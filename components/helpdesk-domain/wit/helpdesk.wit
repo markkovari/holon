@@ -24,7 +24,7 @@ package helpdesk:app@0.1.0;
 
 /// The helpdesk HTTP backend, composed from capability contracts.
 world helpdesk-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // login/register + sessions + roles — the composed auth-guard.
     import auth:identity/accounts@0.1.0;
@@ -66,7 +66,7 @@ world helpdesk-domain {
     // SLA (Rung 5).
     import sched:timer/timer@0.1.0;
     
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
     
     // stateful actors
     import actor:entity/actor@0.1.0;

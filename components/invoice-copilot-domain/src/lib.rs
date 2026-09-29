@@ -19,24 +19,56 @@
 //! retry that any HTTP client will make on its own.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/ratelimit-guard",
+            "../audit-log/wit",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../money/wit",
+            "../ledger/wit",
+            "../idempotency-guard/wit",
+            "../llm-inference/wit",
+            "../ai-inference/wit",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "wit",
+        ],
+        world: "invoice:copilot/invoice-copilot-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+    }
+}
 mod copilot;
 mod invoices;
 mod posting;
 
 use bindings::auth::identity::session as auth_session;
 use bindings::auth::identity::types as auth_types;
-use bindings::exports::wasi::http::incoming_handler::Guest;
+use bindings::p3::handler::Guest;
 use bindings::money::amount::arithmetic as money;
 use bindings::records::store::store as records;
-use bindings::wasi::clocks::wall_clock;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::clocks::system_clock;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 use serde_json::{json, Value};
 
-guestio::guest_write_all!();
-guestio::guest_bearer!();
+guestio::guest_p3_respond!();
+guestio::guest_p3_bearer!();
 
 struct Component;
 
@@ -103,7 +135,7 @@ pub fn cfg(key: &str, default: &str) -> String {
 
 /// Unix seconds, for anything that has to be stamped.
 pub fn now_secs() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 use guestfmt::rfc3339;
@@ -193,18 +225,18 @@ fn seed() -> Reply {
 /// traps the component and the connection simply closes.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body_text!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
 /// One header, as a string. Absent, repeated or non-UTF8 all read as empty.
-fn header(request: &IncomingRequest, name: &str) -> String {
-    let fields = request.headers();
+fn header(request: &Request, name: &str) -> String {
+    let fields = request.get_headers();
     let values = fields.get(name);
     values.first().map(|v| String::from_utf8_lossy(v).into_owned()).unwrap_or_default()
 }
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let path = request.path_with_query().unwrap_or_else(|| "/".into());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".into());
         let (raw_path, query) = match path.split_once('?') {
             Some((p, q)) => (p.to_string(), q.to_string()),
             None => (path.clone(), String::new()),
@@ -216,9 +248,9 @@ impl Guest for Component {
             bearer,
             idempotency_key: header(&request, "idempotency-key"),
         };
-        let method = request.method();
+        let method = request.get_method();
         let body = match method {
-            Method::Post | Method::Put | Method::Patch => read_body(&request),
+            Method::Post | Method::Put | Method::Patch => read_body(request).await,
             _ => String::new(),
         };
 
@@ -247,19 +279,8 @@ impl Guest for Component {
             _ => Reply::err(404, "not_found"),
         };
 
-        let headers = Fields::new();
-        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-        let resp = OutgoingResponse::new(headers);
-        let _ = resp.set_status_code(status);
-        let out = resp.body().expect("body");
-        ResponseOutparam::set(response_out, Ok(resp));
-        if let Ok(stream) = out.write() {
-            if !payload.is_null() {
-                let _ = write_all(&stream, payload.to_string().as_bytes());
-            }
-            drop(stream);
-        }
-        let _ = OutgoingBody::finish(out, None);
+        let body = if payload.is_null() { String::new() } else { payload.to_string() };
+        respond(status, "application/json", body)
     }
 }
 

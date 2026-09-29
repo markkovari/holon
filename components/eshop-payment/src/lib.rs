@@ -4,28 +4,48 @@
 //! config flag — the same success/failure toggle the original exposes.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../event-bus/wit",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "wit",
+        ],
+        world: "eshop:payment/payment-service",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde_json::{json, Value};
 
 use bindings::event::bus::bus;
 use bindings::wasi::config::store as config;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 struct Component;
 
 const GROUP: &str = "payment";
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/");
 
         let (status, body) = match (&method, route) {
@@ -41,7 +61,7 @@ impl Guest for Component {
             (Method::Post, "/internal/pump") => pump(),
             _ => (404, "{\"error\":\"not_found\"}".into()),
         };
-        respond(response_out, status, body.as_bytes());
+        respond(status, "application/json", body)
     }
 }
 
@@ -69,20 +89,6 @@ fn pump() -> (u16, String) {
         }
     }
     (200, json!({"processed": processed, "succeeds": succeeds}).to_string())
-}
-
-fn respond(response_out: ResponseOutparam, status: u16, body: &[u8]) {
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
 }
 
 bindings::export!(Component with_types_in bindings);

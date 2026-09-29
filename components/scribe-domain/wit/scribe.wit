@@ -25,7 +25,7 @@ package scribe:app@0.1.0;
 
 /// The collaborative-editor backend + the SSE loop, composed from contracts.
 world scribe-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // conflict-free convergence: the document is an lwwmap CRDT state.
     import crdt:merge/merger@0.1.0;
@@ -36,7 +36,7 @@ world scribe-domain {
     // replica ids for editors.
     import id:generate/generator@0.1.0;
     // presence timestamps.
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
     // the SSE poll cadence — subscribe-duration(…).block() to sleep, not spin.
-    import wasi:clocks/monotonic-clock@0.2.0;
+    import wasi:clocks/monotonic-clock@0.3.0-rc-2026-03-15;
 }
