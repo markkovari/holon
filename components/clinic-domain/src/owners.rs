@@ -3,8 +3,8 @@
 //! `CONTRACT.md` is the specification. `crate::Reply` is how you answer, and
 //! `crate::bindings::records::store::store` is where things are kept.
 
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
 use crate::{Reply, Route};
 use serde_json::{json, Value};
 

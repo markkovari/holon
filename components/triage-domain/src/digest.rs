@@ -6,8 +6,8 @@
 //! and the CSV cannot disagree about what happened that day. `csv:codec::format`
 //! does the quoting — `Login fails, silently` keeps its five columns.
 use crate::bindings::csv::codec::codec as csv;
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
 use crate::{Reply, Route};
 use serde_json::json;
 use std::collections::BTreeMap;

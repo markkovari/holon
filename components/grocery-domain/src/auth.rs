@@ -1,11 +1,11 @@
-use crate::bindings::wasi::clocks::wall_clock;
-use crate::bindings::wasi::http::types::IncomingRequest;
+use crate::bindings::p3::clocks::system_clock;
+use crate::bindings::p3::http::types::Request;
 use crate::read_body;
 use crate::store::{load_sessions, load_users, save_sessions, save_users};
 use crate::types::{Outcome, Session, User, UserPublic};
 use serde_json::{json, Value};
 
-pub fn get_current_user(request: &IncomingRequest) -> Option<User> {
+pub fn get_current_user(request: &Request) -> Option<User> {
     let token = crate::bearer(request)?;
     let sessions = load_sessions();
     let session = sessions.iter().find(|s| s.token == token)?;
@@ -13,7 +13,7 @@ pub fn get_current_user(request: &IncomingRequest) -> Option<User> {
     users.iter().find(|u| u.id == session.user_id).cloned()
 }
 
-pub fn require_role(request: &IncomingRequest, required_role: &str) -> Result<User, Outcome> {
+pub fn require_role(request: &Request, required_role: &str) -> Result<User, Outcome> {
     let user = match get_current_user(request) {
         Some(u) => u,
         None => {
@@ -30,8 +30,8 @@ pub fn require_role(request: &IncomingRequest, required_role: &str) -> Result<Us
 }
 
 /// POST /api/auth/register
-pub fn handle_register(request: &IncomingRequest) -> Outcome {
-    let raw = match read_body(request) {
+pub async fn handle_register(request: Request) -> Outcome {
+    let raw = match read_body(request).await {
         Ok(b) => b,
         Err(_) => return Outcome::Err(400, "Could not read body".into()),
     };
@@ -58,7 +58,7 @@ pub fn handle_register(request: &IncomingRequest) -> Outcome {
         return Outcome::Err(409, format!("Username '{username}' is already taken"));
     }
 
-    let sec = wall_clock::now().seconds;
+    let sec = system_clock::now().seconds as u64;
     let user_id = format!("usr_{}", sec % 1_000_000);
     let new_user = User {
         id: user_id.clone(),
@@ -96,8 +96,8 @@ pub fn handle_register(request: &IncomingRequest) -> Outcome {
 }
 
 /// POST /api/auth/login
-pub fn handle_login(request: &IncomingRequest) -> Outcome {
-    let raw = match read_body(request) {
+pub async fn handle_login(request: Request) -> Outcome {
+    let raw = match read_body(request).await {
         Ok(b) => b,
         Err(_) => return Outcome::Err(400, "Could not read body".into()),
     };
@@ -123,7 +123,7 @@ pub fn handle_login(request: &IncomingRequest) -> Outcome {
         return Outcome::Err(401, "Invalid username or password".into());
     }
 
-    let sec = wall_clock::now().seconds;
+    let sec = system_clock::now().seconds as u64;
     let token = if user.username == "shopper" {
         "tok_shopper".to_string()
     } else if user.username == "admin" {
@@ -155,7 +155,7 @@ pub fn handle_login(request: &IncomingRequest) -> Outcome {
 }
 
 /// GET /api/auth/me
-pub fn handle_auth_me(request: &IncomingRequest) -> Outcome {
+pub fn handle_auth_me(request: &Request) -> Outcome {
     match get_current_user(request) {
         Some(user) => {
             let pub_user = UserPublic::from(&user);
@@ -166,7 +166,7 @@ pub fn handle_auth_me(request: &IncomingRequest) -> Outcome {
 }
 
 /// POST /api/auth/logout
-pub fn handle_logout(request: &IncomingRequest) -> Outcome {
+pub fn handle_logout(request: &Request) -> Outcome {
     if let Some(token) = crate::bearer(request) {
         let mut sessions = load_sessions();
         sessions.retain(|s| s.token != token);
@@ -176,7 +176,7 @@ pub fn handle_logout(request: &IncomingRequest) -> Outcome {
 }
 
 /// GET /api/admin/users
-pub fn handle_list_users(request: &IncomingRequest) -> Outcome {
+pub fn handle_list_users(request: &Request) -> Outcome {
     if let Err(e) = require_role(request, "admin") {
         return e;
     }
@@ -186,19 +186,19 @@ pub fn handle_list_users(request: &IncomingRequest) -> Outcome {
 }
 
 /// POST /api/admin/users
-pub fn handle_admin_create_user(request: &IncomingRequest) -> Outcome {
-    if let Err(e) = require_role(request, "admin") {
+pub async fn handle_admin_create_user(request: Request) -> Outcome {
+    if let Err(e) = require_role(&request, "admin") {
         return e;
     }
-    handle_register(request)
+    handle_register(request).await
 }
 
 /// PATCH /api/admin/users/{id}/role
-pub fn handle_update_user_role(request: &IncomingRequest, user_id: &str) -> Outcome {
-    if let Err(e) = require_role(request, "admin") {
+pub async fn handle_update_user_role(request: Request, user_id: &str) -> Outcome {
+    if let Err(e) = require_role(&request, "admin") {
         return e;
     }
-    let raw = match read_body(request) {
+    let raw = match read_body(request).await {
         Ok(b) => b,
         Err(_) => return Outcome::Err(400, "Could not read body".into()),
     };
@@ -236,7 +236,7 @@ pub fn handle_update_user_role(request: &IncomingRequest, user_id: &str) -> Outc
 }
 
 /// DELETE /api/admin/users/{id}
-pub fn handle_delete_user(request: &IncomingRequest, user_id: &str) -> Outcome {
+pub fn handle_delete_user(request: &Request, user_id: &str) -> Outcome {
     let caller = match require_role(request, "admin") {
         Ok(u) => u,
         Err(e) => return e,
