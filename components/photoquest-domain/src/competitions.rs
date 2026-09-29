@@ -26,8 +26,8 @@
 
 use crate::bindings::auth::identity::types::Principal;
 use crate::bindings::media::pipeline::jobs as media;
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
 use crate::clock;
 use crate::moderation::{is_hidden, require_active, require_role};
 use crate::{audit, introspect, Reply, Route};

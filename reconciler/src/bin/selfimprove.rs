@@ -74,16 +74,8 @@ struct Args {
 fn build_composed_slug(feature: bool) -> Result<Vec<u8>> {
     let comp = repo_root().join("components");
     let rel = comp.join("target/wasm32-wasip2/release");
-    let mut check = Command::new("cargo");
-    check.current_dir(&comp).args(["component", "check", "--release", "-p", "slug-probe"]);
-    if feature {
-        check.env("COMP_SLUGWITH", "1");
-    } else {
-        check.env_remove("COMP_SLUGWITH");
-    }
-    if !check.output().context("cargo component check")?.status.success() {
-        bail!("bindings for slug-probe failed");
-    }
+    // slug-probe is p3: its bindings come from `generate!` at compile time, so
+    // there is no cargo-component step before the build.
     let mut build = Command::new("cargo");
     build.current_dir(&comp).args([
         "build",

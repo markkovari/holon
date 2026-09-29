@@ -1,8 +1,8 @@
 use crate::api::Reply;
 use crate::bindings::audit::log::recorder;
 use crate::bindings::audit::log::types;
+use crate::bindings::p3::clocks::system_clock;
 use crate::bindings::records::store::store;
-use crate::bindings::wasi::clocks::wall_clock;
 use serde_json::{json, Value};
 
 pub fn list() -> Reply {
@@ -28,12 +28,12 @@ pub fn list() -> Reply {
     };
 
     // 3. Log read action
-    let now = wall_clock::now();
+    let now = system_clock::now();
     let _ = recorder::record_event(&types::Event {
         id: crate::bindings::id::generate::generator::ulid(),
         trace_id: "".to_string(),
         span_id: "".to_string(),
-        timestamp: now.seconds,
+        timestamp: now.seconds as u64,
         event: "tickets:read".to_string(),
         outcome: "allow".to_string(),
         tenant: "support".to_string(),
@@ -59,12 +59,12 @@ pub fn create(body: &str) -> Reply {
 
     match store::create("ticket", &doc.to_string(), &[]) {
         Ok(entry) => {
-            let now = wall_clock::now();
+            let now = system_clock::now();
             let _ = recorder::record_event(&types::Event {
                 id: crate::bindings::id::generate::generator::ulid(),
                 trace_id: "".to_string(),
                 span_id: "".to_string(),
-                timestamp: now.seconds,
+                timestamp: now.seconds as u64,
                 event: "tickets:create".to_string(),
                 outcome: "allow".to_string(),
                 tenant: "support".to_string(),

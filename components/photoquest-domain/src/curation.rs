@@ -39,8 +39,8 @@
 //!   Title, description, XP and the time window stay editable.
 
 use crate::bindings::auth::identity::types::Principal;
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
 use crate::moderation::{require_active, require_role};
 use crate::progress::{
     data_of, doc, find, list_all, load, store_err, str_of, tri, u64_of, JOURNEYS, QUESTS,

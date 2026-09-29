@@ -17,7 +17,7 @@ package eshop:basket@0.1.0;
 
 /// The basket HTTP backend, composed from capability contracts.
 world basket-service {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // token introspection against the shared session bucket.
     import auth:identity/authorizer@0.1.0;

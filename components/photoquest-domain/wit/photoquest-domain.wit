@@ -9,7 +9,7 @@
 package photoquest:domain@0.1.0;
 
 world photoquest-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     /// Real accounts, login and roles — `auth-guard` satisfies all five.
     import auth:identity/accounts@0.1.0;
@@ -35,5 +35,5 @@ world photoquest-domain {
 
     /// `public-callback-base` and `media-callback-secret`.
     import wasi:config/store@0.2.0-rc.1;
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
 }

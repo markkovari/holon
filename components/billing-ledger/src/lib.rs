@@ -7,7 +7,35 @@
 //! crash mid-request and resend without double-charging.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../money/wit",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../idempotency-guard/wit",
+            "../quota/wit",
+            "../csv/wit",
+            "../outbox/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "wit",
+        ],
+        world: "ledger:app/ledger-app",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -19,10 +47,8 @@ use bindings::outbox::dispatch::queue as outbox;
 use bindings::quota::meter::meter as quota;
 use bindings::records::store::store as records;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Component;
 
@@ -36,9 +62,9 @@ const IDEM_TTL: u64 = 86400;
 const CAS_RETRIES: u32 = 3;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let query = path.split_once('?').map(|x| x.1).unwrap_or("").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
@@ -56,17 +82,17 @@ impl Guest for Component {
                 })
                 .to_string(),
             ),
-            (Method::Post, ["api", "accounts"]) => create_account(&request),
+            (Method::Post, ["api", "accounts"]) => create_account(request).await,
             (Method::Get, ["api", "accounts"]) => list_accounts(),
             (Method::Get, ["api", "accounts", id]) => get_account(id),
-            (Method::Post, ["api", "accounts", id, "entries"]) => post_entry(&request, id),
+            (Method::Post, ["api", "accounts", id, "entries"]) => post_entry(request, id).await,
             (Method::Get, ["api", "accounts", id, "entries"]) => list_entries(id),
             (Method::Get, ["api", "accounts", id, "statement.csv"]) => statement(id),
             (Method::Get, ["api", "allocate"]) => allocate(&query),
             (Method::Post, ["api", "events", "drain"]) => drain_events(),
             _ => Outcome::NotFound,
         };
-        emit(response_out, result);
+        emit(result)
     }
 }
 
@@ -90,9 +116,9 @@ struct CreateAccount {
     currency: String,
 }
 
-fn create_account(request: &IncomingRequest) -> Outcome {
+async fn create_account(request: Request) -> Outcome {
     let req: CreateAccount =
-        match read_body(request).and_then(|b| serde_json::from_slice(&b).map_err(|_| ())) {
+        match read_body(request).await.and_then(|b| serde_json::from_slice(&b).map_err(|_| ())) {
             Ok(r) => r,
             Err(_) => return Outcome::Bad("expected json body {name, currency}".into()),
         };
@@ -155,8 +181,8 @@ struct PostEntry {
     description: Option<String>,
 }
 
-fn post_entry(request: &IncomingRequest, account_id: &str) -> Outcome {
-    let Some(key) = header(request, "idempotency-key").filter(|k| !k.is_empty()) else {
+async fn post_entry(request: Request, account_id: &str) -> Outcome {
+    let Some(key) = header(&request, "idempotency-key").filter(|k| !k.is_empty()) else {
         return Outcome::Bad("missing idempotency-key header".into());
     };
     let idem_key = format!("ledger:{account_id}:{key}");
@@ -177,7 +203,7 @@ fn post_entry(request: &IncomingRequest, account_id: &str) -> Outcome {
 
     // only a successful post is cached; any error forgets the reservation so
     // the client can retry with the same key after fixing the request.
-    let outcome = post_entry_inner(request, account_id);
+    let outcome = post_entry_inner(request, account_id).await;
     match &outcome {
         Outcome::Json(status, body) => {
             let _ = idem::complete(&idem_key, *status, body.as_bytes());
@@ -189,7 +215,7 @@ fn post_entry(request: &IncomingRequest, account_id: &str) -> Outcome {
     outcome
 }
 
-fn post_entry_inner(request: &IncomingRequest, account_id: &str) -> Outcome {
+async fn post_entry_inner(request: Request, account_id: &str) -> Outcome {
     match quota::reserve(&format!("ledger:{account_id}"), 1, ENTRY_LIMIT, QUOTA_PERIOD) {
         Ok(_) => {}
         Err(quota::QuotaError::Exceeded(_)) => {
@@ -202,6 +228,7 @@ fn post_entry_inner(request: &IncomingRequest, account_id: &str) -> Outcome {
     }
 
     let req: PostEntry = match read_body(request)
+        .await
         .and_then(|b| serde_json::from_slice(&b).map_err(|_| ()))
     {
         Ok(r) => r,
@@ -448,11 +475,11 @@ fn store_err(e: records::StoreError) -> Outcome {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
 
-fn header(request: &IncomingRequest, name: &str) -> Option<String> {
-    request.headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
+fn header(request: &Request, name: &str) -> Option<String> {
+    request.get_headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
 }
 
 fn query_param(query: &str, key: &str) -> Option<String> {
@@ -464,67 +491,41 @@ fn query_param(query: &str, key: &str) -> Option<String> {
 
 // ---- responses -----------------------------------------------------------------
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => {
-            respond(response_out, code, &[], body.as_bytes(), "application/json")
+        Outcome::Json(code, body) => send(code, &[], body.as_bytes(), "application/json"),
+        Outcome::Cached(code, body) => {
+            send(code, &[("idempotent-replay", "true")], body.as_bytes(), "application/json")
         }
-        Outcome::Cached(code, body) => respond(
-            response_out,
-            code,
-            &[("idempotent-replay", "true")],
-            body.as_bytes(),
-            "application/json",
-        ),
-        Outcome::Csv(body) => respond(response_out, 200, &[], body.as_bytes(), "text/csv"),
-        Outcome::Limited(resets_at) => respond(
-            response_out,
+        Outcome::Csv(body) => send(200, &[], body.as_bytes(), "text/csv"),
+        Outcome::Limited(resets_at) => send(
             429,
             &[],
             format!("{{\"error\":\"quota_exceeded\",\"resetsAt\":{resets_at}}}").as_bytes(),
             "application/json",
         ),
-        Outcome::Bad(msg) => respond(
-            response_out,
-            400,
-            &[],
-            json!({ "error": msg }).to_string().as_bytes(),
-            "application/json",
-        ),
-        Outcome::Err(code, msg) => respond(
-            response_out,
-            code,
-            &[],
-            json!({ "error": msg }).to_string().as_bytes(),
-            "application/json",
-        ),
-        Outcome::NotFound => {
-            respond(response_out, 404, &[], b"{\"error\":\"not_found\"}", "application/json")
+        Outcome::Bad(msg) => {
+            send(400, &[], json!({ "error": msg }).to_string().as_bytes(), "application/json")
         }
+        Outcome::Err(code, msg) => {
+            send(code, &[], json!({ "error": msg }).to_string().as_bytes(), "application/json")
+        }
+        Outcome::NotFound => send(404, &[], b"{\"error\":\"not_found\"}", "application/json"),
     }
 }
 
-fn respond(
-    response_out: ResponseOutparam,
+fn send(
     status: u16,
     extra: &[(&str, &str)],
     body: &[u8],
     content_type: &str,
-) {
+) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
     for (k, v) in extra {
-        let _ = headers.set(k.as_ref(), &[v.as_bytes().to_vec()]);
+        let _ = headers.set(k, &[v.as_bytes().to_vec()]);
     }
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(status, headers, body.to_vec())
 }
 
 bindings::export!(Component with_types_in bindings);

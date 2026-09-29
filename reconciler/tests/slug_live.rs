@@ -18,9 +18,9 @@ use serde_json::{json, Value};
 fn composed_slug_probe() -> Vec<u8> {
     let comp = repo_root().join("components");
     let rel = comp.join("target/wasm32-wasip2/release");
-    // Build both, generating the probe's bindings first (cargo-component codegen).
+    // Build both. slug-probe is p3 and makes its own bindings at compile time;
+    // `slug` is p2, and CI generates its bindings before this runs.
     for args in [
-        vec!["component", "check", "--release", "-p", "slug-probe"],
         vec!["build", "--release", "--target", "wasm32-wasip2", "-p", "slug-probe", "-p", "slug"],
     ] {
         let out = Command::new("cargo").current_dir(&comp).args(&args).output().expect("cargo");
