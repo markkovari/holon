@@ -3,7 +3,7 @@
 // This is the language- and host-agnostic answer to "the domain is the only
 // non-component piece": the pet/appointment/note orchestration that used to be
 // TypeScript running under jco is here an HTTP component that EXPORTS
-// wasi:http/incoming-handler and IMPORTS the capability contracts it composes.
+// wasi:http/handler (p3) and IMPORTS the capability contracts it composes.
 //
 // The world names only WIT — no vendor, no backend, no language. The same
 // vet_domain.wasm runs on jco (Node), on a wasmCloud host, or under wasmtime,

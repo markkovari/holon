@@ -10,7 +10,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -21,7 +21,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -55,7 +55,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -82,7 +82,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -140,7 +140,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -169,7 +169,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -186,7 +186,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -197,7 +197,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -220,7 +220,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -324,7 +324,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -334,7 +334,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -345,7 +345,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -393,7 +393,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -404,7 +404,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -415,7 +415,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -456,7 +456,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -500,7 +500,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -612,7 +612,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -622,7 +622,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -631,7 +631,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -655,7 +655,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -666,7 +666,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -692,7 +692,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -714,7 +714,7 @@ version = "0.1.0"
 dependencies = [
  "guestfmt",
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -732,7 +732,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -777,7 +777,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -794,7 +794,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -834,7 +834,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -845,7 +845,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -873,7 +873,7 @@ name = "demo-probe"
 version = "0.1.0"
 dependencies = [
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -923,7 +923,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -934,7 +934,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -957,7 +957,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -979,7 +979,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -989,7 +989,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -998,7 +998,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1023,7 +1023,7 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid 1.26.1",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1081,7 +1081,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1091,7 +1091,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1099,7 +1099,7 @@ name = "eshop-gateway"
 version = "0.1.0"
 dependencies = [
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1110,7 +1110,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1119,7 +1119,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1144,7 +1144,7 @@ dependencies = [
  "guestfmt",
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1198,7 +1198,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1223,7 +1223,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1240,7 +1240,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1251,7 +1251,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1288,7 +1288,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1308,7 +1308,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1325,7 +1325,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1416,7 +1416,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1496,7 +1496,7 @@ version = "0.1.0"
 dependencies = [
  "guestfmt",
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1513,7 +1513,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1551,7 +1551,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1612,7 +1612,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1629,7 +1629,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1859,7 +1859,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1870,7 +1870,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1922,7 +1922,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1933,7 +1933,7 @@ dependencies = [
  "once_cell",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1944,7 +1944,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1955,7 +1955,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1966,7 +1966,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1998,7 +1998,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2008,7 +2008,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2090,7 +2090,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2107,7 +2107,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2151,7 +2151,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2185,7 +2185,7 @@ name = "llm-probe"
 version = "0.1.0"
 dependencies = [
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2196,7 +2196,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2206,7 +2206,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2291,7 +2291,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2301,7 +2301,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2332,7 +2332,7 @@ version = "0.1.0"
 dependencies = [
  "guestfmt",
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2342,7 +2342,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2360,7 +2360,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2406,7 +2406,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2446,7 +2446,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2502,7 +2502,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2580,7 +2580,7 @@ dependencies = [
  "holon-park",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2602,7 +2602,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2614,7 +2614,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2635,7 +2635,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2646,7 +2646,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2663,7 +2663,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2688,7 +2688,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2700,7 +2700,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2711,7 +2711,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2734,7 +2734,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2769,7 +2769,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2801,7 +2801,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2921,7 +2921,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3056,7 +3056,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3086,7 +3086,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3121,7 +3121,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3172,7 +3172,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3199,7 +3199,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3210,7 +3210,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3239,7 +3239,7 @@ name = "secret-probe"
 version = "0.1.0"
 dependencies = [
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3257,7 +3257,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3403,7 +3403,7 @@ name = "slug-probe"
 version = "0.1.0"
 dependencies = [
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3420,7 +3420,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3473,7 +3473,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3517,7 +3517,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3534,7 +3534,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3545,7 +3545,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3557,7 +3557,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3626,7 +3626,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3684,7 +3684,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3704,7 +3704,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3716,7 +3716,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3750,7 +3750,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3761,7 +3761,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3772,7 +3772,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3783,7 +3783,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3794,7 +3794,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3862,7 +3862,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3933,7 +3933,7 @@ dependencies = [
  "holon-vcs",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3969,7 +3969,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3979,7 +3979,7 @@ dependencies = [
  "guestfmt",
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3996,7 +3996,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -4021,7 +4021,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -4031,7 +4031,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -4242,7 +4242,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
