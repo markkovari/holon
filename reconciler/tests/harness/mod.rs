@@ -421,3 +421,151 @@ pub fn composed_gate() -> Vec<u8> {
     comp_reconciler::plug::compose("gate-domain", &catalog)
         .expect("gate-domain composes with what it imports — `cargo xtask build --force` first")
 }
+
+// ---------------------------------------------------------------------------
+// A real S3-compatible store, for the suites that put bytes in one — the
+// host's `--blob s3` and `comp-backup`.
+// ---------------------------------------------------------------------------
+
+/// Pinned, matching `infra/compose.yaml` and `host/src/objkv_test.rs`.
+pub const RUSTFS_IMAGE: &str = "rustfs/rustfs:1.0.0";
+pub const RUSTFS_KEY: &str = "testadmin";
+pub const RUSTFS_SECRET: &str = "testadmin-secret";
+
+/// A RustFS container that dies with the test, and a signed client for it.
+pub struct RustFs {
+    name: String,
+    pub port: u16,
+    http: reqwest::blocking::Client,
+}
+
+impl Drop for RustFs {
+    fn drop(&mut self) {
+        let _ = Command::new("docker")
+            .args(["rm", "-f", &self.name])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+impl RustFs {
+    /// `None` when Docker cannot start one — the caller prints SKIPPED.
+    pub fn start() -> Option<Self> {
+        let port = comp_reconciler::fleet::free_port();
+        let name = format!("comp-test-rustfs-{port}");
+        let status = Command::new("docker")
+            .args(["run", "--rm", "-d", "--name", &name])
+            .args(["-p", &format!("127.0.0.1:{port}:9000")])
+            .args(["-e", "RUSTFS_VOLUMES=/data", "-e", "RUSTFS_ADDRESS=0.0.0.0:9000"])
+            .args(["-e", &format!("RUSTFS_ACCESS_KEY={RUSTFS_KEY}")])
+            .args(["-e", &format!("RUSTFS_SECRET_KEY={RUSTFS_SECRET}")])
+            .arg(RUSTFS_IMAGE)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .ok()?;
+        if !status.success() {
+            return None;
+        }
+        let me = Self {
+            name,
+            port,
+            http: reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .unwrap(),
+        };
+        // `/health` answers before the S3 API stops returning 503, so readiness
+        // is a real S3 call: HEAD on a bucket that does not exist has to say 404.
+        use rusty_s3::S3Action;
+        let deadline = std::time::Instant::now() + Duration::from_secs(90);
+        while std::time::Instant::now() < deadline {
+            let url =
+                me.bucket("readiness").head_bucket(Some(&me.creds())).sign(Duration::from_secs(60));
+            if let Ok(r) = me.http.head(url).send() {
+                if r.status() == reqwest::StatusCode::NOT_FOUND || r.status().is_success() {
+                    return Some(me);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        panic!("the {RUSTFS_IMAGE} container never answered S3 on {port}");
+    }
+
+    pub fn endpoint(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
+    fn creds(&self) -> rusty_s3::Credentials {
+        rusty_s3::Credentials::new(RUSTFS_KEY, RUSTFS_SECRET)
+    }
+
+    fn bucket(&self, name: &str) -> rusty_s3::Bucket {
+        rusty_s3::Bucket::new(
+            self.endpoint().parse().unwrap(),
+            rusty_s3::UrlStyle::Path,
+            name.to_string(),
+            "us-east-1".to_string(),
+        )
+        .unwrap()
+    }
+
+    /// Every `(key, size)` in `bucket` under `prefix`, all pages.
+    pub fn list(&self, bucket: &str, prefix: &str) -> Vec<(String, u64)> {
+        use rusty_s3::S3Action;
+        let (b, creds) = (self.bucket(bucket), self.creds());
+        let mut out = Vec::new();
+        let mut token: Option<String> = None;
+        loop {
+            let mut action = b.list_objects_v2(Some(&creds));
+            action.with_prefix(prefix);
+            if let Some(t) = &token {
+                action.with_continuation_token(t.as_str());
+            }
+            let body = self
+                .http
+                .get(action.sign(Duration::from_secs(60)))
+                .send()
+                .and_then(|r| r.error_for_status())
+                .and_then(|r| r.text())
+                .unwrap_or_else(|e| panic!("listing s3://{bucket}/{prefix}: {e}"));
+            let page = rusty_s3::actions::ListObjectsV2::parse_response(&body).unwrap();
+            out.extend(page.contents.into_iter().map(|o| (o.key, o.size)));
+            match page.next_continuation_token {
+                Some(t) => token = Some(t),
+                None => return out,
+            }
+        }
+    }
+
+    /// One object's bytes, or `None` if it is not there.
+    pub fn get(&self, bucket: &str, key: &str) -> Option<Vec<u8>> {
+        use rusty_s3::S3Action;
+        let url =
+            self.bucket(bucket).get_object(Some(&self.creds()), key).sign(Duration::from_secs(60));
+        let r = self.http.get(url).send().ok()?;
+        r.status().is_success().then(|| r.bytes().unwrap().to_vec())
+    }
+
+    /// Write files holding the credentials, the way a real deployment hands them
+    /// over: in files, never on a command line.
+    pub fn credential_files(&self, dir: &std::path::Path) -> (String, String) {
+        let (k, s) = (dir.join("s3-access-key"), dir.join("s3-secret-key"));
+        std::fs::write(&k, RUSTFS_KEY).unwrap();
+        std::fs::write(&s, RUSTFS_SECRET).unwrap();
+        (k.display().to_string(), s.display().to_string())
+    }
+}
+
+impl RustFs {
+    /// Overwrite one object — how a test plays the part of a bucket that
+    /// altered what it was given.
+    pub fn put(&self, bucket: &str, key: &str, body: Vec<u8>) {
+        use rusty_s3::S3Action;
+        let url =
+            self.bucket(bucket).put_object(Some(&self.creds()), key).sign(Duration::from_secs(60));
+        let r = self.http.put(url).body(body).send().unwrap();
+        assert!(r.status().is_success(), "PUT {key}: {}", r.status());
+    }
+}
