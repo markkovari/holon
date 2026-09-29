@@ -22,7 +22,35 @@
 //!   require-uv   demand the UV flag (biometric/PIN), not just user presence (default false)
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../host/wit/deps/comp-store",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../record-store/wit",
+            "../cache/wit",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../session-store/wit",
+            "../webauthn/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "wit",
+        ],
+        world: "passkey:app/passkey-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::random0_3_0_rc_2026_03_15 as random;
+    }
+}
 
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
@@ -31,15 +59,13 @@ use serde_json::{json, Map, Value};
 use bindings::cache::store::cache;
 use bindings::records::store::store as records;
 use bindings::session::store::store as sessions;
-use bindings::wasi::clocks::wall_clock;
+use bindings::p3::clocks::system_clock;
 use bindings::wasi::config::store as config;
-use bindings::wasi::random::random;
+use bindings::p3::random::random;
 use bindings::webauthn::verify::verifier as wa;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 
 struct Component;
 
@@ -50,25 +76,25 @@ const CHALLENGE_TTL: u64 = 300;
 const SESSION_TTL: u64 = 3600;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => usage(),
             (Method::Get, ["api", "config"]) => rp_config(),
-            (Method::Post, ["api", "register", "begin"]) => register_begin(&request),
-            (Method::Post, ["api", "register", "finish"]) => register_finish(&request),
-            (Method::Post, ["api", "login", "begin"]) => login_begin(&request),
-            (Method::Post, ["api", "login", "finish"]) => login_finish(&request),
+            (Method::Post, ["api", "register", "begin"]) => register_begin(request).await,
+            (Method::Post, ["api", "register", "finish"]) => register_finish(request).await,
+            (Method::Post, ["api", "login", "begin"]) => login_begin(request).await,
+            (Method::Post, ["api", "login", "finish"]) => login_finish(request).await,
             (Method::Get, ["api", "me"]) => me(&request),
-            (Method::Post, ["api", "credentials", "delete"]) => credential_delete(&request),
+            (Method::Post, ["api", "credentials", "delete"]) => credential_delete(request).await,
             (Method::Post, ["api", "logout"]) => logout(&request),
             _ => Outcome::Err(404, "not_found".into()),
         };
-        emit(response_out, outcome);
+        emit(outcome)
     }
 }
 
@@ -164,7 +190,7 @@ fn spend_challenge(challenge: &str, purpose: &str) -> Result<Value, Outcome> {
 // ---- accounts + credentials -------------------------------------------------
 
 fn now_secs() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 fn find_one(coll: &str, field: &str, value: &str) -> Option<(String, u64, Value)> {
@@ -215,11 +241,11 @@ fn credential_view(v: &Value) -> Value {
 
 // ---- sessions ---------------------------------------------------------------
 
-guestio::guest_bearer!();
-guestio::guest_write_all!();
+guestio::guest_p3_bearer!();
+guestio::guest_p3_respond!();
 
 /// The account this request is authenticated as, if any.
-fn session_user(request: &IncomingRequest) -> Option<String> {
+fn session_user(request: &Request) -> Option<String> {
     let token = bearer(request)?;
     let s = sessions::get(&token).ok()?;
     String::from_utf8(s.data).ok()
@@ -241,8 +267,10 @@ fn username_of(b: &Value) -> Result<String, Outcome> {
     Ok(name)
 }
 
-fn register_begin(request: &IncomingRequest) -> Outcome {
-    let b = match body(request) {
+async fn register_begin(request: Request) -> Outcome {
+    // Read before the body: reading it consumes the request.
+    let signed_in = session_user(&request);
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -254,7 +282,7 @@ fn register_begin(request: &IncomingRequest) -> Outcome {
     // Enrolling a passkey on an EXISTING account requires being signed in to it —
     // otherwise adding a credential is a complete account takeover.
     let existing = account_of(&username);
-    if existing.is_some() && session_user(request).as_deref() != Some(username.as_str()) {
+    if existing.is_some() && signed_in.as_deref() != Some(username.as_str()) {
         return Outcome::Err(
             401,
             "account exists — sign in with an existing passkey to add another".into(),
@@ -299,8 +327,8 @@ fn register_begin(request: &IncomingRequest) -> Outcome {
     )
 }
 
-fn register_finish(request: &IncomingRequest) -> Outcome {
-    let b = match body(request) {
+async fn register_finish(request: Request) -> Outcome {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -372,8 +400,8 @@ fn register_finish(request: &IncomingRequest) -> Outcome {
 
 // ---- login -----------------------------------------------------------------
 
-fn login_begin(request: &IncomingRequest) -> Outcome {
-    let b = match body(request) {
+async fn login_begin(request: Request) -> Outcome {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -411,8 +439,8 @@ fn login_begin(request: &IncomingRequest) -> Outcome {
     )
 }
 
-fn login_finish(request: &IncomingRequest) -> Outcome {
-    let b = match body(request) {
+async fn login_finish(request: Request) -> Outcome {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -504,7 +532,7 @@ fn ceremony_error(e: wa::VerifyError) -> Outcome {
 
 // ---- session-scoped reads --------------------------------------------------
 
-fn me(request: &IncomingRequest) -> Outcome {
+fn me(request: &Request) -> Outcome {
     let username = match session_user(request) {
         Some(u) => u,
         None => return Outcome::Err(401, "no session".into()),
@@ -513,12 +541,12 @@ fn me(request: &IncomingRequest) -> Outcome {
     Outcome::Json(200, json!({ "username": username, "credentials": creds }).to_string())
 }
 
-fn credential_delete(request: &IncomingRequest) -> Outcome {
-    let username = match session_user(request) {
+async fn credential_delete(request: Request) -> Outcome {
+    let username = match session_user(&request) {
         Some(u) => u,
         None => return Outcome::Err(401, "no session".into()),
     };
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -537,7 +565,7 @@ fn credential_delete(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn logout(request: &IncomingRequest) -> Outcome {
+fn logout(request: &Request) -> Outcome {
     if let Some(token) = bearer(request) {
         let _ = sessions::revoke(&token);
     }
@@ -561,8 +589,8 @@ fn challenge_from_client_data(client_data: &[u8]) -> Option<String> {
     v["challenge"].as_str().map(|s| s.to_string())
 }
 
-fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let raw = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+async fn body(request: Request) -> Result<Value, Outcome> {
+    let raw = read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
         return Ok(Value::Object(Map::new()));
     }
@@ -583,25 +611,14 @@ fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     let (code, body) = match result {
         Outcome::Json(c, b) => (c, b),
         Outcome::Err(c, m) => (c, json!({ "error": m }).to_string()),
     };
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(code);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    let bytes = body.as_bytes();
-    if !bytes.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, bytes);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond(code, "application/json", body)
 }
 
 bindings::export!(Component with_types_in bindings);

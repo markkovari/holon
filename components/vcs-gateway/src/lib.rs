@@ -20,16 +20,34 @@
 //! deployment that needs more puts `auth-guard` in front.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/vcs",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "wit",
+        ],
+        world: "holon:vcs-gateway/gateway",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 #[path = "../../vcs-store/src/witconv.rs"]
 mod witconv;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::holon::vcs::code_store as store;
 use bindings::holon::vcs::files as fl;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 
 use holon_vcs::model as m;
 use holon_vcs::wire;
@@ -167,9 +185,9 @@ fn route(func: &str, body: &[u8]) -> Result<Answer, Answer> {
 }
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route_path = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route_path.trim_matches('/').split('/').collect();
         let (status, body) = match (&method, seg.as_slice()) {
@@ -181,7 +199,7 @@ impl Guest for Component {
                     "routes": wire::ROUTES.iter().map(|r| format!("POST {}", wire::route(r))).collect::<Vec<_>>(),
                 }),
             ),
-            (Method::Post, ["v1", func]) => match read_body(&request) {
+            (Method::Post, ["v1", func]) => match read_body(request).await {
                 Ok(bytes) => dispatch(func, &bytes),
                 Err(()) => (
                     413,
@@ -195,29 +213,18 @@ impl Guest for Component {
                 (404, to_json(&wire::ErrorBody::new("not-found", format!("no route {route_path}"))))
             }
         };
-        emit(response_out, status, &body);
+        emit(status, &body)
     }
 }
 
-fn emit(response_out: ResponseOutparam, status: u16, body: &Value) {
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    let bytes = body.to_string().into_bytes();
-    {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, &bytes);
-    }
-    let _ = OutgoingBody::finish(out, None);
+fn emit(status: u16, body: &Value) -> Result<Response, ErrorCode> {
+    respond(status, "application/json", body.to_string())
 }
 
 bindings::export!(Component with_types_in bindings);
 
-guestio::guest_write_all!();
-guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
 #[cfg(test)]
 mod tests {

@@ -22,7 +22,7 @@
 package treasury:ledger@0.1.0;
 
 world treasury-ledger-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     /// Who the caller is, and whether they may.
     import auth:identity/authorizer@0.1.0;
@@ -49,5 +49,5 @@ world treasury-ledger-domain {
     /// Deployment knobs.
     import wasi:config/store@0.2.0-rc.1;
     /// Timestamps.
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
 }

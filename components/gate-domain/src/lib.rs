@@ -7,20 +7,43 @@
 //! (the atomic region). No auth — a gateway keys by a client-supplied API key.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../shaper/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "wit",
+        ],
+        world: "gate:app/gate-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+    }
+}
 
 use serde_json::{json, Map, Value};
 
 use bindings::comp::store::cas;
 use bindings::records::store::store as records;
 use bindings::shaper::limit::limiter as shaper;
-use bindings::wasi::clocks::wall_clock;
+use bindings::p3::clocks::system_clock;
 use bindings::wasi::keyvalue::store as kv;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Component;
 
@@ -42,22 +65,22 @@ const BATCHES: &str = "batches";
 const CAS_TRIES: u32 = 200;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => usage(),
-            (Method::Post, ["api", "ratelimit"]) => ratelimit(&request),
-            (Method::Post, ["api", "throttle"]) => throttle(&request),
-            (Method::Post, ["api", "batch", "submit"]) => batch_submit(&request),
+            (Method::Post, ["api", "ratelimit"]) => ratelimit(request).await,
+            (Method::Post, ["api", "throttle"]) => throttle(request).await,
+            (Method::Post, ["api", "batch", "submit"]) => batch_submit(request).await,
             (Method::Get, ["api", "batch", id]) => batch_get(id),
-            (Method::Post, ["api", "reset"]) => reset(&request),
+            (Method::Post, ["api", "reset"]) => reset(request).await,
             _ => Outcome::Err(404, "not_found".into()),
         };
-        emit(response_out, outcome);
+        emit(outcome)
     }
 }
 
@@ -67,8 +90,8 @@ enum Outcome {
 }
 
 fn now_ms() -> u64 {
-    let t = wall_clock::now();
-    t.seconds * 1000 + (t.nanoseconds / 1_000_000) as u64
+    let t = system_clock::now();
+    t.seconds as u64 * 1000 + (t.nanoseconds / 1_000_000) as u64
 }
 
 fn usage() -> Outcome {
@@ -120,8 +143,8 @@ fn open_bucket() -> Result<kv::Bucket, Outcome> {
     kv::open("default").map_err(|e| Outcome::Err(503, format!("store unavailable: {e:?}")))
 }
 
-fn ratelimit(request: &IncomingRequest) -> Outcome {
-    let b = match body(request) {
+async fn ratelimit(request: Request) -> Outcome {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -176,8 +199,8 @@ fn ratelimit(request: &IncomingRequest) -> Outcome {
 
 // ---- throttle (GCRA) --------------------------------------------------------
 
-fn throttle(request: &IncomingRequest) -> Outcome {
-    let b = match body(request) {
+async fn throttle(request: Request) -> Outcome {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -227,8 +250,8 @@ fn process(item: &str) -> String {
     item.to_uppercase()
 }
 
-fn batch_submit(request: &IncomingRequest) -> Outcome {
-    let b = match body(request) {
+async fn batch_submit(request: Request) -> Outcome {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -318,8 +341,8 @@ fn batch_get(id: &str) -> Outcome {
 
 // ---- reset (clear a key's durable state, for demo replay) -------------------
 
-fn reset(request: &IncomingRequest) -> Outcome {
-    let b = match body(request) {
+async fn reset(request: Request) -> Outcome {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -343,8 +366,8 @@ fn reset(request: &IncomingRequest) -> Outcome {
 
 // ---- http plumbing ----------------------------------------------------------
 
-fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let raw = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+async fn body(request: Request) -> Result<Value, Outcome> {
+    let raw = read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
         return Ok(Value::Object(Map::new()));
     }
@@ -365,10 +388,10 @@ fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     let (code, body) = match result {
         Outcome::Json(c, b) => (c, b),
         Outcome::Err(c, m) => (c, json!({ "error": m }).to_string()),
@@ -376,16 +399,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(code);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    let bytes = body.as_bytes();
-    if !bytes.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, bytes);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(code, headers, body.into_bytes())
 }
 
 bindings::export!(Component with_types_in bindings);
