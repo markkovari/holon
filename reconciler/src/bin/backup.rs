@@ -256,21 +256,6 @@ fn backup_id() -> Result<String> {
     Ok(format!("{}-{}", jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ"), hex::encode(r)))
 }
 
-/// A scratch directory that is removed with its value.
-struct Scratch(PathBuf);
-impl Scratch {
-    fn new(tag: &str) -> Result<Self> {
-        let p = std::env::temp_dir().join(format!("comp-backup-{tag}-{}", std::process::id()));
-        std::fs::create_dir_all(&p)?;
-        Ok(Self(p))
-    }
-}
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
 struct Hashing<W> {
     inner: W,
     hash: Sha256,
@@ -314,13 +299,13 @@ async fn run(a: &RunArgs, key: Option<&Key>) -> Result<Manifest> {
     }
     let id = backup_id()?;
     let base = format!("{}/{id}", a.s3.s3_prefix.trim_end_matches('/'));
-    let scratch = Scratch::new(&id)?;
+    let scratch = tempfile::Builder::new().prefix(&format!("comp-backup-{id}-")).tempdir()?;
     let started = std::time::Instant::now();
     let mut parts = Vec::new();
 
     if let Some(js) = &js {
         for name in streams::names(js, &a.streams).await? {
-            let raw = scratch.0.join(format!("{name}.jsonl.gz"));
+            let raw = scratch.path().join(format!("{name}.jsonl.gz"));
             let mut gz = GzEncoder::new(
                 BufWriter::new(std::fs::File::create(&raw)?),
                 flate2::Compression::default(),
@@ -348,9 +333,9 @@ async fn run(a: &RunArgs, key: Option<&Key>) -> Result<Manifest> {
     if let Some(db) = &db {
         for nsdb in &a.surreal.surreal_dbs {
             let (ns, d) = surreal::split(nsdb)?;
-            let export = scratch.0.join(format!("{ns}.{d}.surql"));
+            let export = scratch.path().join(format!("{ns}.{d}.surql"));
             db.export(nsdb, &export).await?;
-            let raw = scratch.0.join(format!("{ns}.{d}.surql.gz"));
+            let raw = scratch.path().join(format!("{ns}.{d}.surql.gz"));
             tokio::task::block_in_place(|| -> Result<()> {
                 let mut gz = GzEncoder::new(
                     BufWriter::new(std::fs::File::create(&raw)?),
@@ -506,7 +491,7 @@ async fn restore(a: RestoreArgs) -> Result<()> {
     };
     let js = nats(&a.nats).await?;
     let db = Surreal::new(&a.surreal)?;
-    let scratch = Scratch::new(&format!("restore-{id}"))?;
+    let scratch = tempfile::Builder::new().prefix(&format!("comp-backup-restore-{id}-")).tempdir()?;
     eprintln!("comp-backup: restoring {id} ({} parts)", m.parts.len());
 
     for part in m.parts.iter().filter(|p| matches_any(&a.only, &p.name)) {
@@ -519,7 +504,7 @@ async fn restore(a: RestoreArgs) -> Result<()> {
             eprintln!("comp-backup: {}: no {} to restore into; skipped", part.name, part.kind);
             continue;
         }
-        let file = scratch.0.join(part.path.replace('/', "_"));
+        let file = scratch.path().join(part.path.replace('/', "_"));
         store.get_file(&format!("{root}/{id}/{}", part.path), &file).await?;
         // Size and hash before anything is opened: a part that is not the one
         // the manifest describes is refused whole.
