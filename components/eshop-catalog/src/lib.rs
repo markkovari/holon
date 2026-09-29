@@ -13,7 +13,32 @@
 //! (driven by the eshop-pump loop; Dapr's push subscription stand-in).
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../host/wit/deps/comp-store",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../record-store/wit",
+            "../event-bus/wit",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../idempotency-guard/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "wit",
+        ],
+        world: "eshop:catalog/catalog-service",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -22,12 +47,10 @@ use bindings::event::bus::bus;
 use bindings::idempotency::guard::store as idem;
 use bindings::records::store::store as records;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 struct Component;
 
@@ -37,9 +60,9 @@ const TYPES: &str = "catalog-types";
 const GROUP: &str = "catalog";
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let (route, query) = match path.split_once('?') {
             Some((r, q)) => (r.to_string(), q.to_string()),
             None => (path.clone(), String::new()),
@@ -55,7 +78,7 @@ impl Guest for Component {
             (Method::Post, ["internal", "pump"]) => pump(),
             _ => Outcome::NotFound,
         };
-        emit(response_out, result);
+        emit(result)
     }
 }
 
@@ -359,28 +382,14 @@ fn bus_err(e: bus::BusError) -> Outcome {
 
 // ---- responses -----------------------------------------------------------------
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, body.as_bytes()),
+        Outcome::Json(code, body) => respond(code, "application/json", body),
         Outcome::Err(code, msg) => {
-            respond(response_out, code, json!({ "error": msg }).to_string().as_bytes())
+            respond(code, "application/json", json!({ "error": msg }).to_string())
         }
-        Outcome::NotFound => respond(response_out, 404, b"{\"error\":\"not_found\"}"),
+        Outcome::NotFound => respond(404, "application/json", "{\"error\":\"not_found\"}"),
     }
-}
-
-fn respond(response_out: ResponseOutparam, status: u16, body: &[u8]) {
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
 }
 
 bindings::export!(Component with_types_in bindings);

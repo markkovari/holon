@@ -10,7 +10,38 @@
 //! to be driven from the SPA in `examples/asset-tracker/dist`, not curl.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/ratelimit-guard",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../audit-log/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../policy-guard/wit",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../id-generate/wit",
+            "wit",
+        ],
+        world: "asset:tracker/asset-tracker-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -21,15 +52,13 @@ use bindings::auth::identity::accounts;
 use bindings::auth::identity::authorizer;
 use bindings::auth::identity::rbac;
 use bindings::auth::identity::types::{AuthError, Permission, Principal};
-use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::id::generate::generator as ids;
+use bindings::p3::clocks::system_clock;
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 use bindings::policy::guard::guard as policy;
 use bindings::policy::guard::guard::Attr;
 use bindings::records::store::store as records;
-use bindings::wasi::clocks::wall_clock;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
 
 struct Component;
 
@@ -39,25 +68,25 @@ const CHECKOUTS: &str = "checkouts";
 const POLICY_DOMAIN: &str = "assettracker";
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let result = match (&method, seg.as_slice()) {
             (Method::Get, [""]) | (Method::Get, ["api"]) => usage(),
-            (Method::Post, ["auth", "register"]) => register(&request),
-            (Method::Post, ["auth", "login"]) => login(&request),
+            (Method::Post, ["auth", "register"]) => register(request).await,
+            (Method::Post, ["auth", "login"]) => login(request).await,
             (Method::Get, ["auth", "me"]) => me(&request),
-            (Method::Post, ["api", "assets"]) => create_asset(&request),
+            (Method::Post, ["api", "assets"]) => create_asset(request).await,
             (Method::Get, ["api", "assets"]) => list_assets(&request),
             (Method::Delete, ["api", "assets", id]) => delete_asset(&request, id),
             (Method::Post, ["api", "assets", id, "checkout"]) => checkout(&request, id),
             (Method::Post, ["api", "assets", id, "checkin"]) => checkin(&request, id),
             _ => Outcome::NotFound,
         };
-        emit(response_out, result);
+        emit(result)
     }
 }
 
@@ -148,9 +177,9 @@ struct RegisterReq {
     role: Option<String>,
 }
 
-fn register(request: &IncomingRequest) -> Outcome {
+async fn register(request: Request) -> Outcome {
     ensure_seeded();
-    let req: RegisterReq = match parse(request) {
+    let req: RegisterReq = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -172,8 +201,8 @@ struct LoginReq {
     password: String,
 }
 
-fn login(request: &IncomingRequest) -> Outcome {
-    let req: LoginReq = match parse(request) {
+async fn login(request: Request) -> Outcome {
+    let req: LoginReq = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -183,14 +212,14 @@ fn login(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn me(request: &IncomingRequest) -> Outcome {
+fn me(request: &Request) -> Outcome {
     match introspect(request) {
         Ok(p) => Outcome::Json(200, json!({"subject": p.subject, "roles": p.roles}).to_string()),
         Err(o) => o,
     }
 }
 
-fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
+fn introspect(request: &Request) -> Result<Principal, Outcome> {
     let Some(token) = bearer(request) else {
         return Err(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())));
     };
@@ -199,7 +228,7 @@ fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
 
 /// `authorize`, mapped straight onto the request's bearer — the one place a
 /// route says which permission it needs.
-fn require(request: &IncomingRequest, target: &str, action: &str) -> Result<Principal, Outcome> {
+fn require(request: &Request, target: &str, action: &str) -> Result<Principal, Outcome> {
     let Some(token) = bearer(request) else {
         return Err(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())));
     };
@@ -214,13 +243,13 @@ struct CreateAssetReq {
     name: String,
 }
 
-fn create_asset(request: &IncomingRequest) -> Outcome {
+async fn create_asset(request: Request) -> Outcome {
     ensure_seeded();
-    let p = match require(request, "assets", "write") {
+    let p = match require(&request, "assets", "write") {
         Ok(p) => p,
         Err(o) => return o,
     };
-    let req: CreateAssetReq = match parse(request) {
+    let req: CreateAssetReq = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -240,7 +269,7 @@ fn create_asset(request: &IncomingRequest) -> Outcome {
     )
 }
 
-fn list_assets(request: &IncomingRequest) -> Outcome {
+fn list_assets(request: &Request) -> Outcome {
     ensure_seeded();
     if let Err(o) = require(request, "assets", "read") {
         return o;
@@ -269,7 +298,7 @@ fn list_assets(request: &IncomingRequest) -> Outcome {
     Outcome::Json(200, json!({"assets": assets}).to_string())
 }
 
-fn delete_asset(request: &IncomingRequest, id: &str) -> Outcome {
+fn delete_asset(request: &Request, id: &str) -> Outcome {
     let p = match require(request, "assets", "delete") {
         Ok(p) => p,
         Err(o) => return o,
@@ -283,7 +312,7 @@ fn delete_asset(request: &IncomingRequest, id: &str) -> Outcome {
 
 // ---- checkout / checkin --------------------------------------------------------
 
-fn checkout(request: &IncomingRequest, asset_id: &str) -> Outcome {
+fn checkout(request: &Request, asset_id: &str) -> Outcome {
     let p = match require(request, "checkouts", "write") {
         Ok(p) => p,
         Err(o) => return o,
@@ -296,7 +325,7 @@ fn checkout(request: &IncomingRequest, asset_id: &str) -> Outcome {
     if asset_data.get("status").and_then(Value::as_str) != Some("available") {
         return Outcome::Err(409, "not_available".into());
     }
-    let now = wall_clock::now().seconds;
+    let now = system_clock::now().seconds as u64;
     let checkout_data = json!({
         "asset_id": asset_id,
         "holder": p.subject,
@@ -319,7 +348,7 @@ fn checkout(request: &IncomingRequest, asset_id: &str) -> Outcome {
     Outcome::Json(201, json!({"checkout_id": entry.id, "holder": p.subject}).to_string())
 }
 
-fn checkin(request: &IncomingRequest, asset_id: &str) -> Outcome {
+fn checkin(request: &Request, asset_id: &str) -> Outcome {
     let p = match require(request, "checkouts", "write") {
         Ok(p) => p,
         Err(o) => return o,
@@ -347,7 +376,7 @@ fn checkin(request: &IncomingRequest, asset_id: &str) -> Outcome {
         return Outcome::Forbidden("only the holder or an admin may check this in".into());
     }
 
-    let now = wall_clock::now().seconds;
+    let now = system_clock::now().seconds as u64;
     checkout_data["returned_at"] = json!(now);
     if let Err(e) =
         records::update(CHECKOUTS, &entry.id, &checkout_data.to_string(), entry.revision)
@@ -408,62 +437,46 @@ fn auth_error(e: &AuthError) -> (u16, &'static str) {
     }
 }
 
-fn parse<T: for<'a> Deserialize<'a>>(request: &IncomingRequest) -> Result<T, String> {
-    let body = read_body(request).map_err(|_| "could not read body".to_string())?;
+async fn parse<T: for<'a> Deserialize<'a>>(request: Request) -> Result<T, String> {
+    let body = read_body(request).await.map_err(|_| "could not read body".to_string())?;
     serde_json::from_slice(&body).map_err(|e| format!("bad json: {e}"))
 }
 
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
-guestio::guest_bearer!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
+guestio::guest_p3_bearer!();
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, &[], body.as_bytes()),
+        Outcome::Json(code, body) => reply(code, &[], body.as_bytes()),
         Outcome::Auth(e) => {
             if let AuthError::RateLimited(secs) = e {
-                respond(
-                    response_out,
+                reply(
                     429,
                     &[("retry-after", &secs.to_string())],
                     format!("{{\"error\":\"rate_limited\",\"retryAfter\":{secs}}}").as_bytes(),
-                );
+                )
             } else {
                 let (code, msg) = auth_error(&e);
-                respond(response_out, code, &[], format!("{{\"error\":\"{msg}\"}}").as_bytes());
+                reply(code, &[], format!("{{\"error\":\"{msg}\"}}").as_bytes())
             }
         }
-        Outcome::Bad(msg) => {
-            respond(response_out, 400, &[], json!({ "error": msg }).to_string().as_bytes())
-        }
-        Outcome::Err(code, msg) => {
-            respond(response_out, code, &[], json!({ "error": msg }).to_string().as_bytes())
-        }
-        Outcome::Forbidden(msg) => {
-            respond(response_out, 403, &[], json!({ "error": msg }).to_string().as_bytes())
-        }
-        Outcome::NotFound => respond(response_out, 404, &[], b"{\"error\":\"not_found\"}"),
+        Outcome::Bad(msg) => reply(400, &[], json!({ "error": msg }).to_string().as_bytes()),
+        Outcome::Err(code, msg) => reply(code, &[], json!({ "error": msg }).to_string().as_bytes()),
+        Outcome::Forbidden(msg) => reply(403, &[], json!({ "error": msg }).to_string().as_bytes()),
+        Outcome::NotFound => reply(404, &[], b"{\"error\":\"not_found\"}"),
     }
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, extra: &[(&str, &str)], body: &[u8]) {
+fn reply(status: u16, extra: &[(&str, &str)], body: &[u8]) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     for (k, v) in extra {
         let _ = headers.set(k.as_ref(), &[v.as_bytes().to_vec()]);
     }
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        if let Ok(stream) = out.write() {
-            let _ = write_all(&stream, body);
-        }
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(status, headers, body.to_vec())
 }
 
 bindings::export!(Component with_types_in bindings);
