@@ -1,0 +1,16 @@
+[package]
+name = "builder-provider"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wasmcloud-provider-sdk = "0.17"
+wit-bindgen-wrpc = "0.10"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1.0"
+tracing = "0.1"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+async-nats = "0.33"
+serde_yaml = "0.9"
+wadm-types = "0.8.3"

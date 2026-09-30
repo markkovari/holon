@@ -87,3 +87,4 @@ e2e/.photoquest-samples/
 comp-kv.db*
 **/comp-kv.db*
 test_all_apps.sh
+components/juan-agent/

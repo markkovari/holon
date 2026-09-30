@@ -1,0 +1,41 @@
+package holon:system;
+
+interface builder {
+    /// A single file modification request
+    record file {
+        /// Path relative to the component's root
+        path: string,
+        /// The new content for the file
+        content: string,
+    }
+
+    /// The payload an agent submits to mutate itself
+    record build-request {
+        /// Name of the component to rebuild (e.g., "chat-agent")
+        component-name: string,
+        /// WIT files to overwrite
+        wit-files: list<file>,
+        /// Rust files to overwrite
+        rs-files: list<file>,
+        /// New capability imports to add to the component manifest
+        new-imports: list<string>,
+    }
+
+    /// The outcome of the build and deploy pipeline
+    record build-result {
+        /// Whether the deployment was successful
+        success: bool,
+        /// Logs from the builder or WADM
+        message: string,
+        /// The new semantic version deployed (e.g., "0.1.1")
+        new-version: string,
+    }
+
+    /// Mutate the source code, rebuild the component, and trigger a WADM blue-green deployment
+    build-and-deploy: func(req: build-request) -> result<build-result, string>;
+}
+
+/// A provider that exposes the builder interface
+world builder-provider {
+    export builder;
+}

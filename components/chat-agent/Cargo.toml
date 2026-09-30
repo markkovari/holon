@@ -1,0 +1,25 @@
+[package]
+name = "chat-agent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wit-bindgen-rt = { version = "0.33.0", features = ["bitflags"] }
+# Depending on how messaging is implemented in wasmCloud components
+# For wasmcloud:messaging/handler
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[lib]
+crate-type = ["cdylib"]
+[package.metadata.component]
+package = "holon:chat-agent"
+
+[package.metadata.component.target]
+path = "wit"
+
+[package.metadata.component.target.dependencies]
+"wasmcloud:messaging" = { path = "../../wit/deps/wasmcloud-messaging-0.2.0" }
+"holon:system" = { path = "../../wit/deps/system" }
+
+"wasmcloud:secrets" = { version = "0.1.0-draft" }
