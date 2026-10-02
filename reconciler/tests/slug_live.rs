@@ -20,12 +20,10 @@ fn composed_slug_probe() -> Vec<u8> {
     let rel = comp.join("target/wasm32-wasip2/release");
     // Build both. slug-probe is p3 and makes its own bindings at compile time;
     // `slug` is p2, and CI generates its bindings before this runs.
-    for args in [
-        vec!["build", "--release", "--target", "wasm32-wasip2", "-p", "slug-probe", "-p", "slug"],
-    ] {
-        let out = Command::new("cargo").current_dir(&comp).args(&args).output().expect("cargo");
-        assert!(out.status.success(), "{args:?} failed:\n{}", String::from_utf8_lossy(&out.stderr));
-    }
+    let args =
+        vec!["build", "--release", "--target", "wasm32-wasip2", "-p", "slug-probe", "-p", "slug"];
+    let out = Command::new("cargo").current_dir(&comp).args(&args).output().expect("cargo");
+    assert!(out.status.success(), "{args:?} failed:\n{}", String::from_utf8_lossy(&out.stderr));
     // Composed by the library rather than by shelling out to `wac`: the plug list
     // comes from what slug-probe actually imports, so this does not have to name
     // `slug` and cannot drift from the component (ADR-0087). It also drops a
