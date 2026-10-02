@@ -1,0 +1,10 @@
+package holon:chat-agent;
+
+/// Chat-driven orchestrator: a broker message in, optionally a self-mutation
+/// (new component built and deployed) and a reply broker message out.
+world chat-agent {
+    export wasmcloud:messaging/handler@0.2.0;
+
+    import wasmcloud:messaging/consumer@0.2.0;
+    import holon:system/builder;
+}

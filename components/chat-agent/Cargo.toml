@@ -21,5 +21,3 @@ path = "wit"
 [package.metadata.component.target.dependencies]
 "wasmcloud:messaging" = { path = "../../wit/deps/wasmcloud-messaging-0.2.0" }
 "holon:system" = { path = "../../wit/deps/system" }
-
-"wasmcloud:secrets" = { version = "0.1.0-draft" }

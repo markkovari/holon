@@ -49,15 +49,15 @@ bindings::export!(JuanAgent with_types_in bindings);
             let _ = consumer::publish(&consumer::BrokerMessage {
                 subject: chat_room.clone(),
                 reply_to: None,
-                body: format!("Orchestrator: Affirmative! Spawning 'Juan', the joke-telling agent...").into_bytes(),
+                body: "Orchestrator: Affirmative! Spawning 'Juan', the joke-telling agent...".to_string().into_bytes(),
             });
 
             match builder::build_and_deploy(&req) {
-                Ok(result) => {
+                Ok(_result) => {
                     let _ = consumer::publish(&consumer::BrokerMessage {
                         subject: chat_room,
                         reply_to: None,
-                        body: format!("Orchestrator: Success! Juan is now online in the Swarm! You can talk to him.").into_bytes(),
+                        body: "Orchestrator: Success! Juan is now online in the Swarm! You can talk to him.".to_string().into_bytes(),
                     });
                 },
                 Err(e) => {
