@@ -5,7 +5,10 @@
 //! brand-new component from nonexistent to live-and-serving, with no
 //! wasmCloud/wadm/Kubernetes — but driven from a GUI instead of a NATS
 //! message: agents in a sidebar on the left, each one's conversation in the
-//! main panel, chat-app style.
+//! main panel, chat-app style. The main window is for EXISTING agents only;
+//! "+ new agent" opens a separate setup window, same shape as a real chat
+//! app's "new conversation" dialog, rather than repurposing the same
+//! conversation pane as a compose box.
 //!
 //! Boots its own throwaway local dev lattice (`comp_reconciler::fleet::Fleet`)
 //! on launch, exactly like the test does. Pointing this at an already-running,
@@ -63,26 +66,40 @@ impl Console {
         cx.notify();
     }
 
-    /// Enter (or the send/spawn button): sends the typed text to whichever
-    /// agent is selected, or — in "+ new agent" mode (nothing selected) —
-    /// spawns a brand-new one from it.
+    /// Enter (or the send button): sends the typed text to whichever agent
+    /// is selected. Does nothing when no agent is selected — this window is
+    /// for existing agents only; creating one happens in its own window.
     fn submit(&mut self, cx: &mut Context<Self>) {
         let text = std::mem::take(&mut self.message).trim().to_string();
         if text.is_empty() {
             return;
         }
-        let selected = self.lattice.read(cx).selected.clone();
-        match selected {
-            Some(name) => self.lattice.update(cx, |l, cx| l.send_to_agent(name, text, cx)),
-            None => self.lattice.update(cx, |l, cx| l.spawn_agent(text, cx)),
-        }
+        let Some(name) = self.lattice.read(cx).selected.clone() else { return };
+        self.lattice.update(cx, |l, cx| l.send_to_agent(name, text, cx));
     }
 
-    fn select(&mut self, name: Option<String>, cx: &mut Context<Self>) {
+    fn select(&mut self, name: String, cx: &mut Context<Self>) {
         self.lattice.update(cx, |l, cx| {
-            l.selected = name;
+            l.selected = Some(name);
             cx.notify();
         });
+    }
+
+    /// Opens a separate, small "new agent" window — a setup dialog, not the
+    /// same conversation pane repurposed as a compose box. Shares the same
+    /// `Lattice` entity, so the moment it spawns an agent, this window's
+    /// sidebar (reactive via `cx.observe`) picks it up on its own.
+    fn open_new_agent_window(&mut self, cx: &mut Context<Self>) {
+        let lattice = self.lattice.clone();
+        let bounds = Bounds::centered(None, size(px(460.0), px(200.0)), cx);
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            |window, cx| cx.new(|cx| NewAgentForm::new(lattice, window, cx)),
+        )
+        .ok();
     }
 }
 
@@ -98,24 +115,17 @@ impl Render for Console {
         let status_line = state.status_line.clone();
         let agents = state.agents.clone();
         let selected = state.selected.clone();
-        let spawning = state.spawning;
         let message_field = format!("{}_", self.message);
 
         let selected_agent =
             selected.as_ref().and_then(|name| agents.iter().find(|a| &a.name == name));
         let header = match &selected_agent {
             Some(a) => format!("{}  ·  {}", a.name, a.status),
-            None => "new agent".to_string(),
-        };
-        let input_label = if selected.is_some() {
-            "send"
-        } else if spawning {
-            "spawning…"
-        } else {
-            "spawn (or press enter)"
+            None => "no agent selected".to_string(),
         };
         let transcript: Vec<Message> =
             selected_agent.map(|a| a.messages.clone()).unwrap_or_default();
+        let has_selection = selected_agent.is_some();
 
         div()
             .id("root")
@@ -137,9 +147,11 @@ impl Render for Console {
                     .flex_1()
                     .min_h(px(0.0))
                     .child(
-                        // Left: every agent, newest first, plus "+ new agent"
-                        // to go back to compose mode. Click one to view (and
-                        // continue) its conversation in the main panel.
+                        // Left: every existing agent, newest first, plus
+                        // "+ new agent" — which opens a separate setup
+                        // window rather than turning this list/panel into a
+                        // compose box. Click an agent to view (and continue)
+                        // its conversation in the main panel.
                         div()
                             .id("sidebar")
                             .flex()
@@ -157,13 +169,13 @@ impl Render for Console {
                                     .py_1()
                                     .rounded_md()
                                     .cursor_pointer()
-                                    .bg(if selected.is_none() {
-                                        rgb(0x2d6a4f)
-                                    } else {
-                                        rgb(0x2a2a2a)
-                                    })
+                                    .bg(rgb(0x2d6a4f))
                                     .child("+ new agent")
-                                    .on_click(cx.listener(|this, _, _, cx| this.select(None, cx))),
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            this.open_new_agent_window(cx)
+                                        }),
+                                    ),
                             )
                             .child(
                                 div()
@@ -181,8 +193,9 @@ impl Render for Console {
                             ),
                     )
                     .child(
-                        // Main: the selected agent's conversation, or a blank
-                        // compose prompt when nothing's selected.
+                        // Main: the selected agent's conversation. With
+                        // nothing selected, just a prompt — no compose box
+                        // here; creating an agent is its own window.
                         div()
                             .id("main")
                             .flex()
@@ -203,41 +216,39 @@ impl Render for Console {
                                     .children(transcript.into_iter().map(render_message)),
                             )
                             .child(div().text_sm().text_color(rgb(0x999999)).child(status_line))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .gap_2()
-                                    .items_center()
-                                    .child(
-                                        div()
-                                            .px_2()
-                                            .py_1()
-                                            .flex_1()
-                                            .rounded_md()
-                                            .bg(rgb(0x111111))
-                                            .border_1()
-                                            .border_color(rgb(0x444444))
-                                            .child(message_field),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("submit")
-                                            .px_3()
-                                            .py_1()
-                                            .rounded_md()
-                                            .bg(if spawning && selected.is_none() {
-                                                rgb(0x555555)
-                                            } else {
-                                                rgb(0x2d6a4f)
-                                            })
-                                            .cursor_pointer()
-                                            .child(input_label)
-                                            .on_click(
-                                                cx.listener(|this, _, _, cx| this.submit(cx)),
-                                            ),
-                                    ),
-                            ),
+                            .when(has_selection, |main| {
+                                main.child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .gap_2()
+                                        .items_center()
+                                        .child(
+                                            div()
+                                                .px_2()
+                                                .py_1()
+                                                .flex_1()
+                                                .rounded_md()
+                                                .bg(rgb(0x111111))
+                                                .border_1()
+                                                .border_color(rgb(0x444444))
+                                                .child(message_field),
+                                        )
+                                        .child(
+                                            div()
+                                                .id("submit")
+                                                .px_3()
+                                                .py_1()
+                                                .rounded_md()
+                                                .bg(rgb(0x2d6a4f))
+                                                .cursor_pointer()
+                                                .child("send")
+                                                .on_click(
+                                                    cx.listener(|this, _, _, cx| this.submit(cx)),
+                                                ),
+                                        ),
+                                )
+                            }),
                     ),
             )
     }
@@ -273,7 +284,7 @@ fn render_sidebar_row(
         .bg(if is_selected { rgb(0x2a4a6a) } else { rgb(0x252525) })
         .child(div().child(agent.name.clone()))
         .child(div().text_xs().text_color(status_color(&agent.status)).child(agent.status.clone()))
-        .on_click(cx.listener(move |this, _, _, cx| this.select(Some(name.clone()), cx)))
+        .on_click(cx.listener(move |this, _, _, cx| this.select(name.clone(), cx)))
 }
 
 fn render_message(m: Message) -> impl IntoElement {
@@ -289,6 +300,103 @@ fn render_message(m: Message) -> impl IntoElement {
         .when(m.from_user, |d| d.ml_auto())
         .child(div().text_xs().text_color(rgb(0x999999)).child(label))
         .child(div().child(m.text))
+}
+
+/// The "+ new agent" setup window: a small, separate dialog rather than the
+/// main window's conversation pane repurposed as a compose box. Submitting
+/// spawns the agent on the shared `Lattice` entity and closes itself — the
+/// main window's sidebar picks the new agent up on its own via `cx.observe`,
+/// since both windows' views read the same entity.
+struct NewAgentForm {
+    lattice: Entity<Lattice>,
+    focus_handle: FocusHandle,
+    message: String,
+}
+
+impl NewAgentForm {
+    fn new(lattice: Entity<Lattice>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+        window.focus(&focus_handle);
+        Self { lattice, focus_handle, message: String::new() }
+    }
+
+    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event.keystroke.key.as_str() {
+            "backspace" => {
+                self.message.pop();
+            }
+            "enter" => self.create(window, cx),
+            "escape" => window.remove_window(),
+            _ => {
+                if let Some(ch) = &event.keystroke.key_char {
+                    if ch.chars().all(|c| c.is_ascii_alphanumeric() || " -,.!'".contains(c)) {
+                        self.message.push_str(ch);
+                    }
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let message = std::mem::take(&mut self.message).trim().to_string();
+        if message.is_empty() {
+            return;
+        }
+        self.lattice.update(cx, |l, cx| l.spawn_agent(message, cx));
+        window.remove_window();
+    }
+}
+
+impl Focusable for NewAgentForm {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for NewAgentForm {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let message_field = format!("{}_", self.message);
+        div()
+            .id("new-agent-form")
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(Self::on_key_down))
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p_4()
+            .bg(rgb(0x1e1e1e))
+            .text_color(rgb(0xe0e0e0))
+            .child(div().text_lg().child("new agent"))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(0x999999))
+                    .child("e.g. \"create an agent that tells a joke, call it juan\""),
+            )
+            .child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(0x111111))
+                    .border_1()
+                    .border_color(rgb(0x444444))
+                    .child(message_field),
+            )
+            .child(
+                div()
+                    .id("create")
+                    .px_3()
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(0x2d6a4f))
+                    .cursor_pointer()
+                    .child("create (or press enter)")
+                    .on_click(cx.listener(|this, _, window, cx| this.create(window, cx))),
+            )
+    }
 }
 
 fn main() {
