@@ -1,0 +1,153 @@
+//! Local AI inference via Apple's on-device Foundation Models CLI (`fm`,
+//! `/usr/bin/fm` on this machine) — an OpenAI-compatible Chat Completions
+//! HTTP server running entirely on-device: no network call, no API key, no
+//! other inference provider involved. `fm serve` is spawned once as a child
+//! process (killed on drop, same shape as `reconciler::fleet::Kill`) and
+//! talked to over its real `/v1/chat/completions` endpoint.
+//!
+//! macOS/Apple Silicon only — this is Apple's on-device Foundation Model,
+//! not something the Raspberry Pi this project's lattice otherwise targets
+//! can run. That makes the AI-calling capability a host-specific optional
+//! one, the same way this project's own native daemons (ffmpeg, Docker, a
+//! filesystem watcher) already are — not something every node is assumed to
+//! have, wired in only where it's actually available.
+//!
+//! This module is step one: a real, tested invocation of `fm`, independent
+//! of the agent-generation pipeline. Wiring a generated agent's reply
+//! through this (today it's a canned string) is a deliberate next step, not
+//! done here — a wasm32 component has no network egress of its own; it
+//! would need to dial this over loopback HTTP the same way other components
+//! dial this project's native daemons, which needs its own wiring.
+//!
+//! Not called from `main.rs`/`lattice.rs` yet — hence `#![allow(dead_code)]`
+//! below, scoped to this module, not the whole crate.
+#![allow(dead_code)]
+
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+use comp_reconciler::fleet::free_port;
+use serde_json::{json, Value};
+
+/// A running `fm serve` process, killed on drop — same shape as
+/// `reconciler::fleet::Kill`, so a dropped `FmServer` cannot leave an
+/// orphaned process behind the way this console's own lattice once did
+/// before its app-quit hook was added.
+pub struct FmServer {
+    child: Child,
+    base_url: String,
+}
+
+impl Drop for FmServer {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl FmServer {
+    /// Spawns `fm serve --port <port>` on a freshly-picked free port and
+    /// blocks until `/health` answers (or `timeout` elapses).
+    pub fn start(timeout: Duration) -> Result<Self, String> {
+        let port = free_port();
+        let child = Command::new("fm")
+            .args(["serve", "--port", &port.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("failed to spawn `fm serve` (is `fm` on PATH?): {e}"))?;
+
+        let base_url = format!("http://127.0.0.1:{port}");
+        let http = client();
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if http.get(format!("{base_url}/health")).send().is_ok_and(|r| r.status().is_success())
+            {
+                return Ok(Self { child, base_url });
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        Err(format!("fm serve did not become healthy on {base_url} within {timeout:?}"))
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// One-shot, non-streaming chat completion: an optional system
+    /// instruction plus the user's prompt in, the assistant's reply text
+    /// out.
+    pub fn ask(&self, instructions: Option<&str>, prompt: &str) -> Result<String, String> {
+        ask(&self.base_url, instructions, prompt)
+    }
+}
+
+fn client() -> reqwest::blocking::Client {
+    reqwest::blocking::Client::builder().timeout(Duration::from_secs(2)).build().unwrap()
+}
+
+/// Free function so a caller that already knows a running `fm serve`'s URL
+/// (not necessarily one this process itself spawned) can use it too.
+pub fn ask(base_url: &str, instructions: Option<&str>, prompt: &str) -> Result<String, String> {
+    let mut messages = Vec::new();
+    if let Some(instructions) = instructions {
+        messages.push(json!({ "role": "system", "content": instructions }));
+    }
+    messages.push(json!({ "role": "user", "content": prompt }));
+
+    let http = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let body: Value = http
+        .post(format!("{base_url}/v1/chat/completions"))
+        .json(&json!({ "model": "system", "messages": messages, "stream": false }))
+        .send()
+        .map_err(|e| format!("request to fm serve failed: {e}"))?
+        .json()
+        .map_err(|e| format!("fm serve returned non-JSON: {e}"))?;
+
+    body["choices"][0]["message"]["content"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| format!("unexpected response shape from fm serve: {body}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A real end-to-end test against the actual on-device model — slow
+    /// (model load + inference) and skipped if `fm` isn't on this machine,
+    /// but this is exactly the thing worth verifying for real rather than
+    /// mocking: that spawning `fm serve` and calling it actually produces a
+    /// real answer, and that dropping it actually stops the process.
+    #[test]
+    fn fm_serve_spawns_answers_and_is_killed_on_drop() {
+        if Command::new("fm").arg("available").output().is_err() {
+            eprintln!("skipping: `fm` not on PATH on this machine");
+            return;
+        }
+
+        let server = FmServer::start(Duration::from_secs(30)).expect("fm serve should start");
+        let pid = server.child.id();
+
+        let reply = server
+            .ask(Some("Reply with one word only."), "What is the opposite of hot?")
+            .expect("ask should succeed");
+        assert!(!reply.trim().is_empty(), "expected a non-empty reply, got: {reply:?}");
+
+        drop(server);
+        std::thread::sleep(Duration::from_millis(300));
+        // Signal 0: does not kill, only checks whether the pid is still
+        // alive — the simplest "is it really dead" check available without
+        // pulling in a process-inspection crate for one test.
+        let still_alive = Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(!still_alive, "fm serve (pid {pid}) should have been killed on drop");
+    }
+}

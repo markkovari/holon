@@ -23,6 +23,7 @@
 //! full IME/selection/clipboard-capable editor, which is out of scope for
 //! one field in an MVP console.
 
+mod fm;
 mod lattice;
 
 use gpui::{
