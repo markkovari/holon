@@ -18,6 +18,27 @@ impl Drop for Kill {
     }
 }
 
+/// `Fleet`'s scratch directory: either a fresh `tempfile::TempDir` (deleted
+/// on drop, the only thing any `start*` entry point used before this), or a
+/// FIXED, caller-chosen directory that is never deleted — so the same NATS
+/// jetstream store and `platform-domain` SQLite DB can be reused across
+/// separate process launches, which a `TempDir` can never do by definition.
+/// `.path()` mirrors `TempDir`'s own method name so every existing
+/// `self.dir.path()` call site needed no change.
+enum Scratch {
+    Owned(tempfile::TempDir),
+    Fixed(std::path::PathBuf),
+}
+
+impl Scratch {
+    fn path(&self) -> &std::path::Path {
+        match self {
+            Scratch::Owned(t) => t.path(),
+            Scratch::Fixed(p) => p.as_path(),
+        }
+    }
+}
+
 /// Keeps the node logs when asked. The struct's own `drop` runs BEFORE its fields
 /// are dropped, so the scratch directory is still there to copy out of.
 impl Drop for Fleet {
@@ -41,9 +62,10 @@ impl Drop for Fleet {
 }
 
 pub struct Fleet {
-    /// Deleted on drop; `Drop for Fleet` copies the logs out first when
-    /// COMP_FLEET_KEEP_LOGS names somewhere to put them.
-    dir: tempfile::TempDir,
+    /// Deleted on drop ONLY when `Owned` — see `Scratch`. `Drop for Fleet`
+    /// copies the logs out first when COMP_FLEET_KEEP_LOGS names somewhere
+    /// to put them.
+    dir: Scratch,
     /// The stub control plane's port, so a second reconciler can be pointed at
     /// the same one the first is using.
     platform_port: u16,
@@ -337,6 +359,7 @@ impl Fleet {
             &[],
             false,
             &[],
+            None,
         )
     }
 
@@ -363,6 +386,7 @@ impl Fleet {
             &[],
             false,
             &[],
+            None,
         )
     }
 
@@ -370,7 +394,39 @@ impl Fleet {
     /// platform's own API rather than a fixture — deploying, then spawning an
     /// environment and watching the loop converge on it (ADR-0078).
     pub fn start_with_platform(lattice: &str, nodes: u16) -> Self {
-        Self::start_full(lattice, &[], &[], &[], nodes, None, None, true, 0, &[], true, &[])
+        Self::start_full(lattice, &[], &[], &[], nodes, None, None, true, 0, &[], true, &[], None)
+    }
+
+    /// The same as `start_with_platform`, but living in `dir` instead of a
+    /// `TempDir` — so the same NATS jetstream store and `platform-domain`
+    /// SQLite DB are still there on the NEXT call with the same `dir`, across
+    /// separate process launches (a desktop app's own restart, say). `dir` is
+    /// created if it doesn't exist, and NEVER deleted by this `Fleet` — unlike
+    /// every other `start*` entry point, whose `TempDir` goes with it on drop.
+    /// `host_args` is exposed here (where `start_with_platform` has none)
+    /// because a persistent, real deployment is exactly the case that also
+    /// wants `--egress`/`--allow-private-egress` for its own daemons.
+    pub fn start_with_platform_in_dir(
+        lattice: &str,
+        nodes: u16,
+        dir: std::path::PathBuf,
+        host_args: &[String],
+    ) -> Self {
+        Self::start_full(
+            lattice,
+            &[],
+            &[],
+            &[],
+            nodes,
+            None,
+            None,
+            true,
+            0,
+            &[],
+            true,
+            host_args,
+            Some(dir),
+        )
     }
 
     /// A fleet whose every node gets `host_args` on its command line — how a test
@@ -394,6 +450,7 @@ impl Fleet {
             &[],
             false,
             host_args,
+            None,
         )
     }
 
@@ -441,6 +498,7 @@ impl Fleet {
             labels,
             false,
             &[],
+            None,
         )
     }
 
@@ -461,6 +519,7 @@ impl Fleet {
             &[],
             false,
             &[],
+            None,
         )
     }
 
@@ -483,6 +542,10 @@ impl Fleet {
         real_platform: bool,
         // Appended to every node's command line — `--blob s3 ...`, say.
         host_args: &[String],
+        // `Some(dir)` makes this fleet's state live in `dir` across process
+        // launches instead of a `TempDir` that's gone the moment this
+        // `Fleet` drops. Every existing entry point passes `None`.
+        scratch_dir: Option<std::path::PathBuf>,
     ) -> Self {
         let root = repo_root();
         let host_bin = std::env::var("COMP_HOST_BIN")
@@ -495,7 +558,13 @@ impl Fleet {
         );
 
         let (nats_port, platform_port, ingress_port) = (free_port(), free_port(), free_port());
-        let dir = tempfile::tempdir().unwrap();
+        let dir = match scratch_dir {
+            Some(p) => {
+                std::fs::create_dir_all(&p).expect("creating the fixed scratch dir");
+                Scratch::Fixed(p)
+            }
+            None => Scratch::Owned(tempfile::tempdir().unwrap()),
+        };
         let sp = dir.path().to_path_buf();
         // Every node's stdout and stderr land in here, and the directory is deleted
         // when the fleet drops — which is fine for a passing test and useless for a
@@ -1004,6 +1073,7 @@ impl Fleet {
             &[],
             false,
             &[],
+            None,
         )
     }
 
