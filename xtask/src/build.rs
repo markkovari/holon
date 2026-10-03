@@ -46,7 +46,9 @@ pub(crate) fn p2_members() -> Result<Vec<String>> {
     Ok(packages
         .iter()
         .filter(|p| {
-            !p["dependencies"].as_array().is_some_and(|d| d.iter().any(|d| d["name"] == "wit-bindgen"))
+            !p["dependencies"]
+                .as_array()
+                .is_some_and(|d| d.iter().any(|d| d["name"] == "wit-bindgen"))
         })
         .filter_map(|p| p["name"].as_str().map(str::to_string))
         .collect())
