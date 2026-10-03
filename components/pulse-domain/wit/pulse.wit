@@ -15,7 +15,7 @@ package pulse:app@0.1.0;
 
 /// The chat backend + the SSE loop, composed from capability contracts.
 world pulse-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // durable message log (indexed by room) + presence records.
     import records:store/store@0.1.0;
@@ -24,7 +24,7 @@ world pulse-domain {
     // message ids.
     import id:generate/generator@0.1.0;
     // message timestamps.
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
     // the SSE poll cadence — subscribe-duration(…).block() to sleep, not spin.
-    import wasi:clocks/monotonic-clock@0.2.0;
+    import wasi:clocks/monotonic-clock@0.3.0-rc-2026-03-15;
 }

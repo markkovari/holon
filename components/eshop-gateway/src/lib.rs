@@ -7,12 +7,31 @@
 //! choreography.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../proxy-route/wit",
+            "wit",
+        ],
+        world: "eshop:gateway/gateway-service",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use bindings::proxy::route::router;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 
 // ponytail: single-file SPA (the jco-helpdesk pattern) include_str!'d here;
 // switch to the static-assets component if the UI ever needs a build step.
@@ -22,14 +41,14 @@ const INDEX_HTML: &str =
 /// Ordering first (creates/advances), then the reactors.
 const PUMPS: [&str; 4] = ["/pump/ordering", "/pump/catalog", "/pump/payment", "/pump/basket"];
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 struct Component;
 
-impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = method_str(&request.method());
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+impl bindings::p3::handler::Guest for Component {
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = method_str(&request.get_method());
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
@@ -41,15 +60,14 @@ impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
                 }
                 let body = match method.as_str() {
                     "GET" | "HEAD" => Vec::new(),
-                    _ => read_body(&request),
+                    _ => read_body(request).await.unwrap_or_default(),
                 };
                 match router::forward(&method, &path, &headers, &body) {
-                    Ok(up) => respond(response_out, up.status, &up.content_type, &up.body),
+                    Ok(up) => respond(up.status, &up.content_type, up.body),
                     Err(router::ProxyError::NoRoute) => {
-                        respond(response_out, 404, "application/json", b"{\"error\":\"not_found\"}")
+                        respond(404, "application/json", b"{\"error\":\"not_found\"}")
                     }
                     Err(router::ProxyError::UpstreamUnreachable(m)) => respond(
-                        response_out,
                         502,
                         "application/json",
                         format!("{{\"error\":\"upstream unreachable: {m}\"}}").as_bytes(),
@@ -60,10 +78,10 @@ impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
                 let ok =
                     PUMPS.iter().filter(|p| router::forward("POST", p, &[], &[]).is_ok()).count();
                 let body = format!("{{\"pumped\":{ok}}}");
-                respond(response_out, 200, "application/json", body.as_bytes());
+                respond(200, "application/json", body)
             }
             // everything else is the storefront (SPA fallback included).
-            _ => respond(response_out, 200, "text/html; charset=utf-8", INDEX_HTML.as_bytes()),
+            _ => respond(200, "text/html; charset=utf-8", INDEX_HTML.as_bytes()),
         }
     }
 }
@@ -83,8 +101,8 @@ fn method_str(m: &Method) -> String {
     }
 }
 
-fn header(request: &IncomingRequest, name: &str) -> Option<String> {
-    request.headers().get(name).into_iter().next().and_then(|v| String::from_utf8(v).ok())
+fn header(request: &Request, name: &str) -> Option<String> {
+    request.get_headers().get(name).into_iter().next().and_then(|v| String::from_utf8(v).ok())
 }
 
 /// A ceiling on a request body, not a policy: past this the read stops and the
@@ -92,46 +110,8 @@ fn header(request: &IncomingRequest, name: &str) -> Option<String> {
 /// component and the connection simply closes.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-fn read_body(request: &IncomingRequest) -> Vec<u8> {
-    let mut buf = Vec::new();
-    if let Ok(body) = request.consume() {
-        if let Ok(stream) = body.stream() {
-            loop {
-                match stream.blocking_read(8192) {
-                    Ok(c) if c.is_empty() => break,
-                    Ok(c) => {
-                        if buf.len() + c.len() > MAX_BODY_BYTES {
-                            // No error channel on this one, so an over-long body reads as
-                            // EMPTY rather than as a plausible prefix of itself.
-                            return Vec::new();
-                        }
-                        buf.extend_from_slice(&c);
-                    }
-                    Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-                    // A failed read is not an end of body: collapsing the two
-                    // returns a truncated payload as if it were whole.
-                    // A failed read is NOT the end of a body. Breaking here returns
-                    // what arrived so far as though it were complete.
-                    Err(_) => return Vec::new(),
-                }
-            }
-        }
-    }
-    buf
-}
-
-fn respond(response_out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
-}
+// No error channel on this one, so an over-long or failed body reads as
+// EMPTY rather than as a plausible prefix of itself (`unwrap_or_default`).
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
 bindings::export!(Component with_types_in bindings);

@@ -13,7 +13,7 @@ package photosocial:app@0.1.0;
 
 /// The photo-social application world. Composed from standard capability contracts.
 world photosocial-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // auth: Accounts, session, rbac for admin / creator / voter roles
     import auth:identity/accounts@0.1.0;
@@ -29,6 +29,6 @@ world photosocial-domain {
     import llm:inference/inference@0.1.0;
 
     // Timestamps and random ID generation
-    import wasi:clocks/wall-clock@0.2.0;
-    import wasi:random/random@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
+    import wasi:random/random@0.3.0-rc-2026-03-15;
 }

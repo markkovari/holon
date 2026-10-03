@@ -6,7 +6,7 @@
 //! `principal.roles` — a role, not a row, decides that one.
 
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
+use crate::bindings::p3::http::types::Method;
 use crate::{audit, introspect, is_admin, Reply, Route};
 use serde_json::{json, Value};
 

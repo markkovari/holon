@@ -8,7 +8,38 @@
 //!   - `wasi:random` & `wasi:clocks` for IDs and timestamps.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/ratelimit-guard",
+            "../audit-log/wit",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../llm-inference/wit",
+            "wit",
+        ],
+        world: "photosocial:app/photosocial-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::random0_3_0_rc_2026_03_15 as random;
+    }
+}
 
 use serde_json::{json, Map, Value};
 
@@ -19,13 +50,11 @@ use bindings::auth::identity::session;
 use bindings::auth::identity::types::{AuthError, Principal};
 use bindings::llm::inference::inference::{self, Options};
 use bindings::records::store::store as records;
-use bindings::wasi::clocks::wall_clock;
-use bindings::wasi::random::random::get_random_u64;
+use bindings::p3::clocks::system_clock;
+use bindings::p3::random::random::get_random_u64;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Component;
 
@@ -36,9 +65,9 @@ const VOTES_COLL: &str = "votes";
 const RATINGS_COLL: &str = "ratings";
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
@@ -55,30 +84,30 @@ impl Guest for Component {
             (Method::Get, ["api", "info"]) => Some(api_info()),
 
             // Auth
-            (Method::Post, ["api", "register"]) => Some(register(&request)),
-            (Method::Post, ["api", "login"]) => Some(login(&request)),
+            (Method::Post, ["api", "register"]) => Some(register(request).await),
+            (Method::Post, ["api", "login"]) => Some(login(request).await),
             (Method::Post, ["api", "logout"]) => Some(logout(&request)),
             (Method::Get, ["api", "me"]) => Some(me(&request)),
 
             // Attributes (Read: All, Manage: Admin RBAC)
             (Method::Get, ["api", "attributes"]) => Some(list_attributes()),
-            (Method::Post, ["api", "admin", "attributes"]) => Some(create_attribute(&request)),
+            (Method::Post, ["api", "admin", "attributes"]) => Some(create_attribute(request).await),
             (Method::Delete, ["api", "admin", "attributes", id]) => {
                 Some(delete_attribute(&request, id))
             }
 
             // Photos
             (Method::Get, ["api", "photos"]) => Some(list_photos(&path)),
-            (Method::Post, ["api", "photos"]) => Some(create_photo(&request)),
+            (Method::Post, ["api", "photos"]) => Some(create_photo(request).await),
             (Method::Get, ["api", "photos", id]) => Some(get_photo(id)),
             (Method::Post, ["api", "photos", id, "ai-analyze"]) => {
                 Some(analyze_photo_ai(&request, id))
             }
 
             // Voting & Attribute Scoring
-            (Method::Post, ["api", "photos", id, "vote"]) => Some(vote_photo(&request, id)),
+            (Method::Post, ["api", "photos", id, "vote"]) => Some(vote_photo(request, id).await),
             (Method::Post, ["api", "photos", id, "rate"]) => {
-                Some(rate_photo_attributes(&request, id))
+                Some(rate_photo_attributes(request, id).await)
             }
             (Method::Get, ["api", "photos", id, "my-ratings"]) => {
                 Some(get_my_ratings(&request, id))
@@ -86,9 +115,7 @@ impl Guest for Component {
 
             _ => Some(Outcome::Err(404, "not_found".into())),
         };
-        if let Some(out) = outcome {
-            emit(response_out, out);
-        }
+        emit(outcome.unwrap_or_else(|| Outcome::Err(404, "not_found".into())))
     }
 }
 
@@ -102,8 +129,8 @@ enum Outcome {
 }
 
 fn now_ms() -> u64 {
-    let t = wall_clock::now();
-    t.seconds * 1000 + (t.nanoseconds / 1_000_000) as u64
+    let t = system_clock::now();
+    t.seconds as u64 * 1000 + (t.nanoseconds / 1_000_000) as u64
 }
 
 fn random_id(prefix: &str) -> String {
@@ -134,16 +161,16 @@ fn api_info() -> Outcome {
 // Auth & RBAC Helpers
 // -----------------------------------------------------------------------------
 
-guestio::guest_bearer!();
-guestio::guest_write_all!();
+guestio::guest_p3_bearer!();
+guestio::guest_p3_respond!();
 
-fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
+fn introspect(request: &Request) -> Result<Principal, Outcome> {
     let token = bearer(request)
         .ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer token".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
-fn require_admin(request: &IncomingRequest) -> Result<Principal, Outcome> {
+fn require_admin(request: &Request) -> Result<Principal, Outcome> {
     let principal = introspect(request)?;
     if principal.roles.iter().any(|r| r == "admin" || r == "administrator") {
         return Ok(principal);
@@ -151,8 +178,8 @@ fn require_admin(request: &IncomingRequest) -> Result<Principal, Outcome> {
     Err(Outcome::Err(403, "admin role required".into()))
 }
 
-fn register(request: &IncomingRequest) -> Outcome {
-    let body = match body(request) {
+async fn register(request: Request) -> Outcome {
+    let body = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -186,8 +213,8 @@ fn register(request: &IncomingRequest) -> Outcome {
     )
 }
 
-fn login(request: &IncomingRequest) -> Outcome {
-    let body = match body(request) {
+async fn login(request: Request) -> Outcome {
+    let body = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -219,7 +246,7 @@ fn login(request: &IncomingRequest) -> Outcome {
     )
 }
 
-fn logout(request: &IncomingRequest) -> Outcome {
+fn logout(request: &Request) -> Outcome {
     let token = match bearer(request) {
         Some(t) => t,
         None => return Outcome::Auth(AuthError::InvalidToken("missing bearer".into())),
@@ -230,7 +257,7 @@ fn logout(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn me(request: &IncomingRequest) -> Outcome {
+fn me(request: &Request) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -319,13 +346,13 @@ fn list_attributes() -> Outcome {
     Outcome::Json(200, json!(attrs).to_string())
 }
 
-fn create_attribute(request: &IncomingRequest) -> Outcome {
-    let principal = match require_admin(request) {
+async fn create_attribute(request: Request) -> Outcome {
+    let principal = match require_admin(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
 
-    let body = match body(request) {
+    let body = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -362,7 +389,7 @@ fn create_attribute(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn delete_attribute(request: &IncomingRequest, id: &str) -> Outcome {
+fn delete_attribute(request: &Request, id: &str) -> Outcome {
     if let Err(o) = require_admin(request) {
         return o;
     }
@@ -436,13 +463,13 @@ fn run_ai_photo_critique(
     (narrative, ai_reply, generated_tags)
 }
 
-fn create_photo(request: &IncomingRequest) -> Outcome {
-    let principal = match introspect(request) {
+async fn create_photo(request: Request) -> Outcome {
+    let principal = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
 
-    let body = match body(request) {
+    let body = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -542,7 +569,7 @@ fn get_photo(id: &str) -> Outcome {
     Outcome::Err(404, "photo not found".into())
 }
 
-fn analyze_photo_ai(request: &IncomingRequest, id: &str) -> Outcome {
+fn analyze_photo_ai(request: &Request, id: &str) -> Outcome {
     if let Err(o) = introspect(request) {
         return o;
     }
@@ -579,13 +606,13 @@ fn analyze_photo_ai(request: &IncomingRequest, id: &str) -> Outcome {
 // Voting & Community Attribute Ratings
 // -----------------------------------------------------------------------------
 
-fn vote_photo(request: &IncomingRequest, photo_id: &str) -> Outcome {
-    let principal = match introspect(request) {
+async fn vote_photo(request: Request, photo_id: &str) -> Outcome {
+    let principal = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
 
-    let body = match body(request) {
+    let body = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -672,13 +699,13 @@ fn vote_photo(request: &IncomingRequest, photo_id: &str) -> Outcome {
     )
 }
 
-fn rate_photo_attributes(request: &IncomingRequest, photo_id: &str) -> Outcome {
-    let principal = match introspect(request) {
+async fn rate_photo_attributes(request: Request, photo_id: &str) -> Outcome {
+    let principal = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
 
-    let body = match body(request) {
+    let body = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -764,7 +791,7 @@ fn calculate_attribute_averages(photo_id: &str) -> Map<String, Value> {
     map
 }
 
-fn get_my_ratings(request: &IncomingRequest, photo_id: &str) -> Outcome {
+fn get_my_ratings(request: &Request, photo_id: &str) -> Outcome {
     let principal = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -814,8 +841,8 @@ fn get_my_ratings(request: &IncomingRequest, photo_id: &str) -> Outcome {
 // Request / Response Plumbing
 // -----------------------------------------------------------------------------
 
-fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let raw = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+async fn body(request: Request) -> Result<Value, Outcome> {
+    let raw = read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
         return Ok(Value::Object(Map::new()));
     }
@@ -824,9 +851,9 @@ fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
 
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     let (code, content_type, body) = match result {
         Outcome::Html(html) => (200, "text/html; charset=utf-8", html),
         Outcome::Css(css) => (200, "text/css; charset=utf-8", css),
@@ -849,16 +876,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     let _ = headers.set("access-control-allow-headers", &[b"content-type, authorization".to_vec()]);
     let _ = headers.set("access-control-allow-methods", &[b"GET, POST, DELETE, OPTIONS".to_vec()]);
 
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(code);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    let bytes = body.as_bytes();
-    if !bytes.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, bytes);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(code, headers, body.into_bytes())
 }
 
 // -----------------------------------------------------------------------------

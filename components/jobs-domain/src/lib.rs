@@ -12,7 +12,35 @@
 //! *whether-retried*; the workflow backend owns durability of *during*.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../outbox/wit",
+            "../../providers/golem-workflow/wit",
+            "../cron/wit",
+            "../idempotency-guard/wit",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "wit",
+        ],
+        world: "jobs:app/jobs-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+    }
+}
 
 use serde_json::{json, Value};
 
@@ -21,15 +49,13 @@ use bindings::durable::workflow::orchestrator as workflow;
 use bindings::idempotency::guard::store as idem;
 use bindings::outbox::dispatch::queue as outbox;
 use bindings::records::store::store as records;
-use bindings::wasi::clocks::monotonic_clock;
-use bindings::wasi::clocks::wall_clock;
+use bindings::p3::clocks::monotonic_clock;
+use bindings::p3::clocks::system_clock;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 struct Component;
 
@@ -46,25 +72,25 @@ const POLL_MS: u64 = 800;
 const MAX_TICKS: u32 = 700;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         match (&method, seg.as_slice()) {
-            (Method::Get, ["api", "events"]) => stream_events(response_out, &path),
+            (Method::Get, ["api", "events"]) => stream_events(&path),
             _ => {
                 let outcome = match (&method, seg.as_slice()) {
                     (Method::Get, [""]) => Outcome::Html(200, BOARD.to_string()),
                     (Method::Get, ["api"]) => usage_json(),
-                    (Method::Post, ["api", "jobs"]) => enqueue(&request),
+                    (Method::Post, ["api", "jobs"]) => enqueue(request).await,
                     (Method::Get, ["api", "jobs"]) => Outcome::Json(200, board_json().to_string()),
                     (Method::Post, ["api", "tick"]) => Outcome::Json(200, drain_once().to_string()),
                     (Method::Post, ["api", "jobs", oid, "replay"]) => replay(oid),
                     _ => Outcome::Err(404, "not_found".into()),
                 };
-                emit(response_out, outcome);
+                emit(outcome)
             }
         }
     }
@@ -77,7 +103,7 @@ enum Outcome {
 }
 
 fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 fn usage_json() -> Outcome {
@@ -151,8 +177,8 @@ fn board_json() -> Value {
 
 // ---- enqueue ----------------------------------------------------------------
 
-fn enqueue(request: &IncomingRequest) -> Outcome {
-    let body = match parse_body(request) {
+async fn enqueue(request: Request) -> Outcome {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -334,19 +360,16 @@ fn replay(oid: &str) -> Outcome {
 
 // ---- SSE board (self-ticking) -----------------------------------------------
 
-fn stream_events(response_out: ResponseOutparam, _path: &str) {
+fn stream_events(_path: &str) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
     let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(200);
-    let body = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
 
-    {
-        let stream = body.write().expect("write stream");
-        if !write_all(&stream, b": connected\n\n") {
+    let (mut stream, rx) = bindings::wit_stream::new();
+    wit_bindgen::spawn_local(async move {
+        // `write_all` hands back what it could not send: non-empty = hung up.
+        if !stream.write_all(b": connected\n\n".to_vec()).await.is_empty() {
             return;
         }
         let mut last = String::new();
@@ -361,13 +384,17 @@ fn stream_events(response_out: ResponseOutparam, _path: &str) {
             } else {
                 ": ping\n\n".to_string()
             };
-            if !write_all(&stream, frame.as_bytes()) {
+            if !stream.write_all(frame.into_bytes()).await.is_empty() {
                 break;
             }
-            monotonic_clock::subscribe_duration(POLL_MS * 1_000_000).block();
+            monotonic_clock::wait_for(POLL_MS * 1_000_000).await;
         }
-    }
-    let _ = OutgoingBody::finish(body, None);
+    });
+    let (trailers_tx, trailers_rx) = bindings::wit_future::new(|| Ok(None));
+    drop(trailers_tx);
+    let (response, _sent) = Response::new(headers, Some(rx), trailers_rx);
+    let _ = response.set_status_code(200);
+    Ok(response)
 }
 
 // ---- http plumbing -----------------------------------------------------------
@@ -397,8 +424,8 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let body = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+async fn parse_body(request: Request) -> Result<Value, Outcome> {
+    let body = read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if body.is_empty() {
         return Ok(Value::Object(Default::default()));
     }
@@ -419,40 +446,23 @@ fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => {
-            respond(response_out, code, "application/json", body.as_bytes())
+        Outcome::Json(code, body) => cors(code, "application/json", body.into_bytes()),
+        Outcome::Html(code, body) => cors(code, "text/html; charset=utf-8", body.into_bytes()),
+        Outcome::Err(code, msg) => {
+            cors(code, "application/json", json!({ "error": msg }).to_string().into_bytes())
         }
-        Outcome::Html(code, body) => {
-            respond(response_out, code, "text/html; charset=utf-8", body.as_bytes())
-        }
-        Outcome::Err(code, msg) => respond(
-            response_out,
-            code,
-            "application/json",
-            json!({ "error": msg }).to_string().as_bytes(),
-        ),
     }
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {
+fn cors(status: u16, content_type: &str, body: Vec<u8>) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        for chunk in body.chunks(4096) {
-            let _ = write_all(&stream, chunk);
-        }
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(status, headers, body)
 }
 
 bindings::export!(Component with_types_in bindings);

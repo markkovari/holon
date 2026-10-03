@@ -19,7 +19,7 @@ package rollout:app@0.1.0;
 
 /// The console backend + the SSE loop, composed from capability contracts.
 world flags-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // evaluation + runtime rule set/clear/list, with sticky % bucketing.
     import featureflags:guard/evaluator@0.1.0;
@@ -28,7 +28,7 @@ world flags-domain {
     // change-event ids.
     import id:generate/generator@0.1.0;
     // change timestamps.
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
     // the SSE poll cadence — subscribe-duration(…).block() to sleep, not spin.
-    import wasi:clocks/monotonic-clock@0.2.0;
+    import wasi:clocks/monotonic-clock@0.3.0-rc-2026-03-15;
 }

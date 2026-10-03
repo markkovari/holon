@@ -13,18 +13,36 @@
 //! base64 cannot tell a bug from a round trip.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../bytes-codec/wit",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "wit",
+        ],
+        world: "comp:codecprobe/codec-probe",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use bindings::bytes::codec::codec;
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Request, Response};
 use serde_json::json;
 
 struct Component;
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 fn pct(s: &str) -> String {
     let b = s.as_bytes();
@@ -90,8 +108,8 @@ fn err(e: codec::DecodeError) -> serde_json::Value {
 }
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let full = request.path_with_query().unwrap_or_else(|| "/".into());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let full = request.get_path_with_query().unwrap_or_else(|| "/".into());
         let (path, q) = full.split_once('?').unwrap_or((full.as_str(), ""));
 
         let body = match path {
@@ -109,17 +127,7 @@ impl Guest for Component {
             _ => json!({ "error": "no such route" }),
         };
 
-        let headers = Fields::new();
-        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-        let response = OutgoingResponse::new(headers);
-        let _ = response.set_status_code(200);
-        let out = response.body().expect("outgoing body");
-        ResponseOutparam::set(response_out, Ok(response));
-        {
-            let stream = out.write().expect("write stream");
-            write_all(&stream, body.to_string().as_bytes());
-        }
-        let _ = OutgoingBody::finish(out, None);
+        respond(200, "application/json", body.to_string())
     }
 }
 

@@ -18,7 +18,42 @@
 //!                    an app answers to `<app>.<tenant>.<suffix>`
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../audit-log/wit",
+            "../../wit/deps/ratelimit-guard",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../policy-guard/wit",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../event-bus/wit",
+            "../blob-store/wit",
+            "../quota/wit",
+            "../wit-reflect/wit",
+            "../secrets-vault/wit",
+            "wit",
+        ],
+        world: "platform:app/platform-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 mod goals;
 mod manifest;
 mod orgs;
@@ -33,29 +68,41 @@ use bindings::auth::identity::types as auth_types;
 use bindings::blob::store::blobstore as blob;
 use bindings::comp::store::cas;
 use bindings::event::bus::bus;
+use bindings::p3::clocks::system_clock;
 use bindings::policy::guard::guard as policy;
 use bindings::quota::meter::meter as quota;
 use bindings::records::store::store as records;
-use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::config::store as config;
 use bindings::wasi::keyvalue::store as kv;
 use bindings::wit::reflect::composer;
 use bindings::wit::reflect::inspector;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
 
 use manifest::{HostIface, ManifestInput, Part, Plan, Strategy};
 
-guestio::guest_bearer!();
-guestio::guest_write_all!();
+guestio::guest_p3_bearer!();
+guestio::guest_p3_respond!();
 
 struct Component;
+
+/// A request as the handlers see it. Reading a p3 body consumes the request, so
+/// its headers and bearer are taken, and its body read whole, before routing.
+pub(crate) struct Incoming {
+    headers: Fields,
+    bearer: Option<String>,
+    body: Result<Vec<u8>, ()>,
+}
+
+impl Incoming {
+    pub(crate) fn headers(&self) -> &Fields {
+        &self.headers
+    }
+}
 
 const ACCOUNTS: &str = "tenants";
 const CATALOG: &str = "catalog";
@@ -72,9 +119,15 @@ const INVITE_TTL: u64 = 7 * 24 * 3600;
 const DEPLOYMENT_BUDGET: u64 = 5;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
+        let request = Incoming {
+            // A deep copy: the request resource is gone once its body is consumed.
+            headers: request.get_headers().clone(),
+            bearer: bearer(&request),
+            body: read_whole_body(request).await,
+        };
         let (route, query) = split_query(&path);
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
@@ -176,7 +229,7 @@ impl Guest for Component {
             (Method::Post, ["api", "keys", "revoke"]) => key_revoke(&request, &query),
             _ => Outcome::Err(404, "not_found".into()),
         };
-        emit(response_out, outcome);
+        emit(outcome)
     }
 }
 
@@ -192,7 +245,7 @@ enum Outcome {
 }
 
 pub(crate) fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 fn cfg(key: &str, default: &str) -> String {
@@ -228,7 +281,7 @@ fn tenant_of_email(email: &str) -> String {
     s.trim_matches('-').to_string()
 }
 
-fn register(request: &IncomingRequest) -> Outcome {
+fn register(request: &Incoming) -> Outcome {
     let b = match body(request) {
         Ok(v) => v,
         Err(o) => return o,
@@ -281,7 +334,7 @@ fn register(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn login(request: &IncomingRequest) -> Outcome {
+fn login(request: &Incoming) -> Outcome {
     let b = match body(request) {
         Ok(v) => v,
         Err(o) => return o,
@@ -302,11 +355,11 @@ fn login(request: &IncomingRequest) -> Outcome {
 }
 
 /// The verified caller. Roles come from the RBAC store, never from the token.
-fn caller(request: &IncomingRequest) -> Option<auth_types::Principal> {
-    authorizer::introspect(&bearer(request)?).ok()
+fn caller(request: &Incoming) -> Option<auth_types::Principal> {
+    authorizer::introspect(request.bearer.as_deref()?).ok()
 }
 
-fn me(request: &IncomingRequest) -> Outcome {
+fn me(request: &Incoming) -> Outcome {
     match caller(request) {
         Some(p) => Outcome::Json(
             200,
@@ -502,7 +555,7 @@ fn check_config(id: &str, row: &Value, given: &Map<String, Value>) -> Result<(),
 /// asked about — `wac plug` matches EVERY common interface between a plug's exports
 /// and the socket's imports and cannot be told to satisfy just one. A UI that draws
 /// one edge while three were wired is a UI that lies.
-fn components_satisfies(request: &IncomingRequest) -> Outcome {
+fn components_satisfies(request: &Incoming) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -585,7 +638,7 @@ fn components_satisfies(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn component_add(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+fn component_add(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -731,7 +784,7 @@ fn component_add(request: &IncomingRequest, query: &Map<String, Value>) -> Outco
     Outcome::Json(201, doc.to_string())
 }
 
-fn components_list(request: &IncomingRequest) -> Outcome {
+fn components_list(request: &Incoming) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -771,7 +824,7 @@ fn components_list(request: &IncomingRequest) -> Outcome {
 /// search engine, no index: a catalogue of this size does not need one, and adding
 /// one would be inventing an answer to a question nobody has asked yet.
 /// ponytail: linear scan; add an index when the catalogue outgrows a page.
-fn market_search(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+fn market_search(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -831,7 +884,7 @@ fn market_search(request: &IncomingRequest, query: &Map<String, Value>) -> Outco
     Outcome::Json(200, json!({ "components": rows, "count": rows.len() }).to_string())
 }
 
-fn component_publish(request: &IncomingRequest) -> Outcome {
+fn component_publish(request: &Incoming) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -921,7 +974,7 @@ fn component_publish(request: &IncomingRequest) -> Outcome {
 /// contains them, and the pusher must produce a byte-identical shape or the operator
 /// gets an artifact it cannot read. They are already known from upload-time
 /// reflection, so the pusher never has to parse the wasm.
-fn internal_pending(request: &IncomingRequest) -> Outcome {
+fn internal_pending(request: &Incoming) -> Outcome {
     if !internal_ok(request) {
         return Outcome::Err(401, "internal endpoint".into());
     }
@@ -960,7 +1013,7 @@ fn internal_pending(request: &IncomingRequest) -> Outcome {
 /// A pull, not a push: the wasm side never streams megabytes outward (it has one
 /// awkward outgoing-body handshake and no reason to exercise it), and it matches the
 /// direction the applier already polls in.
-fn internal_artifact(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+fn internal_artifact(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     if !internal_ok(request) {
         return Outcome::Err(401, "internal endpoint".into());
     }
@@ -974,7 +1027,7 @@ fn internal_artifact(request: &IncomingRequest, query: &Map<String, Value>) -> O
     }
 }
 
-fn internal_pushed(request: &IncomingRequest) -> Outcome {
+fn internal_pushed(request: &Incoming) -> Outcome {
     if !internal_ok(request) {
         return Outcome::Err(401, "internal endpoint".into());
     }
@@ -1037,7 +1090,7 @@ fn internal_pushed(request: &IncomingRequest) -> Outcome {
 ///
 /// A tenant's app has its own records in its own bucket and must expose its own;
 /// this one can only reach the platform's.
-fn internal_repair(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+fn internal_repair(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     if !internal_ok(request) {
         return Outcome::Err(401, "internal endpoint".into());
     }
@@ -1068,7 +1121,7 @@ fn internal_repair(request: &IncomingRequest, query: &Map<String, Value>) -> Out
 /// who loses theirs registers another rather than asking anyone to recover one.
 /// Member, not viewer: adding a key is the act that decides whose bytes the whole
 /// platform will later trust as public.
-fn key_add(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+fn key_add(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -1107,7 +1160,7 @@ fn key_add(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
 
 /// The keys an organisation publishes under. Public information by construction —
 /// a verifying key is what lets anyone else check the signature.
-fn key_list(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+fn key_list(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -1159,7 +1212,7 @@ fn org_keys(org: &str) -> Vec<(String, String)> {
 /// strangers", not "break whoever already deployed it". A consumer who pinned the
 /// digest keeps running, which is the whole point of pinning — what they lose is
 /// the platform's word that it is still trusted.
-fn key_revoke(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+fn key_revoke(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -1263,7 +1316,7 @@ const FETCH_SKEW_SECS: u64 = 60;
 /// A missing header is refused rather than waved through: an old host that does
 /// not send one is a host whose requests can be replayed, and silently accepting
 /// it would make this decoration.
-pub(crate) fn claim_fetch_nonce(request: &IncomingRequest) -> Result<(), Outcome> {
+pub(crate) fn claim_fetch_nonce(request: &Incoming) -> Result<(), Outcome> {
     let header = |name: &str| -> String {
         request
             .headers()
@@ -1338,7 +1391,7 @@ fn valid_env_name(env: &str) -> bool {
 /// minted by the reconciler and never seen by the guest — so a component can fork
 /// the app it is part of and nothing else. Scoped by construction rather than by
 /// checking a parameter the caller supplied.
-fn internal_env_spawn(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+fn internal_env_spawn(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let token = request
         .headers()
         .get("x-fetch-token")
@@ -1379,7 +1432,7 @@ fn internal_env_spawn(request: &IncomingRequest, query: &Map<String, Value>) -> 
 /// here at all: take it off this node" — so anything started behind the
 /// reconciler's back is reaped within one pass. Desired state is the only durable
 /// way to ask for an instance.
-fn env_spawn(request: &IncomingRequest, _query: &Map<String, Value>) -> Outcome {
+fn env_spawn(request: &Incoming, _query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -1550,7 +1603,7 @@ fn spawn_environment(app: &str, env: &str) -> Outcome {
 }
 
 /// Every environment of an app, with the revision each was copied from.
-fn env_list(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+fn env_list(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some(_p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -1575,7 +1628,7 @@ fn env_list(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
 
 /// Remove an environment. The reconciler stops its instances on the next pass,
 /// for the same reason it started them: nothing wants them any more.
-fn env_despawn(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+fn env_despawn(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -1657,7 +1710,7 @@ fn newest_revision(id: &str) -> Option<Value> {
 /// A GET, because it is a question. Something has to run it on a schedule for a
 /// disagreement to be noticed rather than stumbled over — that scheduler is not
 /// here, and pretending otherwise would be worse than saying so.
-fn internal_verify(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+fn internal_verify(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     if !internal_ok(request) {
         return Outcome::Err(401, "internal endpoint".into());
     }
@@ -1686,7 +1739,7 @@ fn internal_verify(request: &IncomingRequest, query: &Map<String, Value>) -> Out
     }
 }
 
-pub(crate) fn internal_ok(request: &IncomingRequest) -> bool {
+pub(crate) fn internal_ok(request: &Incoming) -> bool {
     let want = cfg("applier-secret", "");
     if want.is_empty() {
         return false;
@@ -1710,7 +1763,7 @@ fn personal_org(p: &auth_types::Principal) -> String {
     p.tenant.clone()
 }
 
-fn org_create(request: &IncomingRequest) -> Outcome {
+fn org_create(request: &Incoming) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -1725,14 +1778,14 @@ fn org_create(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn org_list(request: &IncomingRequest) -> Outcome {
+fn org_list(request: &Incoming) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
     Outcome::Structured(200, json!({ "orgs": orgs::memberships(&p.subject) }))
 }
 
-fn org_invite(request: &IncomingRequest, org: &str) -> Outcome {
+fn org_invite(request: &Incoming, org: &str) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -1751,7 +1804,7 @@ fn org_invite(request: &IncomingRequest, org: &str) -> Outcome {
     }
 }
 
-fn org_join(request: &IncomingRequest) -> Outcome {
+fn org_join(request: &Incoming) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -1765,7 +1818,7 @@ fn org_join(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn org_members(request: &IncomingRequest, org: &str) -> Outcome {
+fn org_members(request: &Incoming, org: &str) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -1776,7 +1829,7 @@ fn org_members(request: &IncomingRequest, org: &str) -> Outcome {
     Outcome::Structured(200, json!({ "org": org, "members": orgs::members(org) }))
 }
 
-fn org_remove(request: &IncomingRequest, org: &str, subject: &str) -> Outcome {
+fn org_remove(request: &Incoming, org: &str, subject: &str) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -1794,7 +1847,7 @@ fn org_remove(request: &IncomingRequest, org: &str, subject: &str) -> Outcome {
 
 // ---- deployments ------------------------------------------------------------
 
-fn deployment_create(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+fn deployment_create(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -1911,7 +1964,7 @@ fn owned_deployment(
     }
 }
 
-fn deployments_list(request: &IncomingRequest) -> Outcome {
+fn deployments_list(request: &Incoming) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -1935,7 +1988,7 @@ fn deployments_list(request: &IncomingRequest) -> Outcome {
     Outcome::Json(200, json!({ "deployments": rows }).to_string())
 }
 
-fn deployment_get(request: &IncomingRequest, id: &str) -> Outcome {
+fn deployment_get(request: &Incoming, id: &str) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -2536,7 +2589,7 @@ fn stage_fused(
     }
 }
 
-fn deployment_save(request: &IncomingRequest, id: &str, query: &Map<String, Value>) -> Outcome {
+fn deployment_save(request: &Incoming, id: &str, query: &Map<String, Value>) -> Outcome {
     // Removing an export is sometimes the point. An author who means it says so.
     let force = query.get("force").and_then(|v| v.as_str()).is_some_and(|v| v == "true");
     // A save is what creates desired state — it is the other way to ask the fleet
@@ -2691,7 +2744,7 @@ fn deployment_save(request: &IncomingRequest, id: &str, query: &Map<String, Valu
     )
 }
 
-fn manifests(request: &IncomingRequest, id: &str) -> Outcome {
+fn manifests(request: &Incoming, id: &str) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -2755,7 +2808,7 @@ fn all_records(collection: &str, cap: usize) -> Vec<records::Entry> {
     out
 }
 
-fn internal_revisions(request: &IncomingRequest) -> Outcome {
+fn internal_revisions(request: &Incoming) -> Outcome {
     if !internal_ok(request) {
         return Outcome::Err(401, "internal endpoint".into());
     }
@@ -2790,7 +2843,7 @@ fn internal_revisions(request: &IncomingRequest) -> Outcome {
 /// whole hazard is gone: the reconciler derives desired state from these records
 /// every pass, so an app that leaves them stops on its own within a pass or two.
 /// ADR-0016's two-signals-before-reaping apparatus goes with it.
-fn deployment_delete(request: &IncomingRequest, id: &str, query: &Map<String, Value>) -> Outcome {
+fn deployment_delete(request: &Incoming, id: &str, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "unauthorized".into());
     };
@@ -2906,7 +2959,7 @@ fn split_query(path: &str) -> (String, Map<String, Value>) {
 
 use guestfmt::percent_decode;
 
-pub(crate) fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
+pub(crate) fn body(request: &Incoming) -> Result<Value, Outcome> {
     let raw = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
         return Ok(Value::Object(Map::new()));
@@ -2928,30 +2981,14 @@ pub(crate) fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
-    let b = request.consume().map_err(|_| ())?;
-    let stream = b.stream().map_err(|_| ())?;
-    let mut buf = Vec::new();
-    loop {
-        match stream.blocking_read(65536) {
-            Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => {
-                // A ceiling, not a policy: past this the read stops and the caller
-                // is told, rather than growing until the store's memory cap traps
-                // the component and the connection just closes.
-                if buf.len() + chunk.len() > MAX_BODY_BYTES {
-                    return Err(());
-                }
-                buf.extend_from_slice(&chunk);
-            }
-            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-            Err(_) => return Err(()),
-        }
-    }
-    Ok(buf)
+guestio::guest_p3_read_body_named!(read_whole_body, MAX_BODY_BYTES);
+
+/// The body read before routing (see `Incoming`).
+pub(crate) fn read_body(request: &Incoming) -> Result<Vec<u8>, ()> {
+    request.body.clone()
 }
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     let (code, ctype, body) = match result {
         Outcome::Json(c, b) => (c, "application/json".to_string(), b.into_bytes()),
         Outcome::Bytes(c, ct, b) => (c, ct, b),
@@ -2964,15 +3001,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     };
     let headers = Fields::new();
     let _ = headers.set("content-type", &[ctype.into_bytes()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(code);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, &body);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(code, headers, body)
 }
 
 bindings::export!(Component with_types_in bindings);
@@ -3091,7 +3120,7 @@ const FLEET_ROW: &str = "status";
 /// The reconciler POSTs here every pass. Until now nothing received it: the
 /// endpoint did not exist, and the reconciler's `let _ = …send()` swallowed the
 /// 404, so `unschedulable` and `at_ceiling` had been reported into the void.
-fn internal_status_put(request: &IncomingRequest) -> Outcome {
+fn internal_status_put(request: &Incoming) -> Outcome {
     if !internal_ok(request) {
         return Outcome::Err(401, "internal endpoint".into());
     }

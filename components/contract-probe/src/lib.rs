@@ -18,47 +18,34 @@
 //! host refused the link".
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../host/wit/deps/comp-secrets",
+            "../knowledge-graph/wit",
+            "../contract-registry/wit",
+            "wit",
+        ],
+        world: "comp:contractprobe/contract-probe",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use bindings::contract::registry::registry as reg;
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
-use bindings::wasi::io::streams::OutputStream;
-
-/// Write a whole response body, however long it is.
-///
-/// `blocking-write-and-flush` accepts at most 4096 bytes and TRAPS above that
-/// rather than returning an error, so a probe that answers with something big
-/// simply dies and its caller sees an empty body. Measured: a contract file grew
-/// past 4096 and every generation of a real run reported `the boundary failed:
-/// unreadable answer (EOF while parsing a value at line 1 column 0)` — an error
-/// about JSON, three components away from the write that caused it.
-///
-/// `check-write` is the stream saying how much it will take right now, so this
-/// writes in whatever bites it offers and flushes once, rather than picking a
-/// constant and flushing every 4 KB.
-fn write_all(stream: &OutputStream, mut bytes: &[u8]) {
-    while !bytes.is_empty() {
-        let ready = match stream.check_write() {
-            Ok(0) => {
-                // Zero is "full, wait" — not a failure. The pollable resolves
-                // when the stream has drained.
-                stream.subscribe().block();
-                continue;
-            }
-            Ok(n) => n as usize,
-            Err(_) => return,
-        };
-        let take = ready.min(bytes.len());
-        if stream.write(&bytes[..take]).is_err() {
-            return;
-        }
-        bytes = &bytes[take..];
-    }
-    let _ = stream.blocking_flush();
-}
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 
 struct Component;
 
@@ -144,19 +131,20 @@ fn request_json(r: &reg::Request) -> String {
 /// traps the component and the connection simply closes.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body_text!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let (route, query) = match path.split_once('?') {
             Some((r, q)) => (r.to_string(), q.to_string()),
             None => (path.clone(), String::new()),
         };
-        let method = request.method();
+        let method = request.get_method();
 
         let body = match (&method, route.as_str()) {
-            (Method::Post, "/publish") => match reg::publish(&read_body(&request)) {
+            (Method::Post, "/publish") => match reg::publish(&read_body(request).await) {
                 Ok(v) => format!("{{\"version\":{v}}}"),
                 Err(e) => err(e),
             },
@@ -180,7 +168,7 @@ impl Guest for Component {
             },
 
             (Method::Post, "/ask") => {
-                let body = read_body(&request);
+                let body = read_body(request).await;
                 match reg::ask(
                     &param(&query, "from"),
                     &param(&query, "to"),
@@ -203,7 +191,7 @@ impl Guest for Component {
 
             (Method::Post, "/answer") => {
                 let v = verdict_of(&param(&query, "verdict"));
-                let body = read_body(&request);
+                let body = read_body(request).await;
                 match reg::answer(&param(&query, "id"), v, &body) {
                     // 0 means no new version: a denial and a counter change
                     // nothing about what the parts build against.
@@ -257,17 +245,7 @@ impl Guest for Component {
                 .to_string(),
         };
 
-        let headers = Fields::new();
-        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-        let resp = OutgoingResponse::new(headers);
-        let _ = resp.set_status_code(200);
-        let out = resp.body().expect("body");
-        ResponseOutparam::set(response_out, Ok(resp));
-        if let Ok(stream) = out.write() {
-            write_all(&stream, body.as_bytes());
-            drop(stream);
-        }
-        let _ = OutgoingBody::finish(out, None);
+        respond(200, "application/json", body)
     }
 }
 

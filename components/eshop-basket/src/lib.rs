@@ -8,7 +8,36 @@
 //! eats the basket.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../audit-log/wit",
+            "../../wit/deps/ratelimit-guard",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../event-bus/wit",
+            "wit",
+        ],
+        world: "eshop:basket/basket-service",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -18,10 +47,8 @@ use bindings::auth::identity::types::{AuthError, Principal};
 use bindings::event::bus::bus;
 use bindings::records::store::store as records;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 
 struct Component;
 
@@ -29,11 +56,21 @@ const BASKETS: &str = "baskets";
 const GROUP: &str = "basket";
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
+        // Reading a p3 body consumes the request: take the bearer first, then read
+        // the body once, only for the routes that have one.
+        let request = Incoming {
+            bearer: bearer(&request),
+            raw: if matches!(method, Method::Post) {
+                read_body(request).await
+            } else {
+                Ok(Vec::new())
+            },
+        };
 
         let result = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => usage_json(),
@@ -43,8 +80,14 @@ impl Guest for Component {
             (Method::Post, ["internal", "pump"]) => pump(),
             _ => Outcome::NotFound,
         };
-        emit(response_out, result);
+        emit(result)
     }
+}
+
+/// What the handlers need from a request, taken before its body was consumed.
+struct Incoming {
+    bearer: Option<String>,
+    raw: Result<Vec<u8>, ()>,
 }
 
 enum Outcome {
@@ -98,7 +141,7 @@ fn basket_json(buyer: &str, entry: Option<&records::Entry>) -> Value {
     json!({"buyerId": buyer, "items": items})
 }
 
-fn get_basket(request: &IncomingRequest) -> Outcome {
+fn get_basket(request: &Incoming) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -109,7 +152,7 @@ fn get_basket(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn put_basket(request: &IncomingRequest) -> Outcome {
+fn put_basket(request: &Incoming) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -175,7 +218,7 @@ struct CheckoutReq {
     card_type_id: u32,
 }
 
-fn checkout(request: &IncomingRequest) -> Outcome {
+fn checkout(request: &Incoming) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -258,8 +301,8 @@ fn pump() -> Outcome {
 
 // ---- helpers -------------------------------------------------------------------
 
-fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
-    let Some(token) = bearer(request) else {
+fn introspect(request: &Incoming) -> Result<Principal, Outcome> {
+    let Some(token) = request.bearer.clone() else {
         return Err(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())));
     };
     authorizer::introspect(&token).map_err(Outcome::Auth)
@@ -295,8 +338,8 @@ fn auth_error(e: &AuthError) -> (u16, &'static str) {
     }
 }
 
-fn parse<T: for<'a> Deserialize<'a>>(request: &IncomingRequest) -> Result<T, String> {
-    let body = read_body(request).map_err(|_| "could not read body".to_string())?;
+fn parse<T: for<'a> Deserialize<'a>>(request: &Incoming) -> Result<T, String> {
+    let body = request.raw.clone().map_err(|_| "could not read body".to_string())?;
     serde_json::from_slice(&body).map_err(|e| format!("bad json: {e}"))
 }
 
@@ -314,42 +357,25 @@ fn parse<T: for<'a> Deserialize<'a>>(request: &IncomingRequest) -> Result<T, Str
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
 
-guestio::guest_bearer!();
+guestio::guest_p3_bearer!();
 
 // ---- responses -------------------------------------------------------------------
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
+    const JSON: &str = "application/json";
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, body.as_bytes()),
+        Outcome::Json(code, body) => respond(code, JSON, body),
         Outcome::Auth(e) => {
             let (code, msg) = auth_error(&e);
-            respond(response_out, code, format!("{{\"error\":\"{msg}\"}}").as_bytes());
+            respond(code, JSON, format!("{{\"error\":\"{msg}\"}}"))
         }
-        Outcome::Bad(msg) => {
-            respond(response_out, 400, json!({ "error": msg }).to_string().as_bytes())
-        }
-        Outcome::Err(code, msg) => {
-            respond(response_out, code, json!({ "error": msg }).to_string().as_bytes())
-        }
-        Outcome::NotFound => respond(response_out, 404, b"{\"error\":\"not_found\"}"),
+        Outcome::Bad(msg) => respond(400, JSON, json!({ "error": msg }).to_string()),
+        Outcome::Err(code, msg) => respond(code, JSON, json!({ "error": msg }).to_string()),
+        Outcome::NotFound => respond(404, JSON, b"{\"error\":\"not_found\"}"),
     }
-}
-
-fn respond(response_out: ResponseOutparam, status: u16, body: &[u8]) {
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
 }
 
 bindings::export!(Component with_types_in bindings);

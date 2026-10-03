@@ -18,11 +18,10 @@
 use serde_json::{json, Map, Value};
 
 use crate::bindings::secrets::vault::vault;
-use crate::bindings::wasi::http::types::IncomingRequest;
 use crate::req;
 use crate::{
     body, caller, claim_fetch_nonce, internal_ok, now, orgs, personal_org, read_body, records,
-    str_of, Outcome,
+    str_of, Incoming, Outcome,
 };
 /// Secrets are named per ORGANISATION, never globally.
 ///
@@ -59,7 +58,7 @@ pub(crate) const FETCH_TOKENS: &str = "fetch_tokens";
 /// The token is a capability, not a secret value: it is worth exactly what this
 /// manifest was worth, which is why the host may keep it in a ledger on disk
 /// (ADR-0022).
-pub fn fetch_token_mint(request: &IncomingRequest) -> Outcome {
+pub fn fetch_token_mint(request: &Incoming) -> Outcome {
     if !internal_ok(request) {
         return Outcome::Err(401, "bad platform secret".into());
     }
@@ -101,7 +100,7 @@ pub fn fetch_token_mint(request: &IncomingRequest) -> Outcome {
 /// The plaintext leaves the platform here and nowhere else. Three checks, in this
 /// order, because each is cheaper than the next: does the token exist, has it
 /// expired, and does it authorise THIS reference.
-pub fn secret_fetch(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+pub fn secret_fetch(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let token = request
         .headers()
         .get("x-fetch-token")
@@ -163,7 +162,7 @@ pub fn secret_fetch(request: &IncomingRequest, query: &Map<String, Value>) -> Ou
     }
 }
 
-pub fn secret_put(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+pub fn secret_put(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -201,7 +200,7 @@ pub fn secret_put(request: &IncomingRequest, query: &Map<String, Value>) -> Outc
 
 /// Names only. There is no endpoint that returns a value: the platform stores
 /// secrets so that workloads can use them, not so that a browser can display them.
-pub fn secrets_list(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+pub fn secrets_list(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -223,7 +222,7 @@ pub fn secrets_list(request: &IncomingRequest, query: &Map<String, Value>) -> Ou
     }
 }
 
-pub fn secret_delete(request: &IncomingRequest, name: &str, query: &Map<String, Value>) -> Outcome {
+pub fn secret_delete(request: &Incoming, name: &str, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };

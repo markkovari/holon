@@ -7,6 +7,6 @@
 package comp:artifactprobe@0.1.0;
 
 world artifact-probe {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
     import artifact:cache/store@0.1.0;
 }

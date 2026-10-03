@@ -36,7 +36,31 @@
 //! opens pull requests, so it stays a deliberate act.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/ui-assets",
+            "../git-forge/wit",
+            "../../host/wit/deps/comp-secrets",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../knowledge-graph/wit",
+            "wit",
+        ],
+        world: "console:app/console-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde_json::{json, Value};
 
@@ -45,11 +69,9 @@ use bindings::knowledge::graph::store as graph;
 use bindings::ui::assets::files as statics;
 use bindings::wasi::config::store as config;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::outgoing_handler;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingRequest, OutgoingResponse,
-    RequestOptions, ResponseOutparam, Scheme,
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{
+    ErrorCode, Fields, Method, Request, RequestOptions, Response, Scheme,
 };
 
 struct Component;
@@ -63,23 +85,23 @@ const SESSION_COOKIE: &str = "holon_session";
 const DEFAULT_GOALS_DIR: &str = ".comp/goals";
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
-            (Method::Post, ["api", "session"]) => log_in(&request),
-            (Method::Get, ["api", "session"]) => whoami(&request),
+            (Method::Post, ["api", "session"]) => log_in(request).await,
+            (Method::Get, ["api", "session"]) => whoami(&request).await,
             (Method::Delete, ["api", "session"]) => log_out(),
 
-            (Method::Get, ["api", "projects"]) => proxy_get(&request, "/api/projects"),
+            (Method::Get, ["api", "projects"]) => proxy_get(&request, "/api/projects").await,
             (Method::Get, ["api", "projects", p, "goals"]) => {
-                proxy_get(&request, &format!("/api/projects/{p}/goals"))
+                proxy_get(&request, &format!("/api/projects/{p}/goals")).await
             }
 
-            (Method::Post, ["api", "goals"]) => author_goal(&request),
+            (Method::Post, ["api", "goals"]) => author_goal(request).await,
             // The lifecycle moves, forwarded verbatim. The console does not decide
             // which are legal — `goal_may` in platform-domain does, and its 409
             // names both ends of the refused move, which is the message worth
@@ -87,7 +109,7 @@ impl Guest for Component {
             (Method::Post, ["api", "goals", id, action])
                 if matches!(*action, "start" | "review" | "done" | "fail") =>
             {
-                proxy_post(&request, &format!("/api/goals/{}/{action}", percent_decode(id)))
+                proxy_post(request, &format!("/api/goals/{}/{action}", percent_decode(id))).await
             }
 
             (Method::Get, ["api", "runs"]) => runs(),
@@ -98,7 +120,7 @@ impl Guest for Component {
             (Method::Get, _) => serve_static(&route),
             _ => Outcome::Err(404, "not_found".into()),
         };
-        emit(response_out, outcome);
+        emit(outcome)
     }
 }
 
@@ -116,12 +138,12 @@ enum Outcome {
 /// The body is passed through unchanged rather than re-encoded: the platform owns
 /// what a credential looks like, and a console that reshapes it would have to be
 /// changed every time the platform's login grows a field.
-fn log_in(request: &IncomingRequest) -> Outcome {
-    let body = match read_body(request) {
+async fn log_in(request: Request) -> Outcome {
+    let body = match read_body(request).await {
         Ok(b) => b,
         Err(_) => return Outcome::Err(400, "could not read body".into()),
     };
-    let (status, answer) = match platform_call("POST", "/api/login", None, Some(&body)) {
+    let (status, answer) = match platform_call("POST", "/api/login", None, Some(&body)).await {
         Ok(pair) => pair,
         Err(e) => return Outcome::Err(502, e),
     };
@@ -161,8 +183,8 @@ fn session_cookie(token: &str) -> String {
     format!("{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/")
 }
 
-fn whoami(request: &IncomingRequest) -> Outcome {
-    match proxy_get(request, "/api/me") {
+async fn whoami(request: &Request) -> Outcome {
+    match proxy_get(request, "/api/me").await {
         // A 401 from the platform is not an error here — it is the answer to
         // "am I logged in", and the SPA renders a login form rather than a fault.
         Outcome::Raw(401, _, _) | Outcome::Err(401, _) => {
@@ -194,11 +216,14 @@ fn log_out() -> Outcome {
 ///
 /// Opens a pull request adding the spec, then queues the goal against the path
 /// that PR creates. See the module header for why that order.
-fn author_goal(request: &IncomingRequest) -> Outcome {
-    let Some(token) = session_token(request) else {
+async fn author_goal(request: Request) -> Outcome {
+    let Some(token) = session_token(&request) else {
         return Outcome::Err(401, "not signed in".into());
     };
-    let body = match read_body(request).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+    let body = match read_body(request)
+        .await
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
     {
         Some(v) => v,
         None => return Outcome::Err(400, "expected a json body".into()),
@@ -252,7 +277,8 @@ fn author_goal(request: &IncomingRequest) -> Outcome {
         &format!("/api/projects/{project}/goals"),
         Some(&token),
         Some(entry.to_string().as_bytes()),
-    );
+    )
+    .await;
 
     match queued {
         Ok((status, answer)) if (200..300).contains(&status) => {
@@ -482,9 +508,9 @@ fn goals_dir() -> String {
 }
 
 /// Forward a GET, carrying the caller's session as a bearer token.
-fn proxy_get(request: &IncomingRequest, path: &str) -> Outcome {
+async fn proxy_get(request: &Request, path: &str) -> Outcome {
     let token = session_token(request);
-    match platform_call("GET", path, token.as_deref(), None) {
+    match platform_call("GET", path, token.as_deref(), None).await {
         Ok((status, body)) => {
             Outcome::Raw(status, vec![("content-type".into(), "application/json".into())], body)
         }
@@ -497,11 +523,11 @@ fn proxy_get(request: &IncomingRequest, path: &str) -> Outcome {
 /// The body is passed through unchanged for the same reason `log_in` does it: a
 /// `fail` carries a reason the platform owns the shape of, and reshaping it here
 /// would mean editing the console every time that shape moves.
-fn proxy_post(request: &IncomingRequest, path: &str) -> Outcome {
-    let token = session_token(request);
-    let body = read_body(request).unwrap_or_default();
+async fn proxy_post(request: Request, path: &str) -> Outcome {
+    let token = session_token(&request);
+    let body = read_body(request).await.unwrap_or_default();
     let body = (!body.is_empty()).then_some(body);
-    match platform_call("POST", path, token.as_deref(), body.as_deref()) {
+    match platform_call("POST", path, token.as_deref(), body.as_deref()).await {
         Ok((status, body)) => {
             Outcome::Raw(status, vec![("content-type".into(), "application/json".into())], body)
         }
@@ -510,7 +536,7 @@ fn proxy_post(request: &IncomingRequest, path: &str) -> Outcome {
 }
 
 /// The session token, from the cookie. `None` means not signed in.
-fn session_token(request: &IncomingRequest) -> Option<String> {
+fn session_token(request: &Request) -> Option<String> {
     let raw = header(request, "cookie")?;
     raw.split(';').find_map(|pair| {
         let (k, v) = pair.split_once('=')?;
@@ -524,7 +550,7 @@ fn session_token(request: &IncomingRequest) -> Option<String> {
 /// proxy here, and a 401 or a 409 from the control plane means the same thing to
 /// the browser as it does to the CLI. Collapsing them into an error type would
 /// make the two clients disagree about what happened.
-fn platform_call(
+async fn platform_call(
     method: &str,
     path: &str,
     token: Option<&str>,
@@ -549,7 +575,24 @@ fn platform_call(
         let _ = headers.set("authorization", &[format!("Bearer {t}").into_bytes()]);
     }
 
-    let req = OutgoingRequest::new(headers);
+    // Set all three explicitly. An unset default that happens to be short is how
+    // a call that should take 200ms dies as "data receipt timed out".
+    let opts = RequestOptions::new();
+    let _ = opts.set_connect_timeout(Some(10_000_000_000)); // 10s
+    let _ = opts.set_first_byte_timeout(Some(30_000_000_000)); // 30s
+    let _ = opts.set_between_bytes_timeout(Some(30_000_000_000)); // 30s
+
+    let (trailers_tx, trailers_rx) = bindings::wit_future::new(|| Ok(None));
+    drop(trailers_tx);
+    let contents = body.map(|b| {
+        let b = b.to_vec();
+        let (mut tx, rx) = bindings::wit_stream::new();
+        wit_bindgen::spawn_local(async move {
+            tx.write_all(b).await;
+        });
+        rx
+    });
+    let (req, _sent) = Request::new(headers, contents, trailers_rx, Some(opts));
     let m = match method {
         "POST" => Method::Post,
         "DELETE" => Method::Delete,
@@ -560,59 +603,37 @@ fn platform_call(
     req.set_authority(Some(&authority)).map_err(|_| "set authority".to_string())?;
     req.set_path_with_query(Some(&full_path)).map_err(|_| "set path".to_string())?;
 
-    {
-        let out = req.body().map_err(|_| "body".to_string())?;
-        if let Some(b) = body {
-            {
-                let stream = out.write().map_err(|_| "write stream".to_string())?;
-                if !write_all(&stream, b) {
-                    return Err("writing the request body".into());
-                }
-            }
-        }
-        OutgoingBody::finish(out, None).map_err(|_| "finish body".to_string())?;
-    }
-
-    // Set all three explicitly. An unset default that happens to be short is how
-    // a call that should take 200ms dies as "data receipt timed out".
-    let opts = RequestOptions::new();
-    let _ = opts.set_connect_timeout(Some(10_000_000_000)); // 10s
-    let _ = opts.set_first_byte_timeout(Some(30_000_000_000)); // 30s
-    let _ = opts.set_between_bytes_timeout(Some(30_000_000_000)); // 30s
-
-    let future = outgoing_handler::handle(req, Some(opts))
-        .map_err(|e| format!("the platform could not be called: {e:?}"))?;
-    future.subscribe().block();
-    let resp = future
-        .get()
-        .ok_or_else(|| "no response from the platform".to_string())?
-        .map_err(|_| "response already taken".to_string())?
+    let resp = bindings::p3::http::client::send(req)
+        .await
         .map_err(|e| format!("the platform is unreachable: {e:?}"))?;
 
-    let status = resp.status();
-    let mut buf = Vec::new();
-    if let Ok(incoming) = resp.consume() {
-        if let Ok(stream) = incoming.stream() {
-            loop {
-                match stream.blocking_read(8192) {
-                    Ok(c) if c.is_empty() => break,
-                    Ok(c) => buf.extend_from_slice(&c),
-                    // `Closed` is the end of the body. Anything else is a read that
-                    // went wrong, and treating it as the end hands back a truncated
-                    // response with a 200 on it — which every caller here then
-                    // parses as JSON, so the failure surfaces as "expected value at
-                    // line 1" pointing at the platform's payload instead of at the
-                    // read that lost half of it.
-                    Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-                    Err(e) => return Err(format!("the platform's response was cut short: {e:?}")),
-                }
+    let status = resp.get_status_code();
+    let (res_tx, res_rx) = bindings::wit_future::new(|| Ok(()));
+    let (mut stream, trailers) = Response::consume_body(resp, res_rx);
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        buf.reserve(8192);
+        let (st, b) = stream.read(buf).await;
+        buf = b;
+        match st {
+            wit_bindgen::StreamResult::Complete(_) => {}
+            wit_bindgen::StreamResult::Dropped => break,
+            wit_bindgen::StreamResult::Cancelled => {
+                return Err("the platform's response was cut short: cancelled".into())
             }
         }
     }
+    drop(res_tx);
+    // The stream ending is not the body arriving whole: a transfer that failed
+    // partway is reported here, and treating it as the end hands back a
+    // truncated response with a 200 on it — which every caller here then parses
+    // as JSON, so the failure surfaces as "expected value at line 1" pointing at
+    // the platform's payload instead of at the read that lost half of it.
+    trailers.await.map_err(|e| format!("the platform's response was cut short: {e:?}"))?;
     Ok((status, buf))
 }
 
-/// `scheme://authority/path?query`, split for `OutgoingRequest`.
+/// `scheme://authority/path?query`, split for the outgoing `Request`.
 fn parse_url(url: &str) -> Result<(Scheme, String, String), String> {
     let (scheme, rest) = match url.split_once("://") {
         Some(("https", r)) => (Scheme::Https, r),
@@ -628,7 +649,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), String> {
 
 // ---- http plumbing ---------------------------------------------------------
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 /// Serve the baked SPA via `ui:assets`: exact path, else fall back to index.html
 /// so client-side routes render the shell.
@@ -648,13 +669,13 @@ fn serve_static(route: &str) -> Outcome {
 /// reaches the caller as a closed connection saying nothing about a size.
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
-fn header(request: &IncomingRequest, name: &str) -> Option<String> {
-    request.headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
+fn header(request: &Request, name: &str) -> Option<String> {
+    request.get_headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
 }
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     let (code, header_pairs, body) = match result {
         Outcome::Json(c, b) => {
             (c, vec![("content-type".to_string(), "application/json".to_string())], b.into_bytes())
@@ -670,15 +691,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     for (k, v) in &header_pairs {
         let _ = headers.set(k, &[v.as_bytes().to_vec()]);
     }
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(code);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        write_all(&stream, &body);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(code, headers, body)
 }
 
 bindings::export!(Component with_types_in bindings);

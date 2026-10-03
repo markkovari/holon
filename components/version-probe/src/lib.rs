@@ -7,15 +7,28 @@
 //! hand and be wrong about.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "wit",
+        ],
+        world: "comp:versionprobe/version-probe",
+        generate_all,
+    });
+    /// Stable names for the p3 `wasi:http` (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http::handler;
+        pub use super::wasi::http;
+    }
+}
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
+use bindings::p3::handler::Guest;
 use bindings::wasi::config::store as config;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::http::types::{ErrorCode, Request, Response};
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 struct Component;
 
@@ -30,7 +43,7 @@ const TAG: &str = match option_env!("COMP_VERSION_TAG") {
 };
 
 impl Guest for Component {
-    fn handle(_request: IncomingRequest, response_out: ResponseOutparam) {
+    async fn handle(_request: Request) -> Result<Response, ErrorCode> {
         // Capabilities are LOADED at startup from the registry the platform hands
         // this instance — `wasi:config/store`, key `capabilities`, a `name:semver`
         // list. Nothing is baked in. A version that advertises nothing (no config)
@@ -56,17 +69,7 @@ impl Guest for Component {
             "{{\"tag\":\"{TAG}\",\"healthy\":{healthy},\"capability_count\":{},\"capabilities\":{{{map}}}}}",
             items.len()
         );
-        let headers = Fields::new();
-        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-        let resp = OutgoingResponse::new(headers);
-        let _ = resp.set_status_code(200);
-        let out = resp.body().expect("body");
-        ResponseOutparam::set(response_out, Ok(resp));
-        if let Ok(stream) = out.write() {
-            let _ = write_all(&stream, body.as_bytes());
-            drop(stream);
-        }
-        let _ = OutgoingBody::finish(out, None);
+        respond(200, "application/json", body)
     }
 }
 

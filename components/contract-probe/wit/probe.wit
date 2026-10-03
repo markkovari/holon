@@ -10,6 +10,6 @@
 package comp:contractprobe@0.1.0;
 
 world contract-probe {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
     import contract:registry/registry@0.1.0;
 }

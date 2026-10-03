@@ -11,41 +11,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 guestfmt = { path = "../guestfmt" }
-wit-bindgen-rt = { workspace = true }
+wit-bindgen = { workspace = true }
 guestio = { path = "../guestio" }
 serde_json = { workspace = true }
-
-[package.metadata.component]
-package = "events:component"
-
-[package.metadata.component.target]
-path = "wit"
-world = "events-domain"
-
-[package.metadata.component.target.dependencies]
-"records:store" = { path = "../record-store/wit" }
-"id:generate" = { path = "../id-generate/wit" }
-"quota:meter" = { path = "../quota/wit" }
-"qr:encode" = { path = "../qr/wit" }
-"fsm:workflow" = { path = "../fsm-workflow/wit" }
-"auth:identity" = { path = "../../wit" }
-# auth.wit's own world imports these; needed to merge the auth:identity package.
-"ratelimit:guard" = { path = "../rate-limiter/wit" }
-"audit:log" = { path = "../audit-log/wit" }
-# `records:store`'s own world imports this.
-"comp:secrets" = { path = "../../host/wit/deps/comp-secrets" }
-"comp:store" = { path = "../../host/wit/deps/comp-store" }
-"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
-"notify:prefs" = { path = "../notify-prefs/wit" }
-"notify:inbox" = { path = "../notify-inbox/wit" }
-"mail:send" = { path = "../mail-http/wit" }
-"webhook:sign" = { path = "../webhook-sign/wit" }
-"sched:timer" = { path = "../scheduler-timer/wit" }
-"blob:store" = { path = "../blob-store/wit" }
-"upload:policy" = { path = "../upload-policy/wit" }
-"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
-"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
-"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
-"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
-"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
-"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }

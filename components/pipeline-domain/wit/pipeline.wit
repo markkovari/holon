@@ -20,7 +20,7 @@ package pipeline:app@0.1.0;
 /// The pipeline backend + the relay pump + the SSE loop, composed from
 /// capability contracts.
 world pipeline-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // the durable queue: enqueue / claim / ack / fail / dead-letters / replay.
     import outbox:dispatch/queue@0.1.0;
@@ -29,7 +29,7 @@ world pipeline-domain {
     // event / change ids.
     import id:generate/generator@0.1.0;
     // transition timestamps.
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
     // the relay + SSE poll cadence — subscribe-duration(…).block() to sleep.
-    import wasi:clocks/monotonic-clock@0.2.0;
+    import wasi:clocks/monotonic-clock@0.3.0-rc-2026-03-15;
 }

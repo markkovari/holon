@@ -15,7 +15,47 @@
 //! lifecycle is an fsm:workflow machine, mirrored onto the issue record.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../audit-log/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/ratelimit-guard",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../fsm-workflow/wit",
+            "../search-index/wit",
+            "../event-bus/wit",
+            "../notify-dispatch/wit",
+            "../webhook-sign/wit",
+            "../llm-inference/wit",
+            "../ai-inference/wit",
+            "../../wit/ui-assets",
+            "../policy-guard/wit",
+            "../pagination/wit",
+            "../markdown/wit",
+            "wit",
+        ],
+        world: "track:app/track-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+    }
+}
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -35,16 +75,14 @@ use bindings::policy::guard::guard as policy;
 use bindings::records::store::store as records;
 use bindings::search::index::index as search;
 use bindings::ui::assets::files as statics;
-use bindings::wasi::clocks::monotonic_clock;
-use bindings::wasi::clocks::wall_clock;
+use bindings::p3::clocks::monotonic_clock;
+use bindings::p3::clocks::system_clock;
 use bindings::webhook::sign::signer as sign;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 struct Component;
 
@@ -62,33 +100,33 @@ const POLL_MS: u64 = 1000;
 const MAX_TICKS: u32 = 3600;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         // SSE is written directly to the response stream — handle before `emit`.
         if let (Method::Get, ["api", "stream"]) = (&method, seg.as_slice()) {
-            return stream_events(response_out, &path);
+            return stream_events(&path);
         }
 
         let result = match (&method, seg.as_slice()) {
             (Method::Get, ["api", "usage"]) => usage_json(),
-            (Method::Post, ["auth", "register"]) => register(&request),
-            (Method::Post, ["auth", "login"]) => login(&request),
+            (Method::Post, ["auth", "register"]) => register(request).await,
+            (Method::Post, ["auth", "login"]) => login(request).await,
             (Method::Get, ["auth", "me"]) => me(&request),
             (Method::Post, ["auth", "logout"]) => logout(&request),
 
-            (Method::Post, ["api", "projects"]) => create_project(&request),
+            (Method::Post, ["api", "projects"]) => create_project(request).await,
             (Method::Get, ["api", "projects"]) => list_projects(&request),
-            (Method::Post, ["api", "projects", pk, "members"]) => add_member(&request, pk),
+            (Method::Post, ["api", "projects", pk, "members"]) => add_member(request, pk).await,
 
-            (Method::Post, ["api", "issues"]) => create_issue(&request),
+            (Method::Post, ["api", "issues"]) => create_issue(request).await,
             (Method::Get, ["api", "issues"]) => list_issues(&request),
             (Method::Get, ["api", "issues", id]) => get_issue(&request, id),
-            (Method::Post, ["api", "issues", id, "move"]) => move_issue(&request, id),
-            (Method::Post, ["api", "issues", id, "comments"]) => add_comment(&request, id),
+            (Method::Post, ["api", "issues", id, "move"]) => move_issue(request, id).await,
+            (Method::Post, ["api", "issues", id, "comments"]) => add_comment(request, id).await,
             (Method::Post, ["api", "issues", id, "summarize"]) => summarize(&request, id),
 
             (Method::Get, ["api", "search"]) => do_search(&request, &path),
@@ -97,7 +135,7 @@ impl Guest for Component {
             (Method::Get, _) => serve_static(&route),
             _ => Outcome::NotFound,
         };
-        emit(response_out, result);
+        emit(result)
     }
 }
 
@@ -123,7 +161,7 @@ fn serve_static(route: &str) -> Outcome {
 }
 
 fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 fn usage_json() -> Outcome {
@@ -198,9 +236,9 @@ struct RegisterReq {
     role: Option<String>,
 }
 
-fn register(request: &IncomingRequest) -> Outcome {
+async fn register(request: Request) -> Outcome {
     ensure_seeded();
-    let req: RegisterReq = match parse(request) {
+    let req: RegisterReq = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -222,8 +260,8 @@ struct LoginReq {
     password: String,
 }
 
-fn login(request: &IncomingRequest) -> Outcome {
-    let req: LoginReq = match parse(request) {
+async fn login(request: Request) -> Outcome {
+    let req: LoginReq = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -236,7 +274,7 @@ fn login(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn me(request: &IncomingRequest) -> Outcome {
+fn me(request: &Request) -> Outcome {
     match introspect(request) {
         Ok(p) => Outcome::Json(
             200,
@@ -246,7 +284,7 @@ fn me(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn logout(request: &IncomingRequest) -> Outcome {
+fn logout(request: &Request) -> Outcome {
     let Some(token) = bearer(request) else {
         return Outcome::Auth(AuthError::InvalidToken("missing bearer".into()));
     };
@@ -256,7 +294,7 @@ fn logout(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
+fn introspect(request: &Request) -> Result<Principal, Outcome> {
     let Some(token) = bearer(request) else {
         return Err(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())));
     };
@@ -300,9 +338,9 @@ fn member_role(p: &Principal, project: &str) -> String {
 
 // ---- projects ----------------------------------------------------------------
 
-fn create_project(request: &IncomingRequest) -> Outcome {
+async fn create_project(request: Request) -> Outcome {
     ensure_seeded();
-    let p = match introspect(request) {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
@@ -314,7 +352,7 @@ fn create_project(request: &IncomingRequest) -> Outcome {
         key: String,
         name: String,
     }
-    let req: Req = match parse(request) {
+    let req: Req = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -339,7 +377,7 @@ fn create_project(request: &IncomingRequest) -> Outcome {
     Outcome::Json(201, json!({"id": entry.id, "key": key, "name": req.name.trim()}).to_string())
 }
 
-fn list_projects(request: &IncomingRequest) -> Outcome {
+fn list_projects(request: &Request) -> Outcome {
     if let Err(o) = introspect(request) {
         return o;
     }
@@ -359,8 +397,8 @@ fn list_projects(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn add_member(request: &IncomingRequest, pk: &str) -> Outcome {
-    let p = match introspect(request) {
+async fn add_member(request: Request, pk: &str) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
@@ -377,7 +415,7 @@ fn add_member(request: &IncomingRequest, pk: &str) -> Outcome {
         #[serde(default)]
         role: Option<String>,
     }
-    let req: Req = match parse(request) {
+    let req: Req = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -406,9 +444,9 @@ fn add_member_row(project: &str, subject: &str, role: &str) {
 
 // ---- issues ------------------------------------------------------------------
 
-fn create_issue(request: &IncomingRequest) -> Outcome {
+async fn create_issue(request: Request) -> Outcome {
     ensure_seeded();
-    let p = match introspect(request) {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
@@ -423,7 +461,7 @@ fn create_issue(request: &IncomingRequest) -> Outcome {
         #[serde(default)]
         assignee: Option<String>,
     }
-    let req: Req = match parse(request) {
+    let req: Req = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -479,14 +517,14 @@ fn create_issue(request: &IncomingRequest) -> Outcome {
     Outcome::Json(201, issue_json(&entry).to_string())
 }
 
-fn list_issues(request: &IncomingRequest) -> Outcome {
+fn list_issues(request: &Request) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
     };
     let _ = p;
     // filters come from the query string on the ORIGINAL path.
-    let path = request.path_with_query().unwrap_or_default();
+    let path = request.get_path_with_query().unwrap_or_default();
     let project = query_str(&path, "project");
     let status = query_str(&path, "status");
     let requested = query_i64(&path, "limit").unwrap_or(20) as u32;
@@ -526,7 +564,7 @@ fn list_issues(request: &IncomingRequest) -> Outcome {
     Outcome::Json(200, json!({"issues": out}).to_string())
 }
 
-fn get_issue(request: &IncomingRequest, id: &str) -> Outcome {
+fn get_issue(request: &Request, id: &str) -> Outcome {
     if let Err(o) = introspect(request) {
         return o;
     }
@@ -547,8 +585,8 @@ fn get_issue(request: &IncomingRequest, id: &str) -> Outcome {
     Outcome::Json(200, out.to_string())
 }
 
-fn move_issue(request: &IncomingRequest, id: &str) -> Outcome {
-    let p = match introspect(request) {
+async fn move_issue(request: Request, id: &str) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
@@ -566,7 +604,7 @@ fn move_issue(request: &IncomingRequest, id: &str) -> Outcome {
     struct Req {
         event: String,
     }
-    let req: Req = match parse(request) {
+    let req: Req = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -591,8 +629,8 @@ fn move_issue(request: &IncomingRequest, id: &str) -> Outcome {
     }
 }
 
-fn add_comment(request: &IncomingRequest, id: &str) -> Outcome {
-    let p = match introspect(request) {
+async fn add_comment(request: Request, id: &str) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
@@ -610,7 +648,7 @@ fn add_comment(request: &IncomingRequest, id: &str) -> Outcome {
     struct Req {
         body: String,
     }
-    let req: Req = match parse(request) {
+    let req: Req = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -628,7 +666,7 @@ fn add_comment(request: &IncomingRequest, id: &str) -> Outcome {
 
 // ---- AI: summarize the comment thread ----------------------------------------
 
-fn summarize(request: &IncomingRequest, id: &str) -> Outcome {
+fn summarize(request: &Request, id: &str) -> Outcome {
     if let Err(o) = introspect(request) {
         return o;
     }
@@ -662,7 +700,7 @@ fn summarize(request: &IncomingRequest, id: &str) -> Outcome {
 
 // ---- read: search ------------------------------------------------------------
 
-fn do_search(request: &IncomingRequest, path: &str) -> Outcome {
+fn do_search(request: &Request, path: &str) -> Outcome {
     if let Err(o) = introspect(request) {
         return o;
     }
@@ -725,21 +763,18 @@ fn tick() -> Outcome {
 
 // ---- stream: SSE activity feed -----------------------------------------------
 
-fn stream_events(response_out: ResponseOutparam, path: &str) {
+fn stream_events(path: &str) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
     let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(200);
-    let body = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
 
     // default: only activity produced after we connect; ?after= catches up.
     let mut cursor = query_i64(path, "after").unwrap_or_else(current_seq);
-    {
-        let stream = body.write().expect("write stream");
-        if !write_all(&stream, b": connected\n\n") {
+    let (mut stream, rx) = bindings::wit_stream::new();
+    wit_bindgen::spawn_local(async move {
+        // `write_all` hands back what it could not send: non-empty = hung up.
+        if !stream.write_all(b": connected\n\n".to_vec()).await.is_empty() {
             return;
         }
         for _ in 0..MAX_TICKS {
@@ -750,13 +785,17 @@ fn stream_events(response_out: ResponseOutparam, path: &str) {
             } else {
                 rows.iter().map(|r| format!("data: {r}\n\n")).collect::<String>()
             };
-            if !write_all(&stream, frame.as_bytes()) {
+            if !stream.write_all(frame.into_bytes()).await.is_empty() {
                 break;
             }
-            monotonic_clock::subscribe_duration(POLL_MS * 1_000_000).block();
+            monotonic_clock::wait_for(POLL_MS * 1_000_000).await;
         }
-    }
-    let _ = OutgoingBody::finish(body, None);
+    });
+    let (trailers_tx, trailers_rx) = bindings::wit_future::new(|| Ok(None));
+    drop(trailers_tx);
+    let (response, _sent) = Response::new(headers, Some(rx), trailers_rx);
+    let _ = response.set_status_code(200);
+    Ok(response)
 }
 
 /// Publish an activity event (the SSE spine). Best-effort — never fails a write.
@@ -866,8 +905,8 @@ fn auth_error(e: &AuthError) -> (u16, &'static str) {
     }
 }
 
-fn parse<T: for<'a> Deserialize<'a>>(request: &IncomingRequest) -> Result<T, String> {
-    let body = read_body(request).map_err(|_| "could not read body".to_string())?;
+async fn parse<T: for<'a> Deserialize<'a>>(request: Request) -> Result<T, String> {
+    let body = read_body(request).await.map_err(|_| "could not read body".to_string())?;
     serde_json::from_slice(&body).map_err(|e| format!("bad json: {e}"))
 }
 
@@ -885,9 +924,9 @@ fn parse<T: for<'a> Deserialize<'a>>(request: &IncomingRequest) -> Result<T, Str
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
-guestio::guest_bearer!();
+guestio::guest_p3_bearer!();
 
 fn query_str(path: &str, key: &str) -> Option<String> {
     let query = path.split('?').nth(1)?;
@@ -903,83 +942,67 @@ fn query_i64(path: &str, key: &str) -> Option<i64> {
 
 use guestfmt::percent_decode as decode;
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
         Outcome::Json(code, body) => {
-            respond_ct(response_out, code, "application/json", &[], body.as_bytes())
+            respond_ct(code, "application/json", &[], body.as_bytes())
         }
-        Outcome::Raw(code, ct, bytes) => respond_ct(response_out, code, &ct, &[], &bytes),
+        Outcome::Raw(code, ct, bytes) => respond_ct(code, &ct, &[], &bytes),
         Outcome::Auth(e) => {
             if let AuthError::RateLimited(secs) = e {
                 respond_ct(
-                    response_out,
                     429,
                     "application/json",
                     &[("retry-after", &secs.to_string())],
                     format!("{{\"error\":\"rate_limited\",\"retryAfter\":{secs}}}").as_bytes(),
-                );
+                )
             } else {
                 let (code, msg) = auth_error(&e);
                 respond_ct(
-                    response_out,
                     code,
                     "application/json",
                     &[],
                     format!("{{\"error\":\"{msg}\"}}").as_bytes(),
-                );
+                )
             }
         }
         Outcome::Bad(msg) => respond_ct(
-            response_out,
             400,
             "application/json",
             &[],
             json!({ "error": msg }).to_string().as_bytes(),
         ),
         Outcome::Err(code, msg) => respond_ct(
-            response_out,
             code,
             "application/json",
             &[],
             json!({ "error": msg }).to_string().as_bytes(),
         ),
         Outcome::Forbidden(msg) => respond_ct(
-            response_out,
             403,
             "application/json",
             &[],
             json!({ "error": msg }).to_string().as_bytes(),
         ),
         Outcome::NotFound => {
-            respond_ct(response_out, 404, "application/json", &[], b"{\"error\":\"not_found\"}")
+            respond_ct(404, "application/json", &[], b"{\"error\":\"not_found\"}")
         }
     }
 }
 
 fn respond_ct(
-    response_out: ResponseOutparam,
     status: u16,
     content_type: &str,
     extra: &[(&str, &str)],
     body: &[u8],
-) {
+) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
     for (k, v) in extra {
-        let _ = headers.set(k.as_ref(), &[v.as_bytes().to_vec()]);
+        let _ = headers.set(k, &[v.as_bytes().to_vec()]);
     }
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        for chunk in body.chunks(4096) {
-            let _ = write_all(&stream, chunk);
-        }
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(status, headers, body.to_vec())
 }
 
 bindings::export!(Component with_types_in bindings);

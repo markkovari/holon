@@ -9,7 +9,39 @@
 //! elapses, then moves to stock validation on its own.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/ratelimit-guard",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../audit-log/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../fsm-workflow/wit",
+            "../event-bus/wit",
+            "../idempotency-guard/wit",
+            "wit",
+        ],
+        world: "eshop:ordering/ordering-service",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -19,14 +51,12 @@ use bindings::auth::identity::types::{AuthError, Principal};
 use bindings::event::bus::bus;
 use bindings::fsm::workflow::engine as fsm;
 use bindings::idempotency::guard::store as idem;
+use bindings::p3::clocks::system_clock;
 use bindings::records::store::store as records;
-use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::config::store as config;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 
 struct Component;
 
@@ -38,9 +68,9 @@ const GROUP: &str = "ordering";
 const DEFAULT_GRACE_SECS: u64 = 60;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
@@ -53,7 +83,7 @@ impl Guest for Component {
             (Method::Post, ["internal", "pump"]) => pump(),
             _ => Outcome::NotFound,
         };
-        emit(response_out, result);
+        emit(result)
     }
 }
 
@@ -129,7 +159,7 @@ fn grace_secs() -> u64 {
 }
 
 fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 // ---- HTTP: order queries + verbs ----------------------------------------------
@@ -138,7 +168,7 @@ fn is_admin(p: &Principal) -> bool {
     p.roles.iter().any(|r| r == "admin")
 }
 
-fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
+fn introspect(request: &Request) -> Result<Principal, Outcome> {
     let Some(token) = bearer(request) else {
         return Err(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())));
     };
@@ -173,7 +203,7 @@ fn order_json(entry: &records::Entry) -> Value {
     })
 }
 
-fn list_orders(request: &IncomingRequest) -> Outcome {
+fn list_orders(request: &Request) -> Outcome {
     ensure_seeded();
     let p = match introspect(request) {
         Ok(p) => p,
@@ -195,7 +225,7 @@ fn list_orders(request: &IncomingRequest) -> Outcome {
     Outcome::Json(200, json!({ "orders": orders }).to_string())
 }
 
-fn get_order(request: &IncomingRequest, id: &str) -> Outcome {
+fn get_order(request: &Request, id: &str) -> Outcome {
     ensure_seeded();
     let p = match introspect(request) {
         Ok(p) => p,
@@ -215,7 +245,7 @@ fn get_order(request: &IncomingRequest, id: &str) -> Outcome {
     Outcome::Json(200, out.to_string())
 }
 
-fn cancel(request: &IncomingRequest, id: &str) -> Outcome {
+fn cancel(request: &Request, id: &str) -> Outcome {
     ensure_seeded();
     let p = match introspect(request) {
         Ok(p) => p,
@@ -228,7 +258,7 @@ fn cancel(request: &IncomingRequest, id: &str) -> Outcome {
     fire_and_mirror(&entry, &data, "cancel", "OrderStatusChangedToCancelled")
 }
 
-fn ship(request: &IncomingRequest, id: &str) -> Outcome {
+fn ship(request: &Request, id: &str) -> Outcome {
     ensure_seeded();
     let p = match introspect(request) {
         Ok(p) => p,
@@ -488,43 +518,27 @@ fn auth_error(e: &AuthError) -> (u16, &'static str) {
     }
 }
 
-guestio::guest_bearer!();
-guestio::guest_write_all!();
+guestio::guest_p3_bearer!();
+guestio::guest_p3_respond!();
 
 // ---- responses ---------------------------------------------------------------------
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, body.as_bytes()),
+        Outcome::Json(code, body) => respond(code, "application/json", body),
         Outcome::Auth(e) => {
             let (code, msg) = auth_error(&e);
-            respond(response_out, code, format!("{{\"error\":\"{msg}\"}}").as_bytes());
+            respond(code, "application/json", format!("{{\"error\":\"{msg}\"}}"))
         }
-        Outcome::Bad(msg) => {
-            respond(response_out, 400, json!({ "error": msg }).to_string().as_bytes())
-        }
+        Outcome::Bad(msg) => respond(400, "application/json", json!({ "error": msg }).to_string()),
         Outcome::Err(code, msg) => {
-            respond(response_out, code, json!({ "error": msg }).to_string().as_bytes())
+            respond(code, "application/json", json!({ "error": msg }).to_string())
         }
         Outcome::Forbidden(msg) => {
-            respond(response_out, 403, json!({ "error": msg }).to_string().as_bytes())
+            respond(403, "application/json", json!({ "error": msg }).to_string())
         }
-        Outcome::NotFound => respond(response_out, 404, b"{\"error\":\"not_found\"}"),
+        Outcome::NotFound => respond(404, "application/json", "{\"error\":\"not_found\"}"),
     }
-}
-
-fn respond(response_out: ResponseOutparam, status: u16, body: &[u8]) {
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
 }
 
 bindings::export!(Component with_types_in bindings);

@@ -14,7 +14,7 @@
 use serde_json::json;
 
 use crate::bindings::fsm::workflow::engine as fsm;
-use crate::bindings::wasi::http::types::Method;
+use crate::bindings::p3::http::types::Method;
 use crate::store::{find_by_str, load, save, with_id};
 use crate::{has_role, require, Reply, Route};
 

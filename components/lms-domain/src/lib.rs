@@ -5,7 +5,39 @@
 //! chart). No bespoke auth, storage, grading, PDF, or charting.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/ratelimit-guard",
+            "../audit-log/wit",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../quiz-grade/wit",
+            "../pdf/wit",
+            "../svg-chart/wit",
+            "wit",
+        ],
+        world: "lms:app/lms-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+    }
+}
 
 use std::collections::BTreeMap;
 
@@ -20,12 +52,10 @@ use bindings::pdf::codec::codec as pdf;
 use bindings::quiz::grade::grader as quiz;
 use bindings::records::store::store as records;
 use bindings::svg::chart::charts as svg;
-use bindings::wasi::clocks::wall_clock;
+use bindings::p3::clocks::system_clock;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Component;
 
@@ -38,32 +68,32 @@ const ENROLLMENTS: &str = "enrollments";
 const SUBMISSIONS: &str = "submissions";
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => usage(),
-            (Method::Post, ["api", "register"]) => register(&request),
-            (Method::Post, ["api", "login"]) => login(&request),
+            (Method::Post, ["api", "register"]) => register(request).await,
+            (Method::Post, ["api", "login"]) => login(request).await,
             (Method::Post, ["api", "logout"]) => logout(&request),
             (Method::Get, ["api", "me"]) => me(&request),
 
-            (Method::Post, ["api", "courses"]) => create_course(&request),
+            (Method::Post, ["api", "courses"]) => create_course(request).await,
             (Method::Get, ["api", "courses"]) => list_courses(&request),
             (Method::Get, ["api", "courses", id]) => get_course(&request, id),
-            (Method::Post, ["api", "courses", id, "lessons"]) => add_lesson(&request, id),
-            (Method::Post, ["api", "courses", id, "quizzes"]) => add_quiz(&request, id),
+            (Method::Post, ["api", "courses", id, "lessons"]) => add_lesson(request, id).await,
+            (Method::Post, ["api", "courses", id, "quizzes"]) => add_quiz(request, id).await,
             (Method::Post, ["api", "courses", id, "enroll"]) => enroll(&request, id),
             (Method::Get, ["api", "courses", id, "progress"]) => progress(&request, id),
             (Method::Get, ["api", "courses", id, "gradebook"]) => gradebook(&request, id),
             (Method::Get, ["api", "courses", id, "certificate.pdf"]) => certificate(&request, id),
-            (Method::Post, ["api", "quizzes", id, "submit"]) => submit_quiz(&request, id),
+            (Method::Post, ["api", "quizzes", id, "submit"]) => submit_quiz(request, id).await,
             _ => Outcome::Err(404, "not_found".into()),
         };
-        emit(response_out, outcome);
+        emit(outcome)
     }
 }
 
@@ -75,7 +105,7 @@ enum Outcome {
 }
 
 fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 fn usage() -> Outcome {
@@ -94,10 +124,10 @@ fn usage() -> Outcome {
 
 // ---- auth -------------------------------------------------------------------
 
-guestio::guest_bearer!();
-guestio::guest_write_all!();
+guestio::guest_p3_bearer!();
+guestio::guest_p3_respond!();
 
-fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
+fn introspect(request: &Request) -> Result<Principal, Outcome> {
     let token =
         bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
@@ -116,8 +146,8 @@ fn subject_email(subject: &str) -> String {
         .unwrap_or_default()
 }
 
-fn register(request: &IncomingRequest) -> Outcome {
-    let body = match body(request) {
+async fn register(request: Request) -> Outcome {
+    let body = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -141,8 +171,8 @@ fn register(request: &IncomingRequest) -> Outcome {
     Outcome::Json(201, json!({ "subject": p.subject, "roles": [role] }).to_string())
 }
 
-fn login(request: &IncomingRequest) -> Outcome {
-    let body = match body(request) {
+async fn login(request: Request) -> Outcome {
+    let body = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -157,7 +187,7 @@ fn login(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn me(request: &IncomingRequest) -> Outcome {
+fn me(request: &Request) -> Outcome {
     match introspect(request) {
         Ok(p) => Outcome::Json(
             200,
@@ -167,7 +197,7 @@ fn me(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn logout(request: &IncomingRequest) -> Outcome {
+fn logout(request: &Request) -> Outcome {
     let token = match bearer(request) {
         Some(t) => t,
         None => return Outcome::Auth(AuthError::InvalidToken("missing bearer".into())),
@@ -204,15 +234,15 @@ fn find(coll: &str, field: &str, value: &str) -> Vec<Value> {
 
 // ---- courses / lessons / quizzes --------------------------------------------
 
-fn create_course(request: &IncomingRequest) -> Outcome {
-    let p = match introspect(request) {
+async fn create_course(request: Request) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
     if !is_instructor(&p) {
         return Outcome::Err(403, "instructors only".into());
     }
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -228,7 +258,7 @@ fn create_course(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn list_courses(request: &IncomingRequest) -> Outcome {
+fn list_courses(request: &Request) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -279,7 +309,7 @@ fn quiz_public(q: &Value) -> Value {
     json!({ "id": q["id"], "title": q["title"], "pass_mark": q["pass_mark"], "questions": questions })
 }
 
-fn get_course(request: &IncomingRequest, id: &str) -> Outcome {
+fn get_course(request: &Request, id: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -308,15 +338,15 @@ fn owned_course(p: &Principal, id: &str) -> Result<Value, Outcome> {
     Ok(c)
 }
 
-fn add_lesson(request: &IncomingRequest, id: &str) -> Outcome {
-    let p = match introspect(request) {
+async fn add_lesson(request: Request, id: &str) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
     if let Err(o) = owned_course(&p, id) {
         return o;
     }
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -332,15 +362,15 @@ fn add_lesson(request: &IncomingRequest, id: &str) -> Outcome {
     }
 }
 
-fn add_quiz(request: &IncomingRequest, id: &str) -> Outcome {
-    let p = match introspect(request) {
+async fn add_quiz(request: Request, id: &str) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
     if let Err(o) = owned_course(&p, id) {
         return o;
     }
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -370,7 +400,7 @@ fn add_quiz(request: &IncomingRequest, id: &str) -> Outcome {
 
 // ---- enroll / submit --------------------------------------------------------
 
-fn enroll(request: &IncomingRequest, id: &str) -> Outcome {
+fn enroll(request: &Request, id: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -392,8 +422,8 @@ fn enroll(request: &IncomingRequest, id: &str) -> Outcome {
     }
 }
 
-fn submit_quiz(request: &IncomingRequest, quiz_id: &str) -> Outcome {
-    let p = match introspect(request) {
+async fn submit_quiz(request: Request, quiz_id: &str) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
@@ -408,7 +438,7 @@ fn submit_quiz(request: &IncomingRequest, quiz_id: &str) -> Outcome {
     {
         return Outcome::Err(403, "enroll in the course first".into());
     }
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -460,7 +490,7 @@ fn best_scores(course: &str, student: &str) -> BTreeMap<String, (u32, bool)> {
     best
 }
 
-fn progress(request: &IncomingRequest, course: &str) -> Outcome {
+fn progress(request: &Request, course: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -491,7 +521,7 @@ fn progress(request: &IncomingRequest, course: &str) -> Outcome {
     )
 }
 
-fn gradebook(request: &IncomingRequest, id: &str) -> Outcome {
+fn gradebook(request: &Request, id: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -554,7 +584,7 @@ fn gradebook(request: &IncomingRequest, id: &str) -> Outcome {
     )
 }
 
-fn certificate(request: &IncomingRequest, course: &str) -> Outcome {
+fn certificate(request: &Request, course: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -657,8 +687,8 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let raw = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+async fn body(request: Request) -> Result<Value, Outcome> {
+    let raw = read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
         return Ok(Value::Object(Map::new()));
     }
@@ -679,12 +709,12 @@ fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     if let Outcome::File(code, ctype, name, bytes) = result {
         let disp = name.map(|n| format!("attachment; filename=\"{}\"", n));
-        return respond(response_out, code, &ctype, disp.as_deref(), &bytes);
+        return reply(code, &ctype, disp.as_deref(), bytes);
     }
     let (code, body) = match result {
         Outcome::Json(c, b) => (c, b),
@@ -699,31 +729,22 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
         }
         Outcome::File(..) => unreachable!(),
     };
-    respond(response_out, code, "application/json", None, body.as_bytes());
+    reply(code, "application/json", None, body.into_bytes())
 }
 
-fn respond(
-    response_out: ResponseOutparam,
+fn reply(
     status: u16,
     ctype: &str,
     disposition: Option<&str>,
-    body: &[u8],
-) {
+    body: Vec<u8>,
+) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[ctype.as_bytes().to_vec()]);
     if let Some(d) = disposition {
         let _ = headers.set("content-disposition", &[d.as_bytes().to_vec()]);
     }
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(status, headers, body)
 }
 
 bindings::export!(Component with_types_in bindings);

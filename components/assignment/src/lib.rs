@@ -1,16 +1,39 @@
 //! assignment:router — stateless route assignment computation
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../event-bus/wit",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "wit",
+        ],
+        world: "assignment:router/assignment-router",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use crate::bindings::event::bus::bus as eventbus;
 use crate::bindings::exports::assignment::router::router::{AgentWorkload, Guest as RouterGuest};
-use crate::bindings::exports::wasi::http::incoming_handler::Guest as HttpGuest;
+use crate::bindings::p3::handler::Guest as HttpGuest;
+use crate::bindings::p3::http::types::{ErrorCode, Request, Response};
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::{
-    Fields, IncomingRequest, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
 use serde_json::{json, Value};
+
+guestio::guest_p3_respond!();
 
 struct Component;
 
@@ -31,13 +54,12 @@ impl RouterGuest for Component {
 }
 
 impl HttpGuest for Component {
-    fn handle(_request: IncomingRequest, response_out: ResponseOutparam) {
+    async fn handle(_request: Request) -> Result<Response, ErrorCode> {
         // Poll for events from the bus
         let events = match eventbus::poll("helpdesk.events", "assignment_worker", 50) {
             Ok(evs) => evs,
             Err(_) => {
-                emit(response_out, 503, "eventbus error".into());
-                return;
+                return emit(503, "eventbus error".into());
             }
         };
 
@@ -94,40 +116,12 @@ impl HttpGuest for Component {
             let _ = eventbus::ack("helpdesk.events", "assignment_worker", &ack_ids);
         }
 
-        emit(response_out, 200, json!({ "processed": ack_ids.len() }).to_string());
+        emit(200, json!({ "processed": ack_ids.len() }).to_string())
     }
 }
 
-fn emit(out: ResponseOutparam, status: u16, body: String) {
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    response.set_status_code(status).unwrap();
-    let out_body = response.body().unwrap();
-    ResponseOutparam::set(out, Ok(response));
-    let stream = out_body.write().unwrap();
-    write_all(&stream, body.as_bytes());
-    drop(stream);
-    OutgoingBody::finish(out_body, None).unwrap();
-}
-
-fn write_all(stream: &bindings::wasi::io::streams::OutputStream, mut bytes: &[u8]) {
-    while !bytes.is_empty() {
-        let ready = match stream.check_write() {
-            Ok(0) => {
-                stream.subscribe().block();
-                continue;
-            }
-            Ok(n) => n as usize,
-            Err(_) => return,
-        };
-        let take = ready.min(bytes.len());
-        if stream.write(&bytes[..take]).is_err() {
-            return;
-        }
-        bytes = &bytes[take..];
-    }
-    let _ = stream.blocking_flush();
+fn emit(status: u16, body: String) -> Result<Response, ErrorCode> {
+    respond(status, "application/json", body)
 }
 
 bindings::export!(Component with_types_in bindings);

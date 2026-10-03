@@ -17,7 +17,7 @@ package eshop:gateway@0.1.0;
 
 /// The storefront edge, composed from capability contracts.
 world gateway-service {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // route-table + forwarding (the Envoy stand-in).
     import proxy:route/router@0.1.0;

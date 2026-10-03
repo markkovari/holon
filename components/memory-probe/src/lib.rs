@@ -15,48 +15,43 @@
 //! exactly the two failures this exists to tell apart.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../host/wit/deps/comp-secrets",
+            "../knowledge-graph/wit",
+            "../search-index/wit",
+            "../llm-inference/wit",
+            "../knowledge-memory/wit",
+            "../event-bus/wit",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "wit",
+        ],
+        world: "comp:memoryprobe/memory-probe",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::knowledge::memory::memory::{self as mem, Entry, Namespace, RecallOpts};
 use bindings::knowledge::memory::promotion;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
-use bindings::wasi::io::streams::OutputStream;
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 
-/// Write a whole response body, however long it is.
-///
-/// `blocking-write-and-flush` accepts at most 4096 bytes and TRAPS above that
-/// rather than returning an error, so a probe that answers with something big
-/// simply dies and its caller sees an empty body. Measured: a contract file grew
-/// past 4096 and every generation of a real run reported `the boundary failed:
-/// unreadable answer (EOF while parsing a value at line 1 column 0)` — an error
-/// about JSON, three components away from the write that caused it.
-///
-/// `check-write` is the stream saying how much it will take right now, so this
-/// writes in whatever bites it offers and flushes once, rather than picking a
-/// constant and flushing every 4 KB.
-fn write_all(stream: &OutputStream, mut bytes: &[u8]) {
-    while !bytes.is_empty() {
-        let ready = match stream.check_write() {
-            Ok(0) => {
-                // Zero is "full, wait" — not a failure. The pollable resolves
-                // when the stream has drained.
-                stream.subscribe().block();
-                continue;
-            }
-            Ok(n) => n as usize,
-            Err(_) => return,
-        };
-        let take = ready.min(bytes.len());
-        if stream.write(&bytes[..take]).is_err() {
-            return;
-        }
-        bytes = &bytes[take..];
-    }
-    let _ = stream.blocking_flush();
-}
+guestio::guest_p3_respond!();
 
 struct Component;
 
@@ -135,7 +130,7 @@ fn err(e: mem::MemoryError) -> String {
 /// traps the component and the connection simply closes.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body_text!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
 /// A repeated query parameter, as a list: `tags=a,b,c`.
 fn csv_param(query: &str, key: &str) -> Vec<String> {
@@ -163,17 +158,17 @@ fn entry_from(query: &str, text: String) -> Entry {
 }
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let (route, query) = match path.split_once('?') {
             Some((r, q)) => (r.to_string(), q.to_string()),
             None => (path.clone(), String::new()),
         };
-        let method = request.method();
+        let method = request.get_method();
 
         let body = match (&method, route.as_str()) {
             (Method::Post, "/observe") => {
-                let e = entry_from(&query, read_body(&request));
+                let e = entry_from(&query, read_body(request).await);
                 match mem::observe(&e) {
                     Ok(h) => format!("{{\"handle\":\"{}\"}}", esc(&h)),
                     Err(e) => err(e),
@@ -184,7 +179,7 @@ impl Guest for Component {
                 // The namespace is not a parameter: `promote` decides it. Passing
                 // one would let this probe claim a promotion into `errors`, which
                 // is exactly what the component refuses to allow.
-                let e = entry_from(&query, read_body(&request));
+                let e = entry_from(&query, read_body(request).await);
                 match promotion::promote(&e, signed(&query, "score", 0)) {
                     Ok(h) => format!("{{\"handle\":\"{}\"}}", esc(&h)),
                     Err(e) => err(e),
@@ -305,17 +300,7 @@ impl Guest for Component {
                 .to_string(),
         };
 
-        let headers = Fields::new();
-        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-        let resp = OutgoingResponse::new(headers);
-        let _ = resp.set_status_code(200);
-        let out = resp.body().expect("body");
-        ResponseOutparam::set(response_out, Ok(resp));
-        if let Ok(stream) = out.write() {
-            write_all(&stream, body.as_bytes());
-            drop(stream);
-        }
-        let _ = OutgoingBody::finish(out, None);
+        respond(200, "application/json", body)
     }
 }
 

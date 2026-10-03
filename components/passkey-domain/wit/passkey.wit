@@ -32,7 +32,7 @@ package passkey:app@0.1.0;
 
 /// The relying party: accounts, credentials, challenges, sessions.
 world passkey-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // accounts + registered credentials (id, public key, counter).
     import records:store/store@0.1.0;
@@ -43,9 +43,9 @@ world passkey-domain {
     // the ceremony verification itself.
     import webauthn:verify/verifier@0.1.0;
     // challenges + user handles.
-    import wasi:random/random@0.2.0;
+    import wasi:random/random@0.3.0-rc-2026-03-15;
     // timestamps on credentials.
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
     // rp-id / origin / require-uv — deployment facts, not request data.
     import wasi:config/store@0.2.0-rc.1;
 }

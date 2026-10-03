@@ -27,7 +27,7 @@ package jobs:app@0.1.0;
 
 /// The job-queue backend + drain loop + SSE board, composed from contracts.
 world jobs-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // the durable work queue (claim/lease/backoff/DLQ/replay).
     import outbox:dispatch/queue@0.1.0;
@@ -40,7 +40,7 @@ world jobs-domain {
     // the dashboard view: one mirrored record per job.
     import records:store/store@0.1.0;
     // timestamps.
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
     // the SSE tick cadence — subscribe-duration(…).block() to sleep, not spin.
-    import wasi:clocks/monotonic-clock@0.2.0;
+    import wasi:clocks/monotonic-clock@0.3.0-rc-2026-03-15;
 }

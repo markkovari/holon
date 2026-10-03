@@ -6,22 +6,51 @@
 //! to drive a real register/login flow to test `handlers.rs` in isolation.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/ratelimit-guard",
+            "../audit-log/wit",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../policy-guard/wit",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../notify-dispatch/wit",
+            "wit",
+        ],
+        world: "referral:tracker/referral-tracker-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 mod handlers;
 
 use bindings::auth::identity::session as auth_session;
 use bindings::auth::identity::types as auth_types;
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::clocks::wall_clock;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::clocks::system_clock;
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 use serde_json::{json, Value};
 
 pub const TENANT: &str = "referraltracker";
 
-guestio::guest_write_all!();
-guestio::guest_bearer!();
+guestio::guest_p3_respond!();
+guestio::guest_p3_bearer!();
 
 struct Component;
 
@@ -65,7 +94,7 @@ impl Route {
 use guestfmt::percent_decode as percent;
 
 pub fn now_secs() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 /// A test token, minted directly (never a real register/login) — the ROUTER's
@@ -99,11 +128,11 @@ fn mint(body: &str) -> Reply {
 }
 
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
-guestio::guest_read_body_text!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let path = request.path_with_query().unwrap_or_else(|| "/".into());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".into());
         let (raw_path, query) = match path.split_once('?') {
             Some((p, q)) => (p.to_string(), q.to_string()),
             None => (path.clone(), String::new()),
@@ -114,9 +143,9 @@ impl Guest for Component {
             query,
             bearer,
         };
-        let method = request.method();
+        let method = request.get_method();
         let body = match method {
-            Method::Post | Method::Put | Method::Patch => read_body(&request),
+            Method::Post | Method::Put | Method::Patch => read_body(request).await,
             _ => String::new(),
         };
 
@@ -130,17 +159,8 @@ impl Guest for Component {
 
         let headers = Fields::new();
         let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-        let resp = OutgoingResponse::new(headers);
-        let _ = resp.set_status_code(status);
-        let out = resp.body().expect("body");
-        ResponseOutparam::set(response_out, Ok(resp));
-        if let Ok(stream) = out.write() {
-            if !payload.is_null() {
-                let _ = write_all(&stream, payload.to_string().as_bytes());
-            }
-            drop(stream);
-        }
-        let _ = OutgoingBody::finish(out, None);
+        let bytes = if payload.is_null() { Vec::new() } else { payload.to_string().into_bytes() };
+        respond_with(status, headers, bytes)
     }
 }
 

@@ -16,9 +16,9 @@
 //! for every route, so a policy engine would be a second place to read it.
 
 use crate::bindings::media::pipeline::jobs::{self as media, MediaError, PartEtag};
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::config::store as config;
-use crate::bindings::wasi::http::types::Method;
 use crate::bindings::webhook::sign::signer::{self, Scheme};
 use crate::{audit, introspect, is_admin, now_secs, Reply, Route};
 use serde_json::{json, Map, Value};

@@ -1,13 +1,33 @@
 //! `graph-viz-domain` — draw the capability graph as a picture you can pan and read
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../host/wit/deps/comp-secrets",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../knowledge-graph/wit",
+            "wit",
+        ],
+        world: "comp:graphvizdomain/graph-viz-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::knowledge::graph::store::{self};
-use bindings::wasi::http::types::{
-    IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 use serde_json::json;
 
 struct Component;
@@ -18,22 +38,16 @@ enum Outcome {
     Error(u16, String),
 }
 
-fn handle_query(req: IncomingRequest) -> Outcome {
-    let Ok(body) = req.consume() else {
-        return Outcome::Error(400, "could not consume body".into());
+/// A ceiling on a request body, not a policy: past this the read gives up
+/// rather than growing until the store's memory cap traps the component.
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+
+async fn handle_query(req: Request) -> Outcome {
+    let Ok(out) = read_body(req).await else {
+        return Outcome::Error(500, "read error".into());
     };
-    let Ok(stream) = body.stream() else {
-        return Outcome::Error(400, "could not get stream".into());
-    };
-    let mut out = Vec::new();
-    loop {
-        match stream.blocking_read(64 * 1024) {
-            Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => out.extend_from_slice(&chunk),
-            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-            Err(_) => return Outcome::Error(500, "read error".into()),
-        }
-    }
     let surql = String::from_utf8_lossy(&out).into_owned();
 
     match store::query(&surql) {
@@ -497,88 +511,21 @@ fn serve_ui() -> Outcome {
 }
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
-        let method = request.method();
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
+        let method = request.get_method();
 
         let outcome = match (&method, path.as_str()) {
             (Method::Get, "/") => serve_ui(),
-            (Method::Post, "/api/query") => handle_query(request),
+            (Method::Post, "/api/query") => handle_query(request).await,
             _ => Outcome::Error(404, "not found".into()),
         };
 
         match outcome {
-            Outcome::Html(html) => {
-                let headers = bindings::wasi::http::types::Fields::new();
-                let _ = headers.set("content-type", &[b"text/html".to_vec()]);
-                let resp = OutgoingResponse::new(headers);
-                let _ = resp.set_status_code(200);
-                let out = resp.body().expect("body");
-                ResponseOutparam::set(response_out, Ok(resp));
-                if let Ok(stream) = out.write() {
-                    let mut bytes = html.as_bytes();
-                    while !bytes.is_empty() {
-                        let ready = match stream.check_write() {
-                            Ok(0) => {
-                                stream.subscribe().block();
-                                continue;
-                            }
-                            Ok(n) => n as usize,
-                            Err(_) => break,
-                        };
-                        let take = ready.min(bytes.len());
-                        if stream.write(&bytes[..take]).is_err() {
-                            break;
-                        }
-                        bytes = &bytes[take..];
-                    }
-                    let _ = stream.blocking_flush();
-                    drop(stream);
-                }
-                let _ = OutgoingBody::finish(out, None);
-            }
-            Outcome::Json(code, json) => {
-                let headers = bindings::wasi::http::types::Fields::new();
-                let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-                let resp = OutgoingResponse::new(headers);
-                let _ = resp.set_status_code(code);
-                let out = resp.body().expect("body");
-                ResponseOutparam::set(response_out, Ok(resp));
-                if let Ok(stream) = out.write() {
-                    let mut bytes = json.as_bytes();
-                    while !bytes.is_empty() {
-                        let ready = match stream.check_write() {
-                            Ok(0) => {
-                                stream.subscribe().block();
-                                continue;
-                            }
-                            Ok(n) => n as usize,
-                            Err(_) => break,
-                        };
-                        let take = ready.min(bytes.len());
-                        if stream.write(&bytes[..take]).is_err() {
-                            break;
-                        }
-                        bytes = &bytes[take..];
-                    }
-                    let _ = stream.blocking_flush();
-                    drop(stream);
-                }
-                let _ = OutgoingBody::finish(out, None);
-            }
+            Outcome::Html(html) => respond(200, "text/html", html),
+            Outcome::Json(code, json) => respond(code, "application/json", json),
             Outcome::Error(code, msg) => {
-                let json = json!({ "error": msg }).to_string();
-                let headers = bindings::wasi::http::types::Fields::new();
-                let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-                let resp = OutgoingResponse::new(headers);
-                let _ = resp.set_status_code(code);
-                let out = resp.body().expect("body");
-                ResponseOutparam::set(response_out, Ok(resp));
-                if let Ok(stream) = out.write() {
-                    let _ = write_all(&stream, json.as_bytes());
-                    drop(stream);
-                }
-                let _ = OutgoingBody::finish(out, None);
+                respond(code, "application/json", json!({ "error": msg }).to_string())
             }
         }
     }
@@ -586,4 +533,4 @@ impl Guest for Component {
 
 bindings::export!(Component with_types_in bindings);
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();

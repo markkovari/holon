@@ -7,7 +7,38 @@
 //! outbox contract owning retry/backoff and the dead-letter lane.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../idempotency-guard/wit",
+            "../webhook-ingest/wit",
+            "../jsonpatch/wit",
+            "../outbox/wit",
+            "../webhook-sign/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../notify-dispatch/wit",
+            "../rate-limiter/wit",
+            "../audit-log/wit",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "wit",
+        ],
+        world: "relay:app/relay-app",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -24,10 +55,8 @@ use bindings::records::store::store as records;
 use bindings::wasi::keyvalue::store as kv;
 use bindings::webhook::sign::signer;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Component;
 
@@ -45,9 +74,9 @@ const CLAIM_LEASE: u64 = 60;
 const DEDUP_TTL: u64 = 24 * 60 * 60;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let query = path.split_once('?').map(|x| x.1).unwrap_or("").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
@@ -65,18 +94,18 @@ impl Guest for Component {
                 })
                 .to_string(),
             ),
-            (Method::Post, ["api", "sources"]) => create_source(&request),
+            (Method::Post, ["api", "sources"]) => create_source(request).await,
             (Method::Get, ["api", "sources"]) => list_sources(),
             (Method::Get, ["api", "sources", id]) => get_source(id),
             (Method::Delete, ["api", "sources", id]) => delete_source(id),
-            (Method::Post, ["hook", id]) => inbound(&request, id),
+            (Method::Post, ["hook", id]) => inbound(request, id).await,
             (Method::Post, ["api", "drain"]) => drain(),
             (Method::Get, ["api", "dead"]) => dead_letters(),
             (Method::Post, ["api", "dead", id, "replay"]) => replay_dead(id),
             (Method::Get, ["api", "audit"]) => audit_recent(&query),
             _ => Outcome::NotFound,
         };
-        emit(response_out, result);
+        emit(result)
     }
 }
 
@@ -110,17 +139,17 @@ fn secret_ref(source_id: &str) -> String {
     format!("relay:secret:{source_id}")
 }
 
-fn create_source(request: &IncomingRequest) -> Outcome {
-    let req: CreateSource = match read_body(request)
-        .and_then(|b| serde_json::from_slice(&b).map_err(|_| ()))
-    {
-        Ok(r) => r,
-        Err(_) => {
-            return Outcome::Bad(
-                "expected json body {name, secret, destination, dest-secret, transform?}".into(),
-            )
-        }
-    };
+async fn create_source(request: Request) -> Outcome {
+    let req: CreateSource =
+        match read_body(request).await.and_then(|b| serde_json::from_slice(&b).map_err(|_| ())) {
+            Ok(r) => r,
+            Err(_) => {
+                return Outcome::Bad(
+                    "expected json body {name, secret, destination, dest-secret, transform?}"
+                        .into(),
+                )
+            }
+        };
     if !(req.destination.starts_with("http://") || req.destination.starts_with("https://")) {
         return Outcome::Bad("destination must be http(s)".into());
     }
@@ -200,7 +229,7 @@ fn source_json(entry: &records::Entry) -> Value {
 
 // ---- ingest ----------------------------------------------------------------
 
-fn inbound(request: &IncomingRequest, source_id: &str) -> Outcome {
+async fn inbound(request: Request, source_id: &str) -> Outcome {
     let source = match records::get(SOURCES, source_id) {
         Ok(e) => e,
         Err(records::StoreError::NotFound) => return Outcome::NotFound,
@@ -216,15 +245,15 @@ fn inbound(request: &IncomingRequest, source_id: &str) -> Outcome {
         Err(LimitError::BackendUnavailable(m)) => return Outcome::Err(503, m),
     }
 
-    let Some(delivery) = header(request, "x-relay-delivery").filter(|d| !d.is_empty()) else {
+    let Some(delivery) = header(&request, "x-relay-delivery").filter(|d| !d.is_empty()) else {
         return Outcome::Bad("missing x-relay-delivery header".into());
     };
-    let sig = header(request, "x-relay-signature").unwrap_or_default();
+    let sig = header(&request, "x-relay-signature").unwrap_or_default();
     let sig = sig.strip_prefix("sha256=").unwrap_or(&sig).to_string();
     if sig.is_empty() {
         return Outcome::Bad("missing x-relay-signature header".into());
     }
-    let payload = read_body(request).unwrap_or_default();
+    let payload = read_body(request).await.unwrap_or_default();
 
     // --- verify, THEN reserve, THEN work, and only then commit ----------------
     //
@@ -527,11 +556,11 @@ fn store_err(e: records::StoreError) -> Outcome {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
 
-fn header(request: &IncomingRequest, name: &str) -> Option<String> {
-    request.headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
+fn header(request: &Request, name: &str) -> Option<String> {
+    request.get_headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
 }
 
 fn query_param(query: &str, key: &str) -> Option<String> {
@@ -543,40 +572,27 @@ fn query_param(query: &str, key: &str) -> Option<String> {
 
 // ---- responses -------------------------------------------------------------
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, &[], body.as_bytes()),
-        Outcome::Limited(secs) => respond(
-            response_out,
+        Outcome::Json(code, body) => answer(code, &[], body),
+        Outcome::Limited(secs) => answer(
             429,
             &[("retry-after", &secs.to_string())],
-            format!("{{\"error\":\"rate_limited\",\"retryAfter\":{secs}}}").as_bytes(),
+            format!("{{\"error\":\"rate_limited\",\"retryAfter\":{secs}}}"),
         ),
-        Outcome::Bad(msg) => {
-            respond(response_out, 400, &[], json!({ "error": msg }).to_string().as_bytes())
-        }
-        Outcome::Err(code, msg) => {
-            respond(response_out, code, &[], json!({ "error": msg }).to_string().as_bytes())
-        }
-        Outcome::NotFound => respond(response_out, 404, &[], b"{\"error\":\"not_found\"}"),
+        Outcome::Bad(msg) => answer(400, &[], json!({ "error": msg }).to_string()),
+        Outcome::Err(code, msg) => answer(code, &[], json!({ "error": msg }).to_string()),
+        Outcome::NotFound => answer(404, &[], "{\"error\":\"not_found\"}".to_string()),
     }
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, extra: &[(&str, &str)], body: &[u8]) {
+fn answer(status: u16, extra: &[(&str, &str)], body: String) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     for (k, v) in extra {
         let _ = headers.set(k.as_ref(), &[v.as_bytes().to_vec()]);
     }
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(status, headers, body.into_bytes())
 }
 
 bindings::export!(Component with_types_in bindings);

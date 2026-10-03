@@ -2,11 +2,11 @@ use crate::bindings::audit::log::recorder as audit;
 use crate::bindings::audit::log::types::Event;
 use crate::bindings::auth::identity::authorizer;
 use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::policy::guard::guard as policy;
 use crate::bindings::policy::guard::guard::{Attr, Condition, Effect, Op, Rule};
 use crate::bindings::quota::meter::meter;
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
 use crate::{Reply, Route};
 use serde_json::{json, Value};
 

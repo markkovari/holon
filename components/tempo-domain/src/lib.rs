@@ -15,7 +15,37 @@
 //! stop (an entry with the elapsed minutes).
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/ratelimit-guard",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../audit-log/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../pdf/wit",
+            "wit",
+        ],
+        world: "tempo:app/tempo-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
@@ -25,14 +55,12 @@ use bindings::auth::identity::authorizer;
 use bindings::auth::identity::rbac;
 use bindings::auth::identity::session;
 use bindings::auth::identity::types::{AuthError, Principal};
+use bindings::p3::clocks::system_clock;
 use bindings::pdf::codec::codec as pdf;
 use bindings::records::store::store as records;
-use bindings::wasi::clocks::wall_clock;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Component;
 
@@ -45,32 +73,32 @@ const USERS: &str = "users";
 const MEMBERS: &str = "memberships"; // {project, user, email, role: member|lead}
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => usage(),
-            (Method::Post, ["api", "register"]) => register(&request),
-            (Method::Post, ["api", "login"]) => login(&request),
+            (Method::Post, ["api", "register"]) => register(request).await,
+            (Method::Post, ["api", "login"]) => login(request).await,
             (Method::Post, ["api", "logout"]) => logout(&request),
             (Method::Get, ["api", "me"]) => me(&request),
 
-            (Method::Post, ["api", "projects"]) => create_project(&request),
+            (Method::Post, ["api", "projects"]) => create_project(request).await,
             (Method::Get, ["api", "projects"]) => list_projects(&request),
-            (Method::Post, ["api", "projects", id, "members"]) => add_member(&request, id),
+            (Method::Post, ["api", "projects", id, "members"]) => add_member(request, id).await,
             (Method::Get, ["api", "projects", id, "members"]) => list_members(&request, id),
-            (Method::Post, ["api", "categories"]) => create_category(&request),
+            (Method::Post, ["api", "categories"]) => create_category(request).await,
             (Method::Get, ["api", "categories"]) => list_named(&request, CATEGORIES),
 
-            (Method::Post, ["api", "entries"]) => create_entry(&request),
+            (Method::Post, ["api", "entries"]) => create_entry(request).await,
             (Method::Get, ["api", "entries"]) => list_entries(&request, &path),
-            (Method::Patch, ["api", "entries", id]) => edit_entry(&request, id),
+            (Method::Patch, ["api", "entries", id]) => edit_entry(request, id).await,
             (Method::Delete, ["api", "entries", id]) => delete_entry(&request, id),
 
-            (Method::Post, ["api", "timer", "start"]) => timer_start(&request),
+            (Method::Post, ["api", "timer", "start"]) => timer_start(request).await,
             (Method::Post, ["api", "timer", "stop"]) => timer_stop(&request),
             (Method::Get, ["api", "timer"]) => timer_get(&request),
 
@@ -78,7 +106,7 @@ impl Guest for Component {
             (Method::Get, ["api", "report.pdf"]) => report_pdf(&request, &path),
             _ => Outcome::Err(404, "not_found".into()),
         };
-        emit(response_out, outcome);
+        emit(outcome)
     }
 }
 
@@ -91,7 +119,7 @@ enum Outcome {
 }
 
 fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 fn usage() -> Outcome {
@@ -112,10 +140,10 @@ fn usage() -> Outcome {
 
 // ---- auth (auth-guard: auth:identity) ---------------------------------------
 
-guestio::guest_bearer!();
-guestio::guest_write_all!();
+guestio::guest_p3_bearer!();
+guestio::guest_p3_respond!();
 
-fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
+fn introspect(request: &Request) -> Result<Principal, Outcome> {
     let token =
         bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
@@ -190,8 +218,8 @@ fn is_lead_of(p: &Principal, project: &str) -> bool {
     }
 }
 
-fn register(request: &IncomingRequest) -> Outcome {
-    let body = match body(request) {
+async fn register(request: Request) -> Outcome {
+    let body = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -212,8 +240,8 @@ fn register(request: &IncomingRequest) -> Outcome {
     Outcome::Json(201, json!({ "subject": p.subject, "roles": [role] }).to_string())
 }
 
-fn login(request: &IncomingRequest) -> Outcome {
-    let body = match body(request) {
+async fn login(request: Request) -> Outcome {
+    let body = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -228,7 +256,7 @@ fn login(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn me(request: &IncomingRequest) -> Outcome {
+fn me(request: &Request) -> Outcome {
     match introspect(request) {
         Ok(p) => Outcome::Json(
             200,
@@ -238,7 +266,7 @@ fn me(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn logout(request: &IncomingRequest) -> Outcome {
+fn logout(request: &Request) -> Outcome {
     let Some(token) = bearer(request) else {
         return Outcome::Auth(AuthError::InvalidToken("missing bearer".into()));
     };
@@ -259,15 +287,15 @@ fn email_of(subject: &str) -> String {
 
 // ---- projects + categories (admin creates) ----------------------------------
 
-fn create_project(request: &IncomingRequest) -> Outcome {
-    let p = match introspect(request) {
+async fn create_project(request: Request) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
     if !is_admin(&p) {
         return Outcome::Err(403, "admin only".into());
     }
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -280,15 +308,15 @@ fn create_project(request: &IncomingRequest) -> Outcome {
     save_named(PROJECTS, d)
 }
 
-fn create_category(request: &IncomingRequest) -> Outcome {
-    let p = match introspect(request) {
+async fn create_category(request: Request) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
     if !is_admin(&p) {
         return Outcome::Err(403, "admin only".into());
     }
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -311,7 +339,7 @@ fn save_named(collection: &str, mut d: Value) -> Outcome {
     Outcome::Json(201, d.to_string())
 }
 
-fn list_named(request: &IncomingRequest, collection: &str) -> Outcome {
+fn list_named(request: &Request, collection: &str) -> Outcome {
     if let Err(o) = introspect(request) {
         return o;
     }
@@ -321,7 +349,7 @@ fn list_named(request: &IncomingRequest, collection: &str) -> Outcome {
 
 /// Projects the caller belongs to (admin: all), each annotated with the caller's
 /// role on it (`admin` | `lead` | `member`).
-fn list_projects(request: &IncomingRequest) -> Outcome {
+fn list_projects(request: &Request) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -360,8 +388,8 @@ fn subject_for_email(email: &str) -> Option<String> {
 }
 
 /// Admin or a project lead adds a user (by email) to the project as member|lead.
-fn add_member(request: &IncomingRequest, project: &str) -> Outcome {
-    let p = match introspect(request) {
+async fn add_member(request: Request, project: &str) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
@@ -371,7 +399,7 @@ fn add_member(request: &IncomingRequest, project: &str) -> Outcome {
     if !name_map(PROJECTS).contains_key(project) {
         return Outcome::Err(404, "no such project".into());
     }
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -412,7 +440,7 @@ fn add_member(request: &IncomingRequest, project: &str) -> Outcome {
     Outcome::Json(200, d.to_string())
 }
 
-fn list_members(request: &IncomingRequest, project: &str) -> Outcome {
+fn list_members(request: &Request, project: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -499,12 +527,12 @@ fn build_entry(subject: &str, b: &Value) -> Result<Value, Outcome> {
     }))
 }
 
-fn create_entry(request: &IncomingRequest) -> Outcome {
-    let p = match introspect(request) {
+async fn create_entry(request: Request) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -518,8 +546,8 @@ fn create_entry(request: &IncomingRequest) -> Outcome {
 }
 
 /// Edit own entry (owner or admin): minutes / category / day / note.
-fn edit_entry(request: &IncomingRequest, id: &str) -> Outcome {
-    let p = match introspect(request) {
+async fn edit_entry(request: Request, id: &str) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
@@ -533,7 +561,7 @@ fn edit_entry(request: &IncomingRequest, id: &str) -> Outcome {
     if d["user"].as_str() != Some(&p.subject) && !is_admin(&p) {
         return Outcome::Err(403, "not your entry".into());
     }
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -583,7 +611,7 @@ fn edit_entry(request: &IncomingRequest, id: &str) -> Outcome {
     }
 }
 
-fn delete_entry(request: &IncomingRequest, id: &str) -> Outcome {
+fn delete_entry(request: &Request, id: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -637,7 +665,7 @@ fn visible_entries(p: &Principal, from: &str, to: &str, scope_all: bool) -> Vec<
         .collect()
 }
 
-fn list_entries(request: &IncomingRequest, path: &str) -> Outcome {
+fn list_entries(request: &Request, path: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -659,12 +687,12 @@ fn my_timer(subject: &str) -> Option<(String, Value)> {
         .and_then(|e| serde_json::from_str::<Value>(&e.data).ok().map(|d| (e.id, d)))
 }
 
-fn timer_start(request: &IncomingRequest) -> Outcome {
-    let p = match introspect(request) {
+async fn timer_start(request: Request) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -693,7 +721,7 @@ fn timer_start(request: &IncomingRequest) -> Outcome {
     Outcome::Json(200, d.to_string())
 }
 
-fn timer_stop(request: &IncomingRequest) -> Outcome {
+fn timer_stop(request: &Request) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -713,7 +741,7 @@ fn timer_stop(request: &IncomingRequest) -> Outcome {
     save_indexed_entry(entry)
 }
 
-fn timer_get(request: &IncomingRequest) -> Outcome {
+fn timer_get(request: &Request) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -726,7 +754,7 @@ fn timer_get(request: &IncomingRequest) -> Outcome {
 
 // ---- report (the aggregation the charts render) -----------------------------
 
-fn report(request: &IncomingRequest, path: &str) -> Outcome {
+fn report(request: &Request, path: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -800,7 +828,7 @@ fn report_data(p: &Principal, path: &str) -> Value {
 }
 
 /// The same range report rendered to a downloadable PDF via `pdf:codec`.
-fn report_pdf(request: &IncomingRequest, path: &str) -> Outcome {
+fn report_pdf(request: &Request, path: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -903,8 +931,9 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let raw = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+async fn body(request: Request) -> Result<Value, Outcome> {
+    let raw =
+        read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
         return Ok(Value::Object(Default::default()));
     }
@@ -925,12 +954,12 @@ fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     if let Outcome::File(code, ctype, name, bytes) = result {
         let disp = format!("attachment; filename=\"{}\"", name);
-        return respond(response_out, code, &ctype, Some(&disp), &bytes);
+        return answer(code, &ctype, Some(&disp), bytes);
     }
     let (code, body) = match result {
         Outcome::Json(c, b) => (c, b),
@@ -945,31 +974,22 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
         }
         Outcome::File(..) => unreachable!(),
     };
-    respond(response_out, code, "application/json", None, body.as_bytes());
+    answer(code, "application/json", None, body.into_bytes())
 }
 
-fn respond(
-    response_out: ResponseOutparam,
+fn answer(
     status: u16,
     ctype: &str,
     disposition: Option<&str>,
-    body: &[u8],
-) {
+    body: Vec<u8>,
+) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[ctype.as_bytes().to_vec()]);
     if let Some(d) = disposition {
         let _ = headers.set("content-disposition", &[d.as_bytes().to_vec()]);
     }
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(status, headers, body)
 }
 
 bindings::export!(Component with_types_in bindings);

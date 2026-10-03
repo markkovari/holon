@@ -17,7 +17,7 @@
 package events:ticketing@0.1.0;
 
 world events-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     /// Events, tickets and swap offers.
     import records:store/store@0.1.0;
@@ -79,10 +79,10 @@ world events-domain {
     import sched:timer/timer@0.1.0;
 
     /// What time it is, for "is this reminder due" and for stamping a note.
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
     /// The sleep between SSE polls. A stream that spun would be a stream that
     /// burned a core per connected browser.
-    import wasi:clocks/monotonic-clock@0.2.0;
+    import wasi:clocks/monotonic-clock@0.3.0-rc-2026-03-15;
 
     /// Signing the stream ticket. `EventSource` cannot set an `Authorization`
     /// header, so a bearer cannot reach the SSE endpoint the way it reaches every

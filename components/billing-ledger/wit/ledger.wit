@@ -22,7 +22,7 @@ package ledger:app@0.1.0;
 
 /// The billing-ledger HTTP backend, composed from capability contracts.
 world ledger-app {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // integer minor-unit arithmetic: parse/format/add/subtract/allocate.
     import money:amount/arithmetic@0.1.0;

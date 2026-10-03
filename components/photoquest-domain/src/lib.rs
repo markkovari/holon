@@ -12,7 +12,39 @@
 //! Why the bytes of a photo never reach this component at all: ADR-0098.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../audit-log/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/ratelimit-guard",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../policy-guard/wit",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../media-pipeline/wit",
+            "../webhook-sign/wit",
+            "wit",
+        ],
+        world: "photoquest:domain/photoquest-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 mod clock;
 mod competitions;
 mod curation;
@@ -30,25 +62,25 @@ pub const TENANT: &str = "photoquest";
 /// every photo, and a role is a privilege, not a free-text field.
 const ROLES: &[&str] = &["photographer"];
 
-guestio::guest_write_all!();
-guestio::guest_bearer!();
+guestio::guest_p3_bearer!();
+guestio::guest_p3_respond!();
 
 /// The callback is the largest body here — 256 sharpness tiles plus Vision's
 /// boxes — and is tens of KiB. A megabyte is a ceiling, not a budget.
 const MAX_BODY_BYTES: usize = 1024 * 1024;
-guestio::guest_read_body_text!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
 guestauth::guest_auth_reply!();
 guestauth::guest_introspect!();
 guestauth::guest_role_check!(is_admin, "admin");
-guestauth::guest_audit!(TENANT);
+guestauth::guest_p3_audit!(TENANT);
 guestauth::guest_accounts_endpoints!(TENANT, ROLES, "photographer");
-guestauth::guest_emit!();
+guestauth::guest_p3_emit!();
 
 /// One request header's first value, empty when absent.
-fn header(request: &bindings::wasi::http::types::IncomingRequest, name: &str) -> String {
+fn header(request: &bindings::p3::http::types::Request, name: &str) -> String {
     request
-        .headers()
+        .get_headers()
         .get(name)
         .first()
         .map(|v| String::from_utf8_lossy(v).into_owned())
@@ -57,30 +89,28 @@ fn header(request: &bindings::wasi::http::types::IncomingRequest, name: &str) ->
 
 struct Component;
 
-impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
-    fn handle(
-        request: bindings::wasi::http::types::IncomingRequest,
-        response_out: bindings::wasi::http::types::ResponseOutparam,
-    ) {
-        use bindings::wasi::http::types::Method;
-        let path = request.path_with_query().unwrap_or_else(|| "/".into());
+impl bindings::p3::handler::Guest for Component {
+    async fn handle(
+        request: bindings::p3::http::types::Request,
+    ) -> Result<bindings::p3::http::types::Response, bindings::p3::http::types::ErrorCode> {
+        use bindings::p3::http::types::Method;
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".into());
         let raw_path = path.split('?').next().unwrap_or("/").to_string();
         let bearer = bearer(&request).unwrap_or_default();
-        // Read before the body: `headers()` is not readable once `consume()` has
-        // been called.
+        // Read before the body: reading it consumes the request.
         let signature = header(&request, "x-media-signature");
-        let method = request.method();
+        let method = request.get_method();
         // BYTES, kept as they arrived. The callback's signature is over the raw
         // body, and a body that went through `from_utf8_lossy` first is a
         // different body whenever it was not valid UTF-8.
         let bytes = match method {
             Method::Post | Method::Put | Method::Patch | Method::Delete => {
-                read_body_bytes(&request).ok()
+                read_body_bytes(request).await.ok()
             }
             _ => Some(Vec::new()),
         };
         let Some(bytes) = bytes else {
-            return emit(response_out, Reply::err(413, "body_too_large"));
+            return emit(Reply::err(413, "body_too_large"));
         };
         let body = String::from_utf8_lossy(&bytes).into_owned();
         let segments: Vec<String> =
@@ -117,7 +147,7 @@ impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
             (_, ["api", ..]) => photos::handle(&method, &route, &body),
             _ => Reply::err(404, "not_found"),
         };
-        emit(response_out, reply);
+        emit(reply)
     }
 }
 

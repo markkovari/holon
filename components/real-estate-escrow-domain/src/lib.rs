@@ -1,28 +1,55 @@
 //! `real-estate-escrow-domain` — hold property transactions behind a login, with per-account access
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/ratelimit-guard",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../audit-log/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "wit",
+        ],
+        world: "real-estate-escrow:real-estate-escrow/real-estate-escrow-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use bindings::auth::identity::accounts;
 use bindings::auth::identity::authorizer;
 use bindings::auth::identity::session;
 use bindings::auth::identity::types::{AuthError, Principal};
+use bindings::p3::clocks::system_clock;
 use bindings::records::store::store as records;
-use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::keyvalue::store;
 use serde_json::{json, Map, Value};
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Component;
 
 const TENANT: &str = "real-estate-escrow";
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
         // Measure usage
         if let Ok(bucket) = store::open("default") {
             let count_bytes = bucket.get("usage_count").unwrap_or(None).unwrap_or(b"0".to_vec());
@@ -30,8 +57,8 @@ impl Guest for Component {
             let _ = bucket.set("usage_count", (count + 1).to_string().as_bytes());
         }
 
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
@@ -43,15 +70,15 @@ impl Guest for Component {
                 Outcome::Css(include_str!("../ui/styles.css").to_string())
             }
             (Method::Get, ["app.js"]) => Outcome::Js(include_str!("../ui/app.js").to_string()),
-            (Method::Post, ["api", "register"]) => register(&request),
-            (Method::Post, ["api", "login"]) => login(&request),
+            (Method::Post, ["api", "register"]) => register(request).await,
+            (Method::Post, ["api", "login"]) => login(request).await,
             (Method::Post, ["api", "logout"]) => logout(&request),
             (Method::Get, ["api", "me"]) => me(&request),
             (Method::Get, ["api", "items"]) => list_items(&request),
-            (Method::Post, ["api", "items"]) => create_item(&request),
+            (Method::Post, ["api", "items"]) => create_item(request).await,
             _ => Outcome::Err(404, "not_found".into()),
         };
-        emit(response_out, outcome);
+        emit(outcome)
     }
 }
 
@@ -65,22 +92,23 @@ enum Outcome {
 }
 
 fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 // Removed serve_html() as it is now served directly via Outcome::Html
 
-guestio::guest_bearer!();
+guestio::guest_p3_bearer!();
 
-fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
+fn introspect(request: &Request) -> Result<Principal, Outcome> {
     let token =
         bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
-fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
+async fn body(request: Request) -> Result<Value, Outcome> {
     // simplified body reader
-    let raw = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+    let raw =
+        read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
         return Ok(Value::Object(Map::new()));
     }
@@ -90,10 +118,10 @@ fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// Ceiling on a request body, matching the rest of the tree.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
-fn register(request: &IncomingRequest) -> Outcome {
-    let b = match body(request) {
+async fn register(request: Request) -> Outcome {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -108,8 +136,8 @@ fn register(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn login(request: &IncomingRequest) -> Outcome {
-    let b = match body(request) {
+async fn login(request: Request) -> Outcome {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -121,7 +149,7 @@ fn login(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn logout(request: &IncomingRequest) -> Outcome {
+fn logout(request: &Request) -> Outcome {
     let token = match bearer(request) {
         Some(t) => t,
         None => return Outcome::Auth(AuthError::InvalidToken("missing bearer".into())),
@@ -132,15 +160,15 @@ fn logout(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn me(request: &IncomingRequest) -> Outcome {
+fn me(request: &Request) -> Outcome {
     match introspect(request) {
         Ok(p) => Outcome::Json(200, json!({ "subject": p.subject, "roles": p.roles }).to_string()),
         Err(o) => o,
     }
 }
 
-fn create_item(request: &IncomingRequest) -> Outcome {
-    let p = match introspect(request) {
+async fn create_item(request: Request) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
@@ -150,7 +178,7 @@ fn create_item(request: &IncomingRequest) -> Outcome {
         return Outcome::Err(403, "forbidden".into());
     }
 
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -166,7 +194,7 @@ fn create_item(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn list_items(request: &IncomingRequest) -> Outcome {
+fn list_items(request: &Request) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -185,7 +213,7 @@ fn list_items(request: &IncomingRequest) -> Outcome {
     Outcome::Json(200, json!({ "items": items }).to_string())
 }
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     let (code, body, content_type) = match result {
         Outcome::Html(b) => (200, b, b"text/html; charset=utf-8".to_vec()),
         Outcome::Css(b) => (200, b, b"text/css; charset=utf-8".to_vec()),
@@ -203,18 +231,9 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     };
     let headers = Fields::new();
     let _ = headers.set("content-type", &[content_type]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(code);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    let bytes = body.as_bytes();
-    if !bytes.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, bytes);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(code, headers, body.into_bytes())
 }
 
 bindings::export!(Component with_types_in bindings);
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();

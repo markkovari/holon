@@ -19,7 +19,7 @@ package drop:app@0.1.0;
 /// The upload pipeline (authorize -> redeem -> store -> record) + a signed
 /// download path, composed from capability contracts.
 world upload-drop {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // the gate: content-type/size policy + signed, expiring upload tickets.
     import upload:policy/gate@0.1.0;
@@ -30,5 +30,5 @@ world upload-drop {
     // object metadata + the store-minted id that keys the blob.
     import records:store/store@0.1.0;
     // ticket + object timestamps, download-link expiry.
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
 }

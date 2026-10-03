@@ -18,21 +18,46 @@
 //! functions with no host state of their own.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../validate/wit",
+            "../pii-redact/wit",
+            "../markdown/wit",
+            "../slug/wit",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../host/wit/deps/comp-store",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../record-store/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "wit",
+        ],
+        world: "bin:app/paste-bin",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde_json::{json, Value};
 
 use bindings::md::render::renderer as md;
+use bindings::p3::clocks::system_clock;
 use bindings::pii::redact::redactor as pii;
 use bindings::records::store::store as records;
 use bindings::slug::generate::generator as slug;
 use bindings::validate::schema::validator as validate;
-use bindings::wasi::clocks::wall_clock;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Component;
 
@@ -40,21 +65,21 @@ const PASTES: &str = "pastes";
 const MAX_BODY: u32 = 100_000;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => usage_json(),
-            (Method::Post, ["api", "paste"]) => create_paste(&request),
+            (Method::Post, ["api", "paste"]) => create_paste(request).await,
             (Method::Get, ["api", "paste", id]) => get_paste(id),
             (Method::Get, ["api", "pastes"]) => list_pastes(),
             (Method::Get, ["api", "raw", id]) => raw_paste(id),
             _ => Outcome::err(404, "not_found"),
         };
-        emit(response_out, outcome);
+        emit(outcome)
     }
 }
 
@@ -69,7 +94,7 @@ impl Outcome {
 }
 
 fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 /// The PII kinds masked at ingest.
@@ -96,8 +121,8 @@ fn usage_json() -> Outcome {
 
 // ---- create: validate -> redact -> store -> slug -----------------------------
 
-fn create_paste(request: &IncomingRequest) -> Outcome {
-    let body = match parse_body(request) {
+async fn create_paste(request: Request) -> Outcome {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -233,8 +258,8 @@ fn store_err(e: records::StoreError) -> Outcome {
 
 // ---- http plumbing -----------------------------------------------------------
 
-fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let body = read_body(request).map_err(|_| Outcome::err(400, "could not read body"))?;
+async fn parse_body(request: Request) -> Result<Value, Outcome> {
+    let body = read_body(request).await.map_err(|_| Outcome::err(400, "could not read body"))?;
     if body.is_empty() {
         return Ok(Value::Object(Default::default()));
     }
@@ -247,33 +272,18 @@ fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// component and the connection simply closes.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
-    match result {
-        Outcome::Json(code, body) => {
-            respond(response_out, code, "application/json", body.as_bytes())
-        }
-        Outcome::Text(code, body) => {
-            respond(response_out, code, "text/plain; charset=utf-8", body.as_bytes())
-        }
-    }
-}
-
-fn respond(response_out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
+    let (status, content_type, body) = match result {
+        Outcome::Json(code, body) => (code, "application/json", body),
+        Outcome::Text(code, body) => (code, "text/plain; charset=utf-8", body),
+    };
     let headers = Fields::new();
     let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(status, headers, body.into_bytes())
 }
 
 bindings::export!(Component with_types_in bindings);

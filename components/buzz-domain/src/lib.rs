@@ -6,7 +6,37 @@
 //! Real-time is client polling — comp-host is request/response.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/ratelimit-guard",
+            "../audit-log/wit",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "wit",
+        ],
+        world: "buzz:app/buzz-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+        pub use super::wasi::random0_3_0_rc_2026_03_15 as random;
+    }
+}
 
 use serde_json::{json, Map, Value};
 
@@ -14,14 +44,12 @@ use bindings::auth::identity::accounts;
 use bindings::auth::identity::authorizer;
 use bindings::auth::identity::session;
 use bindings::auth::identity::types::{AuthError, Principal};
+use bindings::p3::clocks::system_clock;
+use bindings::p3::random::random::get_random_u64;
 use bindings::records::store::store as records;
-use bindings::wasi::clocks::wall_clock;
-use bindings::wasi::random::random::get_random_u64;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Component;
 
@@ -33,34 +61,34 @@ const ANSWERS: &str = "answers";
 const BASE_POINTS: f64 = 1000.0;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => usage(),
-            (Method::Post, ["api", "register"]) => register(&request),
-            (Method::Post, ["api", "login"]) => login(&request),
+            (Method::Post, ["api", "register"]) => register(request).await,
+            (Method::Post, ["api", "login"]) => login(request).await,
             (Method::Post, ["api", "logout"]) => logout(&request),
             (Method::Get, ["api", "me"]) => me(&request),
 
-            (Method::Post, ["api", "quizzes"]) => create_quiz(&request),
+            (Method::Post, ["api", "quizzes"]) => create_quiz(request).await,
             (Method::Get, ["api", "quizzes"]) => list_quizzes(&request),
-            (Method::Post, ["api", "games"]) => create_game(&request),
+            (Method::Post, ["api", "games"]) => create_game(request).await,
             (Method::Get, ["api", "games", pin, "host"]) => host_view(&request, pin),
             (Method::Post, ["api", "games", pin, "start"]) => host_advance(&request, pin, "start"),
             (Method::Post, ["api", "games", pin, "reveal"]) => {
                 host_advance(&request, pin, "reveal")
             }
             (Method::Post, ["api", "games", pin, "next"]) => host_advance(&request, pin, "next"),
-            (Method::Post, ["api", "games", pin, "join"]) => join(&request, pin),
+            (Method::Post, ["api", "games", pin, "join"]) => join(request, pin).await,
             (Method::Get, ["api", "games", pin, "play"]) => play_view(&request, pin, &path),
-            (Method::Post, ["api", "games", pin, "answer"]) => answer(&request, pin),
+            (Method::Post, ["api", "games", pin, "answer"]) => answer(request, pin).await,
             _ => Outcome::Err(404, "not_found".into()),
         };
-        emit(response_out, outcome);
+        emit(outcome)
     }
 }
 
@@ -71,8 +99,8 @@ enum Outcome {
 }
 
 fn now_ms() -> u64 {
-    let t = wall_clock::now();
-    t.seconds * 1000 + (t.nanoseconds / 1_000_000) as u64
+    let t = system_clock::now();
+    t.seconds as u64 * 1000 + (t.nanoseconds / 1_000_000) as u64
 }
 
 fn usage() -> Outcome {
@@ -90,17 +118,17 @@ fn usage() -> Outcome {
 
 // ---- auth (host only) -------------------------------------------------------
 
-guestio::guest_bearer!();
-guestio::guest_write_all!();
+guestio::guest_p3_bearer!();
+guestio::guest_p3_respond!();
 
-fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
+fn introspect(request: &Request) -> Result<Principal, Outcome> {
     let token =
         bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
-fn register(request: &IncomingRequest) -> Outcome {
-    let body = match body(request) {
+async fn register(request: Request) -> Outcome {
+    let body = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -114,8 +142,8 @@ fn register(request: &IncomingRequest) -> Outcome {
     Outcome::Json(201, json!({ "subject": p.subject }).to_string())
 }
 
-fn login(request: &IncomingRequest) -> Outcome {
-    let body = match body(request) {
+async fn login(request: Request) -> Outcome {
+    let body = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -130,14 +158,14 @@ fn login(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn me(request: &IncomingRequest) -> Outcome {
+fn me(request: &Request) -> Outcome {
     match introspect(request) {
         Ok(p) => Outcome::Json(200, json!({ "subject": p.subject, "roles": p.roles }).to_string()),
         Err(o) => o,
     }
 }
 
-fn logout(request: &IncomingRequest) -> Outcome {
+fn logout(request: &Request) -> Outcome {
     let token = match bearer(request) {
         Some(t) => t,
         None => return Outcome::Auth(AuthError::InvalidToken("missing bearer".into())),
@@ -178,12 +206,12 @@ fn game_by_pin(pin: &str) -> Option<Value> {
 
 // ---- quizzes ----------------------------------------------------------------
 
-fn create_quiz(request: &IncomingRequest) -> Outcome {
-    let p = match introspect(request) {
+async fn create_quiz(request: Request) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -210,7 +238,7 @@ fn create_quiz(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn list_quizzes(request: &IncomingRequest) -> Outcome {
+fn list_quizzes(request: &Request) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -237,12 +265,12 @@ fn mint_pin() -> String {
     format!("{:06}", now_ms() % 1_000_000)
 }
 
-fn create_game(request: &IncomingRequest) -> Outcome {
-    let p = match introspect(request) {
+async fn create_game(request: Request) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -290,7 +318,7 @@ fn answers_for(pin: &str, q: i64) -> Vec<Value> {
     find(ANSWERS, "game", pin).into_iter().filter(|a| a["q"].as_i64() == Some(q)).collect()
 }
 
-fn host_advance(request: &IncomingRequest, pin: &str, action: &str) -> Outcome {
+fn host_advance(request: &Request, pin: &str, action: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -372,7 +400,7 @@ fn grade(pin: &str, g: &Value, questions: &[Value]) {
     }
 }
 
-fn host_view(request: &IncomingRequest, pin: &str) -> Outcome {
+fn host_view(request: &Request, pin: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -413,7 +441,7 @@ fn host_view(request: &IncomingRequest, pin: &str) -> Outcome {
 
 // ---- players (anonymous) ----------------------------------------------------
 
-fn join(request: &IncomingRequest, pin: &str) -> Outcome {
+async fn join(request: Request, pin: &str) -> Outcome {
     let g = match game_by_pin(pin) {
         Some(g) => g,
         None => return Outcome::Err(404, "no game with that PIN".into()),
@@ -421,7 +449,7 @@ fn join(request: &IncomingRequest, pin: &str) -> Outcome {
     if g["phase"].as_str() != Some("lobby") {
         return Outcome::Err(409, "the game already started".into());
     }
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -442,7 +470,7 @@ fn player_of(pin: &str, id: &str) -> Option<Value> {
     get(PLAYERS, id).filter(|p| p["game"].as_str() == Some(pin))
 }
 
-fn answer(request: &IncomingRequest, pin: &str) -> Outcome {
+async fn answer(request: Request, pin: &str) -> Outcome {
     let g = match game_by_pin(pin) {
         Some(g) => g,
         None => return Outcome::Err(404, "no such game".into()),
@@ -450,7 +478,7 @@ fn answer(request: &IncomingRequest, pin: &str) -> Outcome {
     if g["phase"].as_str() != Some("question") {
         return Outcome::Err(409, "not accepting answers right now".into());
     }
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -473,7 +501,7 @@ fn rank_of(ranked: &[Value], player_id: &str) -> usize {
     ranked.iter().position(|p| p["id"].as_str() == Some(player_id)).map(|i| i + 1).unwrap_or(0)
 }
 
-fn play_view(request: &IncomingRequest, pin: &str, path: &str) -> Outcome {
+fn play_view(request: &Request, pin: &str, path: &str) -> Outcome {
     let _ = request;
     let g = match game_by_pin(pin) {
         Some(g) => g,
@@ -569,8 +597,9 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let raw = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+async fn body(request: Request) -> Result<Value, Outcome> {
+    let raw =
+        read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
         return Ok(Value::Object(Map::new()));
     }
@@ -591,9 +620,9 @@ fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     let (code, body) = match result {
         Outcome::Json(c, b) => (c, b),
         Outcome::Err(c, m) => (c, json!({ "error": m }).to_string()),
@@ -609,16 +638,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(code);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    let bytes = body.as_bytes();
-    if !bytes.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, bytes);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(code, headers, body.into_bytes())
 }
 
 bindings::export!(Component with_types_in bindings);

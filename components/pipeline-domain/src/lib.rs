@@ -12,22 +12,45 @@
 //! pulse — carrying a reliability story: retry, backoff, dead-letter, replay.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../outbox/wit",
+            "../event-bus/wit",
+            "../id-generate/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "wit",
+        ],
+        world: "pipeline:app/pipeline-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde_json::{json, Value};
 
 use bindings::event::bus::bus;
 use bindings::id::generate::generator as ids;
 use bindings::outbox::dispatch::queue;
-use bindings::wasi::clocks::monotonic_clock;
-use bindings::wasi::clocks::wall_clock;
+use bindings::p3::clocks::monotonic_clock;
+use bindings::p3::clocks::system_clock;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 struct Component;
 
@@ -43,9 +66,9 @@ const CLAIM_MAX: u32 = 32;
 const LEASE_SECS: u64 = 30;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
@@ -53,9 +76,7 @@ impl Guest for Component {
             // The SSE route owns the response (it streams); everything else
             // computes an Outcome and emits once. Routes under /api so the
             // static-dir SPA fallback (index.html for unknown GETs) leaves them.
-            (Method::Get, ["api", "stream"]) => {
-                stream_events(response_out, &path);
-            }
+            (Method::Get, ["api", "stream"]) => stream_events(&path),
             _ => {
                 let outcome = match (&method, seg.as_slice()) {
                     (Method::Get, [""]) | (Method::Get, ["index.html"]) => {
@@ -68,14 +89,14 @@ impl Guest for Component {
                         Outcome::Js(include_str!("../ui/app.js").to_string())
                     }
                     (Method::Get, ["api", "info"]) => usage_json(),
-                    (Method::Post, ["api", "events"]) => enqueue_event(&request),
+                    (Method::Post, ["api", "events"]) => enqueue_event(request).await,
                     (Method::Get, ["api", "events"]) => snapshot(&path),
-                    (Method::Post, ["api", "sink"]) => set_sink(&request),
+                    (Method::Post, ["api", "sink"]) => set_sink(request).await,
                     (Method::Get, ["api", "dead-letters"]) => dead_letters(),
                     (Method::Post, ["api", "dead-letters", id, "replay"]) => replay(id),
                     _ => Outcome::Err(404, "not_found".into()),
                 };
-                emit(response_out, outcome);
+                emit(outcome)
             }
         }
     }
@@ -90,7 +111,7 @@ enum Outcome {
 }
 
 fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 fn usage_json() -> Outcome {
@@ -113,8 +134,8 @@ fn usage_json() -> Outcome {
 // ---- ingress -----------------------------------------------------------------
 
 /// Enqueue an event into the durable outbox. Immediately eligible for the relay.
-fn enqueue_event(request: &IncomingRequest) -> Outcome {
-    let body = match parse_body(request) {
+async fn enqueue_event(request: Request) -> Outcome {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -138,8 +159,8 @@ fn enqueue_event(request: &IncomingRequest) -> Outcome {
 
 /// The demo knob: record the sink up/down as the newest control event. The relay
 /// reads the latest on each pump; a down sink makes every dispatch `fail`.
-fn set_sink(request: &IncomingRequest) -> Outcome {
-    let body = match parse_body(request) {
+async fn set_sink(request: Request) -> Outcome {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -279,24 +300,22 @@ fn event_json(e: &queue::Event) -> Value {
 // ---- the SSE stream ----------------------------------------------------------
 
 /// Hold the connection open, pump the relay each tick, and push every new
-/// transition as an SSE `data:` frame. Sets the response early, then loops until
-/// the client disconnects (a write error) or the connection cap is hit.
-fn stream_events(response_out: ResponseOutparam, path: &str) {
+/// transition as an SSE `data:` frame. Returns the response at once; a spawned
+/// task loops until the client disconnects (a short write) or the connection cap
+/// is hit.
+fn stream_events(path: &str) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
     let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(200);
-    let body = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
 
     // default: only transitions produced after we connect. `?after=` catches up.
     let mut cursor = query_i64(path, "after").unwrap_or_else(current_seq);
 
-    {
-        let stream = body.write().expect("write stream");
-        if !write_all(&stream, b": connected\n\n") {
+    let (mut tx, rx) = bindings::wit_stream::new();
+    wit_bindgen::spawn_local(async move {
+        // `write_all` hands back what the reader did not take: non-empty = hangup.
+        if !tx.write_all(b": connected\n\n".to_vec()).await.is_empty() {
             return;
         }
         for _ in 0..MAX_TICKS {
@@ -308,13 +327,16 @@ fn stream_events(response_out: ResponseOutparam, path: &str) {
             } else {
                 rows.iter().map(|r| format!("data: {r}\n\n")).collect::<String>()
             };
-            if !write_all(&stream, frame.as_bytes()) {
+            if !tx.write_all(frame.into_bytes()).await.is_empty() {
                 break; // client disconnected
             }
-            monotonic_clock::subscribe_duration(POLL_MS * 1_000_000).block();
+            monotonic_clock::wait_for(POLL_MS * 1_000_000).await;
         }
-    }
-    let _ = OutgoingBody::finish(body, None);
+    });
+    let (trailers_tx, trailers_rx) = bindings::wit_future::new(|| Ok(None));
+    drop(trailers_tx);
+    let (response, _sent) = Response::new(headers, Some(rx), trailers_rx);
+    Ok(response)
 }
 
 /// Highest transition seq so far (the "only new" starting cursor).
@@ -336,8 +358,9 @@ fn queue_err(e: queue::OutboxError) -> Outcome {
     }
 }
 
-fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let body = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+async fn parse_body(request: Request) -> Result<Value, Outcome> {
+    let body =
+        read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if body.is_empty() {
         return Ok(Value::Object(Default::default()));
     }
@@ -358,7 +381,7 @@ fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
 /// Read query param `key` as an i64 (for the `after` cursor).
 fn query_i64(path: &str, key: &str) -> Option<i64> {
@@ -369,42 +392,24 @@ fn query_i64(path: &str, key: &str) -> Option<i64> {
     })
 }
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Html(html) => {
-            respond(response_out, 200, "text/html; charset=utf-8", html.as_bytes())
+        Outcome::Html(html) => respond_cors(200, "text/html; charset=utf-8", html),
+        Outcome::Css(css) => respond_cors(200, "text/css; charset=utf-8", css),
+        Outcome::Js(js) => respond_cors(200, "application/javascript; charset=utf-8", js),
+        Outcome::Json(code, body) => respond_cors(code, "application/json", body),
+        Outcome::Err(code, msg) => {
+            respond_cors(code, "application/json", json!({ "error": msg }).to_string())
         }
-        Outcome::Css(css) => respond(response_out, 200, "text/css; charset=utf-8", css.as_bytes()),
-        Outcome::Js(js) => {
-            respond(response_out, 200, "application/javascript; charset=utf-8", js.as_bytes())
-        }
-        Outcome::Json(code, body) => {
-            respond(response_out, code, "application/json", body.as_bytes())
-        }
-        Outcome::Err(code, msg) => respond(
-            response_out,
-            code,
-            "application/json",
-            json!({ "error": msg }).to_string().as_bytes(),
-        ),
     }
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {
+/// `access-control-allow-origin: *` on every non-streamed response.
+fn respond_cors(status: u16, content_type: &str, body: String) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        for chunk in body.chunks(4096) {
-            let _ = write_all(&stream, chunk);
-        }
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(status, headers, body.into_bytes())
 }
 
 bindings::export!(Component with_types_in bindings);

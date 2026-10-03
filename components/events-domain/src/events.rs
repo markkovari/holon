@@ -10,10 +10,10 @@
 use serde_json::json;
 
 use crate::bindings::blob::store::blobstore as blobs;
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::quota::meter::meter as quota;
 use crate::bindings::records::store::store as records;
 use crate::bindings::upload::policy::gate as policy;
-use crate::bindings::wasi::http::types::Method;
 use crate::store::{find_by_str, load, quota_subject, save, with_id, PAGE, QUOTA_PERIOD};
 use crate::{has_role, require, Reply, Route};
 

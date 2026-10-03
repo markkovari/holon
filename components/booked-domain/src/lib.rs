@@ -6,7 +6,40 @@
 //! storage, locking, calendar format, or recurrence math.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/ratelimit-guard",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../audit-log/wit",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../lock-mutex/wit",
+            "../email-render/wit",
+            "../ical/wit",
+            "../rrule/wit",
+            "wit",
+        ],
+        world: "booked:app/booked-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde_json::{json, Map, Value};
 
@@ -18,14 +51,12 @@ use bindings::auth::identity::types::{AuthError, Principal};
 use bindings::email::template::renderer as email;
 use bindings::ical::codec::codec as ical;
 use bindings::lock::mutex::mutex as lock;
+use bindings::p3::clocks::system_clock;
 use bindings::records::store::store as records;
 use bindings::rrule::recur::recur as rrule;
-use bindings::wasi::clocks::wall_clock;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Component;
 
@@ -38,23 +69,23 @@ const USERS: &str = "users";
 const CONFIRM_TMPL: &str = "booking-confirmation";
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => usage(),
-            (Method::Post, ["api", "register"]) => register(&request),
-            (Method::Post, ["api", "login"]) => login(&request),
+            (Method::Post, ["api", "register"]) => register(request).await,
+            (Method::Post, ["api", "login"]) => login(request).await,
             (Method::Post, ["api", "logout"]) => logout(&request),
             (Method::Get, ["api", "me"]) => me(&request),
 
-            (Method::Post, ["api", "resources"]) => create_resource(&request),
+            (Method::Post, ["api", "resources"]) => create_resource(request).await,
             (Method::Get, ["api", "resources"]) => list_resources(&request),
             (Method::Post, ["api", "resources", id, "availability"]) => {
-                set_availability(&request, id)
+                set_availability(request, id).await
             }
             (Method::Get, ["api", "resources", id, "availability"]) => {
                 get_availability(&request, id)
@@ -62,7 +93,7 @@ impl Guest for Component {
             (Method::Get, ["api", "resources", id, "slots"]) => slots(&request, id, &path),
             (Method::Get, ["api", "resources", id, "calendar.ics"]) => resource_ics(&request, id),
 
-            (Method::Post, ["api", "bookings"]) => create_booking(&request),
+            (Method::Post, ["api", "bookings"]) => create_booking(request).await,
             (Method::Get, ["api", "bookings"]) => list_bookings(&request, &path),
             (Method::Delete, ["api", "bookings", id]) => cancel_booking(&request, id),
             (Method::Get, ["api", "bookings", x]) if x.ends_with(".ics") => {
@@ -70,7 +101,7 @@ impl Guest for Component {
             }
             _ => Outcome::Err(404, "not_found".into()),
         };
-        emit(response_out, outcome);
+        emit(outcome)
     }
 }
 
@@ -83,7 +114,7 @@ enum Outcome {
 }
 
 fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 fn usage() -> Outcome {
@@ -162,10 +193,10 @@ fn hhmm(min: i64) -> String {
 
 // ---- auth (auth-guard: auth:identity) ---------------------------------------
 
-guestio::guest_bearer!();
-guestio::guest_write_all!();
+guestio::guest_p3_bearer!();
+guestio::guest_p3_respond!();
 
-fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
+fn introspect(request: &Request) -> Result<Principal, Outcome> {
     let token =
         bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
@@ -185,8 +216,8 @@ fn subject_email(subject: &str) -> String {
         .unwrap_or_default()
 }
 
-fn register(request: &IncomingRequest) -> Outcome {
-    let body = match body(request) {
+async fn register(request: Request) -> Outcome {
+    let body = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -205,8 +236,8 @@ fn register(request: &IncomingRequest) -> Outcome {
     Outcome::Json(201, json!({ "subject": p.subject, "roles": [role] }).to_string())
 }
 
-fn login(request: &IncomingRequest) -> Outcome {
-    let body = match body(request) {
+async fn login(request: Request) -> Outcome {
+    let body = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -221,7 +252,7 @@ fn login(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn me(request: &IncomingRequest) -> Outcome {
+fn me(request: &Request) -> Outcome {
     match introspect(request) {
         Ok(p) => Outcome::Json(
             200,
@@ -231,7 +262,7 @@ fn me(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn logout(request: &IncomingRequest) -> Outcome {
+fn logout(request: &Request) -> Outcome {
     let token = match bearer(request) {
         Some(t) => t,
         None => return Outcome::Auth(AuthError::InvalidToken("missing bearer".into())),
@@ -244,15 +275,15 @@ fn logout(request: &IncomingRequest) -> Outcome {
 
 // ---- resources + availability (owner-managed) -------------------------------
 
-fn create_resource(request: &IncomingRequest) -> Outcome {
-    let p = match introspect(request) {
+async fn create_resource(request: Request) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
     if !is_owner(&p) {
         return Outcome::Err(403, "owner only".into());
     }
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -283,7 +314,7 @@ fn resource(id: &str) -> Option<Value> {
     )
 }
 
-fn list_resources(request: &IncomingRequest) -> Outcome {
+fn list_resources(request: &Request) -> Outcome {
     if let Err(o) = introspect(request) {
         return o;
     }
@@ -301,8 +332,8 @@ fn list_resources(request: &IncomingRequest) -> Outcome {
     Outcome::Json(200, json!({ "items": items }).to_string())
 }
 
-fn set_availability(request: &IncomingRequest, id: &str) -> Outcome {
-    let p = match introspect(request) {
+async fn set_availability(request: Request, id: &str) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
@@ -312,7 +343,7 @@ fn set_availability(request: &IncomingRequest, id: &str) -> Outcome {
     if resource(id).is_none() {
         return Outcome::Err(404, "no such resource".into());
     }
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -349,7 +380,7 @@ fn availability(id: &str) -> Vec<Value> {
     v
 }
 
-fn get_availability(request: &IncomingRequest, id: &str) -> Outcome {
+fn get_availability(request: &Request, id: &str) -> Outcome {
     if let Err(o) = introspect(request) {
         return o;
     }
@@ -466,12 +497,12 @@ fn confirmation(email_addr: &str, res_name: &str, day: &str, start: i64, end: i6
     }
 }
 
-fn create_booking(request: &IncomingRequest) -> Outcome {
-    let p = match introspect(request) {
+async fn create_booking(request: Request) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
-    let b = match body(request) {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -552,7 +583,7 @@ fn expand_repeat(day: &str, rep: &Value) -> Vec<String> {
     }
 }
 
-fn list_bookings(request: &IncomingRequest, path: &str) -> Outcome {
+fn list_bookings(request: &Request, path: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -592,7 +623,7 @@ fn booking(id: &str) -> Option<Value> {
     )
 }
 
-fn cancel_booking(request: &IncomingRequest, id: &str) -> Outcome {
+fn cancel_booking(request: &Request, id: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -629,7 +660,7 @@ fn booking_event(bk: &Value) -> ical::Event {
     }
 }
 
-fn booking_ics(request: &IncomingRequest, id: &str) -> Outcome {
+fn booking_ics(request: &Request, id: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -650,7 +681,7 @@ fn booking_ics(request: &IncomingRequest, id: &str) -> Outcome {
     )
 }
 
-fn resource_ics(request: &IncomingRequest, id: &str) -> Outcome {
+fn resource_ics(request: &Request, id: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -681,7 +712,7 @@ fn resource_ics(request: &IncomingRequest, id: &str) -> Outcome {
 
 // ---- free-slot search -------------------------------------------------------
 
-fn slots(request: &IncomingRequest, id: &str, path: &str) -> Outcome {
+fn slots(request: &Request, id: &str, path: &str) -> Outcome {
     if let Err(o) = introspect(request) {
         return o;
     }
@@ -747,8 +778,9 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let raw = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+async fn body(request: Request) -> Result<Value, Outcome> {
+    let raw =
+        read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
         return Ok(Value::Object(Map::new()));
     }
@@ -769,12 +801,12 @@ fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     if let Outcome::File(code, ctype, name, bytes) = result {
         let disp = name.map(|n| format!("attachment; filename=\"{}\"", n));
-        return respond(response_out, code, &ctype, disp.as_deref(), &bytes);
+        return send(code, &ctype, disp.as_deref(), bytes);
     }
     let (code, body) = match result {
         Outcome::Json(c, b) => (c, b),
@@ -789,31 +821,22 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
         }
         Outcome::File(..) => unreachable!(),
     };
-    respond(response_out, code, "application/json", None, body.as_bytes());
+    send(code, "application/json", None, body.into_bytes())
 }
 
-fn respond(
-    response_out: ResponseOutparam,
+fn send(
     status: u16,
     ctype: &str,
     disposition: Option<&str>,
-    body: &[u8],
-) {
+    body: Vec<u8>,
+) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[ctype.as_bytes().to_vec()]);
     if let Some(d) = disposition {
         let _ = headers.set("content-disposition", &[d.as_bytes().to_vec()]);
     }
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(status, headers, body)
 }
 
 bindings::export!(Component with_types_in bindings);

@@ -2,10 +2,10 @@ use crate::bindings::ai::inference::inference as ai;
 use crate::bindings::auth::identity::authorizer as authz;
 use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
 use crate::bindings::outbox::dispatch::queue as outbox;
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::quota::meter::meter;
 use crate::bindings::records::store::store as records;
 use crate::bindings::session::store::store as sessions;
-use crate::bindings::wasi::http::types::Method;
 use crate::{cfg_u64, now_secs, Reply, Route};
 use serde_json::{json, Value};
 

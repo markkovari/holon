@@ -12,10 +12,10 @@
 use serde_json::json;
 
 use crate::bindings::id::generate::generator as ids;
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::qr::encode::encoder as qr;
 use crate::bindings::quota::meter::meter as quota;
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
 use crate::store::{find_by_str, load, quota_subject, with_id, QUOTA_PERIOD};
 use crate::{has_role, require, Reply, Route};
 

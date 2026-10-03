@@ -1,5 +1,4 @@
-use crate::bindings::exports::wasi::http::incoming_handler::{IncomingRequest, ResponseOutparam};
-use crate::bindings::wasi::http::types::{Fields, OutgoingBody, OutgoingResponse};
+use crate::bindings::p3::http::types::{ErrorCode, Request, Response};
 use crate::reply;
 use crate::tickets;
 
@@ -19,47 +18,47 @@ impl Reply {
     }
 }
 
-pub fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-    let method = request.method();
-    let path_with_query = request.path_with_query().unwrap_or_else(|| "/".to_string());
+pub async fn handle(request: Request) -> Result<Response, ErrorCode> {
+    let method = request.get_method();
+    let path_with_query = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
     let path = path_with_query.split('?').next().unwrap_or("/");
 
     let reply = match (method, path) {
-        (crate::bindings::wasi::http::types::Method::Get, "/")
-        | (crate::bindings::wasi::http::types::Method::Get, "/index.html") => Reply {
+        (crate::bindings::p3::http::types::Method::Get, "/")
+        | (crate::bindings::p3::http::types::Method::Get, "/index.html") => Reply {
             status: 200,
             content_type: "text/html",
             body: include_bytes!("../ui/index.html").to_vec(),
         },
-        (crate::bindings::wasi::http::types::Method::Get, "/styles.css") => Reply {
+        (crate::bindings::p3::http::types::Method::Get, "/styles.css") => Reply {
             status: 200,
             content_type: "text/css",
             body: include_bytes!("../ui/styles.css").to_vec(),
         },
-        (crate::bindings::wasi::http::types::Method::Get, "/app.js") => Reply {
+        (crate::bindings::p3::http::types::Method::Get, "/app.js") => Reply {
             status: 200,
             content_type: "application/javascript",
             body: include_bytes!("../ui/app.js").to_vec(),
         },
-        (crate::bindings::wasi::http::types::Method::Get, "/api/tickets") => tickets::list(),
-        (crate::bindings::wasi::http::types::Method::Post, "/api/tickets") => {
-            let body = read_body(request);
+        (crate::bindings::p3::http::types::Method::Get, "/api/tickets") => tickets::list(),
+        (crate::bindings::p3::http::types::Method::Post, "/api/tickets") => {
+            let body = read_body(request).await;
             tickets::create(&body)
         }
-        (crate::bindings::wasi::http::types::Method::Post, p)
+        (crate::bindings::p3::http::types::Method::Post, p)
             if p.starts_with("/api/tickets/") && p.ends_with("/reply") =>
         {
             let id = p.trim_start_matches("/api/tickets/").trim_end_matches("/reply");
-            let body = read_body(request);
+            let body = read_body(request).await;
             reply::add_reply(id, &body)
         }
-        (crate::bindings::wasi::http::types::Method::Post, p)
+        (crate::bindings::p3::http::types::Method::Post, p)
             if p.starts_with("/api/tickets/") && p.ends_with("/suggest") =>
         {
             let id = p.trim_start_matches("/api/tickets/").trim_end_matches("/suggest");
             reply::suggest_reply(id)
         }
-        (crate::bindings::wasi::http::types::Method::Post, p)
+        (crate::bindings::p3::http::types::Method::Post, p)
             if p.starts_with("/api/tickets/") && p.ends_with("/close") =>
         {
             let id = p.trim_start_matches("/api/tickets/").trim_end_matches("/close");
@@ -68,49 +67,14 @@ pub fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
         _ => Reply::err(404, "not_found"),
     };
 
-    send_reply(response_out, reply);
+    respond(reply.status, reply.content_type, reply.body)
 }
 
-fn read_body(req: IncomingRequest) -> String {
-    let incoming_body = req.consume().expect("request body should be readable");
-    let stream = incoming_body.stream().expect("stream should be available");
-    let mut buf = Vec::new();
-    const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
-    loop {
-        match stream.blocking_read(1024) {
-            Ok(bytes) => {
-                buf.extend(bytes);
-                if buf.len() > MAX_BODY_BYTES {
-                    break;
-                }
-            }
-            Err(crate::bindings::wasi::io::streams::StreamError::Closed) => break,
-            Err(_) => break,
-        }
-    }
-    String::from_utf8(buf).unwrap_or_default()
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+guestio::guest_p3_read_body_named!(read_body_bytes, MAX_BODY_BYTES);
+
+/// The body as UTF-8 — empty if it is unreadable, over the ceiling, or not UTF-8.
+async fn read_body(req: Request) -> String {
+    String::from_utf8(read_body_bytes(req).await.unwrap_or_default()).unwrap_or_default()
 }
-
-fn send_reply(response_out: ResponseOutparam, reply: Reply) {
-    let headers = Fields::new();
-    headers.set("content-type", &[reply.content_type.as_bytes().to_vec()]).unwrap();
-
-    let response = OutgoingResponse::new(headers);
-    response.set_status_code(reply.status).unwrap();
-
-    let outgoing_body = response.body().unwrap();
-    let write_stream = outgoing_body.write().unwrap();
-
-    ResponseOutparam::set(response_out, Ok(response));
-
-    if !reply.body.is_empty() {
-        for chunk in reply.body.chunks(4096) {
-            match write_stream.blocking_write_and_flush(chunk) {
-                Ok(_) => {}
-                Err(_) => break,
-            }
-        }
-    }
-    drop(write_stream);
-    OutgoingBody::finish(outgoing_body, None).unwrap();
-}
+guestio::guest_p3_respond!();

@@ -18,7 +18,7 @@ package bin:app@0.1.0;
 /// The paste pipeline (validate -> redact -> store -> slug) + the read-side
 /// render, composed from mostly pure-compute contracts.
 world paste-bin {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // input validation (body required + length bounds).
     import validate:schema/validator@0.1.0;
@@ -31,5 +31,5 @@ world paste-bin {
     // the only stateful piece: the stored (already-redacted) pastes.
     import records:store/store@0.1.0;
     // paste timestamps.
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
 }

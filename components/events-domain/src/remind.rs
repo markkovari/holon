@@ -19,9 +19,9 @@
 use serde_json::json;
 
 use crate::bindings::notify::prefs::preferences as notify;
+use crate::bindings::p3::clocks::system_clock;
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::sched::timer::timer;
-use crate::bindings::wasi::clocks::wall_clock;
-use crate::bindings::wasi::http::types::Method;
 use crate::store::{find_by_str, load};
 use crate::{require, Reply, Route};
 
@@ -35,7 +35,7 @@ fn job_key(event_id: &str) -> String {
 }
 
 pub fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 /// `2026-09-01T18:00:00Z` -> unix seconds.

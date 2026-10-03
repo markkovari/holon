@@ -2,8 +2,8 @@ use crate::bindings::ai::inference::inference as ai;
 use crate::bindings::ai::inference::inference::Length;
 use crate::bindings::auth::identity::authorizer as authz;
 use crate::bindings::auth::identity::types::{AuthError, Permission};
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
 use crate::{ledger, Reply, Route};
 use serde_json::{json, Value};
 

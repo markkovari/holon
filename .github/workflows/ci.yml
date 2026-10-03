@@ -486,9 +486,11 @@ jobs:
         with:
           tool: cargo-component@0.21.1
 
+      # `version-probe` is a p3 crate now: `wit_bindgen::generate!` makes its
+      # bindings at compile time, so only `slug` needs cargo-component here.
       - name: Generate bindings for the crates newversion/slug_live don't generate their own for
         working-directory: components
-        run: cargo component check --release -p version-probe -p slug
+        run: cargo component check --release -p slug
 
       # nats-server, and it buys more than any other line in this file.
       #
@@ -807,9 +809,10 @@ jobs:
           workspaces: components -> target
       # Clippy needs the generated bindings but not the metadata pass, so this
       # one stays a bare `cargo component check`.
+      # `xtask bindings`, not a bare `cargo component check`: that one also tries
+      # the p3 crates, whose worlds it cannot resolve.
       - name: Generate bindings
-        working-directory: components
-        run: cargo component check --release
+        run: cargo xtask bindings
       - name: Clippy
         working-directory: components
         # #112 cleared main's backlog to 22 and left this line advisory "the

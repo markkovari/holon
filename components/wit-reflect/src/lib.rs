@@ -864,7 +864,7 @@ mod tests {
         // ELSE will have an empty name, which is why callers still supply ids.
         assert_eq!(s.name, "mesh-domain", "the build's `wasm-tools metadata add` pass");
         assert_eq!(s.exports.len(), 1);
-        assert_eq!(s.exports[0].raw, "wasi:http/incoming-handler@0.2.0");
+        assert_eq!(s.exports[0].raw, "wasi:http/handler@0.3.0-rc-2026-03-15"); // p3 (ADR-0103)
         let composable: Vec<&str> = s.imports.iter().map(|i| i.raw.as_str()).collect();
         assert!(composable.contains(&"records:store/store@0.1.0"));
         assert!(composable.contains(&"resilience:breaker/breaker@0.1.0"));
@@ -874,7 +874,7 @@ mod tests {
         assert!(s.host_imports.iter().all(|h| h.namespace == "wasi"));
         assert!(
             s.host_imports.iter().any(|h| h.raw == "wasi:keyvalue/store@0.2.0-draft")
-                || s.host_imports.iter().any(|h| h.name == "wall-clock")
+                || s.host_imports.iter().any(|h| h.name == "wall-clock" || h.name == "system-clock")
         );
     }
 
@@ -958,7 +958,7 @@ mod tests {
             .host_imports
             .iter()
             .any(|h| h.name == "incoming-handler" || h.namespace == "wasi"));
-        assert_eq!(s.exports[0].raw, "wasi:http/incoming-handler@0.2.0");
+        assert_eq!(s.exports[0].raw, "wasi:http/handler@0.3.0-rc-2026-03-15"); // p3 (ADR-0103)
 
         // Structurally what `wac plug` writes: the plugs are nested inside, so the
         // instance count went up and the artifact is bigger than the socket alone.

@@ -11,7 +11,7 @@ package eshop:payment@0.1.0;
 
 /// The payment processor, composed from capability contracts.
 world payment-service {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // integration events (Dapr pub/sub stand-in).
     import event:bus/bus@0.1.0;

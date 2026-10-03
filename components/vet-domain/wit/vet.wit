@@ -3,7 +3,7 @@
 // This is the language- and host-agnostic answer to "the domain is the only
 // non-component piece": the pet/appointment/note orchestration that used to be
 // TypeScript running under jco is here an HTTP component that EXPORTS
-// wasi:http/incoming-handler and IMPORTS the capability contracts it composes.
+// wasi:http/handler (p3) and IMPORTS the capability contracts it composes.
 //
 // The world names only WIT — no vendor, no backend, no language. The same
 // vet_domain.wasm runs on jco (Node), on a wasmCloud host, or under wasmtime,
@@ -21,7 +21,7 @@ package vet:domain@0.1.0;
 /// The vet-clinic HTTP backend, composed from capability contracts.
 world vet-domain {
     // serve HTTP (the http-server provider / jco host drives this).
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // auth + accounts + sessions + RBAC — satisfied by the composed auth-guard.
     import auth:identity/accounts@0.1.0;
@@ -79,8 +79,8 @@ world vet-domain {
 
     // "now" for the >24h cancel rule + the default run-reminders clock (the TS
     // app used Date.now(); here it is the host wall clock).
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
 
     // outbound HTTP (auth-guard's OIDC/JWKS path needs it when composed).
-    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:http/client@0.3.0-rc-2026-03-15;
 }

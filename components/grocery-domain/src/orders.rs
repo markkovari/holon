@@ -1,5 +1,5 @@
-use crate::bindings::wasi::clocks::wall_clock;
-use crate::bindings::wasi::http::types::IncomingRequest;
+use crate::bindings::p3::clocks::system_clock;
+use crate::bindings::p3::http::types::Request;
 use crate::read_body;
 use crate::store::{load_cart, load_products, save_cart, save_products};
 use crate::types::{CartItem, Outcome};
@@ -34,8 +34,8 @@ pub fn get_cart() -> Outcome {
 }
 
 /// POST /api/cart/items
-pub fn add_cart_item(request: &IncomingRequest) -> Outcome {
-    let raw = match read_body(request) {
+pub async fn add_cart_item(request: Request) -> Outcome {
+    let raw = match read_body(request).await {
         Ok(b) => b,
         Err(_) => return Outcome::Err(400, "Could not read body".into()),
     };
@@ -71,8 +71,8 @@ pub fn remove_cart_item(barcode: &str) -> Outcome {
 }
 
 /// POST /api/checkout
-pub fn checkout(request: &IncomingRequest) -> Outcome {
-    let raw = read_body(request).unwrap_or_default();
+pub async fn checkout(request: Request) -> Outcome {
+    let raw = read_body(request).await.unwrap_or_default();
     let val: Value = serde_json::from_slice(&raw).unwrap_or(Value::Null);
 
     let mut products = load_products();
@@ -110,7 +110,7 @@ pub fn checkout(request: &IncomingRequest) -> Outcome {
     cart.clear();
     save_cart(&cart);
 
-    let sec = wall_clock::now().seconds;
+    let sec = system_clock::now().seconds as u64;
     let order_id = format!("ORD-{}", sec % 1_000_000);
 
     Outcome::Json(

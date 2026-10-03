@@ -28,7 +28,7 @@ package tempo:app@0.1.0;
 /// The worktime backend — accounts + projects/categories + entries + a running
 /// timer + range/role-scoped aggregation, composed from capability contracts.
 world tempo-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // auth: register / login / session + token introspection + role grants.
     import auth:identity/accounts@0.1.0;
@@ -43,5 +43,5 @@ world tempo-domain {
     import pdf:codec/codec@0.1.0;
     // project / category / entry ids.
     // entry + timer timestamps.
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
 }

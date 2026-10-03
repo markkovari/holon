@@ -34,7 +34,7 @@ package conduit:app@0.1.0;
 
 /// The Conduit HTTP backend, composed from capability contracts.
 world conduit-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // register/login + token introspection — the composed auth-guard.
     // No rbac, no session-revoke: RealWorld has no roles and no logout.
@@ -48,5 +48,5 @@ world conduit-domain {
     import slug:generate/generator@0.1.0;
     // millisecond-precision createdAt/updatedAt (record:store is second-only, so
     // an update in the same second wouldn't change updatedAt — RealWorld checks it).
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
 }

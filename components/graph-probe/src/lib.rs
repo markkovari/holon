@@ -11,47 +11,35 @@
 //! the egress" — which are the two failures this exists to tell apart.
 
 #[allow(warnings)]
-mod bindings;
-
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::knowledge::graph::store as graph;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
-use bindings::wasi::io::streams::OutputStream;
-
-/// Write a whole response body, however long it is.
-///
-/// `blocking-write-and-flush` accepts at most 4096 bytes and TRAPS above that
-/// rather than returning an error, so a probe that answers with something big
-/// simply dies and its caller sees an empty body. Measured: a contract file grew
-/// past 4096 and every generation of a real run reported `the boundary failed:
-/// unreadable answer (EOF while parsing a value at line 1 column 0)` — an error
-/// about JSON, three components away from the write that caused it.
-///
-/// `check-write` is the stream saying how much it will take right now, so this
-/// writes in whatever bites it offers and flushes once, rather than picking a
-/// constant and flushing every 4 KB.
-fn write_all(stream: &OutputStream, mut bytes: &[u8]) {
-    while !bytes.is_empty() {
-        let ready = match stream.check_write() {
-            Ok(0) => {
-                // Zero is "full, wait" — not a failure. The pollable resolves
-                // when the stream has drained.
-                stream.subscribe().block();
-                continue;
-            }
-            Ok(n) => n as usize,
-            Err(_) => return,
-        };
-        let take = ready.min(bytes.len());
-        if stream.write(&bytes[..take]).is_err() {
-            return;
-        }
-        bytes = &bytes[take..];
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../host/wit/deps/comp-secrets",
+            "../knowledge-graph/wit",
+            "wit",
+        ],
+        world: "comp:graphprobe/graph-probe",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
     }
-    let _ = stream.blocking_flush();
 }
+
+use bindings::knowledge::graph::store as graph;
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
+
+guestio::guest_p3_respond!();
 
 struct Component;
 
@@ -94,21 +82,21 @@ fn node_json(n: &graph::Node) -> String {
 /// traps the component and the connection simply closes.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body_text!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let (route, query) = match path.split_once('?') {
             Some((r, q)) => (r.to_string(), q.to_string()),
             None => (path.clone(), String::new()),
         };
-        let method = request.method();
+        let method = request.get_method();
         let (kind, id) = (param(&query, "kind"), param(&query, "id"));
 
         let body = match (&method, route.as_str()) {
             (Method::Post, "/upsert") => {
-                let props = read_body(&request);
+                let props = read_body(request).await;
                 let n = graph::Node { kind, id, properties: props };
                 match graph::upsert(&n) {
                     Ok(()) => "{\"ok\":true}".to_string(),
@@ -120,7 +108,7 @@ impl Guest for Component {
             // writes through `query`, and a bug that lived only here — a statement
             // over 4096 bytes trapping the component — took down a real run while
             // every typed verb stayed green.
-            (Method::Post, "/query") => match graph::query(&read_body(&request)) {
+            (Method::Post, "/query") => match graph::query(&read_body(request).await) {
                 Ok(body) => body,
                 Err(e) => err(e),
             },
@@ -136,7 +124,7 @@ impl Guest for Component {
                     id: param(&query, "to-id"),
                     properties: String::new(),
                 };
-                let props = read_body(&request);
+                let props = read_body(request).await;
                 match graph::relate(&from, &param(&query, "edge"), &to, &props) {
                     Ok(()) => "{\"ok\":true}".to_string(),
                     Err(e) => err(e),
@@ -160,17 +148,7 @@ impl Guest for Component {
                 .to_string(),
         };
 
-        let headers = Fields::new();
-        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-        let resp = OutgoingResponse::new(headers);
-        let _ = resp.set_status_code(200);
-        let out = resp.body().expect("body");
-        ResponseOutparam::set(response_out, Ok(resp));
-        if let Ok(stream) = out.write() {
-            write_all(&stream, body.as_bytes());
-            drop(stream);
-        }
-        let _ = OutgoingBody::finish(out, None);
+        respond(200, "application/json", body)
     }
 }
 

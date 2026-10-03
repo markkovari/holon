@@ -14,8 +14,8 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-# Pinned to what wasmCloud main's own p3 fixtures/examples use — the async ABI
-# must match the host's wasmtime.
+# The async ABI must match the host's wasmtime (comp-host, wasmtime 45) — the
+# same pin as the components workspace's `wit-bindgen`.
 wit-bindgen = { version = "0.58.0", features = ["async-spawn", "inter-task-wakeup"] }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }

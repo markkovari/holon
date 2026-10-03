@@ -17,14 +17,14 @@
 //      targets are not on the internet: they are the NATS bus, the cloud metadata
 //      endpoint, this host's own listener, and the tailnet the other nodes are on.
 //
-// It imports `outgoing-handler` deliberately — kv-probe omits it to keep a link
+// It imports `wasi:http/client` deliberately — kv-probe omits it to keep a link
 // failure distinguishable from a naming failure, but here the outbound path IS
 // half the question.
 package probe:adversary@0.1.0;
 
 world adversary {
-    export wasi:http/incoming-handler@0.2.0;
-    import wasi:http/outgoing-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
+    import wasi:http/client@0.3.0-rc-2026-03-15;
     import wasi:keyvalue/store@0.2.0-draft;
     import wasi:keyvalue/batch@0.2.0-draft;
 }

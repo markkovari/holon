@@ -2,6 +2,6 @@
 package demo:probe@0.1.0;
 
 world demo-probe {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
     import demo:shape/pager@0.1.0;
 }

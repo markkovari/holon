@@ -983,6 +983,44 @@ on-demand rows need `host/target/release/comp-host … --no-pool` run directly �
 `GET /`, then e.g.
 `oha -z 10s -c 50 -m POST -d '{"order":42}' -H "x-relay-signature: <hex>" -H "x-relay-delivery: bench-1" http://127.0.0.1:3010/hook/{id}`.
 
+## Round 12 — p3 on comp-host: slower per fresh instance, 1.5× with reuse
+
+Round 8 ran p3 on wash. comp-host now serves it too (wasmtime 45's opt-in `p3`,
+so the `0.3.0-rc-2026-03-15` WIT — see `wit/p3`). Same laptop, same comp-host
+binary for both columns, loopback oha, c50, 8–10 s per row, 100 % success
+everywhere. p2 is `bench-suite` minus its blob rungs (comp-host links no
+`wasi:blobstore`); p3 is `bench-suite-p3`. "µs/req" is the host process's CPU
+time over the run divided by requests served — the host sits at ~7.4 of 10
+cores in every row, so this is the number that sets throughput.
+
+| route | p2 | p3, one instance per request | p3, instance reuse |
+|---|--:|--:|--:|
+| GET /ok | 85.4k rps · 87 µs/req | 76.6k · 101 µs | **130.4k · 42 µs** |
+| GET /json | 80.0k · 93 µs | 58.9k · 114 µs | **118.9k · 46 µs** |
+| POST /echo | 76.6k · 98 µs | 48.8k · 122 µs | **117.3k · 52 µs** |
+| GET /ok @ c200 | 87.8k · p99 4.8 ms | 72.5k · p99 6.9 ms | **133.1k · p99 2.7 ms** |
+
+Takeaways:
+- **One p3 instance per request costs 14–30 µs more host CPU than p2.** That is
+  not the body stream: a variant that sends no stream for an empty body and
+  drops the trailers writer instead of writing it measured the same (99 vs
+  101 µs on /ok). What remains is fixed per-request setup: a larger guest
+  (166 KB vs 116 KB — it carries wit-bindgen's async executor), the
+  `run_concurrent` event loop, and the async call itself. Round 8's ~19 %
+  floor gap on wash is the same effect.
+- **Reuse is what p3 is for, and it halves the CPU per request.** Requests are
+  queued onto a live instance by wasmtime-wasi-http's `ProxyHandler` (up to 128
+  requests per instance, 16 at a time, 1 s idle — `wasmtime serve`'s p3
+  defaults). No per-request instantiation, no pooling-allocator arithmetic.
+- p2 cannot do this: its handler is not re-entrant, so its store stays per
+  request (ADR-0037). The trade for p3 is that an instance's memory cap and
+  secret cache now span up to 128 requests of the same tenant (ADR-0103).
+
+Reproduce: `cargo build --release --manifest-path host/Cargo.toml`, build
+`components/bench-suite-p3` (`cargo build --target wasm32-wasip2 --release`),
+then `host/target/release/comp-host --component <wasm> --kv memory` and
+`oha -z 10s -c 50 http://127.0.0.1:3007/ok`.
+
 ## Reproduce
 
 ```bash

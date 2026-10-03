@@ -13,7 +13,7 @@
 package comp:vgitprobe@0.1.0;
 
 world vgit-probe {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
     import vgit:store/objects@0.1.0;
     import vgit:store/refs@0.1.0;
     import vgit:store/worktree@0.1.0;

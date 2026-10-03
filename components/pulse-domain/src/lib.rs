@@ -6,25 +6,49 @@
 //! `seq > cursor` and writing each new message as an SSE `data:` frame — while
 //! the host streams the body to the browser. It sleeps between polls with
 //! `monotonic-clock` (so it doesn't busy-spin) and stops when a write fails
-//! (the client hung up). Real server-push on wasip2, no WebSocket.
+//! (the client hung up). Real server-push on WASI p3, no WebSocket.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../host/wit/deps/comp-store",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../record-store/wit",
+            "../event-bus/wit",
+            "../id-generate/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "wit",
+        ],
+        world: "pulse:app/pulse-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde_json::{json, Value};
 
 use bindings::event::bus::bus;
 use bindings::id::generate::generator as ids;
+use bindings::p3::clocks::monotonic_clock;
+use bindings::p3::clocks::system_clock;
 use bindings::records::store::store as records;
-use bindings::wasi::clocks::monotonic_clock;
-use bindings::wasi::clocks::wall_clock;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 struct Component;
 
@@ -35,9 +59,9 @@ const MAX_TICKS: u32 = 800; // ~9 min connection cap; the client reconnects.
 const PRESENCE_WINDOW: u64 = 15; // seconds since last heartbeat to count as "online"
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
@@ -46,21 +70,21 @@ impl Guest for Component {
             // computes an Outcome and emits once.
             // Routes live under /api so the host's static-dir SPA fallback
             // (which returns index.html for unknown GETs) leaves them alone.
-            (Method::Get, ["api", "rooms", room, "events"]) => {
-                stream_events(&request, response_out, room, &path);
-            }
+            (Method::Get, ["api", "rooms", room, "events"]) => stream_events(room, &path),
             _ => {
                 let outcome = match (&method, seg.as_slice()) {
                     (Method::Get, [""]) => usage_json(),
                     (Method::Post, ["api", "rooms", room, "messages"]) => {
-                        post_message(&request, room)
+                        post_message(request, room).await
                     }
                     (Method::Get, ["api", "rooms", room, "messages"]) => history(room, &path),
-                    (Method::Post, ["api", "rooms", room, "presence"]) => heartbeat(&request, room),
+                    (Method::Post, ["api", "rooms", room, "presence"]) => {
+                        heartbeat(request, room).await
+                    }
                     (Method::Get, ["api", "rooms", room, "presence"]) => presence(room),
                     _ => Outcome::Err(404, "not_found".into()),
                 };
-                emit(response_out, outcome);
+                emit(outcome)
             }
         }
     }
@@ -72,7 +96,7 @@ enum Outcome {
 }
 
 fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 fn usage_json() -> Outcome {
@@ -92,8 +116,8 @@ fn usage_json() -> Outcome {
 
 // ---- post + history ----------------------------------------------------------
 
-fn post_message(request: &IncomingRequest, room: &str) -> Outcome {
-    let body = match parse_body(request) {
+async fn post_message(request: Request, room: &str) -> Outcome {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -163,8 +187,8 @@ fn msg_json(d: &Value) -> Value {
 // ---- presence (rung 3) -------------------------------------------------------
 
 /// Heartbeat: upsert this user's "last seen" for the room.
-fn heartbeat(request: &IncomingRequest, room: &str) -> Outcome {
-    let body = match parse_body(request) {
+async fn heartbeat(request: Request, room: &str) -> Outcome {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -209,51 +233,46 @@ fn presence(room: &str) -> Outcome {
 // ---- the SSE stream ----------------------------------------------------------
 
 /// Hold the connection open and push each new message as an SSE `data:` frame.
-/// Sets the response, then loops until the client disconnects (a write error) or
-/// the connection cap is hit. `?after=seq` catches up from `seq`; the default is
-/// "only messages posted after I connected".
-fn stream_events(
-    request: &IncomingRequest,
-    response_out: ResponseOutparam,
-    room: &str,
-    path: &str,
-) {
+/// Returns the response, while a spawned task loops writing its body until the
+/// client disconnects (a write error) or the connection cap is hit. `?after=seq`
+/// catches up from `seq`; the default is "only messages posted after I connected".
+fn stream_events(room: &str, path: &str) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
     let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);
     // let the browser's EventSource reconnect quickly if we hit the cap.
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(200);
-    let body = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
 
     let mut cursor = query_i64(path, "after").unwrap_or_else(|| max_seq(room));
-    let _ = request; // request headers unused; kept for symmetry with other routes
+    let room = room.to_string();
 
-    {
-        let stream = body.write().expect("write stream");
-        // open the stream (some proxies buffer until the first bytes)
-        if !write_all(&stream, b": connected\n\n") {
+    let (mut stream, rx) = bindings::wit_stream::new();
+    wit_bindgen::spawn_local(async move {
+        // open the stream (some proxies buffer until the first bytes).
+        // `write_all` hands back what it could not send: non-empty = hung up.
+        if !stream.write_all(b": connected\n\n".to_vec()).await.is_empty() {
             return;
         }
         for _ in 0..MAX_TICKS {
-            let (msgs, new_cursor) = messages_after(room, cursor);
+            let (msgs, new_cursor) = messages_after(&room, cursor);
             cursor = new_cursor;
             let frame = if msgs.is_empty() {
                 ": ping\n\n".to_string() // heartbeat — also how we notice a hangup
             } else {
                 msgs.iter().map(|m| format!("data: {m}\n\n")).collect::<String>()
             };
-            if !write_all(&stream, frame.as_bytes()) {
+            if !stream.write_all(frame.into_bytes()).await.is_empty() {
                 break; // client disconnected
             }
-            // sleep without busy-spinning: a monotonic-clock pollable that
-            // resolves after POLL_MS, blocked on directly.
-            monotonic_clock::subscribe_duration(POLL_MS * 1_000_000).block();
+            // sleep without busy-spinning: the monotonic clock's wait, awaited.
+            monotonic_clock::wait_for(POLL_MS * 1_000_000).await;
         }
-    }
-    let _ = OutgoingBody::finish(body, None);
+    });
+    let (trailers_tx, trailers_rx) = bindings::wit_future::new(|| Ok(None));
+    drop(trailers_tx);
+    let (response, _sent) = Response::new(headers, Some(rx), trailers_rx);
+    let _ = response.set_status_code(200);
+    Ok(response)
 }
 
 // ---- http plumbing -----------------------------------------------------------
@@ -267,8 +286,9 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let body = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+async fn parse_body(request: Request) -> Result<Value, Outcome> {
+    let body =
+        read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if body.is_empty() {
         return Ok(Value::Object(Default::default()));
     }
@@ -289,7 +309,7 @@ fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
 /// Read query param `key` as an i64 (for the `after` cursor).
 fn query_i64(path: &str, key: &str) -> Option<i64> {
@@ -300,30 +320,20 @@ fn query_i64(path: &str, key: &str) -> Option<i64> {
     })
 }
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, body.as_bytes()),
+        Outcome::Json(code, body) => respond_json(code, body.into_bytes()),
         Outcome::Err(code, msg) => {
-            respond(response_out, code, json!({ "error": msg }).to_string().as_bytes())
+            respond_json(code, json!({ "error": msg }).to_string().into_bytes())
         }
     }
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, body: &[u8]) {
+fn respond_json(status: u16, body: Vec<u8>) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        for chunk in body.chunks(4096) {
-            let _ = write_all(&stream, chunk);
-        }
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(status, headers, body)
 }
 
 bindings::export!(Component with_types_in bindings);

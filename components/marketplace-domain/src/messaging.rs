@@ -8,8 +8,8 @@
 //! time, the same "copy at creation" discipline `orders.items[].unit_price`
 //! follows.
 
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
 use crate::{audit, introspect, is_admin, Reply, Route};
 use serde_json::{json, Value};
 

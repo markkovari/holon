@@ -46,6 +46,9 @@ publish = false
 
 [workspace.dependencies]
 wit-bindgen-rt = { version = "0.41", features = ["bitflags"] }
+# WASI p3 components: async `generate!` needs 0.58 (cargo-component's 0.41 cannot
+# emit async bindings). The ABI must match comp-host's wasmtime.
+wit-bindgen = { version = "0.58.0", features = ["async-spawn", "inter-task-wakeup"] }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }

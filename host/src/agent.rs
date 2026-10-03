@@ -44,6 +44,9 @@ use crate::{Instance, Instances, Routes};
 pub const HOST_IFACES: &[&str] = &[
     "wasi:http/incoming-handler",
     "wasi:http/outgoing-handler",
+    // p3 (the `0.3.0-rc-2026-03-15` WIT on wasmtime 45): the async door and client.
+    "wasi:http/handler",
+    "wasi:http/client",
     "wasi:keyvalue/store",
     "wasi:keyvalue/atomics",
     "wasi:keyvalue/batch",
@@ -617,7 +620,7 @@ async fn start(
     // A component that exports `wasi:http/incoming-handler` gets a door; one that
     // does not is a plug, reachable over the bus only. Both are legal instances —
     // before the serve side existed, the second could not start at all.
-    let pre = wasmtime_wasi_http::p2::bindings::ProxyPre::new(ipre.clone()).ok();
+    let pre = crate::HttpPre::new(ipre.clone());
 
     // Serve this instance's exports so a remote import has something to call. On the
     // instance's own subject, in a queue group named for it, so N replicas share the

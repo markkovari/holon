@@ -1,27 +1,45 @@
 //! intent-router — AI-Driven intent routing gateway mapping natural language to Holon domains.
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../llm-inference/wit",
+            "wit",
+        ],
+        world: "holon:intent/intent-router",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::llm::inference::inference::{self as llm, Options};
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 
 struct Component;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
-        let result = if is_classify_route(&request.method(), &path) {
-            classify_intent(&request)
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
+        let result = if is_classify_route(&request.get_method(), &path) {
+            classify_intent(request).await
         } else {
             Outcome::NotFound
         };
-        emit(response_out, result);
+        emit(result)
     }
 }
 
@@ -95,8 +113,8 @@ fn shape_completion(text: &str) -> Value {
     parsed
 }
 
-fn classify_intent(request: &IncomingRequest) -> Outcome {
-    let req: IntentReq = match parse(request) {
+async fn classify_intent(request: Request) -> Outcome {
+    let req: IntentReq = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -113,44 +131,25 @@ fn classify_intent(request: &IncomingRequest) -> Outcome {
 
 // ---- helpers ---------------------------------------------------------------------
 
-fn parse<T: for<'a> Deserialize<'a>>(request: &IncomingRequest) -> Result<T, String> {
-    let body = read_body(request).map_err(|_| "could not read body".to_string())?;
+async fn parse<T: for<'a> Deserialize<'a>>(request: Request) -> Result<T, String> {
+    let body = read_body(request).await.map_err(|_| "could not read body".to_string())?;
     serde_json::from_slice(&body).map_err(|e| format!("bad json: {e}"))
 }
 
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, &[], body.as_bytes()),
-        Outcome::Bad(msg) => {
-            respond(response_out, 400, &[], json!({ "error": msg }).to_string().as_bytes())
-        }
+        Outcome::Json(code, body) => respond(code, "application/json", body),
+        Outcome::Bad(msg) => respond(400, "application/json", json!({ "error": msg }).to_string()),
         Outcome::Err(code, msg) => {
-            respond(response_out, code, &[], json!({ "error": msg }).to_string().as_bytes())
+            respond(code, "application/json", json!({ "error": msg }).to_string())
         }
-        Outcome::NotFound => respond(response_out, 404, &[], b"{\"error\":\"not_found\"}"),
+        Outcome::NotFound => respond(404, "application/json", "{\"error\":\"not_found\"}"),
     }
-}
-
-fn respond(response_out: ResponseOutparam, status: u16, extra: &[(&str, &str)], body: &[u8]) {
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    for (k, v) in extra {
-        let _ = headers.set(k.as_ref(), &[v.as_bytes().to_vec()]);
-    }
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
 }
 
 bindings::export!(Component with_types_in bindings);

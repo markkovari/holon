@@ -1,19 +1,49 @@
 //! E-commerce fulfillment flow handling orders
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../host/wit/deps/comp-store",
+            "../../wit/deps/ratelimit-guard",
+            "../audit-log/wit",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../policy-guard/wit",
+            "../record-store/wit",
+            "../ledger/wit",
+            "../fsm-workflow/wit",
+            "../stripe-gateway/wit",
+            "wit",
+        ],
+        world: "domain:ecommerce/ecommerce-fulfillment",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 mod handlers;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 use serde_json::{json, Value};
 
-guestio::guest_write_all!();
-guestio::guest_bearer!();
+guestio::guest_p3_bearer!();
+guestio::guest_p3_respond!();
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
-guestio::guest_read_body_text!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
 pub struct Reply {
     pub status: u16,
@@ -41,8 +71,8 @@ pub struct Route {
 
 use guestfmt::percent_decode as percent;
 
-fn header(request: &IncomingRequest, name: &str) -> String {
-    let fields = request.headers();
+fn header(request: &Request, name: &str) -> String {
+    let fields = request.get_headers();
     let values = fields.get(name);
     values.first().map(|v| String::from_utf8_lossy(v).into_owned()).unwrap_or_default()
 }
@@ -50,8 +80,8 @@ fn header(request: &IncomingRequest, name: &str) -> String {
 struct Component;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let path = request.path_with_query().unwrap_or_else(|| "/".into());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".into());
         let (raw_path, query) = match path.split_once('?') {
             Some((p, q)) => (p.to_string(), q.to_string()),
             None => (path.clone(), String::new()),
@@ -63,9 +93,9 @@ impl Guest for Component {
             bearer: bearer_val,
             idempotency_key: header(&request, "idempotency-key"),
         };
-        let method = request.method();
+        let method = request.get_method();
         let body = match method {
-            Method::Post | Method::Put | Method::Patch => read_body(&request),
+            Method::Post | Method::Put | Method::Patch => read_body(request).await,
             _ => String::new(),
         };
 
@@ -73,17 +103,13 @@ impl Guest for Component {
 
         // Static UI Serving
         if seg.is_empty() || seg.as_slice() == ["index.html"] {
-            return serve_static(response_out, include_str!("../ui/index.html"), "text/html");
+            return respond(200, "text/html", include_str!("../ui/index.html"));
         }
         if seg.as_slice() == ["style.css"] {
-            return serve_static(response_out, include_str!("../ui/style.css"), "text/css");
+            return respond(200, "text/css", include_str!("../ui/style.css"));
         }
         if seg.as_slice() == ["app.js"] {
-            return serve_static(
-                response_out,
-                include_str!("../ui/app.js"),
-                "application/javascript",
-            );
+            return respond(200, "application/javascript", include_str!("../ui/app.js"));
         }
 
         let Reply { status, json: payload } = match seg.as_slice() {
@@ -95,34 +121,9 @@ impl Guest for Component {
             _ => Reply::err(404, &format!("not_found: {:?}", seg)),
         };
 
-        let headers = Fields::new();
-        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-        let resp = OutgoingResponse::new(headers);
-        let _ = resp.set_status_code(status);
-        let out = resp.body().expect("body");
-        ResponseOutparam::set(response_out, Ok(resp));
-        if let Ok(stream) = out.write() {
-            if !payload.is_null() {
-                let _ = write_all(&stream, payload.to_string().as_bytes());
-            }
-            drop(stream);
-        }
-        let _ = OutgoingBody::finish(out, None);
+        let body = if payload.is_null() { String::new() } else { payload.to_string() };
+        respond(status, "application/json", body)
     }
-}
-
-fn serve_static(response_out: ResponseOutparam, content: &str, content_type: &str) {
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
-    let resp = OutgoingResponse::new(headers);
-    let _ = resp.set_status_code(200);
-    let out = resp.body().expect("body");
-    ResponseOutparam::set(response_out, Ok(resp));
-    if let Ok(stream) = out.write() {
-        let _ = write_all(&stream, content.as_bytes());
-        drop(stream);
-    }
-    let _ = OutgoingBody::finish(out, None);
 }
 
 bindings::export!(Component with_types_in bindings);

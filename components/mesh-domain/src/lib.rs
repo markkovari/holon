@@ -17,19 +17,43 @@
 //! concurrent callers converge on one circuit instead of clobbering each other.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../record-store/wit",
+            "../resilience/wit",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../proxy-route/wit",
+            "wit",
+        ],
+        world: "mesh:app/mesh-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde_json::{json, Map, Value};
 
+use bindings::p3::clocks::{monotonic_clock, system_clock};
 use bindings::proxy::route::router;
 use bindings::records::store::store as records;
 use bindings::resilience::breaker::breaker as rb;
-use bindings::wasi::clocks::{monotonic_clock, wall_clock};
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Component;
 
@@ -42,21 +66,21 @@ const MAX_ATTEMPTS_CAP: u32 = 8;
 const MAX_BACKOFF_CAP: u32 = 2_000;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => usage(),
-            (Method::Post, ["api", "call"]) => call(&request),
+            (Method::Post, ["api", "call"]) => call(request).await,
             (Method::Get, ["api", "circuit", key]) => circuit_get(key),
             (Method::Get, ["api", "circuits"]) => circuits_all(),
-            (Method::Post, ["api", "reset"]) => reset(&request),
+            (Method::Post, ["api", "reset"]) => reset(request).await,
             _ => Outcome::Err(404, "not_found".into()),
         };
-        emit(response_out, outcome);
+        emit(outcome)
     }
 }
 
@@ -66,8 +90,8 @@ enum Outcome {
 }
 
 fn now_ms() -> u64 {
-    let t = wall_clock::now();
-    t.seconds * 1000 + (t.nanoseconds / 1_000_000) as u64
+    let t = system_clock::now();
+    t.seconds as u64 * 1000 + (t.nanoseconds / 1_000_000) as u64
 }
 
 /// Monotonic millis — for measuring a call, never for state timestamps.
@@ -75,11 +99,11 @@ fn mono_ms() -> u64 {
     monotonic_clock::now() / 1_000_000
 }
 
-fn sleep_ms(ms: u32) {
+async fn sleep_ms(ms: u32) {
     if ms == 0 {
         return;
     }
-    monotonic_clock::subscribe_duration(ms as u64 * 1_000_000).block();
+    monotonic_clock::wait_for(ms as u64 * 1_000_000).await;
 }
 
 fn usage() -> Outcome {
@@ -262,8 +286,8 @@ fn stats_json(c: &Counters) -> Value {
 
 // ---- the guarded call -------------------------------------------------------
 
-fn call(request: &IncomingRequest) -> Outcome {
-    let b = match body(request) {
+async fn call(request: Request) -> Outcome {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -290,7 +314,7 @@ fn call(request: &IncomingRequest) -> Outcome {
         // Wait out the backoff before a retry (never before the first attempt).
         if attempt > 1 {
             match rb::backoff(attempt, pol.retry, now_ms() ^ attempt as u64) {
-                Some(ms) => sleep_ms(ms.min(MAX_BACKOFF_CAP)),
+                Some(ms) => sleep_ms(ms.min(MAX_BACKOFF_CAP)).await,
                 None => break, // out of attempts
             }
         }
@@ -453,8 +477,8 @@ fn circuits_all() -> Outcome {
     Outcome::Json(200, json!({ "circuits": list }).to_string())
 }
 
-fn reset(request: &IncomingRequest) -> Outcome {
-    let b = match body(request) {
+async fn reset(request: Request) -> Outcome {
+    let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -470,8 +494,9 @@ fn reset(request: &IncomingRequest) -> Outcome {
 
 // ---- http plumbing ----------------------------------------------------------
 
-fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let raw = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+async fn body(request: Request) -> Result<Value, Outcome> {
+    let raw =
+        read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
         return Ok(Value::Object(Map::new()));
     }
@@ -492,10 +517,10 @@ fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     let (code, body) = match result {
         Outcome::Json(c, b) => (c, b),
         Outcome::Err(c, m) => (c, json!({ "error": m }).to_string()),
@@ -503,16 +528,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(code);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    let bytes = body.as_bytes();
-    if !bytes.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, bytes);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(code, headers, body.into_bytes())
 }
 
 bindings::export!(Component with_types_in bindings);

@@ -21,7 +21,7 @@ package relay:app@0.1.0;
 
 /// The webhook-relay HTTP backend, composed from capability contracts.
 world relay-app {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // Inbound HMAC verify and replay dedup, as TWO capabilities rather than one.
     //

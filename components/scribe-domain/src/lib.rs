@@ -11,7 +11,34 @@
 //! wasip2, same trick as pulse).
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../crdt/wit",
+            "../textdiff/wit",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../id-generate/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "wit",
+        ],
+        world: "scribe:app/scribe-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+    }
+}
 
 use serde_json::{json, Value};
 
@@ -19,15 +46,13 @@ use bindings::crdt::merge::merger as crdt;
 use bindings::diff::text::differ as textdiff;
 use bindings::id::generate::generator as ids;
 use bindings::records::store::store as records;
-use bindings::wasi::clocks::monotonic_clock;
-use bindings::wasi::clocks::wall_clock;
+use bindings::p3::clocks::monotonic_clock;
+use bindings::p3::clocks::system_clock;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 struct Component;
 
@@ -41,29 +66,27 @@ const MAX_RETRY: u32 = 8; // optimistic-merge retries on revision conflict
 const MAX_FIELD_LEN: usize = 20_000;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         match (&method, seg.as_slice()) {
             // The SSE route owns the response (it streams); everything else
             // computes an Outcome and emits once.
-            (Method::Get, ["api", "docs", doc, "events"]) => {
-                stream_events(response_out, doc, &path);
-            }
+            (Method::Get, ["api", "docs", doc, "events"]) => stream_events(doc, &path),
             _ => {
                 let outcome = match (&method, seg.as_slice()) {
                     (Method::Get, [""]) => usage_json(),
                     (Method::Get, ["api", "docs", doc]) => get_doc(doc),
                     (Method::Get, ["api", "docs", doc, "history"]) => get_history(doc, &path),
-                    (Method::Post, ["api", "docs", doc, "ops"]) => apply_op(&request, doc),
-                    (Method::Post, ["api", "docs", doc, "presence"]) => heartbeat(&request, doc),
+                    (Method::Post, ["api", "docs", doc, "ops"]) => apply_op(request, doc).await,
+                    (Method::Post, ["api", "docs", doc, "presence"]) => heartbeat(request, doc).await,
                     (Method::Get, ["api", "docs", doc, "presence"]) => presence(doc),
                     _ => Outcome::Err(404, "not_found".into()),
                 };
-                emit(response_out, outcome);
+                emit(outcome)
             }
         }
     }
@@ -75,7 +98,7 @@ enum Outcome {
 }
 
 fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 fn usage_json() -> Outcome {
@@ -183,8 +206,8 @@ fn get_doc(doc: &str) -> Outcome {
 /// idempotent). The `body` field is an rga text sequence edited with id-anchored
 /// insert/delete ops (so concurrent typing interleaves); every other field is a
 /// last-writer-wins register.
-fn apply_op(request: &IncomingRequest, doc: &str) -> Outcome {
-    let body = match parse_body(request) {
+async fn apply_op(request: Request, doc: &str) -> Outcome {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -340,8 +363,8 @@ fn get_history(doc: &str, path: &str) -> Outcome {
 
 // ---- presence ----------------------------------------------------------------
 
-fn heartbeat(request: &IncomingRequest, doc: &str) -> Outcome {
-    let body = match parse_body(request) {
+async fn heartbeat(request: Request, doc: &str) -> Outcome {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -387,39 +410,41 @@ fn presence(doc: &str) -> Outcome {
 /// Hold the connection open and push the merged document whenever its revision
 /// changes. Sends the current document immediately (so a late joiner is caught
 /// up), then loops until the client disconnects or the cap is hit.
-fn stream_events(response_out: ResponseOutparam, doc: &str, path: &str) {
+fn stream_events(doc: &str, path: &str) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
     let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(200);
-    let body = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
 
     // start below any client-supplied rev so the first tick always pushes.
     let mut cursor = query_i64(path, "rev").unwrap_or(-1);
+    let doc = doc.to_string();
 
-    {
-        let stream = body.write().expect("write stream");
-        if !write_all(&stream, b": connected\n\n") {
+    let (mut stream, rx) = bindings::wit_stream::new();
+    wit_bindgen::spawn_local(async move {
+        // `write_all` hands back what it could not send: non-empty = hung up.
+        if !stream.write_all(b": connected\n\n".to_vec()).await.is_empty() {
             return;
         }
         for _ in 0..MAX_TICKS {
-            let d = load(doc);
+            let d = load(&doc);
             let frame = if (d.rev as i64) != cursor {
                 cursor = d.rev as i64;
-                format!("data: {}\n\n", doc_json(doc, &d))
+                format!("data: {}\n\n", doc_json(&doc, &d))
             } else {
                 ": ping\n\n".to_string()
             };
-            if !write_all(&stream, frame.as_bytes()) {
+            if !stream.write_all(frame.into_bytes()).await.is_empty() {
                 break; // client disconnected
             }
-            monotonic_clock::subscribe_duration(POLL_MS * 1_000_000).block();
+            monotonic_clock::wait_for(POLL_MS * 1_000_000).await;
         }
-    }
-    let _ = OutgoingBody::finish(body, None);
+    });
+    let (trailers_tx, trailers_rx) = bindings::wit_future::new(|| Ok(None));
+    drop(trailers_tx);
+    let (response, _sent) = Response::new(headers, Some(rx), trailers_rx);
+    let _ = response.set_status_code(200);
+    Ok(response)
 }
 
 // ---- http plumbing -----------------------------------------------------------
@@ -441,8 +466,8 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let body = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+async fn parse_body(request: Request) -> Result<Value, Outcome> {
+    let body = read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if body.is_empty() {
         return Ok(Value::Object(Default::default()));
     }
@@ -463,7 +488,7 @@ fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
 fn query_i64(path: &str, key: &str) -> Option<i64> {
     let query = path.split('?').nth(1)?;
@@ -473,30 +498,15 @@ fn query_i64(path: &str, key: &str) -> Option<i64> {
     })
 }
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
-    match result {
-        Outcome::Json(code, body) => respond(response_out, code, body.as_bytes()),
-        Outcome::Err(code, msg) => {
-            respond(response_out, code, json!({ "error": msg }).to_string().as_bytes())
-        }
-    }
-}
-
-fn respond(response_out: ResponseOutparam, status: u16, body: &[u8]) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
+    let (code, body) = match result {
+        Outcome::Json(code, body) => (code, body),
+        Outcome::Err(code, msg) => (code, json!({ "error": msg }).to_string()),
+    };
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        for chunk in body.chunks(4096) {
-            let _ = write_all(&stream, chunk);
-        }
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(code, headers, body.into_bytes())
 }
 
 bindings::export!(Component with_types_in bindings);

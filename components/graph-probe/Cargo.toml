@@ -12,23 +12,4 @@ crate-type = ["cdylib"]
 [dependencies]
 guestio = { path = "../guestio" }
 guestfmt = { path = "../guestfmt" }
-wit-bindgen-rt = { workspace = true }
-
-[package.metadata.component]
-package = "comp:graphprobe"
-
-[package.metadata.component.target]
-path = "wit"
-world = "graph-probe"
-
-[package.metadata.component.target.dependencies]
-"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
-"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
-"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
-"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
-"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
-"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
-# The contract itself, from the component that owns it — copying it here would
-# be two files to keep in step and one of them would eventually be wrong.
-"comp:secrets" = { path = "../../host/wit/deps/comp-secrets" }
-"knowledge:graph" = { path = "../knowledge-graph/wit" }
+wit-bindgen = { workspace = true }

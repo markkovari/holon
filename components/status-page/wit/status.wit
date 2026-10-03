@@ -21,7 +21,7 @@ package status:app@0.1.0;
 
 /// The status-page HTTP backend, composed from capability contracts.
 world status-app {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // one recurring job per monitor; due/ack with leases.
     import sched:timer/timer@0.1.0;
@@ -35,7 +35,7 @@ world status-app {
     import notify:dispatch/dispatcher@0.1.0;
 
     // the probes themselves.
-    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:http/client@0.3.0-rc-2026-03-15;
     // `now` for timer due/scheduling.
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
 }

@@ -45,7 +45,6 @@ const READS_ALLOWED: &[(&str, &str)] = &[
         "proxies to another component, which sees the truncation as a malformed \
          request and refuses it",
     ),
-    ("photo-critic", "a truncated image fails to decode; the failure is loud and immediate"),
     (
         "bench-suite",
         "counts bytes to measure throughput; a failed read shows up as a number so \
@@ -159,6 +158,27 @@ fn a_read_loop_tells_end_of_body_from_a_failed_read() {
             if !body.contains("$limit") {
                 sloppy.push(
                     "  components/guestio: the macro does not bound what it reads".to_string(),
+                );
+            }
+            // The p3 loop has no `StreamError`: a transfer that failed partway is
+            // reported on the trailers future, so that is what it must check.
+            let p3: String = text
+                .split("macro_rules! guest_p3_read_body_named")
+                .nth(1)
+                .unwrap_or_default()
+                .chars()
+                .take(2500)
+                .collect();
+            if !p3.contains("trailers.await") {
+                sloppy.push(
+                    "  components/guestio: the p3 macro does not check the trailers result, \
+                     so a failed transfer reads as a complete body"
+                        .to_string(),
+                );
+            }
+            if !p3.contains("$limit") {
+                sloppy.push(
+                    "  components/guestio: the p3 macro does not bound what it reads".to_string(),
                 );
             }
         }

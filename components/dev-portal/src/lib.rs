@@ -7,7 +7,41 @@
 //! one indexed lookup and meters it against a per-key hourly quota.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../audit-log/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/ratelimit-guard",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../id-generate/wit",
+            "../quota/wit",
+            "../policy-guard/wit",
+            "../outbox/wit",
+            "../webhook-sign/wit",
+            "../notify-dispatch/wit",
+            "wit",
+        ],
+        world: "portal:app/dev-portal",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -26,10 +60,8 @@ use bindings::quota::meter::meter as quota;
 use bindings::records::store::store as records;
 use bindings::webhook::sign::signer as sign;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Component;
 
@@ -41,34 +73,34 @@ const DEFAULT_KEY_LIMIT: u64 = 100; // requests per hour
 const QUOTA_PERIOD: u64 = 3600;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let result = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => usage_json(),
-            (Method::Post, ["auth", "register"]) => register(&request),
-            (Method::Post, ["auth", "login"]) => login(&request),
+            (Method::Post, ["auth", "register"]) => register(request).await,
+            (Method::Post, ["auth", "login"]) => login(request).await,
             (Method::Get, ["auth", "me"]) => me(&request),
             (Method::Post, ["auth", "logout"]) => logout(&request),
 
-            (Method::Post, ["api", "projects"]) => create_project(&request),
+            (Method::Post, ["api", "projects"]) => create_project(request).await,
             (Method::Get, ["api", "projects"]) => list_projects(&request),
             (Method::Get, ["api", "projects", id]) => get_project(&request, id),
-            (Method::Post, ["api", "projects", id, "members"]) => add_member(&request, id),
-            (Method::Post, ["api", "projects", id, "webhook"]) => set_webhook(&request, id),
-            (Method::Post, ["api", "projects", id, "keys"]) => mint_key(&request, id),
+            (Method::Post, ["api", "projects", id, "members"]) => add_member(request, id).await,
+            (Method::Post, ["api", "projects", id, "webhook"]) => set_webhook(request, id).await,
+            (Method::Post, ["api", "projects", id, "keys"]) => mint_key(request, id).await,
             (Method::Get, ["api", "projects", id, "keys"]) => list_keys(&request, id),
             (Method::Delete, ["api", "keys", id]) => revoke_key(&request, id),
             (Method::Get, ["api", "keys", id, "usage"]) => key_usage(&request, id),
 
-            (Method::Post, ["api", "gateway", "echo"]) => gateway_echo(&request),
+            (Method::Post, ["api", "gateway", "echo"]) => gateway_echo(request).await,
             (Method::Post, ["api", "admin", "drain"]) => admin_drain(&request),
             _ => Outcome::NotFound,
         };
-        emit(response_out, result);
+        emit(result)
     }
 }
 
@@ -155,9 +187,9 @@ struct RegisterReq {
     role: Option<String>,
 }
 
-fn register(request: &IncomingRequest) -> Outcome {
+async fn register(request: Request) -> Outcome {
     ensure_seeded();
-    let req: RegisterReq = match parse(request) {
+    let req: RegisterReq = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -178,8 +210,8 @@ struct LoginReq {
     password: String,
 }
 
-fn login(request: &IncomingRequest) -> Outcome {
-    let req: LoginReq = match parse(request) {
+async fn login(request: Request) -> Outcome {
+    let req: LoginReq = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -198,7 +230,7 @@ fn login(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn me(request: &IncomingRequest) -> Outcome {
+fn me(request: &Request) -> Outcome {
     match introspect(request) {
         Ok(p) => Outcome::Json(
             200,
@@ -208,7 +240,7 @@ fn me(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn logout(request: &IncomingRequest) -> Outcome {
+fn logout(request: &Request) -> Outcome {
     let Some(token) = bearer(request) else {
         return Outcome::Auth(AuthError::InvalidToken("missing bearer".into()));
     };
@@ -218,7 +250,7 @@ fn logout(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
+fn introspect(request: &Request) -> Result<Principal, Outcome> {
     let Some(token) = bearer(request) else {
         return Err(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())));
     };
@@ -256,9 +288,9 @@ fn authorize_project(
 
 // ---- projects ----------------------------------------------------------------
 
-fn create_project(request: &IncomingRequest) -> Outcome {
+async fn create_project(request: Request) -> Outcome {
     ensure_seeded();
-    let p = match introspect(request) {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
@@ -266,7 +298,7 @@ fn create_project(request: &IncomingRequest) -> Outcome {
     struct Req {
         name: String,
     }
-    let req: Req = match parse(request) {
+    let req: Req = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -287,7 +319,7 @@ fn create_project(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn list_projects(request: &IncomingRequest) -> Outcome {
+fn list_projects(request: &Request) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -301,7 +333,7 @@ fn list_projects(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn get_project(request: &IncomingRequest, id: &str) -> Outcome {
+fn get_project(request: &Request, id: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -312,8 +344,8 @@ fn get_project(request: &IncomingRequest, id: &str) -> Outcome {
     }
 }
 
-fn add_member(request: &IncomingRequest, id: &str) -> Outcome {
-    let p = match introspect(request) {
+async fn add_member(request: Request, id: &str) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
@@ -321,7 +353,7 @@ fn add_member(request: &IncomingRequest, id: &str) -> Outcome {
     struct Req {
         subject: String,
     }
-    let req: Req = match parse(request) {
+    let req: Req = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -345,8 +377,8 @@ fn add_member(request: &IncomingRequest, id: &str) -> Outcome {
     }
 }
 
-fn set_webhook(request: &IncomingRequest, id: &str) -> Outcome {
-    let p = match introspect(request) {
+async fn set_webhook(request: Request, id: &str) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
@@ -355,7 +387,7 @@ fn set_webhook(request: &IncomingRequest, id: &str) -> Outcome {
         url: String,
         secret: String,
     }
-    let req: Req = match parse(request) {
+    let req: Req = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -377,8 +409,8 @@ fn set_webhook(request: &IncomingRequest, id: &str) -> Outcome {
 
 // ---- api keys ------------------------------------------------------------------
 
-fn mint_key(request: &IncomingRequest, project_id: &str) -> Outcome {
-    let p = match introspect(request) {
+async fn mint_key(request: Request, project_id: &str) -> Outcome {
+    let p = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
@@ -388,7 +420,7 @@ fn mint_key(request: &IncomingRequest, project_id: &str) -> Outcome {
         #[serde(default)]
         limit: Option<u64>,
     }
-    let req: Req = match parse(request) {
+    let req: Req = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -427,7 +459,7 @@ fn mint_key(request: &IncomingRequest, project_id: &str) -> Outcome {
     )
 }
 
-fn list_keys(request: &IncomingRequest, project_id: &str) -> Outcome {
+fn list_keys(request: &Request, project_id: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -444,7 +476,7 @@ fn list_keys(request: &IncomingRequest, project_id: &str) -> Outcome {
     }
 }
 
-fn revoke_key(request: &IncomingRequest, key_id: &str) -> Outcome {
+fn revoke_key(request: &Request, key_id: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -467,7 +499,7 @@ fn revoke_key(request: &IncomingRequest, key_id: &str) -> Outcome {
     Outcome::Json(200, "{\"revoked\":true}".into())
 }
 
-fn key_usage(request: &IncomingRequest, key_id: &str) -> Outcome {
+fn key_usage(request: &Request, key_id: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -497,8 +529,8 @@ fn key_usage(request: &IncomingRequest, key_id: &str) -> Outcome {
 
 // ---- gateway (the metered data plane) ------------------------------------------
 
-fn gateway_echo(request: &IncomingRequest) -> Outcome {
-    let Some(key) = header(request, "x-api-key") else {
+async fn gateway_echo(request: Request) -> Outcome {
+    let Some(key) = header(&request, "x-api-key") else {
         return Outcome::Err(401, "missing x-api-key".into());
     };
     let hits = match records::find_by(KEYS, "hash", &json!(hash_key(&key)).to_string()) {
@@ -525,7 +557,7 @@ fn gateway_echo(request: &IncomingRequest) -> Outcome {
         }
         Err(quota::QuotaError::BackendUnavailable(m)) => return Outcome::Err(503, m),
     };
-    let body = read_body(request).unwrap_or_default();
+    let body = read_body(request).await.unwrap_or_default();
     Outcome::Json(
         200,
         json!({
@@ -550,7 +582,7 @@ fn enqueue_event(topic: &str, project_id: &str, key_id: &str, prefix: &str) {
 /// Deliver pending events as signed webhooks. RBAC-gated: admin role only —
 /// wasip2 has no background tasks, so drain is an explicit admin verb (the
 /// same explicit-pump pattern as cache flush + vet's run-reminders).
-fn admin_drain(request: &IncomingRequest) -> Outcome {
+fn admin_drain(request: &Request) -> Outcome {
     ensure_seeded();
     let Some(token) = bearer(request) else {
         return Outcome::Auth(AuthError::InvalidToken("missing bearer".into()));
@@ -676,8 +708,8 @@ fn auth_error(e: &AuthError) -> (u16, &'static str) {
     }
 }
 
-fn parse<T: for<'a> Deserialize<'a>>(request: &IncomingRequest) -> Result<T, String> {
-    let body = read_body(request).map_err(|_| "could not read body".to_string())?;
+async fn parse<T: for<'a> Deserialize<'a>>(request: Request) -> Result<T, String> {
+    let body = read_body(request).await.map_err(|_| "could not read body".to_string())?;
     serde_json::from_slice(&body).map_err(|e| format!("bad json: {e}"))
 }
 
@@ -695,69 +727,55 @@ fn parse<T: for<'a> Deserialize<'a>>(request: &IncomingRequest) -> Result<T, Str
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
 
-guestio::guest_bearer!();
+guestio::guest_p3_bearer!();
 
-fn header(request: &IncomingRequest, name: &str) -> Option<String> {
-    request.headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
+fn header(request: &Request, name: &str) -> Option<String> {
+    request.get_headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
 }
 
 // ---- responses --------------------------------------------------------------------
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, &[], body.as_bytes()),
+        Outcome::Json(code, body) => answer(code, &[], body.as_bytes()),
         Outcome::Auth(e) => {
             if let AuthError::RateLimited(secs) = e {
-                respond(
-                    response_out,
+                answer(
                     429,
                     &[("retry-after", &secs.to_string())],
                     format!("{{\"error\":\"rate_limited\",\"retryAfter\":{secs}}}").as_bytes(),
-                );
+                )
             } else {
                 let (code, msg) = auth_error(&e);
-                respond(response_out, code, &[], format!("{{\"error\":\"{msg}\"}}").as_bytes());
+                answer(code, &[], format!("{{\"error\":\"{msg}\"}}").as_bytes())
             }
         }
         // resetsAt is absolute unix seconds (no clock import here to derive a
         // relative Retry-After from it).
-        Outcome::Limited(resets_at) => respond(
-            response_out,
+        Outcome::Limited(resets_at) => answer(
             429,
             &[],
             format!("{{\"error\":\"quota_exceeded\",\"resetsAt\":{resets_at}}}").as_bytes(),
         ),
-        Outcome::Bad(msg) => {
-            respond(response_out, 400, &[], json!({ "error": msg }).to_string().as_bytes())
-        }
+        Outcome::Bad(msg) => answer(400, &[], json!({ "error": msg }).to_string().as_bytes()),
         Outcome::Err(code, msg) => {
-            respond(response_out, code, &[], json!({ "error": msg }).to_string().as_bytes())
+            answer(code, &[], json!({ "error": msg }).to_string().as_bytes())
         }
-        Outcome::Forbidden(msg) => {
-            respond(response_out, 403, &[], json!({ "error": msg }).to_string().as_bytes())
-        }
-        Outcome::NotFound => respond(response_out, 404, &[], b"{\"error\":\"not_found\"}"),
+        Outcome::Forbidden(msg) => answer(403, &[], json!({ "error": msg }).to_string().as_bytes()),
+        Outcome::NotFound => answer(404, &[], b"{\"error\":\"not_found\"}"),
     }
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, extra: &[(&str, &str)], body: &[u8]) {
+fn answer(status: u16, extra: &[(&str, &str)], body: &[u8]) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     for (k, v) in extra {
         let _ = headers.set(k.as_ref(), &[v.as_bytes().to_vec()]);
     }
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(status, headers, body.to_vec())
 }
 
 bindings::export!(Component with_types_in bindings);

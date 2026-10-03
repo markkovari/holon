@@ -11,19 +11,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 guestio = { path = "../guestio" }
-wit-bindgen-rt = { workspace = true }
-
-[package.metadata.component]
-package = "comp:slugprobe"
-
-[package.metadata.component.target]
-path = "wit"
-world = "slug-probe"
-
-[package.metadata.component.target.dependencies]
-"slug:generate" = { path = "../slug/wit" }
-"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
-"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
-"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
-"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
-"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+wit-bindgen = { workspace = true }

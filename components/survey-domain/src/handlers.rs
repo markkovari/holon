@@ -6,8 +6,8 @@
 //! policy: just "admin for the management routes, anyone authenticated to
 //! read and to answer an open survey".
 
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
 use crate::{audit, introspect, is_admin, Reply, Route};
 use serde_json::{json, Value};
 

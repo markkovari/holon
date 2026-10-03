@@ -21,7 +21,56 @@
 //! Routes — see the match in `handle` for the full list.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/ratelimit-guard",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../audit-log/wit",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../validate/wit",
+            "../search-index/wit",
+            "../blob-store/wit",
+            "../upload-policy/wit",
+            "../fsm-workflow/wit",
+            "../money/wit",
+            "../markdown/wit",
+            "../csv/wit",
+            "../pii-redact/wit",
+            "../otp/wit",
+            "../secrets-vault/wit",
+            "../i18n-catalog/wit",
+            "../pagination/wit",
+            "../llm-inference/wit",
+            "../ai-inference/wit",
+            "../cache/wit",
+            "../scheduler-timer/wit",
+            "../lock-mutex/wit",
+            "../event-bus/wit",
+            "../../wit/ui-assets",
+            "wit",
+        ],
+        world: "vet:domain/vet-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+    }
+}
 
 mod datetime;
 
@@ -57,13 +106,11 @@ use bindings::secrets::vault::vault;
 use bindings::ui::assets::files as statics;
 use bindings::upload::policy::gate as upload;
 
-use bindings::wasi::clocks::wall_clock;
+use bindings::p3::clocks::system_clock;
 use bindings::wasi::keyvalue::store as kv;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Component;
 
@@ -78,9 +125,9 @@ const AISUM_TTL_SECONDS: u64 = 24 * 3600;
 // ---- routing ------------------------------------------------------------
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let query = path.split_once('?').map(|x| x.1).unwrap_or("").to_string();
 
@@ -88,34 +135,34 @@ impl Guest for Component {
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let result = match (&method, route.as_str()) {
-            (Method::Post, "/register") => register(&request),
-            (Method::Post, "/login") => login(&request),
+            (Method::Post, "/register") => register(request).await,
+            (Method::Post, "/login") => login(request).await,
             (Method::Get, "/me") => me(&request),
             // `/auth/*` aliases so the existing React SPA (built against the jco
             // app's paths) works unmodified against this Rust backend.
-            (Method::Post, "/auth/register") => register(&request),
-            (Method::Post, "/auth/login") => login(&request),
+            (Method::Post, "/auth/register") => register(request).await,
+            (Method::Post, "/auth/login") => login(request).await,
             (Method::Get, "/auth/me") => me(&request),
             (Method::Post, "/auth/logout") => logout(&request),
 
             // ---- pets ----
             (Method::Get, "/pets") => list_pets(&request, &query),
-            (Method::Post, "/pets") => create_pet(&request),
+            (Method::Post, "/pets") => create_pet(request).await,
 
             // ---- appointments ----
             (Method::Get, "/appointments") => list_appointments(&request),
-            (Method::Post, "/appointments") => create_appointment(&request),
+            (Method::Post, "/appointments") => create_appointment(request).await,
 
             // ---- admin: RBAC seeding ----
-            (Method::Post, "/admin/role-permissions") => admin_set_role_perms(&request),
-            (Method::Post, "/admin/assign-role") => admin_assign_role(&request),
+            (Method::Post, "/admin/role-permissions") => admin_set_role_perms(request).await,
+            (Method::Post, "/admin/assign-role") => admin_assign_role(request).await,
             (Method::Get, "/admin/audit") => admin_audit(&request),
             (Method::Post, "/admin/run-reminders") => admin_run_reminders(&request, &query),
             (Method::Post, "/admin/run-projection") => admin_run_projection(&request),
 
             // ---- staff 2FA ----
             (Method::Post, "/auth/2fa/enroll") => twofa_enroll(&request),
-            (Method::Post, "/auth/2fa/verify") => twofa_verify(&request),
+            (Method::Post, "/auth/2fa/verify") => twofa_verify(request).await,
             (Method::Get, "/auth/2fa/status") => twofa_status(&request),
 
             // segment-matched routes.
@@ -132,21 +179,21 @@ impl Guest for Component {
                 (Method::Delete, ["pets", id]) => delete_pet(&request, id),
                 // /pets/{id}/photo
                 (Method::Get, ["pets", id, "photo"]) => {
-                    return serve_pet_photo(&request, id, response_out);
+                    return serve_pet_photo(&request, id);
                 }
-                (Method::Post, ["pets", id, "photo"]) => upload_pet_photo(&request, id),
+                (Method::Post, ["pets", id, "photo"]) => upload_pet_photo(request, id).await,
 
                 // /appointments/{id}
                 (Method::Delete, ["appointments", id]) => delete_appointment(&request, id),
                 // /appointments/{id}/transition
                 (Method::Post, ["appointments", id, "transition"]) => {
-                    transition_appointment(&request, id)
+                    transition_appointment(request, id).await
                 }
                 // /appointments/{id}/invoice
                 (Method::Get, ["appointments", id, "invoice"]) => get_invoice(&request, id),
-                (Method::Put, ["appointments", id, "invoice"]) => put_invoice(&request, id),
+                (Method::Put, ["appointments", id, "invoice"]) => put_invoice(request, id).await,
                 // /appointments/{id}/notes
-                (Method::Post, ["appointments", id, "notes"]) => add_note(&request, id),
+                (Method::Post, ["appointments", id, "notes"]) => add_note(request, id).await,
                 (Method::Get, ["appointments", id, "notes"]) => list_notes(&request, id),
                 // /appointments/{id}/summary
                 (Method::Post, ["appointments", id, "summary"]) => {
@@ -160,7 +207,7 @@ impl Guest for Component {
             },
         };
 
-        emit(response_out, result);
+        emit(result)
     }
 }
 
@@ -175,12 +222,12 @@ enum Outcome {
     NotFound,
 }
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
         Outcome::Json(code, body) => {
-            respond(response_out, code, "application/json", body.as_bytes())
+            respond(code, "application/json", body)
         }
-        Outcome::Raw(code, ct, bytes) => respond(response_out, code, &ct, &bytes),
+        Outcome::Raw(code, ct, bytes) => respond(code, &ct, bytes),
         Outcome::Auth(e) => {
             // rate-limited carries a retry-after (seconds) — surface it as the
             // Retry-After header AND a retryAfter JSON field so the UI can show it.
@@ -189,19 +236,19 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
                 let headers = Fields::new();
                 let _ = headers.set("content-type", &[b"application/json".to_vec()]);
                 let _ = headers.set("retry-after", &[secs.to_string().into_bytes()]);
-                respond_built(response_out, 429, headers, body.as_bytes());
+                respond_with(429, headers, body.into_bytes())
             } else {
                 let (code, msg) = auth_error(&e);
-                respond_json(response_out, code, &format!("{{\"error\":\"{msg}\"}}"));
+                respond_json(code, &format!("{{\"error\":\"{msg}\"}}"))
             }
         }
         Outcome::Bad(msg) => {
-            respond_json(response_out, 400, &format!("{{\"error\":\"{}\"}}", esc(&msg)))
+            respond_json(400, &format!("{{\"error\":\"{}\"}}", esc(&msg)))
         }
         Outcome::Err(code, msg) => {
-            respond_json(response_out, code, &format!("{{\"error\":\"{}\"}}", esc(&msg)))
+            respond_json(code, &format!("{{\"error\":\"{}\"}}", esc(&msg)))
         }
-        Outcome::NotFound => respond_json(response_out, 404, "{\"error\":\"not_found\"}"),
+        Outcome::NotFound => respond_json(404, "{\"error\":\"not_found\"}"),
     }
 }
 
@@ -311,8 +358,8 @@ struct RegisterReq {
     tenant: Option<String>,
 }
 
-fn register(request: &IncomingRequest) -> Outcome {
-    let req: RegisterReq = match parse(request) {
+async fn register(request: Request) -> Outcome {
+    let req: RegisterReq = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -340,8 +387,8 @@ struct LoginReq {
     tenant: Option<String>,
 }
 
-fn login(request: &IncomingRequest) -> Outcome {
-    let req: LoginReq = match parse(request) {
+async fn login(request: Request) -> Outcome {
+    let req: LoginReq = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -352,7 +399,7 @@ fn login(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn me(request: &IncomingRequest) -> Outcome {
+fn me(request: &Request) -> Outcome {
     match introspect(request) {
         Ok(p) => Outcome::Json(200, principal_json(&p)),
         Err(o) => o,
@@ -360,7 +407,7 @@ fn me(request: &IncomingRequest) -> Outcome {
 }
 
 /// Revoke the bearer's session (logout). 204 on success.
-fn logout(request: &IncomingRequest) -> Outcome {
+fn logout(request: &Request) -> Outcome {
     let token = match bearer(request) {
         Some(t) => t,
         None => return Outcome::Auth(AuthError::InvalidToken("missing bearer".into())),
@@ -373,7 +420,7 @@ fn logout(request: &IncomingRequest) -> Outcome {
 
 /// Authorize the bearer for {target, action}; returns the principal or an Auth
 /// outcome the caller can early-return.
-fn require(request: &IncomingRequest, target: &str, action: &str) -> Result<Principal, Outcome> {
+fn require(request: &Request, target: &str, action: &str) -> Result<Principal, Outcome> {
     let token = match bearer(request) {
         Some(t) => t,
         None => return Err(Outcome::Auth(AuthError::InvalidToken("missing bearer".into()))),
@@ -383,7 +430,7 @@ fn require(request: &IncomingRequest, target: &str, action: &str) -> Result<Prin
 }
 
 /// Just introspect the bearer (no permission requirement) — for /me + 2FA.
-fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
+fn introspect(request: &Request) -> Result<Principal, Outcome> {
     let token = match bearer(request) {
         Some(t) => t,
         None => return Err(Outcome::Auth(AuthError::InvalidToken("missing bearer".into()))),
@@ -436,8 +483,8 @@ struct AssignRoleReq {
     role: String,
 }
 
-fn admin_set_role_perms(request: &IncomingRequest) -> Outcome {
-    let req: SetRolePermsReq = match parse(request) {
+async fn admin_set_role_perms(request: Request) -> Outcome {
+    let req: SetRolePermsReq = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -452,8 +499,8 @@ fn admin_set_role_perms(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn admin_assign_role(request: &IncomingRequest) -> Outcome {
-    let req: AssignRoleReq = match parse(request) {
+async fn admin_assign_role(request: Request) -> Outcome {
+    let req: AssignRoleReq = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -477,12 +524,12 @@ fn pet_rules() -> Vec<Rule> {
     vec![text_rule("name", true, 1, 60), text_rule("species", true, 1, 40)]
 }
 
-fn create_pet(request: &IncomingRequest) -> Outcome {
-    let principal = match require(request, "pets", "write") {
+async fn create_pet(request: Request) -> Outcome {
+    let principal = match require(&request, "pets", "write") {
         Ok(p) => p,
         Err(o) => return o,
     };
-    let body = match read_body(request) {
+    let body = match read_body(request).await {
         Ok(b) => b,
         Err(_) => return Outcome::Bad("could not read body".into()),
     };
@@ -516,7 +563,7 @@ fn create_pet(request: &IncomingRequest) -> Outcome {
     Outcome::Json(201, pet_json(&entry.id, &entry.data))
 }
 
-fn list_pets(request: &IncomingRequest, query: &str) -> Outcome {
+fn list_pets(request: &Request, query: &str) -> Outcome {
     let principal = match require(request, "pets", "read") {
         Ok(p) => p,
         Err(o) => return o,
@@ -617,7 +664,7 @@ fn paginate_pets(owner: Option<&str>, limit: u32, cursor: Option<&str>, viewer: 
 
 /// Full detail for a pet: the pet + its appointments, each with visit notes.
 /// Owner-scoped; doctors/admins may view any.
-fn get_pet_detail(request: &IncomingRequest, pet_id: &str) -> Outcome {
+fn get_pet_detail(request: &Request, pet_id: &str) -> Outcome {
     let principal = match require(request, "pets", "read") {
         Ok(p) => p,
         Err(o) => return o,
@@ -661,7 +708,7 @@ fn get_pet_detail(request: &IncomingRequest, pet_id: &str) -> Outcome {
 }
 
 /// Delete a pet — only if it has no active (non-cancelled) bookings. Owner-scoped.
-fn delete_pet(request: &IncomingRequest, pet_id: &str) -> Outcome {
+fn delete_pet(request: &Request, pet_id: &str) -> Outcome {
     let principal = match require(request, "pets", "write") {
         Ok(p) => p,
         Err(o) => return o,
@@ -692,8 +739,8 @@ fn delete_pet(request: &IncomingRequest, pet_id: &str) -> Outcome {
 
 // ---- pet photos (upload:policy + blob:store) ----------------------------
 
-fn upload_pet_photo(request: &IncomingRequest, pet_id: &str) -> Outcome {
-    let principal = match require(request, "pets", "write") {
+async fn upload_pet_photo(request: Request, pet_id: &str) -> Outcome {
+    let principal = match require(&request, "pets", "write") {
         Ok(p) => p,
         Err(o) => return o,
     };
@@ -706,8 +753,8 @@ fn upload_pet_photo(request: &IncomingRequest, pet_id: &str) -> Outcome {
         return Outcome::Err(403, "not_your_pet".into());
     }
     let content_type =
-        header(request, "content-type").unwrap_or_else(|| "application/octet-stream".into());
-    let body = match read_body(request) {
+        header(&request, "content-type").unwrap_or_else(|| "application/octet-stream".into());
+    let body = match read_body(request).await {
         Ok(b) => b,
         Err(_) => return Outcome::Bad("could not read body".into()),
     };
@@ -736,22 +783,22 @@ fn upload_pet_photo(request: &IncomingRequest, pet_id: &str) -> Outcome {
 
 /// Serve the raw photo bytes with the stored content-type. Any authed user with
 /// pets:read may read; this writes the response directly (binary body).
-fn serve_pet_photo(request: &IncomingRequest, pet_id: &str, response_out: ResponseOutparam) {
+fn serve_pet_photo(request: &Request, pet_id: &str) -> Result<Response, ErrorCode> {
     let _principal = match require(request, "pets", "read") {
         Ok(p) => p,
-        Err(o) => return emit(response_out, o),
+        Err(o) => return emit(o),
     };
     let pet = match records::get("pets", pet_id) {
         Ok(e) => e,
-        Err(_) => return emit(response_out, Outcome::Err(404, "no_photo".into())),
+        Err(_) => return emit(Outcome::Err(404, "no_photo".into())),
     };
     let ct = match json_field(&pet.data, "photo") {
         Some(c) => c,
-        None => return emit(response_out, Outcome::Err(404, "no_photo".into())),
+        None => return emit(Outcome::Err(404, "no_photo".into())),
     };
     match blob::get(PHOTO_CONTAINER, pet_id) {
-        Ok(bytes) => emit(response_out, Outcome::Raw(200, ct, bytes)),
-        Err(_) => emit(response_out, Outcome::Err(404, "no_photo".into())),
+        Ok(bytes) => emit(Outcome::Raw(200, ct, bytes)),
+        Err(_) => emit(Outcome::Err(404, "no_photo".into())),
     }
 }
 
@@ -769,13 +816,13 @@ fn appt_rules() -> Vec<Rule> {
     vec![text_rule("pet", true, 1, 80), text_rule("datetime", true, 4, 40)]
 }
 
-fn create_appointment(request: &IncomingRequest) -> Outcome {
+async fn create_appointment(request: Request) -> Outcome {
     ensure_seeded(); // fsm machine must exist before create_instance
-    let _principal = match require(request, "appointments", "write") {
+    let _principal = match require(&request, "appointments", "write") {
         Ok(p) => p,
         Err(o) => return o,
     };
-    let body = match read_body(request) {
+    let body = match read_body(request).await {
         Ok(b) => b,
         Err(_) => return Outcome::Bad("could not read body".into()),
     };
@@ -821,7 +868,7 @@ fn create_appointment(request: &IncomingRequest) -> Outcome {
     Outcome::Json(201, appt_json(&entry.id, &entry.data))
 }
 
-fn list_appointments(request: &IncomingRequest) -> Outcome {
+fn list_appointments(request: &Request) -> Outcome {
     let principal = match require(request, "appointments", "read") {
         Ok(p) => p,
         Err(o) => return o,
@@ -850,7 +897,7 @@ fn list_appointments(request: &IncomingRequest) -> Outcome {
 }
 
 /// Cancel (delete) an appointment — only when it is more than 24h away. Owner-scoped.
-fn delete_appointment(request: &IncomingRequest, appt_id: &str) -> Outcome {
+fn delete_appointment(request: &Request, appt_id: &str) -> Outcome {
     let principal = match require(request, "appointments", "write") {
         Ok(p) => p,
         Err(o) => return o,
@@ -885,13 +932,13 @@ struct TransitionReq {
 
 /// Advance an appointment through its lifecycle via fsm:workflow. confirm/complete
 /// are doctor/admin; cancel may also be done by the appointment's owner.
-fn transition_appointment(request: &IncomingRequest, appt_id: &str) -> Outcome {
+async fn transition_appointment(request: Request, appt_id: &str) -> Outcome {
     ensure_seeded(); // fsm machine must exist before fire/allowed-events
-    let principal = match require(request, "appointments", "write") {
+    let principal = match require(&request, "appointments", "write") {
         Ok(p) => p,
         Err(o) => return o,
     };
-    let req: TransitionReq = match parse(request) {
+    let req: TransitionReq = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -947,8 +994,8 @@ struct InvoiceReq {
 }
 
 /// Set/replace the invoice for an appointment (doctor/admin); money:amount totals.
-fn put_invoice(request: &IncomingRequest, appt_id: &str) -> Outcome {
-    let principal = match require(request, "appointments", "write") {
+async fn put_invoice(request: Request, appt_id: &str) -> Outcome {
+    let principal = match require(&request, "appointments", "write") {
         Ok(p) => p,
         Err(o) => return o,
     };
@@ -958,7 +1005,7 @@ fn put_invoice(request: &IncomingRequest, appt_id: &str) -> Outcome {
     if records::get("appointments", appt_id).is_err() {
         return Outcome::Err(404, "appointment_not_found".into());
     }
-    let req: InvoiceReq = match parse(request) {
+    let req: InvoiceReq = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -997,7 +1044,7 @@ fn put_invoice(request: &IncomingRequest, appt_id: &str) -> Outcome {
 }
 
 /// Read an appointment's invoice (owner of it, or doctor/admin).
-fn get_invoice(request: &IncomingRequest, appt_id: &str) -> Outcome {
+fn get_invoice(request: &Request, appt_id: &str) -> Outcome {
     let principal = match require(request, "appointments", "read") {
         Ok(p) => p,
         Err(o) => return o,
@@ -1024,15 +1071,15 @@ struct NoteReq {
     text: String,
 }
 
-fn add_note(request: &IncomingRequest, appt_id: &str) -> Outcome {
-    let principal = match require(request, "notes", "write") {
+async fn add_note(request: Request, appt_id: &str) -> Outcome {
+    let principal = match require(&request, "notes", "write") {
         Ok(p) => p,
         Err(o) => return o,
     };
     if records::get("appointments", appt_id).is_err() {
         return Outcome::Err(404, "appointment_not_found".into());
     }
-    let req: NoteReq = match parse(request) {
+    let req: NoteReq = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -1057,7 +1104,7 @@ fn add_note(request: &IncomingRequest, appt_id: &str) -> Outcome {
 
 /// Notes for an appointment — owner of the appointment, or doctor/admin. Each
 /// note's raw markdown is rendered to safe HTML via md:render.
-fn list_notes(request: &IncomingRequest, appt_id: &str) -> Outcome {
+fn list_notes(request: &Request, appt_id: &str) -> Outcome {
     let principal = match require(request, "appointments", "read") {
         Ok(p) => p,
         Err(o) => return o,
@@ -1128,7 +1175,7 @@ fn aisum_key(appt_id: &str) -> String {
 
 /// Generate (and cache) a clinical summary for an appointment via ai:inference.
 /// Doctor/admin (notes:write). ?force=1 re-runs even if cached.
-fn post_summary(request: &IncomingRequest, appt_id: &str, query: &str) -> Outcome {
+fn post_summary(request: &Request, appt_id: &str, query: &str) -> Outcome {
     let _principal = match require(request, "notes", "write") {
         Ok(p) => p,
         Err(o) => return o,
@@ -1151,7 +1198,7 @@ fn post_summary(request: &IncomingRequest, appt_id: &str, query: &str) -> Outcom
 }
 
 /// Read a cached AI summary (owner of the appointment, or doctor/admin).
-fn get_summary(request: &IncomingRequest, appt_id: &str) -> Outcome {
+fn get_summary(request: &Request, appt_id: &str) -> Outcome {
     let principal = match require(request, "appointments", "read") {
         Ok(p) => p,
         Err(o) => return o,
@@ -1230,7 +1277,7 @@ fn reminder_key(appt_id: &str) -> String {
 /// Fires every reminder due at `now`: collects what it would notify (the
 /// notify sink is a compose-time concern, out of this domain), then acks the
 /// timer jobs. A reminder for a gone/cancelled appointment is acked, not fired.
-fn admin_run_reminders(request: &IncomingRequest, query: &str) -> Outcome {
+fn admin_run_reminders(request: &Request, query: &str) -> Outcome {
     let _principal = match require(request, "audit", "read") {
         Ok(p) => p,
         Err(o) => return o,
@@ -1262,7 +1309,7 @@ fn admin_run_reminders(request: &IncomingRequest, query: &str) -> Outcome {
 
 /// Drain the appointment.booked topic into the projection group, ack, and report
 /// the running booked count. Admin-triggered. Proves the event:bus fan-out.
-fn admin_run_projection(request: &IncomingRequest) -> Outcome {
+fn admin_run_projection(request: &Request) -> Outcome {
     let _principal = match require(request, "audit", "read") {
         Ok(p) => p,
         Err(o) => return o,
@@ -1303,7 +1350,7 @@ fn write_booked_count(count: u64) {
 /// writes events to the shared KV under `al_*` keys; we read them straight from
 /// the bucket (audit:log does not re-export its query interface), newest-first,
 /// and mask PII in the detail + subject fields via pii:redact.
-fn admin_audit(request: &IncomingRequest) -> Outcome {
+fn admin_audit(request: &Request) -> Outcome {
     let _principal = match require(request, "audit", "read") {
         Ok(p) => p,
         Err(o) => return o,
@@ -1381,7 +1428,7 @@ fn read_audit_trail_redacted(max: usize) -> Vec<String> {
 }
 
 /// CSV export (admin): `appointments` or `audit`, formatted by csv:codec.
-fn admin_export_csv(request: &IncomingRequest, what: &str) -> Outcome {
+fn admin_export_csv(request: &Request, what: &str) -> Outcome {
     let _principal = match require(request, "audit", "read") {
         Ok(p) => p,
         Err(o) => return o,
@@ -1452,7 +1499,7 @@ fn otp_secret_name(subject: &str) -> String {
     format!("otp/{subject}")
 }
 
-fn twofa_enroll(request: &IncomingRequest) -> Outcome {
+fn twofa_enroll(request: &Request) -> Outcome {
     let me = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -1472,12 +1519,12 @@ struct CodeReq {
     code: String,
 }
 
-fn twofa_verify(request: &IncomingRequest) -> Outcome {
-    let me = match introspect(request) {
+async fn twofa_verify(request: Request) -> Outcome {
+    let me = match introspect(&request) {
         Ok(p) => p,
         Err(o) => return o,
     };
-    let req: CodeReq = match parse(request) {
+    let req: CodeReq = match parse(request).await {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
@@ -1491,7 +1538,7 @@ fn twofa_verify(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn twofa_status(request: &IncomingRequest) -> Outcome {
+fn twofa_status(request: &Request) -> Outcome {
     let me = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -1522,8 +1569,8 @@ fn i18n_bundle(locale: &str) -> Outcome {
 
 // ---- helpers: request ---------------------------------------------------
 
-fn parse<T: for<'de> Deserialize<'de>>(request: &IncomingRequest) -> Result<T, String> {
-    let body = read_body(request).map_err(|_| "could not read body".to_string())?;
+async fn parse<T: for<'de> Deserialize<'de>>(request: Request) -> Result<T, String> {
+    let body = read_body(request).await.map_err(|_| "could not read body".to_string())?;
     serde_json::from_slice(&body).map_err(|e| format!("bad json: {e}"))
 }
 
@@ -1541,14 +1588,14 @@ fn parse<T: for<'de> Deserialize<'de>>(request: &IncomingRequest) -> Result<T, S
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
 
-guestio::guest_bearer!();
+guestio::guest_p3_bearer!();
 
 /// First value of a request header as a UTF-8 string.
-fn header(request: &IncomingRequest, name: &str) -> Option<String> {
-    let headers = request.headers();
+fn header(request: &Request, name: &str) -> Option<String> {
+    let headers = request.get_headers();
     for v in headers.get(name) {
         if let Ok(s) = String::from_utf8(v) {
             return Some(s);
@@ -1572,8 +1619,8 @@ use guestfmt::percent_decode as url_decode;
 
 /// Host wall-clock "now" in unix seconds.
 fn now_seconds() -> i64 {
-    let now = wall_clock::now();
-    now.seconds as i64
+    let now = system_clock::now();
+    now.seconds
 }
 
 // ---- helpers: validation rules ------------------------------------------
@@ -1721,36 +1768,8 @@ fn policy_err(e: upload::PolicyError) -> Outcome {
 
 // ---- responses ----------------------------------------------------------
 
-fn respond_json(response_out: ResponseOutparam, status: u16, body: &str) {
-    respond(response_out, status, "application/json", body.as_bytes());
-}
-
-/// Respond with a pre-built Fields (for extra headers, e.g. Retry-After).
-fn respond_built(response_out: ResponseOutparam, status: u16, headers: Fields, body: &[u8]) {
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
-}
-
-fn respond(response_out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        // write in <= 4096-byte chunks (the stream's typical write budget).
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
+fn respond_json(status: u16, body: &str) -> Result<Response, ErrorCode> {
+    respond(status, "application/json", body)
 }
 
 bindings::export!(Component with_types_in bindings);

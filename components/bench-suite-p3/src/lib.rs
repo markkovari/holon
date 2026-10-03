@@ -7,6 +7,8 @@
 
 mod bindings {
     wit_bindgen::generate!({
+        path: ["../../wit/p3", "wit"],
+        world: "bench:suite-p3/bench-suite-p3",
         generate_all,
     });
 }

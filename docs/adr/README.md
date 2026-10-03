@@ -131,6 +131,7 @@ tells you what is true now rather than what was once believed.
 | [0099](0099-an-agent-native-code-store.md) | An agent-native code store: an oplog over a commutative, symbol-level patch graph | **served** — contract `wit/vcs/vcs.wit`; engine + NATS/SurrealDB adapters in `crates/holon-vcs` (step two); crash consistency, exact `commuted`, name reservations, positions, indexes (step three); `comp-vcs` + `vcs-store` + `vcs-gateway`, `apps/vcs.toml`, `e2e/vcs.sh` (the service) |
 | [0101](0101-state-can-live-somewhere-else.md) | State can live somewhere else: object bytes on S3/R2, and backups off the box | **accepted**, and built — `--blob s3`, `blob-store`'s `blobs` store, `comp-backup` |
 | [0102](0102-an-agent-session-is-a-contract-first.md) | An agent session is a contract first: sessions, tasks, one resumable event stream, per-tool approval | **accepted**, and served — `comp-agentd` answers `api/openapi.yaml` (REST + SSE) and `api/holon/v1/agent.proto` (gRPC, gRPC-web) on one port |
+| [0103](0103-components-move-to-wasi-p3.md) | Components move to WASI p3, on the rc WIT until wrpc moves: one live instance serves many requests | **accepted**, in progress — comp-host serves p2 and p3; HTTP components are being ported |
 
 ## History: superseded, and kept
 

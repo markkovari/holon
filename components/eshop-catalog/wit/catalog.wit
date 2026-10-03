@@ -17,7 +17,7 @@ package eshop:catalog@0.1.0;
 
 /// The catalog HTTP backend, composed from capability contracts.
 world catalog-service {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // items/brands/types, with brand/type secondary indexes.
     import records:store/store@0.1.0;

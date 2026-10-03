@@ -4,7 +4,7 @@ use crate::bindings::money::amount::arithmetic as money;
 use crate::bindings::ratelimit::guard::limiter as rl;
 use crate::bindings::ratelimit::guard::limiter::LimitError;
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
+use crate::bindings::p3::http::types::Method;
 use crate::{now_secs, Reply, Route};
 use serde_json::{json, Value};
 

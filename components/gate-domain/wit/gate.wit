@@ -28,14 +28,14 @@ package gate:app@0.1.0;
 /// The gateway backend — durable per-key rate limit / throttle / batch state,
 /// with the shaping math delegated to shaper:limit.
 world gate-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // the durable per-key state (the "worker" memory): bucket, TAT, batch buffer.
     import records:store/store@0.1.0;
     // the stateless shaping algorithms (token bucket + GCRA).
     import shaper:limit/limiter@0.1.0;
     // request + refill timestamps (unix millis).
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
     // The rate-limit bucket is ONE keyed value that every request reads and
     // writes. It was a `record` — which meant a secondary-index lookup to find
     // it and index maintenance to write it, ~8 store round trips for a value

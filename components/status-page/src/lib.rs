@@ -7,7 +7,35 @@
 //! consecutive failures; a single good probe recovers from either.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../scheduler-timer/wit",
+            "../../host/wit/deps/comp-store",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../record-store/wit",
+            "../fsm-workflow/wit",
+            "../event-bus/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../notify-dispatch/wit",
+            "wit",
+        ],
+        world: "status:app/status-app",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -15,16 +43,12 @@ use serde_json::{json, Value};
 use bindings::event::bus::bus;
 use bindings::fsm::workflow::engine as fsm;
 use bindings::notify::dispatch::dispatcher as notify;
+use bindings::p3::clocks::system_clock;
 use bindings::records::store::store as records;
 use bindings::sched::timer::timer;
-use bindings::wasi::clocks::wall_clock;
-use bindings::wasi::http::outgoing_handler;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingRequest, OutgoingResponse,
-    RequestOptions, ResponseOutparam, Scheme,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 
 struct Component;
 
@@ -35,24 +59,24 @@ const TICK_BATCH: u32 = 25;
 const TICK_LEASE: u64 = 60;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let query = path.split_once('?').map(|x| x.1).unwrap_or("").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let result = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => Outcome::Html(INDEX_HTML.to_string()),
-            (Method::Post, ["api", "monitors"]) => create_monitor(&request),
+            (Method::Post, ["api", "monitors"]) => create_monitor(request).await,
             (Method::Get, ["api", "monitors"]) | (Method::Get, ["api", "status"]) => status(),
             (Method::Delete, ["api", "monitors", id]) => delete_monitor(id),
             (Method::Get, ["api", "monitors", id, "history"]) => history(id),
-            (Method::Post, ["api", "tick"]) => tick(),
+            (Method::Post, ["api", "tick"]) => tick().await,
             (Method::Get, ["api", "events"]) => events(&query),
             _ => Outcome::NotFound,
         };
-        emit(response_out, result);
+        emit(result)
     }
 }
 
@@ -65,7 +89,7 @@ enum Outcome {
 }
 
 fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 // ---- monitors ----------------------------------------------------------------
@@ -105,9 +129,9 @@ fn ensure_machine() -> Result<(), fsm::FsmError> {
     )
 }
 
-fn create_monitor(request: &IncomingRequest) -> Outcome {
+async fn create_monitor(request: Request) -> Outcome {
     let req: CreateMonitor =
-        match read_body(request).and_then(|b| serde_json::from_slice(&b).map_err(|_| ())) {
+        match read_body(request).await.and_then(|b| serde_json::from_slice(&b).map_err(|_| ())) {
             Ok(r) => r,
             Err(_) => {
                 return Outcome::Bad("expected json body {name, url, period?, alert-url?}".into())
@@ -203,7 +227,7 @@ fn history(id: &str) -> Outcome {
 
 // ---- the pump ------------------------------------------------------------------
 
-fn tick() -> Outcome {
+async fn tick() -> Outcome {
     let at = now();
     let jobs = match timer::due(at, TICK_BATCH, TICK_LEASE) {
         Ok(j) => j,
@@ -220,7 +244,7 @@ fn tick() -> Outcome {
         };
         let data: Value = serde_json::from_str(&monitor.data).unwrap_or(Value::Null);
         let url = data["url"].as_str().unwrap_or("");
-        let status = probe(url);
+        let status = probe(url).await;
         let ok = matches!(status, Some(s) if s < 400);
 
         let event = if ok { "recover" } else { "fail" };
@@ -267,37 +291,13 @@ fn tick() -> Outcome {
     Outcome::Json(200, json!({ "due": jobs.len(), "results": results }).to_string())
 }
 
-/// GET the target and report the status code; None = unreachable.
-fn probe(url: &str) -> Option<u16> {
-    let (scheme, rest) = if let Some(r) = url.strip_prefix("https://") {
-        (Scheme::Https, r)
-    } else {
-        let r = url.strip_prefix("http://")?;
-        (Scheme::Http, r)
-    };
-    let (authority, path) = match rest.find('/') {
-        Some(i) => (&rest[..i], &rest[i..]),
-        None => (rest, "/"),
-    };
-    let req = OutgoingRequest::new(Fields::new());
-    req.set_method(&Method::Get).ok()?;
-    req.set_scheme(Some(&scheme)).ok()?;
-    req.set_authority(Some(authority)).ok()?;
-    req.set_path_with_query(Some(path)).ok()?;
-    let body = req.body().ok()?;
-    OutgoingBody::finish(body, None).ok()?;
-
-    let future = outgoing_handler::handle(req, Some(RequestOptions::new())).ok()?;
-    future.subscribe().block();
-    let resp = future.get()?.ok()?.ok()?;
-    let status = resp.status();
-    // drain so the connection is released.
-    if let Ok(incoming) = resp.consume() {
-        if let Ok(stream) = incoming.stream() {
-            while matches!(stream.blocking_read(8192), Ok(c) if !c.is_empty()) {}
-        }
+/// GET the target and report the status code; None = unreachable. The body is
+/// read (and dropped) so the connection is released.
+async fn probe(url: &str) -> Option<u16> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return None;
     }
-    Some(status)
+    fetch(Method::Get, url, &[], Vec::new()).await.ok().map(|(status, _)| status)
 }
 
 // ---- event feed ------------------------------------------------------------------
@@ -352,8 +352,10 @@ fn store_err(e: records::StoreError) -> Outcome {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
+// A probe reads the target's body only to release the connection; 1 MiB is plenty.
+guestio::guest_p3_fetch!(1024 * 1024);
 
 fn query_param(query: &str, key: &str) -> Option<String> {
     query.split('&').find_map(|kv| {
@@ -364,44 +366,16 @@ fn query_param(query: &str, key: &str) -> Option<String> {
 
 // ---- responses --------------------------------------------------------------------
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => {
-            respond(response_out, code, body.as_bytes(), "application/json")
+        Outcome::Json(code, body) => respond(code, "application/json", body),
+        Outcome::Html(body) => respond(200, "text/html; charset=utf-8", body),
+        Outcome::Bad(msg) => respond(400, "application/json", json!({ "error": msg }).to_string()),
+        Outcome::Err(code, msg) => {
+            respond(code, "application/json", json!({ "error": msg }).to_string())
         }
-        Outcome::Html(body) => {
-            respond(response_out, 200, body.as_bytes(), "text/html; charset=utf-8")
-        }
-        Outcome::Bad(msg) => respond(
-            response_out,
-            400,
-            json!({ "error": msg }).to_string().as_bytes(),
-            "application/json",
-        ),
-        Outcome::Err(code, msg) => respond(
-            response_out,
-            code,
-            json!({ "error": msg }).to_string().as_bytes(),
-            "application/json",
-        ),
-        Outcome::NotFound => {
-            respond(response_out, 404, b"{\"error\":\"not_found\"}", "application/json")
-        }
+        Outcome::NotFound => respond(404, "application/json", "{\"error\":\"not_found\"}"),
     }
-}
-
-fn respond(response_out: ResponseOutparam, status: u16, body: &[u8], content_type: &str) {
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
 }
 
 const INDEX_HTML: &str = r#"<!doctype html>

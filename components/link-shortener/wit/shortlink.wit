@@ -17,7 +17,7 @@ package shortlink:app@0.1.0;
 
 /// The link-shortener HTTP backend, composed from capability contracts.
 world shortlink-app {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // custom-alias slugify + collision suffixing.
     import slug:generate/generator@0.1.0;

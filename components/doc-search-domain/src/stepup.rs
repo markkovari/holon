@@ -1,8 +1,8 @@
 use crate::bindings::auth::identity::authorizer as authz;
 use crate::bindings::auth::identity::types::Permission;
 use crate::bindings::otp::totp::authenticator as totp;
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
 use crate::{cfg_u64, now_secs, Reply, Route};
 use serde_json::{json, Value};
 
