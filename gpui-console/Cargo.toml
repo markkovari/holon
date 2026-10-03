@@ -21,6 +21,10 @@ comp-reconciler = { path = "../reconciler" }
 # available at build time. This feature defers shader compilation to runtime
 # instead, which needs no `xcrun metal` — no functional difference otherwise.
 gpui = { version = "0.2.2", features = ["runtime_shaders"] }
+# For the spawn-progress channel: the background build/upload/deploy work
+# reports checkpoints ("building…", "deploying…") back to the foreground
+# entity as they happen, rather than only a single result at the end.
+futures = "0.3"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -23,22 +23,39 @@ use std::process::Command;
 use std::time::Duration;
 
 use comp_reconciler::fleet::{repo_root, Fleet};
+use futures::channel::mpsc;
+use futures::StreamExt;
 use gpui::{Context, Subscription};
 use serde_json::{json, Value};
 
-/// One line of a conversation with an agent: who said it, and what.
+/// Who a conversation line is from. `System` is a status checkpoint — build
+/// progress, a lifecycle status change reported back by platform-domain,
+/// "message sent, waiting for a reply" — interleaved with the real
+/// user/agent messages rather than hidden behind a single status label.
+#[derive(Clone, PartialEq, Eq)]
+pub enum Kind {
+    User,
+    Agent,
+    System,
+}
+
+/// One line of a conversation with an agent: who said it (or what happened),
+/// and what.
 #[derive(Clone)]
 pub struct Message {
-    pub from_user: bool,
+    pub kind: Kind,
     pub text: String,
 }
 
 impl Message {
     fn user(text: impl Into<String>) -> Self {
-        Self { from_user: true, text: text.into() }
+        Self { kind: Kind::User, text: text.into() }
     }
     fn agent(text: impl Into<String>) -> Self {
-        Self { from_user: false, text: text.into() }
+        Self { kind: Kind::Agent, text: text.into() }
+    }
+    fn system(text: impl Into<String>) -> Self {
+        Self { kind: Kind::System, text: text.into() }
     }
 }
 
@@ -46,10 +63,15 @@ impl Message {
 /// state — platform-domain has no concept of a chat transcript, just a
 /// deployment's name and status — so `refresh` (which re-reads the
 /// deployment list every few seconds) preserves it by matching on `name`
-/// rather than replacing the row outright.
+/// rather than replacing the row outright, and appends a `System` message
+/// only when the status actually CHANGES (not on every 3s poll), so a
+/// status timeline shows up for free however many lifecycle states
+/// platform-domain reports (`draft`, `deploying`, `running`, ...) without
+/// this console having to know their names up front.
 #[derive(Clone)]
 pub struct AgentRow {
     pub name: String,
+    pub description: String,
     pub status: String,
     pub messages: Vec<Message>,
 }
@@ -138,9 +160,23 @@ impl Lattice {
             this.update(cx, |this, cx| {
                 for (name, status) in fetched {
                     if let Some(row) = this.agents.iter_mut().find(|a| a.name == name) {
-                        row.status = status;
+                        if row.status != status {
+                            row.messages.push(Message::system(format!(
+                                "status: {} → {status}",
+                                row.status
+                            )));
+                            row.status = status;
+                        }
                     } else {
-                        this.agents.insert(0, AgentRow { name, status, messages: Vec::new() });
+                        this.agents.insert(
+                            0,
+                            AgentRow {
+                                name,
+                                description: String::new(),
+                                status,
+                                messages: Vec::new(),
+                            },
+                        );
                     }
                 }
                 if !this.spawning {
@@ -163,6 +199,7 @@ impl Lattice {
     pub fn send_to_agent(&mut self, name: String, text: String, cx: &mut Context<Self>) {
         if let Some(row) = self.agents.iter_mut().find(|a| a.name == name) {
             row.messages.push(Message::user(text));
+            row.messages.push(Message::system("message sent — waiting for a reply…".to_string()));
         }
         cx.notify();
 
@@ -173,8 +210,15 @@ impl Lattice {
                 cx.background_executor().spawn(async move { ping(ingress_port, &host) }).await;
             this.update(cx, |this, cx| {
                 if let Some(row) = this.agents.iter_mut().find(|a| a.name == name) {
-                    row.messages
-                        .push(Message::agent(output.unwrap_or_else(|| "(no answer)".to_string())));
+                    match output {
+                        Some(answer) => {
+                            row.messages.push(Message::system("seen — replied".to_string()));
+                            row.messages.push(Message::agent(answer));
+                        }
+                        None => {
+                            row.messages.push(Message::system("no answer".to_string()));
+                        }
+                    }
                 }
                 cx.notify();
             })
@@ -183,65 +227,58 @@ impl Lattice {
         .detach();
     }
 
-    /// The GUI's "create a new agent, live" action, driven by the free-text
-    /// message typed into the console — mirrors `reconciler/tests/juan_live.rs`'s
-    /// chat trigger, just arriving from a text field instead of a NATS
-    /// publish. `extract_name` pulls the agent's name out of it (a bare word
-    /// works too). The agent appears in the sidebar — and gets selected, so
-    /// its conversation is immediately visible — the moment this is called,
-    /// before anything has actually been built yet.
+    /// `name` must be non-empty, WIT-kebab-case-valid, and not already used
+    /// by another agent — checked here so `NewAgentForm` can show the same
+    /// rule before even trying, and so a direct call (nothing else enforces
+    /// it) can't slip an invalid or colliding name through.
+    pub fn validate_name(&self, name: &str) -> Result<(), String> {
+        valid_name_syntax(name)?;
+        if self.agents.iter().any(|a| a.name == name) {
+            return Err(format!("{name} already exists — pick another name"));
+        }
+        Ok(())
+    }
+
+    /// The GUI's "create a new agent, live" action: an explicit, unique
+    /// `name` and a free-text `description` (the agent's purpose — becomes
+    /// its canned reply, and the first line of its conversation), from the
+    /// "+ new agent" window. The agent appears in the sidebar — and gets
+    /// selected, so its conversation is immediately visible — the moment
+    /// this is called, before anything has actually been built yet, with a
+    /// running timeline of what's happening (rendering, building,
+    /// uploading, deploying, waiting on comp-reconciler) appended as it
+    /// happens rather than shown only as a single status label.
     ///
     /// Renders the agent's source from a template, builds it, uploads it,
     /// deploys it, polls until comp-reconciler has converged and it answers
     /// over the lattice, then deletes the scratch source directory again
     /// (platform-domain's catalog/deployment listing is the record that
     /// persists, not a directory on disk).
-    pub fn spawn_agent(&mut self, message: String, cx: &mut Context<Self>) {
+    pub fn spawn_agent(&mut self, name: String, description: String, cx: &mut Context<Self>) {
         if self.spawning {
             return;
         }
-        let message = message.trim().to_string();
-        if message.is_empty() {
-            self.status_line = "type a message first".to_string();
+        if let Err(e) = self.validate_name(&name) {
+            self.status_line = e;
             cx.notify();
             return;
         }
-        let name = extract_name(&message);
-        if name.is_empty() {
-            self.status_line = "couldn't find a name in that message".to_string();
-            cx.notify();
-            return;
-        }
-        // WIT kebab-case identifiers require every dash-separated word to
-        // start with a letter (found the hard way: `cargo component build`
-        // rejects e.g. "agent-1" with "invalid label: dash-separated words
-        // must begin with an ASCII lowercase letter" — a digit right after a
-        // dash fails it). Caught here with a clear message instead of
-        // surfacing as an opaque build failure from the background thread.
-        if name.split('-').any(|word| word.chars().next().is_some_and(|c| !c.is_ascii_lowercase()))
-        {
-            self.status_line = format!(
-                "{name}: each part of the name separated by a dash must start with a letter"
-            );
-            cx.notify();
-            return;
-        }
+        let description = description.trim().to_string();
 
         self.spawning = true;
         self.status_line = format!("rendering + building {name}…");
-        if let Some(row) = self.agents.iter_mut().find(|a| a.name == name) {
-            row.status = "spawning".to_string();
-            row.messages.push(Message::user(message));
-        } else {
-            self.agents.insert(
-                0,
-                AgentRow {
-                    name: name.clone(),
-                    status: "spawning".to_string(),
-                    messages: vec![Message::user(message)],
-                },
-            );
-        }
+        self.agents.insert(
+            0,
+            AgentRow {
+                name: name.clone(),
+                description: description.clone(),
+                status: "spawning".to_string(),
+                messages: vec![
+                    Message::user(description.clone()),
+                    Message::system("initializing…".to_string()),
+                ],
+            },
+        );
         self.selected = Some(name.clone());
         cx.notify();
 
@@ -251,13 +288,45 @@ impl Lattice {
         let host = self.host_for(&name);
         let agent_name = name.clone();
 
+        // Progress pump: appends each checkpoint the background work sends
+        // as a System message, for as long as `progress_tx` (below) is
+        // alive. Separate task from the one awaiting the final result, so
+        // checkpoints show up as they happen rather than all at once at
+        // the end.
+        let (progress_tx, mut progress_rx) = mpsc::unbounded::<String>();
+        {
+            let name = name.clone();
+            cx.spawn(async move |this, cx| {
+                while let Some(line) = progress_rx.next().await {
+                    this.update(cx, |this, cx| {
+                        if let Some(row) = this.agents.iter_mut().find(|a| a.name == name) {
+                            row.messages.push(Message::system(line));
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            })
+            .detach();
+        }
+
         cx.spawn(async move |this, cx| {
+            let say = {
+                let tx = progress_tx.clone();
+                move |s: &str| {
+                    let _ = tx.unbounded_send(s.to_string());
+                }
+            };
             let result: Result<String, String> = cx
                 .background_executor()
                 .spawn(async move {
-                    let wasm = scaffold_build_and_clean(&agent_name)?;
+                    say("rendering + building component…");
+                    let wasm = scaffold_build_and_clean(&agent_name, &description)?;
+                    say("uploading component…");
                     upload_component(&base, &token, &agent_name, wasm)?;
+                    say("deploying…");
                     let dep_id = create_deployment(&base, &token, &agent_name)?;
+                    say("waiting for comp-reconciler to converge…");
 
                     let deadline = std::time::Instant::now() + Duration::from_secs(60);
                     while std::time::Instant::now() < deadline {
@@ -270,6 +339,7 @@ impl Lattice {
                     Err(format!("{agent_name} did not come up in time"))
                 })
                 .await;
+            drop(progress_tx); // ends the progress pump above
 
             this.update(cx, |this, cx| {
                 this.spawning = false;
@@ -281,11 +351,13 @@ impl Lattice {
                     match &result {
                         Ok(answer) => {
                             row.status = "live".to_string();
+                            row.messages
+                                .push(Message::system("status checks passed — live".to_string()));
                             row.messages.push(Message::agent(answer.clone()));
                         }
                         Err(e) => {
                             row.status = format!("failed: {e}");
-                            row.messages.push(Message::agent(format!("failed: {e}")));
+                            row.messages.push(Message::system(format!("failed: {e}")));
                         }
                     }
                 }
@@ -301,30 +373,24 @@ impl Lattice {
     }
 }
 
-/// Pulls the agent's name out of a free-text message — "create an agent that
-/// tells a joke, call it juan" gives "juan", same as
-/// `reconciler/tests/juan_live.rs`'s `parse_trigger`. A message with no
-/// "call it" falls back to sanitizing the whole message as the name, so
-/// typing a bare word still works exactly like the old name-only field did.
-fn extract_name(message: &str) -> String {
-    let lower = message.to_lowercase();
-    if let Some(name) = lower
-        .split("call it ")
-        .nth(1)
-        .and_then(|rest| rest.split_whitespace().next())
-        .map(|word| {
-            word.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect::<String>()
-        })
-        .filter(|name| !name.is_empty())
-    {
-        return name;
+/// The syntax half of `Lattice::validate_name` — non-empty, and WIT
+/// kebab-case-valid. Pulled out as a free function so it's unit-testable
+/// without needing a `Lattice` (which needs a real `Fleet` to construct).
+fn valid_name_syntax(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("type a name first".to_string());
     }
-    message
-        .trim()
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-        .collect::<String>()
-        .to_lowercase()
+    // WIT kebab-case identifiers require every dash-separated word to start
+    // with a letter (found the hard way: `cargo component build` rejects
+    // e.g. "agent-1" with "invalid label: dash-separated words must begin
+    // with an ASCII lowercase letter" — a digit right after a dash fails
+    // it).
+    if name.split('-').any(|word| word.chars().next().is_some_and(|c| !c.is_ascii_lowercase())) {
+        return Err(format!(
+            "{name}: each part of the name separated by a dash must start with a letter"
+        ));
+    }
+    Ok(())
 }
 
 // ---- blocking HTTP helpers, run on the background executor ----------------
@@ -421,7 +487,7 @@ fn ping(ingress_port: u16, host: &str) -> Option<String> {
 /// builds it, and deletes the directory again — win or lose, nothing it
 /// creates survives this call. Mirrors `juan_live.rs`'s
 /// `ScratchComponent::scaffold` + `build` + `Drop`.
-fn scaffold_build_and_clean(name: &str) -> Result<Vec<u8>, String> {
+fn scaffold_build_and_clean(name: &str, description: &str) -> Result<Vec<u8>, String> {
     let dir: PathBuf = repo_root().join("components").join(name);
     if dir.exists() {
         return Err(format!("a component dir named {name} already exists — pick another name"));
@@ -435,7 +501,8 @@ fn scaffold_build_and_clean(name: &str) -> Result<Vec<u8>, String> {
         std::fs::create_dir_all(dir.join("wit")).map_err(|e| e.to_string())?;
         std::fs::write(dir.join("Cargo.toml"), cargo_toml(name)).map_err(|e| e.to_string())?;
         std::fs::write(dir.join("wit/world.wit"), world_wit(name)).map_err(|e| e.to_string())?;
-        std::fs::write(dir.join("src/lib.rs"), lib_rs(name)).map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("src/lib.rs"), lib_rs(name, description))
+            .map_err(|e| e.to_string())?;
         Ok(())
     };
     if let Err(e) = render() {
@@ -508,7 +575,20 @@ world {name} {{
     )
 }
 
-fn lib_rs(name: &str) -> String {
+/// Escapes `"` and `\` so the description can sit inside a plain (non-raw)
+/// Rust string literal in the generated component's source without breaking
+/// it — the description is free text from the "new agent" window, so it can
+/// contain either.
+fn escape_rust_str(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn lib_rs(name: &str, description: &str) -> String {
+    let line = if description.is_empty() {
+        format!("Hola! I am {name}, spawned live from the console.")
+    } else {
+        format!("Hola! I am {name}. {}", escape_rust_str(description))
+    };
     format!(
         r#"//! Rendered live from the console's "spawn new agent" action — see
 //! gpui-console/src/lattice.rs.
@@ -524,7 +604,7 @@ struct Component;
 
 impl Guest for Component {{
     fn handle(_request: bindings::exports::wasi::http::incoming_handler::IncomingRequest, response_out: ResponseOutparam) {{
-        let body = "Hola! I am {name}, spawned live from the console.";
+        let body = "{line}";
         let headers = Fields::new();
         let _ = headers.set("content-type", &[b"text/plain".to_vec()]);
         let resp = OutgoingResponse::new(headers);
@@ -542,4 +622,51 @@ impl Guest for Component {{
 bindings::export!(Component with_types_in bindings);
 "#
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valid_names_pass() {
+        assert!(valid_name_syntax("juan").is_ok());
+        assert!(valid_name_syntax("natasha").is_ok());
+        assert!(valid_name_syntax("weather-bot").is_ok());
+    }
+
+    #[test]
+    fn empty_name_is_rejected() {
+        assert!(valid_name_syntax("").is_err());
+    }
+
+    #[test]
+    fn dash_word_must_start_with_a_letter() {
+        // Found the hard way: `cargo component build` rejects this with an
+        // opaque error from a background thread if it isn't caught first.
+        assert!(valid_name_syntax("agent-1").is_err());
+        assert!(valid_name_syntax("1agent").is_err());
+        assert!(valid_name_syntax("weather-bot").is_ok());
+    }
+
+    #[test]
+    fn quotes_and_backslashes_are_escaped() {
+        // A description containing either would otherwise prematurely
+        // close the generated component's string literal (quote) or escape
+        // the following character (backslash), breaking the build.
+        assert_eq!(escape_rust_str(r#"says "hello""#), r#"says \"hello\""#);
+        assert_eq!(escape_rust_str(r"a\b"), r"a\\b");
+    }
+
+    #[test]
+    fn empty_description_falls_back_to_the_default_line() {
+        let src = lib_rs("juan", "");
+        assert!(src.contains("Hola! I am juan, spawned live from the console."));
+    }
+
+    #[test]
+    fn description_is_embedded_in_the_generated_reply() {
+        let src = lib_rs("natasha", "tells the weather");
+        assert!(src.contains("Hola! I am natasha. tells the weather"));
+    }
 }

@@ -30,7 +30,15 @@ use gpui::{
     Focusable, KeyDownEvent, SharedString, Window, WindowBounds, WindowOptions,
 };
 
-use lattice::{AgentRow, Lattice, Message};
+use lattice::{AgentRow, Kind, Lattice, Message};
+
+/// Any printable ASCII character, plus space — covers punctuation like `?`
+/// that an earlier, narrower whitelist (letters/digits plus a fixed handful
+/// of punctuation marks) missed. A real message needs whatever punctuation
+/// a sentence needs; guessing the full set in advance is the wrong approach.
+fn is_typable(c: char) -> bool {
+    c == ' ' || c.is_ascii_graphic()
+}
 
 struct Console {
     lattice: Entity<Lattice>,
@@ -54,10 +62,7 @@ impl Console {
             "enter" => self.submit(cx),
             _ => {
                 if let Some(ch) = &event.keystroke.key_char {
-                    // A real message, not a slug: letters/digits plus the
-                    // punctuation a sentence like "create an agent that
-                    // tells a joke, call it juan" actually needs.
-                    if ch.chars().all(|c| c.is_ascii_alphanumeric() || " -,.!'".contains(c)) {
+                    if ch.chars().all(is_typable) {
                         self.message.push_str(ch);
                     }
                 }
@@ -91,7 +96,7 @@ impl Console {
     /// sidebar (reactive via `cx.observe`) picks it up on its own.
     fn open_new_agent_window(&mut self, cx: &mut Context<Self>) {
         let lattice = self.lattice.clone();
-        let bounds = Bounds::centered(None, size(px(460.0), px(200.0)), cx);
+        let bounds = Bounds::centered(None, size(px(460.0), px(300.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -123,6 +128,7 @@ impl Render for Console {
             Some(a) => format!("{}  ·  {}", a.name, a.status),
             None => "no agent selected".to_string(),
         };
+        let description = selected_agent.map(|a| a.description.clone()).filter(|d| !d.is_empty());
         let transcript: Vec<Message> =
             selected_agent.map(|a| a.messages.clone()).unwrap_or_default();
         let has_selection = selected_agent.is_some();
@@ -205,6 +211,9 @@ impl Render for Console {
                             .p_3()
                             .gap_2()
                             .child(div().text_lg().child(header))
+                            .when_some(description, |main, d| {
+                                main.child(div().text_sm().text_color(rgb(0x999999)).child(d))
+                            })
                             .child(
                                 div()
                                     .id("transcript")
@@ -274,21 +283,52 @@ fn render_sidebar_row(
     div()
         .id(SharedString::from(format!("agent-{}", agent.name)))
         .flex()
-        .flex_row()
-        .justify_between()
-        .items_center()
+        .flex_col()
+        .gap_1()
         .px_2()
         .py_1()
         .rounded_md()
         .cursor_pointer()
         .bg(if is_selected { rgb(0x2a4a6a) } else { rgb(0x252525) })
-        .child(div().child(agent.name.clone()))
-        .child(div().text_xs().text_color(status_color(&agent.status)).child(agent.status.clone()))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .justify_between()
+                .items_center()
+                .child(div().child(agent.name.clone()))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(status_color(&agent.status))
+                        .child(agent.status.clone()),
+                ),
+        )
+        .when(!agent.description.is_empty(), |row| {
+            row.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(0x888888))
+                    .overflow_hidden()
+                    .child(agent.description.chars().take(40).collect::<String>()),
+            )
+        })
         .on_click(cx.listener(move |this, _, _, cx| this.select(name.clone(), cx)))
 }
 
 fn render_message(m: Message) -> impl IntoElement {
-    let (bg, label) = if m.from_user { (rgb(0x2d4a6a), "you") } else { (rgb(0x2d4a2d), "agent") };
+    // System entries (status checkpoints) are a centered, muted line with no
+    // bubble — distinct from an actual message from either side, same idea
+    // as a chat app's inline "X joined" line.
+    if m.kind == Kind::System {
+        return div()
+            .text_xs()
+            .text_color(rgb(0x888888))
+            .child(format!("· {} ·", m.text))
+            .into_any_element();
+    }
+    let (bg, label) =
+        if m.kind == Kind::User { (rgb(0x2d4a6a), "you") } else { (rgb(0x2d4a2d), "agent") };
     div()
         .flex()
         .flex_col()
@@ -297,40 +337,74 @@ fn render_message(m: Message) -> impl IntoElement {
         .rounded_md()
         .bg(bg)
         .max_w(px(520.0))
-        .when(m.from_user, |d| d.ml_auto())
+        .when(m.kind == Kind::User, |d| d.ml_auto())
         .child(div().text_xs().text_color(rgb(0x999999)).child(label))
         .child(div().child(m.text))
+        .into_any_element()
+}
+
+/// Which of the "+ new agent" window's two fields is currently receiving
+/// keystrokes. Tab toggles between them; clicking a field also focuses it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Field {
+    Name,
+    Description,
 }
 
 /// The "+ new agent" setup window: a small, separate dialog rather than the
-/// main window's conversation pane repurposed as a compose box. Submitting
-/// spawns the agent on the shared `Lattice` entity and closes itself — the
-/// main window's sidebar picks the new agent up on its own via `cx.observe`,
+/// main window's conversation pane repurposed as a compose box. A name
+/// (unique, validated up front — the same rule `Lattice::validate_name`
+/// enforces again before actually spawning, so this is a UX convenience, not
+/// the only check) and a description (the agent's purpose — becomes its
+/// canned reply and the first line of its conversation). Submitting spawns
+/// the agent on the shared `Lattice` entity and closes itself — the main
+/// window's sidebar picks the new agent up on its own via `cx.observe`,
 /// since both windows' views read the same entity.
 struct NewAgentForm {
     lattice: Entity<Lattice>,
     focus_handle: FocusHandle,
-    message: String,
+    name: String,
+    description: String,
+    field: Field,
+    error: Option<String>,
 }
 
 impl NewAgentForm {
     fn new(lattice: Entity<Lattice>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle);
-        Self { lattice, focus_handle, message: String::new() }
+        Self {
+            lattice,
+            focus_handle,
+            name: String::new(),
+            description: String::new(),
+            field: Field::Name,
+            error: None,
+        }
+    }
+
+    fn active_field(&mut self) -> &mut String {
+        match self.field {
+            Field::Name => &mut self.name,
+            Field::Description => &mut self.description,
+        }
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event.keystroke.key.as_str() {
             "backspace" => {
-                self.message.pop();
+                self.active_field().pop();
+            }
+            "tab" => {
+                self.field =
+                    if self.field == Field::Name { Field::Description } else { Field::Name };
             }
             "enter" => self.create(window, cx),
             "escape" => window.remove_window(),
             _ => {
                 if let Some(ch) = &event.keystroke.key_char {
-                    if ch.chars().all(|c| c.is_ascii_alphanumeric() || " -,.!'".contains(c)) {
-                        self.message.push_str(ch);
+                    if ch.chars().all(is_typable) {
+                        self.active_field().push_str(ch);
                     }
                 }
             }
@@ -339,11 +413,23 @@ impl NewAgentForm {
     }
 
     fn create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let message = std::mem::take(&mut self.message).trim().to_string();
-        if message.is_empty() {
+        // `extract_name`'s old job (guessing a name out of free text) is
+        // gone — the name is its own field now, and sanitized the same way
+        // that guess used to be, so e.g. "Natasha" still becomes "natasha".
+        let name: String = self
+            .name
+            .trim()
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect::<String>()
+            .to_lowercase();
+        if let Err(e) = self.lattice.read(cx).validate_name(&name) {
+            self.error = Some(e);
+            cx.notify();
             return;
         }
-        self.lattice.update(cx, |l, cx| l.spawn_agent(message, cx));
+        let description = std::mem::take(&mut self.description);
+        self.lattice.update(cx, |l, cx| l.spawn_agent(name, description, cx));
         window.remove_window();
     }
 }
@@ -354,9 +440,30 @@ impl Focusable for NewAgentForm {
     }
 }
 
+fn form_field(label: &'static str, value: String, active: bool) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(div().text_xs().text_color(rgb(0x999999)).child(label))
+        .child(
+            div()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .bg(rgb(0x111111))
+                .border_1()
+                .border_color(if active { rgb(0x2d6a4f) } else { rgb(0x444444) })
+                .child(format!("{value}{}", if active { "_" } else { "" })),
+        )
+}
+
 impl Render for NewAgentForm {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let message_field = format!("{}_", self.message);
+        let name = self.name.clone();
+        let description = self.description.clone();
+        let field = self.field;
+        let error = self.error.clone();
         div()
             .id("new-agent-form")
             .track_focus(&self.focus_handle)
@@ -371,20 +478,33 @@ impl Render for NewAgentForm {
             .child(div().text_lg().child("new agent"))
             .child(
                 div()
-                    .text_sm()
-                    .text_color(rgb(0x999999))
-                    .child("e.g. \"create an agent that tells a joke, call it juan\""),
+                    .id("field-name")
+                    .child(form_field(
+                        "name (unique) — tab to switch fields",
+                        name,
+                        field == Field::Name,
+                    ))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.field = Field::Name;
+                        cx.notify();
+                    })),
             )
             .child(
                 div()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .bg(rgb(0x111111))
-                    .border_1()
-                    .border_color(rgb(0x444444))
-                    .child(message_field),
+                    .id("field-description")
+                    .child(form_field(
+                        "description — what it's for; becomes its reply",
+                        description,
+                        field == Field::Description,
+                    ))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.field = Field::Description;
+                        cx.notify();
+                    })),
             )
+            .when_some(error, |form, e| {
+                form.child(div().text_sm().text_color(rgb(0xcc8888)).child(e))
+            })
             .child(
                 div()
                     .id("create")
