@@ -45,10 +45,27 @@ impl Drop for FmServer {
     }
 }
 
+/// True only on macOS, and only if `fm` actually runs there — `fm` is
+/// Apple's on-device Foundation Models CLI and doesn't exist anywhere else
+/// (the Raspberry Pi this project's lattice otherwise targets included).
+/// Callers check this and skip rather than attempting to exec a binary that
+/// was never going to be there — not a platform someone forgot to guard,
+/// a platform this capability is simply not for.
+pub fn is_available() -> bool {
+    cfg!(target_os = "macos")
+        && Command::new("fm").arg("available").output().is_ok_and(|o| o.status.success())
+}
+
 impl FmServer {
     /// Spawns `fm serve --port <port>` on a freshly-picked free port and
-    /// blocks until `/health` answers (or `timeout` elapses).
+    /// blocks until `/health` answers (or `timeout` elapses). Refuses up
+    /// front on anything but macOS (see `is_available`) rather than
+    /// attempting to exec a binary that was never going to be there.
     pub fn start(timeout: Duration) -> Result<Self, String> {
+        if !is_available() {
+            return Err("fm (Apple on-device Foundation Models) is not available on this platform"
+                .to_string());
+        }
         let port = free_port();
         let child = Command::new("fm")
             .args(["serve", "--port", &port.to_string()])
@@ -118,6 +135,24 @@ pub fn ask(base_url: &str, instructions: Option<&str>, prompt: &str) -> Result<S
 mod tests {
     use super::*;
 
+    #[test]
+    fn unavailable_on_non_macos() {
+        if !cfg!(target_os = "macos") {
+            assert!(!is_available(), "fm should never be reported available off macOS");
+        }
+    }
+
+    #[test]
+    fn start_refuses_cleanly_when_unavailable() {
+        if is_available() {
+            return; // this test is only meaningful where fm genuinely can't run
+        }
+        match FmServer::start(Duration::from_secs(1)) {
+            Err(e) => assert!(e.contains("not available"), "unexpected error: {e}"),
+            Ok(_) => panic!("expected start() to refuse when fm is unavailable"),
+        }
+    }
+
     /// A real end-to-end test against the actual on-device model — slow
     /// (model load + inference) and skipped if `fm` isn't on this machine,
     /// but this is exactly the thing worth verifying for real rather than
@@ -125,8 +160,8 @@ mod tests {
     /// real answer, and that dropping it actually stops the process.
     #[test]
     fn fm_serve_spawns_answers_and_is_killed_on_drop() {
-        if Command::new("fm").arg("available").output().is_err() {
-            eprintln!("skipping: `fm` not on PATH on this machine");
+        if !is_available() {
+            eprintln!("skipping: fm not available on this platform/machine");
             return;
         }
 
