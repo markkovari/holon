@@ -14,9 +14,9 @@
 //! `query` indexes and compares the JSON ENCODING of a value, so a string field
 //! `billing` is `"billing"`, quotes included — `filter()` does that encoding, and
 //! nothing here passes a bare string.
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::pii::redact::redactor as pii;
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
 use crate::{Reply, Route};
 use serde_json::{json, Map, Value};
 

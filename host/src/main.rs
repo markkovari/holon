@@ -129,7 +129,7 @@ pub struct Instance {
     /// requests arrive at. Before cross-node serving existed a plug could not start
     /// at all; now it starts, serves its exports over the bus, and simply never
     /// appears in the route table.
-    pub(crate) pre: Option<ProxyPre<Host>>,
+    pub(crate) pre: Option<HttpPre>,
     /// Clients for this instance's REMOTE imports, keyed by interface. Built once
     /// at start, because resolving a target per request would put a lookup on the
     /// hot path for something that only changes when placement does.
@@ -141,6 +141,84 @@ pub struct Instance {
     /// process. It is tracked because the reconciler counts replicas per node, and
     /// a host that always reported 1 would be asked to start a second one forever.
     pub count: u32,
+}
+
+/// The HTTP door, in whichever generation the component exports: p2's
+/// `incoming-handler@0.2` or p3's async `handler@0.3.0-rc`. Picked from the
+/// component itself, so nothing is configured and both run side by side.
+#[derive(Clone)]
+pub(crate) enum HttpPre {
+    P2(ProxyPre<Host>),
+    /// The worker pool is built on the first request, which is the first point the
+    /// host has the kv backend and platform url to make its stores with.
+    P3(wasmtime_wasi_http::p3::bindings::ServicePre<Host>, std::sync::OnceLock<P3Handler>),
+}
+
+type P3Handler = wasmtime_wasi_http::handler::ProxyHandler<P3Stores>;
+
+/// How a p3 worker gets its store: the same `store_for` a p2 request gets, so the
+/// tenant boundary, memory cap, CPU slice and egress policy are identical.
+///
+/// A p3 store is NOT per request. One instance serves up to `REUSE` requests, at
+/// most `CONCURRENT` at a time, and is dropped after `IDLE` without work — which
+/// is the whole point of p3. So the secret cache and memory cap cover that
+/// instance's requests, not one: ADR-0037's "an instance is per-request" holds
+/// for p2 only.
+pub(crate) struct P3Stores {
+    engine: Arc<Engine>,
+    scope: SharedScope,
+    kv: Kv,
+    cache_backing: CacheBacking,
+    remotes: std::collections::BTreeMap<String, wrpc_transport_nats::Client>,
+    platform_url: String,
+}
+
+impl wasmtime_wasi_http::handler::HandlerState for P3Stores {
+    type StoreData = Host;
+    fn new_store(
+        &self,
+        _req_id: Option<u64>,
+    ) -> wasmtime::Result<wasmtime_wasi_http::handler::StoreBundle<Host>> {
+        Ok(wasmtime_wasi_http::handler::StoreBundle {
+            store: store_for(
+                &self.engine,
+                self.scope.clone(),
+                self.kv.clone(),
+                self.cache_backing.clone(),
+                self.remotes.clone(),
+                self.platform_url.clone(),
+            ),
+            write_profile: Box::new(|_| {}),
+        })
+    }
+    // ponytail: no per-request wall-clock timeout, same as the p2 path; the epoch
+    // slice keeps a hot loop from starving others. Add one if a hung guest shows up.
+    fn request_timeout(&self) -> std::time::Duration {
+        std::time::Duration::MAX
+    }
+    // `wasmtime serve`'s p3 defaults.
+    fn idle_instance_timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(1)
+    }
+    fn max_instance_reuse_count(&self) -> usize {
+        128
+    }
+    fn max_instance_concurrent_reuse_count(&self) -> usize {
+        16
+    }
+    fn handle_worker_error(&self, error: wasmtime::Error) {
+        eprintln!("comp-host: {} p3 worker: {error:?}", self.scope.id());
+    }
+}
+
+impl HttpPre {
+    /// `None` for a plug — it exports neither door.
+    pub(crate) fn new(ipre: wasmtime::component::InstancePre<Host>) -> Option<Self> {
+        ProxyPre::new(ipre.clone()).map(Self::P2).ok().or_else(|| {
+            let pre = wasmtime_wasi_http::p3::bindings::ServicePre::new(ipre).ok()?;
+            Some(Self::P3(pre, Default::default()))
+        })
+    }
 }
 
 /// Everything running on this node, by `<tenant>/<app>/<component>`.
@@ -217,6 +295,15 @@ impl WasiView for Host {
 impl WasiHttpView for Host {
     fn http(&mut self) -> WasiHttpCtxView<'_> {
         WasiHttpCtxView { ctx: &mut self.http, table: &mut self.table, hooks: &mut self.hooks }
+    }
+}
+impl wasmtime_wasi_http::p3::WasiHttpView for Host {
+    fn http(&mut self) -> wasmtime_wasi_http::p3::WasiHttpCtxView<'_> {
+        wasmtime_wasi_http::p3::WasiHttpCtxView {
+            ctx: &mut self.http,
+            table: &mut self.table,
+            hooks: &mut self.hooks,
+        }
     }
 }
 
@@ -624,20 +711,10 @@ impl WasiHttpHooks for Egress {
             } else {
                 format!("{authority}:{port}")
             };
-            match tokio::net::lookup_host(&target).await {
-                Ok(addrs) => {
-                    for a in addrs {
-                        if !scope.egress.permits_addr(a) {
-                            eprintln!(
-                                "comp-host: {} denied egress to {target} — it resolves to {}",
-                                scope.id(),
-                                a.ip()
-                            );
-                            return Ok(Err(ErrorCode::DestinationIpProhibited));
-                        }
-                    }
-                }
-                Err(_) => return Ok(Err(ErrorCode::DestinationUnavailable)),
+            match resolved_addrs_permitted(&scope, &target).await {
+                Ok(()) => {}
+                Err(AddrDenied::Prohibited) => return Ok(Err(ErrorCode::DestinationIpProhibited)),
+                Err(AddrDenied::Unresolvable) => return Ok(Err(ErrorCode::DestinationUnavailable)),
             }
             if trace {
                 eprintln!("comp-host: [egress] {who} dialing {target} (tls={})", config.use_tls);
@@ -676,6 +753,86 @@ impl WasiHttpHooks for Egress {
     }
 }
 
+/// p3 egress: the same two checks as p2 — the name on the allow-list, then every
+/// resolved address outside the denied ranges — and the same buffered reqwest
+/// fetch. It must be overridden either way: upstream's default `send_request` is
+/// unrestricted egress.
+type P3Body = http_body_util::combinators::UnsyncBoxBody<bytes::Bytes, P3ErrorCode>;
+type P3ErrorCode = wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
+type P3Io = Box<dyn std::future::Future<Output = Result<(), P3ErrorCode>> + Send>;
+
+impl wasmtime_wasi_http::p3::WasiHttpHooks for Egress {
+    fn send_request(
+        &mut self,
+        request: hyper::Request<P3Body>,
+        options: Option<wasmtime_wasi_http::p3::RequestOptions>,
+        _fut: P3Io,
+    ) -> Box<
+        dyn std::future::Future<
+                Output = Result<
+                    (hyper::Response<P3Body>, P3Io),
+                    wasmtime_wasi::TrappableError<P3ErrorCode>,
+                >,
+            > + Send,
+    > {
+        use http_body_util::{BodyExt, Full};
+        let scope = self.scope.clone();
+        Box::new(async move {
+            let authority = request
+                .uri()
+                .authority()
+                .map(|a| a.as_str().to_string())
+                .or_else(|| {
+                    request
+                        .headers()
+                        .get(hyper::header::HOST)
+                        .and_then(|h| h.to_str().ok())
+                        .map(str::to_string)
+                })
+                .unwrap_or_default();
+            if !scope.egress.permits_authority(&authority) {
+                eprintln!(
+                    "comp-host: {} denied egress to {authority:?} (not on its allow-list)",
+                    scope.id()
+                );
+                return Err(P3ErrorCode::HttpRequestDenied.into());
+            }
+            let tls = request.uri().scheme_str() != Some("http");
+            let target = if authority.contains(':') {
+                authority.clone()
+            } else {
+                format!("{authority}:{}", if tls { 443 } else { 80 })
+            };
+            match resolved_addrs_permitted(&scope, &target).await {
+                Ok(()) => {}
+                Err(AddrDenied::Prohibited) => {
+                    return Err(P3ErrorCode::DestinationIpProhibited.into())
+                }
+                Err(AddrDenied::Unresolvable) => {
+                    return Err(P3ErrorCode::DestinationUnavailable.into())
+                }
+            }
+            let (parts, body) = request.into_parts();
+            let body = body.collect().await.map_err(|_| P3ErrorCode::HttpRequestBodySize(None))?;
+            // wasmtime's p2 defaults, for a guest that set no timeouts.
+            let default = std::time::Duration::from_secs(600);
+            let opts = options.unwrap_or_default();
+            let resp = reqwest_fetch(
+                if tls { "https" } else { "http" },
+                &authority,
+                parts,
+                body.to_bytes(),
+                opts.connect_timeout.unwrap_or(default),
+                opts.first_byte_timeout.unwrap_or(default),
+            )
+            .await
+            .map_err(|e| P3ErrorCode::InternalError(Some(e)))?
+            .map(|b| Full::new(b).map_err(|e: std::convert::Infallible| match e {}).boxed_unsync());
+            Ok((resp, Box::new(async { Ok(()) }) as P3Io))
+        })
+    }
+}
+
 /// Make one outbound request through reqwest and buffer the whole response into a
 /// wasi:http `IncomingResponse`.
 ///
@@ -692,19 +849,71 @@ async fn reqwest_send(
     use http_body_util::{BodyExt, Full};
 
     let (parts, body) = request.into_parts();
-    let path = parts
-        .uri
-        .path_and_query()
-        .map(|p| p.as_str().to_string())
-        .unwrap_or_else(|| "/".to_string());
-    let url = format!("{scheme}://{authority}{path}");
-
     // Collect the request body the guest wrote.
     let body_bytes = body
         .collect()
         .await
         .map(|c| c.to_bytes())
         .map_err(|_| ErrorCode::HttpRequestBodySize(None))?;
+    let resp = reqwest_fetch(
+        scheme,
+        authority,
+        parts,
+        body_bytes,
+        config.connect_timeout,
+        config.first_byte_timeout,
+    )
+    .await
+    .map_err(|e| ErrorCode::InternalError(Some(e)))?
+    .map(|bytes| Full::new(bytes).map_err(|e: std::convert::Infallible| match e {}).boxed_unsync());
+
+    Ok(wasmtime_wasi_http::p2::types::IncomingResponse {
+        resp,
+        worker: None,
+        between_bytes_timeout: config.between_bytes_timeout,
+    })
+}
+
+/// Why a name's resolved addresses were refused.
+enum AddrDenied {
+    Prohibited,
+    Unresolvable,
+}
+
+/// The second egress check: every address `target` (`host:port`) resolves to must
+/// be outside the ranges no tenant may reach. Shared by p2 and p3, because a copy
+/// of a security check is a second place for it to be wrong.
+async fn resolved_addrs_permitted(scope: &SharedScope, target: &str) -> Result<(), AddrDenied> {
+    let addrs = tokio::net::lookup_host(target).await.map_err(|_| AddrDenied::Unresolvable)?;
+    for a in addrs {
+        if !scope.egress.permits_addr(a) {
+            eprintln!(
+                "comp-host: {} denied egress to {target} — it resolves to {}",
+                scope.id(),
+                a.ip()
+            );
+            return Err(AddrDenied::Prohibited);
+        }
+    }
+    Ok(())
+}
+
+/// The outbound request itself, through reqwest, with the WHOLE response body
+/// buffered — the generation-neutral half of egress (see `reqwest_send`).
+async fn reqwest_fetch(
+    scheme: &str,
+    authority: &str,
+    parts: hyper::http::request::Parts,
+    body_bytes: bytes::Bytes,
+    connect_timeout: std::time::Duration,
+    first_byte_timeout: std::time::Duration,
+) -> Result<hyper::Response<bytes::Bytes>, String> {
+    let path = parts
+        .uri
+        .path_and_query()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_else(|| "/".to_string());
+    let url = format!("{scheme}://{authority}{path}");
 
     // Copy the guest's headers, minus the ones a client library owns: host and
     // content-length are set by reqwest from the URL and the body, and the
@@ -727,10 +936,10 @@ async fn reqwest_send(
     }
 
     let client = reqwest::Client::builder()
-        .connect_timeout(config.connect_timeout)
-        .timeout(config.first_byte_timeout)
+        .connect_timeout(connect_timeout)
+        .timeout(first_byte_timeout)
         .build()
-        .map_err(|_| ErrorCode::InternalError(Some("http client".into())))?;
+        .map_err(|_| "http client".to_string())?;
 
     let resp = client
         .request(parts.method, &url)
@@ -738,15 +947,12 @@ async fn reqwest_send(
         .body(body_bytes)
         .send()
         .await
-        .map_err(|e| ErrorCode::InternalError(Some(format!("reqwest: {e}"))))?;
+        .map_err(|e| format!("reqwest: {e}"))?;
 
     let status = resp.status();
     let resp_headers = resp.headers().clone();
     // The whole body, read to completion here.
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| ErrorCode::InternalError(Some(format!("reqwest body: {e}"))))?;
+    let bytes = resp.bytes().await.map_err(|e| format!("reqwest body: {e}"))?;
 
     let mut builder = hyper::Response::builder().status(status);
     for (k, v) in resp_headers.iter() {
@@ -758,17 +964,7 @@ async fn reqwest_send(
         }
         builder = builder.header(k, v);
     }
-    let hyper_body =
-        Full::new(bytes).map_err(|e: std::convert::Infallible| match e {}).boxed_unsync();
-    let resp = builder
-        .body(hyper_body)
-        .map_err(|_| ErrorCode::InternalError(Some("response build".into())))?;
-
-    Ok(wasmtime_wasi_http::p2::types::IncomingResponse {
-        resp,
-        worker: None,
-        between_bytes_timeout: config.between_bytes_timeout,
-    })
+    builder.body(bytes).map_err(|_| "response build".to_string())
 }
 
 // ---- config ---------------------------------------------------------------
@@ -1017,6 +1213,12 @@ pub(crate) fn build_linker(engine: &Engine) -> Result<Linker<Host>> {
     let mut linker: Linker<Host> = Linker::new(engine);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
     wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
+    // p3, beside p2 rather than instead of it: distinct package versions, so one
+    // linker serves both generations and a p3 guest's libstd `wasi:cli@0.2` too.
+    wasmtime_wasi_http::p3::add_to_linker(&mut linker)?;
+    wasmtime_wasi::p3::clocks::add_to_linker(&mut linker)?;
+    wasmtime_wasi::p3::random::add_to_linker(&mut linker)?;
+    wasmtime_wasi::p3::cli::add_to_linker(&mut linker)?;
     store::add_to_linker::<_, HasSelf<Host>>(&mut linker, |h| h)?;
     atomics::add_to_linker::<_, HasSelf<Host>>(&mut linker, |h| h)?;
     batch::add_to_linker::<_, HasSelf<Host>>(&mut linker, |h| h)?;
@@ -1067,6 +1269,8 @@ async fn main() -> Result<()> {
     // fairness rather than a nicety. Epoch, not fuel: fuel meters instructions,
     // which is the right tool for a bill and the wrong one for a scheduler.
     wt_config.epoch_interruption(true);
+    // The async component ABI — what a p3 guest's `handler@0.3` export is lifted with.
+    wt_config.wasm_component_model_async(true);
     // (wasmtime >=47: async support is unconditional; `async_support` is a no-op.)
     if args.pool {
         // wasmtime's pooling allocator: pre-reserve a fixed set of instance +
@@ -1267,7 +1471,10 @@ async fn main() -> Result<()> {
                 .into_scope(&limits),
             );
             let component = Component::from_file(&engine, &args.component)?;
-            let pre = Some(ProxyPre::new(build_linker(&engine)?.instantiate_pre(&component)?)?);
+            let pre = Some(
+                HttpPre::new(build_linker(&engine)?.instantiate_pre(&component)?)
+                    .context("component exports neither wasi:http/incoming-handler nor handler")?,
+            );
             let id = scope.id();
             instances.write().unwrap().insert(
                 id.clone(),
@@ -1606,6 +1813,29 @@ async fn handle_request(
     platform_url: String,
     req: hyper::Request<hyper::body::Incoming>,
 ) -> Result<hyper::Response<HyperOutgoingBody>> {
+    let pre = match instance.pre.as_ref() {
+        None => anyhow::bail!(
+            "{} serves no HTTP; it is reachable through links only",
+            instance.scope.id()
+        ),
+        Some(HttpPre::P3(pre, handler)) => {
+            let handler = handler.get_or_init(|| {
+                wasmtime_wasi_http::handler::ProxyHandler::new(
+                    P3Stores {
+                        engine: engine.clone(),
+                        scope: instance.scope.clone(),
+                        kv,
+                        cache_backing: instance.cache_backing.clone(),
+                        remotes: instance.remotes.clone(),
+                        platform_url,
+                    },
+                    wasmtime_wasi_http::handler::ProxyPre::P3(pre.clone()),
+                )
+            });
+            return handle_request_p3(handler, req).await;
+        }
+        Some(HttpPre::P2(pre)) => pre,
+    };
     let mut store = store_for(
         &engine,
         instance.scope.clone(),
@@ -1617,14 +1847,9 @@ async fn handle_request(
 
     let (sender, receiver) = tokio::sync::oneshot::channel();
     // hyper::body::Incoming is already Body<Data=Bytes, Error=hyper::Error>.
-    let req = store
-        .data_mut()
-        .http()
+    let req = WasiHttpView::http(store.data_mut())
         .new_incoming_request(wasmtime_wasi_http::p2::bindings::http::types::Scheme::Http, req)?;
-    let out = store.data_mut().http().new_response_outparam(sender)?;
-    let Some(pre) = instance.pre.as_ref() else {
-        anyhow::bail!("{} serves no HTTP; it is reachable through links only", instance.scope.id())
-    };
+    let out = WasiHttpView::http(store.data_mut()).new_response_outparam(sender)?;
     let proxy = pre.instantiate_async(&mut store).await?;
 
     let task = tokio::task::spawn(async move {
@@ -1639,5 +1864,86 @@ async fn handle_request(
             let err = task.await.unwrap().unwrap_err();
             Err(anyhow::anyhow!("guest never produced a response: {err:?}"))
         }
+    }
+}
+
+/// The p3 door. `handler@0.3` is an async export, so a request is a task queued
+/// onto a live worker instance (upstream's `ProxyHandler`), not a fresh
+/// instantiation — the store must outlive the response, since the guest is still
+/// writing the body into its `stream<u8>` after `handle` returns.
+async fn handle_request_p3(
+    handler: &P3Handler,
+    req: hyper::Request<hyper::body::Incoming>,
+) -> Result<hyper::Response<HyperOutgoingBody>> {
+    use http_body_util::BodyExt;
+    use wasmtime_wasi_http::handler::Proxy;
+    use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode as P3Error;
+    use wasmtime_wasi_http::p3::Request;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let (err_tx, err_rx) = tokio::sync::oneshot::channel::<wasmtime::Error>();
+    handler.spawn(
+        None,
+        Box::new(move |acc, proxy| {
+            Box::pin(async move {
+                let Proxy::P3(service) = proxy else { unreachable!("P3 handler") };
+                let run = async {
+                    let req = req.map(|b| b.map_err(P3Error::from_hyper_request_error));
+                    let (request, io) = Request::from_http(req);
+                    let res = service
+                        .handle(acc, request)
+                        .await?
+                        .map_err(|e| wasmtime::format_err!("guest returned error-code {e:?}"))?;
+                    let res = acc.with(|mut s| res.into_http(&mut s, io))?;
+                    // Dropped by hyper once the body is fully sent — until then this
+                    // task, and so the instance the body streams out of, stays busy.
+                    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+                    let res = res.map(|body| {
+                        DropSignal { body: body.boxed_unsync(), _done: done_tx }.boxed_unsync()
+                    });
+                    if tx.send(res).is_ok() {
+                        let _ = done_rx.await;
+                    }
+                    wasmtime::Result::<()>::Ok(())
+                };
+                if let Err(e) = run.await {
+                    let _ = err_tx.send(e);
+                }
+            })
+        }),
+    );
+    match rx.await {
+        Ok(res) => Ok(res.map(|b| {
+            b.map_err(|e| {
+                wasmtime_wasi_http::p2::bindings::http::types::ErrorCode::InternalError(Some(
+                    format!("{e:?}"),
+                ))
+            })
+            .boxed_unsync()
+        })),
+        Err(_) => Err(anyhow::anyhow!("guest never produced a response: {:?}", err_rx.await.ok())),
+    }
+}
+
+/// A body that signals, by being dropped, that hyper is done with it.
+struct DropSignal<B> {
+    body: B,
+    _done: tokio::sync::oneshot::Sender<()>,
+}
+
+impl<B: hyper::body::Body + Unpin> hyper::body::Body for DropSignal<B> {
+    type Data = B::Data;
+    type Error = B::Error;
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<B::Data>, B::Error>>> {
+        std::pin::Pin::new(&mut self.body).poll_frame(cx)
+    }
+    fn is_end_stream(&self) -> bool {
+        self.body.is_end_stream()
+    }
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.body.size_hint()
     }
 }

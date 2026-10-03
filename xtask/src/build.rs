@@ -17,6 +17,43 @@ fn get_rustc_version() -> Result<String> {
     Ok(ver)
 }
 
+/// `cargo xtask bindings`: generate every p2 crate's `src/bindings.rs`.
+///
+/// cargo-component generates p2 bindings, and treats any crate with a `wit/` as
+/// its job — including a p3 crate, whose bindings come from
+/// `wit_bindgen::generate!` and whose world it cannot resolve. Its `--exclude` is
+/// applied too late to help, so every p2 member is named instead. This replaces a
+/// bare `cargo component check` anywhere one was run over the workspace.
+pub(crate) fn generate_p2_bindings(exclude: &[String]) -> Result<()> {
+    let mut cmd = Command::new("cargo");
+    cmd.args(["component", "check", "--release"]).current_dir("components");
+    for name in p2_members()?.iter().filter(|n| !exclude.contains(n)) {
+        cmd.args(["-p", name]);
+    }
+    run_cmd(&mut cmd, "cargo component check --release (p2 WIT bindings)")
+}
+
+/// The components workspace's members, minus p3 crates — the ones that depend on
+/// `wit-bindgen` itself rather than cargo-component's `wit-bindgen-rt`.
+pub(crate) fn p2_members() -> Result<Vec<String>> {
+    let out = Command::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .current_dir("components")
+        .output()
+        .context("cargo metadata")?;
+    let meta: serde_json::Value = serde_json::from_slice(&out.stdout)?;
+    let packages = meta["packages"].as_array().context("cargo metadata: no packages")?;
+    Ok(packages
+        .iter()
+        .filter(|p| {
+            !p["dependencies"]
+                .as_array()
+                .is_some_and(|d| d.iter().any(|d| d["name"] == "wit-bindgen"))
+        })
+        .filter_map(|p| p["name"].as_str().map(str::to_string))
+        .collect())
+}
+
 fn has_newer_wit(dir: &Path, stamp_time: SystemTime) -> bool {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -68,9 +105,7 @@ pub(crate) fn build_components(force: bool) -> Result<()> {
     };
 
     if need_wit_check {
-        let mut cmd = Command::new("cargo");
-        cmd.args(["component", "check", "--release"]).current_dir("components");
-        run_cmd(&mut cmd, "cargo component check --release (WIT bindings)")?;
+        generate_p2_bindings(&[])?;
         fs::write(&wit_checked, b"")?;
     }
 

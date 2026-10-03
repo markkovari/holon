@@ -9,7 +9,7 @@
 //! as `crm-domain::list_deals`.
 
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
+use crate::bindings::p3::http::types::Method;
 use crate::{audit, introspect, is_admin, now_secs, Reply, Route};
 use serde_json::{json, Value};
 

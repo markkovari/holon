@@ -511,3 +511,122 @@ macro_rules! guest_entries_json {
         }
     };
 }
+
+// ---- WASI p3 ------------------------------------------------------------------
+//
+// The two macros above that touch `wasi:http` — the router and `emit` — for a
+// component whose door is the async p3 `wasi:http/handler`. Everything else here
+// is generation-neutral. They name `crate::bindings::p3::http`, the alias every p3
+// component defines (see `guestio`'s p3 section).
+
+/// `guest_saas_router!` for a p3 component: the same routes, dispatching to the
+/// same `crate::handlers::handle(&Method, &Route, &str) -> Reply`, where `Method`
+/// is the p3 `crate::bindings::p3::http::types::Method`. Requires
+/// `guestio::guest_p3_bearer!()`, `guestio::guest_p3_read_body_text!()` and
+/// `guest_p3_emit!()` in scope.
+#[macro_export]
+macro_rules! guest_p3_saas_router {
+    () => {
+        struct Component;
+
+        impl crate::bindings::p3::handler::Guest for Component {
+            async fn handle(
+                request: crate::bindings::p3::http::types::Request,
+            ) -> Result<
+                crate::bindings::p3::http::types::Response,
+                crate::bindings::p3::http::types::ErrorCode,
+            > {
+                use crate::bindings::p3::http::types::Method;
+                let path = request.get_path_with_query().unwrap_or_else(|| "/".into());
+                let raw_path = path.split('?').next().unwrap_or("/").to_string();
+                let bearer = bearer(&request).unwrap_or_default();
+                let method = request.get_method();
+                let body = match method {
+                    Method::Post | Method::Put | Method::Patch | Method::Delete => {
+                        read_body(request).await
+                    }
+                    _ => String::new(),
+                };
+                let segments: Vec<String> =
+                    raw_path.split('/').filter(|s| !s.is_empty()).map(str::to_string).collect();
+                let route = $crate::Route { segments, bearer };
+                let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
+
+                let reply = if seg.as_slice() == ["health"] {
+                    Reply::json(200, serde_json::json!({"ok": true}))
+                } else {
+                    match (&method, seg.as_slice()) {
+                        (Method::Post, ["register"]) => register(&body),
+                        (Method::Post, ["login"]) => login(&body),
+                        (Method::Post, ["logout"]) => logout(&route),
+                        (Method::Get, ["me"]) => me(&route),
+                        (_, ["api", ..]) => crate::handlers::handle(&method, &route, &body),
+                        _ => Reply::err(404, "not_found"),
+                    }
+                };
+                emit(reply)
+            }
+        }
+
+        bindings::export!(Component with_types_in bindings);
+    };
+}
+
+/// `guest_emit!` for a p3 component: one `Reply` as a response, same header and
+/// body rules. Requires `guestio::guest_p3_respond!()` in scope.
+#[macro_export]
+macro_rules! guest_p3_emit {
+    () => {
+        fn emit(
+            reply: Reply,
+        ) -> Result<
+            crate::bindings::p3::http::types::Response,
+            crate::bindings::p3::http::types::ErrorCode,
+        > {
+            let headers = crate::bindings::p3::http::types::Fields::new();
+            let bytes = match reply.file {
+                Some((content_type, bytes)) => {
+                    let _ = headers.set("content-type", &[content_type.into_bytes()]);
+                    bytes
+                }
+                None => {
+                    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
+                    if reply.json.is_null() {
+                        Vec::new()
+                    } else {
+                        reply.json.to_string().into_bytes()
+                    }
+                }
+            };
+            respond_with(reply.status, headers, bytes)
+        }
+    };
+}
+
+/// `guest_audit!` for a p3 component: the clock is p3's `system-clock`, under the
+/// `crate::bindings::p3::clocks` alias (so the world imports
+/// `wasi:clocks/system-clock@0.3.0-rc-2026-03-15` in place of `wall-clock@0.2.0`).
+#[macro_export]
+macro_rules! guest_p3_audit {
+    ($tenant:expr) => {
+        pub fn now_secs() -> u64 {
+            crate::bindings::p3::clocks::system_clock::now().seconds as u64
+        }
+
+        pub fn audit(event: &str, outcome: &str, subject: &str, detail: &str) {
+            use crate::bindings::audit::log::recorder as audit_rec;
+            use crate::bindings::audit::log::types::Event;
+            let _ = audit_rec::record_event(&Event {
+                id: String::new(),
+                trace_id: String::new(),
+                span_id: String::new(),
+                timestamp: now_secs(),
+                event: event.to_string(),
+                outcome: outcome.to_string(),
+                tenant: $tenant.to_string(),
+                subject: subject.to_string(),
+                detail: detail.to_string(),
+            });
+        }
+    };
+}

@@ -6,43 +6,50 @@
 //! failure. If the answer is identical, the repair loop is a re-roll.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../llm-inference/wit",
+            "../graph-agent/wit",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "wit",
+        ],
+        world: "comp:agentprobe/agent-probe",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::graph::agent::writer as agent;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Request, Response};
 use serde_json::json;
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 struct Component;
 
-fn read_body(request: IncomingRequest) -> String {
-    let Ok(body) = request.consume() else { return String::new() };
-    let Ok(stream) = body.stream() else { return String::new() };
-    let mut out = Vec::new();
-    // `while let Ok(..)` treats a failed read exactly like the end of the body.
-    // See platform-domain for the shape that distinguishes them; this probe reads
-    // its own test input, so a truncated read shows up as a failed assertion
-    // rather than as data loss.
-    while let Ok(chunk) = stream.blocking_read(64 * 1024) {
-        if chunk.is_empty() {
-            break;
-        }
-        out.extend_from_slice(&chunk);
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+/// Probe input, not a user upload: 16 MiB is far past any goal it is sent.
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
 
         let body = if route == "/attempt" {
-            let raw = read_body(request);
+            let raw = read_body(request).await;
             let v: serde_json::Value =
                 serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
             let files = |key: &str| -> Vec<agent::File> {
@@ -116,17 +123,7 @@ impl Guest for Component {
             json!({ "service": "agent-probe", "routes": ["/attempt"] }).to_string()
         };
 
-        let headers = Fields::new();
-        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-        let resp = OutgoingResponse::new(headers);
-        let _ = resp.set_status_code(200);
-        let out = resp.body().expect("body");
-        ResponseOutparam::set(response_out, Ok(resp));
-        if let Ok(stream) = out.write() {
-            let _ = write_all(&stream, body.as_bytes());
-            drop(stream);
-        }
-        let _ = OutgoingBody::finish(out, None);
+        respond(200, "application/json", body)
     }
 }
 

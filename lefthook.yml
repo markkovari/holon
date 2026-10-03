@@ -32,9 +32,10 @@
 # crate needs bindings that only exist after its own component build.
 pre-push:
   commands:
+    # `xtask bindings` generates the p2 crates' bindings (a bare `cargo component
+    # check` would also try the p3 ones and fail); a plain check then covers both.
     components-check:
-      root: "components/"
-      run: cargo component check --workspace --exclude browser-automation --target wasm32-wasip2
+      run: cargo xtask bindings --exclude browser-automation && cargo check --manifest-path components/Cargo.toml --workspace --exclude browser-automation --target wasm32-wasip2
     reconciler-check:
       root: "reconciler/"
       run: cargo check --workspace --bins

@@ -8,13 +8,35 @@
 //! against something that would have made one.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../git-forge/wit",
+            "../llm-inference/wit",
+            "../graph-agent/wit",
+            "../graph-select/wit",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "wit",
+        ],
+        world: "comp:selectprobe/select-probe",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::graph::select::selector as sel;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Request, Response};
 use serde_json::json;
 
 struct Component;
@@ -24,8 +46,8 @@ struct Component;
 /// traps the component and the connection simply closes.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body_text!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
+guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
 
 fn entries_of(v: &serde_json::Value) -> Vec<sel::Entry> {
     v["entries"]
@@ -72,14 +94,14 @@ fn outcome_json(o: &sel::Outcome) -> serde_json::Value {
 }
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
 
         let body = match route.as_str() {
             "/select" => {
-                let v: serde_json::Value =
-                    serde_json::from_str(&read_body(&request)).unwrap_or(serde_json::Value::Null);
+                let v: serde_json::Value = serde_json::from_str(&read_body(request).await)
+                    .unwrap_or(serde_json::Value::Null);
                 match sel::select(&entries_of(&v)) {
                     Ok(o) => outcome_json(&o).to_string(),
                     Err(sel::SelectError::Invalid(m)) => {
@@ -88,8 +110,8 @@ impl Guest for Component {
                 }
             }
             "/land" => {
-                let v: serde_json::Value =
-                    serde_json::from_str(&read_body(&request)).unwrap_or(serde_json::Value::Null);
+                let v: serde_json::Value = serde_json::from_str(&read_body(request).await)
+                    .unwrap_or(serde_json::Value::Null);
                 let l = &v["landing"];
                 let landing = sel::Landing {
                     branch: l["branch"].as_str().unwrap_or("candidate").to_string(),
@@ -116,17 +138,7 @@ impl Guest for Component {
             _ => json!({ "service": "select-probe", "routes": ["/select", "/land"] }).to_string(),
         };
 
-        let headers = Fields::new();
-        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-        let resp = OutgoingResponse::new(headers);
-        let _ = resp.set_status_code(200);
-        let out = resp.body().expect("body");
-        ResponseOutparam::set(response_out, Ok(resp));
-        if let Ok(stream) = out.write() {
-            let _ = write_all(&stream, body.as_bytes());
-            drop(stream);
-        }
-        let _ = OutgoingBody::finish(out, None);
+        respond(200, "application/json", body)
     }
 }
 

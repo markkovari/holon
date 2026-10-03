@@ -16,7 +16,11 @@
 #   · and it imports `demo:shape` no longer, which is what "plugged" means.
 set -euo pipefail
 
-cargo component build --target wasm32-wasip2 -p demo -p demo-probe \
+# `demo` is p2 (cargo-component makes its bindings); `demo-probe` is p3 and makes
+# its own at compile time — cargo-component cannot resolve its world. So: the
+# one crate's bindings, then one plain build of both.
+(cd components && cargo component check -p demo)
+cargo build --target wasm32-wasip2 -p demo -p demo-probe \
   --manifest-path components/Cargo.toml
 
 # cargo-component emits under wasip1 even when asked for wasip2; take whichever is

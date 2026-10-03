@@ -1,11 +1,38 @@
 //! `insta-domain` — post pictures, follow other people and like what they posted
 
-mod bindings;
+#[allow(warnings)]
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/ratelimit-guard",
+            "../audit-log/wit",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "wit",
+        ],
+        world: "insta:app/insta-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+        pub use super::wasi::random0_3_0_rc_2026_03_15 as random;
+    }
+}
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 use bindings::wasi::keyvalue::store::open;
 
 use serde::{Deserialize, Serialize};
@@ -29,24 +56,24 @@ struct Post {
 struct Component;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
-            (Method::Post, ["api", "login"]) => login_user(&request),
+            (Method::Post, ["api", "login"]) => login_user(request).await,
             (Method::Get, ["api", "posts"]) => get_posts(),
-            (Method::Post, ["api", "posts"]) => create_post(&request),
+            (Method::Post, ["api", "posts"]) => create_post(request).await,
             (Method::Post, ["api", "posts", id, "like"]) => like_post(&request, id),
             (Method::Get, ["api", "users"]) => get_users(),
-            (Method::Post, ["api", "users"]) => create_user(&request),
+            (Method::Post, ["api", "users"]) => create_user(request).await,
             (Method::Post, ["api", "users", id, "follow"]) => follow_user(&request, id),
             _ => Outcome::Err(404, "not_found".into()),
         };
 
-        emit(response_out, outcome);
+        emit(outcome)
     }
 }
 
@@ -55,32 +82,21 @@ enum Outcome {
     Err(u16, String),
 }
 
-fn emit(response_out: ResponseOutparam, outcome: Outcome) {
+fn emit(outcome: Outcome) -> Result<Response, ErrorCode> {
     let (status, body_bytes) = match outcome {
         Outcome::Json(s, b) => (s, b.into_bytes()),
         Outcome::Err(s, b) => (s, format!("{{\"error\":\"{}\"}}", b).into_bytes()),
     };
 
-    let fields = Fields::new();
-    let _ = fields.set("content-type", &[b"application/json".to_vec()]);
-
-    let response = OutgoingResponse::new(fields);
-    response.set_status_code(status).unwrap();
-    let body = response.body().unwrap();
-    ResponseOutparam::set(response_out, Ok(response));
-
-    let stream = body.write().unwrap();
-    let _ = write_all(&stream, &body_bytes);
-    drop(stream);
-    OutgoingBody::finish(body, None).unwrap();
+    respond(status, "application/json", body_bytes)
 }
 
 fn get_bucket() -> bindings::wasi::keyvalue::store::Bucket {
     open("").unwrap_or_else(|_| open("default").unwrap())
 }
 
-fn get_auth_token(request: &IncomingRequest) -> Option<String> {
-    let headers = request.headers();
+fn get_auth_token(request: &Request) -> Option<String> {
+    let headers = request.get_headers();
     let values = headers.get("authorization");
     if !values.is_empty() {
         if let Ok(s) = String::from_utf8(values[0].clone()) {
@@ -93,11 +109,7 @@ fn get_auth_token(request: &IncomingRequest) -> Option<String> {
     None
 }
 
-fn authenticate(
-    request: &IncomingRequest,
-    _target: &str,
-    _action: &str,
-) -> Result<String, Outcome> {
+fn authenticate(request: &Request, _target: &str, _action: &str) -> Result<String, Outcome> {
     let token = get_auth_token(request).ok_or(Outcome::Err(401, "Missing token".into()))?;
     if token.starts_with("authenticated_token_for_") {
         let parts: Vec<&str> = token.split('_').collect();
@@ -120,15 +132,16 @@ fn get_users() -> Outcome {
     Outcome::Json(200, String::from_utf8_lossy(&bytes).to_string())
 }
 
-fn create_user(request: &IncomingRequest) -> Outcome {
-    let body_bytes = read_body(request).unwrap_or_default();
+async fn create_user(request: Request) -> Outcome {
+    // Attempt to authenticate to tie this to a real identity, though not strictly required
+    // (read before the body, which consumes the request).
+    let user_id = authenticate(&request, "users", "create")
+        .unwrap_or_else(|_| format!("user_{}", bindings::p3::random::random::get_random_u64()));
+
+    let body_bytes = read_body(request).await.unwrap_or_default();
     let json: serde_json::Value =
         serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
     let username = json["username"].as_str().unwrap_or("anonymous").to_string();
-
-    // Attempt to authenticate to tie this to a real identity, though not strictly required
-    let user_id = authenticate(request, "users", "create")
-        .unwrap_or_else(|_| format!("user_{}", bindings::wasi::random::random::get_random_u64()));
 
     let user = UserProfile { id: user_id, username, followers: Vec::new() };
 
@@ -144,20 +157,20 @@ fn create_user(request: &IncomingRequest) -> Outcome {
     Outcome::Json(201, serde_json::to_string(&user).unwrap())
 }
 
-fn create_post(request: &IncomingRequest) -> Outcome {
-    let author_id = match authenticate(request, "posts", "create") {
+async fn create_post(request: Request) -> Outcome {
+    let author_id = match authenticate(&request, "posts", "create") {
         Ok(id) => id,
         Err(e) => return e, // Enforce authentication for creating posts
     };
 
-    let body_bytes = read_body(request).unwrap_or_default();
+    let body_bytes = read_body(request).await.unwrap_or_default();
     let json: serde_json::Value =
         serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
     let image_url = json["image_url"].as_str().unwrap_or("").to_string();
     let caption = json["caption"].as_str().unwrap_or("").to_string();
 
     let post = Post {
-        id: format!("post_{}", bindings::wasi::random::random::get_random_u64()),
+        id: format!("post_{}", bindings::p3::random::random::get_random_u64()),
         author_id,
         image_url,
         caption,
@@ -176,7 +189,7 @@ fn create_post(request: &IncomingRequest) -> Outcome {
     Outcome::Json(201, serde_json::to_string(&post).unwrap())
 }
 
-fn like_post(request: &IncomingRequest, id: &str) -> Outcome {
+fn like_post(request: &Request, id: &str) -> Outcome {
     let user_id = match authenticate(request, "posts", "like") {
         Ok(id) => id,
         Err(_) => "mock_user".to_string(), // Fallback for testing without token
@@ -200,7 +213,7 @@ fn like_post(request: &IncomingRequest, id: &str) -> Outcome {
     }
 }
 
-fn follow_user(request: &IncomingRequest, id: &str) -> Outcome {
+fn follow_user(request: &Request, id: &str) -> Outcome {
     let follower_id = match authenticate(request, "users", "follow") {
         Ok(id) => id,
         Err(_) => "mock_user".to_string(),
@@ -227,12 +240,13 @@ fn follow_user(request: &IncomingRequest, id: &str) -> Outcome {
 /// Ceiling on a request body, matching the rest of the tree.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
 
 bindings::export!(Component with_types_in bindings);
 
-fn login_user(request: &IncomingRequest) -> Outcome {
-    let body_bytes = read_body(request).unwrap_or_default();
+async fn login_user(request: Request) -> Outcome {
+    let body_bytes = read_body(request).await.unwrap_or_default();
     let json: serde_json::Value =
         serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
     let username = json["username"].as_str().unwrap_or("anonymous").to_string();
@@ -247,7 +261,7 @@ fn login_user(request: &IncomingRequest) -> Outcome {
     let token = format!(
         "bearer authenticated_token_for_{}_{}",
         username,
-        bindings::wasi::random::random::get_random_u64()
+        bindings::p3::random::random::get_random_u64()
     );
 
     Outcome::Json(
@@ -259,5 +273,3 @@ fn login_user(request: &IncomingRequest) -> Outcome {
         .to_string(),
     )
 }
-
-guestio::guest_write_all!();

@@ -8,8 +8,8 @@
 
 use serde_json::json;
 
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
 use crate::store::{find_by_str, load, save, with_id};
 use crate::{require, Reply, Route};
 

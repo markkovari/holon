@@ -27,7 +27,7 @@ package buzz:app@0.1.0;
 /// The game backend — accounts (host) + quizzes + games/players/answers with
 /// speed-weighted scoring and a live leaderboard, composed from contracts.
 world buzz-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // auth: the HOST registers / logs in; players are anonymous.
     import auth:identity/accounts@0.1.0;
@@ -39,7 +39,7 @@ world buzz-domain {
     // the data layer: quizzes, games, players, answers.
     import records:store/store@0.1.0;
     // mint the short numeric game PIN.
-    import wasi:random/random@0.2.0;
+    import wasi:random/random@0.3.0-rc-2026-03-15;
     // question timing + speed-weighted scoring.
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
 }

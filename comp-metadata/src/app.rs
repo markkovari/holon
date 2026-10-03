@@ -183,6 +183,7 @@ pub fn discover_apps(root_dir: &Path) -> Vec<App> {
         }
         if comp.ends_with("-probe")
             || comp.ends_with("-suite")
+            || comp == "bench-suite-p3"
             || comp == "adversary"
             || comp == "contrast-audit"
             || comp == "http-serve"
@@ -205,7 +206,10 @@ pub fn discover_apps(root_dir: &Path) -> Vec<App> {
             for entry in entries.flatten() {
                 if entry.path().extension().is_some_and(|ext| ext == "wit") {
                     if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                        if content.contains("wasi:http/incoming-handler") {
+                        // Either door: p2's incoming-handler or p3's handler (ADR-0103).
+                        if content.contains("wasi:http/incoming-handler")
+                            || content.contains("export wasi:http/handler@")
+                        {
                             exports_http = true;
                             break;
                         }

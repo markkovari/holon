@@ -13,20 +13,50 @@
 
 mod access;
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../host/wit/deps/comp-store",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../record-store/wit",
+            "../id-generate/wit",
+            "../audit-log/wit",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/ratelimit-guard",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../event-bus/wit",
+            "../search-index/wit",
+            "../csv/wit",
+            "wit",
+        ],
+        world: "clinic:domain/clinic-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 mod owners;
 mod reports;
 mod visits;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::id::generate::generator as ids;
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 use bindings::records::store::store as records;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
 use serde_json::{json, Value};
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 struct Component;
 
@@ -66,7 +96,7 @@ impl Reply {
 /// The path segments of a request, its query string, and its bearer token.
 ///
 /// `bearer` is here rather than read per-handler because the header plumbing is
-/// scaffold: `IncomingRequest` is consumed to read the body, so a part that went
+/// scaffold: `Request` is consumed to read the body, so a part that went
 /// looking for the header afterwards would find nothing. Empty when absent.
 pub struct Route {
     pub segments: Vec<String>,
@@ -124,8 +154,8 @@ fn seed() -> Reply {
 }
 
 /// The token out of `Authorization: Bearer <token>`, or empty.
-fn bearer(request: &IncomingRequest) -> String {
-    let headers = request.headers();
+fn bearer(request: &Request) -> String {
+    let headers = request.get_headers();
     let Some(value) = headers.get("authorization").into_iter().next() else {
         return String::new();
     };
@@ -137,11 +167,11 @@ fn bearer(request: &IncomingRequest) -> String {
 /// traps the component and the connection simply closes.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body_text!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let path = request.path_with_query().unwrap_or_else(|| "/".into());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".into());
         let (raw, query) = match path.split_once('?') {
             Some((p, q)) => (p.to_string(), q.to_string()),
             None => (path.clone(), String::new()),
@@ -151,9 +181,9 @@ impl Guest for Component {
             query,
             bearer: bearer(&request),
         };
-        let method = request.method();
+        let method = request.get_method();
         let body = match method {
-            Method::Post | Method::Put | Method::Patch => read_body(&request),
+            Method::Post | Method::Put | Method::Patch => read_body(request).await,
             _ => String::new(),
         };
 
@@ -184,25 +214,14 @@ impl Guest for Component {
             None => "application/json",
         };
         let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
-        let resp = OutgoingResponse::new(headers);
-        let _ = resp.set_status_code(status);
-        let out = resp.body().expect("body");
-        ResponseOutparam::set(response_out, Ok(resp));
-        if let Ok(stream) = out.write() {
-            match &raw {
-                // Byte-for-byte. `to_string()` here is what turned a CSV
-                // document into a JSON string literal.
-                Some((_, bytes)) => {
-                    let _ = write_all(&stream, bytes);
-                }
-                None if !payload.is_null() => {
-                    let _ = write_all(&stream, payload.to_string().as_bytes());
-                }
-                None => {}
-            }
-            drop(stream);
-        }
-        let _ = OutgoingBody::finish(out, None);
+        let bytes = match raw {
+            // Byte-for-byte. `to_string()` here is what turned a CSV
+            // document into a JSON string literal.
+            Some((_, bytes)) => bytes,
+            None if !payload.is_null() => payload.to_string().into_bytes(),
+            None => Vec::new(),
+        };
+        respond_with(status, headers, bytes)
     }
 }
 

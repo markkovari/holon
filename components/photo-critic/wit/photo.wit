@@ -6,8 +6,8 @@
 package demo:photocritic@0.1.0;
 
 world photo-critic {
-    export wasi:http/incoming-handler@0.2.0;
-    import wasi:http/outgoing-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
+    import wasi:http/client@0.3.0-rc-2026-03-15;
     import comp:secrets/reader@0.1.0;
     import wasi:config/store@0.2.0-rc.1;
 }

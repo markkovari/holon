@@ -12,7 +12,7 @@ crate-type = ["cdylib"]
 [dependencies]
 guestio = { path = "../guestio" }
 guestfmt = { path = "../guestfmt" }
-wit-bindgen-rt = { workspace = true }
+wit-bindgen = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 base64 = { workspace = true }
@@ -21,31 +21,3 @@ base64 = { workspace = true }
 # it is pure Rust, which is what makes it build for wasm32-wasip2 at all.
 p256 = { workspace = true }
 sha2 = { workspace = true }
-
-[package.metadata.component]
-package = "platform:component"
-
-[package.metadata.component.target]
-path = "wit"
-world = "platform-domain"
-
-[package.metadata.component.target.dependencies]
-"auth:identity" = { path = "../../wit" }
-# auth.wit's own world imports these; needed to merge the auth:identity package.
-"ratelimit:guard" = { path = "../rate-limiter/wit" }
-"audit:log" = { path = "../audit-log/wit" }
-"policy:guard" = { path = "../policy-guard/wit" }
-"records:store" = { path = "../record-store/wit" }
-"event:bus" = { path = "../event-bus/wit" }
-"comp:store" = { path = "../../host/wit/deps/comp-store" }
-"blob:store" = { path = "../blob-store/wit" }
-"quota:meter" = { path = "../quota/wit" }
-"wit:reflect" = { path = "../wit-reflect/wit" }
-"secrets:vault" = { path = "../secrets-vault/wit" }
-"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
-"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
-"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
-"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
-"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
-"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
-"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }

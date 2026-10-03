@@ -20,7 +20,40 @@
 //! function; they meet only in `records:store` and `fsm:workflow` instances.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../audit-log/wit",
+            "../../wit/deps/ratelimit-guard",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../policy-guard/wit",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../fsm-workflow/wit",
+            "../ledger/wit",
+            "../jev-decision/wit",
+            "wit",
+        ],
+        world: "marketplace:domain/marketplace-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 mod catalog;
 mod fulfillment;
 mod ledger;
@@ -34,18 +67,18 @@ pub const TENANT: &str = "marketplace";
 /// back to `buyer` — a role is a privilege, not a free-text field.
 const ROLES: &[&str] = &["vendor", "buyer", "admin"];
 
-guestio::guest_write_all!();
-guestio::guest_bearer!();
+guestio::guest_p3_bearer!();
+guestio::guest_p3_respond!();
 
 const MAX_BODY_BYTES: usize = 1024 * 1024;
-guestio::guest_read_body_text!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
 guestauth::guest_auth_reply!();
 guestauth::guest_introspect!();
 guestauth::guest_role_check!(is_admin, "admin");
-guestauth::guest_audit!(TENANT);
+guestauth::guest_p3_audit!(TENANT);
 guestauth::guest_accounts_endpoints!(TENANT, ROLES, "buyer");
-guestauth::guest_emit!();
+guestauth::guest_p3_emit!();
 
 use bindings::fsm::workflow::engine as fsm;
 use bindings::records::store::store as records;
@@ -411,18 +444,17 @@ fn test_fsm(machine: &str, instance: &str) -> Reply {
 
 struct Component;
 
-impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
-    fn handle(
-        request: bindings::wasi::http::types::IncomingRequest,
-        response_out: bindings::wasi::http::types::ResponseOutparam,
-    ) {
-        use bindings::wasi::http::types::Method;
-        let path = request.path_with_query().unwrap_or_else(|| "/".into());
+impl bindings::p3::handler::Guest for Component {
+    async fn handle(
+        request: bindings::p3::http::types::Request,
+    ) -> Result<bindings::p3::http::types::Response, bindings::p3::http::types::ErrorCode> {
+        use bindings::p3::http::types::Method;
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".into());
         let raw_path = path.split('?').next().unwrap_or("/").to_string();
         let bearer = bearer(&request).unwrap_or_default();
-        let method = request.method();
+        let method = request.get_method();
         let body = match method {
-            Method::Post | Method::Put | Method::Patch | Method::Delete => read_body(&request),
+            Method::Post | Method::Put | Method::Patch | Method::Delete => read_body(request).await,
             _ => String::new(),
         };
         let segments: Vec<String> =
@@ -484,7 +516,7 @@ impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
 
             _ => Reply::err(404, "not_found"),
         };
-        emit(response_out, reply);
+        emit(reply)
     }
 }
 

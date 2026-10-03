@@ -7,19 +7,37 @@
 //! as `anthropic-provider`, but serving HTTP and sending an image block.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../host/wit/deps/comp-secrets",
+            "wit",
+        ],
+        world: "demo:photocritic/photo-critic",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use bindings::comp::secrets::reader as secrets;
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::config::store as config;
-use bindings::wasi::http::outgoing_handler;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingRequest, OutgoingResponse,
-    RequestOptions, ResponseOutparam, Scheme,
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{
+    ErrorCode, Fields, Method, Request, RequestOptions, Response, Scheme,
 };
-use bindings::wasi::io::streams::StreamError;
+use bindings::wasi::config::store as config;
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 struct Component;
 
@@ -66,7 +84,7 @@ fn json_str(s: &str) -> String {
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 /// POST a JSON body to Anthropic and return (status, response-bytes).
-fn post_anthropic(body: &[u8]) -> Result<(u16, Vec<u8>), String> {
+async fn post_anthropic(body: Vec<u8>) -> Result<(u16, Vec<u8>), String> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     let _ = headers.set("content-length", &[body.len().to_string().into_bytes()]);
@@ -75,95 +93,58 @@ fn post_anthropic(body: &[u8]) -> Result<(u16, Vec<u8>), String> {
     if let Some(k) = api_key() {
         let _ = headers.set("x-api-key", &[k.into_bytes()]);
     }
-    let req = OutgoingRequest::new(headers);
     let e = |m: &str| m.to_string();
-    req.set_method(&Method::Post).map_err(|_| e("method"))?;
-    req.set_scheme(Some(&Scheme::Https)).map_err(|_| e("scheme"))?;
-    req.set_authority(Some("api.anthropic.com")).map_err(|_| e("authority"))?;
-    req.set_path_with_query(Some("/v1/messages")).map_err(|_| e("path"))?;
-    {
-        let out = req.body().map_err(|_| e("body"))?;
-        {
-            let stream = out.write().map_err(|_| e("write"))?;
-            for chunk in body.chunks(4096) {
-                stream.blocking_write_and_flush(chunk).map_err(|_| e("body write"))?;
-            }
-        }
-        OutgoingBody::finish(out, None).map_err(|_| e("finish"))?;
-    }
     let opts = RequestOptions::new();
     let _ = opts.set_connect_timeout(Some(30_000_000_000));
     let _ = opts.set_first_byte_timeout(Some(180_000_000_000));
     let _ = opts.set_between_bytes_timeout(Some(180_000_000_000));
-    let fut =
-        outgoing_handler::handle(req, Some(opts)).map_err(|err| format!("handle: {err:?}"))?;
-    fut.subscribe().block();
-    let resp = fut
-        .get()
-        .ok_or_else(|| e("no response"))?
-        .map_err(|_| e("taken"))?
-        .map_err(|err| format!("http: {err:?}"))?;
-    let status = resp.status();
+    let (trailers_tx, trailers_rx) = bindings::wit_future::new(|| Ok(None));
+    drop(trailers_tx);
+    let (mut tx, rx) = bindings::wit_stream::new();
+    wit_bindgen::spawn_local(async move {
+        tx.write_all(body).await;
+    });
+    let (req, _sent) = Request::new(headers, Some(rx), trailers_rx, Some(opts));
+    req.set_method(&Method::Post).map_err(|_| e("method"))?;
+    req.set_scheme(Some(&Scheme::Https)).map_err(|_| e("scheme"))?;
+    req.set_authority(Some("api.anthropic.com")).map_err(|_| e("authority"))?;
+    req.set_path_with_query(Some("/v1/messages")).map_err(|_| e("path"))?;
+    let resp =
+        bindings::p3::http::client::send(req).await.map_err(|err| format!("http: {err:?}"))?;
+    let status = resp.get_status_code();
+    let (res_tx, res_rx) = bindings::wit_future::new(|| Ok(()));
+    let (mut stream, trailers) = Response::consume_body(resp, res_rx);
     let mut buf = Vec::new();
-    if let Ok(incoming) = resp.consume() {
-        if let Ok(stream) = incoming.stream() {
-            loop {
-                match stream.blocking_read(8192) {
-                    Ok(c) if c.is_empty() => break,
-                    Ok(c) => {
-                        // The same ceiling on the way back. This is a model's
-                        // answer over a network we do not control, and a reply
-                        // larger than the request that provoked it is either a
-                        // mistake or an attack — either way not something to hold
-                        // in memory while deciding.
-                        if buf.len() + c.len() > MAX_BODY_BYTES {
-                            return Err(e("the response body is too large"));
-                        }
-                        buf.extend_from_slice(&c);
-                    }
-                    Err(StreamError::Closed) => break,
-                    Err(_) => break,
-                }
-            }
+    loop {
+        buf.reserve(8192);
+        let (st, b) = stream.read(buf).await;
+        buf = b;
+        // The same ceiling on the way back. This is a model's answer over a
+        // network we do not control, and a reply larger than the request that
+        // provoked it is either a mistake or an attack — either way not
+        // something to hold in memory while deciding.
+        if buf.len() > MAX_BODY_BYTES {
+            return Err(e("the response body is too large"));
+        }
+        match st {
+            wit_bindgen::StreamResult::Complete(_) => {}
+            wit_bindgen::StreamResult::Dropped | wit_bindgen::StreamResult::Cancelled => break,
         }
     }
+    drop(res_tx);
+    // Like the p2 loop's `Err(_) => break`: what arrived is returned, and a
+    // truncated reply fails loudly as bad JSON in `evaluate`.
+    let _ = trailers.await;
     Ok((status, buf))
 }
 
-/// Read the whole incoming request body.
-fn read_body(request: &IncomingRequest) -> Vec<u8> {
-    let mut buf = Vec::new();
-    if let Ok(body) = request.consume() {
-        if let Ok(stream) = body.stream() {
-            loop {
-                match stream.blocking_read(65536) {
-                    Ok(c) if c.is_empty() => break,
-                    Ok(c) => {
-                        // No error channel here, so an over-long body reads as
-                        // EMPTY rather than as a plausible prefix of itself — and
-                        // a truncated image would decode into a critique of half a
-                        // photograph.
-                        if buf.len() + c.len() > MAX_BODY_BYTES {
-                            return Vec::new();
-                        }
-                        buf.extend_from_slice(&c);
-                    }
-                    Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-                    // A failed read is not an end of body: collapsing the two
-                    // returns a truncated payload as if it were whole.
-                    // A failed read is NOT the end of a body. Breaking here returns
-                    // what arrived so far as though it were complete.
-                    Err(_) => return Vec::new(),
-                }
-            }
-        }
-    }
-    buf
-}
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
 /// The whole evaluate path: parse the upload, ask the model, return the critique.
-fn evaluate(request: &IncomingRequest) -> Result<String, String> {
-    let body = read_body(request);
+async fn evaluate(request: Request) -> Result<String, String> {
+    // A failed or over-long read is EMPTY rather than a plausible prefix of
+    // itself — a truncated image would decode into a critique of half a photograph.
+    let body = read_body(request).await.unwrap_or_default();
     let v: serde_json::Value =
         serde_json::from_slice(&body).map_err(|e| format!("bad JSON body: {e}"))?;
     let media_type = v["media_type"].as_str().ok_or("missing media_type")?;
@@ -178,7 +159,7 @@ fn evaluate(request: &IncomingRequest) -> Result<String, String> {
          {{\"type\":\"text\",\"text\":{}}}]}}]}}",
         json_str(&model()), json_str(media_type), data, json_str(PROMPT)
     );
-    let (status, resp) = post_anthropic(req_body.as_bytes())?;
+    let (status, resp) = post_anthropic(req_body.into_bytes()).await?;
     if !(200..300).contains(&status) {
         let snippet = String::from_utf8_lossy(&resp).chars().take(300).collect::<String>();
         return Err(format!("vision API {status}: {snippet}"));
@@ -203,39 +184,25 @@ fn evaluate(request: &IncomingRequest) -> Result<String, String> {
     }
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, ctype: &str, body: &[u8]) {
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[ctype.as_bytes().to_vec()]);
-    let resp = OutgoingResponse::new(headers);
-    let _ = resp.set_status_code(status);
-    let out = resp.body().expect("body");
-    ResponseOutparam::set(response_out, Ok(resp));
-    if let Ok(stream) = out.write() {
-        let _ = write_all(&stream, body);
-        drop(stream);
-    }
-    let _ = OutgoingBody::finish(out, None);
-}
-
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/");
-        match (request.method(), route) {
+        match (request.get_method(), route) {
             (Method::Get, "/") | (Method::Get, "/index.html") => {
-                respond(response_out, 200, "text/html; charset=utf-8", PAGE.as_bytes());
+                respond(200, "text/html; charset=utf-8", PAGE)
             }
-            (Method::Post, "/evaluate") => match evaluate(&request) {
+            (Method::Post, "/evaluate") => match evaluate(request).await {
                 Ok(text) => {
                     let body = format!("{{\"critique\":{}}}", json_str(&text));
-                    respond(response_out, 200, "application/json", body.as_bytes());
+                    respond(200, "application/json", body)
                 }
                 Err(e) => {
                     let body = format!("{{\"error\":{}}}", json_str(&e));
-                    respond(response_out, 500, "application/json", body.as_bytes());
+                    respond(500, "application/json", body)
                 }
             },
-            _ => respond(response_out, 404, "text/plain", b"not found"),
+            _ => respond(404, "text/plain", "not found"),
         }
     }
 }

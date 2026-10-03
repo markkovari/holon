@@ -15,9 +15,9 @@
 use crate::bindings::auth::identity::accounts;
 use crate::bindings::auth::identity::session;
 use crate::bindings::auth::identity::types::AuthError;
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
 use crate::bindings::search::index::index as search;
-use crate::bindings::wasi::http::types::Method;
 use crate::{Reply, Route};
 use serde_json::{json, Value};
 

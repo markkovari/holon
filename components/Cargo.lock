@@ -10,7 +10,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -21,7 +21,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -55,7 +55,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -82,7 +82,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -140,7 +140,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -169,7 +169,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -186,7 +186,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -197,7 +197,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -220,7 +220,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -324,7 +324,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -334,7 +334,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -345,7 +345,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -393,7 +393,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -404,7 +404,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -415,7 +415,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -456,7 +456,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -500,7 +500,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -612,7 +612,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -622,7 +622,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -631,7 +631,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -655,7 +655,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -666,7 +666,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -692,7 +692,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -714,7 +714,7 @@ version = "0.1.0"
 dependencies = [
  "guestfmt",
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -732,7 +732,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -777,7 +777,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -794,7 +794,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -834,7 +834,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -845,7 +845,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -873,7 +873,7 @@ name = "demo-probe"
 version = "0.1.0"
 dependencies = [
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -911,7 +911,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -923,7 +923,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -934,7 +934,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -957,7 +957,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -979,7 +979,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -989,7 +989,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -998,7 +998,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1023,7 +1023,7 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid 1.26.1",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1081,7 +1081,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1091,7 +1091,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1099,7 +1099,7 @@ name = "eshop-gateway"
 version = "0.1.0"
 dependencies = [
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1110,7 +1110,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1119,7 +1119,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1144,7 +1144,7 @@ dependencies = [
  "guestfmt",
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1156,7 +1156,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1198,7 +1198,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1223,7 +1223,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1240,7 +1240,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1251,7 +1251,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1288,7 +1288,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1308,7 +1308,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1325,7 +1325,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1416,7 +1416,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1496,7 +1496,7 @@ version = "0.1.0"
 dependencies = [
  "guestfmt",
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1513,7 +1513,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1551,7 +1551,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1612,8 +1612,14 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
+
+[[package]]
+name = "heck"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "helpdesk-domain"
@@ -1623,7 +1629,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1853,7 +1859,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1864,7 +1870,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1916,7 +1922,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1927,7 +1933,7 @@ dependencies = [
  "once_cell",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1938,7 +1944,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1949,7 +1955,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1960,7 +1966,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -1992,7 +1998,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2002,7 +2008,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2084,7 +2090,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2101,7 +2107,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2145,7 +2151,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2179,7 +2185,7 @@ name = "llm-probe"
 version = "0.1.0"
 dependencies = [
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2190,7 +2196,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2200,7 +2206,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2228,6 +2234,17 @@ name = "luhn-checksum"
 version = "0.1.0"
 dependencies = [
  "wit-bindgen-rt",
+]
+
+[[package]]
+name = "macro-string"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59a9dbbfc75d2688ed057456ce8a3ee3f48d12eec09229f560f3643b9f275653"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -2274,7 +2291,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2284,7 +2301,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2315,7 +2332,7 @@ version = "0.1.0"
 dependencies = [
  "guestfmt",
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2325,7 +2342,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2343,7 +2360,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2389,7 +2406,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2429,7 +2446,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2485,7 +2502,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2563,7 +2580,7 @@ dependencies = [
  "holon-park",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2585,7 +2602,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2597,7 +2614,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2618,7 +2635,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2629,7 +2646,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2646,7 +2663,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2671,7 +2688,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2683,7 +2700,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2694,7 +2711,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2717,7 +2734,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2752,7 +2769,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2784,7 +2801,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -2829,6 +2846,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
+]
+
+[[package]]
+name = "prettyplease"
+version = "0.2.37"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
+dependencies = [
+ "proc-macro2",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -2894,7 +2921,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3029,7 +3056,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3059,7 +3086,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3094,7 +3121,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3145,7 +3172,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3172,7 +3199,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3183,7 +3210,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3212,7 +3239,7 @@ name = "secret-probe"
 version = "0.1.0"
 dependencies = [
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3230,7 +3257,7 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3376,7 +3403,7 @@ name = "slug-probe"
 version = "0.1.0"
 dependencies = [
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3393,7 +3420,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3446,7 +3473,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3469,7 +3496,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3490,7 +3517,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3507,7 +3534,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3518,7 +3545,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3530,7 +3557,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3599,7 +3626,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3657,7 +3684,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3677,7 +3704,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3689,7 +3716,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3723,7 +3750,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3734,7 +3761,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3745,7 +3772,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3756,7 +3783,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3767,7 +3794,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3803,6 +3830,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
+name = "unicode-xid"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
 name = "universal-hash"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3829,7 +3862,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3900,7 +3933,7 @@ dependencies = [
  "holon-vcs",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3919,7 +3952,7 @@ name = "version-probe"
 version = "0.1.0"
 dependencies = [
  "guestio",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3936,7 +3969,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3946,7 +3979,7 @@ dependencies = [
  "guestfmt",
  "guestio",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3963,7 +3996,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3988,7 +4021,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3998,7 +4031,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -4022,8 +4055,8 @@ dependencies = [
  "semver",
  "thiserror 1.0.69",
  "wac-types",
- "wasm-encoder",
- "wasm-metadata",
+ "wasm-encoder 0.247.0",
+ "wasm-metadata 0.247.0",
  "wasmparser 0.247.0",
 ]
 
@@ -4037,7 +4070,7 @@ dependencies = [
  "id-arena",
  "indexmap 2.14.0",
  "semver",
- "wasm-encoder",
+ "wasm-encoder 0.247.0",
  "wasmparser 0.247.0",
 ]
 
@@ -4103,6 +4136,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-encoder"
+version = "0.251.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a879a421bd17c528b74721b2abf4c62e8f1d1889c2ba8c3c50d02deaf2ce395"
+dependencies = [
+ "leb128fmt",
+ "wasmparser 0.251.0",
+]
+
+[[package]]
 name = "wasm-metadata"
 version = "0.247.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4117,8 +4160,20 @@ dependencies = [
  "serde_json",
  "spdx",
  "url",
- "wasm-encoder",
+ "wasm-encoder 0.247.0",
  "wasmparser 0.247.0",
+]
+
+[[package]]
+name = "wasm-metadata"
+version = "0.251.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f998ccc6e012f7b86865eb2a106c8a0422017a1a88977ce01a69f2244be2e57"
+dependencies = [
+ "anyhow",
+ "indexmap 2.14.0",
+ "wasm-encoder 0.251.0",
+ "wasmparser 0.251.0",
 ]
 
 [[package]]
@@ -4145,6 +4200,18 @@ dependencies = [
  "indexmap 2.14.0",
  "semver",
  "serde",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.251.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "437970b35b1a85cfde9c74b2398352d8d653f3bd8e3a3db0c063ea8f5b4b36ff"
+dependencies = [
+ "bitflags 2.13.1",
+ "hashbrown 0.17.1",
+ "indexmap 2.14.0",
+ "semver",
 ]
 
 [[package]]
@@ -4175,7 +4242,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -4247,12 +4314,104 @@ dependencies = [
 ]
 
 [[package]]
+name = "wit-bindgen"
+version = "0.58.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a43552cfa071f246cfd99e5dbb23710dfe7336b3259e09339818483359470749"
+dependencies = [
+ "bitflags 2.13.1",
+ "futures",
+ "wit-bindgen-rust-macro",
+]
+
+[[package]]
+name = "wit-bindgen-core"
+version = "0.58.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4738d1c9a78e97bc7f664bfafd5d8e67d7bb26faa5c41e6d628e8bbdad3ec351"
+dependencies = [
+ "anyhow",
+ "heck",
+ "wit-parser",
+]
+
+[[package]]
 name = "wit-bindgen-rt"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4db52a11d4dfb0a59f194c064055794ee6564eb1ced88c25da2cf76e50c5621"
 dependencies = [
  "bitflags 2.13.1",
+]
+
+[[package]]
+name = "wit-bindgen-rust"
+version = "0.58.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1130ce1f531bc9f9a75922244aa773bf5e2117fda1ef4a86b9f98d6b8135eb46"
+dependencies = [
+ "anyhow",
+ "heck",
+ "indexmap 2.14.0",
+ "prettyplease",
+ "syn 2.0.119",
+ "wasm-metadata 0.251.0",
+ "wit-bindgen-core",
+ "wit-component",
+]
+
+[[package]]
+name = "wit-bindgen-rust-macro"
+version = "0.58.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07296369e4d598e7e79b64eef66f724d83324ea671bcf677d78fc5cf92604ae5"
+dependencies = [
+ "anyhow",
+ "macro-string",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "wit-bindgen-core",
+ "wit-bindgen-rust",
+]
+
+[[package]]
+name = "wit-component"
+version = "0.251.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83a5e60173c413659c689f0581b0cf5d1a2404077568f9ffdce748a9eb2fc913"
+dependencies = [
+ "anyhow",
+ "bitflags 2.13.1",
+ "indexmap 2.14.0",
+ "log",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "wasm-encoder 0.251.0",
+ "wasm-metadata 0.251.0",
+ "wasmparser 0.251.0",
+ "wit-parser",
+]
+
+[[package]]
+name = "wit-parser"
+version = "0.251.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e960732e824fab95099971a09e638979347c94ca48568d3c854c945729196947"
+dependencies = [
+ "anyhow",
+ "hashbrown 0.17.1",
+ "id-arena",
+ "indexmap 2.14.0",
+ "log",
+ "semver",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "unicode-xid",
+ "wasmparser 0.251.0",
 ]
 
 [[package]]

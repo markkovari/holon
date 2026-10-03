@@ -7,16 +7,38 @@
 //!   POST /abandon?claim=
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../blob-store/wit",
+            "../../host/wit/deps/comp-store",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../artifact-cache/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "wit",
+        ],
+        world: "comp:artifactprobe/artifact-probe",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use bindings::artifact::cache::store as cache;
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 use serde_json::json;
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 struct Component;
 
@@ -59,39 +81,16 @@ fn err(e: cache::CacheError) -> String {
 /// traps the component and the connection simply closes.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-fn read_body(request: IncomingRequest) -> Vec<u8> {
-    let Ok(body) = request.consume() else { return Vec::new() };
-    let Ok(stream) = body.stream() else { return Vec::new() };
-    let mut out = Vec::new();
-    loop {
-        match stream.blocking_read(64 * 1024) {
-            Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => {
-                // Same reasoning as the error arm below: an over-long body reads
-                // as empty rather than as a plausible prefix of itself.
-                if out.len() + chunk.len() > MAX_BODY_BYTES {
-                    return Vec::new();
-                }
-                out.extend_from_slice(&chunk);
-            }
-            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-            // No error channel here, so the choice is a truncated body or none.
-            // None: a caller reading an empty body fails cleanly, where half an
-            // artifact is a plausible-looking file that is not the one uploaded.
-            Err(_) => return Vec::new(),
-        }
-    }
-    out
-}
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let (route, query) = match path.split_once('?') {
             Some((r, q)) => (r.to_string(), q.to_string()),
             None => (path.clone(), String::new()),
         };
-        let method = request.method();
+        let method = request.get_method();
 
         let body = match (&method, route.as_str()) {
             (Method::Get, "/id") => {
@@ -115,7 +114,7 @@ impl Guest for Component {
             },
             (Method::Post, "/put") => {
                 let claim = param(&query, "claim");
-                let bytes = read_body(request);
+                let bytes = read_body(request).await.unwrap_or_default();
                 match cache::put(&claim, &bytes, "text/plain") {
                     Ok(id) => json!({ "stored": id }).to_string(),
                     Err(e) => err(e),
@@ -140,17 +139,7 @@ impl Guest for Component {
             .to_string(),
         };
 
-        let headers = Fields::new();
-        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-        let resp = OutgoingResponse::new(headers);
-        let _ = resp.set_status_code(200);
-        let out = resp.body().expect("body");
-        ResponseOutparam::set(response_out, Ok(resp));
-        if let Ok(stream) = out.write() {
-            let _ = write_all(&stream, body.as_bytes());
-            drop(stream);
-        }
-        let _ = OutgoingBody::finish(out, None);
+        respond(200, "application/json", body)
     }
 }
 

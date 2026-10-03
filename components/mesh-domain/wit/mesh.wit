@@ -30,7 +30,7 @@ package mesh:app@0.1.0;
 
 /// The resilience gateway — retry + circuit breaker + SLO over a real upstream.
 world mesh-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // the durable per-key circuit state (breaker memory that survives restarts).
     import records:store/store@0.1.0;
@@ -39,7 +39,7 @@ world mesh-domain {
     // the real outgoing HTTP hop to the upstream (route table from wasi:config).
     import proxy:route/router@0.1.0;
     // state timestamps (unix millis).
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
     // call latency + the backoff sleep between attempts.
-    import wasi:clocks/monotonic-clock@0.2.0;
+    import wasi:clocks/monotonic-clock@0.3.0-rc-2026-03-15;
 }

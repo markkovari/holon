@@ -13,7 +13,37 @@
 //! never double-books or double-refunds. Every move emits an `event:bus` event.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../fsm-workflow/wit",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../idempotency-guard/wit",
+            "../event-bus/wit",
+            "../id-generate/wit",
+            "../outbox/wit",
+            "../scheduler-timer/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "wit",
+        ],
+        world: "saga:app/saga-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+    }
+}
 
 use serde_json::{json, Value};
 
@@ -23,14 +53,10 @@ use bindings::id::generate::generator as ids;
 use bindings::idempotency::guard::store as idem;
 use bindings::records::store::store as records;
 use bindings::sched::timer::timer;
-use bindings::wasi::clocks::wall_clock;
+use bindings::p3::clocks::system_clock;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::outgoing_handler;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingRequest, OutgoingResponse,
-    RequestOptions, ResponseOutparam, Scheme,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 
 struct Component;
 
@@ -43,21 +69,21 @@ const LEGS: [&str; 3] = ["flight", "hotel", "car"];
 const MAX_ATTEMPTS: u64 = 3;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let result = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => usage_json(),
-            (Method::Post, ["trips"]) => create_trip(&request),
+            (Method::Post, ["trips"]) => create_trip(request).await,
             (Method::Get, ["trips", id]) => get_trip(id),
-            (Method::Post, ["trips", id, "run"]) => run_trip(id),
-            (Method::Post, ["internal", "pump"]) => pump(),
+            (Method::Post, ["trips", id, "run"]) => run_trip(id).await,
+            (Method::Post, ["internal", "pump"]) => pump().await,
             _ => Outcome::Err(404, "not_found".into()),
         };
-        emit(response_out, result);
+        emit(result)
     }
 }
 
@@ -67,7 +93,7 @@ enum Outcome {
 }
 
 fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 fn usage_json() -> Outcome {
@@ -130,9 +156,9 @@ fn ref_prefix(leg: &str) -> &str {
 
 // ---- endpoints ---------------------------------------------------------------
 
-fn create_trip(request: &IncomingRequest) -> Outcome {
+async fn create_trip(request: Request) -> Outcome {
     ensure_seeded();
-    let body = match parse_body(request) {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -184,13 +210,13 @@ fn get_trip(id: &str) -> Outcome {
 }
 
 /// Drive one saga to a terminal state (loop `step` until it stops advancing).
-fn run_trip(id: &str) -> Outcome {
+async fn run_trip(id: &str) -> Outcome {
     if records::get(SAGAS, id).is_err() {
         return Outcome::Err(404, "not_found".into());
     }
     // legs + commit + up to 3 compensations + finalize — 20 is a safe ceiling.
     for _ in 0..20 {
-        if !step(id) {
+        if !step(id).await {
             break;
         }
     }
@@ -200,7 +226,7 @@ fn run_trip(id: &str) -> Outcome {
 /// Advance every live (running | compensating) saga by ONE step. This is the
 /// resume/retry entry point: after a host restart, pumping picks each saga up
 /// exactly where its persisted state left off.
-fn pump() -> Outcome {
+async fn pump() -> Outcome {
     // Drain due retry timers: each marks a `retrying` leg eligible again; the
     // step pass below re-attempts it. Ack so a one-shot timer doesn't re-fire.
     if let Ok(jobs) = timer::due(now(), 100, 60) {
@@ -213,7 +239,7 @@ fn pump() -> Outcome {
         let live =
             records::find_by(SAGAS, "status", &json!(status).to_string()).unwrap_or_default();
         for e in live {
-            if step(&e.id) {
+            if step(&e.id).await {
                 advanced += 1;
             }
         }
@@ -225,7 +251,7 @@ fn pump() -> Outcome {
 
 /// One unit of work for saga `id`; persists and returns whether it advanced.
 /// Terminal sagas return false.
-fn step(id: &str) -> bool {
+async fn step(id: &str) -> bool {
     let entry = match records::get(SAGAS, id) {
         Ok(e) => e,
         Err(_) => return false,
@@ -276,7 +302,9 @@ fn step(id: &str) -> bool {
                             id,
                             &leg,
                             golem.as_ref().map(|(u, h)| (u.as_str(), h.as_str())),
-                        ) {
+                        )
+                        .await
+                        {
                             Ok(reference) => {
                                 set_leg(&mut data, i, "booked", &reference);
                                 save(id, &data);
@@ -326,7 +354,7 @@ fn step(id: &str) -> bool {
 /// Reserve a leg, fenced so the booking record is created at most once. Returns
 /// the booking ref (a fresh one, or the replayed ref if already booked). The
 /// decision to book/fail/retry is the caller's; this only performs the reserve.
-fn book_leg(saga: &str, leg: &str, golem: Option<(&str, &str)>) -> Result<String, String> {
+async fn book_leg(saga: &str, leg: &str, golem: Option<(&str, &str)>) -> Result<String, String> {
     let key = format!("saga:{saga}:book:{leg}");
     if let Ok(Some(cached)) = idem::begin(&key, 3600) {
         return Ok(String::from_utf8_lossy(&cached.body).into_owned()); // idempotent replay
@@ -334,7 +362,7 @@ fn book_leg(saga: &str, leg: &str, golem: Option<(&str, &str)>) -> Result<String
     // first caller (single-writer per saga, so in-progress can't race here).
     let reference = match golem {
         // book the leg by invoking a REAL durable Golem worker over HTTP.
-        Some((url, host)) => match golem_book(url, host, &format!("{leg}-{saga}")) {
+        Some((url, host)) => match golem_book(url, host, &format!("{leg}-{saga}")).await {
             Ok(result) => format!("{}-golem-{result}", ref_prefix(leg)),
             Err(e) => {
                 let _ = idem::forget(&key); // release the key so a retry can re-attempt
@@ -363,57 +391,30 @@ fn golem_opts(data: &Value) -> Option<(String, String)> {
 /// {url}/counters/{workflow}/increment`) and return its result body. This is the
 /// same call the `golem-workflow` provider makes — here the saga makes it
 /// directly over `wasi:http`, so a saga leg IS a crash-proof Golem worker.
-fn golem_book(url: &str, host: &str, workflow: &str) -> Result<String, String> {
+async fn golem_book(url: &str, host: &str, workflow: &str) -> Result<String, String> {
     let (scheme, url_authority) = if let Some(rest) = url.strip_prefix("https://") {
-        (Scheme::Https, rest.trim_end_matches('/').to_string())
+        ("https", rest.trim_end_matches('/').to_string())
     } else {
-        (Scheme::Http, url.trim_start_matches("http://").trim_end_matches('/').to_string())
+        ("http", url.trim_start_matches("http://").trim_end_matches('/').to_string())
     };
     // wasi:http derives the `Host` header from the authority (a manual `host`
     // field is ignored), and Golem's gateway routes by subdomain Host. So the
     // authority MUST be the gateway host (e.g. `app.localhost:9006`) — it
     // resolves to loopback locally and yields the right `Host` automatically.
     let authority = if host.is_empty() { url_authority } else { host.to_string() };
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    let req = OutgoingRequest::new(headers);
-    req.set_method(&Method::Post).map_err(|_| "set method".to_string())?;
-    req.set_scheme(Some(&scheme)).map_err(|_| "set scheme".to_string())?;
-    req.set_authority(Some(&authority)).map_err(|_| "set authority".to_string())?;
-    req.set_path_with_query(Some(&format!("/counters/{workflow}/increment")))
-        .map_err(|_| "set path".to_string())?;
-    {
-        let out = req.body().map_err(|_| "body".to_string())?;
-        let _ = OutgoingBody::finish(out, None);
-    }
-    let future = outgoing_handler::handle(req, Some(RequestOptions::new()))
-        .map_err(|e| format!("golem unreachable: {e:?}"))?;
-    future.subscribe().block();
-    let resp = future
-        .get()
-        .ok_or_else(|| "no response".to_string())?
-        .map_err(|_| "response taken".to_string())?
-        .map_err(|e| format!("http: {e:?}"))?;
-    if !(200..300).contains(&resp.status()) {
-        return Err(format!("golem status {}", resp.status()));
-    }
-    let mut bytes = Vec::new();
-    if let Ok(incoming) = resp.consume() {
-        if let Ok(stream) = incoming.stream() {
-            loop {
-                match stream.blocking_read(8192) {
-                    Ok(c) if c.is_empty() => break,
-                    Ok(c) => bytes.extend_from_slice(&c),
-                    Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-                    // A failed read is not the end of the reply; a truncated one
-                    // parses into a plausible and wrong result.
-                    Err(_) => {
-                        bytes.clear();
-                        break;
-                    }
-                }
-            }
-        }
+    let target = format!("{scheme}://{authority}/counters/{workflow}/increment");
+    // A failed read is not the end of the reply; a truncated one parses into a
+    // plausible and wrong result — `fetch` reports it as an error, never a prefix.
+    let (status, bytes) = fetch(
+        Method::Post,
+        &target,
+        &[("content-type", "application/json")],
+        Vec::new(),
+    )
+    .await
+    .map_err(|e| format!("golem unreachable: {e}"))?;
+    if !(200..300).contains(&status) {
+        return Err(format!("golem status {status}"));
     }
     Ok(String::from_utf8_lossy(&bytes).trim().to_string())
 }
@@ -523,8 +524,8 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let body = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+async fn parse_body(request: Request) -> Result<Value, Outcome> {
+    let body = read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if body.is_empty() {
         return Ok(Value::Object(Default::default()));
     }
@@ -545,30 +546,17 @@ fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
+guestio::guest_p3_fetch!(MAX_BODY_BYTES);
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, body.as_bytes()),
+        Outcome::Json(code, body) => respond(code, "application/json", body),
         Outcome::Err(code, msg) => {
-            respond(response_out, code, json!({ "error": msg }).to_string().as_bytes())
+            respond(code, "application/json", json!({ "error": msg }).to_string())
         }
     }
-}
-
-fn respond(response_out: ResponseOutparam, status: u16, body: &[u8]) {
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
 }
 
 bindings::export!(Component with_types_in bindings);

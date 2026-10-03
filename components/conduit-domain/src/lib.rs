@@ -14,21 +14,49 @@
 //! one record per account, indexed by username / email / subject.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../audit-log/wit",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/ratelimit-guard",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../slug/wit",
+            "wit",
+        ],
+        world: "conduit:app/conduit-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde_json::{json, Map, Value};
 
 use bindings::auth::identity::accounts;
 use bindings::auth::identity::authorizer;
 use bindings::auth::identity::types::{AuthError, Principal};
+use bindings::p3::clocks::system_clock;
 use bindings::records::store::store as records;
 use bindings::slug::generate::generator as slug;
-use bindings::wasi::clocks::wall_clock;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 
 struct Component;
 
@@ -40,19 +68,19 @@ const FAVORITES: &str = "favorites"; // {user, article} relation
 const COMMENTS: &str = "comments"; // {article, author, body}
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let result = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => usage_json(),
 
-            (Method::Post, ["api", "users"]) => register(&request),
-            (Method::Post, ["api", "users", "login"]) => login(&request),
+            (Method::Post, ["api", "users"]) => register(request).await,
+            (Method::Post, ["api", "users", "login"]) => login(request).await,
             (Method::Get, ["api", "user"]) => current_user(&request),
-            (Method::Put, ["api", "user"]) => update_user(&request),
+            (Method::Put, ["api", "user"]) => update_user(request).await,
 
             (Method::Get, ["api", "profiles", name]) => get_profile(&request, name),
             (Method::Post, ["api", "profiles", name, "follow"]) => set_follow(&request, name, true),
@@ -61,12 +89,12 @@ impl Guest for Component {
             }
 
             (Method::Get, ["api", "tags"]) => list_tags(),
-            (Method::Post, ["api", "articles"]) => create_article(&request),
+            (Method::Post, ["api", "articles"]) => create_article(request).await,
             // "feed" must precede the {slug} arm.
             (Method::Get, ["api", "articles", "feed"]) => feed(&request, &path),
             (Method::Get, ["api", "articles"]) => list_articles(&request, &path),
             (Method::Get, ["api", "articles", slug]) => get_article(&request, slug),
-            (Method::Put, ["api", "articles", slug]) => update_article(&request, slug),
+            (Method::Put, ["api", "articles", slug]) => update_article(request, slug).await,
             (Method::Delete, ["api", "articles", slug]) => delete_article(&request, slug),
 
             (Method::Post, ["api", "articles", slug, "favorite"]) => {
@@ -75,7 +103,9 @@ impl Guest for Component {
             (Method::Delete, ["api", "articles", slug, "favorite"]) => {
                 set_favorite(&request, slug, false)
             }
-            (Method::Post, ["api", "articles", slug, "comments"]) => add_comment(&request, slug),
+            (Method::Post, ["api", "articles", slug, "comments"]) => {
+                add_comment(request, slug).await
+            }
             (Method::Get, ["api", "articles", slug, "comments"]) => list_comments(&request, slug),
             (Method::Delete, ["api", "articles", slug, "comments", id]) => {
                 delete_comment(&request, slug, id)
@@ -83,7 +113,7 @@ impl Guest for Component {
 
             _ => not_found("route"),
         };
-        emit(response_out, result);
+        emit(result)
     }
 }
 
@@ -133,8 +163,8 @@ fn usage_json() -> Outcome {
 
 // ---- users -------------------------------------------------------------------
 
-fn register(request: &IncomingRequest) -> Outcome {
-    let body = match parse_body(request) {
+async fn register(request: Request) -> Outcome {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -179,8 +209,8 @@ fn register(request: &IncomingRequest) -> Outcome {
     Outcome::Json(201, user_envelope(&data, &token))
 }
 
-fn login(request: &IncomingRequest) -> Outcome {
-    let body = match parse_body(request) {
+async fn login(request: Request) -> Outcome {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -206,7 +236,7 @@ fn login(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn current_user(request: &IncomingRequest) -> Outcome {
+fn current_user(request: &Request) -> Outcome {
     let (p, token) = match auth(request) {
         Ok(v) => v,
         Err(o) => return o,
@@ -217,12 +247,12 @@ fn current_user(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn update_user(request: &IncomingRequest) -> Outcome {
-    let (p, token) = match auth(request) {
+async fn update_user(request: Request) -> Outcome {
+    let (p, token) = match auth(&request) {
         Ok(v) => v,
         Err(o) => return o,
     };
-    let body = match parse_body(request) {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -285,7 +315,7 @@ fn update_user(request: &IncomingRequest) -> Outcome {
 
 // ---- profiles + follows ------------------------------------------------------
 
-fn get_profile(request: &IncomingRequest, username: &str) -> Outcome {
+fn get_profile(request: &Request, username: &str) -> Outcome {
     let (_, target) = match find_user("username", username) {
         Some(u) => u,
         None => return not_found("profile"),
@@ -297,7 +327,7 @@ fn get_profile(request: &IncomingRequest, username: &str) -> Outcome {
     Outcome::Json(200, profile_envelope(&target, following))
 }
 
-fn set_follow(request: &IncomingRequest, username: &str, follow: bool) -> Outcome {
+fn set_follow(request: &Request, username: &str, follow: bool) -> Outcome {
     let (p, _) = match auth(request) {
         Ok(v) => v,
         Err(o) => return o,
@@ -327,12 +357,12 @@ fn set_follow(request: &IncomingRequest, username: &str, follow: bool) -> Outcom
 
 // ---- articles ----------------------------------------------------------------
 
-fn create_article(request: &IncomingRequest) -> Outcome {
-    let (p, _) = match auth(request) {
+async fn create_article(request: Request) -> Outcome {
+    let (p, _) = match auth(&request) {
         Ok(v) => v,
         Err(o) => return o,
     };
-    let body = match parse_body(request) {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -377,7 +407,7 @@ fn create_article(request: &IncomingRequest) -> Outcome {
     }
 }
 
-fn get_article(request: &IncomingRequest, slug: &str) -> Outcome {
+fn get_article(request: &Request, slug: &str) -> Outcome {
     let entry = match load_article(slug) {
         Ok((e, _)) => e,
         Err(o) => return o,
@@ -386,8 +416,8 @@ fn get_article(request: &IncomingRequest, slug: &str) -> Outcome {
     Outcome::Json(200, article_envelope(&entry, viewer.as_ref()))
 }
 
-fn update_article(request: &IncomingRequest, slug: &str) -> Outcome {
-    let (p, _) = match auth(request) {
+async fn update_article(request: Request, slug: &str) -> Outcome {
+    let (p, _) = match auth(&request) {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -398,7 +428,7 @@ fn update_article(request: &IncomingRequest, slug: &str) -> Outcome {
     if data["author"].as_str() != Some(p.subject.as_str()) {
         return forbidden("article");
     }
-    let body = match parse_body(request) {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -437,7 +467,7 @@ fn update_article(request: &IncomingRequest, slug: &str) -> Outcome {
     }
 }
 
-fn delete_article(request: &IncomingRequest, slug: &str) -> Outcome {
+fn delete_article(request: &Request, slug: &str) -> Outcome {
     let (p, _) = match auth(request) {
         Ok(v) => v,
         Err(o) => return o,
@@ -457,7 +487,7 @@ fn delete_article(request: &IncomingRequest, slug: &str) -> Outcome {
     }
 }
 
-fn list_articles(request: &IncomingRequest, path: &str) -> Outcome {
+fn list_articles(request: &Request, path: &str) -> Outcome {
     let viewer = auth(request).ok().map(|(p, _)| p);
     let mut arts = all_articles();
     if let Some(username) = query_param(path, "author") {
@@ -481,7 +511,7 @@ fn list_articles(request: &IncomingRequest, path: &str) -> Outcome {
     Outcome::Json(200, articles_page(arts, path, viewer.as_ref()))
 }
 
-fn feed(request: &IncomingRequest, path: &str) -> Outcome {
+fn feed(request: &Request, path: &str) -> Outcome {
     let (p, _) = match auth(request) {
         Ok(v) => v,
         Err(o) => return o,
@@ -517,7 +547,7 @@ fn list_tags() -> Outcome {
 
 // ---- favorites + comments ----------------------------------------------------
 
-fn set_favorite(request: &IncomingRequest, slug: &str, favorite: bool) -> Outcome {
+fn set_favorite(request: &Request, slug: &str, favorite: bool) -> Outcome {
     let (p, _) = match auth(request) {
         Ok(v) => v,
         Err(o) => return o,
@@ -544,8 +574,8 @@ fn set_favorite(request: &IncomingRequest, slug: &str, favorite: bool) -> Outcom
     Outcome::Json(200, article_envelope(&article, Some(&p)))
 }
 
-fn add_comment(request: &IncomingRequest, slug: &str) -> Outcome {
-    let (p, _) = match auth(request) {
+async fn add_comment(request: Request, slug: &str) -> Outcome {
+    let (p, _) = match auth(&request) {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -553,7 +583,7 @@ fn add_comment(request: &IncomingRequest, slug: &str) -> Outcome {
         Ok(v) => v,
         Err(o) => return o,
     };
-    let body = match parse_body(request) {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -570,7 +600,7 @@ fn add_comment(request: &IncomingRequest, slug: &str) -> Outcome {
     }
 }
 
-fn list_comments(request: &IncomingRequest, slug: &str) -> Outcome {
+fn list_comments(request: &Request, slug: &str) -> Outcome {
     let (article, _) = match load_article(slug) {
         Ok(v) => v,
         Err(o) => return o,
@@ -589,7 +619,7 @@ fn list_comments(request: &IncomingRequest, slug: &str) -> Outcome {
     Outcome::Json(200, json!({ "comments": list }).to_string())
 }
 
-fn delete_comment(request: &IncomingRequest, slug: &str, id: &str) -> Outcome {
+fn delete_comment(request: &Request, slug: &str, id: &str) -> Outcome {
     let (p, _) = match auth(request) {
         Ok(v) => v,
         Err(o) => return o,
@@ -936,7 +966,7 @@ fn tag_list(v: Option<&Value>) -> Vec<String> {
 // ---- auth + request parsing --------------------------------------------------
 
 /// Resolve the bearer token to a principal (RealWorld echoes the token back).
-fn auth(request: &IncomingRequest) -> Result<(Principal, String), Outcome> {
+fn auth(request: &Request) -> Result<(Principal, String), Outcome> {
     let Some(token) = bearer(request) else {
         return Err(token_missing());
     };
@@ -963,9 +993,10 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let body =
-        read_body(request).map_err(|_| Outcome::Err(422, "body", "could not read body".into()))?;
+async fn parse_body(request: Request) -> Result<Value, Outcome> {
+    let body = read_body(request)
+        .await
+        .map_err(|_| Outcome::Err(422, "body", "could not read body".into()))?;
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(422, "body", format!("bad json: {e}")))
 }
 
@@ -983,11 +1014,11 @@ fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
 
 /// RealWorld sends `Authorization: Token <jwt>`; also accept `Bearer`.
-fn bearer(request: &IncomingRequest) -> Option<String> {
+fn bearer(request: &Request) -> Option<String> {
     let raw = header(request, "authorization")?;
     for prefix in ["Token ", "Bearer "] {
         if let Some(tok) = raw.strip_prefix(prefix) {
@@ -997,8 +1028,8 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
     None
 }
 
-fn header(request: &IncomingRequest, name: &str) -> Option<String> {
-    request.headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
+fn header(request: &Request, name: &str) -> Option<String> {
+    request.get_headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
 }
 
 /// First value of query param `key` in a `path?query` string, percent-decoded.
@@ -1016,8 +1047,8 @@ use guestfmt::percent_decode;
 /// precision matters: RealWorld asserts `updatedAt` changes after an update, and
 /// record:store timestamps are second-only.
 fn now_iso() -> String {
-    let t = wall_clock::now();
-    iso8601(t.seconds, t.nanoseconds / 1_000_000)
+    let t = system_clock::now();
+    iso8601(t.seconds as u64, t.nanoseconds / 1_000_000)
 }
 
 /// Unix seconds + millis → ISO8601 (`YYYY-MM-DDTHH:MM:SS.mmmZ`).
@@ -1043,29 +1074,15 @@ fn iso8601(secs: u64, millis: u32) -> String {
 
 // ---- response ----------------------------------------------------------------
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, body.as_bytes()),
-        Outcome::Empty(code) => respond(response_out, code, b""),
+        Outcome::Json(code, body) => respond(code, "application/json", body),
+        Outcome::Empty(code) => respond(code, "application/json", Vec::new()),
         Outcome::Err(code, field, msg) => {
             let body = json!({ "errors": { field: [msg] } }).to_string();
-            respond(response_out, code, body.as_bytes());
+            respond(code, "application/json", body)
         }
     }
-}
-
-fn respond(response_out: ResponseOutparam, status: u16, body: &[u8]) {
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
 }
 
 bindings::export!(Component with_types_in bindings);

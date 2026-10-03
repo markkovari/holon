@@ -22,7 +22,48 @@
 //! that pre-issued would let a part that never calls `quota::reserve` pass.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../id-generate/wit",
+            "../quota/wit",
+            "../qr/wit",
+            "../fsm-workflow/wit",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/ratelimit-guard",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../audit-log/wit",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../../host/wit/deps/comp-secrets",
+            "../notify-inbox/wit",
+            "../mail-http/wit",
+            "../notify-prefs/wit",
+            "../webhook-sign/wit",
+            "../scheduler-timer/wit",
+            "../blob-store/wit",
+            "../upload-policy/wit",
+            "wit",
+        ],
+        world: "events:ticketing/events-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 mod checkin;
 mod events;
 mod notifications;
@@ -35,14 +76,12 @@ use bindings::auth::identity::accounts;
 use bindings::auth::identity::authorizer;
 use bindings::auth::identity::rbac;
 use bindings::auth::identity::types::{AuthError, Permission, Principal};
-use bindings::exports::wasi::http::incoming_handler::Guest;
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 use bindings::records::store::store as records;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
 use serde_json::{json, Value};
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 struct Component;
 
@@ -385,19 +424,19 @@ const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 // silently destroys an image — every byte sequence that is not valid UTF-8 becomes
 // U+FFFD, so the upload succeeds and stores something that is not a JPEG. Anything
 // binary goes through `read_body_bytes`.
-guestio::guest_read_body_text!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
 use guestfmt::percent_decode as percent;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let path = request.path_with_query().unwrap_or_else(|| "/".into());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".into());
         let (raw_path, query) = match path.split_once('?') {
             Some((p, q)) => (p.to_string(), q.to_string()),
             None => (path.clone(), String::new()),
         };
         let bearer = request
-            .headers()
+            .get_headers()
             .get("authorization")
             .first()
             .map(|v| String::from_utf8_lossy(v).into_owned())
@@ -409,11 +448,11 @@ impl Guest for Component {
             query,
             bearer,
         };
-        let method = request.method();
+        let method = request.get_method();
         // The content type the caller sent, needed before the body is consumed —
-        // `request.headers()` is not readable once `consume()` has been called.
+        // `request.get_headers()` is not readable once the body has been consumed.
         let content_type = request
-            .headers()
+            .get_headers()
             .get("content-type")
             .first()
             .map(|v| String::from_utf8_lossy(v).into_owned())
@@ -426,9 +465,11 @@ impl Guest for Component {
         // A body is read ONCE — the stream is not rewindable — so which shape it is
         // read into has to be decided before reading, not after.
         let (body, bytes) = match method {
-            _ if is_image_upload => (String::new(), read_body_bytes(&request).unwrap_or_default()),
+            _ if is_image_upload => {
+                (String::new(), read_body_bytes(request).await.unwrap_or_default())
+            }
             Method::Post | Method::Put | Method::Patch | Method::Delete => {
-                (read_body(&request), Vec::new())
+                (read_body(request).await, Vec::new())
             }
             _ => (String::new(), Vec::new()),
         };
@@ -439,7 +480,7 @@ impl Guest for Component {
         // writes to it for as long as the connection lasts, so it has to be taken
         // out of the dispatch table above the thing that expects a body back.
         if seg.as_slice() == ["api", "notifications", "stream"] {
-            return notifications::stream(response_out, &route);
+            return notifications::stream(&route);
         }
 
         let Reply { status, json: payload, raw } = match seg.as_slice() {
@@ -476,29 +517,11 @@ impl Guest for Component {
             _ => Reply::err(404, "not_found"),
         };
 
-        let headers = Fields::new();
-        let ct = match &raw {
-            Some((t, _)) => t.as_str(),
-            None => "application/json",
-        };
-        let _ = headers.set("content-type", &[ct.as_bytes().to_vec()]);
-        let resp = OutgoingResponse::new(headers);
-        let _ = resp.set_status_code(status);
-        let out = resp.body().expect("body");
-        ResponseOutparam::set(response_out, Ok(resp));
-        if let Ok(stream) = out.write() {
-            match &raw {
-                Some((_, b)) => {
-                    let _ = write_all(&stream, b);
-                }
-                None if !payload.is_null() => {
-                    let _ = write_all(&stream, payload.to_string().as_bytes());
-                }
-                None => {}
-            }
-            drop(stream);
+        match raw {
+            Some((ct, b)) => respond(status, &ct, b),
+            None if !payload.is_null() => respond(status, "application/json", payload.to_string()),
+            None => respond(status, "application/json", Vec::new()),
         }
-        let _ = OutgoingBody::finish(out, None);
     }
 }
 

@@ -14,16 +14,33 @@
 //! density claim taken on an idle box and a safety claim taken on a quiet one.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "wit",
+        ],
+        world: "probe:adversary/adversary",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
-use bindings::wasi::http::outgoing_handler;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingRequest, OutgoingResponse,
-    ResponseOutparam, Scheme,
-};
+use bindings::p3::http::client;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response, Scheme};
 use bindings::wasi::keyvalue::store as kv;
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 struct Component;
 
@@ -120,12 +137,12 @@ fn sweep_stores(neighbour: &str, out: &mut String, r: &mut Reached) {
 
 /// Try to open a connection. Anything but a refusal is a finding.
 ///
-/// Two refusal points, and they are deliberately distinguished: `handle` returning
-/// an error is the NAME check (the authority is not on this app's allow-list), and
-/// the future resolving to an error is the ADDRESS check (an allow-listed name that
+/// Two refusal points, and they are deliberately distinguished: `http-request-denied`
+/// is the NAME check (the authority is not on this app's allow-list), and any
+/// other send error is the ADDRESS check (an allow-listed name that
 /// resolves somewhere no tenant may reach). A design that only had the first would
 /// pass a DNS entry pointed at the metadata endpoint.
-fn probe_egress(out: &mut String, r: &mut Reached) {
+async fn probe_egress(out: &mut String, r: &mut Reached) {
     out.push_str(",\"egress\":[");
     let mut first = true;
     for (target, lateral) in TARGETS {
@@ -133,7 +150,7 @@ fn probe_egress(out: &mut String, r: &mut Reached) {
             out.push(',');
         }
         first = false;
-        let verdict = match dial(target) {
+        let verdict = match dial(target).await {
             Dial::DeniedByName => "refused:name",
             Dial::DeniedByAddress => "refused:address",
             Dial::Connected => {
@@ -144,7 +161,6 @@ fn probe_egress(out: &mut String, r: &mut Reached) {
                 }
                 "connected"
             }
-            Dial::Unreachable => "unreachable",
         };
         out.push_str(&format!(
             "{{\"target\":\"{target}\",\"lateral\":{lateral},\"result\":\"{verdict}\"}}"
@@ -157,38 +173,33 @@ enum Dial {
     DeniedByName,
     DeniedByAddress,
     Connected,
-    /// Nothing was listening. NOT a pass: the host let the attempt out, it just
-    /// found nobody home. Reported separately so a quiet box cannot be mistaken
-    /// for a locked one.
-    Unreachable,
 }
 
-fn dial(authority: &str) -> Dial {
-    let req = OutgoingRequest::new(Fields::new());
+async fn dial(authority: &str) -> Dial {
+    let (trailers_tx, trailers_rx) = bindings::wit_future::new(|| Ok(None));
+    drop(trailers_tx);
+    let (req, _sent) = Request::new(Fields::new(), None, trailers_rx, None);
     let _ = req.set_method(&Method::Get);
     let _ = req.set_scheme(Some(&Scheme::Http));
     let _ = req.set_authority(Some(authority));
     let _ = req.set_path_with_query(Some("/"));
 
-    let fut = match outgoing_handler::handle(req, None) {
-        Ok(f) => f,
-        Err(_) => return Dial::DeniedByName,
-    };
-    fut.subscribe().block();
-    match fut.get() {
-        Some(Ok(Ok(_resp))) => Dial::Connected,
+    // p3 has one `send` where p2 had `handle` + a future, so the NAME check shows
+    // up as its own error code (`http-request-denied`) rather than a sync `Err`.
+    match client::send(req).await {
+        Ok(_resp) => Dial::Connected,
+        Err(ErrorCode::HttpRequestDenied) => Dial::DeniedByName,
         // The host refused after resolving, or the connection failed on its own.
         // `wasi:http` gives one error channel for both, so the host's log is what
         // separates "prohibited" from "nobody listening" — the count that matters
         // (`connections`) is unaffected either way.
-        Some(Ok(Err(_))) => Dial::DeniedByAddress,
-        Some(Err(_)) | None => Dial::Unreachable,
+        Err(_) => Dial::DeniedByAddress,
     }
 }
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let (route, query) = match path.split_once('?') {
             Some((r, q)) => (r.to_string(), q.to_string()),
             None => (path.clone(), String::new()),
@@ -212,7 +223,7 @@ impl Guest for Component {
                 let mut r = Reached { foreign_opens: 0, foreign_keys: 0, connections: 0 };
                 let mut out = String::from("{");
                 sweep_stores(&neighbour, &mut out, &mut r);
-                probe_egress(&mut out, &mut r);
+                probe_egress(&mut out, &mut r).await;
                 out.push_str(&format!(
                     ",\"foreign_opens\":{},\"foreign_keys\":{},\"connections\":{},\"verdict\":\"{}\"}}",
                     r.foreign_opens,
@@ -229,16 +240,7 @@ impl Guest for Component {
             _ => "{\"usage\":[\"/sweep?neighbour=<tenant>/<app>\",\"/work\"]}".to_string(),
         };
 
-        let headers = Fields::new();
-        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-        let response = OutgoingResponse::new(headers);
-        let _ = response.set_status_code(200);
-        let out_body = response.body().expect("outgoing body");
-        ResponseOutparam::set(response_out, Ok(response));
-        let stream = out_body.write().expect("write stream");
-        let _ = write_all(&stream, body.as_bytes());
-        drop(stream);
-        let _ = OutgoingBody::finish(out_body, None);
+        respond(200, "application/json", body)
     }
 }
 
@@ -263,6 +265,6 @@ impl CounterExt for kv::Bucket {
     }
 }
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
+use bindings::p3::handler::Guest;
 
 bindings::export!(Component with_types_in bindings);
