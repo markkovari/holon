@@ -12,16 +12,11 @@
 //! filesystem watcher) already are — not something every node is assumed to
 //! have, wired in only where it's actually available.
 //!
-//! This module is step one: a real, tested invocation of `fm`, independent
-//! of the agent-generation pipeline. Wiring a generated agent's reply
-//! through this (today it's a canned string) is a deliberate next step, not
-//! done here — a wasm32 component has no network egress of its own; it
-//! would need to dial this over loopback HTTP the same way other components
-//! dial this project's native daemons, which needs its own wiring.
-//!
-//! Not called from `main.rs`/`lattice.rs` yet — hence `#![allow(dead_code)]`
-//! below, scoped to this module, not the whole crate.
-#![allow(dead_code)]
+//! `lattice.rs`'s `boot()` starts exactly one of these (if `is_available()`)
+//! and shares its URL with every agent this session spawns, via each
+//! deployment's `fm-url` config — a generated agent dials THAT URL directly
+//! over its own `wasi:http/outgoing-handler`, not through this crate (a
+//! wasm32 guest can't call back into the host process that's running it).
 
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -94,7 +89,12 @@ impl FmServer {
 
     /// One-shot, non-streaming chat completion: an optional system
     /// instruction plus the user's prompt in, the assistant's reply text
-    /// out.
+    /// out. Not called from `lattice.rs` — only a generated AGENT calls
+    /// `fm serve`, via its own `wasi:http/outgoing-handler`, never this
+    /// Rust API — but kept as real, working, tested surface rather than
+    /// deleted: a direct "ask fm from the console itself" feature (a
+    /// debug/test panel, say) would want exactly this.
+    #[allow(dead_code)]
     pub fn ask(&self, instructions: Option<&str>, prompt: &str) -> Result<String, String> {
         ask(&self.base_url, instructions, prompt)
     }
@@ -106,6 +106,7 @@ fn client() -> reqwest::blocking::Client {
 
 /// Free function so a caller that already knows a running `fm serve`'s URL
 /// (not necessarily one this process itself spawned) can use it too.
+#[allow(dead_code)]
 pub fn ask(base_url: &str, instructions: Option<&str>, prompt: &str) -> Result<String, String> {
     let mut messages = Vec::new();
     if let Some(instructions) = instructions {
