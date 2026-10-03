@@ -10,6 +10,13 @@
 //! An earlier version of this redeployed a hand-written fixture wasm under a
 //! new id, which only proved "deploy a pre-existing artifact live" — not
 //! "create one" — matching the same correction `juan_live.rs` went through.
+//!
+//! Agents are keyed by NAME everywhere, not platform-domain's opaque
+//! deployment id — the id is a ULID assigned to the deployment record, while
+//! the HTTP ingress routes by `<name>.<tenant>.test` (the node id each
+//! deployment names itself). An earlier version of this file used the
+//! deployment id for ping routing, which only ever happened to not matter
+//! because nothing had exercised the ping button end to end yet.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -19,24 +26,32 @@ use comp_reconciler::fleet::{repo_root, Fleet};
 use gpui::{Context, Subscription};
 use serde_json::{json, Value};
 
+/// One line of a conversation with an agent: who said it, and what.
 #[derive(Clone)]
-pub struct AgentRow {
-    pub id: String,
-    pub name: String,
-    pub status: String,
-    pub last_output: String,
+pub struct Message {
+    pub from_user: bool,
+    pub text: String,
 }
 
-/// One "spawn" action: the free-text message that was typed, which agent name
-/// got pulled out of it, and how that attempt is going. Newest first, kept
-/// forever for the session — this is the left-hand list the console shows so
-/// "what message created this agent" is never lost once the status line
-/// moves on to the next thing.
+impl Message {
+    fn user(text: impl Into<String>) -> Self {
+        Self { from_user: true, text: text.into() }
+    }
+    fn agent(text: impl Into<String>) -> Self {
+        Self { from_user: false, text: text.into() }
+    }
+}
+
+/// An agent in the sidebar, and its conversation. `messages` is local-only
+/// state — platform-domain has no concept of a chat transcript, just a
+/// deployment's name and status — so `refresh` (which re-reads the
+/// deployment list every few seconds) preserves it by matching on `name`
+/// rather than replacing the row outright.
 #[derive(Clone)]
-pub struct TriggerEvent {
-    pub message: String,
-    pub agent_name: String,
+pub struct AgentRow {
+    pub name: String,
     pub status: String,
+    pub messages: Vec<Message>,
 }
 
 /// Everything booting the lattice produces, handed to the `Lattice` entity.
@@ -75,7 +90,10 @@ pub struct Lattice {
     token: String,
     ingress_port: u16,
     pub agents: Vec<AgentRow>,
-    pub triggers: Vec<TriggerEvent>,
+    /// `None` = composing a new agent (the sidebar's "+ new agent" row);
+    /// `Some(name)` = viewing/continuing that agent's conversation. The
+    /// single source of truth for which pane the main panel renders.
+    pub selected: Option<String>,
     pub status_line: String,
     pub spawning: bool,
 }
@@ -95,36 +113,36 @@ impl Lattice {
             token: boot.token,
             ingress_port,
             agents: Vec::new(),
-            triggers: Vec::new(),
+            selected: None,
             status_line: "booted".to_string(),
             spawning: false,
         }
     }
 
-    fn host_for(&self, id: &str) -> String {
-        format!("{id}.{}.test", self.tenant)
+    fn host_for(&self, name: &str) -> String {
+        format!("{name}.{}.test", self.tenant)
     }
 
-    /// `GET /api/deployments`, merged over the previous rows so a `ping`'s
-    /// `last_output` survives a refresh instead of being wiped every 3s.
+    /// `GET /api/deployments`, merged over the existing rows by NAME so an
+    /// agent's conversation survives a refresh instead of being wiped every
+    /// 3s, and so an agent still mid-build (not in platform-domain's catalog
+    /// yet) isn't dropped from the sidebar while comp-reconciler catches up.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let base = self.base_url.clone();
         let token = self.token.clone();
         cx.spawn(async move |this, cx| {
-            let rows = cx
+            let fetched = cx
                 .background_executor()
                 .spawn(async move { list_deployments(&base, &token) })
                 .await;
             this.update(cx, |this, cx| {
-                let mut merged = rows;
-                for prev in &this.agents {
-                    if let Some(row) = merged.iter_mut().find(|r| r.id == prev.id) {
-                        if row.last_output.is_empty() {
-                            row.last_output = prev.last_output.clone();
-                        }
+                for (name, status) in fetched {
+                    if let Some(row) = this.agents.iter_mut().find(|a| a.name == name) {
+                        row.status = status;
+                    } else {
+                        this.agents.insert(0, AgentRow { name, status, messages: Vec::new() });
                     }
                 }
-                this.agents = merged;
                 if !this.spawning {
                     this.status_line = format!("{} agent(s) deployed", this.agents.len());
                 }
@@ -135,18 +153,28 @@ impl Lattice {
         .detach();
     }
 
-    /// Calls the agent over the real HTTP ingress (ingress -> lattice ->
-    /// component), the same path `answer_over_lattice` exercises in
-    /// `juan_live.rs`.
-    pub fn ping_agent(&mut self, id: String, cx: &mut Context<Self>) {
+    /// Appends the typed text as a user message in `name`'s conversation,
+    /// then calls it over the real HTTP ingress (ingress -> lattice ->
+    /// component) and appends its reply — the same path
+    /// `answer_over_lattice` exercises in `juan_live.rs`. The component only
+    /// ever answers with its one fixed line regardless of what's sent; this
+    /// still exercises and shows the real round trip, which is what this
+    /// console is for.
+    pub fn send_to_agent(&mut self, name: String, text: String, cx: &mut Context<Self>) {
+        if let Some(row) = self.agents.iter_mut().find(|a| a.name == name) {
+            row.messages.push(Message::user(text));
+        }
+        cx.notify();
+
         let ingress_port = self.ingress_port;
-        let host = self.host_for(&id);
+        let host = self.host_for(&name);
         cx.spawn(async move |this, cx| {
             let output =
                 cx.background_executor().spawn(async move { ping(ingress_port, &host) }).await;
             this.update(cx, |this, cx| {
-                if let Some(row) = this.agents.iter_mut().find(|a| a.id == id) {
-                    row.last_output = output.unwrap_or_else(|| "(no answer)".to_string());
+                if let Some(row) = this.agents.iter_mut().find(|a| a.name == name) {
+                    row.messages
+                        .push(Message::agent(output.unwrap_or_else(|| "(no answer)".to_string())));
                 }
                 cx.notify();
             })
@@ -157,11 +185,11 @@ impl Lattice {
 
     /// The GUI's "create a new agent, live" action, driven by the free-text
     /// message typed into the console — mirrors `reconciler/tests/juan_live.rs`'s
-    /// chat trigger, just arriving from a text field instead of a NATS publish.
-    /// `extract_name` pulls the agent's name out of it (a bare word works too,
-    /// same as before); the message and the name both get recorded as a
-    /// `TriggerEvent` up front, so the left-hand list shows "what triggered
-    /// this agent" even while it's still building.
+    /// chat trigger, just arriving from a text field instead of a NATS
+    /// publish. `extract_name` pulls the agent's name out of it (a bare word
+    /// works too). The agent appears in the sidebar — and gets selected, so
+    /// its conversation is immediately visible — the moment this is called,
+    /// before anything has actually been built yet.
     ///
     /// Renders the agent's source from a template, builds it, uploads it,
     /// deploys it, polls until comp-reconciler has converged and it answers
@@ -201,14 +229,20 @@ impl Lattice {
 
         self.spawning = true;
         self.status_line = format!("rendering + building {name}…");
-        self.triggers.insert(
-            0,
-            TriggerEvent {
-                message: message.clone(),
-                agent_name: name.clone(),
-                status: "spawning".to_string(),
-            },
-        );
+        if let Some(row) = self.agents.iter_mut().find(|a| a.name == name) {
+            row.status = "spawning".to_string();
+            row.messages.push(Message::user(message));
+        } else {
+            self.agents.insert(
+                0,
+                AgentRow {
+                    name: name.clone(),
+                    status: "spawning".to_string(),
+                    messages: vec![Message::user(message)],
+                },
+            );
+        }
+        self.selected = Some(name.clone());
         cx.notify();
 
         let base = self.base_url.clone();
@@ -218,7 +252,7 @@ impl Lattice {
         let agent_name = name.clone();
 
         cx.spawn(async move |this, cx| {
-            let result: Result<(), String> = cx
+            let result: Result<String, String> = cx
                 .background_executor()
                 .spawn(async move {
                     let wasm = scaffold_build_and_clean(&agent_name)?;
@@ -228,8 +262,8 @@ impl Lattice {
                     let deadline = std::time::Instant::now() + Duration::from_secs(60);
                     while std::time::Instant::now() < deadline {
                         save_deployment(&base, &token, &dep_id);
-                        if ping(ingress_port, &host).is_some() {
-                            return Ok(());
+                        if let Some(answer) = ping(ingress_port, &host) {
+                            return Ok(answer);
                         }
                         std::thread::sleep(Duration::from_secs(2));
                     }
@@ -240,18 +274,20 @@ impl Lattice {
             this.update(cx, |this, cx| {
                 this.spawning = false;
                 this.status_line = match &result {
-                    Ok(()) => format!("{name} is live"),
+                    Ok(_) => format!("{name} is live"),
                     Err(e) => e.clone(),
                 };
-                if let Some(t) = this
-                    .triggers
-                    .iter_mut()
-                    .find(|t| t.agent_name == name && t.status == "spawning")
-                {
-                    t.status = match &result {
-                        Ok(()) => "live".to_string(),
-                        Err(e) => format!("failed: {e}"),
-                    };
+                if let Some(row) = this.agents.iter_mut().find(|a| a.name == name) {
+                    match &result {
+                        Ok(answer) => {
+                            row.status = "live".to_string();
+                            row.messages.push(Message::agent(answer.clone()));
+                        }
+                        Err(e) => {
+                            row.status = format!("failed: {e}");
+                            row.messages.push(Message::agent(format!("failed: {e}")));
+                        }
+                    }
                 }
                 cx.notify();
             })
@@ -311,7 +347,10 @@ fn register_and_login(base: &str, email: &str, password: &str) -> String {
     v["token"].as_str().unwrap_or_default().to_string()
 }
 
-fn list_deployments(base: &str, token: &str) -> Vec<AgentRow> {
+/// `(name, status)` per deployment — the only two fields platform-domain
+/// actually has that this console cares about; everything else (the
+/// conversation) is local state `refresh` must not clobber.
+fn list_deployments(base: &str, token: &str) -> Vec<(String, String)> {
     let http = client();
     let v: Value = match http.get(format!("{base}/api/deployments")).bearer_auth(token).send() {
         Ok(r) => r.json().unwrap_or(Value::Null),
@@ -322,11 +361,11 @@ fn list_deployments(base: &str, token: &str) -> Vec<AgentRow> {
         .cloned()
         .unwrap_or_default()
         .into_iter()
-        .map(|row| AgentRow {
-            id: row["id"].as_str().unwrap_or_default().to_string(),
-            name: row["name"].as_str().unwrap_or_default().to_string(),
-            status: row["status"].as_str().unwrap_or("unknown").to_string(),
-            last_output: String::new(),
+        .map(|row| {
+            (
+                row["name"].as_str().unwrap_or_default().to_string(),
+                row["status"].as_str().unwrap_or("unknown").to_string(),
+            )
         })
         .collect()
 }
@@ -471,7 +510,7 @@ world {name} {{
 
 fn lib_rs(name: &str) -> String {
     format!(
-        r#"//! Rendered live from the console's "spawn new agent" button — see
+        r#"//! Rendered live from the console's "spawn new agent" action — see
 //! gpui-console/src/lattice.rs.
 #[allow(warnings)]
 mod bindings;
