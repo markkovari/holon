@@ -651,6 +651,13 @@ impl Fleet {
             if let Ok(per) = std::env::var("COMP_MAX_PLACEMENT_LAG_PER_NODE") {
                 cp.args(["--config", &format!("max-placement-lag-per-node={per}")]);
             }
+            // Operator-granted egress for every tenant (platform-domain's
+            // `default-egress`), e.g. so a dev agent can reach a native daemon
+            // on loopback. Granted here, on the control plane's own command
+            // line, never by a tenant — ADR-0008 still holds.
+            if let Ok(egress) = std::env::var("COMP_DEFAULT_EGRESS") {
+                cp.args(["--config", &format!("default-egress={egress}")]);
+            }
             if let Ok(age) = std::env::var("COMP_STATUS_MAX_AGE") {
                 cp.args(["--config", &format!("status-max-age={age}")]);
             }

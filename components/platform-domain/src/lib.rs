@@ -16,6 +16,8 @@
 //!                    (name kept for compatibility with existing deployments)
 //!   ingress-suffix   DNS suffix an app is reachable on, e.g. `apps.local`;
 //!                    an app answers to `<app>.<tenant>.<suffix>`
+//!   default-egress   comma-separated authorities EVERY tenant may reach, granted by
+//!                    the operator (default none). See `with_operator_egress`.
 
 #[allow(warnings)]
 mod bindings {
@@ -1912,6 +1914,22 @@ impl std::ops::Deref for TenantPlan {
     }
 }
 
+/// A tenant's approved egress, plus whatever the OPERATOR granted every tenant
+/// through the `default-egress` config (comma-separated authorities). The grant
+/// comes from this component's own deployment config — host-side state a tenant
+/// cannot write — so ADR-0008's "stamped by the platform, never authored by a
+/// tenant" still holds. Applied at read time rather than stamped at
+/// registration, so it also reaches tenants that registered before it was set.
+/// A local dev lattice uses it to let agents reach a native daemon on loopback.
+fn with_operator_egress(mut tenant: Vec<String>, operator: &str) -> Vec<String> {
+    for e in operator.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        if !tenant.iter().any(|t| t == e) {
+            tenant.push(e.to_string());
+        }
+    }
+    tenant
+}
+
 fn plan_of(tenant: &str) -> TenantPlan {
     let row = find_one(ACCOUNTS, "tenant", tenant).map(|(_, _, v)| v).unwrap_or_else(|| json!({}));
     let p = &row["plan"];
@@ -1920,10 +1938,13 @@ fn plan_of(tenant: &str) -> TenantPlan {
             replicas: p["replicas"].as_u64().unwrap_or(1) as u32,
             pool_size: p["pool_size"].as_u64().unwrap_or(8) as u32,
             max_invocations: p["max_invocations"].as_u64().unwrap_or(200) as u32,
-            egress: p["egress"]
-                .as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                .unwrap_or_default(),
+            egress: with_operator_egress(
+                p["egress"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default(),
+                &cfg("default-egress", ""),
+            ),
             // An application is no longer a pod, so a plan no longer prices one.
             // What it prices instead is WHERE the app may run: node labels the
             // reconciler matches, which is the multicloud/multiregion knob.
@@ -3009,6 +3030,14 @@ bindings::export!(Component with_types_in bindings);
 #[cfg(test)]
 mod config_tests {
     use super::*;
+
+    #[test]
+    fn operator_egress_is_added_once_and_never_removes_a_tenants_own() {
+        let own = vec!["api.stripe.com".to_string()];
+        let got = with_operator_egress(own.clone(), " 127.0.0.1:9 , api.stripe.com ,,");
+        assert_eq!(got, vec!["api.stripe.com", "127.0.0.1:9"]);
+        assert_eq!(with_operator_egress(own.clone(), ""), own);
+    }
 
     fn row(keys: &[(&str, bool)]) -> Value {
         json!({
