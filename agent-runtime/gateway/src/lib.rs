@@ -4,6 +4,10 @@
 //!   runtime-url   where the agent runtime listens, e.g. `http://127.0.0.1:8017`
 //!   agent         which agent this deployment fronts
 //!
+//! W3C Trace Context passes straight through: an incoming `traceparent` (and
+//! `tracestate`) is forwarded to the runtime, so the agent's run joins the
+//! caller's trace, and the run's own `traceparent` comes back on the response.
+//!
 //! `GET /ping` is forwarded as a liveness check that costs no model call.
 //!
 //! The caller chooses only the task text (`?q=` or a POST body). It does NOT
@@ -66,8 +70,21 @@ fn raw_q(path_with_query: &str) -> Option<&str> {
     query.split('&').find(|p| p.starts_with("q="))
 }
 
-/// `(status, body)` from the runtime, or an error for the caller.
-fn forward(request: &IncomingRequest) -> Result<(u16, Vec<u8>), (u16, String)> {
+/// What came back from the runtime.
+struct Reply {
+    status: u16,
+    body: Vec<u8>,
+    /// The run's own `traceparent`, to hand back to the caller.
+    traceparent: Option<Vec<u8>>,
+}
+
+/// The first value of header `name`, if present.
+fn first_header(h: &Fields, name: &str) -> Option<Vec<u8>> {
+    h.get(&name.to_string()).into_iter().next()
+}
+
+/// The runtime's reply, or an error for the caller.
+fn forward(request: &IncomingRequest) -> Result<Reply, (u16, String)> {
     let cfg = |k: &str| config::get(k).ok().flatten().filter(|v| !v.is_empty());
     let runtime =
         cfg("runtime-url").ok_or((503, "gateway has no runtime-url configured".to_string()))?;
@@ -91,6 +108,16 @@ fn forward(request: &IncomingRequest) -> Result<(u16, Vec<u8>), (u16, String)> {
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"text/plain".to_vec()]);
+    // Join the caller's trace. `request.headers()` is a child of `request`;
+    // it is dropped at the end of this block, before anything else is touched.
+    {
+        let incoming_headers = request.headers();
+        for name in ["traceparent", "tracestate"] {
+            if let Some(v) = first_header(&incoming_headers, name) {
+                let _ = headers.set(&name.to_string(), &[v]);
+            }
+        }
+    }
     let req = OutgoingRequest::new(headers);
     let method = if body.is_empty() { Method::Get } else { Method::Post };
     req.set_method(&method).map_err(|_| (502, "method".to_string()))?;
@@ -118,6 +145,10 @@ fn forward(request: &IncomingRequest) -> Result<(u16, Vec<u8>), (u16, String)> {
             .to_string(),
     ))?;
     let status = resp.status();
+    let traceparent = {
+        let h = resp.headers();
+        first_header(&h, "traceparent")
+    };
     // The body must outlive its stream: dropping a parent resource while a
     // child still exists traps with "resource has children". `body` is
     // declared first, so it is dropped last.
@@ -130,23 +161,26 @@ fn forward(request: &IncomingRequest) -> Result<(u16, Vec<u8>), (u16, String)> {
         }
         None => Vec::new(),
     };
-    Ok((status, bytes))
+    Ok(Reply { status, body: bytes, traceparent })
 }
 
 impl Guest for Component {
     fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let (status, body) = match forward(&request) {
+        let reply = match forward(&request) {
             Ok(r) => r,
-            Err((code, msg)) => (code, msg.into_bytes()),
+            Err((code, msg)) => Reply { status: code, body: msg.into_bytes(), traceparent: None },
         };
         let headers = Fields::new();
         let _ = headers.set("content-type", &[b"text/plain; charset=utf-8".to_vec()]);
+        if let Some(tp) = reply.traceparent {
+            let _ = headers.set(&"traceparent".to_string(), &[tp]);
+        }
         let resp = OutgoingResponse::new(headers);
-        let _ = resp.set_status_code(status);
+        let _ = resp.set_status_code(reply.status);
         let out = resp.body().expect("body");
         ResponseOutparam::set(response_out, Ok(resp));
         if let Ok(stream) = out.write() {
-            let _ = write_all(&stream, &body);
+            let _ = write_all(&stream, &reply.body);
             drop(stream);
         }
         let _ = OutgoingBody::finish(out, None);

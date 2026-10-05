@@ -2,6 +2,9 @@
 //! for every agent in a state directory, with no UI. The console embeds the
 //! same library; run this when agents should keep working with it closed.
 //!
+//! Traces go to an OpenTelemetry collector over OTLP/HTTP (JSON) when
+//! `--otlp-endpoint` or the standard `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+//!
 //! The admin token is generated on first start and kept in
 //! `<state-dir>/admin-token` (mode 0600); control endpoints need it.
 
@@ -26,6 +29,10 @@ struct Cli {
     /// Model name to ask that server for.
     #[arg(long, default_value = "")]
     local_model: String,
+    /// An OpenTelemetry collector's OTLP/HTTP base URL; finished runs are
+    /// exported to `<endpoint>/v1/traces`.
+    #[arg(long, env = "OTEL_EXPORTER_OTLP_ENDPOINT")]
+    otlp_endpoint: Option<String>,
 }
 
 fn main() -> Result<(), String> {
@@ -35,6 +42,7 @@ fn main() -> Result<(), String> {
 
     let mut cfg = Config::new(&cli.state_dir);
     cfg.local = LocalModel { base_url: cli.local_url, model: cli.local_model };
+    cfg.otlp_endpoint = cli.otlp_endpoint.filter(|e| !e.is_empty());
     let rt = Runtime::new(cfg)?;
     let addr = server::serve(rt.clone(), &cli.listen, token)?;
     rt.start_scheduler();

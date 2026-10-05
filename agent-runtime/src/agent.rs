@@ -10,39 +10,129 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use crate::kv::{Entry, Put};
 use crate::model::{Msg, Reply, Usage};
-use crate::spec::AgentSpec;
+use crate::spec::{glob_match, validate_topic, AgentSpec};
 use crate::store::{confine, RunRecord, Status, Step, Store};
+use crate::trace::{new_span_id, new_trace_id};
+
+/// Why a run is happening, and the chain of wake-ups behind it. Every hop
+/// copies it forward, which is what lets the runtime stop loops, bound spend
+/// across a whole chain, and show a causal trace afterwards.
+///
+/// `trace_id` and `parent_span_id` are W3C Trace Context ids (see `trace.rs`),
+/// so a run joins a trace started anywhere that speaks the standard, and what
+/// it wakes continues it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Cause {
+    /// 32-hex trace id shared by every run one original trigger set off. Empty
+    /// on a fresh trigger; the first run starts the trace.
+    pub trace_id: String,
+    /// The span that woke or called this one: a tool call in another agent's
+    /// run, or the upstream caller's span from a `traceparent` header.
+    pub parent_span_id: Option<String>,
+    /// Wake-ups so far.
+    pub hops: u32,
+    /// `agent|topic` for each wake-up so far, oldest first.
+    pub chain: Vec<String>,
+    /// Tokens the rest of the chain may still spend; `None` = this agent's own limit.
+    pub budget: Option<u64>,
+}
+
+/// A spawned task's state, as `task_result` reports it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TaskState {
+    Running,
+    Done { ok: bool, answer: String },
+}
 
 /// What the loop needs from whoever runs it. The runtime implements this for
 /// real; tests implement it with fakes.
 pub trait Host: Sync {
     fn now(&self) -> u64;
+    /// Wall clock in unix milliseconds, for span bounds.
+    fn now_ms(&self) -> u64 {
+        self.now() * 1000
+    }
     fn store(&self) -> &Store;
     fn model(&self, spec: &AgentSpec, system: &str, msgs: &[Msg]) -> Result<Reply, String>;
-    /// Blocks until a human answers, or denies on timeout.
-    fn approve(&self, agent: &str, tool: &str, args: &Value) -> bool;
+    /// Blocks until a human answers, or denies on timeout. `chain` says what
+    /// led to the request, so the human can see why it is being asked.
+    fn approve(&self, agent: &str, tool: &str, args: &Value, chain: &[String]) -> bool;
+    /// Runs `target` to completion and returns its answer and the tokens it spent.
     fn call_agent(
         &self,
         caller: &str,
         target: &str,
         message: &str,
-        depth: u32,
+        cause: &Cause,
+    ) -> Result<(String, u64), String>;
+    /// Starts `target` without waiting; returns a task id for `task_result`.
+    fn spawn_task(
+        &self,
+        caller: &str,
+        target: &str,
+        message: &str,
+        cause: &Cause,
     ) -> Result<String, String>;
-    fn emit(&self, from: &str, topic: &str, payload: &str, depth: u32);
+    fn task_result(&self, id: &str) -> Option<TaskState>;
+    /// Publishes to the durable bus; returns how many agents it will wake.
+    fn emit(&self, from: &str, topic: &str, payload: &str, cause: &Cause) -> Result<usize, String>;
+    fn kv_get(&self, ns: &str, key: &str) -> Result<Option<Entry>, String>;
+    fn kv_list(&self, ns: &str, prefix: &str) -> Result<Vec<(String, Entry)>, String>;
+    /// A write that CHANGES the value also wakes `StoreChange` subscribers.
+    fn kv_put(
+        &self,
+        by: &str,
+        ns: &str,
+        key: &str,
+        value: &str,
+        if_version: Option<u64>,
+        cause: &Cause,
+    ) -> Result<Put, String>;
+    /// A one-shot, persisted wake-up for `agent` `in_secs` from now.
+    fn schedule_self(
+        &self,
+        agent: &str,
+        in_secs: u64,
+        prompt: &str,
+        cause: &Cause,
+    ) -> Result<(), String>;
     fn observe(&self, event: Event);
 }
 
 #[derive(Clone, Debug)]
 pub enum Event {
-    RunStarted { agent: String, run_id: String, trigger: String, input: String },
-    StepDone { agent: String, run_id: String, step: Step },
+    RunStarted {
+        agent: String,
+        run_id: String,
+        trigger: String,
+        input: String,
+        trace_id: String,
+        span_id: String,
+        chain: Vec<String>,
+    },
+    StepDone {
+        agent: String,
+        run_id: String,
+        step: Step,
+    },
     RunFinished(Box<RunRecord>),
-    ApprovalRequested { id: u64, agent: String, tool: String, args: Value },
-    ApprovalResolved { id: u64, approved: bool },
+    ApprovalRequested {
+        id: u64,
+        agent: String,
+        tool: String,
+        args: Value,
+        chain: Vec<String>,
+    },
+    ApprovalResolved {
+        id: u64,
+        approved: bool,
+    },
 }
 
-pub const MAX_DEPTH: u32 = 3;
+/// Longest wake-up chain. Past this, the next hop is dropped and logged.
+pub const MAX_HOPS: u32 = 6;
 
 /// Tool calls honoured from one model reply. Models that write several are
 /// usually describing a plan; a cap keeps a runaway reply from fanning out.
@@ -87,6 +177,42 @@ const TOOLS: &[ToolDef] = &[
         sensitive: false,
     },
     ToolDef {
+        name: "store_get",
+        args: r#"{"ns": "<store>", "key": "..."}"#,
+        about: "Read a key from a store: `private` (only yours) or a shared store you were given.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "store_put",
+        args: r#"{"ns": "<store>", "key": "...", "value": "..."}"#,
+        about: "Write a key. Returns whether it CHANGED; agents watching the namespace wake only on a change. Add \"if_version\": N for a safe update.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "store_list",
+        args: r#"{"ns": "<store>", "prefix": ""}"#,
+        about: "List keys (and values) under a prefix.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "schedule_self",
+        args: r#"{"in_secs": 300, "prompt": "..."}"#,
+        about: "Wake yourself once, later, with this prompt.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "spawn_task",
+        args: r#"{"agent": "...", "message": "..."}"#,
+        about: "Start another agent on a task without waiting. Returns a task id.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "task_result",
+        args: r#"{"id": "..."}"#,
+        about: "Check on a task you started: running, or its answer.",
+        sensitive: false,
+    },
+    ToolDef {
         name: "http_get",
         args: r#"{"url": "..."}"#,
         about: "Fetch a URL (only hosts you were allowed).",
@@ -122,6 +248,12 @@ fn required(name: &str) -> &'static [&'static str] {
     match name {
         "remember" => &["text"],
         "emit_event" => &["topic"],
+        "store_get" => &["ns", "key"],
+        "store_put" => &["ns", "key", "value"],
+        "store_list" => &["ns"],
+        "schedule_self" => &["prompt"],
+        "spawn_task" => &["agent", "message"],
+        "task_result" => &["id"],
         "http_get" => &["url"],
         "read_file" => &["path"],
         "write_file" => &["path", "content"],
@@ -139,6 +271,9 @@ fn primary(name: &str) -> Option<&'static str> {
         "http_get" => Some("url"),
         "read_file" | "list_dir" => Some("path"),
         "emit_event" => Some("topic"),
+        "store_get" | "store_list" => Some("ns"),
+        "schedule_self" => Some("prompt"),
+        "task_result" => Some("id"),
         n if n.starts_with("agent:") => Some("message"),
         _ => None,
     }
@@ -218,6 +353,31 @@ fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
     if !abilities.is_empty() {
         s.push_str("Other things you can do yourself (no tool needed):\n");
         s.push_str(&abilities);
+        s.push('\n');
+    }
+    // What this agent may reach beyond itself. A model cannot guess a shared
+    // store's name, and one that is not told will fall back on `private` —
+    // which nobody else can see, so the collaboration silently never happens.
+    let mut reach = String::new();
+    let (r, w) = (&spec.store.read, &spec.store.write);
+    if !r.is_empty() || !w.is_empty() {
+        let list: Vec<String> = w
+            .iter()
+            .map(|n| format!("{n} (read and write)"))
+            .chain(r.iter().filter(|n| !w.contains(n)).map(|n| format!("{n} (read only)")))
+            .collect();
+        reach.push_str(&format!(
+            "Shared stores you may use with the store tools: {}. Use these names as `ns` when other \
+             agents need to see the data; `private` is visible only to you.\n",
+            list.join(", ")
+        ));
+    }
+    if !spec.topics_out.is_empty() {
+        reach
+            .push_str(&format!("Topics you may emit events to: {}.\n", spec.topics_out.join(", ")));
+    }
+    if !reach.is_empty() {
+        s.push_str(&reach);
         s.push('\n');
     }
     let memories = host.store().recall(&spec.name, "", 5);
@@ -358,8 +518,47 @@ pub fn loose_calls(text: &str, granted: &[&str]) -> Vec<(String, Value)> {
     found.into_iter().map(|(_, n, a)| (n, a)).collect()
 }
 
+/// An argument as text. A model that sends `"value": {"a": 1}` or `"n": 5`
+/// meant it, so non-strings are rendered as JSON rather than treated as absent.
 fn arg(args: &Value, k: &str) -> String {
-    args.get(k).and_then(Value::as_str).unwrap_or_default().to_string()
+    match args.get(k) {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Null) | None => String::new(),
+        Some(v) => v.to_string(),
+    }
+}
+
+/// Resolves a namespace the model named: `private` is this agent's own and is
+/// always allowed; anything else must be granted in the spec's `store`.
+fn resolve_ns(spec: &AgentSpec, ns: &str, write: bool) -> Result<String, String> {
+    if ns == "private" {
+        return Ok(format!("private-{}", spec.name));
+    }
+    validate_topic(ns)?;
+    let allowed = if write {
+        spec.store.write.iter().any(|n| n == ns)
+    } else {
+        spec.store.read.iter().chain(&spec.store.write).any(|n| n == ns)
+    };
+    if allowed {
+        Ok(ns.to_string())
+    } else {
+        let may: Vec<&String> = if write {
+            spec.store.write.iter().collect()
+        } else {
+            spec.store.read.iter().chain(&spec.store.write).collect()
+        };
+        Err(format!(
+            "you may not {} store `{ns}`; you may {}: private{}",
+            if write { "write" } else { "read" },
+            if write { "write" } else { "read" },
+            may.iter().map(|n| format!(", {n}")).collect::<String>()
+        ))
+    }
+}
+
+fn entry_text(key: &str, e: &Entry) -> String {
+    format!("{key} (v{}, by {}): {}", e.version, e.by, e.value)
 }
 
 fn http_get(spec: &AgentSpec, url: &str) -> Result<String, String> {
@@ -399,12 +598,17 @@ fn http_get(spec: &AgentSpec, url: &str) -> Result<String, String> {
 
 /// Runs one tool. `Err` is returned to the model as the tool's result, so it
 /// can adapt, exactly like a denial is.
+/// Runs one tool. `Err` is returned to the model as the tool's result, so it
+/// can adapt, exactly like a denial is. `cause` is THIS run, so anything it
+/// wakes records it as the parent. `child_tokens` accumulates what delegated
+/// agents spent, which counts against this run's budget.
 fn exec(
     host: &dyn Host,
     spec: &AgentSpec,
     name: &str,
     args: &Value,
-    depth: u32,
+    cause: &Cause,
+    child_tokens: &mut u64,
 ) -> Result<String, String> {
     let store = host.store();
     match name {
@@ -434,12 +638,75 @@ fn exec(
             .join("\n")),
         "emit_event" => {
             let topic = arg(args, "topic");
-            if topic.is_empty() {
-                return Err("`topic` is empty".into());
+            validate_topic(&topic)?;
+            if !spec.topics_out.iter().any(|p| glob_match(p, &topic)) {
+                return Err(format!(
+                    "you may not emit `{topic}`; you may emit: {}",
+                    if spec.topics_out.is_empty() {
+                        "nothing".to_string()
+                    } else {
+                        spec.topics_out.join(", ")
+                    }
+                ));
             }
-            host.emit(&spec.name, &topic, &arg(args, "payload"), depth + 1);
-            Ok(format!("emitted {topic}"))
+            let woken = host.emit(&spec.name, &topic, &arg(args, "payload"), cause)?;
+            Ok(format!("emitted {topic}; {woken} agent(s) will be woken"))
         }
+        "store_get" => {
+            let ns = resolve_ns(spec, &arg(args, "ns"), false)?;
+            let key = arg(args, "key");
+            Ok(match host.kv_get(&ns, &key)? {
+                Some(e) => entry_text(&key, &e),
+                None => format!("{key} is not set"),
+            })
+        }
+        "store_list" => {
+            let ns = resolve_ns(spec, &arg(args, "ns"), false)?;
+            let rows = host.kv_list(&ns, &arg(args, "prefix"))?;
+            Ok(if rows.is_empty() {
+                "no keys".into()
+            } else {
+                rows.iter().take(50).map(|(k, e)| entry_text(k, e)).collect::<Vec<_>>().join("\n")
+            })
+        }
+        "store_put" => {
+            let ns = resolve_ns(spec, &arg(args, "ns"), true)?;
+            let if_version = args.get("if_version").and_then(Value::as_u64);
+            let put = host.kv_put(
+                &spec.name,
+                &ns,
+                &arg(args, "key"),
+                &arg(args, "value"),
+                if_version,
+                cause,
+            )?;
+            Ok(if put.changed {
+                format!("stored; changed: true, version: {}", put.version)
+            } else {
+                format!("unchanged; changed: false, version: {}", put.version)
+            })
+        }
+        "schedule_self" => {
+            let secs = args.get("in_secs").and_then(Value::as_u64).unwrap_or(60);
+            host.schedule_self(&spec.name, secs, &arg(args, "prompt"), cause)?;
+            Ok(format!("you will be woken in {secs}s"))
+        }
+        "spawn_task" => {
+            let target = arg(args, "agent");
+            if !spec.has_capability(&format!("agent:{target}")) {
+                return Err(format!(
+                    "you may only start agents you have `agent:<name>` for; not `{target}`"
+                ));
+            }
+            let id = host.spawn_task(&spec.name, &target, &arg(args, "message"), cause)?;
+            Ok(format!("task {id} started; check it later with task_result"))
+        }
+        "task_result" => Ok(match host.task_result(&arg(args, "id")) {
+            None => return Err("no such task".into()),
+            Some(TaskState::Running) => "still running".into(),
+            Some(TaskState::Done { ok: true, answer }) => format!("done: {answer}"),
+            Some(TaskState::Done { ok: false, answer }) => format!("failed: {answer}"),
+        }),
         "http_get" => http_get(spec, &arg(args, "url")),
         "list_dir" => {
             let root = store.workspace(&spec.name)?;
@@ -467,26 +734,54 @@ fn exec(
             Ok(format!("wrote {} bytes", content.len()))
         }
         other => match other.strip_prefix("agent:") {
-            Some(target) => host.call_agent(&spec.name, target, &arg(args, "message"), depth + 1),
+            Some(target) => {
+                let (answer, spent) =
+                    host.call_agent(&spec.name, target, &arg(args, "message"), cause)?;
+                *child_tokens += spent;
+                Ok(answer)
+            }
             None => Err(format!("no such tool: {other}")),
         },
     }
 }
 
-pub fn run(host: &dyn Host, spec: &AgentSpec, trigger: &str, input: &str, depth: u32) -> RunRecord {
+/// `provider/model`, for span attributes.
+pub fn model_label(m: &crate::spec::ModelSpec) -> String {
+    use crate::spec::ModelSpec::*;
+    match m {
+        Local => "local/system".to_string(),
+        OpenAi { model, .. } => format!("openai/{model}"),
+        Anthropic { model, .. } => format!("anthropic/{model}"),
+        Mock { .. } => "mock/mock".to_string(),
+    }
+}
+
+/// Runs one task. `cause` says what woke this run (`Cause::default()` for a
+/// fresh trigger); its `budget` caps this run below the agent's own limit.
+pub fn run(
+    host: &dyn Host,
+    spec: &AgentSpec,
+    trigger: &str,
+    input: &str,
+    cause: &Cause,
+) -> RunRecord {
     let started = host.now();
-    let run_id = format!(
-        "{}-{}-{}",
-        spec.name,
-        started,
-        RUN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    );
+    let seq = RUN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let run_id = format!("{}-{}-{}", spec.name, started, seq);
+    let started_ms = host.now_ms();
+    let trace_id = if cause.trace_id.is_empty() { new_trace_id() } else { cause.trace_id.clone() };
+    let span_id = new_span_id();
     host.observe(Event::RunStarted {
         agent: spec.name.clone(),
         run_id: run_id.clone(),
         trigger: trigger.to_string(),
         input: input.to_string(),
+        trace_id: trace_id.clone(),
+        span_id: span_id.clone(),
+        chain: cause.chain.clone(),
     });
+    // This chain's remaining spend caps the run below the agent's own limit.
+    let max_tokens = cause.budget.map_or(spec.max_tokens, |b| b.min(spec.max_tokens));
 
     let mut rec = RunRecord {
         id: run_id.clone(),
@@ -500,7 +795,16 @@ pub fn run(host: &dyn Host, spec: &AgentSpec, trigger: &str, input: &str, depth:
         steps: Vec::new(),
         tokens_in: 0,
         tokens_out: 0,
+        started_ms,
+        finished_ms: started_ms,
+        model: model_label(&spec.model),
+        trace_id: trace_id.clone(),
+        span_id: span_id.clone(),
+        parent_span_id: cause.parent_span_id.clone(),
+        hops: cause.hops,
+        chain: cause.chain.clone(),
     };
+    let mut child_tokens = 0u64;
     let push = |rec: &mut RunRecord, step: Step| {
         host.observe(Event::StepDone {
             agent: rec.agent.clone(),
@@ -523,6 +827,8 @@ pub fn run(host: &dyn Host, spec: &AgentSpec, trigger: &str, input: &str, depth:
     let mut msgs = vec![Msg::user(format!("Trigger: {trigger}\nTask: {input}"))];
     let mut usage = Usage::default();
     let mut last_text = String::new();
+    let mut called_ok: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut nudges = 0;
 
     for turn in 0..=spec.max_steps {
         // The final turn forbids tools, so a run always ends in an answer.
@@ -530,6 +836,7 @@ pub fn run(host: &dyn Host, spec: &AgentSpec, trigger: &str, input: &str, depth:
         if last_turn {
             msgs.push(Msg::user("You are out of steps. Give your final answer now, in plain text, with no tool call."));
         }
+        let m0 = host.now_ms();
         let reply = match model_with_shrinking(host, spec, &system, &mut msgs) {
             Ok(r) => r,
             Err(e) => {
@@ -542,7 +849,17 @@ pub fn run(host: &dyn Host, spec: &AgentSpec, trigger: &str, input: &str, depth:
         usage.output += reply.usage.output;
         rec.tokens_in = usage.input;
         rec.tokens_out = usage.output;
-        push(&mut rec, Step::Model { text: reply.text.clone() });
+        push(
+            &mut rec,
+            Step::Model {
+                text: reply.text.clone(),
+                span_id: new_span_id(),
+                t0: m0,
+                t1: host.now_ms(),
+                tokens_in: reply.usage.input,
+                tokens_out: reply.usage.output,
+            },
+        );
         last_text = reply.text.clone();
 
         let mut calls = Vec::new();
@@ -556,6 +873,33 @@ pub fn run(host: &dyn Host, spec: &AgentSpec, trigger: &str, input: &str, depth:
             calls.truncate(MAX_CALLS_PER_TURN);
         }
         if calls.is_empty() {
+            // A plain-text reply ends the task — unless it comes before a tool
+            // the spec says every run must call.
+            let missing: Vec<&str> = spec
+                .must_call
+                .iter()
+                .filter(|t| !called_ok.contains(*t))
+                .map(String::as_str)
+                .collect();
+            if !missing.is_empty() {
+                if nudges < 2 && !last_turn {
+                    nudges += 1;
+                    msgs.push(Msg::assistant(reply.text.clone()));
+                    msgs.push(Msg::user(format!(
+                        "You are not finished: you have not yet called {}, which this task requires. \
+                         Call it now, using the tool JSON format.",
+                        missing.join(", ")
+                    )));
+                    continue;
+                }
+                rec.status = Status::Failed;
+                rec.answer = format!(
+                    "never called required tool(s) {}; the model answered instead: {}",
+                    missing.join(", "),
+                    clip(&reply.text, 200)
+                );
+                break;
+            }
             rec.answer = reply.text;
             break;
         }
@@ -563,6 +907,10 @@ pub fn run(host: &dyn Host, spec: &AgentSpec, trigger: &str, input: &str, depth:
         let (mut said, mut results, mut any_error) = (Vec::new(), Vec::new(), false);
         for (name, args) in calls {
             let args = normalize_args(&name, args);
+            // The tool call is a span of its own, and the parent of anything
+            // it wakes — which is how a trace shows WHICH call caused a run.
+            let tool_span = new_span_id();
+            let t0 = host.now_ms();
             let (result, error, approved) = if !spec.has_capability(&name) {
                 (format!("`{name}` is not one of your capabilities"), true, None)
             } else if let Err(e) = check_args(&name, &args) {
@@ -571,9 +919,20 @@ pub fn run(host: &dyn Host, spec: &AgentSpec, trigger: &str, input: &str, depth:
             } else {
                 let needs = tool_def(&name).is_some_and(|t| t.sensitive)
                     && !spec.auto_approve.contains(&name);
-                let ok = !needs || host.approve(&spec.name, &name, &args);
+                let ok = !needs || host.approve(&spec.name, &name, &args, &cause.chain);
                 if ok {
-                    match exec(host, spec, &name, &args, depth) {
+                    // What this run passes on to anything it wakes: itself as
+                    // the parent, and whatever budget the chain has left.
+                    let me = Cause {
+                        trace_id: trace_id.clone(),
+                        parent_span_id: Some(tool_span.clone()),
+                        hops: cause.hops,
+                        chain: cause.chain.clone(),
+                        budget: Some(
+                            max_tokens.saturating_sub(usage.input + usage.output + child_tokens),
+                        ),
+                    };
+                    match exec(host, spec, &name, &args, &me, &mut child_tokens) {
                         Ok(r) => (r, false, needs.then_some(true)),
                         Err(e) => (e, true, needs.then_some(true)),
                     }
@@ -589,9 +948,15 @@ pub fn run(host: &dyn Host, spec: &AgentSpec, trigger: &str, input: &str, depth:
                     result: result.clone(),
                     error,
                     approved,
+                    span_id: tool_span,
+                    t0,
+                    t1: host.now_ms(),
                 },
             );
             any_error |= error;
+            if !error {
+                called_ok.insert(name.clone());
+            }
             said.push(json!({ "tool": name, "args": args }).to_string());
             results.push(format!(
                 "Result of {name}{}:\n{}",
@@ -612,13 +977,11 @@ pub fn run(host: &dyn Host, spec: &AgentSpec, trigger: &str, input: &str, depth:
         };
         msgs.push(Msg::user(format!("{}{advice}", results.join("\n\n"))));
 
-        if usage.input + usage.output > spec.max_tokens {
+        let spent = usage.input + usage.output + child_tokens;
+        if spent > max_tokens {
             rec.status = Status::OverBudget;
-            rec.answer = format!(
-                "stopped: spent {} tokens, over this agent's {} per run",
-                usage.input + usage.output,
-                spec.max_tokens
-            );
+            rec.answer =
+                format!("stopped: spent {spent} tokens, over the {max_tokens} this run may spend");
             break;
         }
     }
@@ -632,6 +995,7 @@ static RUN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 
 fn finish(host: &dyn Host, mut rec: RunRecord) -> RunRecord {
     rec.finished = host.now();
+    rec.finished_ms = host.now_ms();
     let _ = host.store().record_run(&rec);
     host.observe(Event::RunFinished(Box::new(rec.clone())));
     rec
@@ -640,34 +1004,50 @@ fn finish(host: &dyn Host, mut rec: RunRecord) -> RunRecord {
 /// Scripted `Host` for tests, here and in `runtime`'s tests.
 #[cfg(test)]
 pub mod testkit {
+    use std::collections::HashMap;
     use std::sync::Mutex;
 
     use super::*;
+    use crate::kv::Kv;
     use crate::model::Usage;
 
     pub struct Fake {
         pub store: Store,
+        pub kv: Kv,
         pub replies: Mutex<Vec<String>>,
         pub approve: bool,
         pub seen: Mutex<Vec<Vec<Msg>>>,
         pub asked: Mutex<Vec<String>>,
-        pub emitted: Mutex<Vec<String>>,
+        /// (topic, payload) of every emit.
+        pub emitted: Mutex<Vec<(String, String)>>,
+        /// The cause every host call received, in order.
+        pub causes: Mutex<Vec<Cause>>,
+        pub tasks: Mutex<HashMap<String, TaskState>>,
+        pub timers: Mutex<Vec<(String, u64, String)>>,
         /// The model refuses a prompt larger than this many characters.
         pub max_chars: Mutex<usize>,
     }
 
     impl Fake {
         pub fn new(tag: &str, replies: &[&str], approve: bool) -> Self {
-            let d = crate::testutil::dir("ar-fake");
+            let d = crate::testutil::dir(&format!("ar-fake-{tag}"));
             Self {
-                store: Store::open(d).unwrap(),
+                store: Store::open(&d).unwrap(),
+                kv: Kv::open(&d).unwrap(),
                 replies: Mutex::new(replies.iter().rev().map(|s| s.to_string()).collect()),
                 approve,
                 seen: Mutex::new(vec![]),
                 asked: Mutex::new(vec![]),
                 emitted: Mutex::new(vec![]),
+                causes: Mutex::new(vec![]),
+                tasks: Mutex::new(HashMap::new()),
+                timers: Mutex::new(vec![]),
                 max_chars: Mutex::new(usize::MAX),
             }
+        }
+
+        pub fn topics_emitted(&self) -> Vec<String> {
+            self.emitted.lock().unwrap().iter().map(|(t, _)| t.clone()).collect()
         }
     }
 
@@ -687,15 +1067,72 @@ pub mod testkit {
             let text = self.replies.lock().unwrap().pop().ok_or("out of replies")?;
             Ok(Reply { text, usage: Usage { input: 10, output: 5 } })
         }
-        fn approve(&self, _: &str, tool: &str, _: &Value) -> bool {
+        fn approve(&self, _: &str, tool: &str, _: &Value, _: &[String]) -> bool {
             self.asked.lock().unwrap().push(tool.to_string());
             self.approve
         }
-        fn call_agent(&self, _: &str, target: &str, m: &str, _: u32) -> Result<String, String> {
-            Ok(format!("{target} says re: {m}"))
+        fn call_agent(
+            &self,
+            _: &str,
+            target: &str,
+            m: &str,
+            cause: &Cause,
+        ) -> Result<(String, u64), String> {
+            self.causes.lock().unwrap().push(cause.clone());
+            Ok((format!("{target} says re: {m}"), 7))
         }
-        fn emit(&self, _: &str, topic: &str, _: &str, _: u32) {
-            self.emitted.lock().unwrap().push(topic.to_string());
+        fn spawn_task(
+            &self,
+            _: &str,
+            target: &str,
+            _: &str,
+            cause: &Cause,
+        ) -> Result<String, String> {
+            self.causes.lock().unwrap().push(cause.clone());
+            let id = format!("task-{target}");
+            self.tasks.lock().unwrap().insert(id.clone(), TaskState::Running);
+            Ok(id)
+        }
+        fn task_result(&self, id: &str) -> Option<TaskState> {
+            self.tasks.lock().unwrap().get(id).cloned()
+        }
+        fn emit(
+            &self,
+            _: &str,
+            topic: &str,
+            payload: &str,
+            cause: &Cause,
+        ) -> Result<usize, String> {
+            self.causes.lock().unwrap().push(cause.clone());
+            self.emitted.lock().unwrap().push((topic.to_string(), payload.to_string()));
+            Ok(1)
+        }
+        fn kv_get(&self, ns: &str, key: &str) -> Result<Option<Entry>, String> {
+            self.kv.get(ns, key)
+        }
+        fn kv_list(&self, ns: &str, prefix: &str) -> Result<Vec<(String, Entry)>, String> {
+            self.kv.list(ns, prefix)
+        }
+        fn kv_put(
+            &self,
+            by: &str,
+            ns: &str,
+            key: &str,
+            value: &str,
+            if_version: Option<u64>,
+            _: &Cause,
+        ) -> Result<Put, String> {
+            self.kv.put(ns, key, value, by, 1_000, if_version)
+        }
+        fn schedule_self(
+            &self,
+            agent: &str,
+            in_secs: u64,
+            prompt: &str,
+            _: &Cause,
+        ) -> Result<(), String> {
+            self.timers.lock().unwrap().push((agent.to_string(), in_secs, prompt.to_string()));
+            Ok(())
         }
         fn observe(&self, _: Event) {}
     }
@@ -711,6 +1148,7 @@ mod tests {
         let mut s = AgentSpec::new("bot", "tests things");
         s.capabilities.push(Capability::named("write_file"));
         s.capabilities.push(Capability::named("emit_event"));
+        s.topics_out.push("*".into());
         s.capabilities.push(Capability::named("agent:helper"));
         s.capabilities.push(Capability {
             name: "poetry".into(),
@@ -744,7 +1182,7 @@ mod tests {
             ],
             true,
         );
-        let r = run(&h, &spec(), "http", "what do I like?", 0);
+        let r = run(&h, &spec(), "http", "what do I like?", &Cause::default());
         assert_eq!(r.status, Status::Ok);
         assert_eq!(r.answer, "You like tea.");
         assert_eq!(r.steps.len(), 5);
@@ -759,7 +1197,7 @@ mod tests {
     #[test]
     fn a_capability_not_granted_cannot_be_called() {
         let h = Fake::new("cap", &[r#"{"tool":"http_get","args":{"url":"http://x"}}"#, "ok"], true);
-        let r = run(&h, &spec(), "http", "go", 0);
+        let r = run(&h, &spec(), "http", "go", &Cause::default());
         match &r.steps[1] {
             Step::Tool { error, result, .. } => {
                 assert!(*error && result.contains("not one of your capabilities"))
@@ -773,13 +1211,13 @@ mod tests {
     fn sensitive_tools_wait_for_approval_and_a_denial_reaches_the_model() {
         let call = r#"{"tool":"write_file","args":{"path":"a.txt","content":"hi"}}"#;
         let h = Fake::new("deny", &[call, "ok then"], false);
-        let r = run(&h, &spec(), "http", "go", 0);
+        let r = run(&h, &spec(), "http", "go", &Cause::default());
         assert_eq!(h.asked.lock().unwrap().as_slice(), ["write_file"]);
         assert!(matches!(&r.steps[1], Step::Tool { approved: Some(false), error: true, .. }));
         assert!(!h.store.workspace("bot").unwrap().join("a.txt").exists());
 
         let h = Fake::new("allow", &[call, "done"], true);
-        run(&h, &spec(), "http", "go", 0);
+        run(&h, &spec(), "http", "go", &Cause::default());
         assert_eq!(
             std::fs::read_to_string(h.store.workspace("bot").unwrap().join("a.txt")).unwrap(),
             "hi"
@@ -789,7 +1227,7 @@ mod tests {
         let mut s = spec();
         s.auto_approve.push("write_file".into());
         let h = Fake::new("auto", &[call, "done"], false);
-        run(&h, &s, "http", "go", 0);
+        run(&h, &s, "http", "go", &Cause::default());
         assert!(h.asked.lock().unwrap().is_empty());
         assert!(h.store.workspace("bot").unwrap().join("a.txt").exists());
     }
@@ -803,7 +1241,7 @@ mod tests {
             &[r#"{"tool":"write_file","args":{"path":"../pwn","content":"x"}}"#, "ok"],
             true,
         );
-        let r = run(&h, &s, "http", "go", 0);
+        let r = run(&h, &s, "http", "go", &Cause::default());
         assert!(matches!(&r.steps[1], Step::Tool { error: true, .. }));
     }
 
@@ -818,9 +1256,9 @@ mod tests {
             ],
             true,
         );
-        let r = run(&h, &spec(), "http", "go", 0);
+        let r = run(&h, &spec(), "http", "go", &Cause::default());
         assert!(matches!(&r.steps[1], Step::Tool { result, .. } if result == "helper says re: hi"));
-        assert_eq!(h.emitted.lock().unwrap().as_slice(), ["done"]);
+        assert_eq!(h.topics_emitted().as_slice(), ["done"]);
         assert_eq!(r.answer, "fin");
     }
 
@@ -830,7 +1268,7 @@ mod tests {
         s.max_steps = 2;
         let call = r#"{"tool":"now"}"#;
         let h = Fake::new("loopcut", &[call, call, "I give up"], true);
-        let r = run(&h, &s, "http", "go", 0);
+        let r = run(&h, &s, "http", "go", &Cause::default());
         assert_eq!(r.answer, "I give up");
         assert_eq!(r.status, Status::Ok);
     }
@@ -841,7 +1279,7 @@ mod tests {
         s.max_tokens = 20;
         let call = r#"{"tool":"now"}"#;
         let h = Fake::new("budget", &[call, call, call], true);
-        let r = run(&h, &s, "http", "go", 0);
+        let r = run(&h, &s, "http", "go", &Cause::default());
         assert_eq!(r.status, Status::OverBudget);
     }
 
@@ -850,9 +1288,9 @@ mod tests {
         let mut s = spec();
         s.daily_token_budget = 50;
         let h = Fake::new("daily", &["a", "b"], true);
-        run(&h, &s, "http", "go", 0); // spends 15
+        run(&h, &s, "http", "go", &Cause::default()); // spends 15
         s.daily_token_budget = 10;
-        let r = run(&h, &s, "http", "go", 0);
+        let r = run(&h, &s, "http", "go", &Cause::default());
         assert_eq!(r.status, Status::OverBudget);
         assert_eq!(h.seen.lock().unwrap().len(), 1, "second run never reached the model");
     }
@@ -912,7 +1350,7 @@ mod tests {
         let mut s = spec();
         s.capabilities.push(Capability::named("http_get"));
         let h = Fake::new("badargs", &[r#"{"tool":"http_get","args":{}}"#, "could not"], false);
-        let r = run(&h, &s, "http", "go", 0);
+        let r = run(&h, &s, "http", "go", &Cause::default());
         match &r.steps[1] {
             Step::Tool { error, result, approved, .. } => {
                 assert!(*error && approved.is_none());
@@ -931,7 +1369,7 @@ mod tests {
     #[test]
     fn a_string_arg_reaches_the_tool_in_a_real_run() {
         let h = Fake::new("strarg", &[r#"{"tool":"remember","args":"likes tea"}"#, "ok"], true);
-        run(&h, &spec(), "http", "go", 0);
+        run(&h, &spec(), "http", "go", &Cause::default());
         assert_eq!(h.store.memories("bot")[0].text, "likes tea");
     }
 
@@ -952,9 +1390,9 @@ mod tests {
             ],
             true,
         );
-        let r = run(&h, &spec(), "http", "go", 0);
+        let r = run(&h, &spec(), "http", "go", &Cause::default());
         assert_eq!(h.store.memories("bot")[0].text, "saw it");
-        assert_eq!(h.emitted.lock().unwrap().as_slice(), ["seen"]);
+        assert_eq!(h.topics_emitted().as_slice(), ["seen"]);
         assert_eq!(r.steps.iter().filter(|s| matches!(s, Step::Tool { .. })).count(), 2);
     }
 
@@ -977,7 +1415,7 @@ mod tests {
     #[test]
     fn a_run_follows_a_described_call_through_to_the_tool() {
         let h = Fake::new("loose", &[r#"remember "likes tea""#, "noted"], true);
-        let r = run(&h, &spec(), "http", "go", 0);
+        let r = run(&h, &spec(), "http", "go", &Cause::default());
         assert_eq!(h.store.memories("bot")[0].text, "likes tea");
         assert_eq!(r.answer, "noted");
     }
@@ -993,7 +1431,7 @@ mod tests {
         );
         h.store.remember("bot", &format!("note {big}"), 1).unwrap();
         *h.max_chars.lock().unwrap() = 3_000;
-        let r = run(&h, &spec(), "http", "go", 0);
+        let r = run(&h, &spec(), "http", "go", &Cause::default());
         assert_eq!(r.status, Status::Ok, "{}", r.answer);
         assert_eq!(r.answer, "I read the note.");
         let seen = h.seen.lock().unwrap();
@@ -1006,5 +1444,80 @@ mod tests {
         assert!(is_context_overflow("Input is too long"));
         assert!(!is_context_overflow("401 unauthorized"));
         assert!(!is_context_overflow("model returned 429 rate limited"));
+    }
+
+    #[test]
+    fn a_required_tool_turns_an_early_plain_text_reply_into_a_reminder() {
+        let mut s = spec();
+        s.must_call = vec!["remember".into()];
+        let h = Fake::new(
+            "must",
+            &[
+                "I found it: likes tea",
+                r#"{"tool":"remember","args":{"text":"likes tea"}}"#,
+                "all done",
+            ],
+            true,
+        );
+        let r = run(&h, &s, "http", "go", &Cause::default());
+        assert_eq!(r.status, Status::Ok, "{}", r.answer);
+        assert_eq!(r.answer, "all done");
+        assert_eq!(h.store.memories("bot")[0].text, "likes tea");
+        let seen = h.seen.lock().unwrap();
+        assert!(seen[1].last().unwrap().content.contains("have not yet called remember"));
+    }
+
+    #[test]
+    fn a_run_that_never_calls_its_required_tool_fails_visibly() {
+        let mut s = spec();
+        s.must_call = vec!["remember".into()];
+        let h = Fake::new("never", &["note 1", "note 2", "note 3", "note 4"], true);
+        let r = run(&h, &s, "http", "go", &Cause::default());
+        assert_eq!(r.status, Status::Failed);
+        assert!(r.answer.contains("never called required tool(s) remember"), "{}", r.answer);
+        assert_eq!(
+            h.seen.lock().unwrap().len(),
+            3,
+            "the original reply plus exactly two reminders"
+        );
+    }
+
+    #[test]
+    fn a_failed_call_does_not_count_as_calling_the_required_tool() {
+        let mut s = spec();
+        s.must_call = vec!["store_put".into()];
+        s.capabilities.push(Capability::named("store_put"));
+        // `private` namespace works; the first call omits the value, so it errors
+        let h = Fake::new(
+            "failedcall",
+            &[
+                r#"{"tool":"store_put","args":{"ns":"private","key":"k"}}"#,
+                "done",
+                r#"{"tool":"store_put","args":{"ns":"private","key":"k","value":"v"}}"#,
+                "finished",
+            ],
+            true,
+        );
+        let r = run(&h, &s, "http", "go", &Cause::default());
+        assert_eq!(r.status, Status::Ok, "{}", r.answer);
+        assert_eq!(r.answer, "finished");
+    }
+
+    #[test]
+    fn the_prompt_names_the_shared_stores_and_topics_the_agent_was_granted() {
+        let mut s = spec();
+        s.store.write = vec!["rowing".into()];
+        s.store.read = vec!["notes".into(), "rowing".into()];
+        s.topics_out = vec!["new-workout".into()];
+        let h = Fake::new("reach", &["x"], true);
+        let p = system_prompt(&h, &s);
+        assert!(p.contains("rowing (read and write)"), "{p}");
+        assert!(p.contains("notes (read only)"));
+        assert!(!p.contains("rowing (read only)"), "write implies read; no duplicate");
+        assert!(p.contains("Topics you may emit events to: new-workout"));
+        // and says nothing when nothing was granted
+        let mut bare = spec();
+        bare.topics_out.clear();
+        assert!(!system_prompt(&h, &bare).contains("Shared stores"));
     }
 }

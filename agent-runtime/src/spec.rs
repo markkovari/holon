@@ -36,8 +36,62 @@ pub enum Trigger {
     /// `@every 30s|5m|2h`. `prompt` is the task given to the agent.
     Schedule { cron: String, prompt: String },
     /// Runs when `topic` is emitted (by another agent, or `POST /events/<topic>`);
-    /// the event payload is the task input.
-    Event { topic: String },
+    /// the event payload is the task input. Durable: events published while the
+    /// agent is paused or the runtime is down are delivered later, in order.
+    /// `filter`, when set, only wakes the agent for payloads containing that
+    /// text (case-insensitive).
+    Event {
+        topic: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filter: Option<String>,
+    },
+    /// Runs when a `store_put` CHANGES a value in shared store `ns` (an
+    /// identical write wakes nobody) under `key_prefix`. The task input is a
+    /// JSON object `{ns, key, version, value, by}`. This is how an agent can
+    /// say "tell me when X changes" without anyone remembering to announce it.
+    StoreChange {
+        ns: String,
+        #[serde(default)]
+        key_prefix: String,
+    },
+}
+
+impl Trigger {
+    /// The bus topic this trigger listens on, if it is bus-driven.
+    pub fn topic(&self) -> Option<String> {
+        match self {
+            Trigger::Event { topic, .. } => Some(topic.clone()),
+            Trigger::StoreChange { ns, .. } => Some(format!("store.{ns}")),
+            Trigger::Schedule { .. } => None,
+        }
+    }
+
+    /// Does an envelope on this trigger's topic actually concern it?
+    pub fn matches(&self, payload: &str) -> bool {
+        match self {
+            Trigger::Event { filter, .. } => {
+                filter.as_deref().is_none_or(|f| payload.to_lowercase().contains(&f.to_lowercase()))
+            }
+            Trigger::StoreChange { key_prefix, .. } => {
+                serde_json::from_str::<serde_json::Value>(payload)
+                    .ok()
+                    .and_then(|v| v["key"].as_str().map(|k| k.starts_with(key_prefix.as_str())))
+                    .unwrap_or(false)
+            }
+            Trigger::Schedule { .. } => false,
+        }
+    }
+}
+
+/// Which SHARED store namespaces an agent may touch. Its own `private`
+/// namespace is always readable and writable and needs no entry here; write
+/// implies read.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct StoreAccess {
+    #[serde(default)]
+    pub read: Vec<String>,
+    #[serde(default)]
+    pub write: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -65,6 +119,9 @@ fn default_steps() -> u32 {
 }
 fn default_tokens() -> u64 {
     20_000
+}
+fn default_rate() -> u32 {
+    30
 }
 fn default_result_chars() -> usize {
     8_000
@@ -94,6 +151,14 @@ pub struct AgentSpec {
     /// Tokens (in + out) one run may spend before it is stopped.
     #[serde(default = "default_tokens")]
     pub max_tokens: u64,
+    /// Tools every run must call (successfully) before its plain-text reply
+    /// counts as finished. A model that writes an intermediate note as prose
+    /// otherwise ends its own task early; this turns "do these steps" into
+    /// something the runtime checks. A reply that comes too soon is answered
+    /// with a reminder (twice); a run that still never calls them FAILS, so
+    /// the gap is visible rather than a quiet no-op.
+    #[serde(default)]
+    pub must_call: Vec<String>,
     /// Longest tool result, in characters, shown to the model; the rest is cut.
     /// Lower it for small-context models (Apple's on-device model has about 4k
     /// tokens, and a page of numbers costs far more than its length suggests).
@@ -102,6 +167,19 @@ pub struct AgentSpec {
     /// Tokens per rolling 24h across all runs; 0 = unlimited.
     #[serde(default)]
     pub daily_token_budget: u64,
+    /// Topics this agent may `emit_event` to: exact names or globs with `*`
+    /// (`deploy.*`). Empty means it may emit nothing — waking another agent
+    /// is something a spec grants, not a side effect of having the tool.
+    #[serde(default)]
+    pub topics_out: Vec<String>,
+    /// Shared store namespaces this agent may read/write.
+    #[serde(default)]
+    pub store: StoreAccess,
+    /// Runs this agent will start per rolling minute, whatever woke it; 0 =
+    /// unlimited. A flood of events is dropped (and logged), not queued
+    /// forever behind a model that takes seconds per call.
+    #[serde(default = "default_rate")]
+    pub max_runs_per_min: u32,
     /// A paused agent fires no schedule or event triggers and refuses HTTP.
     #[serde(default)]
     pub paused: bool,
@@ -128,6 +206,10 @@ impl AgentSpec {
             max_steps: default_steps(),
             max_tokens: default_tokens(),
             max_result_chars: default_result_chars(),
+            must_call: Vec::new(),
+            topics_out: Vec::new(),
+            store: StoreAccess::default(),
+            max_runs_per_min: default_rate(),
             daily_token_budget: 0,
             paused: false,
         }
@@ -135,6 +217,46 @@ impl AgentSpec {
 
     pub fn has_capability(&self, name: &str) -> bool {
         self.capabilities.iter().any(|c| c.name == name)
+    }
+}
+
+/// `*` matches any run of characters (including none); everything else is
+/// literal. Enough for topic names like `deploy.*` without a regex engine.
+pub fn glob_match(pattern: &str, text: &str) -> bool {
+    let parts: Vec<&str> = pattern.split('*').collect();
+    if parts.len() == 1 {
+        return pattern == text;
+    }
+    let (first, last) = (parts[0], parts[parts.len() - 1]);
+    if !text.starts_with(first) || !text[first.len()..].ends_with(last) {
+        return false;
+    }
+    if text.len() < first.len() + last.len() {
+        return false;
+    }
+    let mut rest = &text[first.len()..text.len() - last.len()];
+    for mid in &parts[1..parts.len() - 1] {
+        match rest.find(mid) {
+            Some(i) => rest = &rest[i + mid.len()..],
+            None => return false,
+        }
+    }
+    true
+}
+
+/// Topic and store-namespace names: lowercase letters, digits, `.`, `-`, `_`.
+/// They become file names, so nothing path-like gets through.
+pub fn validate_topic(t: &str) -> Result<(), String> {
+    let ok = !t.is_empty()
+        && t.len() <= 64
+        && !t.starts_with('.')
+        && !t.contains("..")
+        && t.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '-' | '_'));
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("`{t}`: use up to 64 of a-z 0-9 . - _ (no leading dot, no ..)"))
     }
 }
 
@@ -182,5 +304,38 @@ mod tests {
         assert_eq!(s.model, ModelSpec::Local);
         let back: AgentSpec = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(s, back);
+    }
+
+    #[test]
+    fn globs() {
+        assert!(glob_match("deploy.*", "deploy.prod"));
+        assert!(glob_match("*", "anything"));
+        assert!(glob_match("a*c", "abc") && glob_match("a*c", "ac"));
+        assert!(glob_match("a*b*c", "a-x-b-y-c"));
+        assert!(!glob_match("a*c", "ab"));
+        assert!(!glob_match("deploy", "deploy.prod"));
+        assert!(!glob_match("ab*ba", "aba"), "prefix and suffix must not overlap");
+    }
+
+    #[test]
+    fn topic_names_are_file_safe() {
+        assert!(validate_topic("new-workout").is_ok());
+        assert!(validate_topic("store.rowing").is_ok());
+        for bad in ["", ".x", "a..b", "a/b", "A", "x y", &"a".repeat(65)] {
+            assert!(validate_topic(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn triggers_know_their_topic_and_what_concerns_them() {
+        let e = Trigger::Event { topic: "deploy".into(), filter: Some("PROD".into()) };
+        assert_eq!(e.topic().as_deref(), Some("deploy"));
+        assert!(e.matches("shipped to prod"));
+        assert!(!e.matches("shipped to staging"));
+        let w = Trigger::StoreChange { ns: "rowing".into(), key_prefix: "latest".into() };
+        assert_eq!(w.topic().as_deref(), Some("store.rowing"));
+        assert!(w.matches(r#"{"key":"latest/row","value":"x"}"#));
+        assert!(!w.matches(r#"{"key":"other","value":"x"}"#));
+        assert!(!w.matches("not json"));
     }
 }

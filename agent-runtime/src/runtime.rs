@@ -1,19 +1,47 @@
-//! The runtime: owns the store, runs agents, fires their triggers, and holds
-//! approvals open while a human decides. One per state directory.
+//! The runtime: owns the store, bus and shared KV, runs agents, fires their
+//! triggers, and holds approvals open while a human decides. One per state
+//! directory.
+//!
+//! ## How agents wake each other
+//!
+//! * **Call** (`agent:<name>`) — synchronous; the caller gets the answer and
+//!   the tokens it cost, charged to its own budget.
+//! * **Task** (`spawn_task` / `task_result`) — the same, without waiting.
+//! * **Event** (`emit_event`) — durable, fan-out. Written to the bus log
+//!   first, then delivered to each subscriber from its own offset, so a paused
+//!   agent or a restart loses nothing.
+//! * **Store** (`store_put`) — a write that CHANGES a shared value publishes
+//!   `store.<ns>`; agents with a `StoreChange` trigger wake on it.
+//! * **Timer** (`schedule_self`) — a persisted one-shot wake-up.
+//!
+//! Every hop carries a [`Cause`](crate::agent::Cause): the W3C trace id, the
+//! parent span, hops, the `agent|topic` chain and the remaining token budget.
+//! That is what the guards below, and the trace export, are built on.
+//!
+//! ## What stops a runaway
+//!
+//! A chain longer than `MAX_HOPS`, an agent woken twice by the same topic in
+//! one chain (a cycle), more than `max_runs_per_min` runs, and an agent whose
+//! last few runs all failed (circuit breaker) are all REFUSED before the model
+//! is called, and logged as `Dropped` runs so the refusal is visible.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
-use crate::agent::{self, Event, Host, MAX_DEPTH};
+use crate::agent::{self, Cause, Event, Host, TaskState, MAX_HOPS};
+use crate::bus::{Bus, Draft, Envelope, FileBus};
 use crate::cron;
+use crate::kv::{Entry, Kv, Put};
 use crate::model::{self, LocalModel, Msg, Reply};
-use crate::spec::{validate_name, AgentSpec, Trigger};
-use crate::store::{RunRecord, Store};
+use crate::spec::{validate_name, validate_topic, AgentSpec, Trigger};
+use crate::store::{RunRecord, Status, Store};
+use crate::trace::{new_span_id, new_trace_id};
 
 #[derive(Clone)]
 pub struct Config {
@@ -23,6 +51,15 @@ pub struct Config {
     pub local: LocalModel,
     /// How long a sensitive tool call waits for a human before it is denied.
     pub approval_timeout: Duration,
+    /// Consecutive failed runs after which an agent's circuit opens.
+    pub breaker_threshold: u32,
+    /// How long an open circuit refuses runs.
+    pub breaker_cooldown: Duration,
+    /// An OpenTelemetry collector's OTLP/HTTP base URL
+    /// (`http://localhost:4318`). Every finished run is exported to
+    /// `<endpoint>/v1/traces`. The standard `OTEL_EXPORTER_OTLP_ENDPOINT`
+    /// variable is honoured by the daemon and the console.
+    pub otlp_endpoint: Option<String>,
 }
 
 impl Config {
@@ -31,6 +68,9 @@ impl Config {
             state_dir: state_dir.into(),
             local: LocalModel::default(),
             approval_timeout: Duration::from_secs(300),
+            breaker_threshold: 5,
+            breaker_cooldown: Duration::from_secs(120),
+            otlp_endpoint: None,
         }
     }
 }
@@ -41,6 +81,8 @@ pub struct Pending {
     pub agent: String,
     pub tool: String,
     pub args: Value,
+    /// What led to this request (`agent|topic` per wake-up), oldest first.
+    pub chain: Vec<String>,
 }
 
 struct Slot {
@@ -48,11 +90,24 @@ struct Slot {
     answer: Option<bool>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct Timer {
+    id: u64,
+    agent: String,
+    at: u64,
+    prompt: String,
+}
+
+const MAX_TIMERS_PER_AGENT: usize = 20;
+const MAX_TASKS_KEPT: usize = 200;
+
 pub struct Runtime {
-    /// Weak self, so `Host::emit` (which only has `&self`) can hand an owned
-    /// handle to the threads it spawns.
+    /// Weak self, so `Host` methods (which only have `&self`) can hand an owned
+    /// handle to the threads they spawn.
     me: std::sync::Weak<Runtime>,
     store: Store,
+    kv: Kv,
+    bus: Box<dyn Bus>,
     cfg: Config,
     local: Mutex<LocalModel>,
     started: u64,
@@ -64,14 +119,27 @@ pub struct Runtime {
     mock_cursor: Mutex<HashMap<String, usize>>,
     last_fired: Mutex<HashMap<(String, usize), u64>>,
     stop: AtomicBool,
+    tasks: Mutex<Vec<(String, TaskState)>>,
+    next_task: AtomicU64,
+    timers: Mutex<Vec<Timer>>,
+    next_timer: AtomicU64,
+    /// Agents with a bus drain in flight; a second kick is folded into it.
+    draining: Mutex<HashSet<String>>,
+    rate: Mutex<HashMap<String, VecDeque<u64>>>,
+    /// agent -> (consecutive failures, circuit open until)
+    breaker: Mutex<HashMap<String, (u32, u64)>>,
 }
 
 pub fn unix_now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-/// Checked before a spec is saved, so a typo in a cron expression is an error
-/// now rather than an agent that silently never fires.
+pub fn unix_now_ms() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+/// Checked before a spec is saved, so a typo is an error now rather than an
+/// agent that silently never fires or never gets to speak.
 pub fn validate_spec(spec: &AgentSpec) -> Result<(), String> {
     validate_name(&spec.name)?;
     if spec.description.trim().is_empty() {
@@ -80,7 +148,7 @@ pub fn validate_spec(spec: &AgentSpec) -> Result<(), String> {
     if !(1..=50).contains(&spec.max_steps) {
         return Err("max_steps must be 1-50".into());
     }
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     for c in &spec.capabilities {
         if c.name.is_empty() || !seen.insert(c.name.clone()) {
             return Err(format!("capability `{}` is empty or listed twice", c.name));
@@ -88,6 +156,17 @@ pub fn validate_spec(spec: &AgentSpec) -> Result<(), String> {
         if let Some(t) = c.name.strip_prefix("agent:") {
             validate_name(t)?;
         }
+    }
+    for t in &spec.must_call {
+        if !spec.has_capability(t) {
+            return Err(format!("must_call `{t}` is not one of this agent's capabilities"));
+        }
+    }
+    for t in &spec.topics_out {
+        validate_topic(&t.replace('*', "x")).map_err(|e| format!("topics_out: {e}"))?;
+    }
+    for ns in spec.store.read.iter().chain(&spec.store.write) {
+        validate_topic(ns).map_err(|e| format!("store: {e}"))?;
     }
     for t in &spec.triggers {
         match t {
@@ -99,10 +178,12 @@ pub fn validate_spec(spec: &AgentSpec) -> Result<(), String> {
                     );
                 }
             }
-            Trigger::Event { topic } if topic.trim().is_empty() => {
-                return Err("event topic is empty".into())
+            Trigger::Event { topic, .. } => {
+                validate_topic(topic).map_err(|e| format!("event trigger: {e}"))?
             }
-            Trigger::Event { .. } => {}
+            Trigger::StoreChange { ns, .. } => {
+                validate_topic(ns).map_err(|e| format!("store trigger: {e}"))?
+            }
         }
     }
     Ok(())
@@ -111,9 +192,18 @@ pub fn validate_spec(spec: &AgentSpec) -> Result<(), String> {
 impl Runtime {
     pub fn new(cfg: Config) -> Result<Arc<Self>, String> {
         let store = Store::open(&cfg.state_dir)?;
-        Ok(Arc::new_cyclic(|me| Self {
+        let kv = Kv::open(&cfg.state_dir)?;
+        let bus = FileBus::open(&cfg.state_dir)?;
+        let timers: Vec<Timer> = std::fs::read_to_string(cfg.state_dir.join("timers.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let next_timer = timers.iter().map(|t| t.id).max().unwrap_or(0) + 1;
+        let rt = Arc::new_cyclic(|me| Self {
             me: me.clone(),
             store,
+            kv,
+            bus: Box::new(bus),
             local: Mutex::new(cfg.local.clone()),
             cfg,
             started: unix_now(),
@@ -125,11 +215,30 @@ impl Runtime {
             mock_cursor: Mutex::new(HashMap::new()),
             last_fired: Mutex::new(HashMap::new()),
             stop: AtomicBool::new(false),
-        }))
+            tasks: Mutex::new(Vec::new()),
+            next_task: AtomicU64::new(1),
+            timers: Mutex::new(timers),
+            next_timer: AtomicU64::new(next_timer),
+            draining: Mutex::new(HashSet::new()),
+            rate: Mutex::new(HashMap::new()),
+            breaker: Mutex::new(HashMap::new()),
+        });
+        for spec in rt.store.list() {
+            rt.ensure_offsets(&spec);
+        }
+        Ok(rt)
     }
 
     pub fn store(&self) -> &Store {
         &self.store
+    }
+
+    pub fn kv(&self) -> &Kv {
+        &self.kv
+    }
+
+    pub fn bus(&self) -> &dyn Bus {
+        self.bus.as_ref()
     }
 
     pub fn set_local_model(&self, m: LocalModel) {
@@ -142,14 +251,35 @@ impl Runtime {
         rx
     }
 
+    /// One trace as an OTLP/JSON `ExportTraceServiceRequest`: the same
+    /// document a collector would have received, so any OpenTelemetry tool can
+    /// open it.
+    pub fn trace_otlp(&self, trace_id: &str) -> Value {
+        crate::otlp::request(&self.store.trace(trace_id))
+    }
+
     // ---- lifecycle --------------------------------------------------------
+
+    /// A new subscriber starts at the head of each topic it listens on: it
+    /// hears what happens from now on, not the whole history of the topic.
+    fn ensure_offsets(&self, spec: &AgentSpec) {
+        for topic in spec.triggers.iter().filter_map(Trigger::topic) {
+            if let (Ok(None), Ok(head)) =
+                (self.bus.offset(&topic, &spec.name), self.bus.head(&topic))
+            {
+                let _ = self.bus.set_offset(&topic, &spec.name, head);
+            }
+        }
+    }
 
     pub fn create_agent(&self, spec: AgentSpec) -> Result<(), String> {
         validate_spec(&spec)?;
         if self.store.get(&spec.name).is_some() {
             return Err(format!("{} already exists", spec.name));
         }
-        self.store.put(&spec)
+        self.store.put(&spec)?;
+        self.ensure_offsets(&spec);
+        Ok(())
     }
 
     /// Replaces the spec. The next run uses it — no rebuild, no redeploy.
@@ -158,18 +288,27 @@ impl Runtime {
         if self.store.get(&spec.name).is_none() {
             return Err(format!("no agent named {}", spec.name));
         }
-        self.store.put(&spec)
+        self.store.put(&spec)?;
+        self.ensure_offsets(&spec);
+        Ok(())
     }
 
-    pub fn set_paused(&self, name: &str, paused: bool) -> Result<(), String> {
+    /// Resuming delivers everything the agent missed while paused.
+    pub fn set_paused(self: &Arc<Self>, name: &str, paused: bool) -> Result<(), String> {
         let mut s = self.store.get(name).ok_or_else(|| format!("no agent named {name}"))?;
         s.paused = paused;
-        self.store.put(&s)
+        self.store.put(&s)?;
+        if !paused {
+            self.kick(name);
+        }
+        Ok(())
     }
 
     pub fn delete_agent(&self, name: &str) -> Result<(), String> {
         self.store.delete(name)?;
         self.last_fired.lock().unwrap().retain(|(n, _), _| n != name);
+        self.timers.lock().unwrap().retain(|t| t.agent != name);
+        self.save_timers();
         Ok(())
     }
 
@@ -179,16 +318,99 @@ impl Runtime {
         self.busy.lock().unwrap().entry(name.to_string()).or_default().clone()
     }
 
+    /// Refuses a run before the model is called: too many hops, a cycle, the
+    /// rate limit, an open circuit. `Err` is the reason.
+    fn admit(&self, spec: &AgentSpec, cause: &Cause, via: &str) -> Result<(), String> {
+        let now = unix_now();
+        if cause.hops > MAX_HOPS {
+            return Err(format!("chain is {} wake-ups deep; the limit is {MAX_HOPS}", cause.hops));
+        }
+        let key = format!("{}|{via}", spec.name);
+        if !via.is_empty() && cause.chain.contains(&key) {
+            return Err(format!(
+                "cycle: {} was already woken via `{via}` earlier in this chain",
+                spec.name
+            ));
+        }
+        if let Some(&(_, until)) = self.breaker.lock().unwrap().get(&spec.name) {
+            if until > now {
+                return Err(format!("circuit open for {}s after repeated failures", until - now));
+            }
+        }
+        if spec.max_runs_per_min > 0 {
+            let mut rate = self.rate.lock().unwrap();
+            let q = rate.entry(spec.name.clone()).or_default();
+            while q.front().is_some_and(|t| now.saturating_sub(*t) >= 60) {
+                q.pop_front();
+            }
+            if q.len() >= spec.max_runs_per_min as usize {
+                return Err(format!("rate limit: {} runs per minute", spec.max_runs_per_min));
+            }
+            q.push_back(now);
+        }
+        Ok(())
+    }
+
+    fn note_outcome(&self, agent: &str, ok: bool) {
+        let mut b = self.breaker.lock().unwrap();
+        let e = b.entry(agent.to_string()).or_insert((0, 0));
+        if ok {
+            *e = (0, 0);
+        } else {
+            e.0 += 1;
+            if e.0 >= self.cfg.breaker_threshold {
+                e.1 = unix_now() + self.cfg.breaker_cooldown.as_secs();
+                e.0 = 0;
+            }
+        }
+    }
+
+    /// A refused wake-up still leaves a record (and a span): silence would
+    /// look like the agent ignoring it.
+    fn record_drop(&self, agent: &str, trigger: &str, input: &str, cause: &Cause, why: &str) {
+        let (now, now_ms) = (unix_now(), unix_now_ms());
+        let seq = self.next_task.fetch_add(1, Ordering::Relaxed);
+        let rec = RunRecord {
+            id: format!("{agent}-{now}-drop{seq}"),
+            agent: agent.to_string(),
+            trigger: trigger.to_string(),
+            input: input.to_string(),
+            started: now,
+            finished: now,
+            status: Status::Dropped,
+            answer: format!("dropped: {why}"),
+            steps: Vec::new(),
+            tokens_in: 0,
+            tokens_out: 0,
+            started_ms: now_ms,
+            finished_ms: now_ms,
+            model: String::new(),
+            trace_id: if cause.trace_id.is_empty() {
+                new_trace_id()
+            } else {
+                cause.trace_id.clone()
+            },
+            span_id: new_span_id(),
+            parent_span_id: cause.parent_span_id.clone(),
+            hops: cause.hops,
+            chain: cause.chain.clone(),
+        };
+        let _ = self.store.record_run(&rec);
+        self.observe(Event::RunFinished(Box::new(rec)));
+    }
+
     /// Runs `name` to completion. One run per agent at a time: with `wait`
     /// it queues behind the current one, without it a busy agent is an error
     /// (a schedule tick that finds its agent still working should skip, not
-    /// pile up behind it).
+    /// pile up behind it). `via` names how it was woken (`topic` or `call`)
+    /// for cycle detection; empty for triggers that cannot cycle.
     pub fn run_agent(
         &self,
         name: &str,
         trigger: &str,
         input: &str,
-        depth: u32,
+        cause: &Cause,
+        via: &str,
         wait: bool,
     ) -> Result<RunRecord, String> {
         let spec = self.store.get(name).ok_or_else(|| format!("no agent named {name}"))?;
@@ -201,39 +423,171 @@ impl Runtime {
         } else {
             lock.try_lock().map_err(|_| format!("{name} is busy with another run"))?
         };
-        Ok(agent::run(self, &spec, trigger, input, depth))
+        if let Err(why) = self.admit(&spec, cause, via) {
+            self.record_drop(name, trigger, input, cause, &why);
+            return Err(format!("dropped: {why}"));
+        }
+        // The chain a run records includes its own wake-up.
+        let mut c = cause.clone();
+        if !via.is_empty() {
+            c.chain.push(format!("{name}|{via}"));
+        }
+        let rec = agent::run(self, &spec, trigger, input, &c);
+        self.note_outcome(name, rec.status == Status::Ok);
+        Ok(rec)
     }
 
-    /// Wakes every unpaused agent subscribed to `topic`, each on its own
-    /// thread. Returns how many it woke. Chains deeper than `MAX_DEPTH` are
-    /// dropped, which is what stops two agents ping-ponging events forever.
-    pub fn emit_event(self: &Arc<Self>, topic: &str, payload: &str, depth: u32) -> usize {
-        if depth > MAX_DEPTH {
-            return 0;
+    // ---- bus --------------------------------------------------------------
+
+    fn publish_draft(self: &Arc<Self>, topic: &str, draft: Draft) -> Result<usize, String> {
+        validate_topic(topic)?;
+        if draft.hops > MAX_HOPS {
+            return Err(format!("chain is {} wake-ups deep; the limit is {MAX_HOPS}", draft.hops));
         }
+        let env = self.bus.publish(topic, draft)?;
         let mut woken = 0;
         for spec in self.store.list() {
-            let subscribed = !spec.paused
-                && spec
-                    .triggers
-                    .iter()
-                    .any(|t| matches!(t, Trigger::Event { topic: t } if t == topic));
+            let subscribed = spec
+                .triggers
+                .iter()
+                .any(|t| t.topic().as_deref() == Some(topic) && t.matches(&env.draft.payload));
             if subscribed {
-                woken += 1;
-                let (rt, name, trig, input) =
-                    (self.clone(), spec.name, format!("event: {topic}"), payload.to_string());
-                std::thread::spawn(move || {
-                    let _ = rt.run_agent(&name, &trig, &input, depth, true);
-                });
+                if !spec.paused {
+                    woken += 1;
+                }
+                // A paused agent is kicked too: the drain refuses while it is
+                // paused and `set_paused(false)` kicks again, so this keeps
+                // one code path.
+                self.kick(&spec.name);
             }
         }
-        woken
+        Ok(woken)
     }
 
-    // ---- schedule ---------------------------------------------------------
+    /// Publishes from outside any agent (a webhook, the admin API), joining
+    /// `trace_id` / `parent_span_id` if the caller supplied a `traceparent`.
+    /// Returns how many agents it will wake.
+    pub fn emit_event(
+        self: &Arc<Self>,
+        topic: &str,
+        payload: &str,
+        trace_id: Option<&str>,
+        parent_span_id: Option<&str>,
+    ) -> Result<usize, String> {
+        self.publish_draft(
+            topic,
+            Draft {
+                from: "external".into(),
+                payload: payload.to_string(),
+                trace_id: trace_id.map(String::from).unwrap_or_else(new_trace_id),
+                parent_span_id: parent_span_id.map(String::from),
+                hops: 1,
+                ts: unix_now(),
+                ..Default::default()
+            },
+        )
+    }
 
-    /// Evaluates every schedule trigger once, firing what is due. Public so a
-    /// test can drive it without waiting on the background thread.
+    /// Starts draining `agent`'s backlog on its own thread, unless one is
+    /// already running (it will see anything newly published).
+    pub fn kick(self: &Arc<Self>, agent: &str) {
+        if !self.draining.lock().unwrap().insert(agent.to_string()) {
+            return;
+        }
+        let (rt, agent) = (self.clone(), agent.to_string());
+        std::thread::spawn(move || loop {
+            while let Some((topic, env)) = rt.next_pending(&agent) {
+                rt.deliver(&agent, &topic, &env);
+                let _ = rt.bus.set_offset(&topic, &agent, env.seq);
+            }
+            rt.draining.lock().unwrap().remove(&agent);
+            // Something may have been published between the last empty check
+            // and the flag clearing; look once more.
+            if rt.next_pending(&agent).is_none()
+                || !rt.draining.lock().unwrap().insert(agent.clone())
+            {
+                break;
+            }
+        });
+    }
+
+    /// The oldest undelivered envelope across the agent's topics. `None` when
+    /// there is none, or the agent is paused or gone.
+    fn next_pending(&self, agent: &str) -> Option<(String, Envelope)> {
+        let spec = self.store.get(agent)?;
+        if spec.paused {
+            return None;
+        }
+        let topics: HashSet<String> = spec.triggers.iter().filter_map(Trigger::topic).collect();
+        let mut best: Option<(String, Envelope)> = None;
+        for topic in topics {
+            let offset = match self.bus.offset(&topic, agent) {
+                Ok(Some(o)) => o,
+                Ok(None) => self.bus.head(&topic).ok()?,
+                Err(_) => continue,
+            };
+            if let Ok(mut evs) = self.bus.read_after(&topic, offset, 1) {
+                if let Some(e) = evs.pop() {
+                    let older = best
+                        .as_ref()
+                        .is_none_or(|(_, b)| (e.draft.ts, e.seq) < (b.draft.ts, b.seq));
+                    if older {
+                        best = Some((topic, e));
+                    }
+                }
+            }
+        }
+        best
+    }
+
+    fn deliver(&self, agent: &str, topic: &str, env: &Envelope) {
+        let Some(spec) = self.store.get(agent) else { return };
+        let matched = spec
+            .triggers
+            .iter()
+            .find(|t| t.topic().as_deref() == Some(topic) && t.matches(&env.draft.payload));
+        let Some(trigger) = matched else { return };
+        let label = match trigger {
+            Trigger::StoreChange { .. } => {
+                let key = serde_json::from_str::<Value>(&env.draft.payload)
+                    .ok()
+                    .and_then(|v| v["key"].as_str().map(String::from))
+                    .unwrap_or_default();
+                format!("store: {}/{key}", topic.trim_start_matches("store."))
+            }
+            _ => format!("event: {topic}"),
+        };
+        let cause = Cause {
+            trace_id: env.draft.trace_id.clone(),
+            parent_span_id: env.draft.parent_span_id.clone(),
+            hops: env.draft.hops,
+            chain: env.draft.chain.clone(),
+            budget: env.draft.budget,
+        };
+        let _ = self.run_agent(agent, &label, &env.draft.payload, &cause, topic, true);
+    }
+
+    /// Delivers whatever agents missed while the runtime was down.
+    pub fn recover(self: &Arc<Self>) {
+        for spec in self.store.list() {
+            if spec.triggers.iter().any(|t| t.topic().is_some()) {
+                self.kick(&spec.name);
+            }
+        }
+    }
+
+    // ---- schedule and timers ---------------------------------------------
+
+    fn save_timers(&self) {
+        let t = self.timers.lock().unwrap();
+        let _ = std::fs::write(
+            self.cfg.state_dir.join("timers.json"),
+            serde_json::to_string(&*t).unwrap_or_default(),
+        );
+    }
+
+    /// Evaluates every schedule trigger and due timer once, firing what is
+    /// due. Public so a test can drive it without waiting on the thread.
     pub fn tick(self: &Arc<Self>, now: u64) -> usize {
         let mut fired = 0;
         for spec in self.store.list() {
@@ -255,16 +609,34 @@ impl Runtime {
                         prompt.clone(),
                     );
                     std::thread::spawn(move || {
-                        let _ = rt.run_agent(&name, &trig, &input, 0, false);
+                        let _ = rt.run_agent(&name, &trig, &input, &Cause::default(), "", false);
                     });
                 }
             }
         }
+        let due: Vec<Timer> = {
+            let mut timers = self.timers.lock().unwrap();
+            let (due, rest): (Vec<_>, Vec<_>) = timers.drain(..).partition(|t| t.at <= now);
+            *timers = rest;
+            due
+        };
+        if !due.is_empty() {
+            self.save_timers();
+        }
+        for t in due {
+            fired += 1;
+            let rt = self.clone();
+            std::thread::spawn(move || {
+                let _ = rt.run_agent(&t.agent, "timer", &t.prompt, &Cause::default(), "", true);
+            });
+        }
         fired
     }
 
-    /// Starts the background scheduler: checks once a second.
+    /// Starts the background scheduler (once a second) and delivers any bus
+    /// backlog left from before this process started.
     pub fn start_scheduler(self: &Arc<Self>) {
+        self.recover();
         let rt = self.clone();
         std::thread::spawn(move || {
             while !rt.stop.load(Ordering::Relaxed) {
@@ -276,6 +648,69 @@ impl Runtime {
 
     pub fn shutdown(&self) {
         self.stop.store(true, Ordering::Relaxed);
+    }
+
+    // ---- shared store -----------------------------------------------------
+
+    /// Writes from outside any agent (the admin API). Wakes watchers on change.
+    pub fn put_store(
+        self: &Arc<Self>,
+        ns: &str,
+        key: &str,
+        value: &str,
+        by: &str,
+    ) -> Result<Put, String> {
+        self.kv_put_with(by, ns, key, value, None, &Cause::default())
+    }
+
+    fn kv_put_with(
+        self: &Arc<Self>,
+        by: &str,
+        ns: &str,
+        key: &str,
+        value: &str,
+        if_version: Option<u64>,
+        cause: &Cause,
+    ) -> Result<Put, String> {
+        let put = self.kv.put(ns, key, value, by, unix_now(), if_version)?;
+        if put.changed {
+            let clipped: String = value.chars().take(4_000).collect();
+            let payload =
+                json!({"ns": ns, "key": key, "version": put.version, "value": clipped, "by": by});
+            self.publish_draft(
+                &format!("store.{ns}"),
+                Draft {
+                    from: by.to_string(),
+                    payload: payload.to_string(),
+                    trace_id: if cause.trace_id.is_empty() {
+                        new_trace_id()
+                    } else {
+                        cause.trace_id.clone()
+                    },
+                    parent_span_id: cause.parent_span_id.clone(),
+                    hops: cause.hops + 1,
+                    chain: cause.chain.clone(),
+                    budget: cause.budget,
+                    ts: unix_now(),
+                },
+            )?;
+        }
+        Ok(put)
+    }
+
+    // ---- tasks ------------------------------------------------------------
+
+    fn set_task(&self, id: &str, state: TaskState) {
+        let mut tasks = self.tasks.lock().unwrap();
+        match tasks.iter_mut().find(|(i, _)| i == id) {
+            Some(slot) => slot.1 = state,
+            None => {
+                tasks.push((id.to_string(), state));
+                if tasks.len() > MAX_TASKS_KEPT {
+                    tasks.remove(0);
+                }
+            }
+        }
     }
 
     // ---- approvals --------------------------------------------------------
@@ -302,11 +737,19 @@ impl Runtime {
             None => false,
         }
     }
+
+    fn arc(&self) -> Result<Arc<Runtime>, String> {
+        self.me.upgrade().ok_or_else(|| "runtime is shutting down".to_string())
+    }
 }
 
 impl Host for Runtime {
     fn now(&self) -> u64 {
         unix_now()
+    }
+
+    fn now_ms(&self) -> u64 {
+        unix_now_ms()
     }
 
     fn store(&self) -> &Store {
@@ -322,16 +765,22 @@ impl Host for Runtime {
         r
     }
 
-    fn approve(&self, agent: &str, tool: &str, args: &Value) -> bool {
+    fn approve(&self, agent: &str, tool: &str, args: &Value, chain: &[String]) -> bool {
         let id = self.next_approval.fetch_add(1, Ordering::Relaxed);
-        let pending =
-            Pending { id, agent: agent.to_string(), tool: tool.to_string(), args: args.clone() };
+        let pending = Pending {
+            id,
+            agent: agent.to_string(),
+            tool: tool.to_string(),
+            args: args.clone(),
+            chain: chain.to_vec(),
+        };
         self.approvals.lock().unwrap().push(Slot { pending, answer: None });
         self.observe(Event::ApprovalRequested {
             id,
             agent: agent.to_string(),
             tool: tool.to_string(),
             args: args.clone(),
+            chain: chain.to_vec(),
         });
 
         let deadline = std::time::Instant::now() + self.cfg.approval_timeout;
@@ -357,28 +806,134 @@ impl Host for Runtime {
         caller: &str,
         target: &str,
         message: &str,
-        depth: u32,
-    ) -> Result<String, String> {
-        if depth > MAX_DEPTH {
-            return Err("delegation is nested too deeply".into());
-        }
+        cause: &Cause,
+    ) -> Result<(String, u64), String> {
         if target == caller {
             return Err("an agent cannot delegate to itself".into());
         }
-        let r = self.run_agent(target, &format!("agent: {caller}"), message, depth, false)?;
+        let child = Cause { hops: cause.hops + 1, ..cause.clone() };
+        let r =
+            self.run_agent(target, &format!("agent: {caller}"), message, &child, "call", false)?;
         match r.status {
-            crate::store::Status::Ok => Ok(r.answer),
+            Status::Ok => Ok((r.answer, r.tokens_in + r.tokens_out)),
             _ => Err(format!("{target} failed: {}", r.answer)),
         }
     }
 
-    fn emit(&self, _from: &str, topic: &str, payload: &str, depth: u32) {
-        if let Some(rt) = self.me.upgrade() {
-            rt.emit_event(topic, payload, depth);
+    fn spawn_task(
+        &self,
+        caller: &str,
+        target: &str,
+        message: &str,
+        cause: &Cause,
+    ) -> Result<String, String> {
+        if target == caller {
+            return Err("an agent cannot start itself as a task".into());
         }
+        let spec = self.store.get(target).ok_or_else(|| format!("no agent named {target}"))?;
+        if spec.paused {
+            return Err(format!("{target} is paused"));
+        }
+        let rt = self.arc()?;
+        let id = format!("task-{}", self.next_task.fetch_add(1, Ordering::Relaxed));
+        self.set_task(&id, TaskState::Running);
+        let child = Cause { hops: cause.hops + 1, ..cause.clone() };
+        let (tid, target, caller, message) =
+            (id.clone(), target.to_string(), caller.to_string(), message.to_string());
+        std::thread::spawn(move || {
+            let state = match rt.run_agent(
+                &target,
+                &format!("agent: {caller}"),
+                &message,
+                &child,
+                "call",
+                true,
+            ) {
+                Ok(r) => TaskState::Done { ok: r.status == Status::Ok, answer: r.answer },
+                Err(e) => TaskState::Done { ok: false, answer: e },
+            };
+            rt.set_task(&tid, state);
+        });
+        Ok(id)
+    }
+
+    fn task_result(&self, id: &str) -> Option<TaskState> {
+        self.tasks.lock().unwrap().iter().find(|(i, _)| i == id).map(|(_, s)| s.clone())
+    }
+
+    fn emit(&self, from: &str, topic: &str, payload: &str, cause: &Cause) -> Result<usize, String> {
+        self.arc()?.publish_draft(
+            topic,
+            Draft {
+                from: from.to_string(),
+                payload: payload.to_string(),
+                trace_id: if cause.trace_id.is_empty() {
+                    new_trace_id()
+                } else {
+                    cause.trace_id.clone()
+                },
+                parent_span_id: cause.parent_span_id.clone(),
+                hops: cause.hops + 1,
+                chain: cause.chain.clone(),
+                budget: cause.budget,
+                ts: unix_now(),
+            },
+        )
+    }
+
+    fn kv_get(&self, ns: &str, key: &str) -> Result<Option<Entry>, String> {
+        self.kv.get(ns, key)
+    }
+
+    fn kv_list(&self, ns: &str, prefix: &str) -> Result<Vec<(String, Entry)>, String> {
+        self.kv.list(ns, prefix)
+    }
+
+    fn kv_put(
+        &self,
+        by: &str,
+        ns: &str,
+        key: &str,
+        value: &str,
+        if_version: Option<u64>,
+        cause: &Cause,
+    ) -> Result<Put, String> {
+        self.arc()?.kv_put_with(by, ns, key, value, if_version, cause)
+    }
+
+    fn schedule_self(
+        &self,
+        agent: &str,
+        in_secs: u64,
+        prompt: &str,
+        _cause: &Cause,
+    ) -> Result<(), String> {
+        if prompt.trim().is_empty() {
+            return Err("`prompt` is empty".into());
+        }
+        if !(1..=30 * 86_400).contains(&in_secs) {
+            return Err("in_secs must be between 1 second and 30 days".into());
+        }
+        {
+            let mut timers = self.timers.lock().unwrap();
+            if timers.iter().filter(|t| t.agent == agent).count() >= MAX_TIMERS_PER_AGENT {
+                return Err(format!("you already have {MAX_TIMERS_PER_AGENT} pending wake-ups"));
+            }
+            timers.push(Timer {
+                id: self.next_timer.fetch_add(1, Ordering::Relaxed),
+                agent: agent.to_string(),
+                at: unix_now() + in_secs,
+                prompt: prompt.to_string(),
+            });
+        }
+        self.save_timers();
+        Ok(())
     }
 
     fn observe(&self, event: Event) {
+        if let (Event::RunFinished(rec), Some(endpoint)) = (&event, &self.cfg.otlp_endpoint) {
+            crate::otlp::export_async(endpoint.clone(), (**rec).clone());
+        }
         self.observers.lock().unwrap().retain(|tx| tx.send(event.clone()).is_ok());
     }
 }
