@@ -1205,7 +1205,9 @@ mod tests {
         .expect("e2e.json is not valid JSON");
         let window = Duration::from_secs(plan["window_secs"].as_u64().unwrap_or(60));
 
-        let tmp = std::env::temp_dir().join(format!("gpui-console-e2e-cfg-{}", std::process::id()));
+        let tmp_guard =
+            tempfile::Builder::new().prefix("gpui-console-e2e-cfg-").tempdir().expect("tempdir");
+        let tmp = tmp_guard.path().to_path_buf();
         let _ = std::fs::remove_dir_all(&tmp);
         let fm_server = fm::FmServer::start(Duration::from_secs(30)).expect("fm serve");
         let mut cfg = Config::new(tmp.join("runtime"));
