@@ -1,0 +1,10 @@
+package holon:agent-gateway@0.1.0;
+
+world gateway {
+    export wasi:http/incoming-handler@0.2.0;
+    // The runtime is a native daemon outside the sandbox (ADR-0095); reaching
+    // it is an egress decision the operator makes, not something this
+    // component can widen.
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
+}
