@@ -12,7 +12,7 @@
     "test": "tsx --test test/**/*.test.ts"
   },
   "dependencies": {
-    "fastify": "^5.12.1",
+    "fastify": "^5.12.5",
     "fastify-plugin": "^5.1.0"
   },
   "devDependencies": {
