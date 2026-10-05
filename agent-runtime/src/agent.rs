@@ -44,6 +44,10 @@ pub enum Event {
 
 pub const MAX_DEPTH: u32 = 3;
 
+/// Tool calls honoured from one model reply. Models that write several are
+/// usually describing a plan; a cap keeps a runaway reply from fanning out.
+const MAX_CALLS_PER_TURN: usize = 4;
+
 struct ToolDef {
     name: &'static str,
     args: &'static str,
@@ -112,6 +116,64 @@ fn tool_def(name: &str) -> Option<&'static ToolDef> {
     TOOLS.iter().find(|t| t.name == name)
 }
 
+/// Arguments a call cannot work without. `recall` and `list_dir` have sensible
+/// defaults, so a call without them is not an error.
+fn required(name: &str) -> &'static [&'static str] {
+    match name {
+        "remember" => &["text"],
+        "emit_event" => &["topic"],
+        "http_get" => &["url"],
+        "read_file" => &["path"],
+        "write_file" => &["path", "content"],
+        n if n.starts_with("agent:") => &["message"],
+        _ => &[],
+    }
+}
+
+/// The one argument a bare-string `args` stands for: `"args": "https://..."`
+/// from a model that forgot the object means `{"url": "https://..."}`.
+fn primary(name: &str) -> Option<&'static str> {
+    match name {
+        "remember" => Some("text"),
+        "recall" => Some("query"),
+        "http_get" => Some("url"),
+        "read_file" | "list_dir" => Some("path"),
+        "emit_event" => Some("topic"),
+        n if n.starts_with("agent:") => Some("message"),
+        _ => None,
+    }
+}
+
+/// Small models mangle tool calls in predictable ways. Accept the intent:
+/// a bare string for a tool with one obvious parameter, and a missing `args`
+/// become the object it meant. Anything else is left for `check_args` to
+/// explain, rather than guessed at.
+fn normalize_args(name: &str, args: Value) -> Value {
+    match args {
+        Value::String(s) => match primary(name) {
+            Some(k) => json!({ k: s }),
+            None => json!({}),
+        },
+        Value::Null => json!({}),
+        other => other,
+    }
+}
+
+/// `Err` says exactly what was missing and how to call the tool, because the
+/// model reads this message to fix its call.
+fn check_args(name: &str, args: &Value) -> Result<(), String> {
+    let missing: Vec<&str> =
+        required(name).iter().copied().filter(|k| arg(args, k).is_empty()).collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let usage = tool_def(name).map_or(r#"{"message": "..."}"#, |t| t.args);
+    Err(format!(
+        "missing {}. Call it as {{\"tool\": \"{name}\", \"args\": {usage}}}",
+        missing.join(", ")
+    ))
+}
+
 fn clip(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
         s.to_string()
@@ -144,7 +206,9 @@ fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
         s.push_str(
             "You work in steps. To use a tool, reply with ONLY one JSON object, \
              {\"tool\": \"<name>\", \"args\": {...}}, and wait for the result. When you have \
-             your answer, reply in plain text with no JSON.\n\nTools:\n",
+             your answer, reply in plain text with no JSON. A plain-text reply ENDS the task, \
+             so do not write one until you have done everything the task asks, including every \
+             tool call it lists.\n\nTools:\n",
         );
         s.push_str(&tools);
         s.push('\n');
@@ -181,13 +245,117 @@ fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
     s
 }
 
-/// The first JSON object in `text` that has a string `tool` field.
-pub fn parse_tool_call(text: &str) -> Option<(String, Value)> {
-    let start = text.find('{')?;
-    let v: Value =
-        serde_json::Deserializer::from_str(&text[start..]).into_iter::<Value>().next()?.ok()?;
+/// Does this model error mean "your prompt is too big"? Providers word it
+/// differently (Apple's on-device model answers 500 with a message about its
+/// context window), so match the idea, not a status code.
+fn is_context_overflow(err: &str) -> bool {
+    let e = err.to_lowercase();
+    ["context", "too long", "too large", "exceed", "maximum length", "token limit"]
+        .iter()
+        .any(|k| e.contains(k))
+}
+
+/// Calls the model; if the prompt is too big for it, halves the largest
+/// message (always a tool result in practice — they are the only large ones)
+/// and tries again, up to three times. The agent then answers from a shorter
+/// result instead of the whole run failing on a page that happened to be long.
+fn model_with_shrinking(
+    host: &dyn Host,
+    spec: &AgentSpec,
+    system: &str,
+    msgs: &mut [Msg],
+) -> Result<Reply, String> {
+    let mut tries = 0;
+    loop {
+        match host.model(spec, system, msgs) {
+            Err(e) if tries < 3 && is_context_overflow(&e) => {
+                let Some(biggest) = msgs.iter_mut().max_by_key(|m| m.content.len()) else {
+                    return Err(e);
+                };
+                if biggest.content.len() < 400 {
+                    return Err(e);
+                }
+                let keep = biggest.content.len() / 2;
+                let cut =
+                    (0..=keep).rev().find(|&i| biggest.content.is_char_boundary(i)).unwrap_or(0);
+                biggest.content = format!(
+                    "{}\n[…shortened to fit the model's context window]",
+                    &biggest.content[..cut]
+                );
+                tries += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
+fn call_from(v: &Value) -> Option<(String, Value)> {
     let name = v.get("tool")?.as_str()?.to_string();
-    Some((name, v.get("args").cloned().unwrap_or_else(|| json!({}))))
+    // `{"tool": "http_get", "url": "..."}` — the arguments beside the name.
+    let args = v.get("args").cloned().unwrap_or_else(|| {
+        let mut o = v.as_object().cloned().unwrap_or_default();
+        o.remove("tool");
+        Value::Object(o)
+    });
+    Some((name, args))
+}
+
+/// Every JSON object in `text` that has a string `tool` field, in order. A
+/// model often writes several calls in one reply; each is real intent.
+pub fn json_calls(text: &str) -> Vec<(String, Value)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(off) = text[i..].find('{') {
+        let start = i + off;
+        let mut de = serde_json::Deserializer::from_str(&text[start..]).into_iter::<Value>();
+        match de.next() {
+            Some(Ok(v)) => {
+                out.extend(call_from(&v));
+                i = start + de.byte_offset().max(1);
+            }
+            _ => i = start + 1,
+        }
+    }
+    out
+}
+
+/// The first of `json_calls`.
+pub fn parse_tool_call(text: &str) -> Option<(String, Value)> {
+    json_calls(text).into_iter().next()
+}
+
+/// The shape small models fall back to when they describe a call instead of
+/// writing it: `remember "likes tea"`, `emit_event {"topic": "x"}`. Only names
+/// the agent was actually granted count, and only when what follows is a JSON
+/// object or string, so ordinary prose that mentions a tool is left alone.
+pub fn loose_calls(text: &str, granted: &[&str]) -> Vec<(String, Value)> {
+    let mut found: Vec<(usize, String, Value)> = Vec::new();
+    for name in granted {
+        let mut from = 0;
+        while let Some(off) = text[from..].find(name) {
+            let at = from + off;
+            from = at + name.len();
+            let before_ok = text[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == ':'));
+            if !before_ok {
+                continue;
+            }
+            let rest = text[from..].trim_start_matches(|c: char| c.is_whitespace() || c == '(');
+            if !(rest.starts_with('{') || rest.starts_with('"')) {
+                continue;
+            }
+            if let Some(Ok(v)) =
+                serde_json::Deserializer::from_str(rest).into_iter::<Value>().next()
+            {
+                found.push((at, name.to_string(), v));
+                from = text.len() - rest.len();
+            }
+        }
+    }
+    found.sort_by_key(|(at, ..)| *at);
+    found.into_iter().map(|(_, n, a)| (n, a)).collect()
 }
 
 fn arg(args: &Value, k: &str) -> String {
@@ -213,11 +381,19 @@ fn http_get(spec: &AgentSpec, url: &str) -> Result<String, String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none()) // a redirect could leave the allow-list
+        .user_agent("holon-agent/0.1")
         .build()
         .map_err(|e| e.to_string())?;
     let r = client.get(url).send().map_err(|e| e.to_string())?;
     let status = r.status();
+    let is_html = r
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("html"));
     let body = r.text().map_err(|e| e.to_string())?;
+    // Markup is noise to a model and eats its context; give it the text.
+    let body = if is_html { crate::html::html_to_text(&body) } else { body };
     Ok(format!("HTTP {status}\n{}", clip(&body, 8_000)))
 }
 
@@ -354,7 +530,7 @@ pub fn run(host: &dyn Host, spec: &AgentSpec, trigger: &str, input: &str, depth:
         if last_turn {
             msgs.push(Msg::user("You are out of steps. Give your final answer now, in plain text, with no tool call."));
         }
-        let reply = match host.model(spec, &system, &msgs) {
+        let reply = match model_with_shrinking(host, spec, &system, &mut msgs) {
             Ok(r) => r,
             Err(e) => {
                 rec.status = Status::Failed;
@@ -369,43 +545,72 @@ pub fn run(host: &dyn Host, spec: &AgentSpec, trigger: &str, input: &str, depth:
         push(&mut rec, Step::Model { text: reply.text.clone() });
         last_text = reply.text.clone();
 
-        let call = if last_turn { None } else { parse_tool_call(&reply.text) };
-        let Some((name, args)) = call else {
+        let mut calls = Vec::new();
+        if !last_turn {
+            calls = json_calls(&reply.text);
+            if calls.is_empty() {
+                let granted: Vec<&str> =
+                    spec.capabilities.iter().map(|c| c.name.as_str()).collect();
+                calls = loose_calls(&reply.text, &granted);
+            }
+            calls.truncate(MAX_CALLS_PER_TURN);
+        }
+        if calls.is_empty() {
             rec.answer = reply.text;
             break;
-        };
+        }
 
-        let (result, error, approved) = if !spec.has_capability(&name) {
-            (format!("`{name}` is not one of your capabilities"), true, None)
-        } else {
-            let needs =
-                tool_def(&name).is_some_and(|t| t.sensitive) && !spec.auto_approve.contains(&name);
-            let ok = !needs || host.approve(&spec.name, &name, &args);
-            if ok {
-                match exec(host, spec, &name, &args, depth) {
-                    Ok(r) => (r, false, needs.then_some(true)),
-                    Err(e) => (e, true, needs.then_some(true)),
-                }
+        let (mut said, mut results, mut any_error) = (Vec::new(), Vec::new(), false);
+        for (name, args) in calls {
+            let args = normalize_args(&name, args);
+            let (result, error, approved) = if !spec.has_capability(&name) {
+                (format!("`{name}` is not one of your capabilities"), true, None)
+            } else if let Err(e) = check_args(&name, &args) {
+                // Malformed: never bother a human to approve a call that cannot run.
+                (e, true, None)
             } else {
-                ("a human denied this tool call".to_string(), true, Some(false))
-            }
+                let needs = tool_def(&name).is_some_and(|t| t.sensitive)
+                    && !spec.auto_approve.contains(&name);
+                let ok = !needs || host.approve(&spec.name, &name, &args);
+                if ok {
+                    match exec(host, spec, &name, &args, depth) {
+                        Ok(r) => (r, false, needs.then_some(true)),
+                        Err(e) => (e, true, needs.then_some(true)),
+                    }
+                } else {
+                    ("a human denied this tool call".to_string(), true, Some(false))
+                }
+            };
+            push(
+                &mut rec,
+                Step::Tool {
+                    name: name.clone(),
+                    args: args.clone(),
+                    result: result.clone(),
+                    error,
+                    approved,
+                },
+            );
+            any_error |= error;
+            said.push(json!({ "tool": name, "args": args }).to_string());
+            results.push(format!(
+                "Result of {name}{}:\n{}",
+                if error { " (error)" } else { "" },
+                clip(&result, spec.max_result_chars)
+            ));
+        }
+        // Record only the calls themselves. Anything the model wrote around
+        // them was written BEFORE it saw a result, so it is a guess — and a
+        // model that reads its own guess back tends to answer with it.
+        msgs.push(Msg::assistant(said.join("\n")));
+        // A failure must not read like data. The model otherwise tends to
+        // carry on as if the call had worked and invent the answer.
+        let advice = if any_error {
+            "\nA call failed. Fix it and try again, or tell the user plainly that you could not get the information. Do not guess or make up an answer."
+        } else {
+            "\nThat is the real result. Continue the task using ONLY it; if it does not contain what you need, say so instead of guessing."
         };
-        push(
-            &mut rec,
-            Step::Tool {
-                name: name.clone(),
-                args: args.clone(),
-                result: result.clone(),
-                error,
-                approved,
-            },
-        );
-        msgs.push(Msg::assistant(reply.text));
-        msgs.push(Msg::user(format!(
-            "Result of {name}{}:\n{}",
-            if error { " (error)" } else { "" },
-            clip(&result, 4_000)
-        )));
+        msgs.push(Msg::user(format!("{}{advice}", results.join("\n\n"))));
 
         if usage.input + usage.output > spec.max_tokens {
             rec.status = Status::OverBudget;
@@ -447,6 +652,8 @@ pub mod testkit {
         pub seen: Mutex<Vec<Vec<Msg>>>,
         pub asked: Mutex<Vec<String>>,
         pub emitted: Mutex<Vec<String>>,
+        /// The model refuses a prompt larger than this many characters.
+        pub max_chars: Mutex<usize>,
     }
 
     impl Fake {
@@ -459,6 +666,7 @@ pub mod testkit {
                 seen: Mutex::new(vec![]),
                 asked: Mutex::new(vec![]),
                 emitted: Mutex::new(vec![]),
+                max_chars: Mutex::new(usize::MAX),
             }
         }
     }
@@ -471,6 +679,10 @@ pub mod testkit {
             &self.store
         }
         fn model(&self, _: &AgentSpec, _: &str, msgs: &[Msg]) -> Result<Reply, String> {
+            if msgs.iter().map(|m| m.content.len()).sum::<usize>() > *self.max_chars.lock().unwrap()
+            {
+                return Err("500: the prompt exceeds the context window".into());
+            }
             self.seen.lock().unwrap().push(msgs.to_vec());
             let text = self.replies.lock().unwrap().pop().ok_or("out of replies")?;
             Ok(Reply { text, usage: Usage { input: 10, output: 5 } })
@@ -664,5 +876,135 @@ mod tests {
         s.allow_hosts.push("example.com".into());
         assert!(http_get(&s, "http://user:pw@example.com/").unwrap_err().contains("credentials"));
         assert!(http_get(&s, "http://example.com.evil.test/").is_err());
+    }
+
+    #[test]
+    fn http_get_gives_the_model_text_not_markup() {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = server.server_addr().to_ip().unwrap().port();
+        std::thread::spawn(move || {
+            for req in server.incoming_requests() {
+                let html = "<html><head><script>x()</script></head><body><h1>Log</h1>\
+                            <table><tr><td>10/05</td><td>12,108m</td></tr></table></body></html>";
+                let h = tiny_http::Header::from_bytes("content-type", "text/html").unwrap();
+                let _ = req.respond(tiny_http::Response::from_string(html).with_header(h));
+            }
+        });
+        let mut s = spec();
+        s.allow_hosts.push(format!("127.0.0.1:{port}"));
+        let got = http_get(&s, &format!("http://127.0.0.1:{port}/page")).unwrap();
+        assert_eq!(got, "HTTP 200 OK\nLog\n10/05 | 12,108m");
+    }
+
+    #[test]
+    fn a_bare_string_or_sibling_fields_still_make_a_valid_call() {
+        let (n, a) = parse_tool_call(r#"{"tool": "http_get", "url": "http://x/"}"#).unwrap();
+        assert_eq!(normalize_args(&n, a), json!({"url": "http://x/"}));
+        let (n, a) = parse_tool_call(r#"{"tool": "http_get", "args": "http://x/"}"#).unwrap();
+        assert_eq!(normalize_args(&n, a), json!({"url": "http://x/"}));
+        let (n, a) = parse_tool_call(r#"{"tool": "now", "args": null}"#).unwrap();
+        assert_eq!(normalize_args(&n, a), json!({}));
+        assert_eq!(normalize_args("agent:helper", json!("hi")), json!({"message": "hi"}));
+    }
+
+    #[test]
+    fn a_call_missing_an_argument_is_told_how_to_make_it_and_never_asks_a_human() {
+        let mut s = spec();
+        s.capabilities.push(Capability::named("http_get"));
+        let h = Fake::new("badargs", &[r#"{"tool":"http_get","args":{}}"#, "could not"], false);
+        let r = run(&h, &s, "http", "go", 0);
+        match &r.steps[1] {
+            Step::Tool { error, result, approved, .. } => {
+                assert!(*error && approved.is_none());
+                assert!(
+                    result.contains("missing url") && result.contains(r#"{"url": "..."}"#),
+                    "{result}"
+                );
+            }
+            s => panic!("{s:?}"),
+        }
+        assert!(h.asked.lock().unwrap().is_empty());
+        let seen = h.seen.lock().unwrap();
+        assert!(seen[1].last().unwrap().content.contains("Do not guess"));
+    }
+
+    #[test]
+    fn a_string_arg_reaches_the_tool_in_a_real_run() {
+        let h = Fake::new("strarg", &[r#"{"tool":"remember","args":"likes tea"}"#, "ok"], true);
+        run(&h, &spec(), "http", "go", 0);
+        assert_eq!(h.store.memories("bot")[0].text, "likes tea");
+    }
+
+    #[test]
+    fn several_calls_in_one_reply_all_run_in_order() {
+        let calls = json_calls(
+            r#"first {"tool":"remember","args":{"text":"a"}} then {"tool":"emit_event","args":{"topic":"t"}}"#,
+        );
+        assert_eq!(
+            calls.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(),
+            ["remember", "emit_event"]
+        );
+        let h = Fake::new(
+            "multi",
+            &[
+                r#"{"tool":"remember","args":{"text":"saw it"}} {"tool":"emit_event","args":{"topic":"seen"}}"#,
+                "done",
+            ],
+            true,
+        );
+        let r = run(&h, &spec(), "http", "go", 0);
+        assert_eq!(h.store.memories("bot")[0].text, "saw it");
+        assert_eq!(h.emitted.lock().unwrap().as_slice(), ["seen"]);
+        assert_eq!(r.steps.iter().filter(|s| matches!(s, Step::Tool { .. })).count(), 2);
+    }
+
+    #[test]
+    fn a_described_call_is_accepted_only_for_granted_tools() {
+        let granted = ["remember", "emit_event"];
+        let c = loose_calls(
+            r#"remember "likes tea"  emit_event {"topic": "x", "payload": "y"}"#,
+            &granted,
+        );
+        assert_eq!(c.len(), 2);
+        assert_eq!((c[0].0.as_str(), &c[0].1), ("remember", &json!("likes tea")));
+        assert_eq!(c[1].1["topic"], "x");
+        // prose that merely mentions a tool, or an ungranted one, is not a call
+        assert!(loose_calls("I will remember that for you.", &granted).is_empty());
+        assert!(loose_calls(r#"http_get "http://x""#, &granted).is_empty());
+        assert!(loose_calls(r#"unremember "x""#, &granted).is_empty());
+    }
+
+    #[test]
+    fn a_run_follows_a_described_call_through_to_the_tool() {
+        let h = Fake::new("loose", &[r#"remember "likes tea""#, "noted"], true);
+        let r = run(&h, &spec(), "http", "go", 0);
+        assert_eq!(h.store.memories("bot")[0].text, "likes tea");
+        assert_eq!(r.answer, "noted");
+    }
+
+    #[test]
+    fn an_oversized_tool_result_is_shrunk_and_retried_not_fatal() {
+        // `now` is cheap; get a big result by remembering then recalling a huge note.
+        let big = "x".repeat(6_000);
+        let h = Fake::new(
+            "ctx",
+            &[r#"{"tool":"recall","args":{"query":"note"}}"#, "I read the note."],
+            true,
+        );
+        h.store.remember("bot", &format!("note {big}"), 1).unwrap();
+        *h.max_chars.lock().unwrap() = 3_000;
+        let r = run(&h, &spec(), "http", "go", 0);
+        assert_eq!(r.status, Status::Ok, "{}", r.answer);
+        assert_eq!(r.answer, "I read the note.");
+        let seen = h.seen.lock().unwrap();
+        assert!(seen.last().unwrap().iter().any(|m| m.content.contains("shortened to fit")));
+    }
+
+    #[test]
+    fn a_non_context_model_error_is_not_retried() {
+        assert!(is_context_overflow("500: maximum context length exceeded"));
+        assert!(is_context_overflow("Input is too long"));
+        assert!(!is_context_overflow("401 unauthorized"));
+        assert!(!is_context_overflow("model returned 429 rate limited"));
     }
 }
