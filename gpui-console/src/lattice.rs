@@ -1,27 +1,32 @@
-//! The non-UI half: boots a local dev lattice, and talks to platform-domain's
-//! real HTTP API exactly the way `reconciler/tests/juan_live.rs` does.
+//! The non-UI half: boots a local dev lattice plus the agent runtime, and
+//! talks to both.
 //!
-//! "Spawn new agent" renders a brand-new component's source from a template —
-//! its own `Cargo.toml`, `wit/world.wit`, `src/lib.rs`, the same shape every
-//! other component under `components/` has — builds it, uploads it, deploys
-//! it, then deletes the scratch directory again. Nothing the UI creates is
-//! left on disk or committed; platform-domain's own catalog/deployment
-//! listing is the durable record, which is also where `refresh` reads from.
-//! An earlier version of this redeployed a hand-written fixture wasm under a
-//! new id, which only proved "deploy a pre-existing artifact live" — not
-//! "create one" — matching the same correction `juan_live.rs` went through.
+//! An agent is two things that are deliberately separate:
 //!
-//! Agents are keyed by NAME everywhere, not platform-domain's opaque
-//! deployment id — the id is a ULID assigned to the deployment record, while
-//! the HTTP ingress routes by `<name>.<tenant>.test` (the node id each
-//! deployment names itself). An earlier version of this file used the
-//! deployment id for ping routing, which only ever happened to not matter
-//! because nothing had exercised the ping button end to end yet.
+//! * a **spec + brain** in `agent_runtime` — name, description, capabilities,
+//!   triggers, model, memory, run log. Edited by writing a JSON file; the next
+//!   run uses it. Nothing is rebuilt. Schedule and event triggers fire from
+//!   here, whether or not anyone has the console open on that agent.
+//! * a **front door** on the lattice — one generic `agent-gateway` component,
+//!   uploaded once per agent under the agent's name, which forwards HTTP to the
+//!   runtime. This is what makes `<name>.<tenant>.test` answer, through the
+//!   real ingress -> lattice -> component path.
+//!
+//! The UI's transcript is driven by the runtime's event stream, not by what
+//! the UI itself sent, so a run triggered by a cron schedule or another agent
+//! shows up in that agent's conversation exactly like one typed here.
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Duration;
 
+use agent_runtime::agent::Event;
+use agent_runtime::model::LocalModel;
+use agent_runtime::runtime::Pending;
+use agent_runtime::spec::{validate_name, Capability};
+use agent_runtime::store::{MemoryItem, RunRecord, Status, Step};
+use agent_runtime::{server, AgentSpec, Config, ModelSpec, Runtime, Trigger};
 use comp_reconciler::fleet::{repo_root, Fleet};
 use futures::channel::mpsc;
 use futures::StreamExt;
@@ -30,10 +35,15 @@ use serde_json::{json, Value};
 
 use crate::fm;
 
-/// Who a conversation line is from. `System` is a status checkpoint — build
-/// progress, a lifecycle status change reported back by platform-domain,
-/// "message sent, waiting for a reply" — interleaved with the real
-/// user/agent messages rather than hidden behind a single status label.
+/// Where the agent runtime listens. FIXED, not picked per launch: each
+/// deployment's gateway has this URL in its config and egress allow-list, and
+/// deployments persist across launches. `HOLON_AGENT_RUNTIME_PORT` overrides
+/// it (and then existing deployments need respawning).
+const DEFAULT_RUNTIME_PORT: u16 = 18017;
+
+/// Who a conversation line is from. `System` is a checkpoint — a trigger, a
+/// tool call, an approval, a status change — interleaved with the real
+/// user/agent messages.
 #[derive(Clone, PartialEq, Eq)]
 pub enum Kind {
     User,
@@ -41,8 +51,6 @@ pub enum Kind {
     System,
 }
 
-/// One line of a conversation with an agent: who said it (or what happened),
-/// and what.
 #[derive(Clone)]
 pub struct Message {
     pub kind: Kind,
@@ -61,60 +69,52 @@ impl Message {
     }
 }
 
-/// An agent in the sidebar, and its conversation. `messages` is local-only
-/// state — platform-domain has no concept of a chat transcript, just a
-/// deployment's name and status — so `refresh` (which re-reads the
-/// deployment list every few seconds) preserves it by matching on `name`
-/// rather than replacing the row outright, and appends a `System` message
-/// only when the status actually CHANGES (not on every 3s poll), so a
-/// status timeline shows up for free however many lifecycle states
-/// platform-domain reports (`draft`, `deploying`, `running`, ...) without
-/// this console having to know their names up front.
+/// An agent in the sidebar. `messages` is the console's rendering of the
+/// runtime's run log (rebuilt from it on launch, extended by its events).
 #[derive(Clone)]
 pub struct AgentRow {
     pub name: String,
     pub description: String,
+    /// The lattice deployment's status, or "no gateway" if it has none.
     pub status: String,
+    pub paused: bool,
+    pub capabilities: Vec<String>,
+    pub triggers: Vec<String>,
+    pub model: String,
     pub messages: Vec<Message>,
 }
 
-/// Everything booting the lattice produces, handed to the `Lattice` entity.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    Chat,
+    Memory,
+    Spec,
+}
+
 pub struct Boot {
     pub fleet: Fleet,
     pub base_url: String,
     pub tenant: String,
     pub token: String,
-    /// `Some` only when `fm::is_available()` — on anything but macOS, or if
-    /// `fm serve` somehow fails to come up, this is `None` and every
-    /// spawned agent runs with no `fm-url` configured, which its own
-    /// generated `ask_fm` already treats as "answer with the canned line"
-    /// — the same "don't call fm" rule `fm.rs` enforces for itself, mirrored
-    /// here at the console level.
     pub fm: Option<fm::FmServer>,
+    pub runtime: Arc<Runtime>,
+    pub runtime_port: u16,
+    pub runtime_dir: PathBuf,
 }
 
-/// Boots a throwaway local dev lattice (comp-host + comp-reconciler +
-/// platform-domain + comp-ingress), then registers/logs in a console account,
-/// then — only if `fm::is_available()` — starts `fm serve` once, shared by
-/// every agent this session spawns. Blocking, run once before the window
-/// opens — same shape as `juan_live.rs`'s `Api::new`.
+/// Boots the runtime (with `fm serve` as its local model where available),
+/// then the lattice, then registers/logs in a console account. Blocking, run
+/// once before the window opens.
 pub fn boot() -> Boot {
     let dir = persistent_state_dir();
-    let host_args =
-        vec!["--egress".to_string(), "127.0.0.1".to_string(), "--allow-private-egress".to_string()];
-    let fleet = Fleet::start_with_platform_in_dir("console", 1, dir, &host_args);
-    let base_url = fleet.platform_url();
-    let tenant = "console".to_string();
-    let email = format!("{tenant}@agents.test");
-    let token = register_and_login(&base_url, &email, "password123");
+    let runtime_dir = dir.join("runtime");
+    std::fs::create_dir_all(&runtime_dir).expect("creating the runtime state dir");
 
     let fm = if fm::is_available() {
         match fm::FmServer::start(Duration::from_secs(20)) {
             Ok(server) => Some(server),
             Err(e) => {
-                eprintln!(
-                    "fm is available but failed to start, agents will use canned replies: {e}"
-                );
+                eprintln!("fm is available but failed to start; local-model agents will fail: {e}");
                 None
             }
         }
@@ -122,43 +122,66 @@ pub fn boot() -> Boot {
         None
     };
 
-    Boot { fleet, base_url, tenant, token, fm }
+    let mut cfg = Config::new(&runtime_dir);
+    cfg.local = LocalModel {
+        base_url: fm.as_ref().map(|s| s.base_url().to_string()),
+        model: "system".into(),
+    };
+    let runtime = Runtime::new(cfg).expect("opening the agent runtime");
+    let port = std::env::var("HOLON_AGENT_RUNTIME_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(DEFAULT_RUNTIME_PORT);
+    let token = server::admin_token_in(&runtime_dir).expect("admin token");
+    server::serve(runtime.clone(), &format!("127.0.0.1:{port}"), token).unwrap_or_else(|e| {
+        panic!("{e} — is another console or `agent-runtime` already running on port {port}?")
+    });
+    runtime.start_scheduler();
+
+    // The gateway component dials the runtime from inside the tenant's
+    // sandbox, and egress is default-deny, so the OPERATOR (this process, as
+    // the control plane's launcher) grants exactly that one authority to
+    // every tenant — never a tenant itself. See platform-domain's
+    // `default-egress` and ADR-0008.
+    std::env::set_var("COMP_DEFAULT_EGRESS", format!("127.0.0.1:{port}"));
+    let host_args =
+        vec!["--egress".to_string(), "127.0.0.1".to_string(), "--allow-private-egress".to_string()];
+    let fleet = Fleet::start_with_platform_in_dir("console", 1, dir, &host_args);
+    let base_url = fleet.platform_url();
+    let tenant = "console".to_string();
+    let token = register_and_login(&base_url, &format!("{tenant}@agents.test"), "password123");
+
+    Boot { fleet, base_url, tenant, token, fm, runtime, runtime_port: port, runtime_dir }
 }
 
-/// Where this console's lattice lives across separate launches: NATS
-/// jetstream store, `platform-domain`'s SQLite deployment catalog, every
-/// node's state directory. Fixed and outside the repo (so it's never at
-/// risk of being committed, and `gpui-console/.gitignore` doesn't need to
-/// know about it either) — `~/.holon-console-state`. A relaunch pointed at
-/// the SAME directory sees the SAME agents; an earlier version of this
-/// booted a fresh `tempfile::TempDir` every launch, which is why agents
-/// used to vanish on restart.
+/// Where this console's lattice lives across launches. Fixed and outside the
+/// repo, so a relaunch sees the same deployments.
 fn persistent_state_dir() -> PathBuf {
     let home = std::env::var("HOME").expect("HOME must be set");
     PathBuf::from(home).join(".holon-console-state")
 }
 
 pub struct Lattice {
-    // `Option` so the app-quit hook below can `.take()` both, running
-    // `Fleet`'s `Drop` (which kills comp-host/comp-reconciler/comp-ingress/
-    // nats-server) and `FmServer`'s `Drop` (which kills `fm serve`) BEFORE
-    // the process actually exits. A bare field here would never run either
-    // `Drop` on a normal quit — the process tears down `main`'s stack from
-    // the platform's own exit path, not Rust's. Verified exactly this leak
-    // happening for `_fleet` before its half of this fix was added; `_fm`
-    // gets the identical treatment so it can't repeat it.
+    // `Option` so the app-quit hook can `.take()` them and run their `Drop`
+    // (killing the lattice's child processes, `fm serve`) before the process
+    // exits — a bare field's `Drop` never runs on a normal quit.
     _fleet: Option<Fleet>,
     _fm: Option<fm::FmServer>,
     _quit_guard: Subscription,
+    rt: Arc<Runtime>,
+    runtime_port: u16,
+    pub runtime_dir: PathBuf,
     base_url: String,
     tenant: String,
     token: String,
     ingress_port: u16,
     pub agents: Vec<AgentRow>,
-    /// `None` = composing a new agent (the sidebar's "+ new agent" row);
-    /// `Some(name)` = viewing/continuing that agent's conversation. The
-    /// single source of truth for which pane the main panel renders.
+    pub approvals: Vec<Pending>,
+    /// `None` = nothing selected; `Some(name)` = that agent's pane.
     pub selected: Option<String>,
+    pub view: View,
+    /// Lines for the Memory / Spec views, loaded when the view is opened.
+    pub detail: Vec<String>,
     pub status_line: String,
     pub spawning: bool,
 }
@@ -167,114 +190,169 @@ impl Lattice {
     pub fn new(boot: Boot, cx: &mut Context<Self>) -> Self {
         let ingress_port = boot.fleet.ingress_port;
         let quit_guard = cx.on_app_quit(|this, _cx| {
+            this.rt.shutdown();
             this._fleet.take();
             this._fm.take();
             async {}
         });
+
+        // The runtime's events arrive on a std channel and from any thread;
+        // hop them onto the UI's executor.
+        let rx = boot.runtime.subscribe();
+        let (tx, mut events) = mpsc::unbounded::<Event>();
+        std::thread::spawn(move || {
+            while let Ok(ev) = rx.recv() {
+                if tx.unbounded_send(ev).is_err() {
+                    break;
+                }
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            while let Some(ev) = events.next().await {
+                if this.update(cx, |this, cx| this.on_event(ev, cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+
+        let agents =
+            boot.runtime.store().list().iter().map(|s| row_from(s, &boot.runtime)).collect();
         Self {
             _fleet: Some(boot.fleet),
             _fm: boot.fm,
             _quit_guard: quit_guard,
+            rt: boot.runtime,
+            runtime_port: boot.runtime_port,
+            runtime_dir: boot.runtime_dir,
             base_url: boot.base_url,
             tenant: boot.tenant,
             token: boot.token,
             ingress_port,
-            agents: Vec::new(),
+            agents,
+            approvals: Vec::new(),
             selected: None,
+            view: View::Chat,
+            detail: Vec::new(),
             status_line: "booted".to_string(),
             spawning: false,
         }
-    }
-
-    /// Where `fm serve` is listening, if it's running at all — handed to a
-    /// newly-spawned agent as its `fm-url` config so its OWN `ask_fm` can
-    /// reach it. `None` on anything but macOS, or if `fm` failed to start;
-    /// a generated agent treats a missing `fm-url` as "use the canned
-    /// line", so this needs no further branching at the call site.
-    fn fm_url(&self) -> Option<String> {
-        self._fm.as_ref().map(|s| s.base_url().to_string())
     }
 
     fn host_for(&self, name: &str) -> String {
         format!("{name}.{}.test", self.tenant)
     }
 
-    /// `GET /api/deployments`, merged over the existing rows by NAME so an
-    /// agent's conversation survives a refresh instead of being wiped every
-    /// 3s, and so an agent still mid-build (not in platform-domain's catalog
-    /// yet) isn't dropped from the sidebar while comp-reconciler catches up.
+    fn row_mut(&mut self, name: &str) -> Option<&mut AgentRow> {
+        self.agents.iter_mut().find(|a| a.name == name)
+    }
+
+    // ---- runtime events -> transcript ------------------------------------
+
+    fn on_event(&mut self, ev: Event, cx: &mut Context<Self>) {
+        match ev {
+            Event::RunStarted { agent, trigger, input, .. } => {
+                if let Some(row) = self.row_mut(&agent) {
+                    row.messages.extend(start_messages(&trigger, &input));
+                }
+            }
+            Event::StepDone { agent, step, .. } => {
+                if let (Some(row), Some(m)) = (self.row_mut(&agent), step_message(&step)) {
+                    row.messages.push(m);
+                }
+            }
+            Event::RunFinished(rec) => {
+                if let Some(row) = self.row_mut(&rec.agent) {
+                    row.messages.extend(finish_messages(&rec));
+                }
+            }
+            Event::ApprovalRequested { id, agent, tool, args } => {
+                if let Some(row) = self.row_mut(&agent) {
+                    row.messages.push(Message::system(format!(
+                        "needs your approval: {tool} {}",
+                        short(&args.to_string(), 160)
+                    )));
+                }
+                self.approvals.push(Pending { id, agent, tool, args });
+            }
+            Event::ApprovalResolved { id, approved } => {
+                if let Some(p) = self.approvals.iter().find(|p| p.id == id).cloned() {
+                    if let Some(row) = self.row_mut(&p.agent) {
+                        row.messages.push(Message::system(format!(
+                            "{} {}",
+                            p.tool,
+                            if approved { "approved" } else { "denied" }
+                        )));
+                    }
+                }
+                self.approvals.retain(|p| p.id != id);
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn resolve_approval(&mut self, id: u64, approved: bool, cx: &mut Context<Self>) {
+        self.rt.resolve_approval(id, approved);
+        cx.notify();
+    }
+
+    // ---- refresh ----------------------------------------------------------
+
+    /// Re-reads the agent list from the runtime (the source of truth for what
+    /// exists) and each agent's gateway status from platform-domain, keeping
+    /// every conversation by NAME.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let base = self.base_url.clone();
         let token = self.token.clone();
         cx.spawn(async move |this, cx| {
-            let fetched = cx
+            let deployments = cx
                 .background_executor()
                 .spawn(async move { list_deployments(&base, &token) })
                 .await;
             this.update(cx, |this, cx| {
-                for (name, status) in fetched {
-                    if let Some(row) = this.agents.iter_mut().find(|a| a.name == name) {
-                        if row.status != status {
-                            row.messages.push(Message::system(format!(
-                                "status: {} → {status}",
-                                row.status
-                            )));
-                            row.status = status;
-                        }
-                    } else {
-                        this.agents.insert(
-                            0,
-                            AgentRow {
-                                name,
-                                description: String::new(),
-                                status,
-                                messages: Vec::new(),
-                            },
-                        );
-                    }
-                }
-                if !this.spawning {
-                    this.status_line = format!("{} agent(s) deployed", this.agents.len());
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// Appends the typed text as a user message in `name`'s conversation,
-    /// then calls it over the real HTTP ingress (ingress -> lattice ->
-    /// component), carrying the text as `?q=<it>`, and appends its reply —
-    /// the same path `answer_over_lattice` exercises in `juan_live.rs`, now
-    /// with the text actually reaching the agent (it used to be a bare
-    /// `GET /` with nothing to answer) so a real `fm`-backed agent has
-    /// something to respond to.
-    pub fn send_to_agent(&mut self, name: String, text: String, cx: &mut Context<Self>) {
-        if let Some(row) = self.agents.iter_mut().find(|a| a.name == name) {
-            row.messages.push(Message::user(text.clone()));
-            row.messages.push(Message::system("message sent — waiting for a reply…".to_string()));
-        }
-        cx.notify();
-
-        let ingress_port = self.ingress_port;
-        let host = self.host_for(&name);
-        cx.spawn(async move |this, cx| {
-            let output = cx
-                .background_executor()
-                .spawn(async move { ping(ingress_port, &host, Some(&text)) })
-                .await;
-            this.update(cx, |this, cx| {
-                if let Some(row) = this.agents.iter_mut().find(|a| a.name == name) {
-                    match output {
-                        Some(answer) => {
-                            row.messages.push(Message::system("seen — replied".to_string()));
-                            row.messages.push(Message::agent(answer));
+                let specs = this.rt.store().list();
+                this.agents.retain(|a| specs.iter().any(|s| s.name == a.name));
+                for spec in &specs {
+                    let status = deployments
+                        .iter()
+                        .find(|d| d.name == spec.name)
+                        .map(|d| d.status.clone())
+                        .unwrap_or_else(|| "no gateway".to_string());
+                    match this.agents.iter_mut().find(|a| a.name == spec.name) {
+                        Some(row) => {
+                            let fresh = row_from(spec, &this.rt);
+                            if row.status != status
+                                && row.status != "spawning"
+                                && !row.status.starts_with("failed")
+                            {
+                                row.messages.push(Message::system(format!(
+                                    "status: {} → {status}",
+                                    row.status
+                                )));
+                            }
+                            if !row.status.starts_with("failed") || status != "no gateway" {
+                                row.status = status;
+                            }
+                            row.description = fresh.description;
+                            row.paused = fresh.paused;
+                            row.capabilities = fresh.capabilities;
+                            row.triggers = fresh.triggers;
+                            row.model = fresh.model;
                         }
                         None => {
-                            row.messages.push(Message::system("no answer".to_string()));
+                            let mut row = row_from(spec, &this.rt);
+                            row.status = status;
+                            this.agents.push(row);
                         }
                     }
+                }
+                this.agents.sort_by(|a, b| a.name.cmp(&b.name));
+                if this.selected.as_ref().is_some_and(|s| !this.agents.iter().any(|a| &a.name == s))
+                {
+                    this.selected = None;
+                }
+                if !this.spawning {
+                    this.status_line = format!("{} agent(s)", this.agents.len());
                 }
                 cx.notify();
             })
@@ -283,85 +361,77 @@ impl Lattice {
         .detach();
     }
 
-    /// `name` must be non-empty, WIT-kebab-case-valid, and not already used
-    /// by another agent — checked here so `NewAgentForm` can show the same
-    /// rule before even trying, and so a direct call (nothing else enforces
-    /// it) can't slip an invalid or colliding name through.
+    // ---- chat -------------------------------------------------------------
+
+    /// Sends `text` to the agent over the real HTTP ingress (ingress ->
+    /// lattice -> gateway -> runtime). The transcript fills from the runtime's
+    /// events — this only reports a failure the runtime never saw.
+    pub fn send_to_agent(&mut self, name: String, text: String, cx: &mut Context<Self>) {
+        let (port, host) = (self.ingress_port, self.host_for(&name));
+        cx.spawn(async move |this, cx| {
+            // An agent run can wait minutes on an approval, so no short timeout.
+            let out = cx
+                .background_executor()
+                .spawn(async move { ping(port, &host, Some(&text), Duration::from_secs(400)) })
+                .await;
+            if let Err(e) = out {
+                this.update(cx, |this, cx| {
+                    if let Some(row) = this.row_mut(&name) {
+                        row.messages.push(Message::system(format!("no reply: {e}")));
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    // ---- lifecycle --------------------------------------------------------
+
     pub fn validate_name(&self, name: &str) -> Result<(), String> {
-        valid_name_syntax(name)?;
+        validate_name(name)?;
         if self.agents.iter().any(|a| a.name == name) {
             return Err(format!("{name} already exists — pick another name"));
         }
         Ok(())
     }
 
-    /// The GUI's "create a new agent, live" action: an explicit, unique
-    /// `name` and a free-text `description` (the agent's purpose — becomes
-    /// its canned reply, and the first line of its conversation), from the
-    /// "+ new agent" window. The agent appears in the sidebar — and gets
-    /// selected, so its conversation is immediately visible — the moment
-    /// this is called, before anything has actually been built yet, with a
-    /// running timeline of what's happening (rendering, building,
-    /// uploading, deploying, waiting on comp-reconciler) appended as it
-    /// happens rather than shown only as a single status label.
-    ///
-    /// Renders the agent's source from a template, builds it, uploads it,
-    /// deploys it, polls until comp-reconciler has converged and it answers
-    /// over the lattice, then deletes the scratch source directory again
-    /// (platform-domain's catalog/deployment listing is the record that
-    /// persists, not a directory on disk).
-    pub fn spawn_agent(&mut self, name: String, description: String, cx: &mut Context<Self>) {
+    /// Creates an agent: saves its spec in the runtime (so schedule/event
+    /// triggers work immediately), then gives it a lattice front door — the
+    /// shared gateway component, uploaded and deployed under its name.
+    pub fn spawn_agent(&mut self, spec: AgentSpec, cx: &mut Context<Self>) {
         if self.spawning {
             return;
         }
-        if let Err(e) = self.validate_name(&name) {
+        let name = spec.name.clone();
+        if let Err(e) = self.validate_name(&name).and_then(|_| self.rt.create_agent(spec.clone())) {
             self.status_line = e;
             cx.notify();
             return;
         }
-        let description = description.trim().to_string();
-
         self.spawning = true;
-        self.status_line = format!("rendering + building {name}…");
-        self.agents.insert(
-            0,
-            AgentRow {
-                name: name.clone(),
-                description: description.clone(),
-                status: "spawning".to_string(),
-                messages: vec![
-                    Message::user(description.clone()),
-                    Message::system("initializing…".to_string()),
-                ],
-            },
-        );
+        self.status_line = format!("creating {name}…");
+        let mut row = row_from(&spec, &self.rt);
+        row.status = "spawning".into();
+        row.messages.push(Message::system("agent created — giving it a lattice front door…"));
+        self.agents.push(row);
+        self.agents.sort_by(|a, b| a.name.cmp(&b.name));
         self.selected = Some(name.clone());
+        self.view = View::Chat;
         cx.notify();
 
-        let base = self.base_url.clone();
-        let token = self.token.clone();
-        let fm_url = self.fm_url();
-        let ingress_port = self.ingress_port;
-        let host = self.host_for(&name);
-        let agent_name = name.clone();
-        // The confirmation ping doubles as the agent's first real question
-        // when `fm` is available — its own description, so "spawned and
-        // live" shows a genuine AI reply in the transcript rather than
-        // always being the canned line.
-        let first_question = description.clone();
+        let (base, token) = (self.base_url.clone(), self.token.clone());
+        let runtime_url = format!("http://127.0.0.1:{}", self.runtime_port);
+        let (ingress_port, host) = (self.ingress_port, self.host_for(&name));
 
-        // Progress pump: appends each checkpoint the background work sends
-        // as a System message, for as long as `progress_tx` (below) is
-        // alive. Separate task from the one awaiting the final result, so
-        // checkpoints show up as they happen rather than all at once at
-        // the end.
         let (progress_tx, mut progress_rx) = mpsc::unbounded::<String>();
         {
             let name = name.clone();
             cx.spawn(async move |this, cx| {
                 while let Some(line) = progress_rx.next().await {
                     this.update(cx, |this, cx| {
-                        if let Some(row) = this.agents.iter_mut().find(|a| a.name == name) {
+                        if let Some(row) = this.row_mut(&name) {
                             row.messages.push(Message::system(line));
                         }
                         cx.notify();
@@ -373,102 +443,325 @@ impl Lattice {
         }
 
         cx.spawn(async move |this, cx| {
-            let say = {
-                let tx = progress_tx.clone();
-                move |s: &str| {
-                    let _ = tx.unbounded_send(s.to_string());
-                }
-            };
-            let result: Result<String, String> = cx
+            let tx = progress_tx.clone();
+            let agent = name.clone();
+            let result: Result<(), String> = cx
                 .background_executor()
                 .spawn(async move {
-                    say("rendering + building component…");
-                    let wasm = scaffold_build_and_clean(&agent_name, &description)?;
-                    say("uploading component…");
-                    let config_keys: &[&str] = if fm_url.is_some() { &["fm-url"] } else { &[] };
-                    upload_component(&base, &token, &agent_name, wasm, config_keys)?;
+                    let say = |s: &str| {
+                        let _ = tx.unbounded_send(s.to_string());
+                    };
+                    say("preparing the gateway component…");
+                    let wasm = gateway_wasm()?;
+                    say("uploading…");
+                    upload_component(&base, &token, &agent, wasm, &["runtime-url", "agent"])?;
                     say("deploying…");
-                    let dep_id = create_deployment(&base, &token, &agent_name, fm_url.as_deref())?;
+                    let dep_id = create_deployment(&base, &token, &agent, &runtime_url)?;
                     say("waiting for comp-reconciler to converge…");
-
                     let deadline = std::time::Instant::now() + Duration::from_secs(60);
-                    let mut last_save_error: Option<String> = None;
+                    let mut last: Option<String> = None;
                     while std::time::Instant::now() < deadline {
                         let err = save_deployment(&base, &token, &dep_id);
-                        // Only announce a save problem when it CHANGES — a
-                        // "not distributed yet" conflict is normal and
-                        // usually resolves within a poll or two; repeating
-                        // the identical line every 2s would read as an
-                        // alarm for something that isn't one.
-                        if err != last_save_error {
+                        if err != last {
                             if let Some(e) = &err {
                                 say(e);
                             }
-                            last_save_error = err;
+                            last = err;
                         }
-                        if let Some(answer) = ping(ingress_port, &host, Some(&first_question)) {
-                            return Ok(answer);
+                        if ping_ready(ingress_port, &host) {
+                            return Ok(());
                         }
                         std::thread::sleep(Duration::from_secs(2));
                     }
-                    Err(format!("{agent_name} did not come up in time"))
+                    Err(format!("{agent}'s gateway did not come up in time"))
                 })
                 .await;
-            drop(progress_tx); // ends the progress pump above
+            drop(progress_tx);
 
             this.update(cx, |this, cx| {
                 this.spawning = false;
                 this.status_line = match &result {
-                    Ok(_) => format!("{name} is live"),
+                    Ok(()) => format!("{name} is live"),
                     Err(e) => e.clone(),
                 };
-                if let Some(row) = this.agents.iter_mut().find(|a| a.name == name) {
+                if let Some(row) = this.row_mut(&name) {
                     match &result {
-                        Ok(answer) => {
+                        Ok(()) => {
                             row.status = "live".to_string();
-                            row.messages
-                                .push(Message::system("status checks passed — live".to_string()));
-                            row.messages.push(Message::agent(answer.clone()));
+                            row.messages.push(Message::system("live — answering over the lattice"));
                         }
                         Err(e) => {
                             row.status = format!("failed: {e}");
-                            row.messages.push(Message::system(format!("failed: {e}")));
+                            row.messages.push(Message::system(format!(
+                                "no HTTP front door ({e}) — schedule and event triggers still work"
+                            )));
                         }
                     }
                 }
                 cx.notify();
             })
             .ok();
-
             if let Some(handle) = this.upgrade() {
                 handle.update(cx, |this, cx| this.refresh(cx)).ok();
             }
         })
         .detach();
     }
+
+    pub fn set_paused(&mut self, name: &str, paused: bool, cx: &mut Context<Self>) {
+        match self.rt.set_paused(name, paused) {
+            Ok(()) => {
+                if let Some(row) = self.row_mut(name) {
+                    row.paused = paused;
+                    row.messages.push(Message::system(if paused { "paused" } else { "resumed" }));
+                }
+            }
+            Err(e) => self.status_line = e,
+        }
+        cx.notify();
+    }
+
+    /// Removes the agent's spec, memory, runs and workspace, and its lattice
+    /// deployment (which also destroys the deployment's storage — see
+    /// platform-domain's `?confirm=` guard).
+    pub fn delete_agent(&mut self, name: String, cx: &mut Context<Self>) {
+        if let Err(e) = self.rt.delete_agent(&name) {
+            self.status_line = e;
+            cx.notify();
+            return;
+        }
+        self.agents.retain(|a| a.name != name);
+        self.selected = None;
+        self.status_line = format!("deleted {name}");
+        cx.notify();
+        let (base, token) = (self.base_url.clone(), self.token.clone());
+        cx.background_executor()
+            .spawn(async move {
+                if let Some(d) =
+                    list_deployments(&base, &token).into_iter().find(|d| d.name == name)
+                {
+                    let _ = client()
+                        .delete(format!("{base}/api/deployments/{}?confirm={}", d.id, d.name))
+                        .bearer_auth(&token)
+                        .send();
+                }
+            })
+            .detach();
+    }
+
+    pub fn select(&mut self, name: String, cx: &mut Context<Self>) {
+        self.selected = Some(name);
+        self.view = View::Chat;
+        cx.notify();
+    }
+
+    pub fn set_view(&mut self, view: View, cx: &mut Context<Self>) {
+        self.view = view;
+        self.detail = match (view, &self.selected) {
+            (View::Memory, Some(n)) => {
+                let m: Vec<MemoryItem> = self.rt.store().memories(n);
+                if m.is_empty() {
+                    vec!["nothing remembered yet".to_string()]
+                } else {
+                    m.iter().rev().map(|i| i.text.clone()).collect()
+                }
+            }
+            (View::Spec, Some(n)) => {
+                let path = self.runtime_dir.join("agents").join(format!("{n}.json"));
+                let mut lines =
+                    vec![format!("edit {} — the next run uses it", path.display()), String::new()];
+                if let Some(s) = self.rt.store().get(n) {
+                    lines.extend(
+                        serde_json::to_string_pretty(&s)
+                            .unwrap_or_default()
+                            .lines()
+                            .map(String::from),
+                    );
+                }
+                lines
+            }
+            _ => Vec::new(),
+        };
+        cx.notify();
+    }
 }
 
-/// The syntax half of `Lattice::validate_name` — non-empty, and WIT
-/// kebab-case-valid. Pulled out as a free function so it's unit-testable
-/// without needing a `Lattice` (which needs a real `Fleet` to construct).
-fn valid_name_syntax(name: &str) -> Result<(), String> {
-    if name.is_empty() {
-        return Err("type a name first".to_string());
+// ---- transcript rendering of runtime data ----------------------------------
+
+fn short(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(n).collect::<String>())
     }
-    // WIT kebab-case identifiers require every dash-separated word to start
-    // with a letter (found the hard way: `cargo component build` rejects
-    // e.g. "agent-1" with "invalid label: dash-separated words must begin
-    // with an ASCII lowercase letter" — a digit right after a dash fails
-    // it).
-    if name.split('-').any(|word| word.chars().next().is_some_and(|c| !c.is_ascii_lowercase())) {
-        return Err(format!(
-            "{name}: each part of the name separated by a dash must start with a letter"
-        ));
-    }
-    Ok(())
 }
 
-// ---- blocking HTTP helpers, run on the background executor ----------------
+/// An HTTP-triggered run reads as the user's message; every other trigger as a
+/// checkpoint saying what woke the agent.
+fn start_messages(trigger: &str, input: &str) -> Vec<Message> {
+    match trigger {
+        "http" => vec![Message::user(input)],
+        t => vec![Message::system(format!("woken by {t}: {}", short(input, 120)))],
+    }
+}
+
+fn step_message(step: &Step) -> Option<Message> {
+    match step {
+        Step::Model { .. } => None,
+        Step::Tool { name, args, result, error, approved } => Some(Message::system(format!(
+            "{name} {}{} → {}{}",
+            short(&args.to_string(), 80),
+            match approved {
+                Some(true) => " (approved)",
+                Some(false) => " (denied)",
+                None => "",
+            },
+            if *error { "error: " } else { "" },
+            short(result, 120)
+        ))),
+    }
+}
+
+fn finish_messages(rec: &RunRecord) -> Vec<Message> {
+    let mut v = Vec::new();
+    match rec.status {
+        Status::Ok => v.push(Message::agent(&rec.answer)),
+        Status::Failed => v.push(Message::system(format!("run failed: {}", rec.answer))),
+        Status::OverBudget => v.push(Message::system(format!("stopped: {}", rec.answer))),
+    }
+    v.push(Message::system(format!("{} tokens", rec.tokens_in + rec.tokens_out)));
+    v
+}
+
+fn row_from(spec: &AgentSpec, rt: &Runtime) -> AgentRow {
+    let mut messages = Vec::new();
+    for rec in rt.store().runs(&spec.name, 8).iter().rev() {
+        messages.extend(start_messages(&rec.trigger, &rec.input));
+        messages.extend(rec.steps.iter().filter_map(step_message));
+        messages.extend(finish_messages(rec));
+    }
+    AgentRow {
+        name: spec.name.clone(),
+        description: spec.description.clone(),
+        status: "…".into(),
+        paused: spec.paused,
+        capabilities: spec.capabilities.iter().map(|c| c.name.clone()).collect(),
+        triggers: spec
+            .triggers
+            .iter()
+            .map(|t| match t {
+                Trigger::Schedule { cron, .. } => format!("every {cron}"),
+                Trigger::Event { topic } => format!("on {topic}"),
+            })
+            .collect(),
+        model: match &spec.model {
+            ModelSpec::Local => "local".into(),
+            ModelSpec::OpenAi { model, .. } | ModelSpec::Anthropic { model, .. } => model.clone(),
+            ModelSpec::Mock { .. } => "mock".into(),
+        },
+        messages,
+    }
+}
+
+// ---- turning the new-agent form's text into a spec -------------------------
+
+/// What the "+ new agent" form collects, as raw text.
+#[derive(Default, Clone)]
+pub struct FormInput {
+    pub name: String,
+    pub description: String,
+    /// `;`-separated. Each: `name [@ wit-ref] [| what it does]`. A name that
+    /// is a built-in tool (`http_get`, `write_file`, ...) or `agent:<other>`
+    /// becomes callable; any other name is a text ability the model is told
+    /// about. e.g. `http_get; fetch @ os:http/client.get | get a page`.
+    pub capabilities: String,
+    /// `;`-separated `cron :: task`, e.g. `*/10 * * * * :: check the feed`.
+    pub schedules: String,
+    /// Comma-separated event topics this agent wakes on.
+    pub events: String,
+    /// Comma-separated hosts `http_get` may reach.
+    pub hosts: String,
+    /// Blank/`local`, `anthropic:<model>`, or `openai:<base-url>|<model>`.
+    pub model: String,
+    /// Comma-separated sensitive tools allowed without asking.
+    pub auto_approve: String,
+}
+
+fn csv(s: &str) -> Vec<String> {
+    s.split([',', '\n']).map(str::trim).filter(|x| !x.is_empty()).map(String::from).collect()
+}
+
+pub fn spec_from_form(f: &FormInput) -> Result<AgentSpec, String> {
+    let name: String = f
+        .name
+        .trim()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect::<String>()
+        .to_lowercase();
+    validate_name(&name)?;
+    let mut spec = AgentSpec::new(&name, f.description.trim());
+
+    for entry in f.capabilities.split(';').map(str::trim).filter(|e| !e.is_empty()) {
+        let (head, desc) = entry.split_once('|').map_or((entry, ""), |(h, d)| (h.trim(), d.trim()));
+        let (cname, wit) = head
+            .split_once('@')
+            .map_or((head, None), |(n, w)| (n.trim(), Some(w.trim().to_string())));
+        if cname.is_empty() {
+            return Err(format!("capability `{entry}` has no name"));
+        }
+        if let Some(existing) = spec.capabilities.iter_mut().find(|c| c.name == cname) {
+            existing.description = desc.to_string();
+            existing.wit = wit;
+        } else {
+            spec.capabilities.push(Capability {
+                name: cname.to_string(),
+                description: desc.to_string(),
+                wit,
+            });
+        }
+    }
+    for entry in f.schedules.split(';').map(str::trim).filter(|e| !e.is_empty()) {
+        let (cron, prompt) = entry.split_once("::").ok_or_else(|| {
+            format!("schedule `{entry}`: write it as `cron expression :: what to do`")
+        })?;
+        spec.triggers.push(Trigger::Schedule {
+            cron: cron.trim().to_string(),
+            prompt: prompt.trim().to_string(),
+        });
+    }
+    for topic in csv(&f.events) {
+        spec.triggers.push(Trigger::Event { topic });
+    }
+    spec.allow_hosts = csv(&f.hosts);
+    spec.auto_approve = csv(&f.auto_approve);
+    spec.model = match f.model.trim() {
+        "" | "local" => ModelSpec::Local,
+        m if m.starts_with("anthropic:") => ModelSpec::Anthropic {
+            model: m["anthropic:".len()..].trim().to_string(),
+            api_key_env: "ANTHROPIC_API_KEY".into(),
+        },
+        m if m.starts_with("openai:") => {
+            let (url, model) = m["openai:".len()..]
+                .split_once('|')
+                .ok_or("model: write it as `openai:<base-url>|<model>`")?;
+            ModelSpec::OpenAi {
+                base_url: url.trim().to_string(),
+                model: model.trim().to_string(),
+                api_key_env: "OPENAI_API_KEY".into(),
+            }
+        }
+        other => {
+            return Err(format!(
+                "model `{other}`: use local, anthropic:<model> or openai:<base-url>|<model>"
+            ))
+        }
+    };
+    agent_runtime::runtime::validate_spec(&spec)?;
+    Ok(spec)
+}
+
+// ---- blocking HTTP helpers, run on the background executor -----------------
 
 fn client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().unwrap()
@@ -488,12 +781,14 @@ fn register_and_login(base: &str, email: &str, password: &str) -> String {
     v["token"].as_str().unwrap_or_default().to_string()
 }
 
-/// `(name, status)` per deployment — the only two fields platform-domain
-/// actually has that this console cares about; everything else (the
-/// conversation) is local state `refresh` must not clobber.
-fn list_deployments(base: &str, token: &str) -> Vec<(String, String)> {
-    let http = client();
-    let v: Value = match http.get(format!("{base}/api/deployments")).bearer_auth(token).send() {
+struct Deployment {
+    id: String,
+    name: String,
+    status: String,
+}
+
+fn list_deployments(base: &str, token: &str) -> Vec<Deployment> {
+    let v: Value = match client().get(format!("{base}/api/deployments")).bearer_auth(token).send() {
         Ok(r) => r.json().unwrap_or(Value::Null),
         Err(_) => return Vec::new(),
     };
@@ -502,25 +797,48 @@ fn list_deployments(base: &str, token: &str) -> Vec<(String, String)> {
         .cloned()
         .unwrap_or_default()
         .into_iter()
-        .map(|row| {
-            (
-                row["name"].as_str().unwrap_or_default().to_string(),
-                row["status"].as_str().unwrap_or("unknown").to_string(),
-            )
+        .map(|row| Deployment {
+            id: row["id"].as_str().unwrap_or_default().to_string(),
+            name: row["name"].as_str().unwrap_or_default().to_string(),
+            status: row["status"].as_str().unwrap_or("unknown").to_string(),
         })
         .collect()
 }
 
-/// `config_keys` DECLARES which `wasi:config` keys this component is allowed
-/// to be given — separate from, and a prerequisite for, a deployment's node
-/// actually supplying a VALUE for one. Without declaring `fm-url` here,
-/// `/api/deployments/{id}/save` refuses with "`<id>` declares no config
-/// keys, so it cannot take `fm-url`" even though the deployment's own node
-/// config is otherwise correct — found by actually running this end to end
-/// and reading the 422 body, not by inspection (an earlier version of this
-/// function silently discarded `save`'s response, which is exactly how this
-/// stayed hidden: every `save` was failing, quietly, for the entire 60s
-/// poll window every single time).
+/// The generic gateway, built once and reused for every agent. Rebuilt only
+/// if its sources are newer than the artifact — a rebuild takes seconds and
+/// is the ONLY cargo invocation spawning an agent can ever trigger.
+fn gateway_wasm() -> Result<Vec<u8>, String> {
+    let dir = repo_root().join("agent-runtime/gateway");
+    let out = dir.join("target/wasm32-wasip2/release/agent_gateway.wasm");
+    let mtime = |p: PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let newest_src = ["src/lib.rs", "wit/world.wit", "Cargo.toml"]
+        .iter()
+        .filter_map(|f| mtime(dir.join(f)))
+        .max();
+    let stale = match (mtime(out.clone()), newest_src) {
+        (Some(built), Some(src)) => src > built,
+        (None, _) => true,
+        _ => false,
+    };
+    if stale {
+        let o = Command::new("cargo")
+            .current_dir(&dir)
+            .args(["component", "build", "--release", "--target", "wasm32-wasip2"])
+            .output()
+            .map_err(|e| format!("cargo component build failed to run: {e}"))?;
+        if !o.status.success() {
+            return Err(format!(
+                "building the gateway failed:\n{}",
+                String::from_utf8_lossy(&o.stderr)
+            ));
+        }
+    }
+    std::fs::read(&out).map_err(|e| format!("{}: {e}", out.display()))
+}
+
+/// `config_keys` DECLARES which `wasi:config` keys the component may be given —
+/// separate from, and a prerequisite for, a deployment supplying a VALUE.
 fn upload_component(
     base: &str,
     token: &str,
@@ -528,37 +846,26 @@ fn upload_component(
     wasm: Vec<u8>,
     config_keys: &[&str],
 ) -> Result<(), String> {
-    let http = client();
     let mut url = format!("{base}/api/components?id={id}");
     if !config_keys.is_empty() {
         url.push_str("&config=");
         url.push_str(&config_keys.join(","));
     }
-    let r = http.post(url).bearer_auth(token).body(wasm).send().map_err(|e| e.to_string())?;
+    let r = client().post(url).bearer_auth(token).body(wasm).send().map_err(|e| e.to_string())?;
     if !r.status().is_success() {
         return Err(format!("upload failed: {}", r.status()));
     }
     Ok(())
 }
 
-/// `fm_url`, when present, becomes the node's `fm-url` config — read via
-/// `wasi:config/store` by the generated component's own `ask_fm`.
-/// Platform-domain's node schema already supports a per-node `config` map
-/// (confirmed via `components/platform-domain/src/req.rs`'s `node_config`);
-/// `None` omits it, which the generated component already treats as
-/// "fm isn't available — use the canned line".
 fn create_deployment(
     base: &str,
     token: &str,
     id: &str,
-    fm_url: Option<&str>,
+    runtime_url: &str,
 ) -> Result<String, String> {
-    let node = match fm_url {
-        Some(url) => json!({ "id": id, "config": { "fm-url": url } }),
-        None => json!({ "id": id }),
-    };
-    let http = client();
-    let r: Value = http
+    let node = json!({ "id": id, "config": { "runtime-url": runtime_url, "agent": id } });
+    let r: Value = client()
         .post(format!("{base}/api/deployments"))
         .bearer_auth(token)
         .json(&json!({ "name": id, "nodes": [node], "edges": [] }))
@@ -569,16 +876,10 @@ fn create_deployment(
     r["id"].as_str().map(str::to_string).ok_or_else(|| format!("deploy failed: {r}"))
 }
 
-/// `Some(msg)` on anything other than success — a transient "not distributed
-/// yet, save again in a moment" is expected and resolves on its own within a
-/// poll cycle or two; a real refusal (the config-keys 422 that led to this
-/// return type existing) is not, and silently discarding either looked
-/// identical from the caller's side before this: a save loop that just never
-/// converges, with nothing to say why. Found exactly that way — an earlier
-/// version of this function discarded the response outright.
+/// `Some(msg)` on anything but success. A transient "not distributed yet" is
+/// normal; a real refusal must not be swallowed.
 fn save_deployment(base: &str, token: &str, id: &str) -> Option<String> {
-    let http = client();
-    match http
+    match client()
         .post(format!("{base}/api/deployments/{id}/save"))
         .bearer_auth(token)
         .json(&json!({}))
@@ -587,714 +888,282 @@ fn save_deployment(base: &str, token: &str, id: &str) -> Option<String> {
         Ok(r) if r.status().is_success() => None,
         Ok(r) => {
             let status = r.status();
-            let body = r.text().unwrap_or_default();
-            Some(format!("save: {status} {body}"))
+            Some(format!("save: {status} {}", r.text().unwrap_or_default()))
         }
         Err(e) => Some(format!("save: transport error: {e}")),
     }
 }
 
-/// Calls the agent over the real HTTP ingress. `question`, when present,
-/// goes as `?q=<it>` — `reqwest`'s own `.query()` handles the percent-
-/// encoding, which must match the generated component's own hand-rolled
-/// percent-DEcoder (`lib_rs`'s embedded `percent_decode`); using a real,
-/// well-tested encoder here rather than a hand-rolled one of our own is
-/// what keeps that pairing honest.
-fn ping(ingress_port: u16, host: &str, question: Option<&str>) -> Option<String> {
-    let http = client();
+/// Calls the agent over the real HTTP ingress. `question` goes as `?q=`.
+fn ping(
+    ingress_port: u16,
+    host: &str,
+    question: Option<&str>,
+    timeout: Duration,
+) -> Result<String, String> {
+    let http =
+        reqwest::blocking::Client::builder().timeout(timeout).build().map_err(|e| e.to_string())?;
     let mut req = http.get(format!("http://127.0.0.1:{ingress_port}/")).header("host", host);
     if let Some(q) = question {
         req = req.query(&[("q", q)]);
     }
-    let r = req.send().ok()?;
-    if !r.status().is_success() {
-        return None;
-    }
-    r.text().ok().filter(|t| !t.is_empty())
-}
-
-/// Renders `components/<name>/` from a template (own `Cargo.toml`,
-/// `wit/world.wit`, `src/lib.rs` — the same shape every other component has),
-/// builds it, and deletes the directory again — win or lose, nothing it
-/// creates survives this call. Mirrors `juan_live.rs`'s
-/// `ScratchComponent::scaffold` + `build` + `Drop`.
-fn scaffold_build_and_clean(name: &str, description: &str) -> Result<Vec<u8>, String> {
-    let dir: PathBuf = repo_root().join("components").join(name);
-    if dir.exists() {
-        return Err(format!("a component dir named {name} already exists — pick another name"));
-    }
-    let cleanup = |dir: &PathBuf| {
-        let _ = std::fs::remove_dir_all(dir);
-    };
-
-    let render = || -> Result<(), String> {
-        std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
-        std::fs::create_dir_all(dir.join("wit")).map_err(|e| e.to_string())?;
-        std::fs::write(dir.join("Cargo.toml"), cargo_toml(name)).map_err(|e| e.to_string())?;
-        std::fs::write(dir.join("wit/world.wit"), world_wit(name)).map_err(|e| e.to_string())?;
-        std::fs::write(dir.join("src/lib.rs"), lib_rs(name, description))
-            .map_err(|e| e.to_string())?;
-        Ok(())
-    };
-    if let Err(e) = render() {
-        cleanup(&dir);
-        return Err(e);
-    }
-
-    let out = Command::new("cargo")
-        .current_dir(&dir)
-        .args(["component", "build", "--release", "--target", "wasm32-wasip2"])
-        .output();
-    let wasm = match out {
-        Ok(o) if o.status.success() => {
-            let wasm_name = name.replace('-', "_");
-            std::fs::read(dir.join(format!("target/wasm32-wasip2/release/{wasm_name}.wasm")))
-                .map_err(|e| e.to_string())
-        }
-        Ok(o) => Err(format!("building {name} failed:\n{}", String::from_utf8_lossy(&o.stderr))),
-        Err(e) => Err(format!("cargo component build failed to run: {e}")),
-    };
-    cleanup(&dir);
-    wasm
-}
-
-fn cargo_toml(name: &str) -> String {
-    format!(
-        r#"[workspace]
-
-[package]
-name = "{name}"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
-publish = false
-
-[lib]
-crate-type = ["cdylib"]
-
-[dependencies]
-guestio = {{ path = "../guestio" }}
-wit-bindgen-rt = {{ version = "0.41", features = ["bitflags"] }}
-
-[package.metadata.component]
-package = "{name}:agent"
-
-[package.metadata.component.target]
-path = "wit"
-world = "{name}"
-
-[package.metadata.component.target.dependencies]
-"wasi:http" = {{ path = "../../wit/deps/wasi-http-0.2.0" }}
-"wasi:config" = {{ path = "../../wit/deps/wasi-config-0.2.0-rc.1" }}
-"wasi:io" = {{ path = "../../wit/deps/wasi-io-0.2.0" }}
-"wasi:clocks" = {{ path = "../../wit/deps/wasi-clocks-0.2.0" }}
-"wasi:random" = {{ path = "../../wit/deps/wasi-random-0.2.0" }}
-"wasi:cli" = {{ path = "../../wit/deps/wasi-cli-0.2.0" }}
-"#
-    )
-}
-
-fn world_wit(name: &str) -> String {
-    format!(
-        r#"// {name}:agent — rendered live by gpui-console; not committed to this
-// repo, built and deployed once, then deleted.
-package {name}:agent@0.1.0;
-
-world {name} {{
-    export wasi:http/incoming-handler@0.2.0;
-    // Reaching `fm serve` (ADR-0095-style: a native daemon outside the
-    // sandbox) is a MANIFEST decision, same reasoning as fs-watcher's own
-    // world — see `wasi:config/store`'s `fm-url` below and the deployment's
-    // egress allow-list, which decides whether the call leaves at all.
-    import wasi:http/outgoing-handler@0.2.0;
-    import wasi:config/store@0.2.0-rc.1;
-}}
-"#
-    )
-}
-
-/// Escapes `"` and `\` so the description can sit inside a plain (non-raw)
-/// Rust string literal in the generated component's source without breaking
-/// it — the description is free text from the "new agent" window, so it can
-/// contain either.
-fn escape_rust_str(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-/// Extracts and JSON-unescapes `"<key>":"<value>"` from a flat JSON object —
-/// handling `\"`, `\\`, `\/`, `\n`, `\t`, `\r`, `\b`, `\f`, `\uXXXX`, which a
-/// REAL string value can actually contain (an LLM's reply routinely has
-/// embedded quotes and newlines). `fs-watcher`'s own `field()` helper (this
-/// repo already has one) just finds the next bare quote — correct only for
-/// values guaranteed not to contain an escaped quote or control character,
-/// which this is not.
-///
-/// Known limitation, accepted rather than hidden: a non-BMP character
-/// encoded as a UTF-16 surrogate pair (`😀`, an emoji) decodes
-/// each half independently here and fails on the first one (a lone
-/// surrogate is not a valid Unicode scalar value) — this returns `None` in
-/// that case, which the caller treats as "couldn't get a reply" and falls
-/// back to the canned line. Not silently wrong, just not every possible
-/// reply.
-///
-/// This EXACT algorithm is also embedded, as generated Rust source text,
-/// into every agent this console spawns (`lib_rs`'s own generated
-/// `json_string_value`, embedded as source text) — a wasm32 guest can't call
-/// back into this crate, so the logic is necessarily duplicated as text.
-/// Kept here, and tested here, as the one verifiable reference copy; the
-/// `generated_ai_calling_source_actually_compiles` test below additionally
-/// proves the EMBEDDED copy builds for real. Not called from any non-test
-/// code path in this crate — hence `#[allow(dead_code)]`.
-#[allow(dead_code)]
-fn json_string_value(json: &str, key: &str) -> Option<String> {
-    let needle = format!("\"{key}\"");
-    let after_key = json.find(&needle)? + needle.len();
-    let after_colon = json[after_key..].find(':')? + after_key + 1;
-    let mut chars = json[after_colon..].char_indices();
-    loop {
-        let (_, c) = chars.next()?;
-        if c == '"' {
-            break;
-        }
-        if !c.is_whitespace() {
-            return None;
-        }
-    }
-    let mut out = String::new();
-    loop {
-        let (_, c) = chars.next()?;
-        match c {
-            '"' => return Some(out),
-            '\\' => {
-                let (_, esc) = chars.next()?;
-                match esc {
-                    '"' => out.push('"'),
-                    '\\' => out.push('\\'),
-                    '/' => out.push('/'),
-                    'n' => out.push('\n'),
-                    't' => out.push('\t'),
-                    'r' => out.push('\r'),
-                    'b' => out.push('\u{8}'),
-                    'f' => out.push('\u{c}'),
-                    'u' => {
-                        let hex: String =
-                            (0..4).map(|_| chars.next().map(|(_, c)| c)).collect::<Option<_>>()?;
-                        out.push(char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?);
-                    }
-                    other => out.push(other),
-                }
-            }
-            other => out.push(other),
-        }
-    }
-}
-
-/// Percent-decodes a query-string value (`%XX` hex escapes, `+` as space) —
-/// the counterpart to whatever encodes the user's typed message into
-/// `GET /?q=...` before it reaches an agent. Same duplication reasoning as
-/// `json_string_value`: this EXACT algorithm is also embedded as generated
-/// source in `lib_rs`. Not called from any non-test code path in this crate
-/// — hence `#[allow(dead_code)]`.
-#[allow(dead_code)]
-fn percent_decode(s: &str) -> String {
-    // Byte-level throughout — no `&str` slicing by byte offset, which would
-    // panic on a malformed `%` not actually followed by two ASCII hex
-    // digits (slicing mid multi-byte UTF-8 character). `hex_digit` below
-    // only ever reads single bytes and only interprets them as hex if
-    // they're ASCII, so there's nothing here that can land off a char
-    // boundary.
-    fn hex_digit(b: u8) -> Option<u8> {
-        match b {
-            b'0'..=b'9' => Some(b - b'0'),
-            b'a'..=b'f' => Some(b - b'a' + 10),
-            b'A'..=b'F' => Some(b - b'A' + 10),
-            _ => None,
-        }
-    }
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' if i + 2 < bytes.len() => {
-                match (hex_digit(bytes[i + 1]), hex_digit(bytes[i + 2])) {
-                    (Some(hi), Some(lo)) => {
-                        out.push(hi * 16 + lo);
-                        i += 3;
-                    }
-                    _ => {
-                        out.push(bytes[i]);
-                        i += 1;
-                    }
-                }
-            }
-            b'+' => {
-                out.push(b' ');
-                i += 1;
-            }
-            b => {
-                out.push(b);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// Renders a generated agent's full source: a `GET /?q=<question>` real
-/// chat-completion through `fm serve` (system instruction = description,
-/// user prompt = the decoded question), falling back to the canned line
-/// when there's no question, no `fm-url` configured, or the call fails for
-/// any reason. Verified against a REAL `fm serve` and a REAL deployed
-/// component before this template was written — not just eyeballed:
-/// confirmed the no-query canned path, the real-AI-reply path (including
-/// correct handling of a reply containing embedded quotes), and the
-/// no-`fm-url` fallback path all behave as intended.
-fn lib_rs(name: &str, description: &str) -> String {
-    let canned = if description.is_empty() {
-        format!("Hola! I am {name}, spawned live from the console.")
+    let r = req.send().map_err(|e| e.to_string())?;
+    let status = r.status();
+    let body = r.text().unwrap_or_default();
+    if status.is_success() {
+        Ok(body)
     } else {
-        format!("Hola! I am {name}. {}", escape_rust_str(description))
-    };
-    let system_instructions = if description.is_empty() {
-        format!("You are {name}, a helpful AI agent.")
-    } else {
-        escape_rust_str(description)
-    };
-    format!(
-        r#"//! Rendered live from the console's "spawn new agent" action — see
-//! gpui-console/src/lattice.rs.
-#[allow(warnings)]
-mod bindings;
+        Err(format!("{status}: {}", short(&body, 200)))
+    }
+}
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::config::store as config;
-use bindings::wasi::http::outgoing_handler;
-use bindings::wasi::http::types::{{
-    Fields, Method, OutgoingBody, OutgoingRequest, OutgoingResponse, RequestOptions,
-    ResponseOutparam, Scheme,
-}};
-use bindings::wasi::io::streams::StreamError;
-
-guestio::guest_write_all!();
-
-struct Component;
-
-const DESCRIPTION: &str = "{system_instructions}";
-const CANNED: &str = "{canned}";
-
-/// Ten seconds — long enough for on-device inference, short enough that a
-/// caller waiting on an HTTP request would rather hear "it's down" than wait.
-const TIMEOUT_NS: u64 = 10_000_000_000;
-
-/// Percent-decodes a query-string value (`%XX` hex escapes, `+` as space).
-/// Byte-level throughout — no `&str` slicing by byte offset, which would
-/// panic on a malformed `%` not actually followed by two ASCII hex digits.
-fn percent_decode(s: &str) -> String {{
-    fn hex_digit(b: u8) -> Option<u8> {{
-        match b {{
-            b'0'..=b'9' => Some(b - b'0'),
-            b'a'..=b'f' => Some(b - b'a' + 10),
-            b'A'..=b'F' => Some(b - b'A' + 10),
-            _ => None,
-        }}
-    }}
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {{
-        match bytes[i] {{
-            b'%' if i + 2 < bytes.len() => {{
-                match (hex_digit(bytes[i + 1]), hex_digit(bytes[i + 2])) {{
-                    (Some(hi), Some(lo)) => {{
-                        out.push(hi * 16 + lo);
-                        i += 3;
-                    }}
-                    _ => {{
-                        out.push(bytes[i]);
-                        i += 1;
-                    }}
-                }}
-            }}
-            b'+' => {{
-                out.push(b' ');
-                i += 1;
-            }}
-            b => {{
-                out.push(b);
-                i += 1;
-            }}
-        }}
-    }}
-    String::from_utf8_lossy(&out).into_owned()
-}}
-
-/// Pulls `q`'s value out of a `path_with_query` string like `/?q=hello`.
-fn query_param(path_with_query: &str, key: &str) -> Option<String> {{
-    let query = path_with_query.split_once('?')?.1;
-    for pair in query.split('&') {{
-        if let Some((k, v)) = pair.split_once('=') {{
-            if k == key && !v.is_empty() {{
-                return Some(percent_decode(v));
-            }}
-        }}
-    }}
-    None
-}}
-
-/// A JSON string literal — a question can contain a quote or a backslash,
-/// and this is building a request out of one.
-fn json_str(s: &str) -> String {{
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {{
-        match c {{
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{{:04x}}", c as u32)),
-            c => out.push(c),
-        }}
-    }}
-    out.push('"');
-    out
-}}
-
-/// Extracts and JSON-unescapes `"<key>":"<value>"` from a flat JSON object —
-/// handling the escapes a REAL string value can actually contain (an LLM's
-/// reply routinely has embedded quotes and newlines), not just a bare-quote
-/// search.
-fn json_string_value(json: &str, key: &str) -> Option<String> {{
-    let needle = format!("\"{{key}}\"");
-    let after_key = json.find(&needle)? + needle.len();
-    let after_colon = json[after_key..].find(':')? + after_key + 1;
-    let mut chars = json[after_colon..].char_indices();
-    loop {{
-        let (_, c) = chars.next()?;
-        if c == '"' {{
-            break;
-        }}
-        if !c.is_whitespace() {{
-            return None;
-        }}
-    }}
-    let mut out = String::new();
-    loop {{
-        let (_, c) = chars.next()?;
-        match c {{
-            '"' => return Some(out),
-            '\\' => {{
-                let (_, esc) = chars.next()?;
-                match esc {{
-                    '"' => out.push('"'),
-                    '\\' => out.push('\\'),
-                    '/' => out.push('/'),
-                    'n' => out.push('\n'),
-                    't' => out.push('\t'),
-                    'r' => out.push('\r'),
-                    'b' => out.push('\u{{8}}'),
-                    'f' => out.push('\u{{c}}'),
-                    'u' => {{
-                        let hex: String =
-                            (0..4).map(|_| chars.next().map(|(_, c)| c)).collect::<Option<_>>()?;
-                        out.push(char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?);
-                    }}
-                    other => out.push(other),
-                }}
-            }}
-            other => out.push(other),
-        }}
-    }}
-}}
-
-fn parse_url(url: &str) -> Option<(Scheme, String, String)> {{
-    let (scheme, rest) = if let Some(r) = url.strip_prefix("https://") {{
-        (Scheme::Https, r)
-    }} else if let Some(r) = url.strip_prefix("http://") {{
-        (Scheme::Http, r)
-    }} else {{
-        return None;
-    }};
-    let (authority, path) = match rest.find('/') {{
-        Some(i) => (rest[..i].to_string(), rest[i..].to_string()),
-        None => (rest.to_string(), String::new()),
-    }};
-    Some((scheme, authority, path))
-}}
-
-/// Asks `fm serve` a question, with `DESCRIPTION` as the system instruction.
-/// Any failure anywhere — no `fm-url` configured, a bad URL, a transport
-/// error, an unexpected response shape — returns `None`, which the caller
-/// treats as "fall back to the canned line". Deliberately not a `Result`:
-/// there is no error enum worth inventing, and every failure gets the same
-/// one treatment.
-fn ask_fm(question: &str) -> Option<String> {{
-    let url = match config::get("fm-url") {{
-        Ok(Some(u)) if !u.is_empty() => u,
-        _ => return None,
-    }};
-    let (scheme, authority, base) = parse_url(&url)?;
-
-    let body = format!(
-        "{{{{\"model\":\"system\",\"messages\":[{{{{\"role\":\"system\",\"content\":{{}}}}}},{{{{\"role\":\"user\",\"content\":{{}}}}}}],\"stream\":false}}}}",
-        json_str(DESCRIPTION),
-        json_str(question)
-    );
-
-    let headers = Fields::new();
-    headers.set("content-type", &[b"application/json".to_vec()]).ok()?;
-    let req = OutgoingRequest::new(headers);
-    req.set_method(&Method::Post).ok()?;
-    req.set_scheme(Some(&scheme)).ok()?;
-    req.set_authority(Some(&authority)).ok()?;
-    req.set_path_with_query(Some(&format!("{{base}}/v1/chat/completions"))).ok()?;
-
-    let out = req.body().ok()?;
-    {{
-        let stream = out.write().ok()?;
-        for chunk in body.as_bytes().chunks(4096) {{
-            stream.blocking_write_and_flush(chunk).ok()?;
-        }}
-    }}
-    OutgoingBody::finish(out, None).ok()?;
-
-    let opts = RequestOptions::new();
-    let _ = opts.set_connect_timeout(Some(TIMEOUT_NS));
-    let _ = opts.set_first_byte_timeout(Some(TIMEOUT_NS));
-    let _ = opts.set_between_bytes_timeout(Some(TIMEOUT_NS));
-
-    let fut = outgoing_handler::handle(req, Some(opts)).ok()?;
-    fut.subscribe().block();
-    let resp = fut.get()?.ok()?.ok()?;
-
-    let resp_body = resp.consume().ok()?;
-    let stream = resp_body.stream().ok()?;
-    let mut buf = Vec::new();
-    loop {{
-        match stream.blocking_read(8192) {{
-            Ok(c) if c.is_empty() => break,
-            Ok(c) => buf.extend_from_slice(&c),
-            Err(StreamError::Closed) => break,
-            Err(_) => return None,
-        }}
-    }}
-    let text = String::from_utf8_lossy(&buf).into_owned();
-    json_string_value(&text, "content")
-}}
-
-impl Guest for Component {{
-    fn handle(request: bindings::exports::wasi::http::incoming_handler::IncomingRequest, response_out: ResponseOutparam) {{
-        let question = request.path_with_query().and_then(|p| query_param(&p, "q"));
-
-        let body = match question {{
-            Some(q) => ask_fm(&q).unwrap_or_else(|| CANNED.to_string()),
-            None => CANNED.to_string(),
-        }};
-
-        let headers = Fields::new();
-        let _ = headers.set("content-type", &[b"text/plain".to_vec()]);
-        let resp = OutgoingResponse::new(headers);
-        let _ = resp.set_status_code(200);
-        let out = resp.body().expect("body");
-        ResponseOutparam::set(response_out, Ok(resp));
-        if let Ok(stream) = out.write() {{
-            let _ = write_all(&stream, body.as_bytes());
-            drop(stream);
-        }}
-        let _ = OutgoingBody::finish(out, None);
-    }}
-}}
-
-bindings::export!(Component with_types_in bindings);
-"#
-    )
+/// Is the agent's gateway up and forwarding? Hits `/ping`, which costs no
+/// model call, so polling it while converging spends nothing.
+fn ping_ready(ingress_port: u16, host: &str) -> bool {
+    let http = client();
+    http.get(format!("http://127.0.0.1:{ingress_port}/ping"))
+        .header("host", host)
+        .send()
+        .is_ok_and(|r| r.status().is_success() && r.text().is_ok_and(|t| t == "pong"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn valid_names_pass() {
-        assert!(valid_name_syntax("juan").is_ok());
-        assert!(valid_name_syntax("natasha").is_ok());
-        assert!(valid_name_syntax("weather-bot").is_ok());
+    /// Both e2e tests grant egress through the process-wide `COMP_DEFAULT_EGRESS`
+    /// and then start a Fleet, which reads it — so they must not interleave.
+    static FLEET_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn form(name: &str) -> FormInput {
+        FormInput {
+            name: name.into(),
+            description: "watches the build".into(),
+            ..Default::default()
+        }
     }
 
     #[test]
-    fn empty_name_is_rejected() {
-        assert!(valid_name_syntax("").is_err());
+    fn a_plain_form_makes_a_valid_local_agent_with_memory_tools() {
+        let s = spec_from_form(&form("Build-Watcher")).unwrap();
+        assert_eq!(s.name, "build-watcher");
+        assert_eq!(s.model, ModelSpec::Local);
+        assert!(s.has_capability("remember") && s.has_capability("recall"));
+        assert!(s.triggers.is_empty());
     }
 
     #[test]
-    fn dash_word_must_start_with_a_letter() {
-        // Found the hard way: `cargo component build` rejects this with an
-        // opaque error from a background thread if it isn't caught first.
-        assert!(valid_name_syntax("agent-1").is_err());
-        assert!(valid_name_syntax("1agent").is_err());
-        assert!(valid_name_syntax("weather-bot").is_ok());
+    fn capabilities_parse_name_wit_and_description() {
+        let mut f = form("a");
+        f.capabilities = "http_get; fetch @ os:http/client.get | get a page; summarize | write 3 lines; recall | search carefully".into();
+        let s = spec_from_form(&f).unwrap();
+        let fetch = s.capabilities.iter().find(|c| c.name == "fetch").unwrap();
+        assert_eq!(fetch.wit.as_deref(), Some("os:http/client.get"));
+        assert_eq!(fetch.description, "get a page");
+        assert!(s.has_capability("http_get") && s.has_capability("summarize"));
+        let recall = s.capabilities.iter().filter(|c| c.name == "recall").collect::<Vec<_>>();
+        assert_eq!(recall.len(), 1, "a built-in listed again overrides, never duplicates");
+        assert_eq!(recall[0].description, "search carefully");
     }
 
     #[test]
-    fn quotes_and_backslashes_are_escaped() {
-        // A description containing either would otherwise prematurely
-        // close the generated component's string literal (quote) or escape
-        // the following character (backslash), breaking the build.
-        assert_eq!(escape_rust_str(r#"says "hello""#), r#"says \"hello\""#);
-        assert_eq!(escape_rust_str(r"a\b"), r"a\\b");
-    }
-
-    #[test]
-    fn empty_description_falls_back_to_the_default_line() {
-        let src = lib_rs("juan", "");
-        assert!(src.contains("Hola! I am juan, spawned live from the console."));
-    }
-
-    #[test]
-    fn description_is_embedded_in_the_generated_reply() {
-        let src = lib_rs("natasha", "tells the weather");
-        assert!(src.contains("Hola! I am natasha. tells the weather"));
-    }
-
-    #[test]
-    fn percent_decode_handles_hex_escapes_and_plus() {
-        assert_eq!(percent_decode("hello"), "hello");
-        assert_eq!(percent_decode("hello%20world"), "hello world");
-        assert_eq!(percent_decode("a+b"), "a b");
-        assert_eq!(percent_decode("100%25"), "100%");
-        // A malformed `%` not followed by two hex digits is passed through
-        // literally rather than panicking or eating following characters.
-        assert_eq!(percent_decode("50%"), "50%");
-        assert_eq!(percent_decode("50%zz"), "50%zz");
-    }
-
-    #[test]
-    fn json_string_value_handles_real_escapes() {
-        let json = r#"{"choices":[{"message":{"content":"He said \"hi\" and\nleft.","role":"assistant"}}]}"#;
-        assert_eq!(
-            json_string_value(json, "content").as_deref(),
-            Some("He said \"hi\" and\nleft.")
+    fn triggers_model_and_policy_fields() {
+        let mut f = form("a");
+        f.schedules = "*/10 * * * * :: check the feed; @hourly :: summarize".into();
+        f.events = "deploy, alert".into();
+        f.hosts = "example.com".into();
+        f.auto_approve = "http_get".into();
+        f.model = "anthropic:claude-haiku-4-5-20251001".into();
+        let s = spec_from_form(&f).unwrap();
+        assert_eq!(s.triggers.len(), 4);
+        assert!(
+            matches!(&s.triggers[0], Trigger::Schedule { cron, prompt } if cron == "*/10 * * * *" && prompt == "check the feed")
         );
+        assert_eq!(s.allow_hosts, ["example.com"]);
+        assert_eq!(s.auto_approve, ["http_get"]);
+        assert!(matches!(s.model, ModelSpec::Anthropic { .. }));
     }
 
     #[test]
-    fn json_string_value_handles_backslash_and_tab() {
-        let json = r#"{"content":"a\\b\tc"}"#;
-        assert_eq!(json_string_value(json, "content").as_deref(), Some("a\\b\tc"));
+    fn bad_input_is_refused_with_a_reason() {
+        assert!(spec_from_form(&form("agent-1")).is_err());
+        let mut f = form("a");
+        f.schedules = "every day".into();
+        assert!(spec_from_form(&f).unwrap_err().contains("::"));
+        f.schedules = "61 * * * * :: x".into();
+        assert!(spec_from_form(&f).is_err());
+        f.schedules.clear();
+        f.model = "gpt".into();
+        assert!(spec_from_form(&f).is_err());
+        f.model.clear();
+        f.description = "  ".into();
+        assert!(spec_from_form(&f).is_err());
     }
 
+    /// The whole claim, for real: the generic gateway deployed through
+    /// platform-domain, reached over the real ingress, forwarding out of the
+    /// tenant sandbox to the runtime (which only works if the operator's
+    /// `default-egress` actually reached the manifest), and a cron trigger
+    /// firing with nobody calling anything. Needs the built host/reconciler
+    /// binaries and `cargo component`, like every Fleet test.
     #[test]
-    fn json_string_value_handles_unicode_escape() {
-        // A is 'A'.
-        let json = r#"{"content":"ABC"}"#;
-        assert_eq!(json_string_value(json, "content").as_deref(), Some("ABC"));
-    }
+    fn a_gateway_agent_answers_over_the_lattice_and_a_schedule_fires_unprompted() {
+        let _env = FLEET_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("gpui-console-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
 
-    #[test]
-    fn json_string_value_missing_key_is_none() {
-        assert_eq!(json_string_value(r#"{"other":"x"}"#, "content"), None);
-    }
+        let mut cfg = Config::new(tmp.join("runtime"));
+        cfg.approval_timeout = Duration::from_secs(5);
+        let rt = Runtime::new(cfg).unwrap();
+        let addr = server::serve(rt.clone(), "127.0.0.1:0", "t".into()).unwrap();
+        rt.start_scheduler();
+        std::env::set_var("COMP_DEFAULT_EGRESS", format!("127.0.0.1:{}", addr.port()));
 
-    /// The strongest verification available short of a live `fm serve`: the
-    /// REAL `lib_rs`/`cargo_toml`/`world_wit` templates, with the AI-calling
-    /// logic they embed, actually compile as a wasm32 component. This is
-    /// slow (invokes `cargo component build`) and needs `cargo component` on
-    /// PATH, same prerequisite the console itself already has.
-    #[test]
-    fn generated_ai_calling_source_actually_compiles() {
-        let name = "lattice-rs-build-check-tmp";
-        let dir = repo_root().join("components").join(name);
-        if dir.exists() {
-            std::fs::remove_dir_all(&dir).ok();
-        }
-        let wasm = scaffold_build_and_clean(name, "a test agent, for build verification only");
-        assert!(!dir.exists(), "scaffold_build_and_clean must clean up its directory either way");
-        match wasm {
-            Ok(bytes) => assert!(!bytes.is_empty(), "built wasm was empty"),
-            Err(e) => panic!("generated component failed to build:\n{e}"),
-        }
-    }
-
-    /// The real end-to-end claim this whole feature is for: a spawned agent,
-    /// told (via its description) to only ever talk about one specific
-    /// thing, answers a REAL question about something else — in character —
-    /// over the actual lattice. Not just "non-empty", not just "not the
-    /// canned line": the reply has to actually reflect the instruction,
-    /// which only a real model, actually following `DESCRIPTION` as its
-    /// system prompt, would produce.
-    ///
-    /// Currently `#[ignore]`d: it fails not on a code bug but on a genuine
-    /// platform limitation found by actually running this — a tenant's
-    /// egress allow-list is stamped ONCE, as `"egress": []`, when
-    /// `platform-domain`'s own `register()` creates its `ACCOUNTS` plan
-    /// document, and there is no API anywhere in `platform-domain` to change
-    /// it afterward (deliberately — `host/src/tenant.rs`'s own doc on
-    /// `StartCommand::egress` says "stamped by the platform, never authored
-    /// by a tenant", ADR-0008). `gpui-console`'s host-level `--egress`/
-    /// `--allow-private-egress` flags (see `boot()`) only widen
-    /// `comp-host`'s OWN global private-address check — confirmed via a live
-    /// run: `comp-host`'s own log prints `egress = 127.0.0.1` at startup,
-    /// and the generated agent's outbound call is STILL denied
-    /// (`ErrorCode::HttpRequestDenied`, confirmed via the node's own log)
-    /// because the PER-TENANT allow-list it's actually checked against is
-    /// empty regardless. Re-enable once that's resolved, one way or another
-    /// — this test is what will prove it.
-    #[test]
-    #[ignore = "blocked on a real platform gap: no API grants a tenant egress after registration (see doc comment)"]
-    fn a_spawned_agent_answers_a_real_question_via_fm() {
-        if !fm::is_available() {
-            eprintln!("skipping: fm not available on this platform/machine");
-            return;
-        }
-
-        let dir = std::env::temp_dir().join(format!(
-            "gpui-console-fm-test-{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ));
         let host_args = vec![
             "--egress".to_string(),
             "127.0.0.1".to_string(),
             "--allow-private-egress".to_string(),
         ];
-        let fleet = Fleet::start_with_platform_in_dir("fmtest", 1, dir.clone(), &host_args);
+        let fleet = Fleet::start_with_platform_in_dir("e2e", 1, tmp.join("lattice"), &host_args);
         let base = fleet.platform_url();
-        let token = register_and_login(&base, "fmtest@agents.test", "password123");
-        let fm_server =
-            fm::FmServer::start(Duration::from_secs(20)).expect("fm serve should start");
+        let token = register_and_login(&base, "e2e@agents.test", "password123");
 
-        let name = "fmtestagent";
-        let description = "You only ever talk about bananas, no matter what is asked.";
-        let wasm = scaffold_build_and_clean(name, description).expect("build should succeed");
-        upload_component(&base, &token, name, wasm, &["fm-url"]).expect("upload should succeed");
-        let dep_id = create_deployment(&base, &token, name, Some(fm_server.base_url()))
-            .expect("deploy should succeed");
+        let mut spec = AgentSpec::new("echoer", "answers briefly");
+        spec.model = ModelSpec::Mock { replies: vec!["pong from the runtime".to_string(); 20] };
+        spec.triggers.push(Trigger::Schedule { cron: "@every 4s".into(), prompt: "tick".into() });
+        rt.create_agent(spec).unwrap();
 
-        let host = format!("{name}.fmtest.test");
-        let deadline = std::time::Instant::now() + Duration::from_secs(60);
-        let mut answer = None;
-        while std::time::Instant::now() < deadline {
-            save_deployment(&base, &token, &dep_id);
-            if let Some(a) = ping(fleet.ingress_port, &host, Some("What is the capital of France?"))
-            {
-                answer = Some(a);
-                break;
-            }
+        upload_component(
+            &base,
+            &token,
+            "echoer",
+            gateway_wasm().unwrap(),
+            &["runtime-url", "agent"],
+        )
+        .unwrap();
+        let dep = create_deployment(
+            &base,
+            &token,
+            "echoer",
+            &format!("http://127.0.0.1:{}", addr.port()),
+        )
+        .unwrap();
+
+        let host = "echoer.e2e.test";
+        let deadline = std::time::Instant::now() + Duration::from_secs(90);
+        while !ping_ready(fleet.ingress_port, host) {
+            save_deployment(&base, &token, &dep);
+            assert!(
+                std::time::Instant::now() < deadline,
+                "gateway never came up:\n{}",
+                fleet.platform_log()
+            );
             std::thread::sleep(Duration::from_secs(2));
         }
-        let answer = answer.expect("agent never answered");
-        println!("real agent reply: {answer}");
-
-        let canned = format!("Hola! I am {name}. {description}");
-        assert_ne!(answer, canned, "got the canned fallback line, not a real AI reply");
+        // /ping cost nothing: no run yet.
         assert!(
-            answer.to_lowercase().contains("banana"),
-            "expected the agent's persona (bananas) to show through a real AI reply, got: {answer:?}"
+            rt.store().runs("echoer", 5).is_empty()
+                || rt.store().runs("echoer", 5).iter().all(|r| r.trigger != "http")
         );
 
-        drop(fm_server);
+        let a = ping(fleet.ingress_port, host, Some("hello there"), Duration::from_secs(30));
+        let answer = a.expect("the gateway should reach the runtime and relay its answer");
+        assert_eq!(answer, "pong from the runtime");
+        let http_runs: Vec<_> =
+            rt.store().runs("echoer", 20).into_iter().filter(|r| r.trigger == "http").collect();
+        assert_eq!(http_runs.len(), 1);
+        assert_eq!(
+            http_runs[0].input, "hello there",
+            "the question must arrive percent-decoded and intact"
+        );
+
+        // Schedule: fired without any request.
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        while !rt.store().runs("echoer", 20).iter().any(|r| r.trigger.starts_with("schedule")) {
+            assert!(std::time::Instant::now() < deadline, "the @every trigger never fired");
+            std::thread::sleep(Duration::from_millis(500));
+        }
+
+        // Pausing closes the front door too.
+        rt.set_paused("echoer", true).unwrap();
+        assert!(ping(fleet.ingress_port, host, Some("x"), Duration::from_secs(10)).is_err());
+
+        rt.shutdown();
         drop(fleet);
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The same path with the REAL on-device model instead of a script: an
+    /// agent told a fact over the lattice must choose the `remember` tool by
+    /// itself, and a second question must be answered from that memory.
+    /// Skipped where `fm` doesn't exist (anything but Apple silicon macOS).
+    #[test]
+    fn a_gateway_agent_with_the_real_model_remembers_across_requests() {
+        if !fm::is_available() {
+            eprintln!("skipping: fm not available on this machine");
+            return;
+        }
+        let _env = FLEET_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = std::env::temp_dir().join(format!("gpui-console-e2e-fm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let fm_server = fm::FmServer::start(Duration::from_secs(30)).expect("fm serve");
+
+        let mut cfg = Config::new(tmp.join("runtime"));
+        cfg.local =
+            LocalModel { base_url: Some(fm_server.base_url().to_string()), model: "system".into() };
+        let rt = Runtime::new(cfg).unwrap();
+        let addr = server::serve(rt.clone(), "127.0.0.1:0", "t".into()).unwrap();
+        std::env::set_var("COMP_DEFAULT_EGRESS", format!("127.0.0.1:{}", addr.port()));
+        let host_args = vec![
+            "--egress".to_string(),
+            "127.0.0.1".to_string(),
+            "--allow-private-egress".to_string(),
+        ];
+        let fleet = Fleet::start_with_platform_in_dir("e2efm", 1, tmp.join("lattice"), &host_args);
+        let base = fleet.platform_url();
+        let token = register_and_login(&base, "e2efm@agents.test", "password123");
+
+        rt.create_agent(AgentSpec::new(
+            "scribe",
+            "You are a note keeper. When the user tells you a fact, save it with the remember tool. When asked about something, use recall first.",
+        ))
+        .unwrap();
+        upload_component(
+            &base,
+            &token,
+            "scribe",
+            gateway_wasm().unwrap(),
+            &["runtime-url", "agent"],
+        )
+        .unwrap();
+        let dep = create_deployment(
+            &base,
+            &token,
+            "scribe",
+            &format!("http://127.0.0.1:{}", addr.port()),
+        )
+        .unwrap();
+        let host = "scribe.e2efm.test";
+        let deadline = std::time::Instant::now() + Duration::from_secs(90);
+        while !ping_ready(fleet.ingress_port, host) {
+            save_deployment(&base, &token, &dep);
+            assert!(std::time::Instant::now() < deadline, "gateway never came up");
+            std::thread::sleep(Duration::from_secs(2));
+        }
+
+        let t = Duration::from_secs(120);
+        ping(fleet.ingress_port, host, Some("My dog is called Biscuit. Please remember that."), t)
+            .unwrap();
+        let saved = rt.store().memories("scribe");
+        assert!(!saved.is_empty(), "the model never chose the remember tool");
+        assert!(saved.iter().any(|m| m.text.to_lowercase().contains("biscuit")), "{saved:?}");
+
+        let answer = ping(fleet.ingress_port, host, Some("What is my dog's name?"), t).unwrap();
+        assert!(answer.to_lowercase().contains("biscuit"), "answer ignored the memory: {answer:?}");
+
+        rt.shutdown();
+        drop(fleet);
+        drop(fm_server);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

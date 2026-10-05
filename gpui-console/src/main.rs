@@ -1,27 +1,21 @@
-//! A GPUI desktop console for the lattice's dynamic agent CRUD.
+//! A GPUI desktop console for autonomous agents.
 //!
-//! Proves the same claim `reconciler/tests/juan_live.rs` proves — that
-//! platform-domain's HTTP API + comp-reconciler's convergence loop can take a
-//! brand-new component from nonexistent to live-and-serving, with no
-//! wasmCloud/wadm/Kubernetes — but driven from a GUI instead of a NATS
-//! message: agents in a sidebar on the left, each one's conversation in the
-//! main panel, chat-app style. The main window is for EXISTING agents only;
-//! "+ new agent" opens a separate setup window, same shape as a real chat
-//! app's "new conversation" dialog, rather than repurposing the same
+//! An agent has a name, a description, capabilities (text, optionally tied to
+//! a WIT ref), a model, and triggers — HTTP through the lattice, cron
+//! schedules, and events. The runtime (`agent-runtime`, embedded here) runs
+//! each as a bounded tool-using loop with memory; this window shows what they
+//! do, including runs nobody typed (a schedule firing, another agent calling),
+//! and is where a human approves the sensitive tool calls an agent asks for.
+//! Agents persist across launches. Each also gets an HTTP front door on the
+//! lattice: one shared gateway component deployed under its name.
+//!
+//! "+ new agent" opens a separate setup window rather than repurposing the
 //! conversation pane as a compose box.
 //!
-//! Boots its own throwaway local dev lattice (`comp_reconciler::fleet::Fleet`)
-//! on launch, exactly like the test does. Pointing this at an already-running,
-//! persistent deployment instead of an ephemeral local one is a deliberate
-//! follow-up, not done here — which also means an agent you create does NOT
-//! survive quitting and relaunching the console; the whole lattice it lives
-//! on gets torn down and a fresh one booted next time.
-//!
-//! The message field below is a deliberately minimal hand-rolled text input
-//! (append-on-type, backspace-on-delete, whole-window key capture) — GPUI
-//! ships no built-in text field; its own `examples/input.rs` is a ~750-line
-//! full IME/selection/clipboard-capable editor, which is out of scope for
-//! one field in an MVP console.
+//! The text fields are deliberately minimal hand-rolled inputs (append-on-
+//! type, backspace-on-delete, whole-window key capture) — GPUI ships no
+//! built-in text field; its own `examples/input.rs` is ~750 lines of IME/
+//! selection/clipboard handling, out of scope here.
 
 mod fm;
 mod lattice;
@@ -31,7 +25,7 @@ use gpui::{
     Focusable, KeyDownEvent, SharedString, Window, WindowBounds, WindowOptions,
 };
 
-use lattice::{AgentRow, Kind, Lattice, Message};
+use lattice::{spec_from_form, AgentRow, FormInput, Kind, Lattice, Message, View};
 
 /// Any printable ASCII character, plus space — covers punctuation like `?`
 /// that an earlier, narrower whitelist (letters/digits plus a fixed handful
@@ -85,10 +79,7 @@ impl Console {
     }
 
     fn select(&mut self, name: String, cx: &mut Context<Self>) {
-        self.lattice.update(cx, |l, cx| {
-            l.selected = Some(name);
-            cx.notify();
-        });
+        self.lattice.update(cx, |l, cx| l.select(name, cx));
     }
 
     /// Opens a separate, small "new agent" window — a setup dialog, not the
@@ -97,7 +88,7 @@ impl Console {
     /// sidebar (reactive via `cx.observe`) picks it up on its own.
     fn open_new_agent_window(&mut self, cx: &mut Context<Self>) {
         let lattice = self.lattice.clone();
-        let bounds = Bounds::centered(None, size(px(460.0), px(300.0)), cx);
+        let bounds = Bounds::centered(None, size(px(560.0), px(720.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -121,15 +112,33 @@ impl Render for Console {
         let status_line = state.status_line.clone();
         let agents = state.agents.clone();
         let selected = state.selected.clone();
+        let approvals = state.approvals.clone();
+        let view = state.view;
+        let detail = state.detail.clone();
         let message_field = format!("{}_", self.message);
 
         let selected_agent =
             selected.as_ref().and_then(|name| agents.iter().find(|a| &a.name == name));
         let header = match &selected_agent {
-            Some(a) => format!("{}  ·  {}", a.name, a.status),
+            Some(a) => {
+                format!("{}  ·  {}{}", a.name, a.status, if a.paused { "  ·  paused" } else { "" })
+            }
             None => "no agent selected".to_string(),
         };
         let description = selected_agent.map(|a| a.description.clone()).filter(|d| !d.is_empty());
+        let facts = selected_agent.map(|a| {
+            format!(
+                "model: {}   ·   can: {}   ·   triggers: {}",
+                a.model,
+                a.capabilities.join(", "),
+                if a.triggers.is_empty() {
+                    "http only".to_string()
+                } else {
+                    format!("http, {}", a.triggers.join(", "))
+                }
+            )
+        });
+        let paused = selected_agent.is_some_and(|a| a.paused);
         let transcript: Vec<Message> =
             selected_agent.map(|a| a.messages.clone()).unwrap_or_default();
         let has_selection = selected_agent.is_some();
@@ -215,6 +224,61 @@ impl Render for Console {
                             .when_some(description, |main, d| {
                                 main.child(div().text_sm().text_color(rgb(0x999999)).child(d))
                             })
+                            .when_some(facts, |main, f| {
+                                main.child(div().text_xs().text_color(rgb(0x777777)).child(f))
+                            })
+                            .when(has_selection, |main| {
+                                main.child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .gap_2()
+                                        .child(tab_button(
+                                            "tab-chat",
+                                            "conversation",
+                                            view == View::Chat,
+                                            cx,
+                                            |l, cx| l.set_view(View::Chat, cx),
+                                        ))
+                                        .child(tab_button(
+                                            "tab-memory",
+                                            "memory",
+                                            view == View::Memory,
+                                            cx,
+                                            |l, cx| l.set_view(View::Memory, cx),
+                                        ))
+                                        .child(tab_button(
+                                            "tab-spec",
+                                            "spec",
+                                            view == View::Spec,
+                                            cx,
+                                            |l, cx| l.set_view(View::Spec, cx),
+                                        ))
+                                        .child(div().flex_1())
+                                        .child(action_button(
+                                            "pause-resume",
+                                            if paused { "resume" } else { "pause" },
+                                            rgb(0x6a5a2d),
+                                            cx,
+                                            move |l, cx| {
+                                                if let Some(n) = l.selected.clone() {
+                                                    l.set_paused(&n, !paused, cx);
+                                                }
+                                            },
+                                        ))
+                                        .child(action_button(
+                                            "delete",
+                                            "delete",
+                                            rgb(0x6a2d2d),
+                                            cx,
+                                            |l, cx| {
+                                                if let Some(n) = l.selected.clone() {
+                                                    l.delete_agent(n, cx);
+                                                }
+                                            },
+                                        )),
+                                )
+                            })
                             .child(
                                 div()
                                     .id("transcript")
@@ -223,10 +287,46 @@ impl Render for Console {
                                     .gap_2()
                                     .flex_1()
                                     .overflow_scroll()
-                                    .children(transcript.into_iter().map(render_message)),
+                                    .when(view == View::Chat, |t| {
+                                        t.children(transcript.into_iter().map(render_message))
+                                    })
+                                    .when(view != View::Chat, |t| {
+                                        t.children(detail.into_iter().map(|l| {
+                                            div().text_sm().text_color(rgb(0xcccccc)).child(l)
+                                        }))
+                                    }),
                             )
+                            .children(approvals.into_iter().map(|p| {
+                                let id = p.id;
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .gap_2()
+                                    .items_center()
+                                    .p_2()
+                                    .rounded_md()
+                                    .bg(rgb(0x4a3d1a))
+                                    .child(div().flex_1().child(format!(
+                                        "{} wants to run {} {}",
+                                        p.agent, p.tool, p.args
+                                    )))
+                                    .child(action_button(
+                                        SharedString::from(format!("approve-{id}")),
+                                        "approve",
+                                        rgb(0x2d6a4f),
+                                        cx,
+                                        move |l, cx| l.resolve_approval(id, true, cx),
+                                    ))
+                                    .child(action_button(
+                                        SharedString::from(format!("deny-{id}")),
+                                        "deny",
+                                        rgb(0x6a2d2d),
+                                        cx,
+                                        move |l, cx| l.resolve_approval(id, false, cx),
+                                    ))
+                            }))
                             .child(div().text_sm().text_color(rgb(0x999999)).child(status_line))
-                            .when(has_selection, |main| {
+                            .when(has_selection && view == View::Chat, |main| {
                                 main.child(
                                     div()
                                         .flex()
@@ -262,6 +362,42 @@ impl Render for Console {
                     ),
             )
     }
+}
+
+fn tab_button(
+    id: &'static str,
+    label: &'static str,
+    active: bool,
+    cx: &Context<Console>,
+    f: impl Fn(&mut Lattice, &mut Context<Lattice>) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .cursor_pointer()
+        .bg(if active { rgb(0x2a4a6a) } else { rgb(0x2a2a2a) })
+        .child(label)
+        .on_click(cx.listener(move |this, _, _, cx| this.lattice.update(cx, |l, cx| f(l, cx))))
+}
+
+fn action_button(
+    id: impl Into<SharedString>,
+    label: &'static str,
+    color: gpui::Rgba,
+    cx: &Context<Console>,
+    f: impl Fn(&mut Lattice, &mut Context<Lattice>) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(id.into())
+        .px_2()
+        .py_1()
+        .rounded_md()
+        .cursor_pointer()
+        .bg(color)
+        .child(label)
+        .on_click(cx.listener(move |this, _, _, cx| this.lattice.update(cx, |l, cx| f(l, cx))))
 }
 
 fn status_color(status: &str) -> gpui::Rgba {
@@ -344,29 +480,30 @@ fn render_message(m: Message) -> impl IntoElement {
         .into_any_element()
 }
 
-/// Which of the "+ new agent" window's two fields is currently receiving
-/// keystrokes. Tab toggles between them; clicking a field also focuses it.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Field {
-    Name,
-    Description,
-}
+/// The "+ new agent" window's fields, in tab order: (label, hint). Only the
+/// first two are required; everything else has a working default.
+const FIELDS: [(&str, &str); 8] = [
+    ("name", "unique; lowercase words joined by dashes"),
+    ("description", "what it is for — becomes its system prompt"),
+    ("capabilities", "name [@ wit-ref] [| what it does]; … — e.g. http_get; write_file; summarize | write 3 lines; agent:other"),
+    ("schedules", "cron :: task; … — e.g. */10 * * * * :: check the feed   (also @hourly, @every 5m)"),
+    ("events", "topics it wakes on, comma-separated"),
+    ("allowed hosts", "for http_get, comma-separated; empty = none"),
+    ("model", "blank/local, anthropic:<model>, or openai:<base-url>|<model>"),
+    ("auto-approve", "sensitive tools it may use without asking (http_get, write_file)"),
+];
 
 /// The "+ new agent" setup window: a small, separate dialog rather than the
-/// main window's conversation pane repurposed as a compose box. A name
-/// (unique, validated up front — the same rule `Lattice::validate_name`
-/// enforces again before actually spawning, so this is a UX convenience, not
-/// the only check) and a description (the agent's purpose — becomes its
-/// canned reply and the first line of its conversation). Submitting spawns
-/// the agent on the shared `Lattice` entity and closes itself — the main
-/// window's sidebar picks the new agent up on its own via `cx.observe`,
-/// since both windows' views read the same entity.
+/// main window's conversation pane repurposed as a compose box. Submitting
+/// builds an `AgentSpec` (`lattice::spec_from_form` — the same checks the
+/// runtime applies, so a bad cron expression is refused here, not discovered
+/// as an agent that never fires), spawns it on the shared `Lattice` entity and
+/// closes itself; the main window's sidebar picks the new agent up on its own.
 struct NewAgentForm {
     lattice: Entity<Lattice>,
     focus_handle: FocusHandle,
-    name: String,
-    description: String,
-    field: Field,
+    values: [String; 8],
+    field: usize,
     error: Option<String>,
 }
 
@@ -374,38 +511,24 @@ impl NewAgentForm {
     fn new(lattice: Entity<Lattice>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle);
-        Self {
-            lattice,
-            focus_handle,
-            name: String::new(),
-            description: String::new(),
-            field: Field::Name,
-            error: None,
-        }
-    }
-
-    fn active_field(&mut self) -> &mut String {
-        match self.field {
-            Field::Name => &mut self.name,
-            Field::Description => &mut self.description,
-        }
+        Self { lattice, focus_handle, values: Default::default(), field: 0, error: None }
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event.keystroke.key.as_str() {
             "backspace" => {
-                self.active_field().pop();
+                self.values[self.field].pop();
             }
             "tab" => {
-                self.field =
-                    if self.field == Field::Name { Field::Description } else { Field::Name };
+                let step = if event.keystroke.modifiers.shift { FIELDS.len() - 1 } else { 1 };
+                self.field = (self.field + step) % FIELDS.len();
             }
             "enter" => self.create(window, cx),
             "escape" => window.remove_window(),
             _ => {
                 if let Some(ch) = &event.keystroke.key_char {
                     if ch.chars().all(is_typable) {
-                        self.active_field().push_str(ch);
+                        self.values[self.field].push_str(ch);
                     }
                 }
             }
@@ -414,23 +537,31 @@ impl NewAgentForm {
     }
 
     fn create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // `extract_name`'s old job (guessing a name out of free text) is
-        // gone — the name is its own field now, and sanitized the same way
-        // that guess used to be, so e.g. "Natasha" still becomes "natasha".
-        let name: String = self
-            .name
-            .trim()
-            .chars()
-            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-            .collect::<String>()
-            .to_lowercase();
-        if let Err(e) = self.lattice.read(cx).validate_name(&name) {
+        let v = &self.values;
+        let input = FormInput {
+            name: v[0].clone(),
+            description: v[1].clone(),
+            capabilities: v[2].clone(),
+            schedules: v[3].clone(),
+            events: v[4].clone(),
+            hosts: v[5].clone(),
+            model: v[6].clone(),
+            auto_approve: v[7].clone(),
+        };
+        let spec = match spec_from_form(&input) {
+            Ok(s) => s,
+            Err(e) => {
+                self.error = Some(e);
+                cx.notify();
+                return;
+            }
+        };
+        if let Err(e) = self.lattice.read(cx).validate_name(&spec.name) {
             self.error = Some(e);
             cx.notify();
             return;
         }
-        let description = std::mem::take(&mut self.description);
-        self.lattice.update(cx, |l, cx| l.spawn_agent(name, description, cx));
+        self.lattice.update(cx, |l, cx| l.spawn_agent(spec, cx));
         window.remove_window();
     }
 }
@@ -441,12 +572,24 @@ impl Focusable for NewAgentForm {
     }
 }
 
-fn form_field(label: &'static str, value: String, active: bool) -> impl IntoElement {
+fn form_field(
+    label: &'static str,
+    hint: &'static str,
+    value: String,
+    active: bool,
+) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
         .gap_1()
-        .child(div().text_xs().text_color(rgb(0x999999)).child(label))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .child(div().text_xs().text_color(rgb(0xcccccc)).child(label))
+                .child(div().text_xs().text_color(rgb(0x777777)).child(hint)),
+        )
         .child(
             div()
                 .px_2()
@@ -461,9 +604,6 @@ fn form_field(label: &'static str, value: String, active: bool) -> impl IntoElem
 
 impl Render for NewAgentForm {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let name = self.name.clone();
-        let description = self.description.clone();
-        let field = self.field;
         let error = self.error.clone();
         div()
             .id("new-agent-form")
@@ -472,37 +612,20 @@ impl Render for NewAgentForm {
             .size_full()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap_2()
             .p_4()
             .bg(rgb(0x1e1e1e))
             .text_color(rgb(0xe0e0e0))
-            .child(div().text_lg().child("new agent"))
-            .child(
+            .child(div().text_lg().child("new agent  ·  tab / shift-tab to move, enter to create"))
+            .children(FIELDS.iter().enumerate().map(|(i, (label, hint))| {
                 div()
-                    .id("field-name")
-                    .child(form_field(
-                        "name (unique) — tab to switch fields",
-                        name,
-                        field == Field::Name,
-                    ))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.field = Field::Name;
+                    .id(SharedString::from(format!("field-{i}")))
+                    .child(form_field(label, hint, self.values[i].clone(), self.field == i))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.field = i;
                         cx.notify();
-                    })),
-            )
-            .child(
-                div()
-                    .id("field-description")
-                    .child(form_field(
-                        "description — what it's for; becomes its reply",
-                        description,
-                        field == Field::Description,
-                    ))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.field = Field::Description;
-                        cx.notify();
-                    })),
-            )
+                    }))
+            }))
             .when_some(error, |form, e| {
                 form.child(div().text_sm().text_color(rgb(0xcc8888)).child(e))
             })
@@ -514,7 +637,7 @@ impl Render for NewAgentForm {
                     .rounded_md()
                     .bg(rgb(0x2d6a4f))
                     .cursor_pointer()
-                    .child("create (or press enter)")
+                    .child("create")
                     .on_click(cx.listener(|this, _, window, cx| this.create(window, cx))),
             )
     }

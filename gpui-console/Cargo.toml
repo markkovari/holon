@@ -3,7 +3,7 @@ name = "gpui-console"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "A GPUI desktop console for the lattice's dynamic agent CRUD: lists deployed agents, spawns new ones live via platform-domain, and shows each one's last output. Boots its own local dev lattice (reconciler/src/fleet.rs's Fleet) on launch."
+description = "A GPUI desktop console for autonomous agents: create them with capabilities and schedule/event triggers, watch them work, approve what they ask to do. Boots its own local dev lattice (reconciler/src/fleet.rs's Fleet) and embeds the agent runtime."
 
 # Native, and deliberately outside the components/ (wasm32) workspace — same
 # arrangement as cli/, host/ and reconciler/. Path-depends on comp-reconciler,
@@ -16,6 +16,9 @@ path = "src/main.rs"
 
 [dependencies]
 comp-reconciler = { path = "../reconciler" }
+# Agents are specs + a tool-using loop + triggers, run by this crate (also
+# available headless as `agent-runtime`). The console embeds it in-process.
+agent-runtime = { path = "../agent-runtime" }
 # `runtime_shaders`: this machine has only Xcode Command Line Tools, not full
 # Xcode.app, so `xcrun metal` (gpui's default AOT shader compile) isn't
 # available at build time. This feature defers shader compilation to runtime
