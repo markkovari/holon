@@ -1,0 +1,31 @@
+[workspace]
+
+[package]
+name = "agent-gateway"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "The lattice-addressable front door of every autonomous agent: forwards an HTTP request to the agent runtime, naming the agent from deployment config. One generic component, deployed once per agent — an agent's persona, tools and memory live in the runtime, so editing one never rebuilds anything."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+guestio = { path = "../../components/guestio" }
+wit-bindgen-rt = { version = "0.41", features = ["bitflags"] }
+
+[package.metadata.component]
+package = "holon:agent-gateway"
+
+[package.metadata.component.target]
+path = "wit"
+world = "gateway"
+
+[package.metadata.component.target.dependencies]
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
