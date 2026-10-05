@@ -66,6 +66,9 @@ fn default_steps() -> u32 {
 fn default_tokens() -> u64 {
     20_000
 }
+fn default_result_chars() -> usize {
+    8_000
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AgentSpec {
@@ -91,6 +94,11 @@ pub struct AgentSpec {
     /// Tokens (in + out) one run may spend before it is stopped.
     #[serde(default = "default_tokens")]
     pub max_tokens: u64,
+    /// Longest tool result, in characters, shown to the model; the rest is cut.
+    /// Lower it for small-context models (Apple's on-device model has about 4k
+    /// tokens, and a page of numbers costs far more than its length suggests).
+    #[serde(default = "default_result_chars")]
+    pub max_result_chars: usize,
     /// Tokens per rolling 24h across all runs; 0 = unlimited.
     #[serde(default)]
     pub daily_token_budget: u64,
@@ -119,6 +127,7 @@ impl AgentSpec {
             model: ModelSpec::Local,
             max_steps: default_steps(),
             max_tokens: default_tokens(),
+            max_result_chars: default_result_chars(),
             daily_token_budget: 0,
             paused: false,
         }

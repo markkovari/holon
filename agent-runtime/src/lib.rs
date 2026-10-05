@@ -3,6 +3,7 @@
 
 pub mod agent;
 pub mod cron;
+pub mod html;
 pub mod model;
 pub mod runtime;
 pub mod server;

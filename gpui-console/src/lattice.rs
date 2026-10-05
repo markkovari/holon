@@ -1166,4 +1166,166 @@ mod tests {
         drop(fm_server);
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    /// Runs WHATEVER agents a config directory describes, in parallel, over a
+    /// real lattice — the agents are configuration, not part of this repo.
+    /// Set `HOLON_AGENT_CONFIG_DIR` to a directory holding `agents/*.json`
+    /// (the same specs the runtime reads) and an `e2e.json`:
+    ///
+    /// ```json
+    /// { "window_secs": 110,
+    ///   "min_runs": { "heartbeat": 4 },
+    ///   "asks": { "rower": { "q": "a question", "any_of": ["expected", "substrings"] } } }
+    /// ```
+    ///
+    /// Every agent gets a lattice front door. Each `ask` is sent over the real
+    /// ingress while the scheduled agents keep firing; afterwards every agent
+    /// in `min_runs` must have that many successful runs, every ask must have
+    /// been answered with one of its `any_of` substrings, and some two agents'
+    /// runs must have overlapped in time (they really ran in parallel).
+    /// Skipped when the variable is unset or `fm` isn't available.
+    #[test]
+    fn configured_agents_run_in_parallel_over_the_lattice() {
+        let Some(dir) = std::env::var_os("HOLON_AGENT_CONFIG_DIR").map(PathBuf::from) else {
+            eprintln!("skipping: HOLON_AGENT_CONFIG_DIR is not set");
+            return;
+        };
+        if !fm::is_available() {
+            eprintln!("skipping: fm not available on this machine");
+            return;
+        }
+        let _env = FLEET_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let plan: Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("e2e.json")).expect("reading e2e.json"),
+        )
+        .expect("e2e.json is not valid JSON");
+        let window = Duration::from_secs(plan["window_secs"].as_u64().unwrap_or(60));
+
+        let tmp = std::env::temp_dir().join(format!("gpui-console-e2e-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let fm_server = fm::FmServer::start(Duration::from_secs(30)).expect("fm serve");
+        let mut cfg = Config::new(tmp.join("runtime"));
+        cfg.local =
+            LocalModel { base_url: Some(fm_server.base_url().to_string()), model: "system".into() };
+        let rt = Runtime::new(cfg).unwrap();
+
+        let mut names = Vec::new();
+        for entry in std::fs::read_dir(dir.join("agents")).expect("agents/ directory").flatten() {
+            if entry.path().extension().is_some_and(|e| e == "json") {
+                let spec: AgentSpec =
+                    serde_json::from_str(&std::fs::read_to_string(entry.path()).unwrap())
+                        .unwrap_or_else(|e| panic!("{}: {e}", entry.path().display()));
+                names.push(spec.name.clone());
+                rt.create_agent(spec).unwrap_or_else(|e| panic!("{}: {e}", entry.path().display()));
+            }
+        }
+        assert!(!names.is_empty(), "no agents in {}", dir.join("agents").display());
+
+        let addr = server::serve(rt.clone(), "127.0.0.1:0", "t".into()).unwrap();
+        std::env::set_var("COMP_DEFAULT_EGRESS", format!("127.0.0.1:{}", addr.port()));
+        let host_args = vec![
+            "--egress".to_string(),
+            "127.0.0.1".to_string(),
+            "--allow-private-egress".to_string(),
+        ];
+        let fleet = Fleet::start_with_platform_in_dir("cfg", 1, tmp.join("lattice"), &host_args);
+        let base = fleet.platform_url();
+        let token = register_and_login(&base, "cfg@agents.test", "password123");
+        let wasm = gateway_wasm().unwrap();
+        let runtime_url = format!("http://127.0.0.1:{}", addr.port());
+        rt.start_scheduler();
+        let started = std::time::Instant::now();
+
+        let mut deps = Vec::new();
+        for n in &names {
+            upload_component(&base, &token, n, wasm.clone(), &["runtime-url", "agent"]).unwrap();
+            deps.push((n.clone(), create_deployment(&base, &token, n, &runtime_url).unwrap()));
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        for (n, dep) in &deps {
+            let host = format!("{n}.cfg.test");
+            while !ping_ready(fleet.ingress_port, &host) {
+                save_deployment(&base, &token, dep);
+                assert!(std::time::Instant::now() < deadline, "{n}'s gateway never came up");
+                std::thread::sleep(Duration::from_secs(2));
+            }
+        }
+
+        // Every ask, concurrently, over the real ingress, while schedules fire.
+        let ingress = fleet.ingress_port;
+        let askers: Vec<_> = plan["asks"]
+            .as_object()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(agent, ask)| {
+                let q = ask["q"].as_str().unwrap_or_default().to_string();
+                std::thread::spawn(move || {
+                    let r = ping(
+                        ingress,
+                        &format!("{agent}.cfg.test"),
+                        Some(&q),
+                        Duration::from_secs(300),
+                    );
+                    (agent, q, r, ask["any_of"].clone())
+                })
+            })
+            .collect();
+        let mut problems = Vec::new();
+        for a in askers {
+            let (agent, q, r, any_of) = a.join().unwrap();
+            match r {
+                Ok(answer) => {
+                    println!("ASK {agent}: {q}\n  -> {answer}");
+                    let want: Vec<&str> = any_of
+                        .as_array()
+                        .map(|v| v.iter().filter_map(Value::as_str).collect())
+                        .unwrap_or_default();
+                    if !want.is_empty() && !want.iter().any(|w| answer.contains(w)) {
+                        problems.push(format!("{agent}: answer {answer:?} has none of {want:?}"));
+                    }
+                }
+                Err(e) => problems.push(format!("{agent}: ask failed: {e}")),
+            }
+        }
+
+        // Let the scheduled agents work out the rest of the window.
+        if let Some(left) = window.checked_sub(started.elapsed()) {
+            std::thread::sleep(left);
+        }
+        rt.shutdown();
+
+        let mut spans: Vec<(String, u64, u64)> = Vec::new();
+        for n in &names {
+            let runs = rt.store().runs(n, 1000);
+            let ok = runs.iter().filter(|r| r.status == Status::Ok).count();
+            println!("AGENT {n}: {} run(s), {ok} ok", runs.len());
+            for r in runs.iter().rev() {
+                println!(
+                    "  [{}] {} -> {}",
+                    r.trigger,
+                    short(&r.input, 40),
+                    short(&r.answer.replace('\n', " "), 100)
+                );
+                spans.push((n.clone(), r.started, r.finished));
+            }
+            let need = plan["min_runs"][n.as_str()].as_u64().unwrap_or(0) as usize;
+            if ok < need {
+                problems.push(format!("{n}: {ok} successful run(s), wanted at least {need}"));
+            }
+        }
+        let overlapped = spans.iter().any(|(a, s1, e1)| {
+            spans.iter().any(|(b, s2, e2)| {
+                a != b && s1 <= e2 && s2 <= e1 && (e1 > s1 || e2 > s2 || s1 == s2)
+            })
+        });
+        if names.len() > 1 && !overlapped {
+            problems.push("no two agents' runs overlapped — they did not run in parallel".into());
+        }
+
+        drop(fleet);
+        drop(fm_server);
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert!(problems.is_empty(), "e2e problems:\n{}", problems.join("\n"));
+    }
 }
