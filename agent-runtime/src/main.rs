@@ -4,6 +4,10 @@
 //!
 //!   agent-runtime --state-dir ~/.holon-agents [--listen 127.0.0.1:18017]
 //!                 [--local-url http://127.0.0.1:PORT] [--local-model NAME]
+//!                 [--otlp-endpoint http://localhost:4318]
+//!
+//! Traces go to an OpenTelemetry collector over OTLP/HTTP (JSON) when
+//! `--otlp-endpoint` or the standard `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 //!
 //! The admin token is generated on first start and kept in
 //! `<state-dir>/admin-token` (mode 0600); control endpoints need it.
@@ -17,6 +21,7 @@ fn main() -> Result<(), String> {
     let mut state = None;
     let mut listen = "127.0.0.1:18017".to_string();
     let mut local = LocalModel::default();
+    let mut otlp = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok().filter(|v| !v.is_empty());
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut val = |what: &str| args.next().ok_or(format!("{what} needs a value"));
@@ -25,6 +30,7 @@ fn main() -> Result<(), String> {
             "--listen" => listen = val("--listen")?,
             "--local-url" => local.base_url = Some(val("--local-url")?),
             "--local-model" => local.model = val("--local-model")?,
+            "--otlp-endpoint" => otlp = Some(val("--otlp-endpoint")?),
             other => return Err(format!("unknown argument {other}")),
         }
     }
@@ -34,6 +40,7 @@ fn main() -> Result<(), String> {
 
     let mut cfg = Config::new(&state);
     cfg.local = local;
+    cfg.otlp_endpoint = otlp;
     let rt = Runtime::new(cfg)?;
     let addr = server::serve(rt.clone(), &listen, token)?;
     rt.start_scheduler();

@@ -16,9 +16,11 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use tiny_http::{Header, Method, Request, Response, Server};
 
+use crate::agent::Cause;
 use crate::runtime::Runtime;
 use crate::spec::AgentSpec;
 use crate::store::Status;
+use crate::trace::Traceparent;
 
 /// Starts serving on `listen` (e.g. `127.0.0.1:0`) and returns the bound
 /// address. Runs on background threads for the life of the process.
@@ -59,6 +61,32 @@ pub fn admin_token_in(dir: &std::path::Path) -> Result<String, String> {
 fn reply(req: Request, status: u16, ctype: &str, body: impl Into<String>) {
     let h = Header::from_bytes("content-type", ctype).unwrap();
     let _ = req.respond(Response::from_string(body.into()).with_status_code(status).with_header(h));
+}
+
+/// Like `reply`, with extra response headers (here: `traceparent`).
+fn reply_with(req: Request, status: u16, body: impl Into<String>, extra: &[(&str, String)]) {
+    let mut resp = Response::from_string(body.into())
+        .with_status_code(status)
+        .with_header(Header::from_bytes("content-type", "text/plain; charset=utf-8").unwrap());
+    for (k, v) in extra {
+        if let Ok(h) = Header::from_bytes(k.as_bytes(), v.as_bytes()) {
+            resp = resp.with_header(h);
+        }
+    }
+    let _ = req.respond(resp);
+}
+
+fn header_value(req: &Request, name: &str) -> Option<String> {
+    req.headers()
+        .iter()
+        .find(|h| h.field.as_str().as_str().eq_ignore_ascii_case(name))
+        .map(|h| h.value.as_str().to_string())
+}
+
+/// The caller's W3C trace context, if it sent a valid `traceparent`. A
+/// malformed one is ignored and a fresh trace starts, as the spec says.
+fn caller_trace(req: &Request) -> Option<Traceparent> {
+    header_value(req, "traceparent").and_then(|v| Traceparent::parse(&v))
 }
 
 fn json_reply(req: Request, status: u16, v: Value) {
@@ -131,20 +159,43 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
         }
         (Method::Get | Method::Post, ["agents", name, "run"]) => {
             let input = query_param(query, "q").filter(|q| !q.is_empty()).unwrap_or(body);
-            return match rt.run_agent(name, "http", &input, 0, true) {
-                Ok(r) => match r.status {
-                    Status::Ok => text(req, 200, r.answer),
-                    Status::OverBudget => text(req, 429, r.answer),
-                    Status::Failed => text(req, 502, r.answer),
+            // Join the caller's trace if it sent one; the run becomes its child.
+            let cause = match caller_trace(&req) {
+                Some(tp) => Cause {
+                    trace_id: tp.trace_id,
+                    parent_span_id: Some(tp.span_id),
+                    ..Default::default()
                 },
+                None => Cause::default(),
+            };
+            return match rt.run_agent(name, "http", &input, &cause, "", true) {
+                Ok(r) => {
+                    // Hand the caller the run's own span, so it can continue the trace.
+                    let tp = [("traceparent", Traceparent::header(&r.trace_id, &r.span_id))];
+                    let status = match r.status {
+                        Status::Ok => 200,
+                        Status::OverBudget | Status::Dropped => 429,
+                        Status::Failed => 502,
+                    };
+                    reply_with(req, status, r.answer, &tp)
+                }
                 Err(e) if e.starts_with("no agent") => text(req, 404, e),
                 Err(e) if e.contains("paused") => text(req, 423, e),
+                Err(e) if e.starts_with("dropped") => text(req, 429, e),
                 Err(e) => text(req, 409, e),
             };
         }
         (Method::Post, ["events", topic]) => {
-            let woken = rt.emit_event(topic, &body, 0);
-            return json_reply(req, 202, json!({"woken": woken}));
+            let tp = caller_trace(&req);
+            return match rt.emit_event(
+                topic,
+                &body,
+                tp.as_ref().map(|t| t.trace_id.as_str()),
+                tp.as_ref().map(|t| t.span_id.as_str()),
+            ) {
+                Ok(woken) => json_reply(req, 202, json!({"woken": woken})),
+                Err(e) => text(req, 422, e),
+            };
         }
         _ => {}
     }
@@ -188,11 +239,51 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
         (Method::Get, ["agents", name, "memory"]) => {
             json_reply(req, 200, json!(rt.store().memories(name)))
         }
+        // One trace as OTLP/JSON (open it in any OpenTelemetry tool), or as
+        // plain run records with `?format=runs`.
+        (Method::Get, ["traces", id]) => match query_param(query, "format").as_deref() {
+            Some("runs") => json_reply(req, 200, json!(rt.store().trace(id))),
+            _ => json_reply(req, 200, rt.trace_otlp(id)),
+        },
+        (Method::Get, ["store", ns]) => {
+            let prefix = query_param(query, "prefix").unwrap_or_default();
+            match rt.kv().list(ns, &prefix) {
+                Ok(rows) => json_reply(
+                    req,
+                    200,
+                    json!(rows
+                        .into_iter()
+                        .map(|(k, e)| json!({"key": k, "entry": e}))
+                        .collect::<Vec<_>>()),
+                ),
+                Err(e) => text(req, 422, e),
+            }
+        }
+        (Method::Get, ["store", ns, key]) => match rt.kv().get(ns, &percent_decode(key)) {
+            Ok(Some(e)) => json_reply(req, 200, json!(e)),
+            Ok(None) => text(req, 404, "no such key"),
+            Err(e) => text(req, 422, e),
+        },
+        // The body is the value. A write that changes it wakes `StoreChange` watchers.
+        (Method::Put, ["store", ns, key]) => {
+            match rt.put_store(ns, &percent_decode(key), &body, "admin") {
+                Ok(p) => json_reply(req, 200, json!({"changed": p.changed, "version": p.version})),
+                Err(e) => text(req, 422, e),
+            }
+        }
+        (Method::Get, ["topics"]) => json_reply(req, 200, json!(rt.bus().topics())),
+        (Method::Get, ["topics", topic]) => {
+            let after = query_param(query, "after").and_then(|v| v.parse().ok()).unwrap_or(0);
+            match rt.bus().read_after(topic, after, 200) {
+                Ok(evs) => json_reply(req, 200, json!(evs)),
+                Err(e) => text(req, 422, e),
+            }
+        }
         (Method::Get, ["approvals"]) => {
             let v: Vec<Value> = rt
                 .pending_approvals()
                 .into_iter()
-                .map(|p| json!({"id": p.id, "agent": p.agent, "tool": p.tool, "args": p.args}))
+                .map(|p| json!({"id": p.id, "agent": p.agent, "tool": p.tool, "args": p.args, "chain": p.chain}))
                 .collect();
             json_reply(req, 200, json!(v))
         }
@@ -358,7 +449,7 @@ mod tests {
     fn events_wake_subscribers_and_schedules_fire() {
         let (rt, base) = start("trig");
         let mut sub = mock("listener", &["handled"]);
-        sub.triggers.push(Trigger::Event { topic: "deploy".into() });
+        sub.triggers.push(Trigger::Event { topic: "deploy".into(), filter: None });
         rt.create_agent(sub).unwrap();
         let mut tick = mock("ticker", &["tock"]);
         tick.triggers.push(Trigger::Schedule { cron: "@every 1s".into(), prompt: "tick".into() });
@@ -418,5 +509,145 @@ mod tests {
         rt.create_agent(b).unwrap();
         let r = reqwest::blocking::get(format!("{base}/agents/aa/run?q=go")).unwrap();
         assert_eq!(r.status(), 200);
+    }
+
+    #[test]
+    fn a_traceparent_header_is_joined_and_the_runs_own_span_is_handed_back() {
+        let (rt, base) = start("traceparent");
+        rt.create_agent(mock("traced", &["hello"; 6])).unwrap();
+        let c = reqwest::blocking::Client::new();
+        let (trace, caller_span) = ("0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331");
+
+        let r = c
+            .get(format!("{base}/agents/traced/run?q=hi"))
+            .header("traceparent", format!("00-{trace}-{caller_span}-01"))
+            .send()
+            .unwrap();
+        let back = r.headers().get("traceparent").unwrap().to_str().unwrap().to_string();
+        let tp = Traceparent::parse(&back).expect("a valid traceparent comes back");
+        assert_eq!(tp.trace_id, trace, "the run joined the caller's trace");
+        assert_ne!(tp.span_id, caller_span, "and has a span of its own");
+
+        let run = rt.store().runs("traced", 1).remove(0);
+        assert_eq!(run.trace_id, trace);
+        assert_eq!(run.parent_span_id.as_deref(), Some(caller_span));
+        assert_eq!(run.span_id, tp.span_id);
+
+        // no header, or a malformed one: a fresh trace, never an error
+        for bad in
+            [None, Some("garbage"), Some("00-00000000000000000000000000000000-b7ad6b7169203331-01")]
+        {
+            let mut req = c.get(format!("{base}/agents/traced/run?q=again"));
+            if let Some(b) = bad {
+                req = req.header("traceparent", b);
+            }
+            let r = req.send().unwrap();
+            assert_eq!(r.status(), 200);
+            let t = Traceparent::parse(r.headers().get("traceparent").unwrap().to_str().unwrap())
+                .unwrap();
+            assert_ne!(t.trace_id, trace);
+        }
+
+        // the admin API serves the trace as OTLP/JSON, or as plain runs
+        let doc: Value = c
+            .get(format!("{base}/traces/{trace}"))
+            .bearer_auth("tok")
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
+        let spans = doc["resourceSpans"][0]["scopeSpans"][0]["spans"].as_array().unwrap();
+        assert_eq!(spans[0]["parentSpanId"], caller_span);
+        let runs: Value = c
+            .get(format!("{base}/traces/{trace}?format=runs"))
+            .bearer_auth("tok")
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
+        assert_eq!(runs.as_array().unwrap().len(), 1);
+        assert_eq!(c.get(format!("{base}/traces/{trace}")).send().unwrap().status(), 401);
+    }
+
+    #[test]
+    fn an_event_webhook_continues_the_callers_trace_into_the_agents_it_wakes() {
+        let (rt, base) = start("webhook-trace");
+        rt.create_agent({
+            let mut s = mock("hooked", &["handled"]);
+            s.triggers.push(Trigger::Event { topic: "hook".into(), filter: None });
+            s
+        })
+        .unwrap();
+        let trace = "4bf92f3577b34da6a3ce929d0e0e4736";
+        let r = reqwest::blocking::Client::new()
+            .post(format!("{base}/events/hook"))
+            .header("traceparent", format!("00-{trace}-00f067aa0ba902b7-01"))
+            .body("payload")
+            .send()
+            .unwrap();
+        assert_eq!(r.status(), 202);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let run = loop {
+            if let Some(r) = rt.store().runs("hooked", 1).pop() {
+                break r;
+            }
+            assert!(std::time::Instant::now() < deadline, "never woke");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        assert_eq!(run.trace_id, trace);
+        assert_eq!(run.parent_span_id.as_deref(), Some("00f067aa0ba902b7"));
+    }
+
+    #[test]
+    fn the_shared_store_is_readable_and_writable_over_the_admin_api() {
+        let (rt, base) = start("store-http");
+        let c = reqwest::blocking::Client::new();
+        let put = |v: &str| {
+            c.put(format!("{base}/store/rowing/latest"))
+                .bearer_auth("tok")
+                .body(v.to_string())
+                .send()
+                .unwrap()
+        };
+        let r: Value = put("12,108m").json().unwrap();
+        assert_eq!((r["changed"].as_bool(), r["version"].as_u64()), (Some(true), Some(1)));
+        let r: Value = put("12,108m").json().unwrap();
+        assert_eq!(r["changed"], false);
+        let got: Value = c
+            .get(format!("{base}/store/rowing/latest"))
+            .bearer_auth("tok")
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
+        assert_eq!((got["value"].as_str(), got["by"].as_str()), (Some("12,108m"), Some("admin")));
+        let list: Value = c
+            .get(format!("{base}/store/rowing?prefix=lat"))
+            .bearer_auth("tok")
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
+        assert_eq!(list.as_array().unwrap().len(), 1);
+        assert_eq!(c.get(format!("{base}/store/rowing/latest")).send().unwrap().status(), 401);
+        assert_eq!(
+            c.put(format!("{base}/store/..%2Fx/k"))
+                .bearer_auth("tok")
+                .body("v")
+                .send()
+                .unwrap()
+                .status(),
+            422
+        );
+        // the change was published, so it shows in the topic log
+        let log: Value = c
+            .get(format!("{base}/topics/store.rowing"))
+            .bearer_auth("tok")
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
+        assert_eq!(log.as_array().unwrap().len(), 1);
+        assert_eq!(rt.bus().head("store.rowing").unwrap(), 1);
     }
 }

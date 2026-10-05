@@ -19,7 +19,21 @@ use crate::spec::{validate_name, AgentSpec};
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Step {
     /// The model's raw reply for one turn.
-    Model { text: String },
+    Model {
+        text: String,
+        /// Span id and wall-clock bounds (unix ms) of this model call, and what
+        /// it cost — enough to export it as an OpenTelemetry `chat` span.
+        #[serde(default)]
+        span_id: String,
+        #[serde(default)]
+        t0: u64,
+        #[serde(default)]
+        t1: u64,
+        #[serde(default)]
+        tokens_in: u64,
+        #[serde(default)]
+        tokens_out: u64,
+    },
     /// A tool the agent called. `approved` is `None` when none was needed.
     Tool {
         name: String,
@@ -27,6 +41,14 @@ pub enum Step {
         result: String,
         error: bool,
         approved: Option<bool>,
+        /// Anything this call wakes (an event, a store write, a delegated
+        /// agent) has this as its parent span.
+        #[serde(default)]
+        span_id: String,
+        #[serde(default)]
+        t0: u64,
+        #[serde(default)]
+        t1: u64,
     },
 }
 
@@ -37,6 +59,9 @@ pub enum Status {
     Failed,
     /// Stopped for spending more than `max_tokens`, or the daily budget.
     OverBudget,
+    /// Refused before it started: a loop, too many hops, a rate limit or an
+    /// open circuit. Logged so a dropped wake-up is visible, not silent.
+    Dropped,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -53,6 +78,31 @@ pub struct RunRecord {
     pub steps: Vec<Step>,
     pub tokens_in: u64,
     pub tokens_out: u64,
+    /// This run's wall-clock bounds in unix ms (`started`/`finished` are seconds).
+    #[serde(default)]
+    pub started_ms: u64,
+    #[serde(default)]
+    pub finished_ms: u64,
+    /// `provider/model` this run's agent used, e.g. `anthropic/claude-haiku-4-5`
+    /// or `local/system` — what the `chat` spans are attributed to.
+    #[serde(default)]
+    pub model: String,
+    /// W3C trace id (32 hex). Every run one original trigger set off, across
+    /// agents, shares it.
+    #[serde(default)]
+    pub trace_id: String,
+    /// This run's span (16 hex).
+    #[serde(default)]
+    pub span_id: String,
+    /// The span that woke or called this one — usually a tool call in another
+    /// agent's run, or the upstream caller's span from a `traceparent` header.
+    #[serde(default)]
+    pub parent_span_id: Option<String>,
+    #[serde(default)]
+    pub hops: u32,
+    /// `agent|topic` for each wake-up that led here, oldest first.
+    #[serde(default)]
+    pub chain: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -180,6 +230,18 @@ impl Store {
             read_lines(&self.path("runs", agent, "jsonl").unwrap_or_default());
         v.reverse();
         v.truncate(n);
+        v
+    }
+
+    /// Every run in one trace, across all agents, oldest first.
+    pub fn trace(&self, trace_id: &str) -> Vec<RunRecord> {
+        let mut v: Vec<RunRecord> = self
+            .list()
+            .iter()
+            .flat_map(|a| self.runs(&a.name, usize::MAX))
+            .filter(|r| r.trace_id == trace_id)
+            .collect();
+        v.sort_by(|a, b| a.started.cmp(&b.started).then(a.id.cmp(&b.id)));
         v
     }
 

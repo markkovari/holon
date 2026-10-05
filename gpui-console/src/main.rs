@@ -254,6 +254,13 @@ impl Render for Console {
                                             cx,
                                             |l, cx| l.set_view(View::Spec, cx),
                                         ))
+                                        .child(tab_button(
+                                            "tab-trace",
+                                            "trace",
+                                            view == View::Trace,
+                                            cx,
+                                            |l, cx| l.set_view(View::Trace, cx),
+                                        ))
                                         .child(div().flex_1())
                                         .child(action_button(
                                             "pause-resume",
@@ -307,8 +314,15 @@ impl Render for Console {
                                     .rounded_md()
                                     .bg(rgb(0x4a3d1a))
                                     .child(div().flex_1().child(format!(
-                                        "{} wants to run {} {}",
-                                        p.agent, p.tool, p.args
+                                        "{} wants to run {} {}{}",
+                                        p.agent,
+                                        p.tool,
+                                        p.args,
+                                        if p.chain.is_empty() {
+                                            String::new()
+                                        } else {
+                                            format!("  (woken via {})", p.chain.join(" › "))
+                                        }
                                     )))
                                     .child(action_button(
                                         SharedString::from(format!("approve-{id}")),
@@ -482,12 +496,24 @@ fn render_message(m: Message) -> impl IntoElement {
 
 /// The "+ new agent" window's fields, in tab order: (label, hint). Only the
 /// first two are required; everything else has a working default.
-const FIELDS: [(&str, &str); 8] = [
+const FIELDS: [(&str, &str); 11] = [
     ("name", "unique; lowercase words joined by dashes"),
     ("description", "what it is for — becomes its system prompt"),
-    ("capabilities", "name [@ wit-ref] [| what it does]; … — e.g. http_get; write_file; summarize | write 3 lines; agent:other"),
-    ("schedules", "cron :: task; … — e.g. */10 * * * * :: check the feed   (also @hourly, @every 5m)"),
+    (
+        "capabilities",
+        "name [@ wit-ref] [| what it does]; … — e.g. http_get; write_file; summarize | write 3 lines; agent:other",
+    ),
+    (
+        "schedules",
+        "cron :: task; … — e.g. */10 * * * * :: check the feed   (also @hourly, @every 5m)",
+    ),
     ("events", "topics it wakes on, comma-separated"),
+    ("watch stores", "wake when a shared value CHANGES: ns or ns:key-prefix, comma-separated"),
+    ("can emit", "topic globs it may publish to, e.g. deploy.*, new-workout — empty = none"),
+    (
+        "shared stores",
+        "namespaces it may use: name = read+write, name:r = read-only (private is always its own)",
+    ),
     ("allowed hosts", "for http_get, comma-separated; empty = none"),
     ("model", "blank/local, anthropic:<model>, or openai:<base-url>|<model>"),
     ("auto-approve", "sensitive tools it may use without asking (http_get, write_file)"),
@@ -502,7 +528,7 @@ const FIELDS: [(&str, &str); 8] = [
 struct NewAgentForm {
     lattice: Entity<Lattice>,
     focus_handle: FocusHandle,
-    values: [String; 8],
+    values: [String; 11],
     field: usize,
     error: Option<String>,
 }
@@ -544,9 +570,12 @@ impl NewAgentForm {
             capabilities: v[2].clone(),
             schedules: v[3].clone(),
             events: v[4].clone(),
-            hosts: v[5].clone(),
-            model: v[6].clone(),
-            auto_approve: v[7].clone(),
+            watch: v[5].clone(),
+            emits: v[6].clone(),
+            stores: v[7].clone(),
+            hosts: v[8].clone(),
+            model: v[9].clone(),
+            auto_approve: v[10].clone(),
         };
         let spec = match spec_from_form(&input) {
             Ok(s) => s,

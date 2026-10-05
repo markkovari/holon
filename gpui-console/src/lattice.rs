@@ -89,6 +89,7 @@ pub enum View {
     Chat,
     Memory,
     Spec,
+    Trace,
 }
 
 pub struct Boot {
@@ -266,14 +267,19 @@ impl Lattice {
                     row.messages.extend(finish_messages(&rec));
                 }
             }
-            Event::ApprovalRequested { id, agent, tool, args } => {
+            Event::ApprovalRequested { id, agent, tool, args, chain } => {
                 if let Some(row) = self.row_mut(&agent) {
+                    let via = if chain.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (woken via {})", chain.join(" › "))
+                    };
                     row.messages.push(Message::system(format!(
-                        "needs your approval: {tool} {}",
+                        "needs your approval: {tool} {}{via}",
                         short(&args.to_string(), 160)
                     )));
                 }
-                self.approvals.push(Pending { id, agent, tool, args });
+                self.approvals.push(Pending { id, agent, tool, args, chain });
             }
             Event::ApprovalResolved { id, approved } => {
                 if let Some(p) = self.approvals.iter().find(|p| p.id == id).cloned() {
@@ -580,10 +586,67 @@ impl Lattice {
                 }
                 lines
             }
+            (View::Trace, Some(n)) => match self.rt.store().runs(n, 1).first() {
+                Some(last) => trace_lines(&self.rt.store().trace(&last.trace_id), &last.trace_id),
+                None => vec!["no runs yet".to_string()],
+            },
             _ => Vec::new(),
         };
         cx.notify();
     }
+}
+
+/// A trace as an indented tree: each run under the tool call that woke it,
+/// which is what the W3C parent span ids say. Runs from before tracing (no
+/// span ids) simply have no parent and show at the top level.
+pub fn trace_lines(runs: &[RunRecord], trace_id: &str) -> Vec<String> {
+    let mut lines = vec![
+        format!("trace {trace_id}"),
+        "(the runtime serves this as OTLP/JSON at GET /traces/<id>)".to_string(),
+        String::new(),
+    ];
+    // which run owns each tool span, so a run's parent span resolves to a run
+    let owner = |span: &str| {
+        runs.iter().position(|r| {
+            r.steps.iter().any(|s| matches!(s, Step::Tool { span_id, .. } if span_id == span))
+        })
+    };
+    let parent_of: Vec<Option<usize>> =
+        runs.iter().map(|r| r.parent_span_id.as_deref().and_then(owner)).collect();
+
+    fn walk(i: usize, depth: usize, runs: &[RunRecord], out: &mut Vec<String>) {
+        let r = &runs[i];
+        let pad = "    ".repeat(depth);
+        out.push(format!(
+            "{pad}{} [{}] {:?} · {} ms · {} tokens",
+            r.agent,
+            r.trigger,
+            r.status,
+            r.finished_ms.saturating_sub(r.started_ms),
+            r.tokens_in + r.tokens_out
+        ));
+        for step in &r.steps {
+            if let Step::Tool { name, span_id, error, .. } = step {
+                let woke: Vec<usize> = (0..runs.len())
+                    .filter(|&j| runs[j].parent_span_id.as_deref() == Some(span_id.as_str()))
+                    .collect();
+                out.push(format!(
+                    "{pad}  ↳ {name}{}{}",
+                    if *error { " (error)" } else { "" },
+                    if woke.is_empty() { String::new() } else { " — woke:".to_string() }
+                ));
+                for j in woke {
+                    walk(j, depth + 2, runs, out);
+                }
+            }
+        }
+    }
+    for i in 0..runs.len() {
+        if parent_of[i].is_none() {
+            walk(i, 0, runs, &mut lines);
+        }
+    }
+    lines
 }
 
 // ---- transcript rendering of runtime data ----------------------------------
@@ -608,7 +671,7 @@ fn start_messages(trigger: &str, input: &str) -> Vec<Message> {
 fn step_message(step: &Step) -> Option<Message> {
     match step {
         Step::Model { .. } => None,
-        Step::Tool { name, args, result, error, approved } => Some(Message::system(format!(
+        Step::Tool { name, args, result, error, approved, .. } => Some(Message::system(format!(
             "{name} {}{} → {}{}",
             short(&args.to_string(), 80),
             match approved {
@@ -628,6 +691,12 @@ fn finish_messages(rec: &RunRecord) -> Vec<Message> {
         Status::Ok => v.push(Message::agent(&rec.answer)),
         Status::Failed => v.push(Message::system(format!("run failed: {}", rec.answer))),
         Status::OverBudget => v.push(Message::system(format!("stopped: {}", rec.answer))),
+        // Refused before it started (a cycle, the hop or rate limit, an open
+        // circuit): say so, but there is nothing to count.
+        Status::Dropped => {
+            v.push(Message::system(format!("not run — {}", rec.answer)));
+            return v;
+        }
     }
     v.push(Message::system(format!("{} tokens", rec.tokens_in + rec.tokens_out)));
     v
@@ -651,7 +720,8 @@ fn row_from(spec: &AgentSpec, rt: &Runtime) -> AgentRow {
             .iter()
             .map(|t| match t {
                 Trigger::Schedule { cron, .. } => format!("every {cron}"),
-                Trigger::Event { topic } => format!("on {topic}"),
+                Trigger::Event { topic, .. } => format!("on {topic}"),
+                Trigger::StoreChange { ns, .. } => format!("on {ns} change"),
             })
             .collect(),
         model: match &spec.model {
@@ -679,6 +749,15 @@ pub struct FormInput {
     pub schedules: String,
     /// Comma-separated event topics this agent wakes on.
     pub events: String,
+    /// Comma-separated `ns` or `ns:prefix`: wake when a `store_put` CHANGES a
+    /// value in that shared store (under that key prefix).
+    pub watch: String,
+    /// Comma-separated topic globs this agent may `emit_event` to
+    /// (`deploy.*`). Empty = it may emit nothing.
+    pub emits: String,
+    /// Comma-separated shared store namespaces: `name` is read+write,
+    /// `name:r` read-only. (`private` is always its own and needs no entry.)
+    pub stores: String,
     /// Comma-separated hosts `http_get` may reach.
     pub hosts: String,
     /// Blank/`local`, `anthropic:<model>`, or `openai:<base-url>|<model>`.
@@ -731,7 +810,36 @@ pub fn spec_from_form(f: &FormInput) -> Result<AgentSpec, String> {
         });
     }
     for topic in csv(&f.events) {
-        spec.triggers.push(Trigger::Event { topic });
+        spec.triggers.push(Trigger::Event { topic, filter: None });
+    }
+    for w in csv(&f.watch) {
+        let (ns, key_prefix) = w.split_once(':').map_or((w.as_str(), ""), |(n, p)| (n, p));
+        spec.triggers
+            .push(Trigger::StoreChange { ns: ns.to_string(), key_prefix: key_prefix.to_string() });
+    }
+    // Granting a topic or a store is pointless without the tool that uses it,
+    // so grant that too rather than make the user list both.
+    let want = |tool: &str, spec: &mut AgentSpec| {
+        if !spec.has_capability(tool) {
+            spec.capabilities.push(Capability::named(tool));
+        }
+    };
+    spec.topics_out = csv(&f.emits);
+    if !spec.topics_out.is_empty() {
+        want("emit_event", &mut spec);
+    }
+    for entry in csv(&f.stores) {
+        match entry.strip_suffix(":r") {
+            Some(ns) => spec.store.read.push(ns.to_string()),
+            None => spec.store.write.push(entry),
+        }
+    }
+    if !spec.store.read.is_empty() || !spec.store.write.is_empty() {
+        want("store_get", &mut spec);
+        want("store_list", &mut spec);
+    }
+    if !spec.store.write.is_empty() {
+        want("store_put", &mut spec);
     }
     spec.allow_hosts = csv(&f.hosts);
     spec.auto_approve = csv(&f.auto_approve);
@@ -985,6 +1093,90 @@ mod tests {
     }
 
     #[test]
+    fn collaboration_fields_grant_topics_stores_and_the_tools_that_use_them() {
+        let mut f = form("scout");
+        f.emits = "new-workout, deploy.*".into();
+        f.stores = "rowing, notes:r".into();
+        f.watch = "rowing:latest, inbox".into();
+        let s = spec_from_form(&f).unwrap();
+        assert_eq!(s.topics_out, ["new-workout", "deploy.*"]);
+        assert_eq!(s.store.write, ["rowing"]);
+        assert_eq!(s.store.read, ["notes"]);
+        for tool in ["emit_event", "store_get", "store_list", "store_put"] {
+            assert!(s.has_capability(tool), "{tool} should come with the grant");
+        }
+        assert!(matches!(&s.triggers[0], Trigger::StoreChange { ns, key_prefix }
+            if ns == "rowing" && key_prefix == "latest"));
+        assert!(matches!(&s.triggers[1], Trigger::StoreChange { ns, key_prefix }
+            if ns == "inbox" && key_prefix.is_empty()));
+        // read-only access does not grant writing
+        let mut ro = form("reader");
+        ro.stores = "notes:r".into();
+        let r = spec_from_form(&ro).unwrap();
+        assert!(r.has_capability("store_get") && !r.has_capability("store_put"));
+        // and nothing is granted unless asked
+        let plain = spec_from_form(&form("plain")).unwrap();
+        assert!(plain.topics_out.is_empty() && !plain.has_capability("emit_event"));
+        // a bad namespace is refused with a reason
+        let mut bad = form("bad");
+        bad.stores = "../x".into();
+        assert!(spec_from_form(&bad).is_err());
+    }
+
+    #[test]
+    fn a_trace_renders_as_a_tree_under_the_tool_call_that_woke_each_run() {
+        use agent_runtime::store::Step;
+        let run =
+            |agent: &str, span: &str, parent: Option<&str>, tools: &[(&str, &str)]| RunRecord {
+                id: format!("{agent}-1"),
+                agent: agent.into(),
+                trigger: "event: x".into(),
+                input: String::new(),
+                started: 1,
+                finished: 2,
+                status: Status::Ok,
+                answer: String::new(),
+                steps: tools
+                    .iter()
+                    .map(|(n, sp)| Step::Tool {
+                        name: (*n).into(),
+                        args: json!({}),
+                        result: String::new(),
+                        error: false,
+                        approved: None,
+                        span_id: (*sp).into(),
+                        t0: 0,
+                        t1: 0,
+                    })
+                    .collect(),
+                tokens_in: 1,
+                tokens_out: 1,
+                started_ms: 1000,
+                finished_ms: 1500,
+                model: String::new(),
+                trace_id: "t".into(),
+                span_id: span.into(),
+                parent_span_id: parent.map(String::from),
+                hops: 0,
+                chain: vec![],
+            };
+        let runs = vec![
+            run("origin", "s1", None, &[("emit_event", "tool-a")]),
+            run("middle", "s2", Some("tool-a"), &[("emit_event", "tool-b")]),
+            run("last", "s3", Some("tool-b"), &[]),
+        ];
+        let lines = trace_lines(&runs, "t");
+        let text = lines.join("\n");
+        let pos = |needle: &str| lines.iter().position(|l| l.contains(needle)).unwrap();
+        assert!(pos("origin") < pos("middle") && pos("middle") < pos("last"), "{text}");
+        let indent =
+            |needle: &str| lines[pos(needle)].len() - lines[pos(needle)].trim_start().len();
+        assert!(indent("origin") < indent("middle") && indent("middle") < indent("last"), "{text}");
+        assert!(text.contains("emit_event — woke:"), "{text}");
+        assert!(text.contains("500 ms"));
+    }
+
+    #[test]
     fn bad_input_is_refused_with_a_reason() {
         assert!(spec_from_form(&form("agent-1")).is_err());
         let mut f = form("a");
@@ -1069,13 +1261,38 @@ mod tests {
         let a = ping(fleet.ingress_port, host, Some("hello there"), Duration::from_secs(30));
         let answer = a.expect("the gateway should reach the runtime and relay its answer");
         assert_eq!(answer, "pong from the runtime");
-        let http_runs: Vec<_> =
+
+        // W3C Trace Context survives the whole path — ingress, lattice, gateway
+        // component, runtime — in both directions.
+        let (trace, caller_span) = ("0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331");
+        let r = reqwest::blocking::Client::new()
+            .get(format!("http://127.0.0.1:{}/", fleet.ingress_port))
+            .header("host", host)
+            .header("traceparent", format!("00-{trace}-{caller_span}-01"))
+            .query(&[("q", "traced call")])
+            .send()
+            .unwrap();
+        let back = r
+            .headers()
+            .get("traceparent")
+            .expect("the run's traceparent comes back")
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(back.starts_with(&format!("00-{trace}-")), "{back}");
+        let traced = rt.store().trace(trace);
+        assert_eq!(traced.len(), 1, "the run joined the caller's trace");
+        assert_eq!(traced[0].parent_span_id.as_deref(), Some(caller_span));
+        assert!(back.contains(&traced[0].span_id));
+        let mut http_runs: Vec<_> =
             rt.store().runs("echoer", 20).into_iter().filter(|r| r.trigger == "http").collect();
-        assert_eq!(http_runs.len(), 1);
+        http_runs.reverse(); // oldest first
+        assert_eq!(http_runs.len(), 2, "the plain question and the traced one");
         assert_eq!(
             http_runs[0].input, "hello there",
             "the question must arrive percent-decoded and intact"
         );
+        assert_eq!(http_runs[1].input, "traced call");
 
         // Schedule: fired without any request.
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
@@ -1174,6 +1391,7 @@ mod tests {
     ///
     /// ```json
     /// { "window_secs": 110,
+    ///   "ask_after_secs": 75,        // optional: hold the questions back this long
     ///   "min_runs": { "heartbeat": 4 },
     ///   "asks": { "rower": { "q": "a question", "any_of": ["expected", "substrings"] } } }
     /// ```
@@ -1251,6 +1469,13 @@ mod tests {
             }
         }
 
+        // Hold the questions back, if asked to, so scheduled agents get to
+        // leave something (in the shared store, say) for the answer to use.
+        if let Some(wait) = plan["ask_after_secs"].as_u64().map(Duration::from_secs) {
+            if let Some(left) = wait.checked_sub(started.elapsed()) {
+                std::thread::sleep(left);
+            }
+        }
         // Every ask, concurrently, over the real ingress, while schedules fire.
         let ingress = fleet.ingress_port;
         let askers: Vec<_> = plan["asks"]
@@ -1307,6 +1532,16 @@ mod tests {
                     short(&r.input, 40),
                     short(&r.answer.replace('\n', " "), 100)
                 );
+                for st in &r.steps {
+                    if let Step::Tool { name, args, result, error, .. } = st {
+                        println!(
+                            "       tool {name} {} -> {}{}",
+                            short(&args.to_string(), 90),
+                            if *error { "ERROR " } else { "" },
+                            short(&result.replace('\n', " | "), 100)
+                        );
+                    }
+                }
                 spans.push((n.clone(), r.started, r.finished));
             }
             let need = plan["min_runs"][n.as_str()].as_u64().unwrap_or(0) as usize;
@@ -1319,6 +1554,30 @@ mod tests {
                 a != b && s1 <= e2 && s2 <= e1 && (e1 > s1 || e2 > s2 || s1 == s2)
             })
         });
+        // Trace linkage, whatever the agents are: a run woken by an event or a
+        // store change must name, as its parent, a tool call of another run in
+        // the SAME trace — that link is what makes a chain followable.
+        let all_runs: Vec<RunRecord> =
+            names.iter().flat_map(|n| rt.store().runs(n, 1000)).collect();
+        for r in all_runs.iter().filter(|r| {
+            (r.trigger.starts_with("event:") || r.trigger.starts_with("store:"))
+                && r.status != Status::Dropped
+        }) {
+            let linked = r.parent_span_id.as_deref().is_some_and(|p| {
+                all_runs.iter().any(|o| {
+                    o.trace_id == r.trace_id
+                        && o.steps
+                            .iter()
+                            .any(|s| matches!(s, Step::Tool { span_id, .. } if span_id == p))
+                })
+            });
+            if !linked {
+                problems.push(format!(
+                    "{} was woken by `{}` but its parent span {:?} is not a tool call in trace {}",
+                    r.agent, r.trigger, r.parent_span_id, r.trace_id
+                ));
+            }
+        }
         if names.len() > 1 && !overlapped {
             problems.push("no two agents' runs overlapped — they did not run in parallel".into());
         }
