@@ -1,0 +1,28 @@
+[package]
+name = "agent-runtime"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The autonomous half of a Holon agent: a tool-using loop over a model, per-agent memory, schedule/event/HTTP triggers, approvals and a run log. Native on purpose (ADR-0095): a wasm component has no background, so nothing in a guest can fire a cron trigger or hold an approval open."
+
+# Native, outside the components/ (wasm32) workspace — same arrangement as
+# reconciler/ and gpui-console/.
+[workspace]
+
+[lib]
+name = "agent_runtime"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agent-runtime"
+path = "src/main.rs"
+
+[dependencies]
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+tiny_http = "0.12"
+
+[dev-dependencies]
+tempfile = "3"
