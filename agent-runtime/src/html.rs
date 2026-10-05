@@ -1,5 +1,5 @@
 //! HTML to readable text, for `http_get`. A model handed a page's raw markup
-//! spends its whole context on tags and scripts (the Concept2 log page is 35 KB
+//! spends its whole context on tags and scripts (a typical logbook page is 35 KB
 //! of HTML for 2.7 KB of text) and `http_get` used to clip that to 8 KB of
 //! markup — so the capability technically worked and told the agent nothing.
 //!
