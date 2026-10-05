@@ -238,11 +238,7 @@ mod tests {
     use super::*;
 
     fn tmp(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "agent-runtime-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ));
+        let d = crate::testutil::dir("agent-runtime");
         fs::create_dir_all(&d).unwrap();
         d
     }
