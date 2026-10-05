@@ -177,7 +177,7 @@ mod tests {
     use super::*;
 
     fn bus(tag: &str) -> (FileBus, PathBuf) {
-        let d = crate::testutil::dir("ar-bus");
+        let d = crate::testutil::dir(&format!("ar-bus-{tag}"));
         (FileBus::open(&d).unwrap(), d)
     }
 

@@ -304,7 +304,7 @@ mod tests {
     use crate::spec::{Capability, ModelSpec, Trigger};
 
     fn start(tag: &str) -> (Arc<Runtime>, String) {
-        let d = crate::testutil::dir("ar-srv");
+        let d = crate::testutil::dir(&format!("ar-srv-{tag}"));
         let rt = Runtime::new(Config::new(d)).unwrap();
         let addr = serve(rt.clone(), "127.0.0.1:0", "tok".into()).unwrap();
         (rt, format!("http://{addr}"))

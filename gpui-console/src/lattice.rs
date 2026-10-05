@@ -641,8 +641,8 @@ pub fn trace_lines(runs: &[RunRecord], trace_id: &str) -> Vec<String> {
             }
         }
     }
-    for i in 0..runs.len() {
-        if parent_of[i].is_none() {
+    for (i, parent) in parent_of.iter().enumerate() {
+        if parent.is_none() {
             walk(i, 0, runs, &mut lines);
         }
     }

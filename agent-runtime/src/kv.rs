@@ -115,7 +115,7 @@ mod tests {
     use super::*;
 
     fn kv(tag: &str) -> Kv {
-        let d = crate::testutil::dir("ar-kv");
+        let d = crate::testutil::dir(&format!("ar-kv-{tag}"));
         Kv::open(&d).unwrap()
     }
 

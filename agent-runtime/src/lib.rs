@@ -14,6 +14,9 @@ pub mod spec;
 pub mod store;
 pub mod trace;
 
+pub use runtime::{Config, Runtime};
+pub use spec::{AgentSpec, Capability, ModelSpec, Trigger};
+
 #[cfg(test)]
 pub(crate) mod testutil {
     /// A uniquely named, securely created directory for one test. (`tempfile`
@@ -27,6 +30,3 @@ pub(crate) mod testutil {
             .keep()
     }
 }
-
-pub use runtime::{Config, Runtime};
-pub use spec::{AgentSpec, Capability, ModelSpec, Trigger};

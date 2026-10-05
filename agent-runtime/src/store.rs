@@ -300,7 +300,7 @@ mod tests {
     use super::*;
 
     fn tmp(tag: &str) -> PathBuf {
-        let d = crate::testutil::dir("agent-runtime");
+        let d = crate::testutil::dir(&format!("agent-runtime-{tag}"));
         fs::create_dir_all(&d).unwrap();
         d
     }

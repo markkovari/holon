@@ -1030,7 +1030,7 @@ pub mod testkit {
 
     impl Fake {
         pub fn new(tag: &str, replies: &[&str], approve: bool) -> Self {
-            let d = crate::testutil::dir("ar-fake");
+            let d = crate::testutil::dir(&format!("ar-fake-{tag}"));
             Self {
                 store: Store::open(&d).unwrap(),
                 kv: Kv::open(&d).unwrap(),
