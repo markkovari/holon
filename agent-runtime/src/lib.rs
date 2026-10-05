@@ -14,5 +14,19 @@ pub mod spec;
 pub mod store;
 pub mod trace;
 
+#[cfg(test)]
+pub(crate) mod testutil {
+    /// A uniquely named, securely created directory for one test. (`tempfile`
+    /// creates it 0700 with a random name; a predictable path under the shared
+    /// temp dir invites the classic insecure-temp-file race.)
+    pub fn dir(prefix: &str) -> std::path::PathBuf {
+        tempfile::Builder::new()
+            .prefix(&format!("ar-{prefix}-"))
+            .tempdir()
+            .expect("creating a temp dir")
+            .keep()
+    }
+}
+
 pub use runtime::{Config, Runtime};
 pub use spec::{AgentSpec, Capability, ModelSpec, Trigger};

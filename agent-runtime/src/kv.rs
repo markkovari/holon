@@ -115,11 +115,7 @@ mod tests {
     use super::*;
 
     fn kv(tag: &str) -> Kv {
-        let d = std::env::temp_dir().join(format!(
-            "ar-kv-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ));
+        let d = crate::testutil::dir("ar-kv");
         Kv::open(&d).unwrap()
     }
 

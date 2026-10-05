@@ -10,12 +10,10 @@ use agent_runtime::spec::StoreAccess;
 use agent_runtime::store::{RunRecord, Status, Step};
 use agent_runtime::{AgentSpec, Capability, Config, ModelSpec, Runtime, Trigger};
 
+/// A uniquely named, securely created directory (tempfile makes it 0700 with a
+/// random name; a predictable path in the shared temp dir is a classic race).
 fn dir(tag: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "ar-collab-{tag}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-    ))
+    tempfile::Builder::new().prefix(&format!("ar-collab-{tag}-")).tempdir().unwrap().keep()
 }
 
 fn runtime(tag: &str) -> Arc<Runtime> {

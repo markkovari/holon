@@ -1201,7 +1201,9 @@ mod tests {
     #[test]
     fn a_gateway_agent_answers_over_the_lattice_and_a_schedule_fires_unprompted() {
         let _env = FLEET_ENV.lock().unwrap_or_else(|e| e.into_inner());
-        let tmp = std::env::temp_dir().join(format!("gpui-console-e2e-{}", std::process::id()));
+        let tmp_guard =
+            tempfile::Builder::new().prefix("gpui-console-e2e-").tempdir().expect("tempdir");
+        let tmp = tmp_guard.path().to_path_buf();
         let _ = std::fs::remove_dir_all(&tmp);
 
         let mut cfg = Config::new(tmp.join("runtime"));
@@ -1321,7 +1323,9 @@ mod tests {
             return;
         }
         let _env = FLEET_ENV.lock().unwrap_or_else(|e| e.into_inner());
-        let tmp = std::env::temp_dir().join(format!("gpui-console-e2e-fm-{}", std::process::id()));
+        let tmp_guard =
+            tempfile::Builder::new().prefix("gpui-console-e2e-fm-").tempdir().expect("tempdir");
+        let tmp = tmp_guard.path().to_path_buf();
         let _ = std::fs::remove_dir_all(&tmp);
         let fm_server = fm::FmServer::start(Duration::from_secs(30)).expect("fm serve");
 
@@ -1419,7 +1423,9 @@ mod tests {
         .expect("e2e.json is not valid JSON");
         let window = Duration::from_secs(plan["window_secs"].as_u64().unwrap_or(60));
 
-        let tmp = std::env::temp_dir().join(format!("gpui-console-e2e-cfg-{}", std::process::id()));
+        let tmp_guard =
+            tempfile::Builder::new().prefix("gpui-console-e2e-cfg-").tempdir().expect("tempdir");
+        let tmp = tmp_guard.path().to_path_buf();
         let _ = std::fs::remove_dir_all(&tmp);
         let fm_server = fm::FmServer::start(Duration::from_secs(30)).expect("fm serve");
         let mut cfg = Config::new(tmp.join("runtime"));

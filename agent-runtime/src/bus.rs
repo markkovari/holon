@@ -177,11 +177,7 @@ mod tests {
     use super::*;
 
     fn bus(tag: &str) -> (FileBus, PathBuf) {
-        let d = std::env::temp_dir().join(format!(
-            "ar-bus-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ));
+        let d = crate::testutil::dir("ar-bus");
         (FileBus::open(&d).unwrap(), d)
     }
 

@@ -1030,14 +1030,7 @@ pub mod testkit {
 
     impl Fake {
         pub fn new(tag: &str, replies: &[&str], approve: bool) -> Self {
-            let d = std::env::temp_dir().join(format!(
-                "ar-fake-{tag}-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
+            let d = crate::testutil::dir("ar-fake");
             Self {
                 store: Store::open(&d).unwrap(),
                 kv: Kv::open(&d).unwrap(),

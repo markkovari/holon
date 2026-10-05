@@ -304,11 +304,7 @@ mod tests {
     use crate::spec::{Capability, ModelSpec, Trigger};
 
     fn start(tag: &str) -> (Arc<Runtime>, String) {
-        let d = std::env::temp_dir().join(format!(
-            "ar-srv-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ));
+        let d = crate::testutil::dir("ar-srv");
         let rt = Runtime::new(Config::new(d)).unwrap();
         let addr = serve(rt.clone(), "127.0.0.1:0", "tok".into()).unwrap();
         (rt, format!("http://{addr}"))
