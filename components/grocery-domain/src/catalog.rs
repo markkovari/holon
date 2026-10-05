@@ -1,4 +1,4 @@
-use crate::bindings::wasi::http::types::IncomingRequest;
+use crate::bindings::p3::http::types::Request;
 use crate::read_body;
 use crate::store::{load_products, save_products};
 use crate::types::{Outcome, Product};
@@ -11,8 +11,8 @@ pub fn list_products() -> Outcome {
 }
 
 /// POST /api/products — RBAC Protected (Admin only)
-pub fn register_product(request: &IncomingRequest) -> Outcome {
-    let raw = match read_body(request) {
+pub async fn register_product(request: Request) -> Outcome {
+    let raw = match read_body(request).await {
         Ok(b) => b,
         Err(_) => return Outcome::Err(400, "Could not read body".into()),
     };
@@ -61,8 +61,8 @@ pub fn register_product(request: &IncomingRequest) -> Outcome {
 }
 
 /// PATCH /api/products/{barcode}/stock — RBAC Protected (Admin only)
-pub fn adjust_stock(request: &IncomingRequest, barcode: &str) -> Outcome {
-    let raw = match read_body(request) {
+pub async fn adjust_stock(request: Request, barcode: &str) -> Outcome {
+    let raw = match read_body(request).await {
         Ok(b) => b,
         Err(_) => return Outcome::Err(400, "Could not read body".into()),
     };

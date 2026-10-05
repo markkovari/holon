@@ -13,20 +13,45 @@
 //! never exposes the underlying store — no auth component needed.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../upload-policy/wit",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../blob-store/wit",
+            "../webhook-sign/wit",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "wit",
+        ],
+        world: "drop:app/upload-drop",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde_json::{json, Value};
 
 use bindings::blob::store::blobstore as blob;
+use bindings::p3::clocks::system_clock;
 use bindings::records::store::store as records;
 use bindings::upload::policy::gate as upload;
-use bindings::wasi::clocks::wall_clock;
 use bindings::webhook::sign::signer as sign;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Component;
 
@@ -39,23 +64,23 @@ const LINK_SECRET: &str = "drop-download-link-secret";
 const LINK_TTL: u64 = 300;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => usage_json(),
-            (Method::Post, ["api", "tickets"]) => make_ticket(&request),
-            (Method::Put, ["api", "blob", token]) => put_blob(&request, token),
+            (Method::Post, ["api", "tickets"]) => make_ticket(request).await,
+            (Method::Put, ["api", "blob", token]) => put_blob(request, token).await,
             (Method::Get, ["api", "objects"]) => list_objects(),
             (Method::Get, ["api", "object", id]) => object_meta(id),
             (Method::Get, ["api", "blob", id]) => get_blob(id, &path),
             (Method::Get, ["api", "stats"]) => stats(),
             _ => Outcome::err(404, "not_found"),
         };
-        emit(response_out, outcome);
+        emit(outcome)
     }
 }
 
@@ -71,7 +96,7 @@ impl Outcome {
 }
 
 fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 fn usage_json() -> Outcome {
@@ -95,8 +120,8 @@ fn usage_json() -> Outcome {
 
 /// Answer the policy question and mint a signed, expiring ticket. No bytes
 /// touched here — this is the whole point of the presigned axis.
-fn make_ticket(request: &IncomingRequest) -> Outcome {
-    let body = match parse_body(request) {
+async fn make_ticket(request: Request) -> Outcome {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -121,12 +146,12 @@ fn make_ticket(request: &IncomingRequest) -> Outcome {
 /// raw body under the granted object-key, and write metadata. The client PUTs
 /// straight here — we stream the body into the store once, no intermediate copy
 /// held for policy (policy was already decided at ticket time).
-fn put_blob(request: &IncomingRequest, token: &str) -> Outcome {
+async fn put_blob(request: Request, token: &str) -> Outcome {
     let grant = match upload::redeem(token) {
         Ok(g) => g,
         Err(e) => return policy_err(e),
     };
-    let data = match read_body(request) {
+    let data = match read_body(request).await {
         Ok(b) => b,
         Err(_) => return Outcome::err(400, "could not read body"),
     };
@@ -289,8 +314,8 @@ fn store_err(e: records::StoreError) -> Outcome {
 
 // ---- http plumbing -----------------------------------------------------------
 
-fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let body = read_body(request).map_err(|_| Outcome::err(400, "could not read body"))?;
+async fn parse_body(request: Request) -> Result<Value, Outcome> {
+    let body = read_body(request).await.map_err(|_| Outcome::err(400, "could not read body"))?;
     if body.is_empty() {
         return Ok(Value::Object(Default::default()));
     }
@@ -303,8 +328,8 @@ fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// component and the connection simply closes.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
 
 fn query_str(path: &str, key: &str) -> Option<String> {
     let query = path.split('?').nth(1)?;
@@ -316,28 +341,18 @@ fn query_str(path: &str, key: &str) -> Option<String> {
 
 use guestfmt::percent_decode as decode;
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => {
-            respond(response_out, code, "application/json", body.as_bytes())
-        }
-        Outcome::Bytes(code, ct, bytes) => respond(response_out, code, &ct, &bytes),
+        Outcome::Json(code, body) => send(code, "application/json", body.into_bytes()),
+        Outcome::Bytes(code, ct, bytes) => send(code, &ct, bytes),
     }
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {
+fn send(status: u16, content_type: &str, body: Vec<u8>) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(status, headers, body)
 }
 
 bindings::export!(Component with_types_in bindings);

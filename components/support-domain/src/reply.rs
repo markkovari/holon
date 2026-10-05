@@ -2,8 +2,8 @@ use crate::api::Reply;
 use crate::bindings::ai::inference::inference as ai;
 use crate::bindings::audit::log::recorder;
 use crate::bindings::audit::log::types;
+use crate::bindings::p3::clocks::system_clock;
 use crate::bindings::records::store::store;
-use crate::bindings::wasi::clocks::wall_clock;
 use serde_json::{json, Value};
 
 pub fn add_reply(id: &str, body: &str) -> Reply {
@@ -25,13 +25,13 @@ pub fn add_reply(id: &str, body: &str) -> Reply {
         replies.push(json!({
             "text": reply_text,
             "author": "agent",
-            "timestamp": wall_clock::now().seconds
+            "timestamp": system_clock::now().seconds
         }));
     } else {
         data["replies"] = json!([{
             "text": reply_text,
             "author": "agent",
-            "timestamp": wall_clock::now().seconds
+            "timestamp": system_clock::now().seconds
         }]);
     }
 
@@ -84,12 +84,12 @@ pub fn close_ticket(id: &str) -> Reply {
 }
 
 fn log_action(action: &str, _resource: &str, detail: &str) {
-    let now = wall_clock::now();
+    let now = system_clock::now();
     let _ = recorder::record_event(&types::Event {
         id: crate::bindings::id::generate::generator::ulid(),
         trace_id: "".to_string(),
         span_id: "".to_string(),
-        timestamp: now.seconds,
+        timestamp: now.seconds as u64,
         event: action.to_string(),
         outcome: "allow".to_string(),
         tenant: "support".to_string(),

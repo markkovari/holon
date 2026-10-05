@@ -26,8 +26,11 @@ path = "src/main.rs"
 #
 # Bump all four together when wrpc supports a newer one.
 wasmtime = { version = "45", features = ["component-model", "async"] }
-wasmtime-wasi = "45"
-wasmtime-wasi-http = "45"
+# `p3` is opt-in on 45 (default from 49). 45 implements the
+# `0.3.0-rc-2026-03-15` WIT, not final `0.3.0` — a p3 guest must be built
+# against the rc until wrpc lets this host move past 45.
+wasmtime-wasi = { version = "45", features = ["p3"] }
+wasmtime-wasi-http = { version = "45", features = ["p3", "component-model-async"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "signal"] }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }

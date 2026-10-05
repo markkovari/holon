@@ -24,16 +24,40 @@
 //! so here is cheaper than pretending a cookie is more than it is.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../id-generate/wit",
+            "../svg-chart/wit",
+            "../qr/wit",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "wit",
+        ],
+        world: "poll:domain/poll-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::id::generate::generator as ids;
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 use bindings::qr::encode::encoder as qr;
 use bindings::records::store::store as records;
 use bindings::svg::chart::charts as chart;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
 use serde_json::{json, Value};
 
 struct Component;
@@ -45,7 +69,7 @@ const VOTES: &str = "votes";
 const MAX_OPTIONS: usize = 8;
 const MAX_BODY_BYTES: usize = 64 * 1024;
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 /// What a handler answers with. `set_voter` asks the router for a `set-cookie`.
 struct Reply {
@@ -92,14 +116,14 @@ impl Reply {
     }
 }
 
-guestio::guest_read_body_text!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
 /// The `voter` cookie, or empty.
 ///
 /// Parsed rather than matched: `voter=x` and `other=1; voter=x` and `xvoter=y` all
 /// contain the substring, and only two of them are this cookie.
-fn voter_of(request: &IncomingRequest) -> String {
-    let headers = request.headers();
+fn voter_of(request: &Request) -> String {
+    let headers = request.get_headers();
     for raw in headers.get("cookie") {
         let s = String::from_utf8_lossy(&raw).into_owned();
         for pair in s.split(';') {
@@ -288,9 +312,9 @@ fn qr_svg(code: &str, base: &str) -> Reply {
 /// From the request's own `host` header rather than config: the app is served
 /// through an ingress, a proxy, or a tailnet name, and a hardcoded base URL produces
 /// a QR that works on the machine that generated it and nowhere else.
-fn base_url(request: &IncomingRequest) -> String {
+fn base_url(request: &Request) -> String {
     let host = request
-        .headers()
+        .get_headers()
         .get("host")
         .into_iter()
         .next()
@@ -302,15 +326,15 @@ fn base_url(request: &IncomingRequest) -> String {
 }
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let path = request.path_with_query().unwrap_or_else(|| "/".into());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".into());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.split('/').filter(|s| !s.is_empty()).collect();
-        let method = request.method();
+        let method = request.get_method();
         let voter = voter_of(&request);
         let base = base_url(&request);
         let body = match method {
-            Method::Post | Method::Put | Method::Patch => read_body(&request),
+            Method::Post | Method::Put | Method::Patch => read_body(request).await,
             _ => String::new(),
         };
 
@@ -341,15 +365,7 @@ impl Guest for Component {
         // No caching: a result that updates is the whole app, and a proxy that
         // remembers the first answer makes it look broken rather than stale.
         let _ = headers.set("cache-control", &[b"no-store".to_vec()]);
-        let resp = OutgoingResponse::new(headers);
-        let _ = resp.set_status_code(reply.status);
-        let out = resp.body().expect("body");
-        ResponseOutparam::set(response_out, Ok(resp));
-        if let Ok(stream) = out.write() {
-            let _ = write_all(&stream, &reply.body);
-            drop(stream);
-        }
-        let _ = OutgoingBody::finish(out, None);
+        respond_with(reply.status, headers, reply.body)
     }
 }
 

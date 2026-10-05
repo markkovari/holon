@@ -13,10 +13,9 @@
 
 use serde_json::{json, Map, Value};
 
-use crate::bindings::wasi::http::types::IncomingRequest;
 use crate::req;
 use crate::{
-    auth_types, bus, caller, now, orgs, personal_org, read_body, records, str_of, Outcome,
+    auth_types, bus, caller, now, orgs, personal_org, read_body, records, str_of, Incoming, Outcome,
 };
 
 /// Every route in this file needs a session and the org that caller is
@@ -26,7 +25,7 @@ use crate::{
 /// business even though the *early return* has to happen at each call site
 /// (see the `session!` macro right below, which is the part that does that).
 fn session(
-    request: &IncomingRequest,
+    request: &Incoming,
     query: &Map<String, Value>,
     role: orgs::Role,
 ) -> Result<(auth_types::Principal, String), Outcome> {
@@ -94,7 +93,7 @@ fn valid_project_name(name: &str) -> bool {
         && !name.ends_with('-')
 }
 
-pub fn project_create(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+pub fn project_create(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let (_p, org) = session!(request, query, orgs::Role::Member);
     let b: req::NewProject = match read_body(request)
         .map_err(|_| Outcome::Err(400, "could not read body".into()))
@@ -147,7 +146,7 @@ fn projects_of(org: &str) -> Vec<Value> {
         .collect()
 }
 
-pub fn projects_list(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+pub fn projects_list(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let (_p, org) = session!(request, query, orgs::Role::Viewer);
     let rows: Vec<Value> = projects_of(&org)
         .into_iter()
@@ -178,11 +177,7 @@ fn goals_of(project: &str) -> Vec<Value> {
         .collect()
 }
 
-pub fn goal_create(
-    request: &IncomingRequest,
-    project: &str,
-    query: &Map<String, Value>,
-) -> Outcome {
+pub fn goal_create(request: &Incoming, project: &str, query: &Map<String, Value>) -> Outcome {
     let (_p, org) = session!(request, query, orgs::Role::Member);
     if !projects_of(&org).iter().any(|d| str_of(d, "name") == project) {
         return Outcome::Err(404, format!("no project `{project}`"));
@@ -306,7 +301,7 @@ fn parent_is_usable(parent: &str, project: &str) -> Result<(), (u16, String)> {
     Ok(())
 }
 
-pub fn goals_list(request: &IncomingRequest, project: &str, query: &Map<String, Value>) -> Outcome {
+pub fn goals_list(request: &Incoming, project: &str, query: &Map<String, Value>) -> Outcome {
     let (_p, _org) = session!(request, query, orgs::Role::Viewer);
     let want = query.get("state").and_then(|v| v.as_str()).unwrap_or_default();
     // `?parent=<id>` lists one goal's parts; `?parent=` (empty, explicitly given)
@@ -342,11 +337,7 @@ pub fn goals_list(request: &IncomingRequest, project: &str, query: &Map<String, 
 /// polling with no group named don't silently share (and steal events from)
 /// one offset — same reasoning as `event:bus`'s own per-group design, applied
 /// so a forgotten `?group=` cannot look like it worked while dropping events.
-pub fn events_list(
-    request: &IncomingRequest,
-    project: &str,
-    query: &Map<String, Value>,
-) -> Outcome {
+pub fn events_list(request: &Incoming, project: &str, query: &Map<String, Value>) -> Outcome {
     let (p, _org) = session!(request, query, orgs::Role::Viewer);
     let group = query.get("group").and_then(|v| v.as_str()).unwrap_or(&p.subject);
     let max: u32 =
@@ -378,7 +369,7 @@ pub fn events_list(
 /// Advances `group`'s offset so a later poll does not hand the same
 /// transitions back. Acking is the consumer's own bookkeeping — it is never
 /// required for correctness, only for not re-reading history forever.
-pub fn events_ack(request: &IncomingRequest, project: &str, query: &Map<String, Value>) -> Outcome {
+pub fn events_ack(request: &Incoming, project: &str, query: &Map<String, Value>) -> Outcome {
     let (_p, _org) = session!(request, query, orgs::Role::Viewer);
     let b: req::AckEvents = match read_body(request)
         .map_err(|_| Outcome::Err(400, "could not read body".into()))
@@ -395,7 +386,7 @@ pub fn events_ack(request: &IncomingRequest, project: &str, query: &Map<String, 
 
 /// Move a goal, refusing anything the lifecycle does not allow.
 pub fn goal_transition(
-    request: &IncomingRequest,
+    request: &Incoming,
     id: &str,
     to: &str,
     query: &Map<String, Value>,

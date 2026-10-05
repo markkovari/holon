@@ -1,0 +1,8 @@
+// The WASI p3 set a p3 component builds against, as ONE `generate!` path:
+// `path: ["../../wit/p3", <other deps>, "wit"]`. `deps/` links to the vendored
+// `0.3.0-rc-2026-03-15` packages beside the p2 ones in `wit/deps` — the rc,
+// because comp-host's wasmtime 45 implements the rc and not final `0.3.0`.
+// Move the links (and every component's world) to `0.3.0` when the host moves.
+package holon:wasi-p3@0.1.0;
+
+world p3 {}

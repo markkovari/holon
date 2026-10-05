@@ -1,7 +1,7 @@
 use crate::bindings::audit::log::query as audit_query;
 use crate::bindings::audit::log::recorder as audit;
 use crate::bindings::audit::log::types::Event;
-use crate::bindings::wasi::http::types::Method;
+use crate::bindings::p3::http::types::Method;
 use crate::{Reply, Route};
 use serde_json::json;
 

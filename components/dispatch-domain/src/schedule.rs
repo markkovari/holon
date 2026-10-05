@@ -10,8 +10,8 @@
 
 use crate::bindings::fsm::workflow::engine as fsm;
 use crate::bindings::geo::resolve::coords as geo;
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
 use crate::{Reply, Route};
 use serde_json::{json, Value};
 

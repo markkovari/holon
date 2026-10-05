@@ -35,7 +35,7 @@ package studio:app@0.1.0;
 /// The studio backend: a palette of reflected components, saved graphs, and the
 /// four things a graph can turn into.
 world studio-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // inspection, planning, emitting, and real composition.
     import wit:reflect/inspector@0.1.0;
@@ -45,5 +45,5 @@ world studio-domain {
     // the uploaded component bytes — needed again at compose time.
     import blob:store/blobstore@0.1.0;
     // timestamps on uploads and graphs.
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
 }

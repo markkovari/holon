@@ -12,17 +12,42 @@
 //! "that subject wants no email" into the same shape as "the gateway refused".
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../host/wit/deps/comp-secrets",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../mail-http/wit",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../notify-inbox/wit",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../notify-prefs/wit",
+            "wit",
+        ],
+        world: "notify:probe/notify-probe",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::notify::inbox::inbox;
 use bindings::notify::prefs::preferences as prefs;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
 use serde_json::{json, Value};
 
-guestio::guest_write_all!();
+guestio::guest_p3_respond!();
 
 struct Component;
 
@@ -58,7 +83,7 @@ fn param(query: &str, key: &str) -> String {
 
 const MAX_BODY_BYTES: usize = 1 << 20;
 
-guestio::guest_read_body_text!(MAX_BODY_BYTES);
+guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
 fn note_json(n: &inbox::Note) -> Value {
     json!({
@@ -68,15 +93,15 @@ fn note_json(n: &inbox::Note) -> Value {
 }
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let target = request.path_with_query().unwrap_or_else(|| "/".into());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let target = request.get_path_with_query().unwrap_or_else(|| "/".into());
         let (path, query) = match target.split_once('?') {
             Some((p, q)) => (p.to_string(), q.to_string()),
             None => (target.clone(), String::new()),
         };
-        let method = request.method();
+        let method = request.get_method();
         let raw = match method {
-            Method::Post | Method::Put => read_body(&request),
+            Method::Post | Method::Put => read_body(request).await,
             _ => String::new(),
         };
         let body: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
@@ -174,17 +199,7 @@ impl Guest for Component {
             _ => json!({"error": "not_found"}),
         };
 
-        let headers = Fields::new();
-        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-        let resp = OutgoingResponse::new(headers);
-        let _ = resp.set_status_code(200);
-        let ob = resp.body().expect("body");
-        ResponseOutparam::set(response_out, Ok(resp));
-        if let Ok(stream) = ob.write() {
-            let _ = write_all(&stream, out.to_string().as_bytes());
-            drop(stream);
-        }
-        let _ = OutgoingBody::finish(ob, None);
+        respond(200, "application/json", out.to_string())
     }
 }
 

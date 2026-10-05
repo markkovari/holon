@@ -1,5 +1,5 @@
 use crate::bindings::barcode::read::reader::{self as barcode, ReadError};
-use crate::bindings::wasi::http::types::IncomingRequest;
+use crate::bindings::p3::http::types::Request;
 use crate::read_body;
 use crate::store::load_products;
 use crate::types::Outcome;
@@ -28,8 +28,8 @@ pub fn get_fixture(filename: &str) -> Option<&'static [u8]> {
 }
 
 /// POST /api/scan — REAL WebAssembly Barcode Decoding (barcode:read/reader)
-pub fn scan_barcode(request: &IncomingRequest) -> Outcome {
-    let image_bytes = match read_body(request) {
+pub async fn scan_barcode(request: Request) -> Outcome {
+    let image_bytes = match read_body(request).await {
         Ok(b) if !b.is_empty() => b,
         _ => return Outcome::Err(400, "Request body is empty or not readable".into()),
     };

@@ -52,6 +52,7 @@ const ALLOWED: &[&str] = &[
     "wasi:cli/terminal-stdin",
     "wasi:cli/terminal-stdout",
     "wasi:clocks/monotonic-clock",
+    "wasi:clocks/types", // p3's duration type, pulled in by http/types and monotonic-clock
     "wasi:io/error",
     "wasi:io/poll",
     "wasi:io/streams",
@@ -60,8 +61,10 @@ const ALLOWED: &[&str] = &[
     "wasi:blobstore/container",   //   1
     "wasi:blobstore/types",       //   1
     "wasi:clocks/wall-clock",     //  67 — a timestamp, not a duration
+    "wasi:clocks/system-clock",   //  72 — the same timestamp, for p3 components (ADR-0103)
     "wasi:config/store",          //  37
     "wasi:http/outgoing-handler", // 18 — the components that call out
+    "wasi:http/client",           //  6 — the same, for p3 components
     "wasi:http/types",            // 109 — every component that serves
     "wasi:keyvalue/atomics",      //   5
     "wasi:keyvalue/batch",        //   2

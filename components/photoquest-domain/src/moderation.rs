@@ -21,9 +21,9 @@
 
 use crate::bindings::auth::identity::rbac;
 use crate::bindings::auth::identity::types::Principal;
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::config::store as config;
-use crate::bindings::wasi::http::types::Method;
 use crate::{audit, introspect, now_secs, Reply, Route, TENANT};
 use serde_json::{json, Map, Value};
 

@@ -5,7 +5,34 @@
 //! steady-state redirects never touch the record store.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../slug/wit",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../id-generate/wit",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../cache/wit",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../rate-limiter/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "wit",
+        ],
+        world: "shortlink:app/shortlink-app",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+    }
+}
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -19,10 +46,8 @@ use bindings::slug::generate::generator as slug;
 use bindings::wasi::keyvalue::atomics;
 use bindings::wasi::keyvalue::store as kv;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Component;
 
@@ -30,9 +55,9 @@ const LINKS: &str = "links";
 const CODE_LEN: u8 = 7;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let query = path.split_once('?').map(|x| x.1).unwrap_or("").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
@@ -49,14 +74,14 @@ impl Guest for Component {
                 })
                 .to_string(),
             ),
-            (Method::Post, ["api", "links"]) => create_link(&request),
+            (Method::Post, ["api", "links"]) => create_link(request).await,
             (Method::Get, ["api", "links"]) => list_links(&query),
             (Method::Get, ["api", "links", id]) => get_link(id),
             (Method::Delete, ["api", "links", id]) => delete_link(id),
             (Method::Get, [code]) => redirect(code),
             _ => Outcome::NotFound,
         };
-        emit(response_out, result);
+        emit(result)
     }
 }
 
@@ -81,12 +106,12 @@ struct CreateReq {
     title: Option<String>,
 }
 
-fn create_link(request: &IncomingRequest) -> Outcome {
+async fn create_link(request: Request) -> Outcome {
     // fixed-window create limit per client; no auth, so the client IP (or a
     // shared anonymous key behind proxies that strip it) is the identity.
     let client = format!(
         "shortlink:create:{}",
-        header(request, "x-forwarded-for").unwrap_or_else(|| "anon".to_string())
+        header(&request, "x-forwarded-for").unwrap_or_else(|| "anon".to_string())
     );
     match limiter::check(&client) {
         Ok(_) => {}
@@ -95,7 +120,7 @@ fn create_link(request: &IncomingRequest) -> Outcome {
     }
 
     let req: CreateReq =
-        match read_body(request).and_then(|b| serde_json::from_slice(&b).map_err(|_| ())) {
+        match read_body(request).await.and_then(|b| serde_json::from_slice(&b).map_err(|_| ())) {
             Ok(r) => r,
             Err(_) => return Outcome::Bad("expected json body {url, slug?, title?}".into()),
         };
@@ -297,11 +322,11 @@ fn store_err(e: records::StoreError) -> Outcome {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
 
-fn header(request: &IncomingRequest, name: &str) -> Option<String> {
-    request.headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
+fn header(request: &Request, name: &str) -> Option<String> {
+    request.get_headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
 }
 
 fn query_param(query: &str, key: &str) -> Option<String> {
@@ -313,41 +338,28 @@ fn query_param(query: &str, key: &str) -> Option<String> {
 
 // ---- responses -------------------------------------------------------------
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, &[], body.as_bytes()),
-        Outcome::Redirect(url) => respond(response_out, 302, &[("location", &url)], b""),
-        Outcome::Limited(secs) => respond(
-            response_out,
+        Outcome::Json(code, body) => reply(code, &[], body.as_bytes()),
+        Outcome::Redirect(url) => reply(302, &[("location", &url)], b""),
+        Outcome::Limited(secs) => reply(
             429,
             &[("retry-after", &secs.to_string())],
             format!("{{\"error\":\"rate_limited\",\"retryAfter\":{secs}}}").as_bytes(),
         ),
-        Outcome::Bad(msg) => {
-            respond(response_out, 400, &[], json!({ "error": msg }).to_string().as_bytes())
-        }
-        Outcome::Err(code, msg) => {
-            respond(response_out, code, &[], json!({ "error": msg }).to_string().as_bytes())
-        }
-        Outcome::NotFound => respond(response_out, 404, &[], b"{\"error\":\"not_found\"}"),
+        Outcome::Bad(msg) => reply(400, &[], json!({ "error": msg }).to_string().as_bytes()),
+        Outcome::Err(code, msg) => reply(code, &[], json!({ "error": msg }).to_string().as_bytes()),
+        Outcome::NotFound => reply(404, &[], b"{\"error\":\"not_found\"}"),
     }
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, extra: &[(&str, &str)], body: &[u8]) {
+fn reply(status: u16, extra: &[(&str, &str)], body: &[u8]) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     for (k, v) in extra {
         let _ = headers.set(k.as_ref(), &[v.as_bytes().to_vec()]);
     }
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
+    respond_with(status, headers, body.to_vec())
 }
 
 bindings::export!(Component with_types_in bindings);

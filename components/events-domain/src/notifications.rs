@@ -20,9 +20,7 @@ use serde_json::json;
 
 use crate::bindings::notify::inbox::inbox;
 use crate::bindings::notify::prefs::preferences as prefs;
-use crate::bindings::wasi::http::types::{
-    Fields, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use crate::bindings::p3::http::types::{ErrorCode, Fields, Method, Response};
 use crate::{require, Reply, Route};
 
 fn channel_name(c: prefs::Channel) -> &'static str {
@@ -253,36 +251,23 @@ const POLL_MS: u64 = 1000;
 /// It reads `notify:inbox` by cursor. The capability holds no socket, so the
 /// realtime half is the app's; what makes it cheap is that `since(after)` is exactly
 /// "what is new", the same call a page uses to load.
-pub fn stream(response_out: ResponseOutparam, route: &Route) {
+pub fn stream(route: &Route) -> Result<Response, ErrorCode> {
     let Some(subject) = stream_subject(route) else {
         // A bad or expired ticket gets a 401 and no stream. Not a 200 with an error
         // frame: `EventSource` would reconnect forever against it.
-        let headers = Fields::new();
-        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-        let response = OutgoingResponse::new(headers);
-        let _ = response.set_status_code(401);
-        let body = response.body().expect("body");
-        ResponseOutparam::set(response_out, Ok(response));
-        if let Ok(s) = body.write() {
-            let _ = crate::write_all(&s, br#"{"error":"bad_ticket"}"#);
-            drop(s);
-        }
-        let _ = OutgoingBody::finish(body, None);
-        return;
+        return crate::respond(401, "application/json", br#"{"error":"bad_ticket"}"#.to_vec());
     };
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
     let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(200);
-    let body = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
 
     let mut cursor = route.param("after").parse::<u64>().unwrap_or(0);
-    {
-        let Ok(out) = body.write() else { return };
-        if !crate::write_all(&out, b": connected\n\n") {
+    // `write_all` hands back what the reader did not take: non-empty means the
+    // client went away, which ends the stream.
+    let (mut out, rx) = crate::bindings::wit_stream::new();
+    wit_bindgen::spawn_local(async move {
+        if !out.write_all(b": connected\n\n".to_vec()).await.is_empty() {
             return;
         }
         for _ in 0..MAX_TICKS {
@@ -306,12 +291,15 @@ pub fn stream(response_out: ResponseOutparam, route: &Route) {
                     })
                     .collect::<String>()
             };
-            if !crate::write_all(&out, frame.as_bytes()) {
+            if !out.write_all(frame.into_bytes()).await.is_empty() {
                 break;
             }
-            crate::bindings::wasi::clocks::monotonic_clock::subscribe_duration(POLL_MS * 1_000_000)
-                .block();
+            crate::bindings::p3::clocks::monotonic_clock::wait_for(POLL_MS * 1_000_000).await;
         }
-    }
-    let _ = OutgoingBody::finish(body, None);
+    });
+    let (trailers_tx, trailers_rx) = crate::bindings::wit_future::new(|| Ok(None));
+    drop(trailers_tx);
+    let (response, _sent) = Response::new(headers, Some(rx), trailers_rx);
+    let _ = response.set_status_code(200);
+    Ok(response)
 }

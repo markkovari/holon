@@ -9,9 +9,9 @@
 //! kind) runs before the document is built, so there is no code path that could
 //! write the caller's phone number into a manifest anyone can read.
 
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::pii::redact::redactor as pii;
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
 use crate::{Reply, Route};
 use serde_json::{json, Map, Value};
 

@@ -27,8 +27,8 @@
 //! reports nothing awarded. Both writers agree on which id is smallest, so exactly
 //! one row survives.
 
+use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
-use crate::bindings::wasi::http::types::Method;
 use crate::clock;
 use crate::moderation::{is_hidden, require_active};
 use crate::{audit, introspect, Reply, Route};

@@ -16,7 +16,35 @@
 //!    session + CSRF token. The secret is write-once, read-only-to-verify.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../otp/wit",
+            "../qr/wit",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../secrets-vault/wit",
+            "../session-store/wit",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "wit",
+        ],
+        world: "mfa:app/mfa-authgate",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+    }
+}
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -26,12 +54,10 @@ use bindings::qr::encode::encoder as qr;
 use bindings::records::store::store as records;
 use bindings::secrets::vault::vault;
 use bindings::session::store::store as session;
-use bindings::wasi::clocks::wall_clock;
+use bindings::p3::clocks::system_clock;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 
 struct Component;
 
@@ -44,23 +70,23 @@ const SESSION_TTL: u64 = 900;
 const RECOVERY_COUNT: u32 = 5;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        let method = request.method();
-        let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+        let method = request.get_method();
+        let path = request.get_path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => usage_json(),
-            (Method::Post, ["api", "enroll"]) => enroll(&request),
-            (Method::Post, ["api", "activate"]) => activate(&request),
-            (Method::Post, ["api", "login"]) => login(&request),
+            (Method::Post, ["api", "enroll"]) => enroll(request).await,
+            (Method::Post, ["api", "activate"]) => activate(request).await,
+            (Method::Post, ["api", "login"]) => login(request).await,
             (Method::Get, ["api", "session", id]) => get_session(id),
-            (Method::Post, ["api", "logout"]) => logout(&request),
+            (Method::Post, ["api", "logout"]) => logout(request).await,
             (Method::Get, ["api", "status", account]) => status(account),
             _ => Outcome::err(404, "not_found"),
         };
-        emit(response_out, outcome);
+        emit(outcome)
     }
 }
 
@@ -74,7 +100,7 @@ impl Outcome {
 }
 
 fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 fn secret_name(account: &str) -> String {
@@ -116,8 +142,8 @@ fn usage_json() -> Outcome {
 
 // ---- 1. enroll: provision + seal ---------------------------------------------
 
-fn enroll(request: &IncomingRequest) -> Outcome {
-    let body = match parse_body(request) {
+async fn enroll(request: Request) -> Outcome {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -172,8 +198,8 @@ fn enroll(request: &IncomingRequest) -> Outcome {
 
 // ---- 2. activate: first correct code -> enrolled + recovery codes ------------
 
-fn activate(request: &IncomingRequest) -> Outcome {
-    let body = match parse_body(request) {
+async fn activate(request: Request) -> Outcome {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -218,8 +244,8 @@ fn activate(request: &IncomingRequest) -> Outcome {
 
 // ---- 3. login: challenge -> session ------------------------------------------
 
-fn login(request: &IncomingRequest) -> Outcome {
-    let body = match parse_body(request) {
+async fn login(request: Request) -> Outcome {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -287,8 +313,8 @@ fn get_session(id: &str) -> Outcome {
     }
 }
 
-fn logout(request: &IncomingRequest) -> Outcome {
-    let body = match parse_body(request) {
+async fn logout(request: Request) -> Outcome {
+    let body = match parse_body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
@@ -365,8 +391,8 @@ fn store_err(e: records::StoreError) -> Outcome {
 
 // ---- http plumbing -----------------------------------------------------------
 
-fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let body = read_body(request).map_err(|_| Outcome::err(400, "could not read body"))?;
+async fn parse_body(request: Request) -> Result<Value, Outcome> {
+    let body = read_body(request).await.map_err(|_| Outcome::err(400, "could not read body"))?;
     if body.is_empty() {
         return Ok(Value::Object(Default::default()));
     }
@@ -388,28 +414,18 @@ fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-guestio::guest_read_body!(MAX_BODY_BYTES);
-guestio::guest_write_all!();
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+guestio::guest_p3_respond!();
 
-fn emit(response_out: ResponseOutparam, result: Outcome) {
+fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, body.as_bytes()),
+        Outcome::Json(code, body) => {
+            let headers = Fields::new();
+            let _ = headers.set("content-type", &[b"application/json".to_vec()]);
+            let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
+            respond_with(code, headers, body.into_bytes())
+        }
     }
-}
-
-fn respond(response_out: ResponseOutparam, status: u16, body: &[u8]) {
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
-    ResponseOutparam::set(response_out, Ok(response));
-    if !body.is_empty() {
-        let stream = out.write().expect("write stream");
-        let _ = write_all(&stream, body);
-    }
-    let _ = OutgoingBody::finish(out, None);
 }
 
 bindings::export!(Component with_types_in bindings);

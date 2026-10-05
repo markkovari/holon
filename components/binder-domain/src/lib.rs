@@ -40,25 +40,62 @@
 //! collection is small and an index is a second thing to keep right.
 
 #[allow(warnings)]
-mod bindings;
+mod bindings {
+    wit_bindgen::generate!({
+        path: [
+            "../../wit/p3",
+            "../../wit/deps/wasi-keyvalue-0.2.0-draft",
+            "../../wit/deps/wasi-config-0.2.0-rc.1",
+            "../../wit/deps/wasi-io-0.2.0",
+            "../../wit/deps/wasi-clocks-0.2.0",
+            "../../wit/deps/wasi-random-0.2.0",
+            "../audit-log/wit",
+            "../../wit/deps/ratelimit-guard",
+            "../../wit/deps/wasi-cli-0.2.0",
+            "../../wit/deps/wasi-http-0.2.0",
+            "../../wit/auth.wit",
+            "../../wit/deps/wasi-blobstore-0.2.0-draft",
+            "../../wit/deps/wasmcloud-messaging-0.2.0",
+            "../zip/wit",
+            "../csv/wit",
+            "../sheet-ingest/wit",
+            "../qr/wit",
+            "../id-generate/wit",
+            "../../host/wit/deps/comp-store",
+            "../record-store/wit",
+            "../deck-build/wit",
+            "../vision-describe/wit",
+            "../card-identify/wit",
+            "../price-history/wit",
+            "../portfolio-value/wit",
+            "wit",
+        ],
+        world: "binder:app/binder-domain",
+        generate_all,
+    });
+    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
+    pub mod p3 {
+        pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
+        pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
+        pub use super::wasi::random0_3_0_rc_2026_03_15 as random;
+    }
+}
 
 use bindings::auth::identity::accounts;
 use bindings::auth::identity::authorizer;
 use bindings::auth::identity::types::Principal;
 use bindings::card::identify::identifier as ident;
 use bindings::deck::build::builder as deck;
-use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::id::generate::generator as ids;
+use bindings::p3::clocks::system_clock;
+use bindings::p3::handler::Guest;
+use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
 use bindings::portfolio::value::valuation as pv;
 use bindings::price::history::history as ph;
 use bindings::qr::encode::encoder as qr;
 use bindings::sheet::ingest::reader as sheet;
 use bindings::vision::describe::describer as vision;
-use bindings::wasi::clocks::wall_clock;
-use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
-};
-use bindings::wasi::io::streams::StreamError;
 use bindings::wasi::keyvalue::store;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -286,7 +323,7 @@ fn param(query: &str, key: &str) -> Option<String> {
 use guestfmt::percent_decode;
 
 fn now() -> u64 {
-    wall_clock::now().seconds
+    system_clock::now().seconds as u64
 }
 
 fn open() -> Result<store::Bucket, String> {
@@ -438,55 +475,49 @@ fn kind_name(k: deck::CardKind) -> &'static str {
 /// progress without parsing prose, and a stage added later does not break one that
 /// only knows the old ones.
 fn stream_photo(
-    out: ResponseOutparam,
-    bucket: &store::Bucket,
-    ns: &str,
+    bucket: store::Bucket,
+    ns: String,
     bytes: Vec<u8>,
     media_type: String,
-) {
+) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
     let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);
-    let response = OutgoingResponse::new(headers);
-    let _ = response.set_status_code(200);
-    let body = response.body().expect("outgoing body");
-    // Set BEFORE the work starts, so the browser has the connection and the first
-    // event arrives while the model is still looking rather than after it.
-    ResponseOutparam::set(out, Ok(response));
-
-    {
-        let stream = body.write().expect("write stream");
-        // Chunked, like every other write in this repository: one call above 4096
-        // bytes traps the component mid-response, and an SSE frame carrying a card
-        // with a long `needs_review` is not small.
-        let send = |v: Value| -> bool {
-            let frame = format!("data: {v}\n\n");
-            for chunk in frame.as_bytes().chunks(4096) {
-                if stream.blocking_write_and_flush(chunk).is_err() {
-                    return false;
-                }
-            }
-            true
+    let (trailers_tx, trailers_rx) = bindings::wit_future::new(|| Ok(None));
+    drop(trailers_tx);
+    let (mut tx, rx) = bindings::wit_stream::new();
+    // The work runs AFTER the response is returned, so the browser has the
+    // connection and the first event arrives while the model is still looking
+    // rather than after it.
+    wit_bindgen::spawn_local(async move {
+        let bucket = &bucket;
+        let ns = ns.as_str();
+        // A p3 `stream<u8>` write has no 4096-byte trap; `write_all` loops until
+        // every byte is taken, and hands back what is left if the reader went away.
+        let mut send = async |v: Value| -> bool {
+            tx.write_all(format!("data: {v}\n\n").into_bytes()).await.is_empty()
         };
 
-        if !send(json!({ "stage": "looking", "detail": "showing the card to the model" })) {
+        if !send(json!({ "stage": "looking", "detail": "showing the card to the model" })).await {
             return;
         }
 
         match vision::describe(&bytes, &media_type, &ident::prompt()) {
             Ok(answer) => {
                 let _ =
-                    send(json!({ "stage": "reading", "detail": "reading the answer into fields" }));
+                    send(json!({ "stage": "reading", "detail": "reading the answer into fields" }))
+                        .await;
                 match ident::parse(&answer) {
                     Ok(g) => match store_guess(bucket, ns, g) {
                         Ok(card) => {
                             let _ = send(json!({
                                 "stage": "done",
                                 "card": serde_json::to_value(&card).unwrap_or(Value::Null),
-                            }));
+                            }))
+                            .await;
                         }
                         Err(e) => {
-                            let _ = send(json!({ "stage": "failed", "error": e }));
+                            let _ = send(json!({ "stage": "failed", "error": e })).await;
                         }
                     },
                     // Not a card, several cards, or no name. The model's own words go
@@ -497,56 +528,42 @@ fn stream_photo(
                             "stage": "refused",
                             "error": format!("{e:?}"),
                             "said": answer.chars().take(400).collect::<String>(),
-                        }));
+                        }))
+                        .await;
                     }
                 }
             }
             // The provider's own words. A model that refused and a provider that is
             // down are different problems for the person holding the phone.
             Err(e) => {
-                let _ = send(json!({ "stage": "failed", "error": format!("{e:?}") }));
+                let _ = send(json!({ "stage": "failed", "error": format!("{e:?}") })).await;
             }
         }
-    }
-    let _ = OutgoingBody::finish(body, None);
+    });
+    let (response, _sent) = Response::new(headers, Some(rx), trailers_rx);
+    response
+        .set_status_code(200)
+        .map_err(|()| ErrorCode::InternalError(Some("bad status 200".into())))?;
+    Ok(response)
 }
 
 // ---- HTTP ---------------------------------------------------------------
 
-fn respond(out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
-    let resp = OutgoingResponse::new(headers);
-    let _ = resp.set_status_code(status);
-    let out_body = resp.body().expect("a response has a body");
-    ResponseOutparam::set(out, Ok(resp));
-    {
-        let stream = out_body.write().expect("a body has a stream");
-        // Chunked to stay under the stream's own limit; the page is larger than one
-        // permitted write and a silent truncation would serve half a document.
-        for chunk in body.chunks(4096) {
-            if stream.blocking_write_and_flush(chunk).is_err() {
-                return;
-            }
-        }
-    }
-    let _ = OutgoingBody::finish(out_body, None);
+fn json_out(status: u16, v: &Value) -> Result<Response, ErrorCode> {
+    respond(status, "application/json", v.to_string())
 }
 
-fn json_out(out: ResponseOutparam, status: u16, v: &Value) {
-    respond(out, status, "application/json", v.to_string().as_bytes());
+fn fail(status: u16, why: &str) -> Result<Response, ErrorCode> {
+    json_out(status, &json!({ "error": why }))
 }
 
-fn fail(out: ResponseOutparam, status: u16, why: &str) {
-    json_out(out, status, &json!({ "error": why }));
-}
-
-guestio::guest_bearer!();
+guestio::guest_p3_bearer!();
+guestio::guest_p3_respond!();
 
 /// Who is asking. Every route below except `/`, `/health` and the two auth routes
 /// goes through here, and a route that forgets to is a route that reads somebody
 /// else's collection.
-fn who(req: &IncomingRequest) -> Option<Principal> {
+fn who(req: &Request) -> Option<Principal> {
     authorizer::introspect(&bearer(req)?).ok()
 }
 
@@ -562,94 +579,69 @@ fn ns(p: &Principal) -> String {
 /// generous — but bounded.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-/// The whole request body, or nothing.
-///
-/// `wasi:io` signals the end of a body with `Err(StreamError::Closed)` and a genuine
-/// failure with the other arm. Collapsing both into `break` returns a TRUNCATED body
-/// as if it were whole — for `/api/photo` that is half a picture described with
-/// confidence, and for anything that parses it is a confusing 400. There is no error
-/// channel out of this function, so a failed or over-long read returns EMPTY: a
-/// caller that gets nothing writes nothing, and a caller handed a plausible prefix
-/// stores it.
-fn read_body(req: &IncomingRequest) -> Vec<u8> {
-    let Ok(body) = req.consume() else { return Vec::new() };
-    let Ok(stream) = body.stream() else { return Vec::new() };
-    let mut buf = Vec::new();
-    loop {
-        match stream.blocking_read(8192) {
-            Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => {
-                if buf.len() + chunk.len() > MAX_BODY_BYTES {
-                    return Vec::new();
-                }
-                buf.extend_from_slice(&chunk);
-            }
-            Err(StreamError::Closed) => break,
-            // NOT the end of the body.
-            Err(_) => return Vec::new(),
-        }
-    }
-    buf
-}
+// The whole request body, or nothing: `guest_p3_read_body!` never returns a
+// truncated body as if it were whole — for `/api/photo` that would be half a
+// picture described with confidence. Callers take a failed or over-long read as
+// EMPTY: a caller that gets nothing writes nothing, and a caller handed a
+// plausible prefix stores it.
+guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
 impl Guest for Component {
-    fn handle(req: IncomingRequest, out: ResponseOutparam) {
-        let full = req.path_with_query().unwrap_or_else(|| "/".into());
+    async fn handle(req: Request) -> Result<Response, ErrorCode> {
+        let full = req.get_path_with_query().unwrap_or_else(|| "/".into());
         let (path, query) = match full.split_once('?') {
             Some((p, q)) => (p.to_string(), q.to_string()),
             None => (full.clone(), String::new()),
         };
-        let method = req.method();
+        let method = req.get_method();
 
         let bucket = match open() {
             Ok(b) => b,
-            Err(e) => return fail(out, 500, &format!("no store: {e}")),
+            Err(e) => return fail(500, &format!("no store: {e}")),
         };
 
         match (&method, path.as_str()) {
-            (Method::Get, "/health") => json_out(out, 200, &json!({ "ok": true })),
+            (Method::Get, "/health") => json_out(200, &json!({ "ok": true })),
 
             // The prompt a vision provider should send, straight from the capability
             // that parses its output — so the two cannot drift.
-            (Method::Get, "/api/prompt") => {
-                json_out(out, 200, &json!({ "prompt": ident::prompt() }))
-            }
+            (Method::Get, "/api/prompt") => json_out(200, &json!({ "prompt": ident::prompt() })),
 
             // --- accounts ------------------------------------------------
             //
             // Thin on purpose: `auth:identity` owns hashing, sessions and
             // introspection, and this app owns none of it (ADR-0009).
             (Method::Post, "/api/register") => {
-                let body = read_body(&req);
+                let body = read_body(req).await.unwrap_or_default();
                 let Ok(v) = serde_json::from_slice::<Value>(&body) else {
-                    return fail(out, 400, "not json");
+                    return fail(400, "not json");
                 };
                 let email = v.get("email").and_then(Value::as_str).unwrap_or_default();
                 let password = v.get("password").and_then(Value::as_str).unwrap_or_default();
                 match accounts::register(email, password, "binder") {
-                    Ok(p) => json_out(out, 201, &json!({ "subject": p.subject })),
-                    Err(e) => fail(out, 409, &format!("{e:?}")),
+                    Ok(p) => json_out(201, &json!({ "subject": p.subject })),
+                    Err(e) => fail(409, &format!("{e:?}")),
                 }
             }
 
             (Method::Post, "/api/login") => {
-                let body = read_body(&req);
+                let body = read_body(req).await.unwrap_or_default();
                 let Ok(v) = serde_json::from_slice::<Value>(&body) else {
-                    return fail(out, 400, "not json");
+                    return fail(400, "not json");
                 };
                 let email = v.get("email").and_then(Value::as_str).unwrap_or_default();
                 let password = v.get("password").and_then(Value::as_str).unwrap_or_default();
                 match accounts::login(email, password, "binder") {
-                    Ok(t) => json_out(out, 200, &json!({ "access_token": t.access_token })),
+                    Ok(t) => json_out(200, &json!({ "access_token": t.access_token })),
                     // One message for every failure, so this cannot be used to find
                     // out which addresses have accounts.
-                    Err(_) => fail(out, 401, "invalid credentials"),
+                    Err(_) => fail(401, "invalid credentials"),
                 }
             }
 
             (Method::Get, "/api/me") => match who(&req) {
-                Some(p) => json_out(out, 200, &json!({ "subject": p.subject, "roles": p.roles })),
-                None => fail(out, 401, "sign in"),
+                Some(p) => json_out(200, &json!({ "subject": p.subject, "roles": p.roles })),
+                None => fail(401, "sign in"),
             },
 
             // A PHOTOGRAPH in, a card row out. The whole point of the app: nobody
@@ -662,22 +654,22 @@ impl Guest for Component {
             // with a job; the work happens on the event stream below, which can say
             // what it is doing while it does it.
             (Method::Post, "/api/photo") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
-                let body = read_body(&req);
+                let body = read_body(req).await.unwrap_or_default();
                 let Ok(v) = serde_json::from_slice::<Value>(&body) else {
-                    return fail(out, 400, "not json");
+                    return fail(400, "not json");
                 };
                 let media_type =
                     v.get("media_type").and_then(Value::as_str).unwrap_or("image/jpeg").to_string();
                 let Some(data) = v.get("data").and_then(Value::as_str) else {
-                    return fail(out, 400, "no image");
+                    return fail(400, "no image");
                 };
                 if decode_b64(data).is_none() {
                     // Checked HERE rather than on the stream: a picture that is not
                     // base64 is the caller's mistake and should be a 400 on the
                     // request that made it, not an error event a minute later.
-                    return fail(out, 400, "the image is not base64");
+                    return fail(400, "the image is not base64");
                 }
                 // The instant, plus how long the payload is: unique per upload
                 // without a random source, and the job is read back by exactly one
@@ -685,13 +677,9 @@ impl Guest for Component {
                 let id = format!("{}-{}", now(), data.len());
                 let job = json!({ "media_type": media_type, "data": data });
                 if let Err(e) = put_json(&bucket, &format!("{ns}job:{id}"), &job) {
-                    return fail(out, 500, &e);
+                    return fail(500, &e);
                 }
-                json_out(
-                    out,
-                    202,
-                    &json!({ "job": id, "events": format!("/api/photo/{id}/events") }),
-                )
+                json_out(202, &json!({ "job": id, "events": format!("/api/photo/{id}/events") }))
             }
 
             // The work, reported as it happens.
@@ -702,12 +690,12 @@ impl Guest for Component {
             // not parallelism — it is that the person watching is told `looking`,
             // then `reading`, then the answer, instead of a spinner and a timeout.
             (Method::Get, p) if p.starts_with("/api/photo/") && p.ends_with("/events") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
                 let id =
                     percent_decode(p.trim_start_matches("/api/photo/").trim_end_matches("/events"));
                 let Some(job) = get_json::<Value>(&bucket, &format!("{ns}job:{id}")) else {
-                    return fail(out, 404, "no such job");
+                    return fail(404, "no such job");
                 };
                 // Claimed by deleting it: a stream that reconnects must not spend a
                 // second vision call on the same picture.
@@ -724,15 +712,15 @@ impl Guest for Component {
                     .and_then(decode_b64)
                     .unwrap_or_default();
 
-                stream_photo(out, &bucket, &ns, bytes, media_type)
+                stream_photo(bucket, ns, bytes, media_type)
             }
 
             // A model's answer in, a card row out. The parse is the capability's; the
             // id and the storage are the app's.
             (Method::Post, "/api/scan") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
-                let body = read_body(&req);
+                let body = read_body(req).await.unwrap_or_default();
                 let answer = match serde_json::from_slice::<Value>(&body) {
                     Ok(v) => {
                         v.get("answer").and_then(Value::as_str).unwrap_or_default().to_string()
@@ -776,13 +764,13 @@ impl Guest for Component {
                                 .collect(),
                         };
                         if let Err(e) = put_json(&bucket, &format!("{ns}card:{id}"), &card) {
-                            return fail(out, 500, &e);
+                            return fail(500, &e);
                         }
-                        json_out(out, 201, &serde_json::to_value(card).unwrap_or(Value::Null))
+                        json_out(201, &serde_json::to_value(card).unwrap_or(Value::Null))
                     }
                     // A refusal is a 422 and says why: not a card, several cards, or
                     // an answer with no name in it. None of them becomes a blank row.
-                    Err(e) => fail(out, 422, &format!("{e:?}")),
+                    Err(e) => fail(422, &format!("{e:?}")),
                 }
             }
 
@@ -791,16 +779,16 @@ impl Guest for Component {
             // The two paths produce the same row, which is why `needs_review` is a
             // property of the row rather than of how it arrived.
             (Method::Post, "/api/cards") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
-                let body = read_body(&req);
+                let body = read_body(req).await.unwrap_or_default();
                 let Ok(v) = serde_json::from_slice::<Value>(&body) else {
-                    return fail(out, 400, "not json");
+                    return fail(400, "not json");
                 };
                 let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
                 let name = s("name");
                 if name.trim().is_empty() {
-                    return fail(out, 400, "a card needs a name");
+                    return fail(400, "a card needs a name");
                 }
                 let set_code = s("set_code").to_lowercase();
                 let number = s("number");
@@ -828,7 +816,7 @@ impl Guest for Component {
                     needs_review: vec![],
                 };
                 if let Err(e) = put_json(&bucket, &format!("{ns}card:{id}"), &card) {
-                    return fail(out, 500, &e);
+                    return fail(500, &e);
                 }
                 // What you paid, if you said. Adding a card and recording its cost is
                 // one action to a person, and making it two is how a collection ends
@@ -849,7 +837,7 @@ impl Guest for Component {
                     };
                     let _ = put_json(&bucket, &event_key(&ns, &ev), &ev);
                 }
-                json_out(out, 201, &serde_json::to_value(card).unwrap_or(Value::Null))
+                json_out(201, &serde_json::to_value(card).unwrap_or(Value::Null))
             }
 
             // --- swaps -------------------------------------------------------
@@ -868,31 +856,31 @@ impl Guest for Component {
             // and `id:generate` both existed, import nothing, and know nothing
             // about cards.
             (Method::Post, "/api/swaps") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
-                let body = read_body(&req);
+                let body = read_body(req).await.unwrap_or_default();
                 let Ok(v) = serde_json::from_slice::<Value>(&body) else {
-                    return fail(out, 400, "not json");
+                    return fail(400, "not json");
                 };
                 let str_of =
                     |k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
                 let give = str_of("give");
                 let want = str_of("want");
                 if give.is_empty() || want.is_empty() {
-                    return fail(out, 400, "a swap needs a `give` and a `want`");
+                    return fail(400, "a swap needs a `give` and a `want`");
                 }
                 // You cannot offer what you do not have. Checked here rather than
                 // at accept time, because an offer nobody can honour wastes the
                 // other person's time and is visible to them as a valid one.
                 if get_json::<Card>(&bucket, &format!("{ns}card:{give}")).is_none() {
-                    return fail(out, 422, &format!("you do not have `{give}`"));
+                    return fail(422, &format!("you do not have `{give}`"));
                 }
                 let value_minor = v.get("value_minor").and_then(Value::as_i64).unwrap_or(0);
                 if value_minor <= 0 {
                     // Zero would make both sides record a swap that cost nothing
                     // and was worth nothing, which is a chart that under-reports
                     // rather than an error anybody would notice.
-                    return fail(out, 422, "a swap needs an agreed `value_minor` above zero");
+                    return fail(422, "a swap needs an agreed `value_minor` above zero");
                 }
                 let swap = Swap {
                     id: ids::short_code(10),
@@ -912,11 +900,10 @@ impl Guest for Component {
                 // has to be able to read one, and a key under `u/<subject>/` is by
                 // construction unreadable to them.
                 if let Err(e) = put_json(&bucket, &format!("swap:{}", swap.id), &swap) {
-                    return fail(out, 500, &e);
+                    return fail(500, &e);
                 }
                 let square = qr::svg(&swap.id, qr::Ecc::Medium, 2).unwrap_or_default();
                 json_out(
-                    out,
                     201,
                     &json!({
                         "id": swap.id,
@@ -936,9 +923,8 @@ impl Guest for Component {
             (Method::Get, p) if p.starts_with("/api/swaps/") && !p.ends_with("/accept") => {
                 let id = percent_decode(p.trim_start_matches("/api/swaps/"));
                 match get_json::<Swap>(&bucket, &format!("swap:{id}")) {
-                    None => fail(out, 404, "no such swap"),
+                    None => fail(404, "no such swap"),
                     Some(s) => json_out(
-                        out,
                         200,
                         &json!({
                             "id": s.id,
@@ -953,21 +939,21 @@ impl Guest for Component {
             }
 
             (Method::Post, p) if p.starts_with("/api/swaps/") && p.ends_with("/accept") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let taker_ns = ns(&who);
                 let id =
                     percent_decode(p.trim_start_matches("/api/swaps/").trim_end_matches("/accept"));
                 let Some(mut swap) = get_json::<Swap>(&bucket, &format!("swap:{id}")) else {
-                    return fail(out, 404, "no such swap");
+                    return fail(404, "no such swap");
                 };
                 if !swap.taken_by.is_empty() {
                     // Refused, not re-run. A second accept would move a card that
                     // has already moved and write four more events for a trade
                     // that happened once.
-                    return fail(out, 409, "that swap has already been taken");
+                    return fail(409, "that swap has already been taken");
                 }
                 if swap.from == who.subject {
-                    return fail(out, 422, "you cannot take your own swap");
+                    return fail(422, "you cannot take your own swap");
                 }
                 let offerer_ns = format!("u/{}/", swap.from);
 
@@ -977,12 +963,12 @@ impl Guest for Component {
                 let Some(given) =
                     get_json::<Card>(&bucket, &format!("{offerer_ns}card:{}", swap.give))
                 else {
-                    return fail(out, 409, "the offered card is no longer in that collection");
+                    return fail(409, "the offered card is no longer in that collection");
                 };
                 let Some(wanted) =
                     get_json::<Card>(&bucket, &format!("{taker_ns}card:{}", swap.want))
                 else {
-                    return fail(out, 422, &format!("you do not have `{}`", swap.want));
+                    return fail(422, &format!("you do not have `{}`", swap.want));
                 };
 
                 let at = now();
@@ -1003,7 +989,7 @@ impl Guest for Component {
                     if let Err(e) =
                         put_json(&bucket, &format!("{namespace}card:{}", arriving.id), arriving)
                     {
-                        return fail(out, 500, &e);
+                        return fail(500, &e);
                     }
                     let leaving = ev(&card.id, "disposed");
                     let joining = ev(&arriving.id, "acquired");
@@ -1013,10 +999,9 @@ impl Guest for Component {
 
                 swap.taken_by = who.subject.clone();
                 if let Err(e) = put_json(&bucket, &format!("swap:{}", swap.id), &swap) {
-                    return fail(out, 500, &e);
+                    return fail(500, &e);
                 }
                 json_out(
-                    out,
                     200,
                     &json!({
                         "id": swap.id,
@@ -1041,17 +1026,17 @@ impl Guest for Component {
             // refused one: the person cannot tell which half, and their second
             // attempt duplicates whatever the first got through.
             (Method::Post, "/api/cards/bulk") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
                 let name = param(&query, "name").unwrap_or_else(|| "upload.csv".into());
-                let body = read_body(&req);
+                let body = read_body(req).await.unwrap_or_default();
                 if body.is_empty() {
-                    return fail(out, 400, "no file in the body");
+                    return fail(400, "no file in the body");
                 }
 
                 let sheet = match sheet::read(&name, &body) {
                     Ok(s) => s,
-                    Err(e) => return fail(out, 400, &format!("{e:?}")),
+                    Err(e) => return fail(400, &format!("{e:?}")),
                 };
 
                 // Header names as a person writes them: `Paid (minor)`, `paid_minor`
@@ -1074,7 +1059,7 @@ impl Guest for Component {
                         .unwrap_or_default()
                 };
                 if !cols.iter().any(|c| c == "name") {
-                    return fail(out, 422, &format!("no `name` column — found {:?}", sheet.header));
+                    return fail(422, &format!("no `name` column — found {:?}", sheet.header));
                 }
 
                 // Validate everything first. `row` is 1-based and counts the header,
@@ -1175,7 +1160,6 @@ impl Guest for Component {
 
                 if !problems.is_empty() {
                     return json_out(
-                        out,
                         422,
                         &json!({
                             "error": "nothing was imported",
@@ -1195,7 +1179,7 @@ impl Guest for Component {
                     let k = format!("{ns}card:{}", card.id);
                     let existed = bucket.get(&k).ok().flatten().is_some();
                     if let Err(e) = put_json(&bucket, &k, &card) {
-                        return fail(out, 500, &e);
+                        return fail(500, &e);
                     }
                     if existed {
                         updated += 1;
@@ -1208,7 +1192,6 @@ impl Guest for Component {
                     }
                 }
                 json_out(
-                    out,
                     201,
                     &json!({
                         "sheet": sheet.sheet_name,
@@ -1224,29 +1207,29 @@ impl Guest for Component {
             // keeps its EVENTS: what you paid and what you sold it for is history, and
             // deleting the row must not silently rewrite a realised gain.
             (Method::Delete, "/api/cards") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
-                let body = read_body(&req);
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
+                let body = read_body(req).await.unwrap_or_default();
                 let id = serde_json::from_slice::<Value>(&body)
                     .ok()
                     .and_then(|v| v.get("id").and_then(Value::as_str).map(str::to_string))
                     .unwrap_or_default();
                 if id.is_empty() {
-                    return fail(out, 400, "which card");
+                    return fail(400, "which card");
                 }
                 match bucket.delete(&format!("{}card:{id}", ns(&who))) {
-                    Ok(()) => json_out(out, 200, &json!({ "deleted": id })),
-                    Err(e) => fail(out, 500, &format!("{e:?}")),
+                    Ok(()) => json_out(200, &json!({ "deleted": id })),
+                    Err(e) => fail(500, &format!("{e:?}")),
                 }
             }
 
             // One card, and how it got here: what it is, what is held, every
             // correction anyone made, and what it has been worth.
             (Method::Get, p) if p.starts_with("/api/cards/") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
                 let id = percent_decode(p.trim_start_matches("/api/cards/"));
                 let Some(card) = get_json::<Card>(&bucket, &format!("{ns}card:{id}")) else {
-                    return fail(out, 404, "no such card");
+                    return fail(404, "no such card");
                 };
 
                 let events: Vec<StoredEvent> = scan::<StoredEvent>(&bucket, &format!("{ns}event:"))
@@ -1329,7 +1312,6 @@ impl Guest for Component {
                 evs.sort_by_key(|a| std::cmp::Reverse(a.at));
 
                 json_out(
-                    out,
                     200,
                     &json!({
                         "card": card,
@@ -1360,7 +1342,7 @@ impl Guest for Component {
             }
 
             (Method::Get, "/api/cards") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
                 let cards: Vec<Card> = scan(&bucket, &format!("{ns}card:"));
                 // Which decks each card is in. A card is not consumed by a deck, so
@@ -1386,7 +1368,6 @@ impl Guest for Component {
                 let all_quotes = scan::<StoredQuote>(&bucket, "quote:");
                 let at = now();
                 json_out(
-                    out,
                     200,
                     &json!({
                         "cards": cards.iter().map(|c| {
@@ -1443,17 +1424,17 @@ impl Guest for Component {
             // A correction. Only the fields sent are touched, and every one of them
             // leaves `needs_review` — that is what a person checking it means.
             (Method::Patch, "/api/cards") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
-                let body = read_body(&req);
+                let body = read_body(req).await.unwrap_or_default();
                 let Ok(patch) = serde_json::from_slice::<Value>(&body) else {
-                    return fail(out, 400, "not json");
+                    return fail(400, "not json");
                 };
                 let Some(id) = patch.get("id").and_then(Value::as_str) else {
-                    return fail(out, 400, "which card");
+                    return fail(400, "which card");
                 };
                 let Some(mut card) = get_json::<Card>(&bucket, &format!("{ns}card:{id}")) else {
-                    return fail(out, 404, "no such card");
+                    return fail(404, "no such card");
                 };
                 let at = now();
                 let mut changes: Vec<Change> = Vec::new();
@@ -1494,18 +1475,18 @@ impl Guest for Component {
                     let _ = put_json(&bucket, &format!("{ns}change:{at:020}:{id}:{}", c.field), c);
                 }
                 if let Err(e) = put_json(&bucket, &format!("{ns}card:{id}"), &card) {
-                    return fail(out, 500, &e);
+                    return fail(500, &e);
                 }
-                json_out(out, 200, &serde_json::to_value(card).unwrap_or(Value::Null))
+                json_out(200, &serde_json::to_value(card).unwrap_or(Value::Null))
             }
 
             // What you paid, or what you sold it for. A swap is two of these.
             (Method::Post, "/api/events") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
-                let body = read_body(&req);
+                let body = read_body(req).await.unwrap_or_default();
                 let Ok(e) = serde_json::from_slice::<Value>(&body) else {
-                    return fail(out, 400, "not json");
+                    return fail(400, "not json");
                 };
                 let at = e.get("at").and_then(Value::as_u64).unwrap_or_else(now);
                 let ev = StoredEvent {
@@ -1525,7 +1506,7 @@ impl Guest for Component {
                     at,
                 };
                 if ev.card_id.is_empty() {
-                    return fail(out, 400, "which card");
+                    return fail(400, "which card");
                 }
                 // A disposal of more than is held is refused HERE, on the request that
                 // makes it, rather than by the valuation later.
@@ -1549,7 +1530,6 @@ impl Guest for Component {
                         .sum();
                     if (ev.quantity as i64) > held {
                         return fail(
-                            out,
                             409,
                             &format!(
                                 "you hold {held} of {} at that date, so {} cannot be sold",
@@ -1560,23 +1540,23 @@ impl Guest for Component {
                 }
                 let key = event_key(&ns, &ev);
                 if let Err(e) = put_json(&bucket, &key, &ev) {
-                    return fail(out, 500, &e);
+                    return fail(500, &e);
                 }
-                json_out(out, 201, &serde_json::to_value(ev).unwrap_or(Value::Null))
+                json_out(201, &serde_json::to_value(ev).unwrap_or(Value::Null))
             }
 
             // Remove one. The only way back from a log that cannot be valued, and
             // the reason the refusal above names an `at`.
             (Method::Delete, "/api/events") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
-                let body = read_body(&req);
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
+                let body = read_body(req).await.unwrap_or_default();
                 let Ok(v) = serde_json::from_slice::<Value>(&body) else {
-                    return fail(out, 400, "not json");
+                    return fail(400, "not json");
                 };
                 let (Some(card), Some(at)) =
                     (v.get("card_id").and_then(Value::as_str), v.get("at").and_then(Value::as_u64))
                 else {
-                    return fail(out, 400, "which event — card_id and at");
+                    return fail(400, "which event — card_id and at");
                 };
                 // The EXACT event when the caller names it fully, which the card page
                 // does because it is showing the thing being deleted. A prefix on
@@ -1616,15 +1596,15 @@ impl Guest for Component {
                 for k in &found {
                     let _ = bucket.delete(k);
                 }
-                json_out(out, 200, &json!({ "deleted": found.len(), "card_id": card, "at": at }))
+                json_out(200, &json!({ "deleted": found.len(), "card_id": card, "at": at }))
             }
 
             // An observed price. Where it came from is not this app's business —
             // a market API, a scraper, or what the shop down the road is asking.
             (Method::Post, "/api/quotes") => {
-                let body = read_body(&req);
+                let body = read_body(req).await.unwrap_or_default();
                 let Ok(q) = serde_json::from_slice::<Value>(&body) else {
-                    return fail(out, 400, "not json");
+                    return fail(400, "not json");
                 };
                 let at = q.get("at").and_then(Value::as_u64).unwrap_or_else(now);
                 let quote = StoredQuote {
@@ -1642,13 +1622,13 @@ impl Guest for Component {
                     at,
                 };
                 if quote.card_id.is_empty() {
-                    return fail(out, 400, "which card");
+                    return fail(400, "which card");
                 }
                 let key = format!("quote:{}:{:020}", quote.card_id, at);
                 if let Err(e) = put_json(&bucket, &key, &quote) {
-                    return fail(out, 500, &e);
+                    return fail(500, &e);
                 }
-                json_out(out, 201, &serde_json::to_value(quote).unwrap_or(Value::Null))
+                json_out(201, &serde_json::to_value(quote).unwrap_or(Value::Null))
             }
 
             // One card's price over the last 90 days, carried across the gaps.
@@ -1669,7 +1649,6 @@ impl Guest for Component {
                 let since = until.saturating_sub(90 * 86_400);
                 match ph::series(&quotes, ph::QuoteKind::Market, since, until, 86_400) {
                     Ok(points) => json_out(
-                        out,
                         200,
                         &json!({
                             "card_id": card,
@@ -1678,13 +1657,13 @@ impl Guest for Component {
                             })).collect::<Vec<_>>()
                         }),
                     ),
-                    Err(e) => fail(out, 422, &format!("{e:?}")),
+                    Err(e) => fail(422, &format!("{e:?}")),
                 }
             }
 
             // What the whole collection is worth, and how it got there.
             (Method::Get, "/api/portfolio") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let events = events_for(&bucket, &ns(&who));
                 let quotes = quotes_for(&bucket);
                 let until = now();
@@ -1713,7 +1692,6 @@ impl Guest for Component {
                         let points =
                             pv::series(&events, &quotes, since, until, step).unwrap_or_default();
                         json_out(
-                            out,
                             200,
                             &json!({
                                 "cost_basis_minor": v.cost_basis_minor,
@@ -1746,7 +1724,6 @@ impl Guest for Component {
                     // An empty collection is not an error to a person looking at a
                     // screen, so it answers with zeroes and says the log is empty.
                     Err(pv::ValueError::Empty) => json_out(
-                        out,
                         200,
                         &json!({
                             "cost_basis_minor": 0, "market_value_minor": 0,
@@ -1779,7 +1756,6 @@ impl Guest for Component {
                             other => (format!("{other:?}"), String::new()),
                         };
                         json_out(
-                            out,
                             200,
                             &json!({
                                 "cost_basis_minor": 0, "market_value_minor": 0,
@@ -1799,55 +1775,55 @@ impl Guest for Component {
             // The legality verdict and the shopping list are `deck:build`'s; this
             // route owns which deck, whose collection, and which prices.
             (Method::Get, "/api/decks") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let decks: Vec<Deck> = scan(&bucket, &format!("{}deck:", ns(&who)));
-                json_out(out, 200, &json!({ "decks": decks }))
+                json_out(200, &json!({ "decks": decks }))
             }
 
             // Create an empty deck. A deck you are about to fill has to exist
             // before you can put anything in it, and PUT-with-slots cannot express
             // "new and empty" without pretending the list is already right.
             (Method::Post, "/api/decks") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
-                let body = read_body(&req);
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
+                let body = read_body(req).await.unwrap_or_default();
                 let name = serde_json::from_slice::<Value>(&body)
                     .ok()
                     .and_then(|v| v.get("name").and_then(Value::as_str).map(str::to_string))
                     .unwrap_or_default();
                 if name.trim().is_empty() {
-                    return fail(out, 400, "a deck needs a name");
+                    return fail(400, "a deck needs a name");
                 }
                 let key = format!("{}deck:{name}", ns(&who));
                 if get_json::<Deck>(&bucket, &key).is_some() {
-                    return fail(out, 409, "you already have a deck by that name");
+                    return fail(409, "you already have a deck by that name");
                 }
                 let d = Deck { name, slots: vec![] };
                 if let Err(e) = put_json(&bucket, &key, &d) {
-                    return fail(out, 500, &e);
+                    return fail(500, &e);
                 }
-                json_out(out, 201, &serde_json::to_value(d).unwrap_or(Value::Null))
+                json_out(201, &serde_json::to_value(d).unwrap_or(Value::Null))
             }
 
             // Add a card to a deck, or change how many. A card is NOT consumed by
             // this: the collection is what you own and a deck is a list that refers
             // to it, so one card can be in as many decks as you like.
             (Method::Post, p) if p.starts_with("/api/decks/") && p.ends_with("/slots") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
                 let name =
                     percent_decode(p.trim_start_matches("/api/decks/").trim_end_matches("/slots"));
                 let key = format!("{ns}deck:{name}");
                 let Some(mut d) = get_json::<Deck>(&bucket, &key) else {
-                    return fail(out, 404, "no such deck");
+                    return fail(404, "no such deck");
                 };
-                let body = read_body(&req);
+                let body = read_body(req).await.unwrap_or_default();
                 let Ok(v) = serde_json::from_slice::<Value>(&body) else {
-                    return fail(out, 400, "not json");
+                    return fail(400, "not json");
                 };
                 let card_id =
                     v.get("card_id").and_then(Value::as_str).unwrap_or_default().to_string();
                 if card_id.is_empty() {
-                    return fail(out, 400, "which card");
+                    return fail(400, "which card");
                 }
                 // The printed name comes from the COLLECTION when it is there, so a
                 // deck cannot disagree with the card about what it is called — and
@@ -1871,53 +1847,53 @@ impl Guest for Component {
                 }
                 d.slots.sort_by(|a, b| a.card_id.cmp(&b.card_id));
                 if let Err(e) = put_json(&bucket, &key, &d) {
-                    return fail(out, 500, &e);
+                    return fail(500, &e);
                 }
-                json_out(out, 200, &serde_json::to_value(d).unwrap_or(Value::Null))
+                json_out(200, &serde_json::to_value(d).unwrap_or(Value::Null))
             }
 
             (Method::Delete, "/api/decks") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
-                let body = read_body(&req);
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
+                let body = read_body(req).await.unwrap_or_default();
                 let name = serde_json::from_slice::<Value>(&body)
                     .ok()
                     .and_then(|v| v.get("name").and_then(Value::as_str).map(str::to_string))
                     .unwrap_or_default();
                 if name.is_empty() {
-                    return fail(out, 400, "which deck");
+                    return fail(400, "which deck");
                 }
                 // Only the list goes. The cards it referred to are still yours —
                 // that is the whole difference between a deck and a box.
                 match bucket.delete(&format!("{}deck:{name}", ns(&who))) {
-                    Ok(()) => json_out(out, 200, &json!({ "deleted": name })),
-                    Err(e) => fail(out, 500, &format!("{e:?}")),
+                    Ok(()) => json_out(200, &json!({ "deleted": name })),
+                    Err(e) => fail(500, &format!("{e:?}")),
                 }
             }
 
             (Method::Put, "/api/decks") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
-                let body = read_body(&req);
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
+                let body = read_body(req).await.unwrap_or_default();
                 let Ok(d) = serde_json::from_slice::<Deck>(&body) else {
-                    return fail(out, 400, "not a deck");
+                    return fail(400, "not a deck");
                 };
                 if d.name.is_empty() {
-                    return fail(out, 400, "a deck needs a name");
+                    return fail(400, "a deck needs a name");
                 }
                 if let Err(e) = put_json(&bucket, &format!("{}deck:{}", ns(&who), d.name), &d) {
-                    return fail(out, 500, &e);
+                    return fail(500, &e);
                 }
-                json_out(out, 200, &serde_json::to_value(d).unwrap_or(Value::Null))
+                json_out(200, &serde_json::to_value(d).unwrap_or(Value::Null))
             }
 
             // Is it legal, and what would finishing it cost? Both at once, because
             // they are the two questions a builder asks about the same list and
             // answering them in two round trips is two chances to disagree.
             (Method::Get, p) if p.starts_with("/api/decks/") => {
-                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
                 let name = percent_decode(p.trim_start_matches("/api/decks/"));
                 let Some(d) = get_json::<Deck>(&bucket, &format!("{ns}deck:{name}")) else {
-                    return fail(out, 404, "no such deck");
+                    return fail(404, "no such deck");
                 };
 
                 let slots: Vec<deck::Slot> = d
@@ -1971,7 +1947,6 @@ impl Guest for Component {
                 let why = deck::legality(&slots);
                 let short = deck::shortfall(&slots, &owned, &prices, "EUR");
                 json_out(
-                    out,
                     200,
                     &json!({
                         "name": d.name,
@@ -2004,7 +1979,7 @@ impl Guest for Component {
                 )
             }
 
-            _ => fail(out, 404, "no such route"),
+            _ => fail(404, "no such route"),
         }
     }
 }
