@@ -97,6 +97,26 @@ pub fn project_targets(
     lead.filter(|l| members.iter().any(|m| m == l)).map(|l| vec![l.to_string()]).unwrap_or_default()
 }
 
+/// A project name from a Space's display name: lowercase words joined by dashes, each
+/// starting with a letter ("Nutrition & Meals 2" -> "nutrition-meals-n2"). Empty when the
+/// name has nothing usable (all symbols, or no ASCII letters or digits).
+pub fn slug(name: &str) -> String {
+    let words: Vec<String> = name
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let w = w.to_ascii_lowercase();
+            if w.starts_with(|c: char| c.is_ascii_digit()) {
+                format!("n{w}")
+            } else {
+                w
+            }
+        })
+        .collect();
+    let joined = words.join("-");
+    joined.chars().take(40).collect::<String>().trim_end_matches('-').to_string()
+}
+
 impl Bridge {
     pub fn new(cfg: Config) -> Arc<Self> {
         let mx = Matrix::new(&cfg.homeserver, &cfg.as_token, &cfg.admin_token);
@@ -110,6 +130,13 @@ impl Bridge {
             seen_events: Mutex::new(Default::default()),
             reconciling: Mutex::new(()),
         })
+    }
+
+    /// A note to the owner, in the control room.
+    fn tell_owner(&self, text: &str) {
+        if let Some(room) = self.state.read(|d| d.control_room.clone()) {
+            let _ = self.mx.send_text(&room, &self.bridge_user(), text, None);
+        }
     }
 
     /// Puts the owner into a room the bridge made, so there is no invite to find.
@@ -198,6 +225,10 @@ impl Bridge {
         let owner = self.cfg.owner.clone();
         let server = self.cfg.server_name.clone();
         let existing = self.state.read(|d| d.projects.get(&p.name).cloned());
+        // A Space the owner made themselves: its rooms are whatever the owner put in it.
+        if let Some(r) = existing.as_ref().filter(|r| r.general.is_empty() && r.feed.is_empty()) {
+            return self.sync_adopted(p, &r.space);
+        }
         let rooms = match existing {
             Some(r) => r,
             None => {
@@ -261,6 +292,115 @@ impl Bridge {
         Ok(())
     }
 
+    /// Keeps an adopted Space and every room in it matching the runtime's member list:
+    /// member agents are invited in (as the owner: the bridge is not in these rooms),
+    /// agents that are no longer members are removed.
+    fn sync_adopted(&self, p: &ProjectInfo, space: &str) -> R<()> {
+        let st = self.mx.room_state_as_owner(space)?;
+        let children: Vec<String> = st
+            .iter()
+            .filter(|e| e["type"] == "m.space.child" && e["content"].get("via").is_some())
+            .filter_map(|e| e["state_key"].as_str().filter(|k| !k.is_empty()).map(String::from))
+            .collect();
+        self.state.write(|d| {
+            d.rooms.retain(|_, project| project != &p.name);
+            for c in &children {
+                d.rooms.insert(c.clone(), p.name.clone());
+            }
+        });
+        for room in std::iter::once(space.to_string()).chain(children) {
+            // a child the owner has since left cannot be managed; skip it
+            let Ok(joined) = self.mx.joined_as_owner(&room) else { continue };
+            for agent in &p.agents {
+                let ghost = self.cfg.ghost(agent);
+                if !joined.contains(&ghost) {
+                    self.mx.register(&format!("agent-{agent}"))?;
+                    self.mx.invite_as_owner(&room, &ghost)?;
+                    self.mx.join(&room, &ghost)?;
+                }
+            }
+            for user in &joined {
+                if let Some(agent) = self.cfg.agent_of(user) {
+                    if !p.agents.contains(&agent) {
+                        let _ = self.mx.kick_as_owner(&room, user, "no longer in this project");
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// `agent` was invited to `room` (which it has joined) and the room is not one the
+    /// bridge knows. If it is a Space, the Space becomes a project named after it, with
+    /// `agent` as its first member. Returns whether it was adopted.
+    fn adopt_space(&self, room: &str, agent: &str) -> bool {
+        let ghost = self.cfg.ghost(agent);
+        let Ok(st) = self.mx.room_state(room, &ghost) else { return false };
+        let is_space =
+            st.iter().any(|e| e["type"] == "m.room.create" && e["content"]["type"] == "m.space");
+        if !is_space {
+            return false;
+        }
+        let field = |ty: &str, key: &str| {
+            st.iter()
+                .find(|e| e["type"] == ty)
+                .and_then(|e| e["content"][key].as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+        let (name, topic) = (field("m.room.name", "name"), field("m.room.topic", "topic"));
+        let project = slug(&name);
+        if project.is_empty() {
+            self.tell_owner(&format!("I can't make a project from the Space \"{name}\": its name needs some letters or digits (a-z, 0-9). Rename it and invite {agent} again."));
+            return true;
+        }
+        if self.state.read(|d| d.projects.get(&project).is_some_and(|r| r.space != room)) {
+            self.tell_owner(&format!("There is already a project called {project} (from a different Space). Rename this Space and invite {agent} again."));
+            return true;
+        }
+        let known =
+            self.rt.projects().map(|ps| ps.iter().any(|x| x.name == project)).unwrap_or(false);
+        let result = if known {
+            self.rt.add_to_project(&project, agent)
+        } else {
+            self.rt.put_project(&ProjectInfo {
+                name: project.clone(),
+                description: topic,
+                agents: vec![agent.to_string()],
+                lead: None,
+            })
+        };
+        match result {
+            Ok(()) => {
+                self.state.write(|d| {
+                    d.projects.entry(project.clone()).or_insert(ProjectRooms {
+                        space: room.to_string(),
+                        general: String::new(),
+                        feed: String::new(),
+                    });
+                });
+                self.tell_owner(&format!(
+                    "Adopted your Space \"{name}\" as the project {project}; {agent} is in it. Invite more agents to the Space or to any room in it; mention one to address it (or set a lead: !project lead {project} <agent>)."
+                ));
+            }
+            Err(e) => self.tell_owner(&format!("Could not make {project} a project: {e}")),
+        }
+        true
+    }
+
+    /// The project whose Space is a parent of `room`, if any (by its `m.space.parent` state).
+    fn parent_project(&self, room: &str, as_user: &str) -> Option<String> {
+        let st = self.mx.room_state(room, as_user).ok()?;
+        let parents: Vec<String> = st
+            .iter()
+            .filter(|e| e["type"] == "m.space.parent")
+            .filter_map(|e| e["state_key"].as_str().map(String::from))
+            .collect();
+        self.state.read(|d| {
+            d.projects.iter().find(|(_, r)| parents.contains(&r.space)).map(|(p, _)| p.clone())
+        })
+    }
+
     // ---- events from Synapse ---------------------------------------------
 
     /// True the first time an event id is seen (Synapse can deliver one twice).
@@ -316,35 +456,53 @@ impl Bridge {
         if sender != self.cfg.owner {
             return;
         }
-        let project = match self.state.kind_of(room) {
-            Some(RoomKind::ProjectGeneral(p)) | Some(RoomKind::ProjectFeed(p)) => Some(p),
+        let project_of = |kind: Option<RoomKind>| match kind {
+            Some(RoomKind::ProjectGeneral(p))
+            | Some(RoomKind::ProjectFeed(p))
+            | Some(RoomKind::ProjectSpace(p))
+            | Some(RoomKind::ProjectRoom(p)) => Some(p),
             _ => None,
         };
         match ev["content"]["membership"].as_str().unwrap_or_default() {
-            // The owner invited an agent: it accepts, and in a project room it joins the project.
+            // The owner invited an agent. In a project's room or Space it joins the project;
+            // in a Space the bridge does not know yet, that Space BECOMES a project; in any
+            // other room it just joins (and answers when addressed).
             "invite" => {
-                if let Some(p) = &project {
-                    match self.rt.add_to_project(p, &agent) {
+                if let Some(p) = project_of(self.state.kind_of(room)) {
+                    match self.rt.add_to_project(&p, &agent) {
                         Ok(()) => log(&format!("{agent} added to project {p}")),
                         Err(e) => {
-                            let _ = self.mx.send_text(
-                                room,
-                                &self.bridge_user(),
-                                &format!("Could not add {agent} to {p}: {e}"),
-                                None,
-                            );
+                            self.tell_owner(&format!("Could not add {agent} to {p}: {e}"));
                             return;
                         }
                     }
+                    if let Err(e) = self.mx.join(room, target) {
+                        log(&format!("{agent} could not join {room}: {e}"));
+                    }
+                    return;
                 }
                 if let Err(e) = self.mx.join(room, target) {
                     log(&format!("{agent} could not join {room}: {e}"));
+                    return;
+                }
+                if self.adopt_space(room, &agent) {
+                    return;
+                }
+                // a room inside an adopted Space: inviting an agent to it joins the project too
+                if let Some(p) = self.parent_project(room, target) {
+                    match self.rt.add_to_project(&p, &agent) {
+                        Ok(()) => {
+                            self.state.write(|d| d.rooms.insert(room.to_string(), p.clone()));
+                            log(&format!("{agent} added to project {p} (via a room in its Space)"));
+                        }
+                        Err(e) => self.tell_owner(&format!("Could not add {agent} to {p}: {e}")),
+                    }
                 }
             }
-            // The owner removed an agent: in a project room it leaves the project.
+            // The owner removed an agent: in a project room or Space it leaves the project.
             "leave" => {
-                if let Some(p) = &project {
-                    match self.rt.remove_from_project(p, &agent) {
+                if let Some(p) = project_of(self.state.kind_of(room)) {
+                    match self.rt.remove_from_project(&p, &agent) {
                         Ok(()) => log(&format!("{agent} removed from project {p}")),
                         Err(e) => log(&format!("removing {agent} from {p}: {e}")),
                     }
@@ -378,8 +536,8 @@ impl Bridge {
                 return;
             }
             Some(RoomKind::Dm(a)) => vec![a],
-            Some(RoomKind::ProjectFeed(_)) => return,
-            Some(RoomKind::ProjectGeneral(p)) => {
+            Some(RoomKind::ProjectFeed(_)) | Some(RoomKind::ProjectSpace(_)) => return,
+            Some(RoomKind::ProjectGeneral(p)) | Some(RoomKind::ProjectRoom(p)) => {
                 let Some(info) =
                     self.rt.projects().ok().and_then(|ps| ps.into_iter().find(|x| x.name == p))
                 else {
@@ -595,5 +753,25 @@ mod tests {
         assert_eq!(project_targets(&members, Some("coach"), &names(&["stranger"])), ["coach"]);
         // a lead that is no longer a member does not answer
         assert!(project_targets(&names(&["rower"]), Some("gone"), &[]).is_empty());
+    }
+
+    #[test]
+    fn a_spaces_name_becomes_a_valid_project_name() {
+        assert_eq!(slug("Nutrition"), "nutrition");
+        assert_eq!(slug("Nutrition & Meals 2"), "nutrition-meals-n2");
+        assert_eq!(slug("  Rowing — 2026 plan! "), "rowing-n2026-plan");
+        assert_eq!(slug("2026"), "n2026");
+        assert_eq!(slug("!!!"), "");
+        assert_eq!(slug(""), "");
+        assert!(slug(&"word ".repeat(30)).len() <= 40);
+        assert!(!slug(&"word ".repeat(30)).ends_with('-'));
+        // whatever it returns is a name the runtime accepts: lowercase words, each starting with a letter
+        for n in ["Nutrition & Meals 2", "9 lives", "a--b", "Z"] {
+            let s = slug(n);
+            assert!(
+                s.split('-').all(|w| w.chars().next().is_some_and(|c| c.is_ascii_lowercase())),
+                "{n} -> {s}"
+            );
+        }
     }
 }

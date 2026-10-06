@@ -282,6 +282,72 @@ impl Matrix {
         Ok(v["joined"].as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default())
     }
 
+    /// A room's full state, as seen by `as_user` (who must be in it).
+    pub fn room_state(&self, room: &str, as_user: &str) -> R<Vec<Value>> {
+        let v = self.as_call(
+            reqwest::Method::GET,
+            &format!("/_matrix/client/v3/rooms/{}/state", enc(room)),
+            as_user,
+            None,
+        )?;
+        Ok(v.as_array().cloned().unwrap_or_default())
+    }
+
+    /// The same, as the owner (for rooms the owner made and no agent is in yet).
+    pub fn room_state_as_owner(&self, room: &str) -> R<Vec<Value>> {
+        let v = self.call(
+            reqwest::Method::GET,
+            &format!("/_matrix/client/v3/rooms/{}/state", enc(room)),
+            None,
+            &self.admin_token,
+            None,
+        )?;
+        Ok(v.as_array().cloned().unwrap_or_default())
+    }
+
+    pub fn joined_as_owner(&self, room: &str) -> R<Vec<String>> {
+        let v = self.call(
+            reqwest::Method::GET,
+            &format!("/_matrix/client/v3/rooms/{}/joined_members", enc(room)),
+            None,
+            &self.admin_token,
+            None,
+        )?;
+        Ok(v["joined"].as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default())
+    }
+
+    /// Invites `target` to a room the OWNER is in (a Space or room they made in their
+    /// own client), as the owner. The bridge is not a member of those rooms, so this
+    /// is how agents get into them.
+    pub fn invite_as_owner(&self, room: &str, target: &str) -> R<()> {
+        match self.call(
+            reqwest::Method::POST,
+            &format!("/_matrix/client/v3/rooms/{}/invite", enc(room)),
+            None,
+            &self.admin_token,
+            Some(json!({"user_id": target})),
+        ) {
+            Ok(_) => Ok(()),
+            Err(e)
+                if e.msg.contains("already in the room") || e.msg.contains("is already joined") =>
+            {
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn kick_as_owner(&self, room: &str, target: &str, reason: &str) -> R<()> {
+        self.call(
+            reqwest::Method::POST,
+            &format!("/_matrix/client/v3/rooms/{}/kick", enc(room)),
+            None,
+            &self.admin_token,
+            Some(json!({"user_id": target, "reason": reason})),
+        )
+        .map(|_| ())
+    }
+
     /// Accepts the owner's pending invite to `room`, using the owner's own session.
     /// Every room the bridge makes invites the owner at creation; this is what turns
     /// "the agent made you a room" into a room that is already in your list, with no

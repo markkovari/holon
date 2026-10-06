@@ -11,7 +11,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ProjectRooms {
     pub space: String,
+    /// Empty for a Space the owner made themselves and the bridge adopted: its
+    /// rooms are whatever the owner puts in it (see `Data::rooms`).
+    #[serde(default)]
     pub general: String,
+    #[serde(default)]
     pub feed: String,
 }
 
@@ -23,6 +27,10 @@ pub struct Data {
     pub projects: BTreeMap<String, ProjectRooms>,
     /// poll event id -> runtime approval id
     pub polls: BTreeMap<String, u64>,
+    /// room id -> project, for the rooms inside an ADOPTED Space (rebuilt each
+    /// reconcile from the Space's `m.space.child` events).
+    #[serde(default)]
+    pub rooms: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -31,6 +39,10 @@ pub enum RoomKind {
     Dm(String),
     ProjectGeneral(String),
     ProjectFeed(String),
+    /// The Space itself. Inviting an agent to it, or removing one, changes the project.
+    ProjectSpace(String),
+    /// A room inside an adopted Space: talked to like a project's general room.
+    ProjectRoom(String),
 }
 
 pub struct State {
@@ -70,14 +82,17 @@ impl State {
                 return Some(RoomKind::Dm(a.clone()));
             }
             for (p, r) in &d.projects {
-                if r.general == room {
+                if !r.general.is_empty() && r.general == room {
                     return Some(RoomKind::ProjectGeneral(p.clone()));
                 }
-                if r.feed == room {
+                if !r.feed.is_empty() && r.feed == room {
                     return Some(RoomKind::ProjectFeed(p.clone()));
                 }
+                if r.space == room {
+                    return Some(RoomKind::ProjectSpace(p.clone()));
+                }
             }
-            None
+            d.rooms.get(room).map(|p| RoomKind::ProjectRoom(p.clone()))
         })
     }
 }
@@ -104,7 +119,22 @@ mod tests {
         assert_eq!(s.kind_of("!dm:s"), Some(RoomKind::Dm("rower".into())));
         assert_eq!(s.kind_of("!g:s"), Some(RoomKind::ProjectGeneral("rowing".into())));
         assert_eq!(s.kind_of("!f:s"), Some(RoomKind::ProjectFeed("rowing".into())));
-        assert_eq!(s.kind_of("!sp:s"), None, "the space itself is not a chat room");
+        assert_eq!(s.kind_of("!sp:s"), Some(RoomKind::ProjectSpace("rowing".into())));
         assert_eq!(s.kind_of("!unknown:s"), None);
+        // rooms inside an adopted Space, and a Space adopted with no rooms of its own
+        s.write(|d| {
+            d.projects.insert(
+                "nutrition".into(),
+                ProjectRooms { space: "!ns:s".into(), general: String::new(), feed: String::new() },
+            );
+            d.rooms.insert("!meals:s".into(), "nutrition".into());
+        });
+        assert_eq!(s.kind_of("!meals:s"), Some(RoomKind::ProjectRoom("nutrition".into())));
+        assert_eq!(s.kind_of("!ns:s"), Some(RoomKind::ProjectSpace("nutrition".into())));
+        assert_eq!(
+            s.kind_of(""),
+            None,
+            "an empty id never matches an adopted space's empty general room"
+        );
     }
 }

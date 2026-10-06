@@ -170,6 +170,53 @@ impl Owner {
         v["joined"].as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default()
     }
 
+    /// Creates a room the way Element would (the owner is its creator and admin).
+    fn create_room(&self, body: Value) -> String {
+        let v = self.call(reqwest::Method::POST, "/_matrix/client/v3/createRoom", Some(body));
+        v["room_id"].as_str().unwrap_or_else(|| panic!("createRoom failed: {v}")).to_string()
+    }
+
+    fn set_state(&self, room: &str, ty: &str, key: &str, content: Value) {
+        let v = self.call(
+            reqwest::Method::PUT,
+            &format!("/_matrix/client/v3/rooms/{}/state/{ty}/{}", enc(room), enc(key)),
+            Some(content),
+        );
+        assert!(v.get("errcode").is_none(), "setting {ty} failed: {v}");
+    }
+
+    fn invite(&self, room: &str, user: &str) {
+        let v = self.call(
+            reqwest::Method::POST,
+            &format!("/_matrix/client/v3/rooms/{}/invite", enc(room)),
+            Some(json!({"user_id": user})),
+        );
+        assert!(v.get("errcode").is_none(), "invite failed: {v}");
+    }
+
+    fn kick(&self, room: &str, user: &str) {
+        let v = self.call(
+            reqwest::Method::POST,
+            &format!("/_matrix/client/v3/rooms/{}/kick", enc(room)),
+            Some(json!({"user_id": user, "reason": "test"})),
+        );
+        assert!(v.get("errcode").is_none(), "kick failed: {v}");
+    }
+
+    /// A Space with a room inside it, linked both ways, as Element does it.
+    fn space_with_room(&self, space_name: &str, room_name: &str) -> (String, String) {
+        let space = self.create_room(json!({"name": space_name, "topic": "what we eat", "preset": "private_chat", "creation_content": {"type": "m.space"}}));
+        let room = self.add_room_to(&space, room_name);
+        (space, room)
+    }
+
+    fn add_room_to(&self, space: &str, name: &str) -> String {
+        let room = self.create_room(json!({"name": name, "preset": "private_chat"}));
+        self.set_state(space, "m.space.child", &room, json!({"via": [SERVER]}));
+        self.set_state(&room, "m.space.parent", space, json!({"via": [SERVER], "canonical": true}));
+        room
+    }
+
     fn state(&self, room: &str, ty: &str, key: &str) -> Value {
         self.call(
             reqwest::Method::GET,
@@ -200,18 +247,34 @@ fn ghost(a: &str) -> String {
     format!("@agent-{a}:{SERVER}")
 }
 
-#[test]
-fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
+/// Everything the scenarios share: a real Synapse with the bridge's appservice loaded, an
+/// agent runtime with scripted agents, the bridge, and the owner logged in.
+struct World {
+    rt: Arc<Runtime>,
+    bridge: Arc<Bridge>,
+    owner: Owner,
+    base: String,
+    container: String,
+    _work: tempfile::TempDir,
+    _down: Synapse,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+/// One Synapse at a time: the scenarios are heavy and share Docker.
+static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn world() -> Option<World> {
     if !docker_ok() {
         eprintln!("skipping: docker is not available");
-        return;
+        return None;
     }
+    let lock = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let work = tempfile::Builder::new().prefix("agent-matrix-e2e-").tempdir().unwrap();
     let project = format!("holonmx{}", std::process::id());
     let syn_dir = work.path().join("synapse");
     let (syn_port, bridge_port) = (free_port(), free_port());
     let base = format!("http://127.0.0.1:{syn_port}");
-    let _down = Synapse { project: project.clone(), dir: syn_dir.clone() };
+    let down = Synapse { project: project.clone(), dir: syn_dir.clone() };
 
     // ---- an agent runtime with scripted agents -----------------------------
     let rt = Runtime::new(RtConfig::new(work.path().join("runtime"))).unwrap();
@@ -285,7 +348,14 @@ fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
     bridge.reconcile().expect("first reconcile");
     bridge.spawn_loops();
     let owner = Owner::login(&base);
+    Some(World { rt, bridge, owner, base, container, _work: work, _down: down, _lock: lock })
+}
 
+#[test]
+fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
+    let Some(World { rt, bridge, owner, base, container, _work, _down, _lock }) = world() else {
+        return;
+    };
     // ---- 1. every agent is a user with a room the owner is already in ---------
     let dm = |a: &str| {
         bridge.state.read(|d| d.dms.get(a).cloned()).unwrap_or_else(|| panic!("no room for {a}"))
@@ -490,4 +560,82 @@ fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
         before,
         "a message from anyone but the owner starts no run"
     );
+}
+
+#[test]
+fn a_space_you_make_yourself_becomes_a_project_when_you_invite_an_agent_into_it() {
+    let Some(World { rt, bridge, owner, _work, _down, _lock, .. }) = world() else { return };
+    let control = bridge.state.read(|d| d.control_room.clone()).expect("control room");
+    let notes = || owner.texts_from(&control, &bridge.cfg.bridge_user());
+
+    // 1. You make a Space and a room in it, in your own client. Nothing is a project yet.
+    let (space, room) = owner.space_with_room("Nutrition & Meals", "meal planning");
+    assert!(rt.store().get_project("nutrition-meals").is_none());
+
+    // 2. Inviting an agent into the SPACE makes the Space a project, named after it.
+    owner.invite(&space, &ghost("chef"));
+    let project =
+        wait_for("the Space to be adopted", 40, || rt.store().get_project("nutrition-meals"));
+    assert_eq!(project.agents, ["chef"]);
+    assert_eq!(
+        project.description, "what we eat",
+        "the Space's topic is the project's description"
+    );
+    wait_for("the notice in the control room", 20, || {
+        notes().into_iter().find(|n| n.contains("Adopted your Space"))
+    });
+    // the agent is in the Space AND in the room inside it, and the room is a project room
+    wait_for("chef in the space and its room", 40, || {
+        (owner.joined(&space).contains(&ghost("chef"))
+            && owner.joined(&room).contains(&ghost("chef")))
+        .then_some(())
+    });
+    assert!(
+        matches!(bridge.state.kind_of(&room), Some(agent_matrix::state::RoomKind::ProjectRoom(p)) if p == "nutrition-meals")
+    );
+
+    // 3. Inside the Space the usual rules hold: unaddressed is silent, a mention answers.
+    owner.say(&room, "hello"); // no mention, no lead
+    std::thread::sleep(Duration::from_secs(4));
+    assert!(owner.texts_from(&room, &ghost("chef")).is_empty());
+    owner.say_to(&room, "chef: what is for dinner?", "chef");
+    let a = wait_for("chef's answer", 40, || {
+        Some(owner.texts_from(&room, &ghost("chef"))).filter(|t| !t.is_empty())
+    });
+    assert_eq!(a[0], "Pasta tonight.");
+
+    // 4. Inviting another agent to just the ROOM also puts it in the project (and the Space).
+    owner.invite(&room, &ghost("coach"));
+    wait_for("coach to join the project", 40, || {
+        rt.store().get_project("nutrition-meals").filter(|p| p.agents.iter().any(|a| a == "coach"))
+    });
+    wait_for("coach in the space too", 40, || {
+        owner.joined(&space).contains(&ghost("coach")).then_some(())
+    });
+
+    // 5. A room you add to the Space later is picked up, with the members already in it.
+    let later = owner.add_room_to(&space, "shopping");
+    wait_for("members in the new room", 40, || {
+        let j = owner.joined(&later);
+        (j.contains(&ghost("chef")) && j.contains(&ghost("coach"))).then_some(())
+    });
+
+    // 6. Removing an agent from the Space removes it from the project and every room in it.
+    owner.kick(&space, &ghost("coach"));
+    wait_for("coach to leave the project", 40, || {
+        rt.store().get_project("nutrition-meals").filter(|p| !p.agents.iter().any(|a| a == "coach"))
+    });
+    wait_for("coach out of the rooms", 40, || {
+        (!owner.joined(&room).contains(&ghost("coach"))
+            && !owner.joined(&later).contains(&ghost("coach")))
+        .then_some(())
+    });
+
+    // 7. A Space whose name has nothing usable is refused with a note, not half-adopted.
+    let (bad, _) = owner.space_with_room("!!!", "x");
+    owner.invite(&bad, &ghost("scout"));
+    wait_for("the refusal note", 40, || {
+        notes().into_iter().find(|n| n.contains("can't make a project"))
+    });
+    assert!(rt.store().list_projects().iter().all(|p| !p.agents.iter().any(|a| a == "scout")));
 }

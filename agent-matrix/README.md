@@ -15,9 +15,15 @@ Element ── Synapse (malna, tailnet) ──appservice──▶ agent-matrix �
   answer comes back as that agent, with a typing indicator while it works.
 * **A Space per project** (`rowing`, `nutrition`, whatever you start): a `general`
   room where you talk to the project's agents and a `feed` room for what they report.
-* **Adding an agent to a project is an invite.** Invite `@agent-coach` to the
-  project's room and it joins the project; kick it and it leaves. Or use commands
-  (below), which work from clients that cannot create Spaces.
+* **Make a Space in Element, invite an agent into it: that is a project.** Element X
+  has *Create space*. The bridge adopts the Space as a project named after it
+  (`Nutrition & Meals` becomes `nutrition-meals`; the Space's topic becomes the
+  description), with the invited agent as its first member, and says so in the control
+  room. Invite more agents to the Space *or to any room in it*; kick one and it leaves
+  the project and every room in it. Rooms you add to the Space later are picked up
+  within a few seconds, with the members already in them.
+* **Or let the bridge make it:** `!project new rowing` creates the Space with a
+  `general` and a `feed` room (commands below).
 * **Membership is the grant.** In the runtime, project members get the project's
   shared store (`project.<name>`), may emit to `<name>.*`, and are told who else is
   in the project. Removing an agent takes all of it away at its next run.
@@ -76,13 +82,23 @@ agents, and kicks agents that left the project. Membership changes made *in Matr
 ## Tested
 
 `cargo test` runs unit tests (mention routing, command parsing, the registration
-file, ghost ids). `cargo test --test e2e` is the whole path against a **real
+file, ghost ids). `cargo test --test e2e` is the whole path (two scenarios) against a **real
 Synapse in Docker** deployed by the same `infra/matrix/deploy.sh` that goes to
 malna, with the bridge and a runtime with scripted agents in-process, playing the
 owner with plain Matrix client calls. It covers rooms and owner placement, chatting,
 Space creation, adding agents by command and by invite and removing them by kick,
-mention/lead/silence routing, an approval answered by a poll vote, and a
-non-owner being ignored. It skips when Docker is not available.
+mention/lead/silence routing, an approval answered by a poll vote, a non-owner being
+ignored, and — in the second scenario — a Space made in the owner's own client being
+adopted as a project, its rooms followed (including ones added later), an agent added
+by inviting it to a room inside the Space, removal by kick, and a Space whose name has
+nothing usable being refused with a note. It skips when Docker is not available.
+
+## Limits
+
+* A Space's project name is its ASCII letters and digits (`slug`): `Táplálkozás` would
+  become `t-pl-lkoz-s`. A name with none is refused with a note; rename the Space.
+* The bridge manages rooms in an adopted Space **as you** (it holds your session), since
+  it is not a member of rooms you made. It only invites and removes agents there.
 
 ## Not built yet
 
