@@ -634,7 +634,12 @@ fn an_agent_is_told_which_project_it_is_in_and_who_else_is() {
     let eff = agent_runtime::projects::effective(
         &rt.store().get("scout").unwrap(),
         &rt.store().list_projects(),
+        &[("coach".into(), "Coaches rowing. Brief.".into())],
     );
+    // members may ask each other, described, without any hand-written grant
+    let ask = eff.capabilities.iter().find(|c| c.name == "agent:coach").unwrap();
+    assert_eq!(ask.description, "Ask coach. Coaches rowing.");
+    assert!(!eff.has_capability("agent:scout"));
     assert_eq!(eff.projects[0].members, ["scout", "coach"]);
     assert_eq!(eff.projects[0].lead.as_deref(), Some("coach"));
     assert_eq!(eff.projects[0].store_ns, "project.rowing");

@@ -475,7 +475,9 @@ impl Runtime {
             return Err(format!("{name} is paused"));
         }
         // What a run may do is its own spec plus whatever its projects grant.
-        let spec = crate::projects::effective(&spec, &self.store.list_projects());
+        let directory: Vec<(String, String)> =
+            self.store.list().into_iter().map(|a| (a.name, a.description)).collect();
+        let spec = crate::projects::effective(&spec, &self.store.list_projects(), &directory);
         let lock = self.lock_for(name);
         let _guard = if wait {
             lock.lock().unwrap()
