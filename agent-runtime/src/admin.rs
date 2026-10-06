@@ -58,7 +58,39 @@ pub fn build_spec(existing: Option<&AgentSpec>, args: &Value) -> Result<AgentSpe
             }
         }
     }
-    serde_json::from_value(Value::Object(base)).map_err(|e| format!("not a valid agent: {e}"))
+    let mut spec: AgentSpec = serde_json::from_value(Value::Object(base))
+        .map_err(|e| format!("not a valid agent: {e}"))?;
+    // An agent that may fetch pages but may reach no host cannot do anything: allow the hosts
+    // its own instructions name.
+    if spec.has_capability("http_get") && spec.allow_hosts.is_empty() {
+        let mut text = spec.description.clone();
+        for t in &spec.triggers {
+            if let crate::spec::Trigger::Schedule { prompt, .. } = t {
+                text.push(' ');
+                text.push_str(prompt);
+            }
+        }
+        spec.allow_hosts = hosts_in(&text);
+    }
+    Ok(spec)
+}
+
+/// The distinct hosts of the http(s) URLs in `text`, in order.
+pub fn hosts_in(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for scheme in ["https://", "http://"] {
+        for (i, _) in text.match_indices(scheme) {
+            let rest = &text[i + scheme.len()..];
+            let end = rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == ':'))
+                .unwrap_or(rest.len());
+            let host = rest[..end].trim_end_matches('.').to_lowercase();
+            if !host.is_empty() && !out.contains(&host) {
+                out.push(host);
+            }
+        }
+    }
+    out
 }
 
 /// One line per agent for `agents_list`.
@@ -92,6 +124,25 @@ mod tests {
         assert!(build_spec(None, &json!({"name": "x"})).unwrap_err().contains("description"));
         assert!(build_spec(None, &json!({"description": "d"})).unwrap_err().contains("name"));
         assert!(build_spec(None, &json!("nope")).is_err());
+    }
+
+    #[test]
+    fn an_agent_that_may_fetch_gets_the_hosts_its_instructions_name() {
+        let s = build_spec(
+            None,
+            &json!({"name": "jokes", "description": "Fetch https://official-joke-api.appspot.com/random_joke then riff. Also http://example.org/x.",
+                    "capabilities": ["http_get"]}),
+        )
+        .unwrap();
+        assert_eq!(s.allow_hosts, ["official-joke-api.appspot.com", "example.org"]);
+        // hosts the owner set are never overridden
+        let s = build_spec(
+            None,
+            &json!({"name": "jokes", "description": "Fetch https://a.com/x", "capabilities": ["http_get"], "allow_hosts": ["b.com"]}),
+        )
+        .unwrap();
+        assert_eq!(s.allow_hosts, ["b.com"]);
+        assert_eq!(hosts_in("see https://a.b:8080/x and nothing"), ["a.b:8080"]);
     }
 
     #[test]

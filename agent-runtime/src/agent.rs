@@ -629,7 +629,34 @@ pub fn loose_calls(text: &str, granted: &[&str]) -> Vec<(String, Value)> {
         }
     }
     found.sort_by_key(|(at, ..)| *at);
-    found.into_iter().map(|(_, n, a)| (n, a)).collect()
+    let mut calls: Vec<(String, Value)> = found.into_iter().map(|(_, n, a)| (n, a)).collect();
+    if calls.is_empty() {
+        calls.extend(bare_call(text, granted));
+    }
+    calls
+}
+
+/// A reply that is only `HTTP_GET https://example.com/x` (a tool name in any case and ONE
+/// bare argument): what a small model writes when it means to call a tool with a single
+/// obvious parameter. Prose that merely starts with a tool's name is left alone: the argument
+/// must be the whole rest of a one-line reply, with no spaces in it.
+fn bare_call(text: &str, granted: &[&str]) -> Option<(String, Value)> {
+    let t = text.trim();
+    if t.contains('\n') {
+        return None;
+    }
+    granted.iter().find_map(|name| {
+        let key = primary(name)?;
+        let head = t.get(..name.len())?;
+        if !head.eq_ignore_ascii_case(name) {
+            return None;
+        }
+        let arg =
+            t[name.len()..].trim().trim_matches(|c| matches!(c, '`' | '"' | '\'' | '(' | ')'));
+        let sep_ok = t[name.len()..].starts_with(|c: char| c.is_whitespace() || c == '(');
+        (sep_ok && !arg.is_empty() && !arg.contains(char::is_whitespace))
+            .then(|| (name.to_string(), json!({ key: arg })))
+    })
 }
 
 /// An argument as text. A model that sends `"value": {"a": 1}` or `"n": 5`
@@ -1738,6 +1765,22 @@ mod tests {
         run(&h, &off, "http", "second question", &Cause::default());
         let one = system_prompt(&h, &off);
         assert!(one.contains("second question") && !one.contains("first question"));
+    }
+
+    #[test]
+    fn a_bare_tool_name_and_one_argument_is_a_call_but_prose_is_not() {
+        let granted = ["http_get", "remember"];
+        let c = loose_calls("HTTP_GET https://example.com/joke", &granted);
+        assert_eq!(c, vec![("http_get".to_string(), json!({"url": "https://example.com/joke"}))]);
+        assert!(
+            loose_calls("remember buy some milk", &granted).is_empty(),
+            "spaces: this is prose"
+        );
+        assert!(loose_calls("http_get is a tool I could use", &granted).is_empty());
+        assert!(
+            loose_calls("HTTP_GET https://a.b/c\nand then I will say more", &granted).is_empty()
+        );
+        assert!(loose_calls("Here you go: http_get", &granted).is_empty());
     }
 
     #[test]
