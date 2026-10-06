@@ -558,8 +558,10 @@ impl Bridge {
                 return;
             }
             Some(RoomKind::Dm(a)) => vec![a],
-            Some(RoomKind::ProjectFeed(_)) | Some(RoomKind::ProjectSpace(_)) => return,
-            Some(RoomKind::ProjectGeneral(p)) | Some(RoomKind::ProjectRoom(p)) => {
+            Some(RoomKind::ProjectSpace(_)) => return,
+            Some(RoomKind::ProjectGeneral(p))
+            | Some(RoomKind::ProjectRoom(p))
+            | Some(RoomKind::ProjectFeed(p)) => {
                 let Some(info) =
                     self.rt.projects().ok().and_then(|ps| ps.into_iter().find(|x| x.name == p))
                 else {
