@@ -183,7 +183,13 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
                 },
                 None => Cause::default(),
             };
-            return match rt.run_agent(name, "http", &input, &cause, "", true) {
+            // Who or what woke the agent, in words it reads as the run's `Trigger:` line.
+            let trigger = query_param(query, "why")
+                .map(|w| w.split_whitespace().collect::<Vec<_>>().join(" "))
+                .filter(|w| !w.is_empty())
+                .map(|w| format!("http: {}", w.chars().take(160).collect::<String>()))
+                .unwrap_or_else(|| "http".to_string());
+            return match rt.run_agent(name, &trigger, &input, &cause, "", true) {
                 Ok(r) => {
                     // Hand the caller the run's own span, so it can continue the trace.
                     let tp = [("traceparent", Traceparent::header(&r.trace_id, &r.span_id))];

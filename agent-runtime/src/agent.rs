@@ -404,6 +404,13 @@ fn clip(s: &str, n: usize) -> String {
 
 fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
     let mut s = format!("You are {}. {}\n\n", spec.name, spec.description);
+    s.push_str(
+        "You are asleep unless something wakes you; the `Trigger:` line of the task says what \
+         did (a message, a schedule, another agent, an event) and the task is why you are \
+         needed. You remember nothing between runs except what is written below or in the \
+         task. If the task shows the conversation so far, use it to understand what is being \
+         asked, and answer only the latest message.\n\n",
+    );
     let mut tools = String::new();
     let mut abilities = String::new();
     for c in &spec.capabilities {

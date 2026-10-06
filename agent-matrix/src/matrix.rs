@@ -305,6 +305,23 @@ impl Matrix {
         Ok(v.as_array().cloned().unwrap_or_default())
     }
 
+    /// The latest messages of a room, newest first, as the owner (who is in every room the
+    /// bridge manages). Only `m.room.message` events.
+    pub fn messages_as_owner(&self, room: &str, limit: usize) -> R<Vec<Value>> {
+        let filter = enc(&json!({"types": ["m.room.message"]}).to_string());
+        let v = self.call(
+            reqwest::Method::GET,
+            &format!(
+                "/_matrix/client/v3/rooms/{}/messages?dir=b&limit={limit}&filter={filter}",
+                enc(room)
+            ),
+            None,
+            &self.admin_token,
+            None,
+        )?;
+        Ok(v["chunk"].as_array().cloned().unwrap_or_default())
+    }
+
     pub fn joined_as_owner(&self, room: &str) -> R<Vec<String>> {
         let v = self.call(
             reqwest::Method::GET,

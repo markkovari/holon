@@ -94,6 +94,38 @@ pub fn clear_winner(ranked: &[(String, f32)]) -> Option<String> {
     }
 }
 
+/// The recent messages as `name: text` lines, oldest first, at most `budget` characters
+/// (the newest are kept), each message trimmed; the message `skip` and empty ones left out.
+/// `msgs` is the Matrix `/messages` chunk, newest first.
+pub fn history_lines(cfg: &Config, msgs: &[Value], skip: &str, budget: usize) -> String {
+    const PER_MESSAGE: usize = 400;
+    let mut picked: Vec<String> = Vec::new();
+    let mut used = 0;
+    for m in msgs {
+        if m["event_id"].as_str() == Some(skip) {
+            continue;
+        }
+        let body = m["content"]["body"].as_str().unwrap_or_default().trim();
+        if body.is_empty() || m["content"]["m.relates_to"]["rel_type"].as_str() == Some("m.replace")
+        {
+            continue;
+        }
+        let sender = m["sender"].as_str().unwrap_or_default();
+        let who = match cfg.agent_of(sender) {
+            Some(a) => a,
+            None => sender.trim_start_matches('@').split(':').next().unwrap_or(sender).to_string(),
+        };
+        let line = format!("{who}: {}", clip(body, PER_MESSAGE));
+        if used + line.len() > budget && !picked.is_empty() {
+            break;
+        }
+        used += line.len();
+        picked.push(line);
+    }
+    picked.reverse();
+    picked.join("\n")
+}
+
 /// Who answers a message in a project room.
 pub fn project_targets(
     members: &[String],
@@ -678,7 +710,7 @@ impl Bridge {
             }
         };
         note(&format!("🎙️ “{}”", clip(&text, 1_000)));
-        let (ok, answer) = self.rt.run(agent, &text, None);
+        let (ok, answer) = self.rt.run(agent, &self.task(room, "", &text), &self.why(room), None);
         self.mx.typing(room, &ghost, false);
         let written = if ok {
             if answer.trim().is_empty() {
@@ -729,7 +761,8 @@ impl Bridge {
         // The agent may not be in this room yet (a hand-made one it was invited to).
         let _ = self.mx.join(room, &ghost);
         self.mx.typing(room, &ghost, true);
-        let (ok, answer) = self.rt.run(agent, text, None);
+        let (ok, answer) =
+            self.rt.run(agent, &self.task(room, reply_to, text), &self.why(room), None);
         self.mx.typing(room, &ghost, false);
         let body = if ok {
             if answer.trim().is_empty() {
@@ -742,6 +775,35 @@ impl Bridge {
         };
         if let Err(e) = self.mx.send_text(room, &ghost, &body, Some(reply_to)) {
             log(&format!("{agent}: could not post the answer: {e}"));
+        }
+    }
+
+    /// Why an agent is being woken, for its `Trigger:` line.
+    fn why(&self, room: &str) -> String {
+        match self.state.kind_of(room) {
+            Some(RoomKind::Dm(_)) => "mark sent you a direct message".to_string(),
+            Some(RoomKind::ProjectGeneral(p))
+            | Some(RoomKind::ProjectRoom(p))
+            | Some(RoomKind::ProjectFeed(p)) => format!("mark wrote in the project {p}"),
+            _ => "mark wrote in a room you are in".to_string(),
+        }
+    }
+
+    /// What the agent is handed: the recent conversation (so it knows what the message is
+    /// about and who said what), then the new message. `HOLON_HISTORY_CHARS` bounds the
+    /// history (default 3000; 0 sends the bare message). `skip` is the message being answered.
+    fn task(&self, room: &str, skip: &str, text: &str) -> String {
+        let budget: usize =
+            std::env::var("HOLON_HISTORY_CHARS").ok().and_then(|v| v.parse().ok()).unwrap_or(3000);
+        if budget == 0 {
+            return text.to_string();
+        }
+        let msgs = self.mx.messages_as_owner(room, 30).unwrap_or_default();
+        let lines = history_lines(&self.cfg, &msgs, skip, budget);
+        if lines.is_empty() {
+            text.to_string()
+        } else {
+            format!("Conversation so far (oldest first):\n{lines}\n\nThe new message, from mark:\n{text}")
         }
     }
 
@@ -897,6 +959,27 @@ mod tests {
         assert_eq!(project_targets(&members, Some("coach"), &names(&["stranger"])), ["coach"]);
         // a lead that is no longer a member does not answer
         assert!(project_targets(&names(&["rower"]), Some("gone"), &[]).is_empty());
+    }
+
+    #[test]
+    fn history_is_oldest_first_attributed_bounded_and_leaves_out_the_message_being_answered() {
+        let cfg = cfg();
+        let m = |id: &str, from: &str, body: &str| json!({"event_id": id, "sender": from, "content": {"body": body}});
+        let agent = cfg.ghost("coach");
+        let owner = cfg.owner.clone();
+        // newest first, as Matrix returns them
+        let msgs = vec![
+            m("$4", &owner, "yes"),
+            m("$3", &agent, "Shall I ask the rower?"),
+            m("$2", &owner, "how was my row"),
+            m("$1", &owner, ""),
+        ];
+        let all = history_lines(&cfg, &msgs, "$4", 10_000);
+        assert_eq!(all, "mark: how was my row\ncoach: Shall I ask the rower?");
+        // a tight budget keeps the newest and drops the oldest
+        let tight = history_lines(&cfg, &msgs, "$4", 30);
+        assert_eq!(tight, "coach: Shall I ask the rower?");
+        assert_eq!(history_lines(&cfg, &[], "", 100), "");
     }
 
     #[test]

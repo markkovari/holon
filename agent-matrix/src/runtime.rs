@@ -230,9 +230,19 @@ impl Runtime {
 
     /// Runs `agent` on `text`. The runtime's answer, or its error, as text; the
     /// bool says whether it succeeded. `traceparent` joins an existing trace.
-    pub fn run(&self, agent: &str, text: &str, traceparent: Option<&str>) -> (bool, String) {
-        let mut req =
-            self.runner.get(format!("{}/agents/{agent}/run", self.base)).query(&[("q", text)]);
+    pub fn run(
+        &self,
+        agent: &str,
+        text: &str,
+        why: &str,
+        traceparent: Option<&str>,
+    ) -> (bool, String) {
+        // POST, so a long conversation is a body and not part of the URL.
+        let mut req = self
+            .runner
+            .post(format!("{}/agents/{agent}/run", self.base))
+            .query(&[("why", why)])
+            .body(text.to_string());
         if let Some(tp) = traceparent {
             req = req.header("traceparent", tp);
         }
