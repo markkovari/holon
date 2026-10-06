@@ -403,7 +403,7 @@ fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
         }
         s.push('\n');
     }
-    let runs = host.store().runs(&spec.name, 3);
+    let runs = host.store().runs(&spec.name, spec.recent_runs);
     if !runs.is_empty() {
         s.push_str("Your last runs (newest first):\n");
         for r in runs {
@@ -1534,5 +1534,23 @@ mod tests {
         let mut bare = spec();
         bare.topics_out.clear();
         assert!(!system_prompt(&h, &bare).contains("Shared stores"));
+    }
+
+    #[test]
+    fn recent_runs_can_be_recalled_or_switched_off() {
+        let h = Fake::new("recent", &["a", "b"], true);
+        run(&h, &spec(), "http", "first question", &Cause::default());
+        let with = system_prompt(&h, &spec());
+        assert!(with.contains("Your last runs") && with.contains("first question"), "{with}");
+        let mut off = spec();
+        off.recent_runs = 0;
+        assert!(
+            !system_prompt(&h, &off).contains("Your last runs"),
+            "0 means none, so a wrong answer cannot prime the next run"
+        );
+        off.recent_runs = 1;
+        run(&h, &off, "http", "second question", &Cause::default());
+        let one = system_prompt(&h, &off);
+        assert!(one.contains("second question") && !one.contains("first question"));
     }
 }

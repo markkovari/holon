@@ -120,6 +120,9 @@ fn default_steps() -> u32 {
 fn default_tokens() -> u64 {
     20_000
 }
+fn default_recent_runs() -> usize {
+    3
+}
 fn default_rate() -> u32 {
     30
 }
@@ -151,6 +154,12 @@ pub struct AgentSpec {
     /// Tokens (in + out) one run may spend before it is stopped.
     #[serde(default = "default_tokens")]
     pub max_tokens: u64,
+    /// How many of this agent's last runs its prompt recalls ("[http] question →
+    /// answer"). Useful for an agent that works in a continuing way; harmful for one
+    /// that must look the answer up each time, because a small model repeats a wrong
+    /// earlier answer it can see. 0 turns it off.
+    #[serde(default = "default_recent_runs")]
+    pub recent_runs: usize,
     /// Tools every run must call (successfully) before its plain-text reply
     /// counts as finished. A model that writes an intermediate note as prose
     /// otherwise ends its own task early; this turns "do these steps" into
@@ -211,6 +220,7 @@ impl AgentSpec {
             max_tokens: default_tokens(),
             max_result_chars: default_result_chars(),
             must_call: Vec::new(),
+            recent_runs: default_recent_runs(),
             topics_out: Vec::new(),
             store: StoreAccess::default(),
             max_runs_per_min: default_rate(),
