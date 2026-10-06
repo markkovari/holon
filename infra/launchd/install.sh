@@ -21,7 +21,7 @@ spec() {
   case "$1" in
     fm) echo "$HOME"; echo /usr/bin/fm serve --port 18099 ;;
     qwen) echo "$HOME"; echo "$HOME/.local/bin/mlx_lm.server" --model mlx-community/Qwen3-4B-Instruct-2507-4bit --host 127.0.0.1 --port 18101 ;;
-    qwen-large) echo "$HOME"; echo "$HOME/.local/bin/mlx_lm.server" --model mlx-community/Qwen3.8-27B-4bit --host 127.0.0.1 --port 18103 ;;
+    qwen-large) echo "$HOME"; echo "$HOME/.local/bin/mlx_lm.server" --model mlx-community/Qwen3.8-27B-4bit --host 127.0.0.1 --port 18103 --max-tokens 4096 ;;
     embed) echo "$REPO/agent-runtime/embed"; echo "$HOME/.local/bin/uv" run --with "sentence-transformers[image]" --with torch server.py --port 18102 ;;
     runtime) echo "$REPO/agent-runtime"; echo "$REPO/agent-runtime/target/release/agent-runtime" --state-dir "$HOME/.holon-agents" --listen 127.0.0.1:18017 --local-url http://127.0.0.1:18099 --stt-bin "$HOME/.holon-agents/holon-stt" --embed-url http://127.0.0.1:18102 ;;
     bridge) echo "$REPO/agent-matrix"; echo "$REPO/agent-matrix/target/release/agent-matrix" run --config "$HOME/.holon-matrix/bridge.json" ;;

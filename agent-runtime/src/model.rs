@@ -97,15 +97,21 @@ fn openai(base: &str, model: &str, key: &str, system: &str, msgs: &[Msg]) -> Res
     messages.extend(msgs.iter().map(|m| json!({"role": m.role, "content": m.content})));
     let mut req = http()?
         .post(format!("{}/v1/chat/completions", base.trim_end_matches('/')))
-        .json(&json!({"model": model, "messages": messages, "stream": false}));
+        // Room for a reasoning model to think AND answer; some servers default to a few hundred.
+        .json(&json!({"model": model, "messages": messages, "stream": false, "max_tokens": 4096}));
     if !key.is_empty() {
         req = req.bearer_auth(key);
     }
     let v = send(req)?;
-    let text = v["choices"][0]["message"]["content"]
-        .as_str()
-        .ok_or_else(|| format!("unexpected model response: {}", clip(&v.to_string())))?
-        .to_string();
+    let text = match v["choices"][0]["message"]["content"].as_str() {
+        Some(t) => t.to_string(),
+        None if v["choices"][0]["finish_reason"] == "length" => {
+            return Err("the model ran out of tokens while thinking and never answered; \
+                        ask again, or use a model that thinks less"
+                .into())
+        }
+        None => return Err(format!("unexpected model response: {}", clip(&v.to_string()))),
+    };
     Ok(Reply {
         text,
         usage: Usage {
