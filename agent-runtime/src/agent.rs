@@ -413,7 +413,11 @@ fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
         ));
     }
     if !spec.projects.is_empty() {
-        s.push('\n');
+        s.push_str(
+            "If a question needs what another member knows or does, call that member's `agent:` \
+             tool yourself and use its answer. Never ask the person which member to use or who \
+             they are.\n\n",
+        );
     }
     let memories = host.store().recall(&spec.name, "", 5);
     if !memories.is_empty() {
