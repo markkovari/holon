@@ -15,7 +15,15 @@ set -euo pipefail
 TARGET=${1:?usage: tailscale.sh <ssh host> serve|exit-node|status}
 ACTION=${2:?}
 PORT=${SYNAPSE_PORT:-8008}
-on() { if [ "$TARGET" = local ]; then bash -c "$1"; else ssh -o BatchMode=yes "$TARGET" "$1"; fi; }
+# Seamless access: if ~/.ssh/holon_<host> exists (a dedicated deploy key; see README),
+# use it, unless SSH_OPTS says otherwise.
+if [ -z "${SSH_OPTS:-}" ]; then
+  _k="$HOME/.ssh/holon_$(printf %s "${TARGET:-}" | tr 'A-Z' 'a-z')"
+  [ -f "$_k" ] && SSH_OPTS="-i $_k -o IdentitiesOnly=yes"
+fi
+# Commands are piped to `bash -s`: the remote login shell may not be bash (malna's is
+# fish). SSH_OPTS is for things like a shared ControlPath; none are required.
+on() { if [ "$TARGET" = local ]; then bash -c "$1"; else printf '%s\n' "$1" | ssh ${SSH_OPTS:-} -o BatchMode=yes "$TARGET" bash -s; fi; }
 
 case "$ACTION" in
   serve)

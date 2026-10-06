@@ -33,16 +33,32 @@ machine's tailnet name, which is also the URL the clients type. Secrets are
 generated once on the target (`.env`, mode 0600) and never leave it. Re-running
 is safe: data, keys and secrets are kept. Docker or podman, whichever exists.
 
-Prerequisite: HTTPS certificates enabled for the tailnet (admin console → DNS).
+Prerequisite: HTTPS certificates enabled for the tailnet (admin console → DNS) — already
+the case on this tailnet.
 Funnel is never used; nothing is exposed to the internet.
 
 Undo: `ssh Malna 'sudo tailscale serve reset'`, then `docker compose down -v`
 in `~/holon-matrix` and delete that directory.
 
+## Access to the target
+
+The scripts talk to the target over ssh. If `~/.ssh/holon_<host>` exists (for
+`Malna`: `~/.ssh/holon_malna`) it is used automatically; otherwise your normal ssh
+setup applies, or set `SSH_OPTS` yourself.
+
+That key is a dedicated, passphrase-less deploy key, so automation needs no agent
+or password. It is installed on the target restricted to tailnet source addresses
+(`from="100.64.0.0/10,fd7a:115c:a1e0::/48"`, no agent or X11 forwarding), so it is
+useless from anywhere else. To revoke it, delete its line (comment `holon-deploy`)
+from `~/.ssh/authorized_keys` on the target and `~/.ssh/holon_malna*` here.
+
+Commands are piped to `bash -s` on the target, because the login shell there may
+not be bash (malna's is fish).
+
 ## Try it from your devices
 
 ```sh
-./spike.sh https://<name>.ts.net <name>.ts.net setup   # prints YOUR password once
+REMOTE=Malna ./spike.sh https://<name>.ts.net <name>.ts.net setup   # prints YOUR password once
 ./spike.sh https://<name>.ts.net <name>.ts.net post    # text, mention, file, poll
 ./spike.sh https://<name>.ts.net <name>.ts.net loop 60 20   # a text a minute, for push
 ```
@@ -61,7 +77,9 @@ from `rower`. Then check, in order:
 ./tailscale.sh Malna exit-node   # forwarding sysctl + advertise; then approve once in the admin console
 ```
 
-An exit node routes a device's *internet* traffic through that machine. It is
+**Approve it once** in the admin console (Machines → malna → Edit route settings →
+Use as exit node); until then `tailscale exit-node list` shows nothing. An exit node
+routes a device's *internet* traffic through that machine. It is
 not needed to reach the server, which any tailnet device already can. It does
 not change push.
 

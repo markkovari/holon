@@ -17,7 +17,15 @@ SYNAPSE_TAG=${SYNAPSE_TAG:-latest}
 SYNAPSE_PORT=${SYNAPSE_PORT:-8008}
 
 # Run a command on the target (or here, for `local`).
-on() { if [ "$TARGET" = local ]; then bash -c "$1"; else ssh -o BatchMode=yes "$TARGET" "$1"; fi; }
+# Seamless access: if ~/.ssh/holon_<host> exists (a dedicated deploy key; see README),
+# use it, unless SSH_OPTS says otherwise.
+if [ -z "${SSH_OPTS:-}" ]; then
+  _k="$HOME/.ssh/holon_$(printf %s "${TARGET:-}" | tr 'A-Z' 'a-z')"
+  [ -f "$_k" ] && SSH_OPTS="-i $_k -o IdentitiesOnly=yes"
+fi
+# Commands are piped to `bash -s`: the remote login shell may not be bash (malna's is
+# fish). SSH_OPTS is for things like a shared ControlPath; none are required.
+on() { if [ "$TARGET" = local ]; then bash -c "$1"; else printf '%s\n' "$1" | ssh ${SSH_OPTS:-} -o BatchMode=yes "$TARGET" bash -s; fi; }
 
 if [ "$TARGET" = local ]; then
   DIR=${LOCAL_DIR:-$HERE/local}
@@ -40,7 +48,7 @@ on "mkdir -p '$DIR/data'"
 if [ "$TARGET" = local ]; then
   cp "$HERE/compose.yaml" "$HERE/homeserver.yaml.tmpl" "$DIR/"
 else
-  scp -q "$HERE/compose.yaml" "$HERE/homeserver.yaml.tmpl" "$TARGET:$DIR/"
+  scp -q ${SSH_OPTS:-} "$HERE/compose.yaml" "$HERE/homeserver.yaml.tmpl" "$TARGET:$DIR/"
 fi
 
 # Secrets are generated once, on the target, and never leave it.
@@ -49,10 +57,12 @@ on "cd '$DIR' && umask 077 && [ -f .env ] || { printf 'REGISTRATION_SECRET=%s\nM
 # Signing key and log config come from Synapse's own generator, once.
 on "cd '$DIR' && [ -f 'data/$SERVER_NAME.signing.key' ] || $RT run --rm -v \"\$PWD/data:/data\" -e SYNAPSE_SERVER_NAME='$SERVER_NAME' -e SYNAPSE_REPORT_STATS=no matrixdotorg/synapse:$SYNAPSE_TAG generate"
 
-# Render the config from the template.
-on "cd '$DIR' && . ./.env && sed -e 's|@@SERVER_NAME@@|$SERVER_NAME|g' -e \"s|@@REGISTRATION_SECRET@@|\$REGISTRATION_SECRET|\" -e \"s|@@MACAROON_SECRET@@|\$MACAROON_SECRET|\" -e \"s|@@FORM_SECRET@@|\$FORM_SECRET|\" homeserver.yaml.tmpl > data/homeserver.yaml && chmod 600 data/homeserver.yaml"
-# The container runs as uid 991; the data dir must be writable by it.
-on "cd '$DIR' && chmod -R a+rwX data"
+# Render the config from the template, then install it through a throwaway
+# container: the generator above leaves data/ owned by Synapse's own user
+# (uid 991), which the host user cannot write — and making it world-writable
+# or reaching for sudo would be the wrong fix.
+on "cd '$DIR' && . ./.env && sed -e 's|@@SERVER_NAME@@|$SERVER_NAME|g' -e \"s|@@REGISTRATION_SECRET@@|\$REGISTRATION_SECRET|\" -e \"s|@@MACAROON_SECRET@@|\$MACAROON_SECRET|\" -e \"s|@@FORM_SECRET@@|\$FORM_SECRET|\" homeserver.yaml.tmpl > homeserver.rendered.yaml && chmod 600 homeserver.rendered.yaml"
+on "cd '$DIR' && $RT run --rm --entrypoint sh -v \"\$PWD:/src:ro\" -v \"\$PWD/data:/data\" matrixdotorg/synapse:$SYNAPSE_TAG -c 'cp /src/homeserver.rendered.yaml /data/homeserver.yaml && chown 991:991 /data/homeserver.yaml && chmod 600 /data/homeserver.yaml' && rm -f homeserver.rendered.yaml"
 
 on "cd '$DIR' && SYNAPSE_TAG='$SYNAPSE_TAG' SYNAPSE_PORT='$SYNAPSE_PORT' $COMPOSE up -d"
 echo "waiting for Synapse..."

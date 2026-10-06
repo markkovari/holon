@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The Matrix test: what does an agent look like from Element X?
 #
-#   ./spike.sh <base-url> <server-name> setup                # create you + a ghost agent (admin command, in the container)
+#   REMOTE=Malna ./spike.sh <base-url> <server-name> setup   # create you + a ghost agent (admin command, in the container)
 #   ./spike.sh <base-url> <server-name> post                 # one of each: text, mention, file, poll
 #   ./spike.sh <base-url> <server-name> loop [secs] [count]  # a text every N seconds, to test push (default 60s x 20)
 #
@@ -12,7 +12,15 @@
 set -euo pipefail
 BASE=${1:?base url}; SN=${2:?server name}; CMD=${3:?setup|post|loop}
 ME=${ME_USER:-mark}; GHOST=${GHOST_USER:-rower}
-CTR=${SYNAPSE_CONTAINER:-$(docker ps --format '{{.Names}}' 2>/dev/null | grep -m1 synapse || true)}
+# Seamless access: if ~/.ssh/holon_<host> exists (a dedicated deploy key; see README),
+# use it, unless SSH_OPTS says otherwise.
+if [ -z "${SSH_OPTS:-}" ]; then
+  _k="$HOME/.ssh/holon_$(printf %s "${REMOTE:-}" | tr 'A-Z' 'a-z')"
+  [ -f "$_k" ] && SSH_OPTS="-i $_k -o IdentitiesOnly=yes"
+fi
+# REMOTE=<ssh host> runs the container commands there (SSH_OPTS as in deploy.sh).
+sh_on() { if [ -n "${REMOTE:-}" ]; then printf '%s\n' "$1" | ssh ${SSH_OPTS:-} -o BatchMode=yes "$REMOTE" bash -s; else bash -c "$1"; fi; }
+CTR=${SYNAPSE_CONTAINER:-$(sh_on "docker ps --format '{{.Names}}' 2>/dev/null | grep -m1 synapse || true")}
 STATE=${SPIKE_STATE:-$(dirname "$0")/.spike}   # holds the ghost's password and room id (gitignored)
 mkdir -p "$STATE"; chmod 700 "$STATE"
 
@@ -30,8 +38,8 @@ case "$CMD" in
   setup)
     [ -n "$CTR" ] || { echo "no synapse container found; set SYNAPSE_CONTAINER" >&2; exit 1; }
     ME_PW=$(openssl rand -base64 18 | tr -d '/+=' | head -c 20); GH_PW=$(openssl rand -base64 18 | tr -d '/+=' | head -c 20)
-    docker exec "$CTR" register_new_matrix_user -c /data/homeserver.yaml --admin -u "$ME" -p "$ME_PW" http://localhost:8008 >/dev/null
-    docker exec "$CTR" register_new_matrix_user -c /data/homeserver.yaml --no-admin -u "$GHOST" -p "$GH_PW" http://localhost:8008 >/dev/null
+    sh_on "docker exec '$CTR' register_new_matrix_user -c /data/homeserver.yaml --admin -u '$ME' -p '$ME_PW' http://localhost:8008 >/dev/null"
+    sh_on "docker exec '$CTR' register_new_matrix_user -c /data/homeserver.yaml --no-admin -u '$GHOST' -p '$GH_PW' http://localhost:8008 >/dev/null"
     umask 077; printf '%s' "$GH_PW" > "$STATE/ghost.pw"
     echo "created @$ME:$SN and @$GHOST:$SN"
     echo "YOUR PASSWORD (shown once): $ME_PW"
