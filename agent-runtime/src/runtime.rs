@@ -482,7 +482,17 @@ impl Runtime {
         // What a run may do is its own spec plus whatever its projects grant.
         let directory: Vec<(String, String)> =
             self.store.list().into_iter().map(|a| (a.name, a.description)).collect();
-        let spec = crate::projects::effective(&spec, &self.store.list_projects(), &directory);
+        let mut spec = crate::projects::effective(&spec, &self.store.list_projects(), &directory);
+        // A capability named after a shared connector gets its definition from there.
+        let dir = self.store.connectors_dir();
+        for c in spec.capabilities.iter_mut().filter(|c| c.exec.is_none()) {
+            if let Some(d) = crate::connector::load(&dir, &c.name) {
+                c.exec = Some(d.exec);
+                if c.description.is_empty() {
+                    c.description = d.description;
+                }
+            }
+        }
         let lock = self.lock_for(name);
         let _guard = if wait {
             lock.lock().unwrap()

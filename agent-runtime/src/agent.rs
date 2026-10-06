@@ -321,6 +321,23 @@ fn normalize_args(name: &str, args: Value) -> Value {
 
 /// `Err` says exactly what was missing and how to call the tool, because the
 /// model reads this message to fix its call.
+fn check_connector(spec: &AgentSpec, name: &str, args: &Value) -> Result<(), String> {
+    let Some(x) = spec.capabilities.iter().find(|c| c.name == name).and_then(|c| c.exec.as_ref())
+    else {
+        return Ok(());
+    };
+    let missing: Vec<&str> =
+        x.required.iter().map(String::as_str).filter(|k| arg(args, k).is_empty()).collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "missing {}. Call it as {{\"tool\": \"{name}\", \"args\": {}}}",
+        missing.join(", "),
+        x.args
+    ))
+}
+
 fn check_args(name: &str, args: &Value) -> Result<(), String> {
     let missing: Vec<&str> =
         required(name).iter().copied().filter(|k| arg(args, k).is_empty()).collect();
@@ -351,6 +368,9 @@ fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
         if let Some(t) = tool_def(&c.name) {
             let about = if c.description.is_empty() { t.about } else { &c.description };
             tools.push_str(&format!("- {} {} — {about}{wit}\n", t.name, t.args));
+        } else if let Some(x) = &c.exec {
+            let about = if c.description.is_empty() { "A connector." } else { &c.description };
+            tools.push_str(&format!("- {} {} — {about}{wit}\n", c.name, x.args));
         } else if let Some(other) = c.name.strip_prefix("agent:") {
             let about = if c.description.is_empty() {
                 "Delegate a task to that agent."
@@ -811,7 +831,15 @@ fn exec(
                 *child_tokens += spent;
                 Ok(answer)
             }
-            None => Err(format!("no such tool: {other}")),
+            None => match spec
+                .capabilities
+                .iter()
+                .find(|c| c.name == other)
+                .and_then(|c| c.exec.as_ref())
+            {
+                Some(x) => crate::connector::run(x, args),
+                None => Err(format!("no such tool: {other}")),
+            },
         },
     }
 }
@@ -984,12 +1012,18 @@ pub fn run(
             let t0 = host.now_ms();
             let (result, error, approved) = if !spec.has_capability(&name) {
                 (format!("`{name}` is not one of your capabilities"), true, None)
-            } else if let Err(e) = check_args(&name, &args) {
+            } else if let Err(e) =
+                check_args(&name, &args).and_then(|_| check_connector(spec, &name, &args))
+            {
                 // Malformed: never bother a human to approve a call that cannot run.
                 (e, true, None)
             } else {
-                let needs = tool_def(&name).is_some_and(|t| t.sensitive)
-                    && !spec.auto_approve.contains(&name);
+                let sensitive = tool_def(&name).map(|t| t.sensitive).unwrap_or_else(|| {
+                    spec.capabilities
+                        .iter()
+                        .any(|c| c.name == name && c.exec.as_ref().is_some_and(|x| x.sensitive))
+                });
+                let needs = sensitive && !spec.auto_approve.contains(&name);
                 let ok = !needs || host.approve(&spec.name, &name, &args, &cause.chain);
                 if ok {
                     // What this run passes on to anything it wakes: itself as
@@ -1230,7 +1264,7 @@ mod tests {
         s.capabilities.push(Capability {
             name: "poetry".into(),
             description: "write a haiku".into(),
-            wit: None,
+            ..Default::default()
         });
         s
     }
@@ -1614,6 +1648,42 @@ mod tests {
         run(&h, &off, "http", "second question", &Cause::default());
         let one = system_prompt(&h, &off);
         assert!(one.contains("second question") && !one.contains("first question"));
+    }
+
+    #[test]
+    fn a_connector_is_a_tool_backed_by_a_program_and_sensitive_ones_need_approval() {
+        let mut s = spec();
+        s.capabilities.push(Capability {
+            name: "echo_back".into(),
+            description: "Echo the args".into(),
+            exec: Some(crate::connector::Exec {
+                command: vec!["cat".into()],
+                args: r#"{"what": "..."}"#.into(),
+                required: vec!["what".into()],
+                sensitive: true,
+                timeout_secs: 5,
+            }),
+            ..Default::default()
+        });
+        let call = r#"{"tool":"echo_back","args":{"what":"hi"}}"#;
+        let h = Fake::new("conn-deny", &[call, "ok"], false);
+        let r = run(&h, &s, "http", "go", &Cause::default());
+        assert_eq!(h.asked.lock().unwrap().as_slice(), ["echo_back"]);
+        assert!(matches!(&r.steps[1], Step::Tool { approved: Some(false), error: true, .. }));
+
+        let h = Fake::new("conn-allow", &[call, "done"], true);
+        let r = run(&h, &s, "http", "go", &Cause::default());
+        match &r.steps[1] {
+            Step::Tool { result, error: false, .. } => assert_eq!(result, r#"{"what":"hi"}"#),
+            other => panic!("{other:?}"),
+        }
+        // a missing required argument is explained, and no human is asked
+        let h = Fake::new("conn-bad", &[r#"{"tool":"echo_back","args":{}}"#, "ok"], true);
+        let r = run(&h, &s, "http", "go", &Cause::default());
+        assert!(h.asked.lock().unwrap().is_empty());
+        assert!(
+            matches!(&r.steps[1], Step::Tool { error: true, result, .. } if result.contains("missing what"))
+        );
     }
 
     #[test]

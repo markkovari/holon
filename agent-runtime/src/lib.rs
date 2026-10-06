@@ -3,6 +3,7 @@
 
 pub mod agent;
 pub mod bus;
+pub mod connector;
 pub mod cron;
 pub mod embed;
 pub mod html;

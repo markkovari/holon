@@ -797,6 +797,7 @@ pub fn spec_from_form(f: &FormInput) -> Result<AgentSpec, String> {
                 name: cname.to_string(),
                 description: desc.to_string(),
                 wit,
+                ..Default::default()
             });
         }
     }

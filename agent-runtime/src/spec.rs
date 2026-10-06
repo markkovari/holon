@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// `os:fs/watcher.changes` naming the interface function this binds to. Text
 /// alone is unenforceable; WIT alone is not something a model can choose
 /// from. `wit` is optional so a capability can start as prose.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct Capability {
     /// Matches a built-in tool name (`remember`, `http_get`, ...) or an
     /// agent name prefixed `agent:` to delegate to another agent.
@@ -18,11 +18,15 @@ pub struct Capability {
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wit: Option<String>,
+    /// A program that implements this capability as a tool (see `connector.rs`). Either
+    /// written here or filled in from `<state>/connectors/<name>.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exec: Option<crate::connector::Exec>,
 }
 
 impl Capability {
     pub fn named(name: &str) -> Self {
-        Self { name: name.to_string(), description: String::new(), wit: None }
+        Self { name: name.to_string(), ..Default::default() }
     }
 }
 

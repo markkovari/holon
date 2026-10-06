@@ -145,6 +145,11 @@ impl Store {
         Ok(Self { dir })
     }
 
+    /// Where shared connector definitions live (`connectors/<name>.json`); may not exist.
+    pub fn connectors_dir(&self) -> PathBuf {
+        self.dir.join("connectors")
+    }
+
     fn path(&self, sub: &str, name: &str, ext: &str) -> Result<PathBuf, String> {
         validate_name(name)?;
         Ok(self.dir.join(sub).join(format!("{name}.{ext}")))
