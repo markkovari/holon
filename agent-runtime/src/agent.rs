@@ -380,6 +380,21 @@ fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
         s.push_str(&reach);
         s.push('\n');
     }
+    for p in &spec.projects {
+        s.push_str(&format!(
+            "You are working in the project `{}`{}. Members: {}{}. The project's shared store is `{}` \
+             (use that as `ns`, so the others can see it); you may emit events to `{}`.\n",
+            p.name,
+            if p.description.is_empty() { String::new() } else { format!(" ({})", p.description) },
+            p.members.join(", "),
+            p.lead.as_ref().map(|l| format!(", led by {l}")).unwrap_or_default(),
+            p.store_ns,
+            p.topic_glob
+        ));
+    }
+    if !spec.projects.is_empty() {
+        s.push('\n');
+    }
     let memories = host.store().recall(&spec.name, "", 5);
     if !memories.is_empty() {
         s.push_str("Things you remembered earlier (newest first):\n");

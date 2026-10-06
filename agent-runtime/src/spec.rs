@@ -183,6 +183,10 @@ pub struct AgentSpec {
     /// A paused agent fires no schedule or event triggers and refuses HTTP.
     #[serde(default)]
     pub paused: bool,
+    /// Filled in at run time from the project registry (`projects::effective`);
+    /// never read from or written to the spec file.
+    #[serde(skip)]
+    pub projects: Vec<crate::projects::ProjectInfo>,
 }
 
 fn default_model() -> ModelSpec {
@@ -212,6 +216,7 @@ impl AgentSpec {
             max_runs_per_min: default_rate(),
             daily_token_budget: 0,
             paused: false,
+            projects: Vec::new(),
         }
     }
 
