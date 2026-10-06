@@ -12,6 +12,7 @@ pub mod projects;
 pub mod runtime;
 pub mod server;
 pub mod spec;
+pub mod speech;
 pub mod store;
 pub mod trace;
 

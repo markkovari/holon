@@ -33,6 +33,19 @@ struct Cli {
     /// exported to `<endpoint>/v1/traces`.
     #[arg(long, env = "OTEL_EXPORTER_OTLP_ENDPOINT")]
     otlp_endpoint: Option<String>,
+    /// Speech-to-text command: `<bin> <audio.wav> <locale>` prints the transcript. On a
+    /// Mac, build `speech/holon-stt.swift` (see its header). Without it, transcription is off.
+    #[arg(long, env = "HOLON_STT_BIN")]
+    stt_bin: Option<PathBuf>,
+    /// Text-to-speech override: `<bin> <out-audio-file> <voice>`, text on stdin. By
+    /// default the system `say` is used.
+    #[arg(long, env = "HOLON_TTS_BIN")]
+    tts_bin: Option<PathBuf>,
+    #[arg(long, default_value = "ffmpeg")]
+    ffmpeg: String,
+    /// Recognition language when a caller does not say.
+    #[arg(long, default_value = "en-US")]
+    speech_locale: String,
 }
 
 fn main() -> Result<(), String> {
@@ -43,6 +56,12 @@ fn main() -> Result<(), String> {
     let mut cfg = Config::new(&cli.state_dir);
     cfg.local = LocalModel { base_url: cli.local_url, model: cli.local_model };
     cfg.otlp_endpoint = cli.otlp_endpoint.filter(|e| !e.is_empty());
+    cfg.speech = agent_runtime::speech::SpeechConfig {
+        stt: cli.stt_bin,
+        tts: cli.tts_bin,
+        ffmpeg: cli.ffmpeg,
+        default_locale: cli.speech_locale,
+    };
     let rt = Runtime::new(cfg)?;
     let addr = server::serve(rt.clone(), &cli.listen, token)?;
     rt.start_scheduler();

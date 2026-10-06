@@ -98,6 +98,10 @@ pub trait Host: Sync {
         prompt: &str,
         cause: &Cause,
     ) -> Result<(), String>;
+    /// Audio (any format ffmpeg reads) to text; empty when nothing was said.
+    fn transcribe(&self, audio: &[u8], lang: Option<&str>) -> Result<String, String>;
+    /// Text to a voice message: Ogg/Opus bytes and their length in ms.
+    fn speak(&self, text: &str, voice: Option<&str>) -> Result<(Vec<u8>, u64), String>;
     fn observe(&self, event: Event);
 }
 
@@ -213,6 +217,18 @@ const TOOLS: &[ToolDef] = &[
         sensitive: false,
     },
     ToolDef {
+        name: "transcribe",
+        args: r#"{"path": "recording.ogg", "lang": "en-US"}"#,
+        about: "Turn an audio file in your workspace into text (speech recognition).",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "speak",
+        args: r#"{"text": "...", "voice": "Samantha", "path": "speech/reply.ogg"}"#,
+        about: "Turn text into a spoken voice message saved in your workspace.",
+        sensitive: false,
+    },
+    ToolDef {
         name: "http_get",
         args: r#"{"url": "..."}"#,
         about: "Fetch a URL (only hosts you were allowed).",
@@ -254,6 +270,8 @@ fn required(name: &str) -> &'static [&'static str] {
         "schedule_self" => &["prompt"],
         "spawn_task" => &["agent", "message"],
         "task_result" => &["id"],
+        "transcribe" => &["path"],
+        "speak" => &["text"],
         "http_get" => &["url"],
         "read_file" => &["path"],
         "write_file" => &["path", "content"],
@@ -274,6 +292,8 @@ fn primary(name: &str) -> Option<&'static str> {
         "store_get" | "store_list" => Some("ns"),
         "schedule_self" => Some("prompt"),
         "task_result" => Some("id"),
+        "transcribe" => Some("path"),
+        "speak" => Some("text"),
         n if n.starts_with("agent:") => Some("message"),
         _ => None,
     }
@@ -722,6 +742,26 @@ fn exec(
             Some(TaskState::Done { ok: true, answer }) => format!("done: {answer}"),
             Some(TaskState::Done { ok: false, answer }) => format!("failed: {answer}"),
         }),
+        "transcribe" => {
+            let p = confine(&store.workspace(&spec.name)?, &arg(args, "path"))?;
+            let bytes = std::fs::read(&p).map_err(|e| format!("{}: {e}", arg(args, "path")))?;
+            let lang = Some(arg(args, "lang")).filter(|l| !l.is_empty());
+            let text = host.transcribe(&bytes, lang.as_deref())?;
+            Ok(if text.is_empty() { "(no speech recognised)".to_string() } else { text })
+        }
+        "speak" => {
+            let voice = Some(arg(args, "voice")).filter(|v| !v.is_empty());
+            let (audio, ms) = host.speak(&arg(args, "text"), voice.as_deref())?;
+            let rel = Some(arg(args, "path"))
+                .filter(|p| !p.is_empty())
+                .unwrap_or_else(|| format!("speech/{}.ogg", host.now()));
+            let p = confine(&store.workspace(&spec.name)?, &rel)?;
+            if let Some(parent) = p.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&p, audio).map_err(|e| e.to_string())?;
+            Ok(format!("wrote {rel} ({:.1}s of speech)", ms as f64 / 1000.0))
+        }
         "http_get" => http_get(spec, &arg(args, "url")),
         "list_dir" => {
             let root = store.workspace(&spec.name)?;
@@ -1149,6 +1189,12 @@ pub mod testkit {
             self.timers.lock().unwrap().push((agent.to_string(), in_secs, prompt.to_string()));
             Ok(())
         }
+        fn transcribe(&self, audio: &[u8], lang: Option<&str>) -> Result<String, String> {
+            Ok(format!("transcript of {} bytes in {}", audio.len(), lang.unwrap_or("default")))
+        }
+        fn speak(&self, text: &str, _: Option<&str>) -> Result<(Vec<u8>, u64), String> {
+            Ok((format!("OggS fake audio of: {text}").into_bytes(), 1_500))
+        }
         fn observe(&self, _: Event) {}
     }
 }
@@ -1552,5 +1598,48 @@ mod tests {
         run(&h, &off, "http", "second question", &Cause::default());
         let one = system_prompt(&h, &off);
         assert!(one.contains("second question") && !one.contains("first question"));
+    }
+
+    #[test]
+    fn transcribe_and_speak_work_on_the_agents_workspace_only() {
+        let mut s = spec();
+        s.capabilities.push(Capability::named("transcribe"));
+        s.capabilities.push(Capability::named("speak"));
+        let h = Fake::new(
+            "speech",
+            &[
+                r#"{"tool":"speak","args":{"text":"Keep the pace steady.","path":"speech/a.ogg"}}"#,
+                r#"{"tool":"transcribe","args":{"path":"speech/a.ogg","lang":"hu-HU"}}"#,
+                r#"{"tool":"transcribe","args":{"path":"../outside.ogg"}}"#,
+                r#"{"tool":"speak","args":{"text":"x"}}"#,
+                "done",
+            ],
+            true,
+        );
+        let r = run(&h, &s, "http", "go", &Cause::default());
+        let results: Vec<(bool, String)> = r
+            .steps
+            .iter()
+            .filter_map(|st| match st {
+                Step::Tool { error, result, .. } => Some((*error, result.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results[0], (false, "wrote speech/a.ogg (1.5s of speech)".to_string()));
+        let file = h.store.workspace("bot").unwrap().join("speech/a.ogg");
+        assert!(std::fs::read_to_string(&file).unwrap().contains("Keep the pace steady."));
+        assert_eq!(
+            results[1],
+            (
+                false,
+                format!("transcript of {} bytes in hu-HU", std::fs::metadata(&file).unwrap().len())
+            )
+        );
+        assert!(results[2].0, "a path outside the workspace is refused: {:?}", results[2]);
+        assert!(
+            !results[3].0 && results[3].1.starts_with("wrote speech/"),
+            "the default path is under speech/: {:?}",
+            results[3]
+        );
     }
 }

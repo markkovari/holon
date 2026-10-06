@@ -60,6 +60,8 @@ pub struct Config {
     /// `<endpoint>/v1/traces`. The standard `OTEL_EXPORTER_OTLP_ENDPOINT`
     /// variable is honoured by the daemon and the console.
     pub otlp_endpoint: Option<String>,
+    /// On-device speech engines (see `speech.rs`). Nothing is configured by default.
+    pub speech: crate::speech::SpeechConfig,
 }
 
 impl Config {
@@ -71,6 +73,7 @@ impl Config {
             breaker_threshold: 5,
             breaker_cooldown: Duration::from_secs(120),
             otlp_endpoint: None,
+            speech: Default::default(),
         }
     }
 }
@@ -109,6 +112,7 @@ pub struct Runtime {
     kv: Kv,
     bus: Box<dyn Bus>,
     cfg: Config,
+    speech: crate::speech::Speech,
     local: Mutex<LocalModel>,
     started: u64,
     busy: Mutex<HashMap<String, Arc<Mutex<()>>>>,
@@ -205,6 +209,7 @@ impl Runtime {
             kv,
             bus: Box::new(bus),
             local: Mutex::new(cfg.local.clone()),
+            speech: crate::speech::Speech::new(cfg.speech.clone()),
             cfg,
             started: unix_now(),
             busy: Mutex::new(HashMap::new()),
@@ -235,6 +240,10 @@ impl Runtime {
 
     pub fn kv(&self) -> &Kv {
         &self.kv
+    }
+
+    pub fn speech(&self) -> &crate::speech::Speech {
+        &self.speech
     }
 
     pub fn bus(&self) -> &dyn Bus {
@@ -969,6 +978,14 @@ impl Host for Runtime {
         }
         self.save_timers();
         Ok(())
+    }
+
+    fn transcribe(&self, audio: &[u8], lang: Option<&str>) -> Result<String, String> {
+        self.speech.transcribe(audio, lang)
+    }
+
+    fn speak(&self, text: &str, voice: Option<&str>) -> Result<(Vec<u8>, u64), String> {
+        self.speech.speak(text, voice).map(|s| (s.audio, s.duration_ms))
     }
 
     fn observe(&self, event: Event) {

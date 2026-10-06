@@ -89,6 +89,17 @@ fn caller_trace(req: &Request) -> Option<Traceparent> {
     header_value(req, "traceparent").and_then(|v| Traceparent::parse(&v))
 }
 
+fn bytes_reply(req: Request, ctype: &str, bytes: Vec<u8>, extra: &[(&str, String)]) {
+    let mut resp =
+        Response::from_data(bytes).with_header(Header::from_bytes("content-type", ctype).unwrap());
+    for (k, v) in extra {
+        if let Ok(h) = Header::from_bytes(k.as_bytes(), v.as_bytes()) {
+            resp = resp.with_header(h);
+        }
+    }
+    let _ = req.respond(resp);
+}
+
 fn json_reply(req: Request, status: u16, v: Value) {
     reply(req, status, "application/json", v.to_string());
 }
@@ -137,8 +148,12 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
     let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
     let method = req.method().clone();
 
-    let mut body = String::new();
-    let _ = req.as_reader().take(1 << 20).read_to_string(&mut body);
+    // Audio is bytes and can be large; everything else is small text.
+    let limit =
+        if path.starts_with("/speech") { crate::speech::MAX_AUDIO_IN as u64 } else { 1 << 20 };
+    let mut raw = Vec::new();
+    let _ = req.as_reader().take(limit).read_to_end(&mut raw);
+    let body = String::from_utf8_lossy(&raw).into_owned();
 
     let authed = req
         .headers()
@@ -276,6 +291,42 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
             let after = query_param(query, "after").and_then(|v| v.parse().ok()).unwrap_or(0);
             match rt.bus().read_after(topic, after, 200) {
                 Ok(evs) => json_reply(req, 200, json!(evs)),
+                Err(e) => text(req, 422, e),
+            }
+        }
+        // Speech (see speech.rs): audio in -> text, text -> audio out. 501 when the
+        // engine is not configured, 422 when the input is bad.
+        (Method::Get, ["speech"]) => json_reply(
+            req,
+            200,
+            json!({
+                "transcribe": rt.speech().can_transcribe(),
+                "speak": rt.speech().can_speak(),
+                "locale": rt.speech().config().default_locale,
+            }),
+        ),
+        (Method::Post, ["speech", "transcribe"]) => {
+            match rt.speech().transcribe(&raw, query_param(query, "lang").as_deref()) {
+                Ok(text) => json_reply(req, 200, json!({ "text": text })),
+                Err(e) if e.contains("not configured") => text(req, 501, e),
+                Err(e) => text(req, 422, e),
+            }
+        }
+        (Method::Post, ["speech", "speak"]) => {
+            match rt.speech().speak(&body, query_param(query, "voice").as_deref()) {
+                Ok(sp) => bytes_reply(
+                    req,
+                    "audio/ogg",
+                    sp.audio,
+                    &[
+                        ("x-holon-duration-ms", sp.duration_ms.to_string()),
+                        (
+                            "x-holon-waveform",
+                            sp.waveform.iter().map(u16::to_string).collect::<Vec<_>>().join(","),
+                        ),
+                    ],
+                ),
+                Err(e) if e.contains("not available") => text(req, 501, e),
                 Err(e) => text(req, 422, e),
             }
         }
