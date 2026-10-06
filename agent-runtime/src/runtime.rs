@@ -193,6 +193,15 @@ pub fn validate_spec(spec: &AgentSpec) -> Result<(), String> {
     Ok(())
 }
 
+/// How long an agent calling another agent waits for it to finish its current run.
+const CALL_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
+
+thread_local! {
+    /// The agents whose runs are in progress on this thread, outermost first: a call from
+    /// an agent's run is made on its thread, so this is the call stack of agents.
+    static RUNNING_HERE: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 impl Runtime {
     pub fn new(cfg: Config) -> Result<Arc<Self>, String> {
         let store = Store::open(&cfg.state_dir)?;
@@ -470,6 +479,27 @@ impl Runtime {
         let lock = self.lock_for(name);
         let _guard = if wait {
             lock.lock().unwrap()
+        } else if via == "call" {
+            // An agent further up this very call stack is waiting on us: queueing
+            // behind it would be a certain deadlock.
+            if RUNNING_HERE.with(|r| r.borrow().iter().any(|n| n == name)) {
+                return Err(format!("{name} is already waiting on this call"));
+            }
+            // An agent asked by another agent queues behind the run in progress (the
+            // owner may have just addressed both). Bounded, so two agents waiting on
+            // each other time out with an error instead of hanging.
+            let deadline = std::time::Instant::now() + CALL_WAIT;
+            loop {
+                match lock.try_lock() {
+                    Ok(g) => break g,
+                    Err(_) if std::time::Instant::now() < deadline => {
+                        std::thread::sleep(std::time::Duration::from_millis(100))
+                    }
+                    Err(_) => {
+                        return Err(format!("{name} stayed busy for {}s", CALL_WAIT.as_secs()))
+                    }
+                }
+            }
         } else {
             lock.try_lock().map_err(|_| format!("{name} is busy with another run"))?
         };
@@ -482,7 +512,9 @@ impl Runtime {
         if !via.is_empty() {
             c.chain.push(format!("{name}|{via}"));
         }
+        RUNNING_HERE.with(|r| r.borrow_mut().push(name.to_string()));
         let rec = agent::run(self, &spec, trigger, input, &c);
+        RUNNING_HERE.with(|r| r.borrow_mut().pop());
         self.note_outcome(name, rec.status == Status::Ok);
         Ok(rec)
     }
