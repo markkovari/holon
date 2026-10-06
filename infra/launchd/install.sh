@@ -42,7 +42,10 @@ plist() {
   echo "</array>"
   echo "<key>WorkingDirectory</key><string>$dir</string>"
   echo "<key>EnvironmentVariables</key><dict><key>PATH</key><string>$PATH_ENV</string>"
-  echo "  <key>HOLON_EMBED_URL</key><string>http://127.0.0.1:18102</string></dict>"
+  echo "  <key>HOLON_EMBED_URL</key><string>http://127.0.0.1:18102</string>"
+  # a PATH to the key file, never the key: Jev routes messages when it exists
+  [ -f "$HOME/.comp-secrets/typesafe" ] && echo "  <key>HOLON_JEV_KEY_FILE</key><string>$HOME/.comp-secrets/typesafe</string>"
+  echo "</dict>"
   echo "<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>"
   echo "<key>ThrottleInterval</key><integer>10</integer>"
   echo "<key>StandardOutPath</key><string>$LOGS/$name.log</string>"

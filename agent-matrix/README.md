@@ -112,7 +112,12 @@ nothing usable being refused with a note. It skips when Docker is not available.
 
 ## Who answers when nobody is named
 
-In a project room, `@name` picks the agent. Otherwise, if `HOLON_EMBED_URL` points at the
-embedding service (`agent-runtime/embed/server.py`), each member's description is compared with
-the message and a member answers only if it fits clearly better than the others. Otherwise
-(no service, or a near tie) the project's lead answers.
+In a project room, `@name` picks the agent. Otherwise, in order:
+1. **Jev**, when `HOLON_JEV_KEY_FILE` names a file holding a TypeSafe key: each member's description
+   is put to Jev as a yes/no question about the message, and the members it confirms answer. Jev
+   returns probabilities, not text, so it routes; it is not a chat model.
+2. **Embeddings**, when `HOLON_EMBED_URL` points at `agent-runtime/embed/server.py`: a member answers
+   only if it fits clearly better than the others.
+3. The project's **lead**.
+
+Each step is skipped when it is not configured or cannot answer.

@@ -614,22 +614,46 @@ impl Bridge {
                 let named = mentioned.iter().any(|a| info.agents.contains(a));
                 // Nobody named: when an embedding service is configured and one member
                 // fits clearly better than the rest, that member answers; else the lead.
-                let judged = match std::env::var("HOLON_EMBED_URL") {
-                    Ok(url) if !named && !url.is_empty() && info.agents.len() > 1 => {
-                        let known = self.rt.agents().unwrap_or_default();
-                        let cands: Vec<(String, String)> = info
-                            .agents
-                            .iter()
-                            .map(|a| {
-                                let d = known.iter().find(|k| &k.name == a);
-                                (a.clone(), d.map(|k| k.description.clone()).unwrap_or_default())
-                            })
-                            .collect();
-                        self.rt.rank(&url, &body, &cands).and_then(|r| clear_winner(&r))
-                    }
-                    _ => None,
+                // Jev first when a key file is configured; else (or when it cannot say) the
+                // embedding margin.
+                let jev_key = std::env::var("HOLON_JEV_KEY_FILE").unwrap_or_default();
+                let by_jev = if named || jev_key.is_empty() || info.agents.len() < 2 {
+                    None
+                } else {
+                    let known = self.rt.agents().unwrap_or_default();
+                    let cands: Vec<(String, String)> = info
+                        .agents
+                        .iter()
+                        .map(|a| {
+                            let d = known.iter().find(|k| &k.name == a);
+                            (a.clone(), d.map(|k| k.description.clone()).unwrap_or_default())
+                        })
+                        .collect();
+                    crate::jev::affected(&jev_key, &body, &cands).filter(|v| !v.is_empty())
                 };
-                judged.map(|a| vec![a]).unwrap_or_else(|| {
+                let judged = if by_jev.is_some() {
+                    None
+                } else {
+                    match std::env::var("HOLON_EMBED_URL") {
+                        Ok(url) if !named && !url.is_empty() && info.agents.len() > 1 => {
+                            let known = self.rt.agents().unwrap_or_default();
+                            let cands: Vec<(String, String)> = info
+                                .agents
+                                .iter()
+                                .map(|a| {
+                                    let d = known.iter().find(|k| &k.name == a);
+                                    (
+                                        a.clone(),
+                                        d.map(|k| k.description.clone()).unwrap_or_default(),
+                                    )
+                                })
+                                .collect();
+                            self.rt.rank(&url, &body, &cands).and_then(|r| clear_winner(&r))
+                        }
+                        _ => None,
+                    }
+                };
+                by_jev.or_else(|| judged.map(|a| vec![a])).unwrap_or_else(|| {
                     project_targets(&info.agents, info.lead.as_deref(), &mentioned)
                 })
             }
