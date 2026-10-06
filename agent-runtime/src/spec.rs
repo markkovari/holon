@@ -111,9 +111,17 @@ pub enum ModelSpec {
         model: String,
         #[serde(default)]
         api_key_env: String,
+        /// Or a file holding the key, read at each call and never stored in the spec. Wins
+        /// over `api_key_env` when both are given.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        api_key_file: String,
     },
     /// Anthropic's Messages API. Same rule for the key.
     Anthropic { model: String, api_key_env: String },
+    /// Try each model in order and use the first that answers: a hosted one first, a local one
+    /// as the floor. A model that errors (down, out of quota, over its limit) is skipped for
+    /// this call only.
+    Fallback { models: Vec<ModelSpec> },
     /// Scripted replies, for tests.
     Mock { replies: Vec<String> },
 }

@@ -31,6 +31,7 @@ pub struct Usage {
     pub output: u64,
 }
 
+#[derive(Debug)]
 pub struct Reply {
     pub text: String,
     pub usage: Usage,
@@ -60,8 +61,23 @@ pub fn complete(
             let model = if local.model.is_empty() { "system" } else { &local.model };
             openai(base, model, "", system, messages)
         }
-        ModelSpec::OpenAi { base_url, model, api_key_env } => {
-            openai(base_url, model, &key(api_key_env)?, system, messages)
+        ModelSpec::OpenAi { base_url, model, api_key_env, api_key_file } => {
+            let k = if api_key_file.is_empty() {
+                key(api_key_env)?
+            } else {
+                key_from_file(api_key_file)?
+            };
+            openai(base_url, model, &k, system, messages)
+        }
+        ModelSpec::Fallback { models } => {
+            let mut errors: Vec<String> = Vec::new();
+            for m in models {
+                match complete(m, local, system, messages, mock_cursor) {
+                    Ok(r) => return Ok(r),
+                    Err(e) => errors.push(e),
+                }
+            }
+            Err(format!("no model answered: {}", errors.join(" | ")))
         }
         ModelSpec::Anthropic { model, api_key_env } => {
             anthropic(model, &key(api_key_env)?, system, messages)
@@ -83,6 +99,17 @@ fn key(env: &str) -> Result<String, String> {
         return Ok(String::new());
     }
     std::env::var(env).map_err(|_| format!("environment variable {env} is not set"))
+}
+
+/// A key read from a file at the moment it is needed (never kept, never logged).
+fn key_from_file(path: &str) -> Result<String, String> {
+    let k = std::fs::read_to_string(path).map_err(|e| format!("key file {path}: {e}"))?;
+    let k = k.trim().to_string();
+    if k.is_empty() {
+        Err(format!("key file {path} is empty"))
+    } else {
+        Ok(k)
+    }
 }
 
 fn http() -> Result<reqwest::blocking::Client, String> {
@@ -156,4 +183,55 @@ fn send(req: reqwest::blocking::RequestBuilder) -> Result<Value, String> {
 
 fn clip(s: &str) -> String {
     s.chars().take(300).collect()
+}
+
+#[cfg(test)]
+mod fallback_tests {
+    use super::*;
+
+    fn mock(replies: &[&str]) -> ModelSpec {
+        ModelSpec::Mock { replies: replies.iter().map(|r| r.to_string()).collect() }
+    }
+
+    fn ask(spec: &ModelSpec) -> Result<Reply, String> {
+        complete(
+            spec,
+            &LocalModel::default(),
+            "sys",
+            &[Msg::user("hi".to_string())],
+            &Mutex::new(0),
+        )
+    }
+
+    #[test]
+    fn the_first_model_that_answers_is_used_and_all_failing_is_an_error_naming_each() {
+        // the first has no replies (it errors), the second answers
+        let chain = ModelSpec::Fallback { models: vec![mock(&[]), mock(&["second"])] };
+        // each mock shares the cursor of the call, so the second starts at 0 too
+        assert_eq!(ask(&chain).unwrap().text, "second");
+        let dead = ModelSpec::Fallback {
+            models: vec![
+                ModelSpec::OpenAi {
+                    base_url: "http://127.0.0.1:1".into(),
+                    model: "m".into(),
+                    api_key_env: String::new(),
+                    api_key_file: String::new(),
+                },
+                ModelSpec::Local,
+            ],
+        };
+        let e = ask(&dead).unwrap_err();
+        assert!(e.starts_with("no model answered: ") && e.contains(" | "), "{e}");
+    }
+
+    #[test]
+    fn a_key_file_is_read_trimmed_and_a_missing_or_empty_one_is_an_error() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("k");
+        std::fs::write(&f, "  sk-test\n").unwrap();
+        assert_eq!(key_from_file(f.to_str().unwrap()).unwrap(), "sk-test");
+        std::fs::write(&f, "\n").unwrap();
+        assert!(key_from_file(f.to_str().unwrap()).unwrap_err().contains("empty"));
+        assert!(key_from_file("/nonexistent/key").is_err());
+    }
 }

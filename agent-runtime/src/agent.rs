@@ -969,6 +969,7 @@ pub fn model_label(m: &crate::spec::ModelSpec) -> String {
         Local => "local/system".to_string(),
         OpenAi { model, .. } => format!("openai/{model}"),
         Anthropic { model, .. } => format!("anthropic/{model}"),
+        Fallback { models } => models.first().map_or("fallback/none".to_string(), model_label),
         Mock { .. } => "mock/mock".to_string(),
     }
 }
