@@ -150,6 +150,13 @@ impl Store {
         self.dir.join("connectors")
     }
 
+    /// A model block by name, from `<state>/models.json` (`{"qwen": {"kind": "open_ai", ...}}`).
+    pub fn model_alias(&self, name: &str) -> Option<serde_json::Value> {
+        let all: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(self.dir.join("models.json")).ok()?).ok()?;
+        all.get(name).cloned()
+    }
+
     fn path(&self, sub: &str, name: &str, ext: &str) -> Result<PathBuf, String> {
         validate_name(name)?;
         Ok(self.dir.join(sub).join(format!("{name}.{ext}")))

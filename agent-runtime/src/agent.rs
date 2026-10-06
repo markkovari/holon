@@ -281,7 +281,7 @@ const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "agent_save",
-        args: r#"{"name": "...", "description": "what it is for, as instructions to it", "capabilities": ["http_get"], "schedule": "@every 1h", "prompt": "what to do when the schedule fires"}"#,
+        args: r#"{"name": "...", "description": "what it is for, as instructions to it", "capabilities": ["http_get"], "schedule": "@every 1h", "prompt": "what to do when the schedule fires", "model": "qwen"}"#,
         about: "Create an agent, or change the fields you give of an existing one. The owner approves first.",
         sensitive: true,
     },
@@ -873,7 +873,8 @@ fn exec(
                 return Err("you may not change your own spec".into());
             }
             let existing = store.get(&name);
-            let new = crate::admin::build_spec(existing.as_ref(), args)?;
+            let new =
+                crate::admin::build_spec_with(existing.as_ref(), args, &|n| store.model_alias(n))?;
             host.save_agent(new)?;
             Ok(if existing.is_some() {
                 format!("updated {name}")

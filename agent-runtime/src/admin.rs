@@ -11,6 +11,15 @@ use crate::spec::AgentSpec;
 /// same fields of it and everything else is kept; otherwise they build a new one. Capabilities
 /// may be plain names (`["http_get"]`) or full objects.
 pub fn build_spec(existing: Option<&AgentSpec>, args: &Value) -> Result<AgentSpec, String> {
+    build_spec_with(existing, args, &|_| None)
+}
+
+/// `build_spec`, with `model_alias` resolving a model name (`"qwen"`) to its spec block.
+pub fn build_spec_with(
+    existing: Option<&AgentSpec>,
+    args: &Value,
+    model_alias: &dyn Fn(&str) -> Option<Value>,
+) -> Result<AgentSpec, String> {
     let given = match args {
         Value::Object(m) => m,
         _ => return Err("args must be an object with at least `name`".into()),
@@ -47,6 +56,14 @@ pub fn build_spec(existing: Option<&AgentSpec>, args: &Value) -> Result<AgentSpe
                     json!([{"kind": "schedule", "cron": cron, "prompt": prompt}]),
                 );
             }
+        } else if k == "model" {
+            // a name from `models.json` (`qwen`, `apple`, ...) stands for the whole block
+            let alias = v.as_str().map(|n| (n, model_alias(&n.to_lowercase())));
+            match alias {
+                Some((_, Some(block))) => base.insert(k.clone(), block),
+                Some((n, None)) => return Err(format!("no model called `{n}`")),
+                None => base.insert(k.clone(), v.clone()),
+            };
         } else if k != "prompt" {
             base.insert(k.clone(), v.clone());
         }
@@ -116,7 +133,7 @@ mod tests {
             None,
             &json!({"name": "news", "description": "Summarise the news.", "capabilities": ["http_get", "remember"],
                     "schedule": "@every 1h", "prompt": "Read the headlines."}),
-        )
+                    )
         .unwrap();
         assert_eq!(s.name, "news");
         assert!(s.has_capability("http_get") && s.has_capability("remember"));
@@ -143,6 +160,28 @@ mod tests {
         .unwrap();
         assert_eq!(s.allow_hosts, ["b.com"]);
         assert_eq!(hosts_in("see https://a.b:8080/x and nothing"), ["a.b:8080"]);
+    }
+
+    #[test]
+    fn a_model_name_stands_for_its_whole_block_and_an_unknown_one_is_refused() {
+        let alias = |n: &str| {
+            (n == "qwen").then(|| json!({"kind": "open_ai", "base_url": "http://x", "model": "q"}))
+        };
+        let old = AgentSpec::new("kevin", "Jokes.");
+        let s = build_spec_with(Some(&old), &json!({"name": "kevin", "model": "Qwen"}), &alias)
+            .unwrap();
+        assert!(matches!(s.model, crate::spec::ModelSpec::OpenAi { .. }));
+        assert!(build_spec_with(Some(&old), &json!({"name": "kevin", "model": "gpt"}), &alias)
+            .unwrap_err()
+            .contains("no model called"));
+        // a full block still works
+        let s = build_spec_with(
+            Some(&old),
+            &json!({"name": "kevin", "model": {"kind": "local"}}),
+            &alias,
+        )
+        .unwrap();
+        assert_eq!(s.model, crate::spec::ModelSpec::Local);
     }
 
     #[test]
