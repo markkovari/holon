@@ -34,6 +34,13 @@ pub struct Approval {
     pub chain: Vec<String>,
 }
 
+/// Speech the runtime produced, with what a chat client shows for a voice message.
+pub struct Spoken {
+    pub audio: Vec<u8>,
+    pub duration_ms: u64,
+    pub waveform: Vec<u16>,
+}
+
 pub struct Runtime {
     base: String,
     token: String,
@@ -123,6 +130,65 @@ impl Runtime {
 
     pub fn remove_from_project(&self, project: &str, agent: &str) -> Result<(), String> {
         self.send(reqwest::Method::DELETE, &format!("/projects/{project}/agents/{agent}"), None)
+    }
+
+    /// Whether the runtime can transcribe and speak (`GET /speech`).
+    pub fn speech_caps(&self) -> (bool, bool) {
+        match self.admin::<Value>("/speech") {
+            Ok(v) => {
+                (v["transcribe"].as_bool().unwrap_or(false), v["speak"].as_bool().unwrap_or(false))
+            }
+            Err(_) => (false, false),
+        }
+    }
+
+    /// Audio to text. `Err` carries the runtime's reason (not configured, bad audio,
+    /// a language it has no model for).
+    pub fn transcribe(&self, audio: Vec<u8>) -> Result<String, String> {
+        let r = self
+            .runner
+            .post(format!("{}/speech/transcribe", self.base))
+            .bearer_auth(&self.token)
+            .body(audio)
+            .send()
+            .map_err(|e| e.to_string())?;
+        let status = r.status();
+        let text = r.text().unwrap_or_default();
+        if !status.is_success() {
+            return Err(text);
+        }
+        serde_json::from_str::<Value>(&text)
+            .ok()
+            .and_then(|v| v["text"].as_str().map(String::from))
+            .ok_or_else(|| "unexpected reply".into())
+    }
+
+    /// Text to a voice message (Opus in Ogg), with its length and waveform.
+    pub fn speak(&self, text: &str) -> Result<Spoken, String> {
+        let r = self
+            .runner
+            .post(format!("{}/speech/speak", self.base))
+            .bearer_auth(&self.token)
+            .body(text.to_string())
+            .send()
+            .map_err(|e| e.to_string())?;
+        if !r.status().is_success() {
+            return Err(r.text().unwrap_or_default());
+        }
+        let duration_ms = r
+            .headers()
+            .get("x-holon-duration-ms")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let waveform = r
+            .headers()
+            .get("x-holon-waveform")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.split(',').filter_map(|n| n.parse().ok()).collect())
+            .unwrap_or_default();
+        let audio = r.bytes().map_err(|e| e.to_string())?.to_vec();
+        Ok(Spoken { audio, duration_ms, waveform })
     }
 
     /// Runs `agent` on `text`. The runtime's answer, or its error, as text; the

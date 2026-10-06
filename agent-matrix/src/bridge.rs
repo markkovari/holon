@@ -97,6 +97,20 @@ pub fn project_targets(
     lead.filter(|l| members.iter().any(|m| m == l)).map(|l| vec![l.to_string()]).unwrap_or_default()
 }
 
+/// What to say aloud of a written answer: the start of it, cut at a sentence end, short
+/// enough to listen to. The full text is always in the room.
+pub fn spoken_excerpt(answer: &str) -> String {
+    const LIMIT: usize = 700;
+    let a = answer.trim();
+    if a.chars().count() <= LIMIT {
+        return a.to_string();
+    }
+    let head: String = a.chars().take(LIMIT).collect();
+    let cut =
+        head.rfind(['.', '!', '?', '\n']).filter(|i| *i > LIMIT / 3).map_or(head.len(), |i| i + 1);
+    format!("{} The rest is in the message.", head[..cut].trim())
+}
+
 /// A project name from a Space's display name: lowercase words joined by dashes, each
 /// starting with a letter ("Nutrition & Meals 2" -> "nutrition-meals-n2"). Empty when the
 /// name has nothing usable (all symbols, or no ASCII letters or digits).
@@ -517,14 +531,22 @@ impl Bridge {
             return;
         };
         let content = &ev["content"];
-        if content["msgtype"].as_str() != Some("m.text") {
+        // A voice message (or any audio) is heard; text is read. Nothing else is input.
+        let heard = content["msgtype"].as_str() == Some("m.audio");
+        if !heard && content["msgtype"].as_str() != Some("m.text") {
             return;
         }
-        let body = content["body"].as_str().unwrap_or_default().trim().to_string();
-        if body.is_empty() {
+        let body = if heard {
+            String::new()
+        } else {
+            content["body"].as_str().unwrap_or_default().trim().to_string()
+        };
+        if !heard && body.is_empty() {
             return;
         }
         let agents: Vec<String> = match self.state.kind_of(room) {
+            // commands are typed; a voice message here is ignored
+            Some(RoomKind::Control) if heard => return,
             Some(RoomKind::Control) => {
                 let me = self.clone();
                 let (room, bridge) = (room.to_string(), self.bridge_user());
@@ -573,9 +595,101 @@ impl Bridge {
             }
         };
         for agent in agents {
-            let (me, room, event_id, body) =
-                (self.clone(), room.to_string(), event_id.to_string(), body.clone());
-            std::thread::spawn(move || me.answer(&agent, &room, &event_id, &body));
+            let (me, room, event_id, body, content) = (
+                self.clone(),
+                room.to_string(),
+                event_id.to_string(),
+                body.clone(),
+                content.clone(),
+            );
+            if heard {
+                std::thread::spawn(move || me.answer_voice(&agent, &room, &event_id, &content));
+            } else {
+                std::thread::spawn(move || me.answer(&agent, &room, &event_id, &body));
+            }
+        }
+    }
+
+    /// A voice message to an agent: download it, transcribe it, show what was heard, run
+    /// the agent on the transcript, and answer in text AND in voice (voice in, voice out).
+    fn answer_voice(&self, agent: &str, room: &str, reply_to: &str, content: &Value) {
+        // The agent says what it heard, and speaks its own errors: the bridge's user is not
+        // a member of an agent's direct room, but the agent is.
+        let ghost = self.cfg.ghost(agent);
+        let _ = self.mx.join(room, &ghost);
+        let note = |text: &str| {
+            let _ = self.mx.send_text(room, &ghost, text, Some(reply_to));
+        };
+        let Some(mxc) = content["url"].as_str() else {
+            note("I can only hear voice messages in unencrypted rooms (this one is encrypted, or the message has no audio).");
+            return;
+        };
+        let audio = match self.mx.download(mxc, &ghost) {
+            Ok(a) => a,
+            Err(e) => return note(&format!("⚠️ I could not fetch that recording: {e}")),
+        };
+        self.mx.typing(room, &ghost, true);
+        let heard = self.rt.transcribe(audio);
+        let text = match heard {
+            Ok(t) if t.trim().is_empty() => {
+                self.mx.typing(room, &ghost, false);
+                return note("🎙️ I did not catch anything in that recording.");
+            }
+            Ok(t) => t.trim().to_string(),
+            Err(e) => {
+                self.mx.typing(room, &ghost, false);
+                let why = if e.contains("not configured") {
+                    "speech-to-text is not set up on the runtime (start it with --stt-bin)"
+                        .to_string()
+                } else {
+                    clip(&e, 300)
+                };
+                return note(&format!("⚠️ I could not understand that recording: {why}"));
+            }
+        };
+        note(&format!("🎙️ “{}”", clip(&text, 1_000)));
+        let (ok, answer) = self.rt.run(agent, &text, None);
+        self.mx.typing(room, &ghost, false);
+        let written = if ok {
+            if answer.trim().is_empty() {
+                "(no answer)".to_string()
+            } else {
+                clip(&answer, MAX_REPLY)
+            }
+        } else {
+            format!("⚠️ {}", clip(&answer, 2_000))
+        };
+        if let Err(e) = self.mx.send_text(room, &ghost, &written, Some(reply_to)) {
+            log(&format!("{agent}: could not post the answer: {e}"));
+        }
+        // ...and the same answer, spoken, if the runtime can speak.
+        if ok && self.rt.speech_caps().1 {
+            self.speak_in(room, &ghost, &spoken_excerpt(&answer), reply_to);
+        }
+    }
+
+    /// Posts `text` as a voice message from `ghost`.
+    fn speak_in(&self, room: &str, ghost: &str, text: &str, reply_to: &str) {
+        let spoken = match self.rt.speak(text) {
+            Ok(s) => s,
+            Err(e) => return log(&format!("could not speak: {e}")),
+        };
+        let size = spoken.audio.len();
+        let uri = match self.mx.upload(spoken.audio, "audio/ogg", "voice-message.ogg", ghost) {
+            Ok(u) => u,
+            Err(e) => return log(&format!("could not upload the voice message: {e}")),
+        };
+        let content = json!({
+            "msgtype": "m.audio",
+            "body": "Voice message",
+            "url": uri,
+            "info": {"mimetype": "audio/ogg", "size": size, "duration": spoken.duration_ms},
+            "org.matrix.msc1767.audio": {"duration": spoken.duration_ms, "waveform": spoken.waveform},
+            "org.matrix.msc3245.voice": {},
+            "m.relates_to": {"m.in_reply_to": {"event_id": reply_to}},
+        });
+        if let Err(e) = self.mx.send_event(room, ghost, "m.room.message", content) {
+            log(&format!("could not post the voice message: {e}"));
         }
     }
 
@@ -773,5 +887,19 @@ mod tests {
                 "{n} -> {s}"
             );
         }
+    }
+
+    #[test]
+    fn a_long_answer_is_spoken_in_part_and_cut_at_a_sentence() {
+        assert_eq!(spoken_excerpt("  Short answer.  "), "Short answer.");
+        let long = format!("{} Final bit.", "This is a sentence. ".repeat(80));
+        let said = spoken_excerpt(&long);
+        assert!(said.ends_with("The rest is in the message."), "{said}");
+        assert!(said.chars().count() < 800, "{}", said.chars().count());
+        assert!(said.contains("This is a sentence."));
+        assert!(!said.contains("Final bit."));
+        // no sentence end to cut at: still bounded
+        let blob = "x".repeat(2000);
+        assert!(spoken_excerpt(&blob).chars().count() < 800);
     }
 }

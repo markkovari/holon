@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use agent_matrix::init::{init, InitArgs};
 use agent_matrix::{serve::serve, Bridge, Config};
+use agent_runtime::speech::SpeechConfig;
 use agent_runtime::{AgentSpec, Capability, Config as RtConfig, ModelSpec, Runtime};
 use serde_json::{json, Value};
 
@@ -203,6 +204,58 @@ impl Owner {
         assert!(v.get("errcode").is_none(), "kick failed: {v}");
     }
 
+    fn upload(&self, bytes: Vec<u8>, content_type: &str, filename: &str) -> String {
+        let v: Value = self
+            .http
+            .post(format!("{}/_matrix/media/v3/upload?filename={filename}", self.base))
+            .bearer_auth(&self.token)
+            .header("content-type", content_type)
+            .body(bytes)
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
+        v["content_uri"].as_str().unwrap_or_else(|| panic!("upload failed: {v}")).to_string()
+    }
+
+    fn download(&self, mxc: &str) -> Vec<u8> {
+        let rest = mxc.strip_prefix("mxc://").unwrap();
+        self.http
+            .get(format!("{}/_matrix/client/v1/media/download/{rest}", self.base))
+            .bearer_auth(&self.token)
+            .send()
+            .unwrap()
+            .bytes()
+            .unwrap()
+            .to_vec()
+    }
+
+    /// Sends an audio file as a voice message, the way Element's microphone button does.
+    fn send_voice(&self, room: &str, bytes: Vec<u8>, ms: u64) -> String {
+        let size = bytes.len();
+        let uri = self.upload(bytes, "audio/ogg", "voice-message.ogg");
+        self.send(
+            room,
+            json!({
+                "msgtype": "m.audio", "body": "Voice message", "url": uri,
+                "info": {"mimetype": "audio/ogg", "size": size, "duration": ms},
+                "org.matrix.msc3245.voice": {},
+            }),
+        )
+    }
+
+    /// Voice messages from `sender`, newest first.
+    fn voice_from(&self, room: &str, sender: &str) -> Vec<Value> {
+        self.events(room)
+            .into_iter()
+            .filter(|e| {
+                e["type"] == "m.room.message"
+                    && e["sender"] == sender
+                    && e["content"]["msgtype"] == "m.audio"
+            })
+            .collect()
+    }
+
     /// A Space with a room inside it, linked both ways, as Element does it.
     fn space_with_room(&self, space_name: &str, room_name: &str) -> (String, String) {
         let space = self.create_room(json!({"name": space_name, "topic": "what we eat", "preset": "private_chat", "creation_content": {"type": "m.space"}}));
@@ -264,6 +317,10 @@ struct World {
 static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn world() -> Option<World> {
+    world_with(SpeechConfig::default())
+}
+
+fn world_with(speech: SpeechConfig) -> Option<World> {
     if !docker_ok() {
         eprintln!("skipping: docker is not available");
         return None;
@@ -277,7 +334,9 @@ fn world() -> Option<World> {
     let down = Synapse { project: project.clone(), dir: syn_dir.clone() };
 
     // ---- an agent runtime with scripted agents -----------------------------
-    let rt = Runtime::new(RtConfig::new(work.path().join("runtime"))).unwrap();
+    let mut rt_cfg = RtConfig::new(work.path().join("runtime"));
+    rt_cfg.speech = speech;
+    let rt = Runtime::new(rt_cfg).unwrap();
     let rt_addr =
         agent_runtime::server::serve(rt.clone(), "127.0.0.1:0", "rt-admin-token".into()).unwrap();
     rt.create_agent(agent("rower", "logs rowing", vec!["Your last row was 12,108m.".into(); 8]))
@@ -638,4 +697,87 @@ fn a_space_you_make_yourself_becomes_a_project_when_you_invite_an_agent_into_it(
         notes().into_iter().find(|n| n.contains("can't make a project"))
     });
     assert!(rt.store().list_projects().iter().all(|p| !p.agents.iter().any(|a| a == "scout")));
+}
+
+#[test]
+fn you_can_talk_to_an_agent_and_it_talks_back() {
+    let real = cfg!(target_os = "macos")
+        && ["say", "ffmpeg", "swiftc"].iter().all(|c| {
+            Command::new(c)
+                .arg(if *c == "say" {
+                    "-v?"
+                } else if *c == "ffmpeg" {
+                    "-version"
+                } else {
+                    "--version"
+                })
+                .output()
+                .is_ok_and(|o| o.status.success())
+        });
+    if !real {
+        eprintln!("skipping: needs macOS with say, ffmpeg and the Swift toolchain");
+        return;
+    }
+    // the same on-device recognizer the runtime ships, built once for this test
+    let tools = tempfile::Builder::new().prefix("agent-matrix-stt-").tempdir().unwrap();
+    let stt = tools.path().join("holon-stt");
+    let build = Command::new("swiftc")
+        .args(["-parse-as-library", "-O", "-o"])
+        .arg(&stt)
+        .arg(repo().join("agent-runtime/speech/holon-stt.swift"))
+        .output()
+        .unwrap();
+    if !build.status.success() {
+        eprintln!("skipping: holon-stt did not build (needs the macOS 26 SDK)");
+        return;
+    }
+    let Some(World { rt, bridge, owner, _work, _down, _lock, .. }) =
+        world_with(SpeechConfig { stt: Some(stt), ..Default::default() })
+    else {
+        return;
+    };
+    let room = bridge.state.read(|d| d.dms.get("rower").cloned()).expect("rower's room");
+    // You hold the microphone and say something. (Spoken with a real voice, as Opus in Ogg.)
+    let said = rt.speech().speak("What was my last row, please?", None).expect("speaking");
+    owner.send_voice(&room, said.audio, said.duration_ms);
+
+    // 1. the bridge shows what it heard...
+    let heard = wait_for("the transcript", 60, || {
+        owner.texts_from(&room, &ghost("rower")).into_iter().find(|t| t.starts_with("🎙️"))
+    });
+    assert!(heard.to_lowercase().contains("last row"), "heard: {heard}");
+    // ...2. the agent ran on that transcript...
+    wait_for("the run", 60, || rt.store().runs("rower", 3).into_iter().next());
+    assert!(
+        rt.store().runs("rower", 1)[0].input.to_lowercase().contains("last row"),
+        "the agent was given the words, not the audio"
+    );
+    // ...3. and answered in text AND in a voice message
+    let text = wait_for("the written answer", 60, || {
+        owner.texts_from(&room, &ghost("rower")).into_iter().find(|t| t.contains("12,108m"))
+    });
+    assert_eq!(text, "Your last row was 12,108m.");
+    let voice = wait_for("the voice answer", 60, || {
+        owner.voice_from(&room, &ghost("rower")).into_iter().next()
+    });
+    let c = &voice["content"];
+    assert!(
+        c.get("org.matrix.msc3245.voice").is_some(),
+        "it is a voice message, so a client shows it as one"
+    );
+    assert_eq!(c["info"]["mimetype"], "audio/ogg");
+    assert!(
+        c["org.matrix.msc1767.audio"]["waveform"].as_array().is_some_and(|w| w.len() == 100),
+        "with a waveform"
+    );
+    assert!(c["info"]["duration"].as_u64().unwrap() > 500);
+
+    // The spoken answer really says it: download it and listen.
+    let audio = owner.download(c["url"].as_str().unwrap());
+    assert_eq!(&audio[..4], b"OggS");
+    let back = rt.speech().transcribe(&audio, None).expect("transcribing the reply").to_lowercase();
+    assert!(back.contains("last row"), "the voice reply says the answer: {back}");
+
+    // Without speech set up, a voice message gets a clear note instead of silence
+    // (covered by the unit-level wording; the runtime used here has it configured).
 }
