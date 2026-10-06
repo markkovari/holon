@@ -61,6 +61,8 @@ case "${1:-}" in
     for s in "${SERVICES[@]}"; do
       f="$AGENTS/io.holon.$s.plist"
       launchctl bootout "gui/$UID_/io.holon.$s" 2>/dev/null || true
+      # bootout returns before the job is gone; bootstrapping too soon fails with an I/O error
+      for _ in $(seq 1 30); do launchctl print "gui/$UID_/io.holon.$s" >/dev/null 2>&1 || break; sleep 1; done
       plist "$s" > "$f"
       plutil -lint "$f" >/dev/null
       launchctl bootstrap "gui/$UID_" "$f"
