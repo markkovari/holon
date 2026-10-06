@@ -567,11 +567,28 @@ impl Bridge {
                 else {
                     return;
                 };
-                project_targets(
-                    &info.agents,
-                    info.lead.as_deref(),
-                    &mentioned_agents(&self.cfg, content),
-                )
+                let mentioned = mentioned_agents(&self.cfg, content);
+                let named = mentioned.iter().any(|a| info.agents.contains(a));
+                // Nobody named: Jev (when an advisor is configured) decides which
+                // members the message concerns; else the lead answers.
+                let judged = match std::env::var("HOLON_ADVISOR_URL") {
+                    Ok(url) if !named && !url.is_empty() => {
+                        let known = self.rt.agents().unwrap_or_default();
+                        let cands: Vec<(String, String)> = info
+                            .agents
+                            .iter()
+                            .map(|a| {
+                                let d = known.iter().find(|k| &k.name == a);
+                                (a.clone(), d.map(|k| k.description.clone()).unwrap_or_default())
+                            })
+                            .collect();
+                        self.rt.affected(&url, &body, &cands).filter(|v| !v.is_empty())
+                    }
+                    _ => None,
+                };
+                judged.unwrap_or_else(|| {
+                    project_targets(&info.agents, info.lead.as_deref(), &mentioned)
+                })
             }
             // A room the owner made by hand: whichever agents are in it and addressed.
             None => {

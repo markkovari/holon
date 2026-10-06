@@ -96,6 +96,41 @@ impl Runtime {
         self.admin("/agents")
     }
 
+    /// Ask Jev (through the capability-advisor service) which of `candidates`
+    /// (name, description) a message concerns. `None` when the advisor is
+    /// unreachable or Jev is unavailable: the caller falls back to its own rule.
+    pub fn affected(
+        &self,
+        advisor: &str,
+        message: &str,
+        candidates: &[(String, String)],
+    ) -> Option<Vec<String>> {
+        let cands: Vec<Value> = candidates
+            .iter()
+            .map(|(n, d)| serde_json::json!({"id": n, "name": n, "description": d}))
+            .collect();
+        let r = self
+            .http
+            .post(format!("{}/evaluate", advisor.trim_end_matches('/')))
+            .json(&serde_json::json!({
+                "goal": format!("A message to a team of agents: {message}"),
+                "candidates": cands
+            }))
+            .send()
+            .ok()?;
+        let v: Value = r.json().ok()?;
+        if v["unavailable"].as_bool().unwrap_or(true) {
+            return None;
+        }
+        Some(
+            v["confirmed"]
+                .as_array()?
+                .iter()
+                .filter_map(|c| c["name"].as_str().map(String::from))
+                .collect(),
+        )
+    }
+
     pub fn projects(&self) -> Result<Vec<ProjectInfo>, String> {
         self.admin("/projects")
     }

@@ -109,3 +109,10 @@ nothing usable being refused with a note. It skips when Docker is not available.
 * Running as a service (launchd); today it is a foreground process.
 * Whether the bridge's own session and the appservice survive a Synapse upgrade is
   untested.
+
+## Who answers when nobody is named
+
+In a project room, `@name` picks the agent. Otherwise, if `HOLON_ADVISOR_URL` points at the
+`capability-advisor` service, Jev decides which members the message concerns (each member's
+description is the question). If it is unset, unreachable or Jev is unavailable, the project's
+lead answers.
