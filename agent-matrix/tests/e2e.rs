@@ -517,6 +517,7 @@ fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
     let eff = agent_runtime::projects::effective(
         &rt.store().get("chef").unwrap(),
         &rt.store().list_projects(),
+        &[],
     );
     assert_eq!(eff.store.write, ["project.rowing"]);
     // kicking it takes the membership away again

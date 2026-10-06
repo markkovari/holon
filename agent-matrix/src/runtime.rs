@@ -96,39 +96,41 @@ impl Runtime {
         self.admin("/agents")
     }
 
-    /// Ask Jev (through the capability-advisor service) which of `candidates`
-    /// (name, description) a message concerns. `None` when the advisor is
-    /// unreachable or Jev is unavailable: the caller falls back to its own rule.
-    pub fn affected(
+    /// Rank `candidates` (name, description) by how well each fits `message`, best first,
+    /// using the embedding service. `None` when it is unreachable.
+    pub fn rank(
         &self,
-        advisor: &str,
+        embed_url: &str,
         message: &str,
         candidates: &[(String, String)],
-    ) -> Option<Vec<String>> {
-        let cands: Vec<Value> = candidates
-            .iter()
-            .map(|(n, d)| serde_json::json!({"id": n, "name": n, "description": d}))
-            .collect();
-        let r = self
-            .http
-            .post(format!("{}/evaluate", advisor.trim_end_matches('/')))
-            .json(&serde_json::json!({
-                "goal": format!("A message to a team of agents: {message}"),
-                "candidates": cands
-            }))
-            .send()
-            .ok()?;
-        let v: Value = r.json().ok()?;
-        if v["unavailable"].as_bool().unwrap_or(true) {
-            return None;
-        }
-        Some(
-            v["confirmed"]
+    ) -> Option<Vec<(String, f32)>> {
+        let embed = |texts: Vec<String>, kind: &str| -> Option<Vec<Vec<f32>>> {
+            let r = self
+                .http
+                .post(format!("{}/embed", embed_url.trim_end_matches('/')))
+                .json(&serde_json::json!({"texts": texts, "kind": kind, "dim": 256}))
+                .send()
+                .ok()?;
+            let v: Value = r.json().ok()?;
+            v["vectors"]
                 .as_array()?
                 .iter()
-                .filter_map(|c| c["name"].as_str().map(String::from))
-                .collect(),
-        )
+                .map(|row| {
+                    row.as_array()
+                        .map(|a| a.iter().filter_map(|x| x.as_f64()).map(|x| x as f32).collect())
+                })
+                .collect()
+        };
+        let docs =
+            embed(candidates.iter().map(|(n, d)| format!("{n}: {d}")).collect(), "document")?;
+        let query = embed(vec![message.to_string()], "query")?.pop()?;
+        let mut out: Vec<(String, f32)> = candidates
+            .iter()
+            .zip(docs)
+            .map(|((n, _), d)| (n.clone(), query.iter().zip(&d).map(|(a, b)| a * b).sum()))
+            .collect();
+        out.sort_by(|a, b| b.1.total_cmp(&a.1));
+        Some(out)
     }
 
     pub fn projects(&self) -> Result<Vec<ProjectInfo>, String> {

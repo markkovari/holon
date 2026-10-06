@@ -112,7 +112,7 @@ nothing usable being refused with a note. It skips when Docker is not available.
 
 ## Who answers when nobody is named
 
-In a project room, `@name` picks the agent. Otherwise, if `HOLON_ADVISOR_URL` points at the
-`capability-advisor` service, Jev decides which members the message concerns (each member's
-description is the question). If it is unset, unreachable or Jev is unavailable, the project's
-lead answers.
+In a project room, `@name` picks the agent. Otherwise, if `HOLON_EMBED_URL` points at the
+embedding service (`agent-runtime/embed/server.py`), each member's description is compared with
+the message and a member answers only if it fits clearly better than the others. Otherwise
+(no service, or a near tie) the project's lead answers.

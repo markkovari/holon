@@ -62,6 +62,8 @@ pub struct Config {
     pub otlp_endpoint: Option<String>,
     /// On-device speech engines (see `speech.rs`). Nothing is configured by default.
     pub speech: crate::speech::SpeechConfig,
+    /// Where the embedding service listens (`embed/server.py`); empty: memories are recalled by shared words.
+    pub embed_url: String,
 }
 
 impl Config {
@@ -74,6 +76,7 @@ impl Config {
             breaker_cooldown: Duration::from_secs(120),
             otlp_endpoint: None,
             speech: Default::default(),
+            embed_url: String::new(),
         }
     }
 }
@@ -113,6 +116,7 @@ pub struct Runtime {
     bus: Box<dyn Bus>,
     cfg: Config,
     speech: crate::speech::Speech,
+    embedder: Option<crate::embed::Embedder>,
     local: Mutex<LocalModel>,
     started: u64,
     busy: Mutex<HashMap<String, Arc<Mutex<()>>>>,
@@ -219,6 +223,7 @@ impl Runtime {
             bus: Box::new(bus),
             local: Mutex::new(cfg.local.clone()),
             speech: crate::speech::Speech::new(cfg.speech.clone()),
+            embedder: crate::embed::Embedder::new(&cfg.embed_url),
             cfg,
             started: unix_now(),
             busy: Mutex::new(HashMap::new()),
@@ -1020,6 +1025,10 @@ impl Host for Runtime {
 
     fn speak(&self, text: &str, voice: Option<&str>) -> Result<(Vec<u8>, u64), String> {
         self.speech.speak(text, voice).map(|s| (s.audio, s.duration_ms))
+    }
+
+    fn embed(&self, texts: &[String], kind: &str) -> Option<Vec<Vec<f32>>> {
+        self.embedder.as_ref()?.embed(texts, kind)
     }
 
     fn observe(&self, event: Event) {

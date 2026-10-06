@@ -4,6 +4,7 @@
 pub mod agent;
 pub mod bus;
 pub mod cron;
+pub mod embed;
 pub mod html;
 pub mod kv;
 pub mod model;

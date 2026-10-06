@@ -83,6 +83,17 @@ pub fn mentioned_agents(cfg: &Config, content: &Value) -> Vec<String> {
     out
 }
 
+/// The top-ranked member, but only when it beats the runner-up by a clear margin. Embedding
+/// scores of unrelated text sit high, so a bare top-1 is a guess; a near tie goes to the lead.
+pub fn clear_winner(ranked: &[(String, f32)]) -> Option<String> {
+    const MARGIN: f32 = 0.04;
+    match ranked {
+        [(a, x), (_, y), ..] if x - y >= MARGIN => Some(a.clone()),
+        [(a, _)] => Some(a.clone()),
+        _ => None,
+    }
+}
+
 /// Who answers a message in a project room.
 pub fn project_targets(
     members: &[String],
@@ -569,10 +580,10 @@ impl Bridge {
                 };
                 let mentioned = mentioned_agents(&self.cfg, content);
                 let named = mentioned.iter().any(|a| info.agents.contains(a));
-                // Nobody named: Jev (when an advisor is configured) decides which
-                // members the message concerns; else the lead answers.
-                let judged = match std::env::var("HOLON_ADVISOR_URL") {
-                    Ok(url) if !named && !url.is_empty() => {
+                // Nobody named: when an embedding service is configured and one member
+                // fits clearly better than the rest, that member answers; else the lead.
+                let judged = match std::env::var("HOLON_EMBED_URL") {
+                    Ok(url) if !named && !url.is_empty() && info.agents.len() > 1 => {
                         let known = self.rt.agents().unwrap_or_default();
                         let cands: Vec<(String, String)> = info
                             .agents
@@ -582,11 +593,11 @@ impl Bridge {
                                 (a.clone(), d.map(|k| k.description.clone()).unwrap_or_default())
                             })
                             .collect();
-                        self.rt.affected(&url, &body, &cands).filter(|v| !v.is_empty())
+                        self.rt.rank(&url, &body, &cands).and_then(|r| clear_winner(&r))
                     }
                     _ => None,
                 };
-                judged.unwrap_or_else(|| {
+                judged.map(|a| vec![a]).unwrap_or_else(|| {
                     project_targets(&info.agents, info.lead.as_deref(), &mentioned)
                 })
             }
@@ -886,6 +897,15 @@ mod tests {
         assert_eq!(project_targets(&members, Some("coach"), &names(&["stranger"])), ["coach"]);
         // a lead that is no longer a member does not answer
         assert!(project_targets(&names(&["rower"]), Some("gone"), &[]).is_empty());
+    }
+
+    #[test]
+    fn only_a_clear_margin_picks_a_member() {
+        let r = |v: &[(&str, f32)]| v.iter().map(|(n, s)| (n.to_string(), *s)).collect::<Vec<_>>();
+        assert_eq!(clear_winner(&r(&[("rower", 0.70), ("coach", 0.62)])).as_deref(), Some("rower"));
+        assert_eq!(clear_winner(&r(&[("rower", 0.70), ("coach", 0.68)])), None);
+        assert_eq!(clear_winner(&r(&[("rower", 0.5)])).as_deref(), Some("rower"));
+        assert_eq!(clear_winner(&[]), None);
     }
 
     #[test]

@@ -41,6 +41,9 @@ struct Cli {
     /// default the system `say` is used.
     #[arg(long, env = "HOLON_TTS_BIN")]
     tts_bin: Option<PathBuf>,
+    /// Embedding service (`embed/server.py`); with it `recall` finds memories by meaning.
+    #[arg(long, env = "HOLON_EMBED_URL", default_value = "")]
+    embed_url: String,
     #[arg(long, default_value = "ffmpeg")]
     ffmpeg: String,
     /// Recognition language when a caller does not say.
@@ -56,6 +59,7 @@ fn main() -> Result<(), String> {
     let mut cfg = Config::new(&cli.state_dir);
     cfg.local = LocalModel { base_url: cli.local_url, model: cli.local_model };
     cfg.otlp_endpoint = cli.otlp_endpoint.filter(|e| !e.is_empty());
+    cfg.embed_url = cli.embed_url;
     cfg.speech = agent_runtime::speech::SpeechConfig {
         stt: cli.stt_bin,
         tts: cli.tts_bin,

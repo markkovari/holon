@@ -102,6 +102,11 @@ pub trait Host: Sync {
     fn transcribe(&self, audio: &[u8], lang: Option<&str>) -> Result<String, String>;
     /// Text to a voice message: Ogg/Opus bytes and their length in ms.
     fn speak(&self, text: &str, voice: Option<&str>) -> Result<(Vec<u8>, u64), String>;
+    /// Embed texts with the configured embedding service (`kind` "query" or "document");
+    /// `None` when there is none or it is down.
+    fn embed(&self, _texts: &[String], _kind: &str) -> Option<Vec<Vec<f32>>> {
+        None
+    }
     fn observe(&self, event: Event);
 }
 
@@ -660,7 +665,14 @@ fn exec(
             Ok("saved".into())
         }
         "recall" => {
-            let hits = store.recall(&spec.name, &arg(args, "query"), 5);
+            let query = arg(args, "query");
+            let semantic = (!query.is_empty())
+                .then(|| host.embed(std::slice::from_ref(&query), "query"))
+                .flatten()
+                .and_then(|mut v| v.pop())
+                .map(|qv| store.recall_semantic(&spec.name, &qv, 5, &|t| host.embed(t, "document")))
+                .filter(|h| !h.is_empty());
+            let hits = semantic.unwrap_or_else(|| store.recall(&spec.name, &query, 5));
             Ok(if hits.is_empty() {
                 "nothing matched".into()
             } else {
