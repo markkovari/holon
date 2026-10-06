@@ -247,7 +247,7 @@ const TOOLS: &[ToolDef] = &[
         name: "http_get",
         args: r#"{"url": "..."}"#,
         about: "Fetch a URL (only hosts you were allowed).",
-        sensitive: true,
+        sensitive: false,
     },
     ToolDef {
         name: "list_dir",

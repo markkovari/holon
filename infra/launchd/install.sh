@@ -54,6 +54,10 @@ case "${1:-}" in
     for b in "$REPO/agent-runtime/target/release/agent-runtime" "$REPO/agent-matrix/target/release/agent-matrix"; do
       [ -x "$b" ] || { echo "missing $b — cargo build --release there first"; exit 1; }
     done
+    # A binary cargo rewrote in place can be killed on launch (OS_REASON_CODESIGNING) until it is re-signed.
+    for b in "$REPO/agent-runtime/target/release/agent-runtime" "$REPO/agent-matrix/target/release/agent-matrix"; do
+      codesign --force --sign - "$b" 2>/dev/null || true
+    done
     for s in "${SERVICES[@]}"; do
       f="$AGENTS/io.holon.$s.plist"
       launchctl bootout "gui/$UID_/io.holon.$s" 2>/dev/null || true
