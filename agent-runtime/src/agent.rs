@@ -1117,7 +1117,7 @@ pub fn run(
                 );
                 break;
             }
-            rec.answer = reply.text;
+            rec.answer = reply.text.trim().to_string();
             break;
         }
 
