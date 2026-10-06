@@ -1037,6 +1037,24 @@ impl Host for Runtime {
         self.speech.speak(text, voice).map(|s| (s.audio, s.duration_ms))
     }
 
+    fn save_agent(&self, spec: AgentSpec) -> Result<String, String> {
+        if self.store.get(&spec.name).is_some() {
+            self.update_agent(spec)?;
+            Ok("updated".into())
+        } else {
+            self.create_agent(spec)?;
+            Ok("created".into())
+        }
+    }
+
+    fn delete_agent(&self, name: &str) -> Result<(), String> {
+        Runtime::delete_agent(self, name)
+    }
+
+    fn pause_agent(&self, name: &str, paused: bool) -> Result<(), String> {
+        self.arc()?.set_paused(name, paused)
+    }
+
     fn embed(&self, texts: &[String], kind: &str) -> Option<Vec<Vec<f32>>> {
         self.embedder.as_ref()?.embed(texts, kind)
     }

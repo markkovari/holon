@@ -644,3 +644,43 @@ fn an_agent_is_told_which_project_it_is_in_and_who_else_is() {
     assert_eq!(eff.projects[0].lead.as_deref(), Some("coach"));
     assert_eq!(eff.projects[0].store_ns, "project.rowing");
 }
+
+#[test]
+fn an_agent_granted_the_tools_can_create_change_pause_and_delete_other_agents() {
+    let rt = runtime("admin");
+    let create = r#"{"tool":"agent_save","args":{"name":"news","description":"Summarise the news.","capabilities":["remember"]}}"#;
+    let change = r#"{"tool":"agent_save","args":{"name":"news","description":"Summarise the news in one line."}}"#;
+    let pause = r#"{"tool":"agent_pause","args":{"name":"news","paused":true}}"#;
+    let delete = r#"{"tool":"agent_delete","args":{"name":"news"}}"#;
+    let selfdel = r#"{"tool":"agent_delete","args":{"name":"holon"}}"#;
+    let mut holon =
+        agent("holon", &[create, "ok", change, "ok", pause, "ok", selfdel, "ok", delete, "ok"]);
+    for t in ["agent_save", "agent_pause", "agent_delete", "agents_list"] {
+        holon.capabilities.push(Capability::named(t));
+    }
+    holon.auto_approve = vec!["agent_save".into(), "agent_delete".into()];
+    rt.create_agent(holon).unwrap();
+
+    let ask = |rt: &Arc<Runtime>| {
+        rt.run_agent("holon", "http", "go", &Cause::default(), "", true).unwrap()
+    };
+    ask(&rt);
+    let n = rt.store().get("news").expect("created");
+    assert!(n.has_capability("remember"));
+    ask(&rt);
+    let n = rt.store().get("news").unwrap();
+    assert_eq!(n.description, "Summarise the news in one line.");
+    assert!(n.has_capability("remember"), "a change keeps the fields it did not mention");
+    ask(&rt);
+    assert!(rt.store().get("news").unwrap().paused);
+    let r = ask(&rt);
+    assert!(
+        r.steps.iter().any(
+            |s| matches!(s, Step::Tool { error: true, result, .. } if result.contains("yourself"))
+        ),
+        "an agent cannot delete itself"
+    );
+    assert!(rt.store().get("holon").is_some());
+    ask(&rt);
+    assert!(rt.store().get("news").is_none(), "deleted");
+}

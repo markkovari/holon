@@ -102,6 +102,16 @@ pub trait Host: Sync {
     fn transcribe(&self, audio: &[u8], lang: Option<&str>) -> Result<String, String>;
     /// Text to a voice message: Ogg/Opus bytes and their length in ms.
     fn speak(&self, text: &str, voice: Option<&str>) -> Result<(Vec<u8>, u64), String>;
+    /// Creates or replaces an agent's spec. Only called for agents granted `agent_save`.
+    fn save_agent(&self, _spec: AgentSpec) -> Result<String, String> {
+        Err("agent management is not available".into())
+    }
+    fn delete_agent(&self, _name: &str) -> Result<(), String> {
+        Err("agent management is not available".into())
+    }
+    fn pause_agent(&self, _name: &str, _paused: bool) -> Result<(), String> {
+        Err("agent management is not available".into())
+    }
     /// Embed texts with the configured embedding service (`kind` "query" or "document");
     /// `None` when there is none or it is down.
     fn embed(&self, _texts: &[String], _kind: &str) -> Option<Vec<Vec<f32>>> {
@@ -257,6 +267,36 @@ const TOOLS: &[ToolDef] = &[
         about: "Write a text file in your workspace.",
         sensitive: true,
     },
+    ToolDef {
+        name: "agents_list",
+        args: "{}",
+        about: "List every agent: name, what it is for, and its capabilities.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "agent_show",
+        args: r#"{"name": "..."}"#,
+        about: "Show one agent's full spec.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "agent_save",
+        args: r#"{"name": "...", "description": "what it is for, as instructions to it", "capabilities": ["http_get"], "schedule": "@every 1h", "prompt": "what to do when the schedule fires"}"#,
+        about: "Create an agent, or change the fields you give of an existing one. The owner approves first.",
+        sensitive: true,
+    },
+    ToolDef {
+        name: "agent_delete",
+        args: r#"{"name": "..."}"#,
+        about: "Delete an agent for good. The owner approves first.",
+        sensitive: true,
+    },
+    ToolDef {
+        name: "agent_pause",
+        args: r#"{"name": "...", "paused": true}"#,
+        about: "Pause (true) or resume (false) an agent.",
+        sensitive: false,
+    },
 ];
 
 fn tool_def(name: &str) -> Option<&'static ToolDef> {
@@ -278,6 +318,8 @@ fn required(name: &str) -> &'static [&'static str] {
         "transcribe" => &["path"],
         "speak" => &["text"],
         "http_get" => &["url"],
+        "agent_show" | "agent_delete" | "agent_pause" => &["name"],
+        "agent_save" => &["name"],
         "read_file" => &["path"],
         "write_file" => &["path", "content"],
         n if n.starts_with("agent:") => &["message"],
@@ -297,6 +339,7 @@ fn primary(name: &str) -> Option<&'static str> {
         "store_get" | "store_list" => Some("ns"),
         "schedule_self" => Some("prompt"),
         "task_result" => Some("id"),
+        "agent_show" | "agent_delete" | "agent_pause" | "agent_save" => Some("name"),
         "transcribe" => Some("path"),
         "speak" => Some("text"),
         n if n.starts_with("agent:") => Some("message"),
@@ -778,6 +821,46 @@ fn exec(
             Some(TaskState::Done { ok: true, answer }) => format!("done: {answer}"),
             Some(TaskState::Done { ok: false, answer }) => format!("failed: {answer}"),
         }),
+        "agents_list" => {
+            let all = store.list();
+            Ok(if all.is_empty() {
+                "no agents".into()
+            } else {
+                all.iter().map(crate::admin::summary).collect::<Vec<_>>().join("\n")
+            })
+        }
+        "agent_show" => match store.get(&arg(args, "name")) {
+            Some(s) => serde_json::to_string_pretty(&s).map_err(|e| e.to_string()),
+            None => Err(format!("no agent named {}", arg(args, "name"))),
+        },
+        "agent_save" => {
+            let name = arg(args, "name");
+            if name == spec.name {
+                return Err("you may not change your own spec".into());
+            }
+            let existing = store.get(&name);
+            let new = crate::admin::build_spec(existing.as_ref(), args)?;
+            host.save_agent(new)?;
+            Ok(if existing.is_some() {
+                format!("updated {name}")
+            } else {
+                format!("created {name}")
+            })
+        }
+        "agent_delete" => {
+            let name = arg(args, "name");
+            if name == spec.name {
+                return Err("you may not delete yourself".into());
+            }
+            host.delete_agent(&name)?;
+            Ok(format!("deleted {name}"))
+        }
+        "agent_pause" => {
+            let paused = !matches!(args.get("paused"), Some(Value::Bool(false)))
+                && arg(args, "paused") != "false";
+            host.pause_agent(&arg(args, "name"), paused)?;
+            Ok(if paused { "paused".into() } else { "resumed".into() })
+        }
         "transcribe" => {
             let p = confine(&store.workspace(&spec.name)?, &arg(args, "path"))?;
             let bytes = std::fs::read(&p).map_err(|e| format!("{}: {e}", arg(args, "path")))?;

@@ -1,6 +1,7 @@
 //! The autonomous half of a Holon agent. See `runtime.rs` for the entry point
 //! and `agent.rs` for the loop.
 
+pub mod admin;
 pub mod agent;
 pub mod bus;
 pub mod connector;
