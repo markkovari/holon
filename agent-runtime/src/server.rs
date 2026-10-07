@@ -302,6 +302,28 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
         }
         // Speech (see speech.rs): audio in -> text, text -> audio out. 501 when the
         // engine is not configured, 422 when the input is bad.
+        // Embeddings, for the bridge and other callers: the runtime owns the service (and starts it
+        // when it is on demand). 501 when none is configured, 503 when it cannot answer.
+        (Method::Post, ["embed"]) => match serde_json::from_str::<Value>(&body) {
+            Err(e) => text(req, 400, format!("bad json: {e}")),
+            Ok(v) => {
+                let texts: Vec<String> = v["texts"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                let kind = if v["kind"] == "query" { "query" } else { "document" };
+                if texts.is_empty() {
+                    text(req, 400, "`texts` must be a non-empty array of strings")
+                } else if !rt.has_embedder() {
+                    text(req, 501, "no embedding service is configured")
+                } else {
+                    match rt.embed_texts(&texts, kind) {
+                        Some(vectors) => json_reply(req, 200, json!({"vectors": vectors})),
+                        None => text(req, 503, "the embedding service did not answer"),
+                    }
+                }
+            }
+        },
         (Method::Get, ["speech"]) => json_reply(
             req,
             200,
@@ -594,6 +616,24 @@ mod tests {
         rt.create_agent(b).unwrap();
         let r = reqwest::blocking::get(format!("{base}/agents/aa/run?q=go")).unwrap();
         assert_eq!(r.status(), 200);
+    }
+
+    #[test]
+    fn embed_route_refuses_bad_requests_and_says_when_no_service_is_configured() {
+        let (_rt, base) = start("embed-route");
+        let post = |body: &str| {
+            reqwest::blocking::Client::new()
+                .post(format!("{base}/embed"))
+                .bearer_auth("tok")
+                .body(body.to_string())
+                .send()
+                .unwrap()
+                .status()
+                .as_u16()
+        };
+        assert_eq!(post("not json"), 400);
+        assert_eq!(post(r#"{"texts": []}"#), 400);
+        assert_eq!(post(r#"{"texts": ["a"]}"#), 501);
     }
 
     #[test]

@@ -97,20 +97,23 @@ impl Runtime {
     }
 
     /// Rank `candidates` (name, description) by how well each fits `message`, best first,
-    /// using the embedding service. `None` when it is unreachable.
+    /// using the runtime's embedding service. `None` when it has none or cannot answer.
     pub fn rank(
         &self,
-        embed_url: &str,
         message: &str,
         candidates: &[(String, String)],
     ) -> Option<Vec<(String, f32)>> {
         let embed = |texts: Vec<String>, kind: &str| -> Option<Vec<Vec<f32>>> {
             let r = self
-                .http
-                .post(format!("{}/embed", embed_url.trim_end_matches('/')))
-                .json(&serde_json::json!({"texts": texts, "kind": kind, "dim": 256}))
+                .runner
+                .post(format!("{}/embed", self.base))
+                .bearer_auth(&self.token)
+                .json(&serde_json::json!({"texts": texts, "kind": kind}))
                 .send()
                 .ok()?;
+            if !r.status().is_success() {
+                return None;
+            }
             let v: Value = r.json().ok()?;
             v["vectors"]
                 .as_array()?

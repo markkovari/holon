@@ -6,6 +6,9 @@ use std::time::Duration;
 
 pub struct Embedder {
     url: String,
+    /// The launchd service that runs the embedding server, started on first use and stopped
+    /// after it has sat idle (see `lazy.rs`); empty when it is run by hand.
+    service: String,
     dim: u32,
     http: reqwest::blocking::Client,
 }
@@ -14,14 +17,19 @@ pub struct Embedder {
 const DEFAULT_DIM: u32 = 256;
 
 impl Embedder {
-    pub fn new(url: &str) -> Option<Self> {
+    pub fn new(url: &str, service: &str) -> Option<Self> {
         let url = url.trim().trim_end_matches('/');
         if url.is_empty() {
             return None;
         }
         let http =
             reqwest::blocking::Client::builder().timeout(Duration::from_secs(20)).build().ok()?;
-        Some(Self { url: url.to_string(), dim: DEFAULT_DIM, http })
+        Some(Self {
+            url: url.to_string(),
+            service: service.trim().to_string(),
+            dim: DEFAULT_DIM,
+            http,
+        })
     }
 
     /// `kind`: "query" for what someone asked, "document" for what is searched.
@@ -29,6 +37,17 @@ impl Embedder {
         if texts.is_empty() {
             return Some(vec![]);
         }
+        if !self.service.is_empty() && crate::lazy::ensure(&self.service, &self.url).is_err() {
+            return None;
+        }
+        let out = self.call(texts, kind);
+        if !self.service.is_empty() {
+            crate::lazy::touch(&self.service);
+        }
+        out
+    }
+
+    fn call(&self, texts: &[String], kind: &str) -> Option<Vec<Vec<f32>>> {
         let r = self
             .http
             .post(format!("{}/embed", self.url))
@@ -81,7 +100,7 @@ mod tests {
 
     #[test]
     fn no_url_means_no_embedder() {
-        assert!(Embedder::new("  ").is_none());
-        assert!(Embedder::new("http://127.0.0.1:1").is_some());
+        assert!(Embedder::new("  ", "").is_none());
+        assert!(Embedder::new("http://127.0.0.1:1", "io.holon.embed").is_some());
     }
 }

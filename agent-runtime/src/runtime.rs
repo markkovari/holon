@@ -64,6 +64,8 @@ pub struct Config {
     pub speech: crate::speech::SpeechConfig,
     /// Where the embedding service listens (`embed/server.py`); empty: memories are recalled by shared words.
     pub embed_url: String,
+    /// The launchd service behind `embed_url`, started on demand (see `lazy.rs`).
+    pub embed_service: String,
 }
 
 impl Config {
@@ -77,6 +79,7 @@ impl Config {
             otlp_endpoint: None,
             speech: Default::default(),
             embed_url: String::new(),
+            embed_service: String::new(),
         }
     }
 }
@@ -229,7 +232,7 @@ impl Runtime {
             bus: Box::new(bus),
             local: Mutex::new(cfg.local.clone()),
             speech: crate::speech::Speech::new(cfg.speech.clone()),
-            embedder: crate::embed::Embedder::new(&cfg.embed_url),
+            embedder: crate::embed::Embedder::new(&cfg.embed_url, &cfg.embed_service),
             cfg,
             started: unix_now(),
             busy: Mutex::new(HashMap::new()),
@@ -260,6 +263,16 @@ impl Runtime {
 
     pub fn kv(&self) -> &Kv {
         &self.kv
+    }
+
+    /// Embeds `texts` with the embedding service (starting it if it is on demand). `None` when
+    /// none is configured or it cannot answer.
+    pub fn has_embedder(&self) -> bool {
+        self.embedder.is_some()
+    }
+
+    pub fn embed_texts(&self, texts: &[String], kind: &str) -> Option<Vec<Vec<f32>>> {
+        self.embedder.as_ref()?.embed(texts, kind)
     }
 
     pub fn speech(&self) -> &crate::speech::Speech {

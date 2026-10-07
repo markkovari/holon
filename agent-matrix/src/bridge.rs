@@ -634,8 +634,9 @@ impl Bridge {
                 let judged = if by_jev.is_some() {
                     None
                 } else {
-                    match std::env::var("HOLON_EMBED_URL") {
-                        Ok(url) if !named && !url.is_empty() && info.agents.len() > 1 => {
+                    // the runtime owns the embedding service (and starts it when needed)
+                    match (!named && info.agents.len() > 1).then_some(()) {
+                        Some(()) => {
                             let known = self.rt.agents().unwrap_or_default();
                             let cands: Vec<(String, String)> = info
                                 .agents
@@ -648,9 +649,9 @@ impl Bridge {
                                     )
                                 })
                                 .collect();
-                            self.rt.rank(&url, &body, &cands).and_then(|r| clear_winner(&r))
+                            self.rt.rank(&body, &cands).and_then(|r| clear_winner(&r))
                         }
-                        _ => None,
+                        None => None,
                     }
                 };
                 by_jev.or_else(|| judged.map(|a| vec![a])).unwrap_or_else(|| {
