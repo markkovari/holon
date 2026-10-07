@@ -9,6 +9,7 @@ pub mod cron;
 pub mod embed;
 pub mod html;
 pub mod kv;
+pub mod lazy;
 pub mod model;
 pub mod otlp;
 pub mod projects;

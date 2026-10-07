@@ -61,13 +61,20 @@ pub fn complete(
             let model = if local.model.is_empty() { "system" } else { &local.model };
             openai(base, model, "", system, messages)
         }
-        ModelSpec::OpenAi { base_url, model, api_key_env, api_key_file } => {
+        ModelSpec::OpenAi { base_url, model, api_key_env, api_key_file, service } => {
             let k = if api_key_file.is_empty() {
                 key(api_key_env)?
             } else {
                 key_from_file(api_key_file)?
             };
-            openai(base_url, model, &k, system, messages)
+            if !service.is_empty() {
+                crate::lazy::ensure(service, base_url)?;
+            }
+            let r = openai(base_url, model, &k, system, messages);
+            if !service.is_empty() {
+                crate::lazy::touch(service);
+            }
+            r
         }
         ModelSpec::Fallback { models } => {
             let mut errors: Vec<String> = Vec::new();
@@ -216,6 +223,7 @@ mod fallback_tests {
                     model: "m".into(),
                     api_key_env: String::new(),
                     api_key_file: String::new(),
+                    service: String::new(),
                 },
                 ModelSpec::Local,
             ],

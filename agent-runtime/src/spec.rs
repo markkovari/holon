@@ -115,6 +115,10 @@ pub enum ModelSpec {
         /// over `api_key_env` when both are given.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         api_key_file: String,
+        /// The launchd label of the service that runs this server (`io.holon.qwen`). When set,
+        /// the runtime starts it on first use and stops it after it has sat idle.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        service: String,
     },
     /// Anthropic's Messages API. Same rule for the key.
     Anthropic { model: String, api_key_env: String },

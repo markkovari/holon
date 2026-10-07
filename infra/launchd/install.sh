@@ -14,6 +14,9 @@ AGENTS="$HOME/Library/LaunchAgents"
 LOGS="$HOME/Library/Logs/holon"
 UID_="$(id -u)"
 SERVICES=(fm qwen qwen-large embed runtime bridge)
+# Big local models: installed but not started. The runtime starts one when a model chain needs it
+# (DeepSeek unavailable or not good enough) and stops it after 10 idle minutes.
+LAZY=" qwen qwen-large "
 NO_THINKING='{"enable_thinking":false}'
 PATH_ENV="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
@@ -46,7 +49,11 @@ plist() {
   # a PATH to the key file, never the key: Jev routes messages when it exists
   [ -f "$HOME/.comp-secrets/typesafe" ] && echo "  <key>HOLON_JEV_KEY_FILE</key><string>$HOME/.comp-secrets/typesafe</string>"
   echo "</dict>"
-  echo "<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>"
+  if [[ "$LAZY" == *" $name "* ]]; then
+    echo "<key>RunAtLoad</key><false/><key>KeepAlive</key><false/>"
+  else
+    echo "<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>"
+  fi
   echo "<key>ThrottleInterval</key><integer>10</integer>"
   echo "<key>StandardOutPath</key><string>$LOGS/$name.log</string>"
   echo "<key>StandardErrorPath</key><string>$LOGS/$name.log</string>"

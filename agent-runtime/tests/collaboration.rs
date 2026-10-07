@@ -684,3 +684,27 @@ fn an_agent_granted_the_tools_can_create_change_pause_and_delete_other_agents() 
     ask(&rt);
     assert!(rt.store().get("news").is_none(), "deleted");
 }
+
+#[test]
+fn a_run_that_misses_a_required_tool_is_retried_on_the_next_model_of_its_chain() {
+    let rt = runtime("escalate");
+    let mock = |replies: &[&str]| ModelSpec::Mock {
+        replies: replies.iter().map(|r| r.to_string()).collect(),
+    };
+    let mut a = AgentSpec::new("picky", "must remember");
+    a.must_call = vec!["remember".into()];
+    // the first model answers without the tool, then twice more when nudged; the second does it
+    a.model = ModelSpec::Fallback {
+        models: vec![
+            mock(&["no tool", "still no tool", "nope"]),
+            // a mock agent's reply cursor is shared by its runs: the first run used 3
+            mock(&["-", "-", "-", r#"{"tool":"remember","args":{"text":"x"}}"#, "done"]),
+        ],
+    };
+    rt.create_agent(a).unwrap();
+    let r = rt.run_agent("picky", "http", "go", &Cause::default(), "", true).unwrap();
+    assert_eq!((r.status, r.answer.as_str()), (Status::Ok, "done"));
+    let runs = rt.store().runs("picky", 5);
+    assert_eq!(runs.len(), 2, "the failed attempt is kept, visibly");
+    assert_eq!(rt.store().recall("picky", "x", 5).len(), 1);
+}

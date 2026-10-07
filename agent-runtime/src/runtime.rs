@@ -200,6 +200,12 @@ pub fn validate_spec(spec: &AgentSpec) -> Result<(), String> {
 /// How long an agent calling another agent waits for it to finish its current run.
 const CALL_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
 
+/// Whether a finished run is the kind of failure another model might not have.
+fn needs_better_model(rec: &RunRecord) -> bool {
+    (rec.status == Status::Failed && rec.answer.starts_with("never called required tool"))
+        || (rec.status == Status::Ok && rec.answer.trim().is_empty())
+}
+
 thread_local! {
     /// The agents whose runs are in progress on this thread, outermost first: a call from
     /// an agent's run is made on its thread, so this is the call stack of agents.
@@ -530,7 +536,23 @@ impl Runtime {
             c.chain.push(format!("{name}|{via}"));
         }
         RUNNING_HERE.with(|r| r.borrow_mut().push(name.to_string()));
-        let rec = agent::run(self, &spec, trigger, input, &c);
+        let mut rec = agent::run(self, &spec, trigger, input, &c);
+        // A run that fails a check the agent sets (a tool it must call) or says nothing is
+        // tried again on the next model of its fallback chain, so a hosted model's miss is
+        // the local model's turn, and a good hosted answer never wakes a local server.
+        if let crate::spec::ModelSpec::Fallback { models } = &spec.model {
+            let mut rest = &models[..];
+            while rest.len() > 1 && needs_better_model(&rec) {
+                rest = &rest[1..];
+                let mut again = spec.clone();
+                again.model = if rest.len() == 1 {
+                    rest[0].clone()
+                } else {
+                    crate::spec::ModelSpec::Fallback { models: rest.to_vec() }
+                };
+                rec = agent::run(self, &again, trigger, input, &c);
+            }
+        }
         RUNNING_HERE.with(|r| r.borrow_mut().pop());
         self.note_outcome(name, rec.status == Status::Ok);
         Ok(rec)
