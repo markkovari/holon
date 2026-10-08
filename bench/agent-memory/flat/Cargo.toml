@@ -1,0 +1,10 @@
+[package]
+name = "flat"
+version = "0.0.0"
+edition = "2021"
+[workspace]
+[dependencies]
+instant-distance = "0.6"
+[profile.release]
+opt-level = 3
+lto = true

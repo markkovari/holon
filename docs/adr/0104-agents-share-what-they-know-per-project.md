@@ -59,29 +59,55 @@ with `proposed: true`), which only puts the entry in a review list.
   agent's `http_get` allow-list, and the runtime holds the only client. The
   runtime is the trusted party; the component stays policy-free about identity.
 
-### 3. Reuse `knowledge-memory`, don't write a second index
+### 3. Retrieval runs in-process, per scope; SurrealDB is the shared store
 
-Run the existing component and call it from `agent-runtime` over HTTP, the way
-`reconciler/src/memory.rs` already does. ADR-0095 reserves "native" for what a
-wasm guest cannot do (cron, open approvals); storage and retrieval policy is not
-one of those. This needs a WIT bump to `knowledge:memory@0.3.0`, additive:
+*Revised after the benchmark (`bench/agent-memory/`); the first draft reused
+`knowledge-memory` as the retrieval engine and was wrong about its cost.*
 
-- `entry` and `recall-opts` gain `scope: string` (empty = today's behaviour).
-  Rows are filtered on it in the SurrealQL `WHERE`, **before** the HNSW
-  `<|k,COSINE|>` result is used, so a scope can never be widened by the index.
-  (To confirm in a spike: that filtered KNN returns k hits and not k-then-filtered.)
-- `entry` gains `author: string`, `source: string` (Matrix event id or run id),
-  `model: string` (embedding model id) and `proposed: bool`.
-- The coding-loop fields (`goal`, `env`, `attempt`, `score`, `tags`) stay and
-  are left empty by agents. `namespace` keeps `patterns | solutions | errors`;
-  agents write `solutions`/`errors`-shaped *observations*, and `curated`
-  scope entries are stored as `patterns` with the project scope. `observe`
-  keeps refusing `patterns`; `promotion` stays linked only into the review path.
+What the numbers say (256-dim, M2 Max, details in the bench README):
+
+| per recall | 1 000 | 10 000 | 100 000 |
+|---|---|---|---|
+| today's private recall (`Store::recall_semantic`) | 7.5 ms | 75 ms | 770 ms |
+| SurrealDB `<|k,COSINE|>` + scope filter (bearer auth) | 2–18 ms | 17–75 ms | 126 ms–1 s |
+| in-process exact f32 scan, vectors in RAM | 0.10 ms | 0.31 ms | 2.7 ms |
+
+- The dense query in `knowledge-memory` is a brute-force scan limited by a scope
+  index. It never touches the HNSW index it defines, and the HNSW path cannot
+  be combined with a scope filter (post-filters: recall 0.08–0.31, short rows).
+  It is correct, and 20–40× slower than a scan done in-process; one 90k-row scope
+  costs ~1 s and the server saturates near 22 qps on 4 CPUs.
+- The current private recall is slow because it re-parses JSON per call, not
+  because the math is expensive.
+
+So the decision is:
+
+- **Each scope is its own in-memory flat index in agent-runtime** (a contiguous
+  `f32` matrix + row metadata), exact, single-threaded below ~50k rows,
+  threaded above. A scope is a separate matrix, so isolation is structural:
+  there is no filter to get wrong and nothing to post-filter. 100k entries is
+  100 MB and 2.7 ms; 1M is 1 GB and 26 ms. No ANN index is needed at this scale.
+- **Durability and sharing live in SurrealDB** (via `knowledge-memory`'s
+  `observe` / `attribute` / `promote` policy, unchanged), for `project:` and
+  `curated:` scopes. The runtime loads a scope's rows on first use and
+  refreshes by version; private scopes keep the local files but move to a binary
+  vector file so a load is one `read`, not a JSON parse.
+- **`knowledge-memory`'s dense query stays for the coding loop**, where the
+  pool is small and the wasm component is the thing being exercised. Two cheap
+  fixes are due regardless: send a bearer token instead of HTTP Basic (saves
+  ~14 ms per query), and stop defining an HNSW index that no query uses.
+- Hybrid ranking (lexical + dense RRF, outcome weighting) is re-implemented
+  over the in-memory scope, ranked the same way; the scenario suite from
+  ADR-0084 is the oracle.
+
+WIT 0.3.0 still gains `scope`, `author`, `source`, `model` and `proposed`
+(for the stored rows and the coding loop's use of them). The `scope` column is
+a `WHERE` on a plain index, never on a vector index.
 
 Not changed: the dedup key (re-learning reinforces one row), `attribute`
 (outcomes are the only thing that moves standing), `RRF_K`, the 900-character
 cap, and the "error means do the work" rule (an unreachable pool must never
-fail a run; recall falls back to today's private lexical recall).
+fail a run; recall falls back to the local private store).
 
 ### 4. What counts as an outcome for an agent
 
@@ -123,52 +149,37 @@ the coding loop. A one-shot importer copies existing `memory/*/vecs.jsonl` into
 `agent:<name>` scope (vectors reused when the model matches). No shared entries
 are created by migration.
 
-## Spike result (2026-10-08, SurrealDB v3.1.3, in-memory, Docker on a laptop)
+## Benchmark result (2026-10-08–09)
 
-Question: does `WHERE vec <|k,COSINE|> q AND scope = 'x'` filter *before* the
-cut, or take the global top-k and then drop rows (which would return too few
-rows and make a scope a recall hole)?
+Full tables and the scripts are in `bench/agent-memory/`. What changed in this
+ADR because of it:
 
-**Correctness: filtered.** 200 rows in scope B all closer to the query than 5
-rows in scope A; a KNN with `scope='A'` returned all 5 A rows and no B rows, for
-k=5 and k=10 (k=10 returned 5, the scope's size). Then 256-dim vectors, 10
-scopes, 1k / 10k / 50k rows, a plain index on `scope` plus the HNSW index:
+1. **The first spike conclusion was wrong.** It saw correct scope filtering and
+   concluded filtered HNSW works. The query used, `<|k,COSINE|>`, is SurrealDB's
+   brute-force KNN, so the HNSW index was never exercised; the real HNSW form
+   (`<|k,ef|>`) post-filters and loses recall. What held up: a scan limited by a
+   scope index never leaks across scopes.
+2. **My estimate of the current local scan was wrong too.** I wrote "microseconds
+   to a few ms"; it is 7.5 ms at 1 000 memories and 75 ms at 10 000.
+3. **~14 ms of every SurrealDB number in the first spike was HTTP Basic auth**
+   (password hashed per request); a bearer token costs 0.29 ms.
+4. **In-process exact search is 20–250× faster than either**, and exact, so §3
+   is rewritten around it.
 
-| rows | filtered KNN p50 | unfiltered KNN p50 | exact scan of the scope p50 | scope leaks | recall@10 vs exact |
-|---|---|---|---|---|---|
-| 1 000 | 18 ms | 32 ms | 20 ms | 0 | 10/10 |
-| 10 000 | 35 ms | 125 ms | 47 ms | 0 | 10/10 |
-| 50 000 | 92 ms | 521 ms | 138 ms | 0 | 10/10 |
-
-Reading it:
-
-- The scope filter is safe to rely on: no leaks, no recall loss, on this data.
-  The "scope enforced in SQL" design in §3 stands. It still gets a scenario test
-  in `scenarios.rs`, and the filter stays in the query, never in post-processing.
-- **The win is the scope index, not HNSW.** Per-scope pools are small, and an
-  exact scan of one scope is within 1.5× of the filtered KNN. Latencies include
-  the HTTP round trip and a laptop container, so treat them as an order of
-  magnitude, not a benchmark.
-- **Per-turn recall for a *private* pool should not go through this path.** A
-  1k-row private memory costs ~18 ms here; the in-process JSONL scan is
-  microseconds to a few ms at that size (not measured here). So: `agent:<name>`
-  recall stays local and unchanged; the service is for `project:` and
-  `curated:` scopes, and recall merges both. This amends §2: unscoped recall
-  reads the local private store *and* the pool, in parallel.
-- Not tested: concurrent writers, a different filter selectivity (one scope
-  holding most rows), and a real wasm component in front. Repeat the
-  `knowledge-memory` scenario suite with a `scope` column before WIT 0.3.0.
+Still unmeasured: query-embedding latency (likely the floor of a recall call),
+persistent SurrealDB engines, the wasm component end to end, and recall quality
+on real embeddings.
 
 ## Phasing
 
-1. **Spike — done** (above). Remaining: measure the JSONL scan for comparison,
-   and test skewed scopes and concurrent writers.
-2. **WIT 0.3.0 + component.** Fields above, scenario tests for scope isolation
-   (an `agent:a` row is invisible to a recall for `agent:b`, to an unscoped
-   recall, and to a project it was not written in).
-3. **agent-runtime client.** `src/pool.rs` modeled on `reconciler/src/memory.rs`;
-   `recall`/`observe` gain the optional `scope`; `resolve_scope` mirrors
-   `resolve_ns`; fallback to current behaviour when absent.
+1. **Benchmark — done** (above). Remaining: embedding latency, persistent
+   engine, real embeddings.
+2. **In-memory scope index in agent-runtime** (`src/index.rs`): flat matrix,
+   exact top-k, binary vector file, isolation tests (a scope's rows are
+   invisible to every other scope's recall). This alone fixes private recall.
+3. **Shared scopes.** `src/pool.rs` modeled on `reconciler/src/memory.rs`
+   (bearer auth), WIT 0.3.0 fields, `resolve_scope` mirroring `resolve_ns`,
+   load/refresh of a scope from SurrealDB; fallback to local when absent.
 4. **Matrix.** `!keep`, `!forget`, a review list for proposals, reaction →
    `attribute`.
 5. **Shared with the coding loop.** Wire ADR-0084 slices 2–3 against the same
@@ -207,8 +218,9 @@ Reading it:
 
 ## Open questions
 
-- Does the memory component run per host or one shared instance for several
-  runtimes? Single-process JSONL files stop being safe the moment two runtimes
+- Two runtimes holding the same project scope in RAM need a refresh signal
+  (version poll, or a Surreal live query). Does the memory component run per host
+  or one shared instance for several runtimes? Single-process JSONL files stop being safe the moment two runtimes
   write, which is the main reason this should not stay on files.
 - Per-project retention: TTL by default, or only by explicit `!forget`?
 - Should `curated` be exportable to a repo file (reviewable in git), so the
