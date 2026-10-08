@@ -1,0 +1,31 @@
+[package]
+name = "agent-matrix"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Matrix bridge for agent-runtime: every agent is a Matrix user, every project a Space. Chat with an agent in its room, add an agent to a project by inviting it, approve tool calls with a poll."
+
+# Native, outside the components/ (wasm32) workspace — same arrangement as
+# agent-runtime/ and gpui-console/. It talks to the runtime over HTTP only and
+# shares no code with it.
+[workspace]
+
+[lib]
+name = "agent_matrix"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agent-matrix"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tiny_http = "0.12"
+
+[dev-dependencies]
+# The e2e test starts a real runtime with scripted agents, in-process.
+agent-runtime = { path = "../agent-runtime" }
+tempfile = "3"

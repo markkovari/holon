@@ -4,6 +4,7 @@
 #   ./deploy.sh local                 # this machine, server_name `localhost` (to try it)
 #   ./deploy.sh Malna                 # an ssh host; server_name = its tailnet DNS name
 #   SERVER_NAME=x.ts.net ./deploy.sh Malna
+#   APPSERVICE_REG=~/.holon-matrix/holon-agents.yaml ./deploy.sh Malna   # also load the agent bridge
 #
 # Idempotent: re-running keeps the secrets, the signing key and all data, and
 # only re-renders the config and restarts. Nothing here exposes the server: it
@@ -51,6 +52,13 @@ else
   scp -q ${SSH_OPTS:-} "$HERE/compose.yaml" "$HERE/homeserver.yaml.tmpl" "$TARGET:$DIR/"
 fi
 
+# An application service registration (the agent bridge), if given.
+if [ -n "${APPSERVICE_REG:-}" ]; then
+  on "mkdir -p '$DIR/appservice'"
+  if [ "$TARGET" = local ]; then cp "$APPSERVICE_REG" "$DIR/appservice/holon-agents.yaml"; else scp -q ${SSH_OPTS:-} "$APPSERVICE_REG" "$TARGET:$DIR/appservice/holon-agents.yaml"; fi
+  on "chmod 600 '$DIR/appservice/holon-agents.yaml'"
+fi
+
 # Secrets are generated once, on the target, and never leave it.
 on "cd '$DIR' && umask 077 && [ -f .env ] || { printf 'REGISTRATION_SECRET=%s\nMACAROON_SECRET=%s\nFORM_SECRET=%s\n' \$(openssl rand -hex 32) \$(openssl rand -hex 32) \$(openssl rand -hex 32) > .env; }"
 
@@ -61,10 +69,13 @@ on "cd '$DIR' && [ -f 'data/$SERVER_NAME.signing.key' ] || $RT run --rm -v \"\$P
 # container: the generator above leaves data/ owned by Synapse's own user
 # (uid 991), which the host user cannot write — and making it world-writable
 # or reaching for sudo would be the wrong fix.
-on "cd '$DIR' && . ./.env && sed -e 's|@@SERVER_NAME@@|$SERVER_NAME|g' -e \"s|@@REGISTRATION_SECRET@@|\$REGISTRATION_SECRET|\" -e \"s|@@MACAROON_SECRET@@|\$MACAROON_SECRET|\" -e \"s|@@FORM_SECRET@@|\$FORM_SECRET|\" homeserver.yaml.tmpl > homeserver.rendered.yaml && chmod 600 homeserver.rendered.yaml"
-on "cd '$DIR' && $RT run --rm --entrypoint sh -v \"\$PWD:/src:ro\" -v \"\$PWD/data:/data\" matrixdotorg/synapse:$SYNAPSE_TAG -c 'cp /src/homeserver.rendered.yaml /data/homeserver.yaml && chown 991:991 /data/homeserver.yaml && chmod 600 /data/homeserver.yaml' && rm -f homeserver.rendered.yaml"
+on "cd '$DIR' && . ./.env && sed -e 's|@@SERVER_NAME@@|$SERVER_NAME|g' -e \"s|@@REGISTRATION_SECRET@@|\$REGISTRATION_SECRET|\" -e \"s|@@MACAROON_SECRET@@|\$MACAROON_SECRET|\" -e \"s|@@FORM_SECRET@@|\$FORM_SECRET|\" homeserver.yaml.tmpl > homeserver.rendered.yaml && { [ -f appservice/holon-agents.yaml ] && printf 'app_service_config_files:\\n  - /data/appservices/holon-agents.yaml\\n' >> homeserver.rendered.yaml || true; } && chmod 600 homeserver.rendered.yaml"
+on "cd '$DIR' && $RT run --rm --entrypoint sh -v \"\$PWD:/src:ro\" -v \"\$PWD/data:/data\" matrixdotorg/synapse:$SYNAPSE_TAG -c 'cp /src/homeserver.rendered.yaml /data/homeserver.yaml && chown 991:991 /data/homeserver.yaml && chmod 600 /data/homeserver.yaml && if [ -d /src/appservice ]; then mkdir -p /data/appservices && cp /src/appservice/*.yaml /data/appservices/ && chown -R 991:991 /data/appservices && chmod 600 /data/appservices/*.yaml; fi' && rm -f homeserver.rendered.yaml"
 
-on "cd '$DIR' && SYNAPSE_TAG='$SYNAPSE_TAG' SYNAPSE_PORT='$SYNAPSE_PORT' $COMPOSE up -d"
+# --force-recreate: the config is a bind mount, so compose alone would not notice that
+# it changed (an added appservice, say) and would leave the old Synapse running.
+# Re-running therefore restarts Synapse for a few seconds.
+on "cd '$DIR' && SYNAPSE_TAG='$SYNAPSE_TAG' SYNAPSE_PORT='$SYNAPSE_PORT' $COMPOSE up -d --force-recreate"
 echo "waiting for Synapse..."
 for _ in $(seq 1 40); do
   on "curl -fsS http://127.0.0.1:$SYNAPSE_PORT/_matrix/client/versions >/dev/null 2>&1" && { echo "up: http://127.0.0.1:$SYNAPSE_PORT on $TARGET"; exit 0; }

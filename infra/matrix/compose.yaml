@@ -9,5 +9,9 @@ services:
       SYNAPSE_CONFIG_PATH: /data/homeserver.yaml
     volumes:
       - ./data:/data
+    # So an appservice running on the host (the bridge) is reachable as
+    # host.docker.internal on Docker Desktop, OrbStack and Linux alike.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${SYNAPSE_PORT:-8008}:8008"

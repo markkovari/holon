@@ -279,6 +279,38 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
                 Err(e) => text(req, 422, e),
             }
         }
+        // Projects: membership is the grant (see projects.rs).
+        (Method::Get, ["projects"]) => json_reply(req, 200, json!(rt.store().list_projects())),
+        (Method::Get, ["projects", name]) => match rt.store().get_project(name) {
+            Some(p) => json_reply(req, 200, json!(p)),
+            None => text(req, 404, "no such project"),
+        },
+        (Method::Put, ["projects", name]) => {
+            match serde_json::from_str::<crate::projects::Project>(&body) {
+                Err(e) => text(req, 400, format!("bad project: {e}")),
+                Ok(p) if p.name != *name => text(req, 400, "name in body does not match the URL"),
+                Ok(p) => match rt.put_project(p) {
+                    Ok(()) => text(req, 200, "ok"),
+                    Err(e) => text(req, 422, e),
+                },
+            }
+        }
+        (Method::Delete, ["projects", name]) => match rt.delete_project(name) {
+            Ok(()) => text(req, 200, "deleted"),
+            Err(e) => text(req, 404, e),
+        },
+        (Method::Post, ["projects", name, "agents", agent]) => match rt.add_to_project(name, agent)
+        {
+            Ok(()) => text(req, 200, "ok"),
+            Err(e) if e.starts_with("no project") => text(req, 404, e),
+            Err(e) => text(req, 422, e),
+        },
+        (Method::Delete, ["projects", name, "agents", agent]) => {
+            match rt.remove_from_project(name, agent) {
+                Ok(()) => text(req, 200, "ok"),
+                Err(e) => text(req, 404, e),
+            }
+        }
         (Method::Get, ["approvals"]) => {
             let v: Vec<Value> = rt
                 .pending_approvals()
@@ -645,5 +677,67 @@ mod tests {
             .unwrap();
         assert_eq!(log.as_array().unwrap().len(), 1);
         assert_eq!(rt.bus().head("store.rowing").unwrap(), 1);
+    }
+
+    #[test]
+    fn projects_can_be_managed_over_the_admin_api() {
+        let (rt, base) = start("projects-http");
+        rt.create_agent(mock("rower", &["x"])).unwrap();
+        rt.create_agent(mock("coach", &["x"])).unwrap();
+        let c = reqwest::blocking::Client::new();
+        let put = |body: Value| {
+            c.put(format!("{base}/projects/rowing")).bearer_auth("tok").json(&body).send().unwrap()
+        };
+        assert_eq!(put(json!({"name": "rowing", "agents": ["rower"]})).status(), 200);
+        assert_eq!(put(json!({"name": "rowing", "agents": ["ghost"]})).status(), 422);
+        assert_eq!(
+            put(json!({"name": "other", "agents": []})).status(),
+            400,
+            "URL and body must agree"
+        );
+
+        let add = c
+            .post(format!("{base}/projects/rowing/agents/coach"))
+            .bearer_auth("tok")
+            .send()
+            .unwrap();
+        assert_eq!(add.status(), 200);
+        let p: Value = c
+            .get(format!("{base}/projects/rowing"))
+            .bearer_auth("tok")
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
+        assert_eq!(p["agents"], json!(["rower", "coach"]));
+        let list: Value =
+            c.get(format!("{base}/projects")).bearer_auth("tok").send().unwrap().json().unwrap();
+        assert_eq!(list.as_array().unwrap().len(), 1);
+
+        assert_eq!(
+            c.delete(format!("{base}/projects/rowing/agents/rower"))
+                .bearer_auth("tok")
+                .send()
+                .unwrap()
+                .status(),
+            200
+        );
+        assert_eq!(
+            c.post(format!("{base}/projects/none/agents/coach"))
+                .bearer_auth("tok")
+                .send()
+                .unwrap()
+                .status(),
+            404
+        );
+        assert_eq!(c.get(format!("{base}/projects")).send().unwrap().status(), 401, "admin tier");
+        assert_eq!(
+            c.delete(format!("{base}/projects/rowing")).bearer_auth("tok").send().unwrap().status(),
+            200
+        );
+        assert_eq!(
+            c.get(format!("{base}/projects/rowing")).bearer_auth("tok").send().unwrap().status(),
+            404
+        );
     }
 }

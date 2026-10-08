@@ -519,3 +519,123 @@ fn finished_runs_are_exported_to_an_otlp_collector_as_json() {
     assert!(names.iter().any(|n| n.starts_with("chat ")) && names.contains(&"execute_tool now"));
     assert!(spans.iter().all(|s| s["traceId"] == rec.trace_id.as_str()));
 }
+
+// ---- projects ---------------------------------------------------------------
+
+use agent_runtime::projects::Project;
+
+fn project(name: &str, agents: &[&str]) -> Project {
+    Project {
+        name: name.into(),
+        description: "training".into(),
+        agents: agents.iter().map(|a| a.to_string()).collect(),
+        lead: None,
+    }
+}
+
+#[test]
+fn project_membership_is_the_grant_for_the_store_and_topics_and_removal_takes_it_away() {
+    let rt = runtime("project");
+    // Neither spec grants a store or any topic: only the project does.
+    // One scripted model, three runs: replies are consumed in order across them.
+    let put = |v: &str| {
+        format!(
+            r#"{{"tool":"store_put","args":{{"ns":"project.rowing","key":"latest","value":"{v}"}}}}"#
+        )
+    };
+    let writer = agent_n(
+        "scout",
+        vec![
+            put("tried-as-non-member"),
+            "gave up".into(), // run 1: not a member
+            put("12,108m"),
+            r#"{"tool":"emit_event","args":{"topic":"rowing.logged","payload":"x"}}"#.into(),
+            "done".into(), // run 2: member
+            put("other"),
+            "done again".into(), // run 3: removed
+        ],
+    );
+    rt.create_agent(writer).unwrap();
+    let mut coach = agent_n("coach", repeat("noted", 5));
+    coach
+        .triggers
+        .push(Trigger::StoreChange { ns: "project.rowing".into(), key_prefix: String::new() });
+    rt.create_agent(coach).unwrap();
+
+    // not a member yet: the tool does not even exist for it
+    let none = rt.run_agent("scout", "http", "go", &Cause::default(), "", true).unwrap();
+    assert!(
+        matches!(&none.steps[1], Step::Tool { error: true, result, .. } if result.contains("not one of your capabilities")),
+        "{:?}",
+        none.steps
+    );
+
+    rt.put_project(project("rowing", &["scout", "coach"])).unwrap();
+    let r = rt.run_agent("scout", "http", "go", &Cause::default(), "", true).unwrap();
+    let tools: Vec<(bool, String)> = r
+        .steps
+        .iter()
+        .filter_map(|s| match s {
+            Step::Tool { error, result, .. } => Some((*error, result.clone())),
+            _ => None,
+        })
+        .collect();
+    assert!(tools.iter().all(|(e, _)| !e), "membership should grant both calls: {tools:?}");
+    assert_eq!(rt.kv().get("project.rowing", "latest").unwrap().unwrap().value, "12,108m");
+    // the other member, woken by the shared store, is in the same trace
+    let woke = wait_for("coach", || runs(&rt, "coach").into_iter().next());
+    assert_eq!(woke.trace_id, r.trace_id);
+
+    rt.remove_from_project("rowing", "scout").unwrap();
+    let after = rt.run_agent("scout", "http", "go", &Cause::default(), "", true).unwrap();
+    assert!(
+        after.steps.iter().any(|s| matches!(s, Step::Tool { error: true, .. })),
+        "removal must revoke the grant: {:?}",
+        after.steps
+    );
+    assert_eq!(
+        rt.kv().get("project.rowing", "latest").unwrap().unwrap().value,
+        "12,108m",
+        "unchanged"
+    );
+}
+
+#[test]
+fn a_project_is_validated_against_the_agents_that_exist_and_tracks_deletions() {
+    let rt = runtime("project-valid");
+    rt.create_agent(agent("a", &["x"])).unwrap();
+    assert!(rt
+        .put_project(project("rowing", &["a", "ghost"]))
+        .unwrap_err()
+        .contains("no agent named ghost"));
+    let mut p = project("rowing", &["a"]);
+    p.lead = Some("a".into());
+    rt.put_project(p).unwrap();
+    assert_eq!(rt.store().get_project("rowing").unwrap().lead.as_deref(), Some("a"));
+    // removing the lead clears it; deleting an agent drops it from its projects
+    rt.remove_from_project("rowing", "a").unwrap();
+    assert_eq!(rt.store().get_project("rowing").unwrap().lead, None);
+    rt.add_to_project("rowing", "a").unwrap();
+    rt.delete_agent("a").unwrap();
+    assert!(rt.store().get_project("rowing").unwrap().agents.is_empty());
+    assert!(rt.add_to_project("nope", "a").unwrap_err().contains("no project"));
+}
+
+#[test]
+fn an_agent_is_told_which_project_it_is_in_and_who_else_is() {
+    let rt = runtime("project-prompt");
+    rt.create_agent(agent("scout", &["ok"])).unwrap();
+    rt.create_agent(agent("coach", &["ok"])).unwrap();
+    let mut p = project("rowing", &["scout", "coach"]);
+    p.lead = Some("coach".into());
+    rt.put_project(p).unwrap();
+    // the mock model sees the system prompt only through its token count, so
+    // check the rendered grants instead: the effective spec is what runs
+    let eff = agent_runtime::projects::effective(
+        &rt.store().get("scout").unwrap(),
+        &rt.store().list_projects(),
+    );
+    assert_eq!(eff.projects[0].members, ["scout", "coach"]);
+    assert_eq!(eff.projects[0].lead.as_deref(), Some("coach"));
+    assert_eq!(eff.projects[0].store_ns, "project.rowing");
+}
