@@ -123,11 +123,46 @@ the coding loop. A one-shot importer copies existing `memory/*/vecs.jsonl` into
 `agent:<name>` scope (vectors reused when the model matches). No shared entries
 are created by migration.
 
+## Spike result (2026-10-08, SurrealDB v3.1.3, in-memory, Docker on a laptop)
+
+Question: does `WHERE vec <|k,COSINE|> q AND scope = 'x'` filter *before* the
+cut, or take the global top-k and then drop rows (which would return too few
+rows and make a scope a recall hole)?
+
+**Correctness: filtered.** 200 rows in scope B all closer to the query than 5
+rows in scope A; a KNN with `scope='A'` returned all 5 A rows and no B rows, for
+k=5 and k=10 (k=10 returned 5, the scope's size). Then 256-dim vectors, 10
+scopes, 1k / 10k / 50k rows, a plain index on `scope` plus the HNSW index:
+
+| rows | filtered KNN p50 | unfiltered KNN p50 | exact scan of the scope p50 | scope leaks | recall@10 vs exact |
+|---|---|---|---|---|---|
+| 1 000 | 18 ms | 32 ms | 20 ms | 0 | 10/10 |
+| 10 000 | 35 ms | 125 ms | 47 ms | 0 | 10/10 |
+| 50 000 | 92 ms | 521 ms | 138 ms | 0 | 10/10 |
+
+Reading it:
+
+- The scope filter is safe to rely on: no leaks, no recall loss, on this data.
+  The "scope enforced in SQL" design in §3 stands. It still gets a scenario test
+  in `scenarios.rs`, and the filter stays in the query, never in post-processing.
+- **The win is the scope index, not HNSW.** Per-scope pools are small, and an
+  exact scan of one scope is within 1.5× of the filtered KNN. Latencies include
+  the HTTP round trip and a laptop container, so treat them as an order of
+  magnitude, not a benchmark.
+- **Per-turn recall for a *private* pool should not go through this path.** A
+  1k-row private memory costs ~18 ms here; the in-process JSONL scan is
+  microseconds to a few ms at that size (not measured here). So: `agent:<name>`
+  recall stays local and unchanged; the service is for `project:` and
+  `curated:` scopes, and recall merges both. This amends §2: unscoped recall
+  reads the local private store *and* the pool, in parallel.
+- Not tested: concurrent writers, a different filter selectivity (one scope
+  holding most rows), and a real wasm component in front. Repeat the
+  `knowledge-memory` scenario suite with a `scope` column before WIT 0.3.0.
+
 ## Phasing
 
-1. **Spike (1–2 days).** Confirm filtered KNN semantics in SurrealDB v3.1.3;
-   measure recall latency vs the JSONL scan at 1k / 10k / 100k entries; check
-   that the scope filter cannot be bypassed.
+1. **Spike — done** (above). Remaining: measure the JSONL scan for comparison,
+   and test skewed scopes and concurrent writers.
 2. **WIT 0.3.0 + component.** Fields above, scenario tests for scope isolation
    (an `agent:a` row is invisible to a recall for `agent:b`, to an unscoped
    recall, and to a project it was not written in).
