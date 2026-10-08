@@ -111,6 +111,19 @@ pub struct MemoryItem {
     pub text: String,
 }
 
+/// One vector per text, from an embedding service.
+pub type Vectors = Vec<Vec<f32>>;
+
+#[derive(Serialize, Deserialize)]
+struct MemoryVec {
+    text: String,
+    vec: Vec<f32>,
+}
+
+/// How far below the best match a memory may score and still be recalled. Embedding scores
+/// of unrelated text sit well above zero, so a fixed floor would be arbitrary.
+const RECALL_SPREAD: f32 = 0.08;
+
 #[derive(Clone)]
 pub struct Store {
     dir: PathBuf,
@@ -130,6 +143,18 @@ impl Store {
             fs::create_dir_all(dir.join(sub)).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
         Ok(Self { dir })
+    }
+
+    /// Where shared connector definitions live (`connectors/<name>.json`); may not exist.
+    pub fn connectors_dir(&self) -> PathBuf {
+        self.dir.join("connectors")
+    }
+
+    /// A model block by name, from `<state>/models.json` (`{"qwen": {"kind": "open_ai", ...}}`).
+    pub fn model_alias(&self, name: &str) -> Option<serde_json::Value> {
+        let all: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(self.dir.join("models.json")).ok()?).ok()?;
+        all.get(name).cloned()
     }
 
     fn path(&self, sub: &str, name: &str, ext: &str) -> Result<PathBuf, String> {
@@ -252,6 +277,45 @@ impl Store {
         scored.into_iter().take(k).map(|(_, m)| m).collect()
     }
 
+    /// Recall by meaning. `query` is the embedded question; `embed_docs` embeds memory texts
+    /// that have no stored vector yet (`None` when the service is down, and then those are
+    /// skipped). Vectors live in a sidecar file keyed by text, so memories stay append-only.
+    /// Returns the best `k`, dropping any clearly worse than the best match.
+    pub fn recall_semantic(
+        &self,
+        agent: &str,
+        query: &[f32],
+        k: usize,
+        embed_docs: &dyn Fn(&[String]) -> Option<Vectors>,
+    ) -> Vec<MemoryItem> {
+        let all = self.memories(agent);
+        let Ok(side) = self.path("memory", agent, "vecs.jsonl") else { return vec![] };
+        let mut known: std::collections::HashMap<String, Vec<f32>> =
+            read_lines::<MemoryVec>(&side).into_iter().map(|m| (m.text, m.vec)).collect();
+        let missing: Vec<String> = all
+            .iter()
+            .filter(|m| !known.contains_key(&m.text))
+            .map(|m| m.text.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if !missing.is_empty() {
+            if let Some(vecs) = embed_docs(&missing) {
+                for (text, vec) in missing.into_iter().zip(vecs) {
+                    let _ = append(&side, &MemoryVec { text: text.clone(), vec: vec.clone() });
+                    known.insert(text, vec);
+                }
+            }
+        }
+        let mut scored: Vec<(f32, MemoryItem)> = all
+            .into_iter()
+            .filter_map(|m| known.get(&m.text).map(|v| (crate::embed::cosine(query, v), m)))
+            .collect();
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(b.1.at.cmp(&a.1.at)));
+        let best = scored.first().map_or(0.0, |s| s.0);
+        scored.into_iter().filter(|s| s.0 >= best - RECALL_SPREAD).take(k).map(|s| s.1).collect()
+    }
+
     // ---- runs -------------------------------------------------------------
 
     pub fn record_run(&self, r: &RunRecord) -> Result<(), String> {
@@ -365,6 +429,35 @@ mod tests {
         assert_eq!(hits[0].text, "build passed after the fix");
         assert_eq!(s.recall("a", "", 1)[0].text, "build passed after the fix");
         assert!(s.recall("a", "zebra", 3).is_empty());
+    }
+
+    #[test]
+    fn semantic_recall_ranks_by_vector_embeds_each_text_once_and_survives_a_down_service() {
+        let s = Store::open(tmp("sem")).unwrap();
+        s.remember("a", "rowed 12k on tuesday", 1).unwrap();
+        s.remember("a", "lunch is at noon", 2).unwrap();
+        s.remember("a", "new pb on the erg", 3).unwrap();
+        let calls = std::cell::Cell::new(0);
+        // a toy space: dimension 0 is "rowing", dimension 1 is "food"
+        let embed = |t: &[String]| {
+            calls.set(calls.get() + t.len());
+            Some(
+                t.iter()
+                    .map(|x| if x.contains("lunch") { vec![0.0, 1.0] } else { vec![1.0, 0.1] })
+                    .collect(),
+            )
+        };
+        let hits = s.recall_semantic("a", &[1.0, 0.0], 5, &embed);
+        let texts: Vec<_> = hits.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(texts, ["new pb on the erg", "rowed 12k on tuesday"]);
+        assert_eq!(calls.get(), 3);
+        let again = s.recall_semantic("a", &[0.0, 1.0], 5, &embed);
+        assert_eq!(again[0].text, "lunch is at noon");
+        assert_eq!(calls.get(), 3, "vectors are kept, not recomputed");
+        // service down: what has a vector still works; a new memory just is not found yet
+        s.remember("a", "ran a 5k", 4).unwrap();
+        let down = |_: &[String]| None;
+        assert_eq!(s.recall_semantic("a", &[1.0, 0.0], 5, &down).len(), 2);
     }
 
     #[test]

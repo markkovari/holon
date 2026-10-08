@@ -1,17 +1,22 @@
 //! The autonomous half of a Holon agent. See `runtime.rs` for the entry point
 //! and `agent.rs` for the loop.
 
+pub mod admin;
 pub mod agent;
 pub mod bus;
+pub mod connector;
 pub mod cron;
+pub mod embed;
 pub mod html;
 pub mod kv;
+pub mod lazy;
 pub mod model;
 pub mod otlp;
 pub mod projects;
 pub mod runtime;
 pub mod server;
 pub mod spec;
+pub mod speech;
 pub mod store;
 pub mod trace;
 

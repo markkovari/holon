@@ -109,3 +109,15 @@ nothing usable being refused with a note. It skips when Docker is not available.
 * Running as a service (launchd); today it is a foreground process.
 * Whether the bridge's own session and the appservice survive a Synapse upgrade is
   untested.
+
+## Who answers when nobody is named
+
+In a project room, `@name` picks the agent. Otherwise, in order:
+1. **Jev**, when `HOLON_JEV_KEY_FILE` names a file holding a TypeSafe key: each member's description
+   is put to Jev as a yes/no question about the message, and the members it confirms answer. Jev
+   returns probabilities, not text, so it routes; it is not a chat model.
+2. **Embeddings**, through the runtime's `/embed` (when it has an embedding service): a member answers
+   only if it fits clearly better than the others.
+3. The project's **lead**.
+
+Each step is skipped when it is not configured or cannot answer.

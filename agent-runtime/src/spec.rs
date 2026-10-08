@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// `os:fs/watcher.changes` naming the interface function this binds to. Text
 /// alone is unenforceable; WIT alone is not something a model can choose
 /// from. `wit` is optional so a capability can start as prose.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct Capability {
     /// Matches a built-in tool name (`remember`, `http_get`, ...) or an
     /// agent name prefixed `agent:` to delegate to another agent.
@@ -18,11 +18,15 @@ pub struct Capability {
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wit: Option<String>,
+    /// A program that implements this capability as a tool (see `connector.rs`). Either
+    /// written here or filled in from `<state>/connectors/<name>.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exec: Option<crate::connector::Exec>,
 }
 
 impl Capability {
     pub fn named(name: &str) -> Self {
-        Self { name: name.to_string(), description: String::new(), wit: None }
+        Self { name: name.to_string(), ..Default::default() }
     }
 }
 
@@ -107,9 +111,21 @@ pub enum ModelSpec {
         model: String,
         #[serde(default)]
         api_key_env: String,
+        /// Or a file holding the key, read at each call and never stored in the spec. Wins
+        /// over `api_key_env` when both are given.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        api_key_file: String,
+        /// The launchd label of the service that runs this server (`io.holon.qwen`). When set,
+        /// the runtime starts it on first use and stops it after it has sat idle.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        service: String,
     },
     /// Anthropic's Messages API. Same rule for the key.
     Anthropic { model: String, api_key_env: String },
+    /// Try each model in order and use the first that answers: a hosted one first, a local one
+    /// as the floor. A model that errors (down, out of quota, over its limit) is skipped for
+    /// this call only.
+    Fallback { models: Vec<ModelSpec> },
     /// Scripted replies, for tests.
     Mock { replies: Vec<String> },
 }

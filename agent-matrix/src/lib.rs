@@ -5,6 +5,7 @@ pub mod bridge;
 pub mod commands;
 pub mod config;
 pub mod init;
+pub mod jev;
 pub mod matrix;
 pub mod runtime;
 pub mod serve;
