@@ -1,0 +1,48 @@
+# Rendered by deploy.sh. @@NAME@@ values are substituted; secrets are generated
+# once and kept in .env (mode 0600), never committed.
+#
+# server_name is PERMANENT: it is part of every user id (@you:<server_name>) and
+# cannot be changed later. deploy.sh uses the machine's tailnet DNS name so that
+# the URL clients type and the server name are the same host (no .well-known).
+server_name: "@@SERVER_NAME@@"
+pid_file: /data/homeserver.pid
+
+listeners:
+  - port: 8008
+    type: http
+    tls: false
+    x_forwarded: true          # tailscale serve terminates TLS in front of it
+    bind_addresses: ["0.0.0.0"] # inside the container; compose publishes loopback only
+    resources:
+      - names: [client]         # no `federation` resource: this server talks to nobody else
+        compress: false
+
+database:
+  name: sqlite3                 # a handful of users and ghost users; move to Postgres if it grows
+  args:
+    database: /data/homeserver.db
+
+log_config: "/data/@@SERVER_NAME@@.log.config"
+signing_key_path: "/data/@@SERVER_NAME@@.signing.key"
+media_store_path: /data/media_store
+max_upload_size: 100M
+
+registration_shared_secret: "@@REGISTRATION_SECRET@@"
+macaroon_secret_key: "@@MACAROON_SECRET@@"
+form_secret: "@@FORM_SECRET@@"
+
+enable_registration: false      # accounts are created by an admin command, not the internet
+allow_guest_access: false
+federation_domain_whitelist: [] # belt and braces: no federation even if a listener is added
+trusted_key_servers: []
+suppress_key_server_warning: true
+report_stats: false
+
+# Rate limits are for strangers; this server has one person and some agents.
+rc_message:
+  per_second: 20
+  burst_count: 100
+
+# Application services (the agent bridge) are listed here once it exists:
+# app_service_config_files:
+#   - /data/agents-appservice.yaml
