@@ -2,10 +2,11 @@ import json,random,http.client,base64,time,math,sys,threading,subprocess
 from concurrent.futures import ThreadPoolExecutor
 PORT=int(sys.argv[1]); ENGINE=sys.argv[2]; PHASES=sys.argv[3].split(","); OUT=open(sys.argv[4],"a")
 D=256
-import os,urllib.request
+import os
 def _tok():
-    r=urllib.request.Request(f"http://localhost:{PORT}/signin",data=b'{"user":"root","pass":"root"}',headers={"Accept":"application/json"})
-    return json.load(urllib.request.urlopen(r))["token"]
+    c=http.client.HTTPConnection("localhost",PORT,timeout=30)
+    c.request("POST","/signin",b'{"user":"root","pass":"root"}',{"Accept":"application/json"})
+    return json.loads(c.getresponse().read())["token"]
 AUTH_MODE=os.environ.get("AUTH","bearer")
 AUTH=("Bearer "+_tok()) if AUTH_MODE=="bearer" else "Basic "+base64.b64encode(b"root:root").decode()
 tl=threading.local()
