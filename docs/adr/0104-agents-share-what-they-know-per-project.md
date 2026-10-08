@@ -166,17 +166,22 @@ ADR because of it:
 4. **In-process exact search is 20–250× faster than either**, and exact, so §3
    is rewritten around it.
 
-Still unmeasured: query-embedding latency (likely the floor of a recall call),
+5. **Query embedding is the floor.** Measured with the real model: 37–40 ms per
+   query on MPS (62 ms CPU), against 0.2 ms of search after the change. A recall
+   call is ~40 ms whatever the pool size; the index matters from the thousands up.
+
+Built since: the in-memory index for private recall (`agent-runtime/src/store.rs`,
+`tests/recall_e2e.rs`; 107–270× faster search, 8/8 end to end). Still unmeasured:
 persistent SurrealDB engines, the wasm component end to end, and recall quality
-on real embeddings.
+beyond that 8-question check.
 
 ## Phasing
 
 1. **Benchmark — done** (above). Remaining: embedding latency, persistent
    engine, real embeddings.
-2. **In-memory scope index in agent-runtime** (`src/index.rs`): flat matrix,
-   exact top-k, binary vector file, isolation tests (a scope's rows are
-   invisible to every other scope's recall). This alone fixes private recall.
+2. **In-memory index in agent-runtime — private scope done** (`Store`'s
+   `MemoryIndex`; isolation tested). Remaining: a binary vector file so the
+   cold load is one read, and the same structure per shared scope.
 3. **Shared scopes.** `src/pool.rs` modeled on `reconciler/src/memory.rs`
    (bearer auth), WIT 0.3.0 fields, `resolve_scope` mirroring `resolve_ns`,
    load/refresh of a scope from SurrealDB; fallback to local when absent.
