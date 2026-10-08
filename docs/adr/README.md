@@ -132,6 +132,7 @@ tells you what is true now rather than what was once believed.
 | [0101](0101-state-can-live-somewhere-else.md) | State can live somewhere else: object bytes on S3/R2, and backups off the box | **accepted**, and built — `--blob s3`, `blob-store`'s `blobs` store, `comp-backup` |
 | [0102](0102-an-agent-session-is-a-contract-first.md) | An agent session is a contract first: sessions, tasks, one resumable event stream, per-tool approval | **accepted**, and served — `comp-agentd` answers `api/openapi.yaml` (REST + SSE) and `api/holon/v1/agent.proto` (gRPC, gRPC-web) on one port |
 | [0103](0103-components-move-to-wasi-p3.md) | Components move to WASI p3, on the rc WIT until wrpc moves: one live instance serves many requests | **accepted**, in progress — comp-host serves p2 and p3; HTTP components are being ported |
+| [0104](0104-agents-share-what-they-know-per-project.md) | Agents share what they know, per project: three scopes, scope enforced in agent-runtime, `knowledge-memory` reused, promotion is a person | **proposed** — nothing built |
 
 ## History: superseded, and kept
 
