@@ -29,7 +29,37 @@ Run: `cargo run --release` in `localbench/` and `flat/` (`RUSTFLAGS="-C target-c
 Linear, ~7.5 µs/entry. The cost is parsing the whole JSONL (256 floats per line)
 on every call, not the cosine math.
 
-### The same recall, exact, vectors held in memory (`flat/`)
+### After: the in-memory index in `Store` (this PR), warm calls
+
+`localbench/` again, same data, after `Store::recall_semantic` keeps vectors in memory
+and re-reads only appended bytes. p95 is the one-time cold load of each agent per process.
+
+| entries | before p50 | after p50 | speed-up | cold load (p95) |
+|---|---|---|---|---|
+| 1 000 | 7.5 ms | 0.07 ms | 107× | 13 ms |
+| 10 000 | 75 ms | 0.28 ms | 270× | 81 ms |
+| 100 000 | 770 ms | 2.9 ms | 265× | 813 ms |
+
+### End to end with the real embedding model (`agent-runtime/tests/recall_e2e.rs`)
+
+`google/embeddinggemma-2` via `embed/server.py` (on the Apple GPU, MPS), 8 facts +
+1 000 distractors, paraphrased questions, release build:
+
+| | before | after |
+|---|---|---|
+| top-1 correct | 8/8 | 8/8 |
+| query embedding p50 | 40 ms | 40 ms |
+| search p50 | 7.6 ms | 0.23 ms |
+| save-then-recall (embeds 1 memory) | 46 ms | 41 ms |
+| first recall, embeds 1 008 memories | 3.6 s | 3.6 s |
+
+Embedding one query costs 37–40 ms (MPS; 62 ms on CPU) and a document ≈ 4 ms in a
+batch of 32+. So **a recall tool call is now ~40 ms and the model is the floor**; the
+index matters most once memories reach the thousands (at 10 000 the old path adds 75 ms,
+the new one 0.3 ms). Further reduction would be a smaller/faster query model or a
+cache of repeated query embeddings; neither is done.
+
+### The same recall, exact, vectors held in memory, as a ceiling (`flat/`)
 
 | entries | f32, 1 thread | f32, 8 threads | int8, 1 thread (recall@10) | RAM |
 |---|---|---|---|---|
@@ -84,10 +114,8 @@ engine, HNSW indexes defined on each).
 
 ### Not measured
 
-- Query-embedding latency (`agent-runtime/embed/server.py`, a transformer
-  forward pass per query). It is probably larger than every search time above
-  except the 100k scans, so the floor for a recall tool call is set there.
 - SurrealDB with RocksDB/SurrealKV storage, and a persistent deployment.
 - The wasm `knowledge-memory` component and its sparse + RRF + hydration steps
   (it issues several queries per recall, each paying the round trip).
-- Real embeddings. Quality (recall@k on real text) needs a labelled set.
+- Real-embedding quality beyond the 8-question end-to-end check above (a labelled
+  set would be needed for recall@k).

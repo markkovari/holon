@@ -7,9 +7,11 @@
 //! workspaces/<name>/      the only place its file tools can touch
 //! ```
 
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
@@ -127,6 +129,122 @@ const RECALL_SPREAD: f32 = 0.08;
 #[derive(Clone)]
 pub struct Store {
     dir: PathBuf,
+    /// One in-memory recall index per agent, shared by every clone of the store.
+    indexes: Arc<Mutex<HashMap<String, MemoryIndex>>>,
+}
+
+/// An agent's memories and their vectors, kept in memory so a recall is a dot
+/// product per row and not a re-parse of two JSONL files (7.5 ms at a thousand
+/// memories, 75 ms at ten thousand: bench/agent-memory). Both files are
+/// append-only, so each call reads only the bytes added since the last one.
+/// Vectors are stored unit-length: cosine is then a plain dot product.
+#[derive(Default)]
+struct MemoryIndex {
+    /// Bytes of `memory/<a>.jsonl` and `memory/<a>.vecs.jsonl` consumed so far,
+    /// always ending on a line boundary.
+    mem_off: u64,
+    side_off: u64,
+    items: Vec<MemoryItem>,
+    /// Row in `rows` for each text that has a vector.
+    row_of: HashMap<String, usize>,
+    rows: Vec<Vec<f32>>,
+    /// `items[i]`'s row, once it has one. Resolved when something changed, so a
+    /// recall on an unchanged index never hashes a text.
+    item_row: Vec<Option<usize>>,
+    dirty: bool,
+}
+
+fn unit(mut v: Vec<f32>) -> Vec<f32> {
+    let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if n > 0.0 {
+        v.iter_mut().for_each(|x| *x /= n);
+    }
+    v
+}
+
+fn dot(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() {
+        return 0.0;
+    }
+    let mut lanes = [0f32; 8];
+    let ((ca, ra), (cb, rb)) = (a.as_chunks::<8>(), b.as_chunks::<8>());
+    let tail: f32 = ra.iter().zip(rb).map(|(x, y)| x * y).sum();
+    for (x, y) in ca.iter().zip(cb) {
+        for i in 0..8 {
+            lanes[i] += x[i] * y[i];
+        }
+    }
+    lanes.iter().sum::<f32>() + tail
+}
+
+/// Complete lines appended to `path` after `*off`, advancing `*off` past them.
+/// A file that shrank was replaced: `None`, and the caller starts over.
+fn read_new_lines<T: for<'a> Deserialize<'a>>(path: &Path, off: &mut u64) -> Option<Vec<T>> {
+    let Ok(mut f) = fs::File::open(path) else {
+        return (*off == 0).then(Vec::new);
+    };
+    let len = f.metadata().ok()?.len();
+    if len < *off {
+        return None;
+    }
+    if len == *off {
+        return Some(vec![]);
+    }
+    f.seek(SeekFrom::Start(*off)).ok()?;
+    let mut buf = Vec::with_capacity((len - *off) as usize);
+    f.take(len - *off).read_to_end(&mut buf).ok()?;
+    // Only whole lines: a writer may be mid-append.
+    let end = buf.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+    *off += end as u64;
+    Some(
+        String::from_utf8_lossy(&buf[..end])
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect(),
+    )
+}
+
+impl MemoryIndex {
+    fn add_vec(&mut self, text: String, vec: Vec<f32>) {
+        if !self.row_of.contains_key(&text) {
+            self.row_of.insert(text, self.rows.len());
+            self.rows.push(unit(vec));
+            self.dirty = true;
+        }
+    }
+
+    fn resolve(&mut self) {
+        if !self.dirty && self.item_row.len() == self.items.len() {
+            return;
+        }
+        self.item_row.resize(self.items.len(), None);
+        for (m, r) in self.items.iter().zip(self.item_row.iter_mut()) {
+            if r.is_none() {
+                *r = self.row_of.get(&m.text).copied();
+            }
+        }
+        self.dirty = false;
+    }
+
+    /// Catch up with both files. Rebuilds from scratch if either was replaced.
+    fn sync(&mut self, mem: &Path, side: &Path) {
+        for attempt in 0..2 {
+            let items = read_new_lines::<MemoryItem>(mem, &mut self.mem_off);
+            let vecs = read_new_lines::<MemoryVec>(side, &mut self.side_off);
+            match (items, vecs) {
+                (Some(items), Some(vecs)) => {
+                    self.items.extend(items);
+                    self.dirty = true;
+                    for v in vecs {
+                        self.add_vec(v.text, v.vec);
+                    }
+                    return;
+                }
+                _ if attempt == 0 => *self = Self::default(),
+                _ => return,
+            }
+        }
+    }
 }
 
 fn tokens(s: &str) -> Vec<String> {
@@ -142,7 +260,7 @@ impl Store {
         for sub in ["agents", "memory", "runs", "workspaces", "projects"] {
             fs::create_dir_all(dir.join(sub)).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
-        Ok(Self { dir })
+        Ok(Self { dir, indexes: Arc::default() })
     }
 
     /// Where shared connector definitions live (`connectors/<name>.json`); may not exist.
@@ -231,6 +349,8 @@ impl Store {
         }
         fs::remove_file(spec).map_err(|e| e.to_string())?;
         let _ = fs::remove_file(self.path("memory", name, "jsonl")?);
+        let _ = fs::remove_file(self.path("memory", name, "vecs.jsonl")?);
+        self.indexes.lock().unwrap().remove(name);
         let _ = fs::remove_file(self.path("runs", name, "jsonl")?);
         let _ = fs::remove_dir_all(self.dir.join("workspaces").join(name));
         Ok(())
@@ -288,32 +408,48 @@ impl Store {
         k: usize,
         embed_docs: &dyn Fn(&[String]) -> Option<Vectors>,
     ) -> Vec<MemoryItem> {
-        let all = self.memories(agent);
-        let Ok(side) = self.path("memory", agent, "vecs.jsonl") else { return vec![] };
-        let mut known: std::collections::HashMap<String, Vec<f32>> =
-            read_lines::<MemoryVec>(&side).into_iter().map(|m| (m.text, m.vec)).collect();
-        let missing: Vec<String> = all
-            .iter()
-            .filter(|m| !known.contains_key(&m.text))
-            .map(|m| m.text.clone())
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        if !missing.is_empty() {
-            if let Some(vecs) = embed_docs(&missing) {
-                for (text, vec) in missing.into_iter().zip(vecs) {
-                    let _ = append(&side, &MemoryVec { text: text.clone(), vec: vec.clone() });
-                    known.insert(text, vec);
-                }
+        let (Ok(mem), Ok(side)) =
+            (self.path("memory", agent, "jsonl"), self.path("memory", agent, "vecs.jsonl"))
+        else {
+            return vec![];
+        };
+        // The embedding call can be slow, so it runs without the lock held.
+        let missing: Vec<String> = {
+            let mut all = self.indexes.lock().unwrap();
+            let ix = all.entry(agent.to_string()).or_default();
+            ix.sync(&mem, &side);
+            ix.resolve();
+            ix.items
+                .iter()
+                .zip(&ix.item_row)
+                .filter(|(_, r)| r.is_none())
+                .map(|(m, _)| m.text.clone())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        };
+        let fresh = if missing.is_empty() { None } else { embed_docs(&missing) };
+        let q = unit(query.to_vec());
+        let mut all = self.indexes.lock().unwrap();
+        let ix = all.entry(agent.to_string()).or_default();
+        if let Some(vecs) = fresh {
+            for (text, vec) in missing.into_iter().zip(vecs) {
+                let _ = append(&side, &MemoryVec { text: text.clone(), vec: vec.clone() });
+                ix.add_vec(text, vec);
             }
         }
-        let mut scored: Vec<(f32, MemoryItem)> = all
-            .into_iter()
-            .filter_map(|m| known.get(&m.text).map(|v| (crate::embed::cosine(query, v), m)))
+        ix.resolve();
+        let scored: Vec<(f32, &MemoryItem)> = ix
+            .items
+            .iter()
+            .zip(&ix.item_row)
+            .filter_map(|(m, r)| r.map(|r| (dot(&q, &ix.rows[r]), m)))
             .collect();
-        scored.sort_by(|a, b| b.0.total_cmp(&a.0).then(b.1.at.cmp(&a.1.at)));
-        let best = scored.first().map_or(0.0, |s| s.0);
-        scored.into_iter().filter(|s| s.0 >= best - RECALL_SPREAD).take(k).map(|s| s.1).collect()
+        let best = scored.iter().map(|s| s.0).fold(f32::NEG_INFINITY, f32::max);
+        let mut kept: Vec<(f32, &MemoryItem)> =
+            scored.into_iter().filter(|s| s.0 >= best - RECALL_SPREAD).collect();
+        kept.sort_by(|a, b| b.0.total_cmp(&a.0).then(b.1.at.cmp(&a.1.at)));
+        kept.into_iter().take(k).map(|s| s.1.clone()).collect()
     }
 
     // ---- runs -------------------------------------------------------------
@@ -458,6 +594,62 @@ mod tests {
         s.remember("a", "ran a 5k", 4).unwrap();
         let down = |_: &[String]| None;
         assert_eq!(s.recall_semantic("a", &[1.0, 0.0], 5, &down).len(), 2);
+    }
+
+    fn toy(t: &[String]) -> Option<Vectors> {
+        Some(
+            t.iter()
+                .map(|x| if x.contains("lunch") { vec![0.0, 1.0] } else { vec![1.0, 0.1] })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn the_index_picks_up_appended_memories_without_rereading_and_agents_do_not_mix() {
+        let s = Store::open(tmp("incr")).unwrap();
+        s.remember("a", "rowed 12k", 1).unwrap();
+        s.remember("b", "lunch is at noon", 1).unwrap();
+        assert_eq!(s.recall_semantic("a", &[1.0, 0.0], 5, &toy).len(), 1);
+        s.remember("a", "new pb", 2).unwrap();
+        let texts: Vec<_> =
+            s.recall_semantic("a", &[1.0, 0.0], 5, &toy).into_iter().map(|m| m.text).collect();
+        assert_eq!(texts, ["new pb", "rowed 12k"]);
+        // b's memory is never visible to a, whatever the query is closest to
+        assert!(!texts.iter().any(|t| t.contains("lunch")));
+        assert_eq!(s.recall_semantic("b", &[0.0, 1.0], 5, &toy)[0].text, "lunch is at noon");
+    }
+
+    #[test]
+    fn a_half_written_line_is_ignored_until_it_is_complete() {
+        let d = tmp("torn");
+        let s = Store::open(&d).unwrap();
+        s.remember("a", "rowed 12k", 1).unwrap();
+        assert_eq!(s.recall_semantic("a", &[1.0, 0.0], 5, &toy).len(), 1);
+        let path = d.join("memory/a.jsonl");
+        let mut f = OpenOptions::new().append(true).open(&path).unwrap();
+        f.write_all(b"{\"at\":2,\"text\":\"new p").unwrap();
+        assert_eq!(s.recall_semantic("a", &[1.0, 0.0], 5, &toy).len(), 1);
+        f.write_all(b"b\"}\n").unwrap();
+        assert_eq!(s.recall_semantic("a", &[1.0, 0.0], 5, &toy).len(), 2);
+    }
+
+    #[test]
+    fn a_replaced_or_deleted_memory_file_rebuilds_the_index() {
+        let d = tmp("replace");
+        let s = Store::open(&d).unwrap();
+        s.put(&AgentSpec::new("a", "x")).unwrap();
+        s.remember("a", "rowed 12k and then rowed some more", 1).unwrap();
+        assert_eq!(s.recall_semantic("a", &[1.0, 0.0], 5, &toy).len(), 1);
+        // replaced by a shorter file behind the store's back
+        fs::write(d.join("memory/a.jsonl"), "{\"at\":9,\"text\":\"lunch\"}\n").unwrap();
+        fs::remove_file(d.join("memory/a.vecs.jsonl")).unwrap();
+        let hits = s.recall_semantic("a", &[0.0, 1.0], 5, &toy);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].text, "lunch");
+        // deleting the agent forgets its vectors too
+        s.delete("a").unwrap();
+        assert!(s.recall_semantic("a", &[0.0, 1.0], 5, &toy).is_empty());
+        assert!(!d.join("memory/a.vecs.jsonl").exists());
     }
 
     #[test]
