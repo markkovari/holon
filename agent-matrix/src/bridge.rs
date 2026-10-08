@@ -83,6 +83,49 @@ pub fn mentioned_agents(cfg: &Config, content: &Value) -> Vec<String> {
     out
 }
 
+/// The top-ranked member, but only when it beats the runner-up by a clear margin. Embedding
+/// scores of unrelated text sit high, so a bare top-1 is a guess; a near tie goes to the lead.
+pub fn clear_winner(ranked: &[(String, f32)]) -> Option<String> {
+    const MARGIN: f32 = 0.04;
+    match ranked {
+        [(a, x), (_, y), ..] if x - y >= MARGIN => Some(a.clone()),
+        [(a, _)] => Some(a.clone()),
+        _ => None,
+    }
+}
+
+/// The recent messages as `name: text` lines, oldest first, at most `budget` characters
+/// (the newest are kept), each message trimmed; the message `skip` and empty ones left out.
+/// `msgs` is the Matrix `/messages` chunk, newest first.
+pub fn history_lines(cfg: &Config, msgs: &[Value], skip: &str, budget: usize) -> String {
+    const PER_MESSAGE: usize = 400;
+    let mut picked: Vec<String> = Vec::new();
+    let mut used = 0;
+    for m in msgs {
+        if m["event_id"].as_str() == Some(skip) {
+            continue;
+        }
+        let body = m["content"]["body"].as_str().unwrap_or_default().trim();
+        if body.is_empty() || m["content"]["m.relates_to"]["rel_type"].as_str() == Some("m.replace")
+        {
+            continue;
+        }
+        let sender = m["sender"].as_str().unwrap_or_default();
+        let who = match cfg.agent_of(sender) {
+            Some(a) => a,
+            None => sender.trim_start_matches('@').split(':').next().unwrap_or(sender).to_string(),
+        };
+        let line = format!("{who}: {}", clip(body, PER_MESSAGE));
+        if used + line.len() > budget && !picked.is_empty() {
+            break;
+        }
+        used += line.len();
+        picked.push(line);
+    }
+    picked.reverse();
+    picked.join("\n")
+}
+
 /// Who answers a message in a project room.
 pub fn project_targets(
     members: &[String],
@@ -95,6 +138,20 @@ pub fn project_targets(
         return addressed;
     }
     lead.filter(|l| members.iter().any(|m| m == l)).map(|l| vec![l.to_string()]).unwrap_or_default()
+}
+
+/// What to say aloud of a written answer: the start of it, cut at a sentence end, short
+/// enough to listen to. The full text is always in the room.
+pub fn spoken_excerpt(answer: &str) -> String {
+    const LIMIT: usize = 700;
+    let a = answer.trim();
+    if a.chars().count() <= LIMIT {
+        return a.to_string();
+    }
+    let head: String = a.chars().take(LIMIT).collect();
+    let cut =
+        head.rfind(['.', '!', '?', '\n']).filter(|i| *i > LIMIT / 3).map_or(head.len(), |i| i + 1);
+    format!("{} The rest is in the message.", head[..cut].trim())
 }
 
 /// A project name from a Space's display name: lowercase words joined by dashes, each
@@ -517,14 +574,22 @@ impl Bridge {
             return;
         };
         let content = &ev["content"];
-        if content["msgtype"].as_str() != Some("m.text") {
+        // A voice message (or any audio) is heard; text is read. Nothing else is input.
+        let heard = content["msgtype"].as_str() == Some("m.audio");
+        if !heard && content["msgtype"].as_str() != Some("m.text") {
             return;
         }
-        let body = content["body"].as_str().unwrap_or_default().trim().to_string();
-        if body.is_empty() {
+        let body = if heard {
+            String::new()
+        } else {
+            content["body"].as_str().unwrap_or_default().trim().to_string()
+        };
+        if !heard && body.is_empty() {
             return;
         }
         let agents: Vec<String> = match self.state.kind_of(room) {
+            // commands are typed; a voice message here is ignored
+            Some(RoomKind::Control) if heard => return,
             Some(RoomKind::Control) => {
                 let me = self.clone();
                 let (room, bridge) = (room.to_string(), self.bridge_user());
@@ -536,18 +601,62 @@ impl Bridge {
                 return;
             }
             Some(RoomKind::Dm(a)) => vec![a],
-            Some(RoomKind::ProjectFeed(_)) | Some(RoomKind::ProjectSpace(_)) => return,
-            Some(RoomKind::ProjectGeneral(p)) | Some(RoomKind::ProjectRoom(p)) => {
+            Some(RoomKind::ProjectSpace(_)) => return,
+            Some(RoomKind::ProjectGeneral(p))
+            | Some(RoomKind::ProjectRoom(p))
+            | Some(RoomKind::ProjectFeed(p)) => {
                 let Some(info) =
                     self.rt.projects().ok().and_then(|ps| ps.into_iter().find(|x| x.name == p))
                 else {
                     return;
                 };
-                project_targets(
-                    &info.agents,
-                    info.lead.as_deref(),
-                    &mentioned_agents(&self.cfg, content),
-                )
+                let mentioned = mentioned_agents(&self.cfg, content);
+                let named = mentioned.iter().any(|a| info.agents.contains(a));
+                // Nobody named: when an embedding service is configured and one member
+                // fits clearly better than the rest, that member answers; else the lead.
+                // Jev first when a key file is configured; else (or when it cannot say) the
+                // embedding margin.
+                let jev_key = std::env::var("HOLON_JEV_KEY_FILE").unwrap_or_default();
+                let by_jev = if named || jev_key.is_empty() || info.agents.len() < 2 {
+                    None
+                } else {
+                    let known = self.rt.agents().unwrap_or_default();
+                    let cands: Vec<(String, String)> = info
+                        .agents
+                        .iter()
+                        .map(|a| {
+                            let d = known.iter().find(|k| &k.name == a);
+                            (a.clone(), d.map(|k| k.description.clone()).unwrap_or_default())
+                        })
+                        .collect();
+                    crate::jev::affected(&jev_key, &body, &cands).filter(|v| !v.is_empty())
+                };
+                let judged = if by_jev.is_some() {
+                    None
+                } else {
+                    // the runtime owns the embedding service (and starts it when needed)
+                    match (!named && info.agents.len() > 1).then_some(()) {
+                        Some(()) => {
+                            let known = self.rt.agents().unwrap_or_default();
+                            let cands: Vec<(String, String)> = info
+                                .agents
+                                .iter()
+                                .map(|a| {
+                                    let d = known.iter().find(|k| &k.name == a);
+                                    (
+                                        a.clone(),
+                                        d.map(|k| k.description.clone()).unwrap_or_default(),
+                                    )
+                                })
+                                .collect();
+                            self.rt.rank(&body, &cands).and_then(|r| clear_winner(&r))
+                        }
+                        None => None,
+                    }
+                };
+                by_jev.or_else(|| judged.map(|a| vec![a])).unwrap_or_else(|| {
+                    project_targets(&info.agents, info.lead.as_deref(), &mentioned)
+                })
             }
             // A room the owner made by hand: whichever agents are in it and addressed.
             None => {
@@ -573,9 +682,101 @@ impl Bridge {
             }
         };
         for agent in agents {
-            let (me, room, event_id, body) =
-                (self.clone(), room.to_string(), event_id.to_string(), body.clone());
-            std::thread::spawn(move || me.answer(&agent, &room, &event_id, &body));
+            let (me, room, event_id, body, content) = (
+                self.clone(),
+                room.to_string(),
+                event_id.to_string(),
+                body.clone(),
+                content.clone(),
+            );
+            if heard {
+                std::thread::spawn(move || me.answer_voice(&agent, &room, &event_id, &content));
+            } else {
+                std::thread::spawn(move || me.answer(&agent, &room, &event_id, &body));
+            }
+        }
+    }
+
+    /// A voice message to an agent: download it, transcribe it, show what was heard, run
+    /// the agent on the transcript, and answer in text AND in voice (voice in, voice out).
+    fn answer_voice(&self, agent: &str, room: &str, reply_to: &str, content: &Value) {
+        // The agent says what it heard, and speaks its own errors: the bridge's user is not
+        // a member of an agent's direct room, but the agent is.
+        let ghost = self.cfg.ghost(agent);
+        let _ = self.mx.join(room, &ghost);
+        let note = |text: &str| {
+            let _ = self.mx.send_text(room, &ghost, text, Some(reply_to));
+        };
+        let Some(mxc) = content["url"].as_str() else {
+            note("I can only hear voice messages in unencrypted rooms (this one is encrypted, or the message has no audio).");
+            return;
+        };
+        let audio = match self.mx.download(mxc, &ghost) {
+            Ok(a) => a,
+            Err(e) => return note(&format!("⚠️ I could not fetch that recording: {e}")),
+        };
+        self.mx.typing(room, &ghost, true);
+        let heard = self.rt.transcribe(audio);
+        let text = match heard {
+            Ok(t) if t.trim().is_empty() => {
+                self.mx.typing(room, &ghost, false);
+                return note("🎙️ I did not catch anything in that recording.");
+            }
+            Ok(t) => t.trim().to_string(),
+            Err(e) => {
+                self.mx.typing(room, &ghost, false);
+                let why = if e.contains("not configured") {
+                    "speech-to-text is not set up on the runtime (start it with --stt-bin)"
+                        .to_string()
+                } else {
+                    clip(&e, 300)
+                };
+                return note(&format!("⚠️ I could not understand that recording: {why}"));
+            }
+        };
+        note(&format!("🎙️ “{}”", clip(&text, 1_000)));
+        let (ok, answer) = self.rt.run(agent, &self.task(room, "", &text), &self.why(room), None);
+        self.mx.typing(room, &ghost, false);
+        let written = if ok {
+            if answer.trim().is_empty() {
+                "(no answer)".to_string()
+            } else {
+                clip(&answer, MAX_REPLY)
+            }
+        } else {
+            format!("⚠️ {}", clip(&answer, 2_000))
+        };
+        if let Err(e) = self.mx.send_text(room, &ghost, &written, Some(reply_to)) {
+            log(&format!("{agent}: could not post the answer: {e}"));
+        }
+        // ...and the same answer, spoken, if the runtime can speak.
+        if ok && self.rt.speech_caps().1 {
+            self.speak_in(room, &ghost, &spoken_excerpt(&answer), reply_to);
+        }
+    }
+
+    /// Posts `text` as a voice message from `ghost`.
+    fn speak_in(&self, room: &str, ghost: &str, text: &str, reply_to: &str) {
+        let spoken = match self.rt.speak(text) {
+            Ok(s) => s,
+            Err(e) => return log(&format!("could not speak: {e}")),
+        };
+        let size = spoken.audio.len();
+        let uri = match self.mx.upload(spoken.audio, "audio/ogg", "voice-message.ogg", ghost) {
+            Ok(u) => u,
+            Err(e) => return log(&format!("could not upload the voice message: {e}")),
+        };
+        let content = json!({
+            "msgtype": "m.audio",
+            "body": "Voice message",
+            "url": uri,
+            "info": {"mimetype": "audio/ogg", "size": size, "duration": spoken.duration_ms},
+            "org.matrix.msc1767.audio": {"duration": spoken.duration_ms, "waveform": spoken.waveform},
+            "org.matrix.msc3245.voice": {},
+            "m.relates_to": {"m.in_reply_to": {"event_id": reply_to}},
+        });
+        if let Err(e) = self.mx.send_event(room, ghost, "m.room.message", content) {
+            log(&format!("could not post the voice message: {e}"));
         }
     }
 
@@ -585,7 +786,8 @@ impl Bridge {
         // The agent may not be in this room yet (a hand-made one it was invited to).
         let _ = self.mx.join(room, &ghost);
         self.mx.typing(room, &ghost, true);
-        let (ok, answer) = self.rt.run(agent, text, None);
+        let (ok, answer) =
+            self.rt.run(agent, &self.task(room, reply_to, text), &self.why(room), None);
         self.mx.typing(room, &ghost, false);
         let body = if ok {
             if answer.trim().is_empty() {
@@ -598,6 +800,35 @@ impl Bridge {
         };
         if let Err(e) = self.mx.send_text(room, &ghost, &body, Some(reply_to)) {
             log(&format!("{agent}: could not post the answer: {e}"));
+        }
+    }
+
+    /// Why an agent is being woken, for its `Trigger:` line.
+    fn why(&self, room: &str) -> String {
+        match self.state.kind_of(room) {
+            Some(RoomKind::Dm(_)) => "mark sent you a direct message".to_string(),
+            Some(RoomKind::ProjectGeneral(p))
+            | Some(RoomKind::ProjectRoom(p))
+            | Some(RoomKind::ProjectFeed(p)) => format!("mark wrote in the project {p}"),
+            _ => "mark wrote in a room you are in".to_string(),
+        }
+    }
+
+    /// What the agent is handed: the recent conversation (so it knows what the message is
+    /// about and who said what), then the new message. `HOLON_HISTORY_CHARS` bounds the
+    /// history (default 3000; 0 sends the bare message). `skip` is the message being answered.
+    fn task(&self, room: &str, skip: &str, text: &str) -> String {
+        let budget: usize =
+            std::env::var("HOLON_HISTORY_CHARS").ok().and_then(|v| v.parse().ok()).unwrap_or(3000);
+        if budget == 0 {
+            return text.to_string();
+        }
+        let msgs = self.mx.messages_as_owner(room, 30).unwrap_or_default();
+        let lines = history_lines(&self.cfg, &msgs, skip, budget);
+        if lines.is_empty() {
+            text.to_string()
+        } else {
+            format!("Conversation so far (oldest first):\n{lines}\n\nThe new message, from mark:\n{text}")
         }
     }
 
@@ -756,6 +987,36 @@ mod tests {
     }
 
     #[test]
+    fn history_is_oldest_first_attributed_bounded_and_leaves_out_the_message_being_answered() {
+        let cfg = cfg();
+        let m = |id: &str, from: &str, body: &str| json!({"event_id": id, "sender": from, "content": {"body": body}});
+        let agent = cfg.ghost("coach");
+        let owner = cfg.owner.clone();
+        // newest first, as Matrix returns them
+        let msgs = vec![
+            m("$4", &owner, "yes"),
+            m("$3", &agent, "Shall I ask the rower?"),
+            m("$2", &owner, "how was my row"),
+            m("$1", &owner, ""),
+        ];
+        let all = history_lines(&cfg, &msgs, "$4", 10_000);
+        assert_eq!(all, "mark: how was my row\ncoach: Shall I ask the rower?");
+        // a tight budget keeps the newest and drops the oldest
+        let tight = history_lines(&cfg, &msgs, "$4", 30);
+        assert_eq!(tight, "coach: Shall I ask the rower?");
+        assert_eq!(history_lines(&cfg, &[], "", 100), "");
+    }
+
+    #[test]
+    fn only_a_clear_margin_picks_a_member() {
+        let r = |v: &[(&str, f32)]| v.iter().map(|(n, s)| (n.to_string(), *s)).collect::<Vec<_>>();
+        assert_eq!(clear_winner(&r(&[("rower", 0.70), ("coach", 0.62)])).as_deref(), Some("rower"));
+        assert_eq!(clear_winner(&r(&[("rower", 0.70), ("coach", 0.68)])), None);
+        assert_eq!(clear_winner(&r(&[("rower", 0.5)])).as_deref(), Some("rower"));
+        assert_eq!(clear_winner(&[]), None);
+    }
+
+    #[test]
     fn a_spaces_name_becomes_a_valid_project_name() {
         assert_eq!(slug("Nutrition"), "nutrition");
         assert_eq!(slug("Nutrition & Meals 2"), "nutrition-meals-n2");
@@ -773,5 +1034,19 @@ mod tests {
                 "{n} -> {s}"
             );
         }
+    }
+
+    #[test]
+    fn a_long_answer_is_spoken_in_part_and_cut_at_a_sentence() {
+        assert_eq!(spoken_excerpt("  Short answer.  "), "Short answer.");
+        let long = format!("{} Final bit.", "This is a sentence. ".repeat(80));
+        let said = spoken_excerpt(&long);
+        assert!(said.ends_with("The rest is in the message."), "{said}");
+        assert!(said.chars().count() < 800, "{}", said.chars().count());
+        assert!(said.contains("This is a sentence."));
+        assert!(!said.contains("Final bit."));
+        // no sentence end to cut at: still bounded
+        let blob = "x".repeat(2000);
+        assert!(spoken_excerpt(&blob).chars().count() < 800);
     }
 }

@@ -31,6 +31,7 @@ pub struct Usage {
     pub output: u64,
 }
 
+#[derive(Debug)]
 pub struct Reply {
     pub text: String,
     pub usage: Usage,
@@ -60,8 +61,30 @@ pub fn complete(
             let model = if local.model.is_empty() { "system" } else { &local.model };
             openai(base, model, "", system, messages)
         }
-        ModelSpec::OpenAi { base_url, model, api_key_env } => {
-            openai(base_url, model, &key(api_key_env)?, system, messages)
+        ModelSpec::OpenAi { base_url, model, api_key_env, api_key_file, service } => {
+            let k = if api_key_file.is_empty() {
+                key(api_key_env)?
+            } else {
+                key_from_file(api_key_file)?
+            };
+            if !service.is_empty() {
+                crate::lazy::ensure(service, base_url)?;
+            }
+            let r = openai(base_url, model, &k, system, messages);
+            if !service.is_empty() {
+                crate::lazy::touch(service);
+            }
+            r
+        }
+        ModelSpec::Fallback { models } => {
+            let mut errors: Vec<String> = Vec::new();
+            for m in models {
+                match complete(m, local, system, messages, mock_cursor) {
+                    Ok(r) => return Ok(r),
+                    Err(e) => errors.push(e),
+                }
+            }
+            Err(format!("no model answered: {}", errors.join(" | ")))
         }
         ModelSpec::Anthropic { model, api_key_env } => {
             anthropic(model, &key(api_key_env)?, system, messages)
@@ -85,6 +108,17 @@ fn key(env: &str) -> Result<String, String> {
     std::env::var(env).map_err(|_| format!("environment variable {env} is not set"))
 }
 
+/// A key read from a file at the moment it is needed (never kept, never logged).
+fn key_from_file(path: &str) -> Result<String, String> {
+    let k = std::fs::read_to_string(path).map_err(|e| format!("key file {path}: {e}"))?;
+    let k = k.trim().to_string();
+    if k.is_empty() {
+        Err(format!("key file {path} is empty"))
+    } else {
+        Ok(k)
+    }
+}
+
 fn http() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(120))
@@ -97,15 +131,21 @@ fn openai(base: &str, model: &str, key: &str, system: &str, msgs: &[Msg]) -> Res
     messages.extend(msgs.iter().map(|m| json!({"role": m.role, "content": m.content})));
     let mut req = http()?
         .post(format!("{}/v1/chat/completions", base.trim_end_matches('/')))
-        .json(&json!({"model": model, "messages": messages, "stream": false}));
+        // Room for a reasoning model to think AND answer; some servers default to a few hundred.
+        .json(&json!({"model": model, "messages": messages, "stream": false, "max_tokens": 4096}));
     if !key.is_empty() {
         req = req.bearer_auth(key);
     }
     let v = send(req)?;
-    let text = v["choices"][0]["message"]["content"]
-        .as_str()
-        .ok_or_else(|| format!("unexpected model response: {}", clip(&v.to_string())))?
-        .to_string();
+    let text = match v["choices"][0]["message"]["content"].as_str() {
+        Some(t) => t.to_string(),
+        None if v["choices"][0]["finish_reason"] == "length" => {
+            return Err("the model ran out of tokens while thinking and never answered; \
+                        ask again, or use a model that thinks less"
+                .into())
+        }
+        None => return Err(format!("unexpected model response: {}", clip(&v.to_string()))),
+    };
     Ok(Reply {
         text,
         usage: Usage {
@@ -150,4 +190,56 @@ fn send(req: reqwest::blocking::RequestBuilder) -> Result<Value, String> {
 
 fn clip(s: &str) -> String {
     s.chars().take(300).collect()
+}
+
+#[cfg(test)]
+mod fallback_tests {
+    use super::*;
+
+    fn mock(replies: &[&str]) -> ModelSpec {
+        ModelSpec::Mock { replies: replies.iter().map(|r| r.to_string()).collect() }
+    }
+
+    fn ask(spec: &ModelSpec) -> Result<Reply, String> {
+        complete(
+            spec,
+            &LocalModel::default(),
+            "sys",
+            &[Msg::user("hi".to_string())],
+            &Mutex::new(0),
+        )
+    }
+
+    #[test]
+    fn the_first_model_that_answers_is_used_and_all_failing_is_an_error_naming_each() {
+        // the first has no replies (it errors), the second answers
+        let chain = ModelSpec::Fallback { models: vec![mock(&[]), mock(&["second"])] };
+        // each mock shares the cursor of the call, so the second starts at 0 too
+        assert_eq!(ask(&chain).unwrap().text, "second");
+        let dead = ModelSpec::Fallback {
+            models: vec![
+                ModelSpec::OpenAi {
+                    base_url: "http://127.0.0.1:1".into(),
+                    model: "m".into(),
+                    api_key_env: String::new(),
+                    api_key_file: String::new(),
+                    service: String::new(),
+                },
+                ModelSpec::Local,
+            ],
+        };
+        let e = ask(&dead).unwrap_err();
+        assert!(e.starts_with("no model answered: ") && e.contains(" | "), "{e}");
+    }
+
+    #[test]
+    fn a_key_file_is_read_trimmed_and_a_missing_or_empty_one_is_an_error() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("k");
+        std::fs::write(&f, "  sk-test\n").unwrap();
+        assert_eq!(key_from_file(f.to_str().unwrap()).unwrap(), "sk-test");
+        std::fs::write(&f, "\n").unwrap();
+        assert!(key_from_file(f.to_str().unwrap()).unwrap_err().contains("empty"));
+        assert!(key_from_file("/nonexistent/key").is_err());
+    }
 }

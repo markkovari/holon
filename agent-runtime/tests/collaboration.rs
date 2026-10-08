@@ -634,8 +634,77 @@ fn an_agent_is_told_which_project_it_is_in_and_who_else_is() {
     let eff = agent_runtime::projects::effective(
         &rt.store().get("scout").unwrap(),
         &rt.store().list_projects(),
+        &[("coach".into(), "Coaches rowing. Brief.".into())],
     );
+    // members may ask each other, described, without any hand-written grant
+    let ask = eff.capabilities.iter().find(|c| c.name == "agent:coach").unwrap();
+    assert_eq!(ask.description, "Ask coach. Coaches rowing.");
+    assert!(!eff.has_capability("agent:scout"));
     assert_eq!(eff.projects[0].members, ["scout", "coach"]);
     assert_eq!(eff.projects[0].lead.as_deref(), Some("coach"));
     assert_eq!(eff.projects[0].store_ns, "project.rowing");
+}
+
+#[test]
+fn an_agent_granted_the_tools_can_create_change_pause_and_delete_other_agents() {
+    let rt = runtime("admin");
+    let create = r#"{"tool":"agent_save","args":{"name":"news","description":"Summarise the news.","capabilities":["remember"]}}"#;
+    let change = r#"{"tool":"agent_save","args":{"name":"news","description":"Summarise the news in one line."}}"#;
+    let pause = r#"{"tool":"agent_pause","args":{"name":"news","paused":true}}"#;
+    let delete = r#"{"tool":"agent_delete","args":{"name":"news"}}"#;
+    let selfdel = r#"{"tool":"agent_delete","args":{"name":"holon"}}"#;
+    let mut holon =
+        agent("holon", &[create, "ok", change, "ok", pause, "ok", selfdel, "ok", delete, "ok"]);
+    for t in ["agent_save", "agent_pause", "agent_delete", "agents_list"] {
+        holon.capabilities.push(Capability::named(t));
+    }
+    holon.auto_approve = vec!["agent_save".into(), "agent_delete".into()];
+    rt.create_agent(holon).unwrap();
+
+    let ask = |rt: &Arc<Runtime>| {
+        rt.run_agent("holon", "http", "go", &Cause::default(), "", true).unwrap()
+    };
+    ask(&rt);
+    let n = rt.store().get("news").expect("created");
+    assert!(n.has_capability("remember"));
+    ask(&rt);
+    let n = rt.store().get("news").unwrap();
+    assert_eq!(n.description, "Summarise the news in one line.");
+    assert!(n.has_capability("remember"), "a change keeps the fields it did not mention");
+    ask(&rt);
+    assert!(rt.store().get("news").unwrap().paused);
+    let r = ask(&rt);
+    assert!(
+        r.steps.iter().any(
+            |s| matches!(s, Step::Tool { error: true, result, .. } if result.contains("yourself"))
+        ),
+        "an agent cannot delete itself"
+    );
+    assert!(rt.store().get("holon").is_some());
+    ask(&rt);
+    assert!(rt.store().get("news").is_none(), "deleted");
+}
+
+#[test]
+fn a_run_that_misses_a_required_tool_is_retried_on_the_next_model_of_its_chain() {
+    let rt = runtime("escalate");
+    let mock = |replies: &[&str]| ModelSpec::Mock {
+        replies: replies.iter().map(|r| r.to_string()).collect(),
+    };
+    let mut a = AgentSpec::new("picky", "must remember");
+    a.must_call = vec!["remember".into()];
+    // the first model answers without the tool, then twice more when nudged; the second does it
+    a.model = ModelSpec::Fallback {
+        models: vec![
+            mock(&["no tool", "still no tool", "nope"]),
+            // a mock agent's reply cursor is shared by its runs: the first run used 3
+            mock(&["-", "-", "-", r#"{"tool":"remember","args":{"text":"x"}}"#, "done"]),
+        ],
+    };
+    rt.create_agent(a).unwrap();
+    let r = rt.run_agent("picky", "http", "go", &Cause::default(), "", true).unwrap();
+    assert_eq!((r.status, r.answer.as_str()), (Status::Ok, "done"));
+    let runs = rt.store().runs("picky", 5);
+    assert_eq!(runs.len(), 2, "the failed attempt is kept, visibly");
+    assert_eq!(rt.store().recall("picky", "x", 5).len(), 1);
 }

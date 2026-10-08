@@ -60,6 +60,17 @@ impl Project {
     }
 }
 
+/// The first sentence or two of a description, short enough to list many of.
+fn short(d: &str) -> String {
+    let d = d.trim();
+    let cut = d.char_indices().nth(200).map_or(d.len(), |(i, _)| i);
+    let head = &d[..cut];
+    match head.find(". ") {
+        Some(i) => head[..=i].to_string(),
+        None => head.to_string(),
+    }
+}
+
 /// What an agent knows about a project it belongs to. Filled in at run time
 /// from the registry; never written into the agent's spec file.
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -74,7 +85,11 @@ pub struct ProjectInfo {
 
 /// `spec` with the grants its project memberships imply. The stored spec is
 /// untouched; this is what a run actually uses.
-pub fn effective(spec: &AgentSpec, projects: &[Project]) -> AgentSpec {
+pub fn effective(
+    spec: &AgentSpec,
+    projects: &[Project],
+    directory: &[(String, String)],
+) -> AgentSpec {
     let mut s = spec.clone();
     for p in projects.iter().filter(|p| p.agents.contains(&spec.name)) {
         let ns = p.store_ns();
@@ -89,6 +104,18 @@ pub fn effective(spec: &AgentSpec, projects: &[Project]) -> AgentSpec {
         for tool in ["store_get", "store_put", "store_list", "emit_event"] {
             if !s.has_capability(tool) {
                 s.capabilities.push(Capability::named(tool));
+            }
+        }
+        // Every other member is one this agent may ask, with what it is for, so the
+        // agent itself decides whether any of them fits what it was asked.
+        for m in p.agents.iter().filter(|m| **m != spec.name) {
+            let cap = format!("agent:{m}");
+            if !s.has_capability(&cap) {
+                let about = directory.iter().find(|(n, _)| n == m).map(|(_, d)| d.as_str());
+                s.capabilities.push(Capability {
+                    description: format!("Ask {m}. {}", short(about.unwrap_or_default())),
+                    ..Capability::named(&cap)
+                });
             }
         }
         s.projects.push(ProjectInfo {
@@ -120,7 +147,7 @@ mod tests {
     fn membership_grants_the_namespace_the_topics_and_the_tools() {
         let spec = AgentSpec::new("coach", "coaches");
         assert!(!spec.has_capability("store_put") && spec.store.write.is_empty());
-        let eff = effective(&spec, &[project("rowing", &["coach", "rower"])]);
+        let eff = effective(&spec, &[project("rowing", &["coach", "rower"])], &[]);
         assert_eq!(eff.store.write, ["project.rowing"]);
         assert_eq!(eff.topics_out, ["rowing.*"]);
         for t in ["store_get", "store_put", "store_list", "emit_event"] {
@@ -134,11 +161,11 @@ mod tests {
     #[test]
     fn non_members_get_nothing_and_grants_are_not_duplicated() {
         let spec = AgentSpec::new("other", "x");
-        assert_eq!(effective(&spec, &[project("rowing", &["coach"])]), spec);
+        assert_eq!(effective(&spec, &[project("rowing", &["coach"])], &[]), spec);
         let mut own = AgentSpec::new("coach", "x");
         own.store.write.push("project.rowing".into());
         own.capabilities.push(Capability::named("store_put"));
-        let eff = effective(&own, &[project("rowing", &["coach"])]);
+        let eff = effective(&own, &[project("rowing", &["coach"])], &[]);
         assert_eq!(eff.store.write, ["project.rowing"]);
         assert_eq!(eff.capabilities.iter().filter(|c| c.name == "store_put").count(), 1);
     }
@@ -149,6 +176,7 @@ mod tests {
         let eff = effective(
             &spec,
             &[project("rowing", &["coach"]), project("nutrition", &["coach", "chef"])],
+            &[],
         );
         assert_eq!(eff.store.write, ["project.rowing", "project.nutrition"]);
         assert_eq!(eff.topics_out, ["rowing.*", "nutrition.*"]);

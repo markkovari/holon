@@ -60,6 +60,12 @@ pub struct Config {
     /// `<endpoint>/v1/traces`. The standard `OTEL_EXPORTER_OTLP_ENDPOINT`
     /// variable is honoured by the daemon and the console.
     pub otlp_endpoint: Option<String>,
+    /// On-device speech engines (see `speech.rs`). Nothing is configured by default.
+    pub speech: crate::speech::SpeechConfig,
+    /// Where the embedding service listens (`embed/server.py`); empty: memories are recalled by shared words.
+    pub embed_url: String,
+    /// The launchd service behind `embed_url`, started on demand (see `lazy.rs`).
+    pub embed_service: String,
 }
 
 impl Config {
@@ -71,6 +77,9 @@ impl Config {
             breaker_threshold: 5,
             breaker_cooldown: Duration::from_secs(120),
             otlp_endpoint: None,
+            speech: Default::default(),
+            embed_url: String::new(),
+            embed_service: String::new(),
         }
     }
 }
@@ -109,6 +118,8 @@ pub struct Runtime {
     kv: Kv,
     bus: Box<dyn Bus>,
     cfg: Config,
+    speech: crate::speech::Speech,
+    embedder: Option<crate::embed::Embedder>,
     local: Mutex<LocalModel>,
     started: u64,
     busy: Mutex<HashMap<String, Arc<Mutex<()>>>>,
@@ -189,6 +200,21 @@ pub fn validate_spec(spec: &AgentSpec) -> Result<(), String> {
     Ok(())
 }
 
+/// How long an agent calling another agent waits for it to finish its current run.
+const CALL_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// Whether a finished run is the kind of failure another model might not have.
+fn needs_better_model(rec: &RunRecord) -> bool {
+    (rec.status == Status::Failed && rec.answer.starts_with("never called required tool"))
+        || (rec.status == Status::Ok && rec.answer.trim().is_empty())
+}
+
+thread_local! {
+    /// The agents whose runs are in progress on this thread, outermost first: a call from
+    /// an agent's run is made on its thread, so this is the call stack of agents.
+    static RUNNING_HERE: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 impl Runtime {
     pub fn new(cfg: Config) -> Result<Arc<Self>, String> {
         let store = Store::open(&cfg.state_dir)?;
@@ -205,6 +231,8 @@ impl Runtime {
             kv,
             bus: Box::new(bus),
             local: Mutex::new(cfg.local.clone()),
+            speech: crate::speech::Speech::new(cfg.speech.clone()),
+            embedder: crate::embed::Embedder::new(&cfg.embed_url, &cfg.embed_service),
             cfg,
             started: unix_now(),
             busy: Mutex::new(HashMap::new()),
@@ -235,6 +263,20 @@ impl Runtime {
 
     pub fn kv(&self) -> &Kv {
         &self.kv
+    }
+
+    /// Embeds `texts` with the embedding service (starting it if it is on demand). `None` when
+    /// none is configured or it cannot answer.
+    pub fn has_embedder(&self) -> bool {
+        self.embedder.is_some()
+    }
+
+    pub fn embed_texts(&self, texts: &[String], kind: &str) -> Option<Vec<Vec<f32>>> {
+        self.embedder.as_ref()?.embed(texts, kind)
+    }
+
+    pub fn speech(&self) -> &crate::speech::Speech {
+        &self.speech
     }
 
     pub fn bus(&self) -> &dyn Bus {
@@ -457,10 +499,43 @@ impl Runtime {
             return Err(format!("{name} is paused"));
         }
         // What a run may do is its own spec plus whatever its projects grant.
-        let spec = crate::projects::effective(&spec, &self.store.list_projects());
+        let directory: Vec<(String, String)> =
+            self.store.list().into_iter().map(|a| (a.name, a.description)).collect();
+        let mut spec = crate::projects::effective(&spec, &self.store.list_projects(), &directory);
+        // A capability named after a shared connector gets its definition from there.
+        let dir = self.store.connectors_dir();
+        for c in spec.capabilities.iter_mut().filter(|c| c.exec.is_none()) {
+            if let Some(d) = crate::connector::load(&dir, &c.name) {
+                c.exec = Some(d.exec);
+                if c.description.is_empty() {
+                    c.description = d.description;
+                }
+            }
+        }
         let lock = self.lock_for(name);
         let _guard = if wait {
             lock.lock().unwrap()
+        } else if via == "call" {
+            // An agent further up this very call stack is waiting on us: queueing
+            // behind it would be a certain deadlock.
+            if RUNNING_HERE.with(|r| r.borrow().iter().any(|n| n == name)) {
+                return Err(format!("{name} is already waiting on this call"));
+            }
+            // An agent asked by another agent queues behind the run in progress (the
+            // owner may have just addressed both). Bounded, so two agents waiting on
+            // each other time out with an error instead of hanging.
+            let deadline = std::time::Instant::now() + CALL_WAIT;
+            loop {
+                match lock.try_lock() {
+                    Ok(g) => break g,
+                    Err(_) if std::time::Instant::now() < deadline => {
+                        std::thread::sleep(std::time::Duration::from_millis(100))
+                    }
+                    Err(_) => {
+                        return Err(format!("{name} stayed busy for {}s", CALL_WAIT.as_secs()))
+                    }
+                }
+            }
         } else {
             lock.try_lock().map_err(|_| format!("{name} is busy with another run"))?
         };
@@ -473,7 +548,25 @@ impl Runtime {
         if !via.is_empty() {
             c.chain.push(format!("{name}|{via}"));
         }
-        let rec = agent::run(self, &spec, trigger, input, &c);
+        RUNNING_HERE.with(|r| r.borrow_mut().push(name.to_string()));
+        let mut rec = agent::run(self, &spec, trigger, input, &c);
+        // A run that fails a check the agent sets (a tool it must call) or says nothing is
+        // tried again on the next model of its fallback chain, so a hosted model's miss is
+        // the local model's turn, and a good hosted answer never wakes a local server.
+        if let crate::spec::ModelSpec::Fallback { models } = &spec.model {
+            let mut rest = &models[..];
+            while rest.len() > 1 && needs_better_model(&rec) {
+                rest = &rest[1..];
+                let mut again = spec.clone();
+                again.model = if rest.len() == 1 {
+                    rest[0].clone()
+                } else {
+                    crate::spec::ModelSpec::Fallback { models: rest.to_vec() }
+                };
+                rec = agent::run(self, &again, trigger, input, &c);
+            }
+        }
+        RUNNING_HERE.with(|r| r.borrow_mut().pop());
         self.note_outcome(name, rec.status == Status::Ok);
         Ok(rec)
     }
@@ -969,6 +1062,36 @@ impl Host for Runtime {
         }
         self.save_timers();
         Ok(())
+    }
+
+    fn transcribe(&self, audio: &[u8], lang: Option<&str>) -> Result<String, String> {
+        self.speech.transcribe(audio, lang)
+    }
+
+    fn speak(&self, text: &str, voice: Option<&str>) -> Result<(Vec<u8>, u64), String> {
+        self.speech.speak(text, voice).map(|s| (s.audio, s.duration_ms))
+    }
+
+    fn save_agent(&self, spec: AgentSpec) -> Result<String, String> {
+        if self.store.get(&spec.name).is_some() {
+            self.update_agent(spec)?;
+            Ok("updated".into())
+        } else {
+            self.create_agent(spec)?;
+            Ok("created".into())
+        }
+    }
+
+    fn delete_agent(&self, name: &str) -> Result<(), String> {
+        Runtime::delete_agent(self, name)
+    }
+
+    fn pause_agent(&self, name: &str, paused: bool) -> Result<(), String> {
+        self.arc()?.set_paused(name, paused)
+    }
+
+    fn embed(&self, texts: &[String], kind: &str) -> Option<Vec<Vec<f32>>> {
+        self.embedder.as_ref()?.embed(texts, kind)
     }
 
     fn observe(&self, event: Event) {

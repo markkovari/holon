@@ -98,6 +98,25 @@ pub trait Host: Sync {
         prompt: &str,
         cause: &Cause,
     ) -> Result<(), String>;
+    /// Audio (any format ffmpeg reads) to text; empty when nothing was said.
+    fn transcribe(&self, audio: &[u8], lang: Option<&str>) -> Result<String, String>;
+    /// Text to a voice message: Ogg/Opus bytes and their length in ms.
+    fn speak(&self, text: &str, voice: Option<&str>) -> Result<(Vec<u8>, u64), String>;
+    /// Creates or replaces an agent's spec. Only called for agents granted `agent_save`.
+    fn save_agent(&self, _spec: AgentSpec) -> Result<String, String> {
+        Err("agent management is not available".into())
+    }
+    fn delete_agent(&self, _name: &str) -> Result<(), String> {
+        Err("agent management is not available".into())
+    }
+    fn pause_agent(&self, _name: &str, _paused: bool) -> Result<(), String> {
+        Err("agent management is not available".into())
+    }
+    /// Embed texts with the configured embedding service (`kind` "query" or "document");
+    /// `None` when there is none or it is down.
+    fn embed(&self, _texts: &[String], _kind: &str) -> Option<Vec<Vec<f32>>> {
+        None
+    }
     fn observe(&self, event: Event);
 }
 
@@ -213,10 +232,22 @@ const TOOLS: &[ToolDef] = &[
         sensitive: false,
     },
     ToolDef {
+        name: "transcribe",
+        args: r#"{"path": "recording.ogg", "lang": "en-US"}"#,
+        about: "Turn an audio file in your workspace into text (speech recognition).",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "speak",
+        args: r#"{"text": "...", "voice": "Samantha", "path": "speech/reply.ogg"}"#,
+        about: "Turn text into a spoken voice message saved in your workspace.",
+        sensitive: false,
+    },
+    ToolDef {
         name: "http_get",
         args: r#"{"url": "..."}"#,
         about: "Fetch a URL (only hosts you were allowed).",
-        sensitive: true,
+        sensitive: false,
     },
     ToolDef {
         name: "list_dir",
@@ -236,6 +267,36 @@ const TOOLS: &[ToolDef] = &[
         about: "Write a text file in your workspace.",
         sensitive: true,
     },
+    ToolDef {
+        name: "agents_list",
+        args: "{}",
+        about: "List every agent: name, what it is for, and its capabilities.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "agent_show",
+        args: r#"{"name": "..."}"#,
+        about: "Show one agent's full spec.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "agent_save",
+        args: r#"{"name": "...", "description": "what it is for, as instructions to it", "capabilities": ["http_get"], "schedule": "@every 1h", "prompt": "what to do when the schedule fires", "model": "qwen"}"#,
+        about: "Create an agent, or change the fields you give of an existing one. The owner approves first.",
+        sensitive: true,
+    },
+    ToolDef {
+        name: "agent_delete",
+        args: r#"{"name": "..."}"#,
+        about: "Delete an agent for good. The owner approves first.",
+        sensitive: true,
+    },
+    ToolDef {
+        name: "agent_pause",
+        args: r#"{"name": "...", "paused": true}"#,
+        about: "Pause (true) or resume (false) an agent.",
+        sensitive: false,
+    },
 ];
 
 fn tool_def(name: &str) -> Option<&'static ToolDef> {
@@ -254,7 +315,11 @@ fn required(name: &str) -> &'static [&'static str] {
         "schedule_self" => &["prompt"],
         "spawn_task" => &["agent", "message"],
         "task_result" => &["id"],
+        "transcribe" => &["path"],
+        "speak" => &["text"],
         "http_get" => &["url"],
+        "agent_show" | "agent_delete" | "agent_pause" => &["name"],
+        "agent_save" => &["name"],
         "read_file" => &["path"],
         "write_file" => &["path", "content"],
         n if n.starts_with("agent:") => &["message"],
@@ -274,6 +339,9 @@ fn primary(name: &str) -> Option<&'static str> {
         "store_get" | "store_list" => Some("ns"),
         "schedule_self" => Some("prompt"),
         "task_result" => Some("id"),
+        "agent_show" | "agent_delete" | "agent_pause" | "agent_save" => Some("name"),
+        "transcribe" => Some("path"),
+        "speak" => Some("text"),
         n if n.starts_with("agent:") => Some("message"),
         _ => None,
     }
@@ -296,6 +364,23 @@ fn normalize_args(name: &str, args: Value) -> Value {
 
 /// `Err` says exactly what was missing and how to call the tool, because the
 /// model reads this message to fix its call.
+fn check_connector(spec: &AgentSpec, name: &str, args: &Value) -> Result<(), String> {
+    let Some(x) = spec.capabilities.iter().find(|c| c.name == name).and_then(|c| c.exec.as_ref())
+    else {
+        return Ok(());
+    };
+    let missing: Vec<&str> =
+        x.required.iter().map(String::as_str).filter(|k| arg(args, k).is_empty()).collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "missing {}. Call it as {{\"tool\": \"{name}\", \"args\": {}}}",
+        missing.join(", "),
+        x.args
+    ))
+}
+
 fn check_args(name: &str, args: &Value) -> Result<(), String> {
     let missing: Vec<&str> =
         required(name).iter().copied().filter(|k| arg(args, k).is_empty()).collect();
@@ -319,6 +404,13 @@ fn clip(s: &str, n: usize) -> String {
 
 fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
     let mut s = format!("You are {}. {}\n\n", spec.name, spec.description);
+    s.push_str(
+        "You are asleep unless something wakes you; the `Trigger:` line of the task says what \
+         did (a message, a schedule, another agent, an event) and the task is why you are \
+         needed. You remember nothing between runs except what is written below or in the \
+         task. If the task shows the conversation so far, use it to understand what is being \
+         asked, and answer only the latest message.\n\n",
+    );
     let mut tools = String::new();
     let mut abilities = String::new();
     for c in &spec.capabilities {
@@ -326,6 +418,9 @@ fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
         if let Some(t) = tool_def(&c.name) {
             let about = if c.description.is_empty() { t.about } else { &c.description };
             tools.push_str(&format!("- {} {} — {about}{wit}\n", t.name, t.args));
+        } else if let Some(x) = &c.exec {
+            let about = if c.description.is_empty() { "A connector." } else { &c.description };
+            tools.push_str(&format!("- {} {} — {about}{wit}\n", c.name, x.args));
         } else if let Some(other) = c.name.strip_prefix("agent:") {
             let about = if c.description.is_empty() {
                 "Delegate a task to that agent."
@@ -393,7 +488,11 @@ fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
         ));
     }
     if !spec.projects.is_empty() {
-        s.push('\n');
+        s.push_str(
+            "If a question needs what another member knows or does, call that member's `agent:` \
+             tool yourself and use its answer. Never ask the person which member to use or who \
+             they are.\n\n",
+        );
     }
     let memories = host.store().recall(&spec.name, "", 5);
     if !memories.is_empty() {
@@ -530,7 +629,34 @@ pub fn loose_calls(text: &str, granted: &[&str]) -> Vec<(String, Value)> {
         }
     }
     found.sort_by_key(|(at, ..)| *at);
-    found.into_iter().map(|(_, n, a)| (n, a)).collect()
+    let mut calls: Vec<(String, Value)> = found.into_iter().map(|(_, n, a)| (n, a)).collect();
+    if calls.is_empty() {
+        calls.extend(bare_call(text, granted));
+    }
+    calls
+}
+
+/// A reply that is only `HTTP_GET https://example.com/x` (a tool name in any case and ONE
+/// bare argument): what a small model writes when it means to call a tool with a single
+/// obvious parameter. Prose that merely starts with a tool's name is left alone: the argument
+/// must be the whole rest of a one-line reply, with no spaces in it.
+fn bare_call(text: &str, granted: &[&str]) -> Option<(String, Value)> {
+    let t = text.trim();
+    if t.contains('\n') {
+        return None;
+    }
+    granted.iter().find_map(|name| {
+        let key = primary(name)?;
+        let head = t.get(..name.len())?;
+        if !head.eq_ignore_ascii_case(name) {
+            return None;
+        }
+        let arg =
+            t[name.len()..].trim().trim_matches(|c| matches!(c, '`' | '"' | '\'' | '(' | ')'));
+        let sep_ok = t[name.len()..].starts_with(|c: char| c.is_whitespace() || c == '(');
+        (sep_ok && !arg.is_empty() && !arg.contains(char::is_whitespace))
+            .then(|| (name.to_string(), json!({ key: arg })))
+    })
 }
 
 /// An argument as text. A model that sends `"value": {"a": 1}` or `"n": 5`
@@ -636,7 +762,14 @@ fn exec(
             Ok("saved".into())
         }
         "recall" => {
-            let hits = store.recall(&spec.name, &arg(args, "query"), 5);
+            let query = arg(args, "query");
+            let semantic = (!query.is_empty())
+                .then(|| host.embed(std::slice::from_ref(&query), "query"))
+                .flatten()
+                .and_then(|mut v| v.pop())
+                .map(|qv| store.recall_semantic(&spec.name, &qv, 5, &|t| host.embed(t, "document")))
+                .filter(|h| !h.is_empty());
+            let hits = semantic.unwrap_or_else(|| store.recall(&spec.name, &query, 5));
             Ok(if hits.is_empty() {
                 "nothing matched".into()
             } else {
@@ -722,6 +855,67 @@ fn exec(
             Some(TaskState::Done { ok: true, answer }) => format!("done: {answer}"),
             Some(TaskState::Done { ok: false, answer }) => format!("failed: {answer}"),
         }),
+        "agents_list" => {
+            let all = store.list();
+            Ok(if all.is_empty() {
+                "no agents".into()
+            } else {
+                all.iter().map(crate::admin::summary).collect::<Vec<_>>().join("\n")
+            })
+        }
+        "agent_show" => match store.get(&arg(args, "name")) {
+            Some(s) => serde_json::to_string_pretty(&s).map_err(|e| e.to_string()),
+            None => Err(format!("no agent named {}", arg(args, "name"))),
+        },
+        "agent_save" => {
+            let name = arg(args, "name");
+            if name == spec.name {
+                return Err("you may not change your own spec".into());
+            }
+            let existing = store.get(&name);
+            let new =
+                crate::admin::build_spec_with(existing.as_ref(), args, &|n| store.model_alias(n))?;
+            host.save_agent(new)?;
+            Ok(if existing.is_some() {
+                format!("updated {name}")
+            } else {
+                format!("created {name}")
+            })
+        }
+        "agent_delete" => {
+            let name = arg(args, "name");
+            if name == spec.name {
+                return Err("you may not delete yourself".into());
+            }
+            host.delete_agent(&name)?;
+            Ok(format!("deleted {name}"))
+        }
+        "agent_pause" => {
+            let paused = !matches!(args.get("paused"), Some(Value::Bool(false)))
+                && arg(args, "paused") != "false";
+            host.pause_agent(&arg(args, "name"), paused)?;
+            Ok(if paused { "paused".into() } else { "resumed".into() })
+        }
+        "transcribe" => {
+            let p = confine(&store.workspace(&spec.name)?, &arg(args, "path"))?;
+            let bytes = std::fs::read(&p).map_err(|e| format!("{}: {e}", arg(args, "path")))?;
+            let lang = Some(arg(args, "lang")).filter(|l| !l.is_empty());
+            let text = host.transcribe(&bytes, lang.as_deref())?;
+            Ok(if text.is_empty() { "(no speech recognised)".to_string() } else { text })
+        }
+        "speak" => {
+            let voice = Some(arg(args, "voice")).filter(|v| !v.is_empty());
+            let (audio, ms) = host.speak(&arg(args, "text"), voice.as_deref())?;
+            let rel = Some(arg(args, "path"))
+                .filter(|p| !p.is_empty())
+                .unwrap_or_else(|| format!("speech/{}.ogg", host.now()));
+            let p = confine(&store.workspace(&spec.name)?, &rel)?;
+            if let Some(parent) = p.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::write(&p, audio).map_err(|e| e.to_string())?;
+            Ok(format!("wrote {rel} ({:.1}s of speech)", ms as f64 / 1000.0))
+        }
         "http_get" => http_get(spec, &arg(args, "url")),
         "list_dir" => {
             let root = store.workspace(&spec.name)?;
@@ -755,7 +949,15 @@ fn exec(
                 *child_tokens += spent;
                 Ok(answer)
             }
-            None => Err(format!("no such tool: {other}")),
+            None => match spec
+                .capabilities
+                .iter()
+                .find(|c| c.name == other)
+                .and_then(|c| c.exec.as_ref())
+            {
+                Some(x) => crate::connector::run(x, args),
+                None => Err(format!("no such tool: {other}")),
+            },
         },
     }
 }
@@ -767,6 +969,7 @@ pub fn model_label(m: &crate::spec::ModelSpec) -> String {
         Local => "local/system".to_string(),
         OpenAi { model, .. } => format!("openai/{model}"),
         Anthropic { model, .. } => format!("anthropic/{model}"),
+        Fallback { models } => models.first().map_or("fallback/none".to_string(), model_label),
         Mock { .. } => "mock/mock".to_string(),
     }
 }
@@ -915,7 +1118,7 @@ pub fn run(
                 );
                 break;
             }
-            rec.answer = reply.text;
+            rec.answer = reply.text.trim().to_string();
             break;
         }
 
@@ -928,12 +1131,18 @@ pub fn run(
             let t0 = host.now_ms();
             let (result, error, approved) = if !spec.has_capability(&name) {
                 (format!("`{name}` is not one of your capabilities"), true, None)
-            } else if let Err(e) = check_args(&name, &args) {
+            } else if let Err(e) =
+                check_args(&name, &args).and_then(|_| check_connector(spec, &name, &args))
+            {
                 // Malformed: never bother a human to approve a call that cannot run.
                 (e, true, None)
             } else {
-                let needs = tool_def(&name).is_some_and(|t| t.sensitive)
-                    && !spec.auto_approve.contains(&name);
+                let sensitive = tool_def(&name).map(|t| t.sensitive).unwrap_or_else(|| {
+                    spec.capabilities
+                        .iter()
+                        .any(|c| c.name == name && c.exec.as_ref().is_some_and(|x| x.sensitive))
+                });
+                let needs = sensitive && !spec.auto_approve.contains(&name);
                 let ok = !needs || host.approve(&spec.name, &name, &args, &cause.chain);
                 if ok {
                     // What this run passes on to anything it wakes: itself as
@@ -1149,6 +1358,12 @@ pub mod testkit {
             self.timers.lock().unwrap().push((agent.to_string(), in_secs, prompt.to_string()));
             Ok(())
         }
+        fn transcribe(&self, audio: &[u8], lang: Option<&str>) -> Result<String, String> {
+            Ok(format!("transcript of {} bytes in {}", audio.len(), lang.unwrap_or("default")))
+        }
+        fn speak(&self, text: &str, _: Option<&str>) -> Result<(Vec<u8>, u64), String> {
+            Ok((format!("OggS fake audio of: {text}").into_bytes(), 1_500))
+        }
         fn observe(&self, _: Event) {}
     }
 }
@@ -1168,7 +1383,7 @@ mod tests {
         s.capabilities.push(Capability {
             name: "poetry".into(),
             description: "write a haiku".into(),
-            wit: None,
+            ..Default::default()
         });
         s
     }
@@ -1552,5 +1767,100 @@ mod tests {
         run(&h, &off, "http", "second question", &Cause::default());
         let one = system_prompt(&h, &off);
         assert!(one.contains("second question") && !one.contains("first question"));
+    }
+
+    #[test]
+    fn a_bare_tool_name_and_one_argument_is_a_call_but_prose_is_not() {
+        let granted = ["http_get", "remember"];
+        let c = loose_calls("HTTP_GET https://example.com/joke", &granted);
+        assert_eq!(c, vec![("http_get".to_string(), json!({"url": "https://example.com/joke"}))]);
+        assert!(
+            loose_calls("remember buy some milk", &granted).is_empty(),
+            "spaces: this is prose"
+        );
+        assert!(loose_calls("http_get is a tool I could use", &granted).is_empty());
+        assert!(
+            loose_calls("HTTP_GET https://a.b/c\nand then I will say more", &granted).is_empty()
+        );
+        assert!(loose_calls("Here you go: http_get", &granted).is_empty());
+    }
+
+    #[test]
+    fn a_connector_is_a_tool_backed_by_a_program_and_sensitive_ones_need_approval() {
+        let mut s = spec();
+        s.capabilities.push(Capability {
+            name: "echo_back".into(),
+            description: "Echo the args".into(),
+            exec: Some(crate::connector::Exec {
+                command: vec!["cat".into()],
+                args: r#"{"what": "..."}"#.into(),
+                required: vec!["what".into()],
+                sensitive: true,
+                timeout_secs: 5,
+            }),
+            ..Default::default()
+        });
+        let call = r#"{"tool":"echo_back","args":{"what":"hi"}}"#;
+        let h = Fake::new("conn-deny", &[call, "ok"], false);
+        let r = run(&h, &s, "http", "go", &Cause::default());
+        assert_eq!(h.asked.lock().unwrap().as_slice(), ["echo_back"]);
+        assert!(matches!(&r.steps[1], Step::Tool { approved: Some(false), error: true, .. }));
+
+        let h = Fake::new("conn-allow", &[call, "done"], true);
+        let r = run(&h, &s, "http", "go", &Cause::default());
+        match &r.steps[1] {
+            Step::Tool { result, error: false, .. } => assert_eq!(result, r#"{"what":"hi"}"#),
+            other => panic!("{other:?}"),
+        }
+        // a missing required argument is explained, and no human is asked
+        let h = Fake::new("conn-bad", &[r#"{"tool":"echo_back","args":{}}"#, "ok"], true);
+        let r = run(&h, &s, "http", "go", &Cause::default());
+        assert!(h.asked.lock().unwrap().is_empty());
+        assert!(
+            matches!(&r.steps[1], Step::Tool { error: true, result, .. } if result.contains("missing what"))
+        );
+    }
+
+    #[test]
+    fn transcribe_and_speak_work_on_the_agents_workspace_only() {
+        let mut s = spec();
+        s.capabilities.push(Capability::named("transcribe"));
+        s.capabilities.push(Capability::named("speak"));
+        let h = Fake::new(
+            "speech",
+            &[
+                r#"{"tool":"speak","args":{"text":"Keep the pace steady.","path":"speech/a.ogg"}}"#,
+                r#"{"tool":"transcribe","args":{"path":"speech/a.ogg","lang":"hu-HU"}}"#,
+                r#"{"tool":"transcribe","args":{"path":"../outside.ogg"}}"#,
+                r#"{"tool":"speak","args":{"text":"x"}}"#,
+                "done",
+            ],
+            true,
+        );
+        let r = run(&h, &s, "http", "go", &Cause::default());
+        let results: Vec<(bool, String)> = r
+            .steps
+            .iter()
+            .filter_map(|st| match st {
+                Step::Tool { error, result, .. } => Some((*error, result.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results[0], (false, "wrote speech/a.ogg (1.5s of speech)".to_string()));
+        let file = h.store.workspace("bot").unwrap().join("speech/a.ogg");
+        assert!(std::fs::read_to_string(&file).unwrap().contains("Keep the pace steady."));
+        assert_eq!(
+            results[1],
+            (
+                false,
+                format!("transcript of {} bytes in hu-HU", std::fs::metadata(&file).unwrap().len())
+            )
+        );
+        assert!(results[2].0, "a path outside the workspace is refused: {:?}", results[2]);
+        assert!(
+            !results[3].0 && results[3].1.starts_with("wrote speech/"),
+            "the default path is under speech/: {:?}",
+            results[3]
+        );
     }
 }

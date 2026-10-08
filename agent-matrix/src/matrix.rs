@@ -305,6 +305,23 @@ impl Matrix {
         Ok(v.as_array().cloned().unwrap_or_default())
     }
 
+    /// The latest messages of a room, newest first, as the owner (who is in every room the
+    /// bridge manages). Only `m.room.message` events.
+    pub fn messages_as_owner(&self, room: &str, limit: usize) -> R<Vec<Value>> {
+        let filter = enc(&json!({"types": ["m.room.message"]}).to_string());
+        let v = self.call(
+            reqwest::Method::GET,
+            &format!(
+                "/_matrix/client/v3/rooms/{}/messages?dir=b&limit={limit}&filter={filter}",
+                enc(room)
+            ),
+            None,
+            &self.admin_token,
+            None,
+        )?;
+        Ok(v["chunk"].as_array().cloned().unwrap_or_default())
+    }
+
     pub fn joined_as_owner(&self, room: &str) -> R<Vec<String>> {
         let v = self.call(
             reqwest::Method::GET,
@@ -346,6 +363,68 @@ impl Matrix {
             Some(json!({"user_id": target, "reason": reason})),
         )
         .map(|_| ())
+    }
+
+    /// Downloads media by `mxc://server/id` (authenticated media, as the bridge).
+    pub fn download(&self, mxc: &str, as_user: &str) -> R<Vec<u8>> {
+        let rest = mxc.strip_prefix("mxc://").ok_or(MxErr {
+            status: 0,
+            errcode: "BAD_MXC".into(),
+            msg: format!("not an mxc uri: {mxc}"),
+        })?;
+        let url = format!(
+            "{}/_matrix/client/v1/media/download/{rest}?user_id={}",
+            self.base,
+            enc(as_user)
+        );
+        let r = self.http.get(url).bearer_auth(&self.as_token).send()?;
+        let status = r.status().as_u16();
+        if !(200..300).contains(&status) {
+            return Err(MxErr {
+                status,
+                errcode: String::new(),
+                msg: r.text().unwrap_or_default(),
+            });
+        }
+        Ok(r.bytes()?.to_vec())
+    }
+
+    /// Uploads media as `as_user`; returns its `mxc://` uri.
+    pub fn upload(
+        &self,
+        bytes: Vec<u8>,
+        content_type: &str,
+        filename: &str,
+        as_user: &str,
+    ) -> R<String> {
+        let url = format!(
+            "{}/_matrix/media/v3/upload?filename={}&user_id={}",
+            self.base,
+            enc(filename),
+            enc(as_user)
+        );
+        let r = self
+            .http
+            .post(url)
+            .bearer_auth(&self.as_token)
+            .header("content-type", content_type)
+            .body(bytes)
+            .send()?;
+        let status = r.status().as_u16();
+        let v: Value = r.json().unwrap_or(Value::Null);
+        if (200..300).contains(&status) {
+            v["content_uri"].as_str().map(String::from).ok_or(MxErr {
+                status,
+                errcode: "NO_URI".into(),
+                msg: v.to_string(),
+            })
+        } else {
+            Err(MxErr {
+                status,
+                errcode: v["errcode"].as_str().unwrap_or("").into(),
+                msg: v["error"].as_str().unwrap_or("upload failed").into(),
+            })
+        }
     }
 
     /// Accepts the owner's pending invite to `room`, using the owner's own session.

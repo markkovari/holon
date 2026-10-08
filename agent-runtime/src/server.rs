@@ -89,6 +89,17 @@ fn caller_trace(req: &Request) -> Option<Traceparent> {
     header_value(req, "traceparent").and_then(|v| Traceparent::parse(&v))
 }
 
+fn bytes_reply(req: Request, ctype: &str, bytes: Vec<u8>, extra: &[(&str, String)]) {
+    let mut resp =
+        Response::from_data(bytes).with_header(Header::from_bytes("content-type", ctype).unwrap());
+    for (k, v) in extra {
+        if let Ok(h) = Header::from_bytes(k.as_bytes(), v.as_bytes()) {
+            resp = resp.with_header(h);
+        }
+    }
+    let _ = req.respond(resp);
+}
+
 fn json_reply(req: Request, status: u16, v: Value) {
     reply(req, status, "application/json", v.to_string());
 }
@@ -137,8 +148,12 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
     let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
     let method = req.method().clone();
 
-    let mut body = String::new();
-    let _ = req.as_reader().take(1 << 20).read_to_string(&mut body);
+    // Audio is bytes and can be large; everything else is small text.
+    let limit =
+        if path.starts_with("/speech") { crate::speech::MAX_AUDIO_IN as u64 } else { 1 << 20 };
+    let mut raw = Vec::new();
+    let _ = req.as_reader().take(limit).read_to_end(&mut raw);
+    let body = String::from_utf8_lossy(&raw).into_owned();
 
     let authed = req
         .headers()
@@ -168,7 +183,13 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
                 },
                 None => Cause::default(),
             };
-            return match rt.run_agent(name, "http", &input, &cause, "", true) {
+            // Who or what woke the agent, in words it reads as the run's `Trigger:` line.
+            let trigger = query_param(query, "why")
+                .map(|w| w.split_whitespace().collect::<Vec<_>>().join(" "))
+                .filter(|w| !w.is_empty())
+                .map(|w| format!("http: {}", w.chars().take(160).collect::<String>()))
+                .unwrap_or_else(|| "http".to_string());
+            return match rt.run_agent(name, &trigger, &input, &cause, "", true) {
                 Ok(r) => {
                     // Hand the caller the run's own span, so it can continue the trace.
                     let tp = [("traceparent", Traceparent::header(&r.trace_id, &r.span_id))];
@@ -276,6 +297,64 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
             let after = query_param(query, "after").and_then(|v| v.parse().ok()).unwrap_or(0);
             match rt.bus().read_after(topic, after, 200) {
                 Ok(evs) => json_reply(req, 200, json!(evs)),
+                Err(e) => text(req, 422, e),
+            }
+        }
+        // Speech (see speech.rs): audio in -> text, text -> audio out. 501 when the
+        // engine is not configured, 422 when the input is bad.
+        // Embeddings, for the bridge and other callers: the runtime owns the service (and starts it
+        // when it is on demand). 501 when none is configured, 503 when it cannot answer.
+        (Method::Post, ["embed"]) => match serde_json::from_str::<Value>(&body) {
+            Err(e) => text(req, 400, format!("bad json: {e}")),
+            Ok(v) => {
+                let texts: Vec<String> = v["texts"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                let kind = if v["kind"] == "query" { "query" } else { "document" };
+                if texts.is_empty() {
+                    text(req, 400, "`texts` must be a non-empty array of strings")
+                } else if !rt.has_embedder() {
+                    text(req, 501, "no embedding service is configured")
+                } else {
+                    match rt.embed_texts(&texts, kind) {
+                        Some(vectors) => json_reply(req, 200, json!({"vectors": vectors})),
+                        None => text(req, 503, "the embedding service did not answer"),
+                    }
+                }
+            }
+        },
+        (Method::Get, ["speech"]) => json_reply(
+            req,
+            200,
+            json!({
+                "transcribe": rt.speech().can_transcribe(),
+                "speak": rt.speech().can_speak(),
+                "locale": rt.speech().config().default_locale,
+            }),
+        ),
+        (Method::Post, ["speech", "transcribe"]) => {
+            match rt.speech().transcribe(&raw, query_param(query, "lang").as_deref()) {
+                Ok(text) => json_reply(req, 200, json!({ "text": text })),
+                Err(e) if e.contains("not configured") => text(req, 501, e),
+                Err(e) => text(req, 422, e),
+            }
+        }
+        (Method::Post, ["speech", "speak"]) => {
+            match rt.speech().speak(&body, query_param(query, "voice").as_deref()) {
+                Ok(sp) => bytes_reply(
+                    req,
+                    "audio/ogg",
+                    sp.audio,
+                    &[
+                        ("x-holon-duration-ms", sp.duration_ms.to_string()),
+                        (
+                            "x-holon-waveform",
+                            sp.waveform.iter().map(u16::to_string).collect::<Vec<_>>().join(","),
+                        ),
+                    ],
+                ),
+                Err(e) if e.contains("not available") => text(req, 501, e),
                 Err(e) => text(req, 422, e),
             }
         }
@@ -537,6 +616,24 @@ mod tests {
         rt.create_agent(b).unwrap();
         let r = reqwest::blocking::get(format!("{base}/agents/aa/run?q=go")).unwrap();
         assert_eq!(r.status(), 200);
+    }
+
+    #[test]
+    fn embed_route_refuses_bad_requests_and_says_when_no_service_is_configured() {
+        let (_rt, base) = start("embed-route");
+        let post = |body: &str| {
+            reqwest::blocking::Client::new()
+                .post(format!("{base}/embed"))
+                .bearer_auth("tok")
+                .body(body.to_string())
+                .send()
+                .unwrap()
+                .status()
+                .as_u16()
+        };
+        assert_eq!(post("not json"), 400);
+        assert_eq!(post(r#"{"texts": []}"#), 400);
+        assert_eq!(post(r#"{"texts": ["a"]}"#), 501);
     }
 
     #[test]
