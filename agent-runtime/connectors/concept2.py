@@ -21,8 +21,11 @@ UA = "Mozilla/5.0 (holon concept2 connector)"
 
 
 def fetch(path):
-    req = urllib.request.Request(BASE + path, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=20) as r:
+    url = BASE + path
+    if not url.startswith("https://log.concept2.com/"):
+        raise ValueError("refusing to fetch outside log.concept2.com")
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=20) as r:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         return r.read().decode("utf-8", "replace")
 
 
