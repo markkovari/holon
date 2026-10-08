@@ -43,6 +43,5 @@ rc_message:
   per_second: 20
   burst_count: 100
 
-# Application services (the agent bridge) are listed here once it exists:
-# app_service_config_files:
-#   - /data/agents-appservice.yaml
+# Application services (the agent bridge) are appended by deploy.sh when APPSERVICE_REG
+# is set: `app_service_config_files` pointing at /data/appservices/*.yaml.

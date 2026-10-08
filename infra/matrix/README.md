@@ -71,6 +71,13 @@ from `rower`. Then check, in order:
 3. `loop` with Tailscale **off**: does a notification still arrive, and what does it say?
 4. Lock the phone and wait; is delivery prompt?
 
+## The agent bridge
+
+The homeserver is what the agent bridge (`agent-matrix/`) plugs into. To load its
+registration: `APPSERVICE_REG=~/.holon-matrix/holon-agents.yaml ./deploy.sh Malna`
+(Synapse is recreated, a few seconds). `spike.sh` is no longer needed once the
+bridge runs: the agents are real users with real answers.
+
 ## Exit node (optional)
 
 ```sh

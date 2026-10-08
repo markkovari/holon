@@ -304,8 +304,47 @@ impl Runtime {
         Ok(())
     }
 
+    /// Creates or replaces a project. Every member must be an existing agent.
+    pub fn put_project(&self, project: crate::projects::Project) -> Result<(), String> {
+        project.validate()?;
+        if let Some(missing) = project.agents.iter().find(|a| self.store.get(a).is_none()) {
+            return Err(format!("no agent named {missing}"));
+        }
+        self.store.put_project(&project)
+    }
+
+    pub fn delete_project(&self, name: &str) -> Result<(), String> {
+        self.store.delete_project(name)
+    }
+
+    pub fn add_to_project(&self, name: &str, agent: &str) -> Result<(), String> {
+        let mut p =
+            self.store.get_project(name).ok_or_else(|| format!("no project named {name}"))?;
+        if !p.agents.iter().any(|a| a == agent) {
+            p.agents.push(agent.to_string());
+        }
+        self.put_project(p)
+    }
+
+    /// Takes the agent's project grants away at its next run. If it was the
+    /// project's lead, the project has no lead until one is set.
+    pub fn remove_from_project(&self, name: &str, agent: &str) -> Result<(), String> {
+        let mut p =
+            self.store.get_project(name).ok_or_else(|| format!("no project named {name}"))?;
+        p.agents.retain(|a| a != agent);
+        if p.lead.as_deref() == Some(agent) {
+            p.lead = None;
+        }
+        self.put_project(p)
+    }
+
     pub fn delete_agent(&self, name: &str) -> Result<(), String> {
         self.store.delete(name)?;
+        for p in
+            self.store.list_projects().into_iter().filter(|p| p.agents.iter().any(|a| a == name))
+        {
+            let _ = self.remove_from_project(&p.name, name);
+        }
         self.last_fired.lock().unwrap().retain(|(n, _), _| n != name);
         self.timers.lock().unwrap().retain(|t| t.agent != name);
         self.save_timers();
@@ -417,6 +456,8 @@ impl Runtime {
         if spec.paused {
             return Err(format!("{name} is paused"));
         }
+        // What a run may do is its own spec plus whatever its projects grant.
+        let spec = crate::projects::effective(&spec, &self.store.list_projects());
         let lock = self.lock_for(name);
         let _guard = if wait {
             lock.lock().unwrap()

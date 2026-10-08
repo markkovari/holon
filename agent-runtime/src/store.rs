@@ -126,7 +126,7 @@ fn tokens(s: &str) -> Vec<String> {
 impl Store {
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self, String> {
         let dir = dir.into();
-        for sub in ["agents", "memory", "runs", "workspaces"] {
+        for sub in ["agents", "memory", "runs", "workspaces", "projects"] {
             fs::create_dir_all(dir.join(sub)).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
         Ok(Self { dir })
@@ -135,6 +135,40 @@ impl Store {
     fn path(&self, sub: &str, name: &str, ext: &str) -> Result<PathBuf, String> {
         validate_name(name)?;
         Ok(self.dir.join(sub).join(format!("{name}.{ext}")))
+    }
+
+    pub fn list_projects(&self) -> Vec<crate::projects::Project> {
+        let mut v: Vec<crate::projects::Project> = fs::read_dir(self.dir.join("projects"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| fs::read_to_string(e.path()).ok())
+            .filter_map(|s| serde_json::from_str(&s).ok())
+            .collect();
+        v.sort_by(|a, b| a.name.cmp(&b.name));
+        v
+    }
+
+    pub fn get_project(&self, name: &str) -> Option<crate::projects::Project> {
+        let p = self.path("projects", name, "json").ok()?;
+        serde_json::from_str(&fs::read_to_string(p).ok()?).ok()
+    }
+
+    /// Atomic, like `put`.
+    pub fn put_project(&self, project: &crate::projects::Project) -> Result<(), String> {
+        let p = self.path("projects", &project.name, "json")?;
+        let tmp = p.with_extension("json.tmp");
+        fs::write(&tmp, serde_json::to_string_pretty(project).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+        fs::rename(&tmp, &p).map_err(|e| e.to_string())
+    }
+
+    pub fn delete_project(&self, name: &str) -> Result<(), String> {
+        let p = self.path("projects", name, "json")?;
+        if !p.exists() {
+            return Err(format!("no project named {name}"));
+        }
+        fs::remove_file(p).map_err(|e| e.to_string())
     }
 
     pub fn list(&self) -> Vec<AgentSpec> {

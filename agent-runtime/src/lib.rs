@@ -8,6 +8,7 @@ pub mod html;
 pub mod kv;
 pub mod model;
 pub mod otlp;
+pub mod projects;
 pub mod runtime;
 pub mod server;
 pub mod spec;
