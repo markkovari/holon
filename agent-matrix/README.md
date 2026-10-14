@@ -103,6 +103,23 @@ nothing usable being refused with a note. It skips when Docker is not available.
 * The bridge manages rooms in an adopted Space **as you** (it holds your session), since
   it is not a member of rooms you made. It only invites and removes agents there.
 
+## When an agent is deleted
+
+The runtime tells the bridge nothing, so the bridge notices an agent missing from the
+runtime's list. After **three passes in a row** (about 15 seconds) it retires the agent's
+direct room: the agent says it was deleted, its name becomes `<name> (deleted)`, and you
+leave and forget the room, so it drops out of your list.
+
+* An agent still in the runtime's trash keeps its user in the room. `!agent restore
+  <agent>` (or the `agent_restore` tool) brings the agent back, invites you back to the
+  **same room** with its history, and restores its name.
+* An agent that is not in the trash (purged, or deleted before the trash existed) has its
+  user leave the room too. The Matrix user itself is never deactivated: old messages keep
+  the name, and the name can be used again.
+* If more than half of the agents (and more than one) vanish at once the bridge changes
+  nothing and tells you in the control room: that is what a runtime started against the
+  wrong state directory looks like. `!agent retire <agent>` retires one by hand.
+
 ## Scheduled results
 
 The runtime runs schedules and reminders on its own and only logs the result. The
