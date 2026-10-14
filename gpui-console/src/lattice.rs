@@ -808,6 +808,7 @@ pub fn spec_from_form(f: &FormInput) -> Result<AgentSpec, String> {
         spec.triggers.push(Trigger::Schedule {
             cron: cron.trim().to_string(),
             prompt: prompt.trim().to_string(),
+            notify: false,
         });
     }
     for topic in csv(&f.events) {
@@ -1086,7 +1087,7 @@ mod tests {
         let s = spec_from_form(&f).unwrap();
         assert_eq!(s.triggers.len(), 4);
         assert!(
-            matches!(&s.triggers[0], Trigger::Schedule { cron, prompt } if cron == "*/10 * * * *" && prompt == "check the feed")
+            matches!(&s.triggers[0], Trigger::Schedule { cron, prompt, .. } if cron == "*/10 * * * *" && prompt == "check the feed")
         );
         assert_eq!(s.allow_hosts, ["example.com"]);
         assert_eq!(s.auto_approve, ["http_get"]);
@@ -1225,7 +1226,11 @@ mod tests {
 
         let mut spec = AgentSpec::new("echoer", "answers briefly");
         spec.model = ModelSpec::Mock { replies: vec!["pong from the runtime".to_string(); 20] };
-        spec.triggers.push(Trigger::Schedule { cron: "@every 4s".into(), prompt: "tick".into() });
+        spec.triggers.push(Trigger::Schedule {
+            cron: "@every 4s".into(),
+            prompt: "tick".into(),
+            notify: false,
+        });
         rt.create_agent(spec).unwrap();
 
         upload_component(
