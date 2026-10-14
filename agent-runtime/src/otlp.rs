@@ -223,6 +223,7 @@ mod tests {
             hops: 1,
             chain: vec!["coach|store.rowing".into()],
             project: String::new(),
+            attachments: Vec::new(),
         }
     }
 

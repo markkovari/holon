@@ -561,6 +561,7 @@ impl Runtime {
             hops: cause.hops,
             chain: cause.chain.clone(),
             project: cause.project.clone().unwrap_or_default(),
+            attachments: cause.attachments.clone(),
         };
         let _ = self.store.record_run(&rec);
         self.observe(Event::RunFinished(Box::new(rec)));
@@ -784,6 +785,7 @@ impl Runtime {
             chain: env.draft.chain.clone(),
             budget: env.draft.budget,
             project: None,
+            attachments: Vec::new(),
         };
         let _ = self.run_agent(agent, &label, &env.draft.payload, &cause, topic, true);
     }

@@ -37,6 +37,9 @@ pub struct Cause {
     pub chain: Vec<String>,
     /// Tokens the rest of the chain may still spend; `None` = this agent's own limit.
     pub budget: Option<u64>,
+    /// Photos that came with this run, by file name in the agent's inbox. They are put in front of
+    /// the model with the first message; anything the run wakes does not get them.
+    pub attachments: Vec<String>,
     /// The project this work is for, when it is for one: a schedule that names it, a reminder
     /// asked for inside it, a message in its room. The agent must be a member to be woken
     /// for it, and a reminder it sets keeps it.
@@ -1115,6 +1118,7 @@ pub fn run(
         hops: cause.hops,
         chain: cause.chain.clone(),
         project: cause.project.clone().unwrap_or_default(),
+        attachments: cause.attachments.clone(),
     };
     let mut child_tokens = 0u64;
     let push = |rec: &mut RunRecord, step: Step| {
@@ -1138,7 +1142,21 @@ pub fn run(
     let system = system_prompt(host, spec);
     let project_line =
         cause.project.as_ref().map(|p| format!("Project: {p}\n")).unwrap_or_default();
-    let mut msgs = vec![Msg::user(format!("Trigger: {trigger}\n{project_line}Task: {input}"))];
+    // Photos that came with the run go to the model with the first message. One that cannot be
+    // used is said, so the model tells Mark instead of answering as if it had looked.
+    let (images, problems) = crate::attach::load(host.store(), &spec.name, &cause.attachments);
+    let unread: String = problems.iter().map(|p| format!("\n(attachment: {p})")).collect();
+    let seen = match images.len() {
+        0 => String::new(),
+        n => format!(
+            "\n(attached: {n} photo{}. Look at {}.)",
+            if n == 1 { "" } else { "s" },
+            if n == 1 { "it" } else { "them" }
+        ),
+    };
+    let mut msgs =
+        vec![Msg::user(format!("Trigger: {trigger}\n{project_line}Task: {input}{seen}{unread}"))
+            .with_images(images)];
     let mut usage = Usage::default();
     let mut last_text = String::new();
     let mut called_ok: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -1252,6 +1270,7 @@ pub fn run(
                             max_tokens.saturating_sub(usage.input + usage.output + child_tokens),
                         ),
                         project: cause.project.clone(),
+                        attachments: Vec::new(),
                     };
                     match exec(host, spec, &name, &args, &me, &mut child_tokens) {
                         Ok(r) => (r, false, needs.then_some(true)),
@@ -1587,6 +1606,65 @@ mod tests {
         assert!(matches!(&r.steps[1], Step::Tool { result, .. } if result == "helper says re: hi"));
         assert_eq!(h.topics_emitted().as_slice(), ["done"]);
         assert_eq!(r.answer, "fin");
+    }
+
+    #[test]
+    fn a_photo_attached_to_a_run_goes_to_the_model_with_the_first_message() {
+        let s = spec();
+        let h = Fake::new("attach", &["a plate of rice"], true);
+        let inbox = h.store.workspace("bot").unwrap().join("inbox");
+        std::fs::create_dir_all(&inbox).unwrap();
+        std::fs::write(inbox.join("1-lunch.png"), [0x89, b'P', b'N', b'G']).unwrap();
+        let cause = Cause { attachments: vec!["1-lunch.png".into()], ..Cause::default() };
+        let r = run(&h, &s, "http", "what is this?", &cause);
+        assert_eq!(r.status, Status::Ok);
+        assert_eq!(r.attachments, ["1-lunch.png"], "the record says what came with the run");
+        let first = &h.seen.lock().unwrap()[0][0];
+        assert_eq!(first.images.len(), 1);
+        assert_eq!(first.images[0].media_type, "image/png");
+        assert!(
+            first.content.contains("Task: what is this?")
+                && first.content.contains("(attached: 1 photo. Look at it.)"),
+            "{}",
+            first.content
+        );
+    }
+
+    #[test]
+    fn an_attachment_that_cannot_be_used_is_said_not_fatal() {
+        let s = spec();
+        let h = Fake::new("attach-missing", &["I could not see it"], true);
+        let cause = Cause {
+            attachments: vec!["gone.jpg".into(), "../../etc/passwd".into()],
+            ..Cause::default()
+        };
+        let r = run(&h, &s, "http", "what is this?", &cause);
+        assert_eq!(r.status, Status::Ok, "the run still happens");
+        let first = &h.seen.lock().unwrap()[0][0];
+        assert!(first.images.is_empty());
+        assert!(
+            first.content.contains("(attachment: `gone.jpg` is not in your inbox)"),
+            "{}",
+            first.content
+        );
+        assert!(
+            first.content.contains("`../../etc/passwd` is not in your inbox"),
+            "a path is refused, not followed"
+        );
+        assert!(!first.content.contains("attached:"), "nothing was attached");
+    }
+
+    #[test]
+    fn a_run_without_attachments_is_untouched() {
+        let s = spec();
+        let h = Fake::new("no-attach", &["ok"], true);
+        run(&h, &s, "http", "hi", &Cause::default());
+        let first = &h.seen.lock().unwrap()[0][0];
+        assert!(
+            first.images.is_empty() && first.content == "Trigger: http\nTask: hi",
+            "{}",
+            first.content
+        );
     }
 
     #[test]
