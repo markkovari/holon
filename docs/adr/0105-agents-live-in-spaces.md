@@ -43,6 +43,12 @@ An agent that is in a project needs no room of its own: it is in that project's 
 One in several projects is in each of them; where its unprompted results go is decided
 in section 4.
 
+**A new agent starts in the Agents Space** and is moved into a project on purpose.
+`agent_save` takes an optional `project`; when it is given, the approval poll says
+"and add it to the project `<name>`", because joining a project is a grant (its store,
+its topics) and the owner approving the poll is what authorises it. Nothing is
+granted by default.
+
 holon, the agent that manages the others, keeps its own room. It is the entry point,
 not a member of the fleet it manages, and it is the one place a command is typed.
 
@@ -52,6 +58,11 @@ Unchanged, with one added rule: **a project with exactly one member and no lead 
 answered by that member.** A one-agent Space is then what a direct room was, with no
 special case in the router. A room in the Agents Space has one agent in it and so
 already routes by the existing hand-made-room rule.
+
+**A project with one agent has one room**, not `general` plus `feed`: you talk to the
+agent and it reports in the same place, since there is no one else to keep the report
+apart from. It gets a `feed` when a second agent joins (the reconcile pass creates it
+then) and a result goes to `feed` if the project has one, else to `general`.
 
 Existing direct rooms keep working and keep being routed, so nothing is migrated under
 the owner. New ones are simply not made; the old ones are removed by hand or by the
@@ -81,13 +92,34 @@ empty registry), the bridge retires nothing and says so in the control room. A p
 (deactivate the user, delete the room) is a separate explicit command and not an
 automatic reaction.
 
-### 4. Where an agent's unprompted results go
+### 4. A schedule belongs to an agent *and* a project
 
-`agent-matrix` already posts schedule and reminder results to a project's feed room,
-else the agent's room. Unchanged in shape, with the fallback now the Agents-Space room
-and not a direct room. An agent in several projects posts to the first project's feed
-by name, which is arbitrary; whether a trigger should name its destination is open
-(Open 3).
+An agent can be in several projects, so "where does this result go" cannot be a
+property of the agent. A schedule trigger takes an optional `project`:
+
+```json
+{"kind": "schedule", "cron": "0 12 * * *", "prompt": "...", "project": "rowing", "notify": true}
+```
+
+- **With `project`**: the result is posted in that project's `feed` room (its only room,
+  for a one-agent project), and the run is told it is working for that project. The same
+  agent can hold one schedule per project; `0 12 * * *` for `rowing` and for `nutrition`
+  are two triggers with two destinations.
+- **Without `project`**: the result goes to the agent's own room in the Agents Space. This
+  replaces today's "the first project by name", which was a guess.
+- **Validation**: `project` must be one the agent is a member of, checked when the trigger
+  is saved. If the agent is later removed from that project the trigger does not fire:
+  the run is logged as `dropped` with the reason, and the next reconcile tells the control
+  room. An archived project's agents are paused anyway (section 5).
+- **Reminders** (`schedule_self`) go back to where they were asked for: the timer records
+  the project of the run that created it, or none if it was asked for in an agent's own
+  room. This needs the run to know which project woke it, which today only the bridge's
+  `why` text says; the runtime's run request gains an optional `project`.
+
+What "told it is working for that project" means is deliberately small: the project is
+named in the task's `Trigger:` line and the run's store and topic grants are the agent's
+as today. Narrowing a scheduled run to only that project's grants is a stronger idea and a
+separate decision.
 
 ### 5. Archiving a project
 
@@ -133,19 +165,25 @@ business and a bridge restart must not forget it. The Matrix leave is the bridge
    assume the owner is the only person who sees the rooms.
 5. **Element behaviour is assumed in four places** (Verify, below).
 
-## Open
+## Decided in review
 
-1. A project's `general` room is where you talk and its `feed` is where agents report,
-   and one human typing in `feed` gets an answer. Keep both rooms for a one-agent
-   project, or make one-agent projects single-room?
-2. Does an agent created through holon get a project at creation (a `project` field on
-   `agent_save`), or does it land in the Agents Space until moved? The second is cheaper
-   and matches section 1; the first saves a step.
-3. Should a schedule name where its result goes? Today it is "the first project by
-   name", which is a guess.
-4. Soft delete in the runtime (spec, runs and memory moved to `trash/` for 30 days) is
-   independent of everything above and would have made the `kevin-ishot` deletion
-   recoverable. Wanted, or is the approval poll enough? (ADR-0105 does not depend on it.)
+1. A one-agent project has one room (section 2).
+2. A new agent starts in the Agents Space; `agent_save` may name a project, and the
+   approval poll says so (section 1).
+3. A schedule carries its project (section 4).
+4. **Soft delete in the runtime is wanted.** Deleting an agent moves its spec, runs and
+   memory to `trash/<name>-<time>/` for 30 days and a purge removes them early. It is
+   independent of the rest of this ADR and is its own slice (below). When it lands, the
+   words **PERMANENTLY** in the `agent_delete` description and in the Matrix approval
+   line (#330) become "recoverable until <date>", and a restore is a tool and a command.
+
+## Still open
+
+1. Should multi-agent projects also drop `feed` and become one room? A feed exists so
+   that reports do not bury a conversation; with one human and a lead that may not hold.
+   Decide after living with the one-agent case.
+2. How a restored agent's Matrix side comes back: it was retired (section 3), so its user
+   is reused and it gets a new room. Whether its old room is also reused is unsettled.
 
 ## Verify before building
 
@@ -161,13 +199,17 @@ Each is one scenario in `agent-matrix/tests/e2e.rs`, which already runs a real S
 
 ## Build order
 
+0. **Soft delete** (runtime only), with the wording change above. Independent; worth doing
+   first because it removes the one irreversible step in today's flow.
 1. **Retirement on delete** (section 3). Stands alone, fixes today's orphans, no new
    rooms. Needs verify 4.
 2. **Agents Space and the one-member rule** (sections 1, 2). Stops creating direct
    rooms. Existing ones keep working.
-3. **Archive and unarchive** (section 5): runtime fields and pause, bridge leave and
+3. **Schedules carry a project** (section 4): the trigger field and its validation, the
+   run's `project`, and delivery by it. Needs slice 2 for the Agents-Space fallback.
+4. **Archive and unarchive** (section 5): runtime fields and pause, bridge leave and
    re-invite, the two commands. Needs verify 2 and 3.
-4. **Cleanup command** for legacy direct rooms, if doing it by hand turns out to be
+5. **Cleanup command** for legacy direct rooms, if doing it by hand turns out to be
    tedious.
 
 ## What this does not do
