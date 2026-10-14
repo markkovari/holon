@@ -131,9 +131,13 @@ leave and forget the room, so it drops out of your list.
 
 The runtime runs schedules and reminders on its own and only logs the result. The
 bridge posts the ones you want to read, as the agent: a schedule trigger with
-`"notify": true`, and every `schedule_self` reminder. They go to the feed room of the
-agent's project (its direct room if it has no project, or the project is an adopted
-Space with no feed). A failed run is posted as a `⚠️` line; a run a loop guard dropped
+`"notify": true`, and every `schedule_self` reminder. A schedule belongs to an agent
+**and a project** (`"project": "rowing"`): its result goes to that project's report room,
+the feed, or the only room of a project with no feed. With no project it goes to the
+agent's own room. A reminder goes back to where it was asked for: a message written in a
+project's room is work for that project, and a reminder it sets keeps that. A schedule
+whose agent is not (or no longer) a member of its project is refused and the refusal is
+posted. A failed run is posted as a `⚠️` line; a run a loop guard dropped
 is not. The bridge remembers the last run it posted per agent, so a restart does not
 repeat one, and an agent it sees for the first time starts from now, not from its
 history. Without `notify`, a schedule stays silent: an hourly one is 24 messages a day.

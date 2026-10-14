@@ -174,6 +174,10 @@ pub fn describe_approval(tool: &str, args: &Value) -> Option<String> {
                 Some(s) => format!("the schedule `{s}`"),
                 None => "ALL schedules".to_string(),
             };
+            let which = match args["project"].as_str().filter(|p| !p.is_empty()) {
+                Some(p) => format!("{which} that work for the project `{p}`"),
+                None => which,
+            };
             format!(
                 "remove {which} from the agent `{name}`. The agent, its run history, its memory \
                  and its other triggers stay."
@@ -190,8 +194,16 @@ pub fn describe_approval(tool: &str, args: &Value) -> Option<String> {
             } else {
                 ""
             };
+            let joins = match args["project"].as_str().filter(|p| !p.is_empty()) {
+                Some(p) => format!(
+                    " It is ADDED TO the project `{p}`, which grants it that project's shared \
+                     store and topics, and its schedule works for it: results are posted in \
+                     that project's room."
+                ),
+                None => String::new(),
+            };
             format!(
-                "create or change the agent `{name}` (fields: {}).{replaces}",
+                "create or change the agent `{name}` (fields: {}).{replaces}{joins}",
                 fields.join(", ")
             )
         }
@@ -975,7 +987,13 @@ impl Bridge {
             }
         };
         note(&format!("🎙️ “{}”", clip(&text, 1_000)));
-        let (ok, answer) = self.rt.run(agent, &self.task(room, "", &text), &self.why(room), None);
+        let (ok, answer) = self.rt.run(
+            agent,
+            &self.task(room, "", &text),
+            &self.why(room),
+            None,
+            self.project_of(room).as_deref(),
+        );
         self.mx.typing(room, &ghost, false);
         let written = if ok {
             if answer.trim().is_empty() {
@@ -1026,8 +1044,13 @@ impl Bridge {
         // The agent may not be in this room yet (a hand-made one it was invited to).
         let _ = self.mx.join(room, &ghost);
         self.mx.typing(room, &ghost, true);
-        let (ok, answer) =
-            self.rt.run(agent, &self.task(room, reply_to, text), &self.why(room), None);
+        let (ok, answer) = self.rt.run(
+            agent,
+            &self.task(room, reply_to, text),
+            &self.why(room),
+            None,
+            self.project_of(room).as_deref(),
+        );
         self.mx.typing(room, &ghost, false);
         let body = if ok {
             if answer.trim().is_empty() {
@@ -1040,6 +1063,17 @@ impl Bridge {
         };
         if let Err(e) = self.mx.send_text(room, &ghost, &body, Some(reply_to)) {
             log(&format!("{agent}: could not post the answer: {e}"));
+        }
+    }
+
+    /// The project a room belongs to, when it is one of a project's rooms: what a message
+    /// written there is for, and so where a reminder it sets is delivered.
+    fn project_of(&self, room: &str) -> Option<String> {
+        match self.state.kind_of(room) {
+            Some(RoomKind::ProjectGeneral(p))
+            | Some(RoomKind::ProjectRoom(p))
+            | Some(RoomKind::ProjectFeed(p)) => Some(p),
+            _ => None,
         }
     }
 
@@ -1180,14 +1214,16 @@ impl Bridge {
             if due.is_empty() {
                 continue;
             }
-            let Some(room) =
-                self.state.read(|d| crate::scheduled::room_for(&agent.name, &projects, d))
-            else {
-                continue;
-            };
             let ghost = self.cfg.ghost(&agent.name);
-            let _ = self.mx.join(&room, &ghost);
             for run in due {
+                // The room of the project the run was for; else the agent's own.
+                let Some(room) = self
+                    .state
+                    .read(|d| crate::scheduled::room_for_run(run, &agent.name, &projects, d))
+                else {
+                    break;
+                };
+                let _ = self.mx.join(&room, &ghost);
                 let body = crate::scheduled::render(run, MAX_REPLY);
                 if let Err(e) = self.mx.send_text(&room, &ghost, &body, None) {
                     // Not marked delivered, so the next pass tries again.
@@ -1329,6 +1365,21 @@ mod tests {
         )
         .unwrap();
         assert!(save.contains("fields: prompt, schedule") && save.contains("replaces"), "{save}");
+        let joined = describe_approval(
+            "agent_save",
+            &json!({"name": "cox", "schedule": "@daily", "project": "rowing"}),
+        )
+        .unwrap();
+        assert!(
+            joined.contains("ADDED TO the project `rowing`") && joined.contains("grants"),
+            "{joined}"
+        );
+        let narrow = describe_approval(
+            "agent_remove_schedule",
+            &json!({"name": "w", "schedule": "@daily", "project": "rowing"}),
+        )
+        .unwrap();
+        assert!(narrow.contains("work for the project `rowing`"), "{narrow}");
         assert_eq!(describe_approval("write_file", &json!({"path": "x"})), None);
     }
 
