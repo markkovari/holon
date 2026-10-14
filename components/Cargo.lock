@@ -659,6 +659,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "concept2-logbook"
+version = "0.1.0"
+dependencies = [
+ "guestio",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "conduit-domain"
 version = "0.1.0"
 dependencies = [
