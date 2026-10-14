@@ -492,7 +492,11 @@ mod tests {
         let got: Value =
             c.get(format!("{base}/agents/made")).bearer_auth("tok").send().unwrap().json().unwrap();
         assert_eq!(got["description"], "edited");
-        spec.triggers.push(Trigger::Schedule { cron: "bogus".into(), prompt: "p".into() });
+        spec.triggers.push(Trigger::Schedule {
+            cron: "bogus".into(),
+            prompt: "p".into(),
+            notify: false,
+        });
         assert_eq!(put(&spec).status(), 422, "a bad cron is refused, not silently never fired");
         assert!(c
             .delete(format!("{base}/agents/made"))
@@ -559,7 +563,11 @@ mod tests {
         sub.triggers.push(Trigger::Event { topic: "deploy".into(), filter: None });
         rt.create_agent(sub).unwrap();
         let mut tick = mock("ticker", &["tock"]);
-        tick.triggers.push(Trigger::Schedule { cron: "@every 1s".into(), prompt: "tick".into() });
+        tick.triggers.push(Trigger::Schedule {
+            cron: "@every 1s".into(),
+            prompt: "tick".into(),
+            notify: false,
+        });
         rt.create_agent(tick).unwrap();
 
         let r: Value = reqwest::blocking::Client::new()

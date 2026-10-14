@@ -31,6 +31,11 @@ pub struct Data {
     /// reconcile from the Space's `m.space.child` events).
     #[serde(default)]
     pub rooms: BTreeMap<String, String>,
+    /// agent name -> `finished_ms` of the last run of it the bridge has posted
+    /// (or, for an agent it has only just seen, when it first saw it), so a
+    /// restart neither repeats a result nor posts an agent's whole history.
+    #[serde(default)]
+    pub delivered: BTreeMap<String, u64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

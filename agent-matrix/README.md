@@ -100,11 +100,21 @@ nothing usable being refused with a note. It skips when Docker is not available.
 * The bridge manages rooms in an adopted Space **as you** (it holds your session), since
   it is not a member of rooms you made. It only invites and removes agents there.
 
+## Scheduled results
+
+The runtime runs schedules and reminders on its own and only logs the result. The
+bridge posts the ones you want to read, as the agent: a schedule trigger with
+`"notify": true`, and every `schedule_self` reminder. They go to the feed room of the
+agent's project (its direct room if it has no project, or the project is an adopted
+Space with no feed). A failed run is posted as a `⚠️` line; a run a loop guard dropped
+is not. The bridge remembers the last run it posted per agent, so a restart does not
+repeat one, and an agent it sees for the first time starts from now, not from its
+history. Without `notify`, a schedule stays silent: an hourly one is 24 messages a day.
+
 ## Not built yet
 
 * Files in either direction (Matrix media to the agent's workspace and back).
-* Agents posting unprompted: a `notify` capability and delivery of scheduled
-  results to the project's feed room.
+* Agents posting unprompted *as a tool* (a `notify` capability an agent calls mid-run).
 * More than one human, and per-room permissions.
 * Running as a service (launchd); today it is a foreground process.
 * Whether the bridge's own session and the appservice survive a Synapse upgrade is

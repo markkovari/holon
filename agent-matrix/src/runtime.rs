@@ -11,6 +11,35 @@ pub struct AgentInfo {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// The agent's triggers as the runtime stores them (`kind`, `cron`, `notify`...).
+    #[serde(default)]
+    pub triggers: Vec<Value>,
+}
+
+/// One finished run, as `GET /agents/<name>/runs` reports it.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+pub struct RunInfo {
+    pub id: String,
+    /// `http`, `schedule: <cron>`, `timer`, `event: <topic>`, ...
+    pub trigger: String,
+    pub status: String,
+    #[serde(default)]
+    pub answer: String,
+    /// Seconds. `finished_ms` is the precise one but older records lack it.
+    #[serde(default)]
+    pub finished: u64,
+    #[serde(default)]
+    pub finished_ms: u64,
+}
+
+impl RunInfo {
+    pub fn finished_at_ms(&self) -> u64 {
+        if self.finished_ms > 0 {
+            self.finished_ms
+        } else {
+            self.finished * 1000
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -134,6 +163,11 @@ impl Runtime {
             .collect();
         out.sort_by(|a, b| b.1.total_cmp(&a.1));
         Some(out)
+    }
+
+    /// The newest `n` runs of `agent`, newest first.
+    pub fn runs(&self, agent: &str, n: usize) -> Result<Vec<RunInfo>, String> {
+        self.admin(&format!("/agents/{agent}/runs?limit={n}"))
     }
 
     pub fn projects(&self) -> Result<Vec<ProjectInfo>, String> {

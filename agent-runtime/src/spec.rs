@@ -37,8 +37,16 @@ impl Capability {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Trigger {
     /// `cron` is a 5-field expression (UTC), an `@hourly`-style macro, or
-    /// `@every 30s|5m|2h`. `prompt` is the task given to the agent.
-    Schedule { cron: String, prompt: String },
+    /// `@every 30s|5m|2h`. `prompt` is the task given to the agent. `notify`
+    /// asks a chat bridge to post each result to the owner; the runtime only
+    /// records it (the run is logged either way), so it costs nothing to leave
+    /// off on a schedule nobody needs to read.
+    Schedule {
+        cron: String,
+        prompt: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        notify: bool,
+    },
     /// Runs when `topic` is emitted (by another agent, or `POST /events/<topic>`);
     /// the event payload is the task input. Durable: events published while the
     /// agent is paused or the runtime is down are delivered later, in order.

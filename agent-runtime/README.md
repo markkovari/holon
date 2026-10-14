@@ -46,7 +46,8 @@ every run), `workspaces/<name>/` (the only place its file tools can reach).
   other name is an ability the model is told about. A tool the agent was not
   granted is refused, never dispatched.
 * **Triggers**: HTTP (always, through the gateway), `schedule` (5-field cron
-  UTC, `@hourly`, `@every 30s`), `event` (`emit_event` from another agent, or
+  UTC, `@hourly`, `@every 30s`; add `"notify": true` and a chat bridge posts
+  each result to you, otherwise it is only in the run log), `event` (`emit_event` from another agent, or
   `POST /events/<topic>`; the payload is the task).
 * **Limits**: `max_steps`, `max_tokens` per run, `daily_token_budget`.
   A run always ends with an answer; an over-budget one says why.
