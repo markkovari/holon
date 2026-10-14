@@ -167,10 +167,8 @@ looks at it with a tool; a connector gets the agent's workspace as `HOLON_WORKSP
 reads that agent's inbox and nobody else's. Only photos (jpg, png, webp, gif, heic, up to 20 MB)
 are kept, and only from unencrypted rooms, like voice messages.
 
-`agent-runtime/connectors/foodphoto.py` is a ready connector for it: `list` the inbox and
-`analyze` a photo with DeepSeek's vision model (`deepseek-chat`), which returns the items on the
-plate with grams, calories and macros, a confidence and what it is unsure of. It is an estimate
-from a picture, and says so.
+What looks at the photo is not decided here: the agent gets the file name and a tool or service
+of your choosing reads the inbox (a `vision:describe` component is the intended one).
 
 ## Not built yet
 
