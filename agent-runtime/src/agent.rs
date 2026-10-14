@@ -190,7 +190,7 @@ const TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "now",
         args: "{}",
-        about: "The current date and time (UTC).",
+        about: "The current date and time: today's local date with its weekday, tomorrow, and the next days, plus UTC and unix time. Use it for any relative date (today, tomorrow, next Friday) instead of working it out yourself.",
         sensitive: false,
     },
     ToolDef {
@@ -808,7 +808,7 @@ fn exec(
                 hits.iter().map(|m| format!("- {}", m.text)).collect::<Vec<_>>().join("\n")
             })
         }
-        "now" => Ok(host.now().to_string()),
+        "now" => Ok(crate::clock::now(host.now())),
         "list_agents" => Ok(store
             .list()
             .iter()
