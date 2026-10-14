@@ -686,6 +686,43 @@ fn an_agent_granted_the_tools_can_create_change_pause_and_delete_other_agents() 
 }
 
 #[test]
+fn removing_a_schedule_keeps_the_agent_its_history_and_its_other_triggers() {
+    let rt = runtime("unschedule");
+    let mut news = agent("news", &["ok"]);
+    news.triggers.push(Trigger::Schedule { cron: "@every 1h".into(), prompt: "p".into() });
+    news.triggers.push(Trigger::Schedule { cron: "0 12 * * *".into(), prompt: "q".into() });
+    news.triggers.push(Trigger::Event { topic: "deploy".into(), filter: None });
+    rt.create_agent(news).unwrap();
+    let wrong = r#"{"tool":"agent_remove_schedule","args":{"name":"news","schedule":"@daily"}}"#;
+    let one = r#"{"tool":"agent_remove_schedule","args":{"name":"news","schedule":"@every 1h"}}"#;
+    let rest = r#"{"tool":"agent_remove_schedule","args":{"name":"news"}}"#;
+    let mut holon = agent("holon", &[wrong, "ok", one, "ok", rest, "ok"]);
+    holon.capabilities.push(Capability::named("agent_remove_schedule"));
+    holon.auto_approve = vec!["agent_remove_schedule".into()];
+    rt.create_agent(holon).unwrap();
+    let ask = || rt.run_agent("holon", "http", "go", &Cause::default(), "", true).unwrap();
+
+    let r = ask();
+    assert!(
+        r.steps.iter().any(|s| matches!(s, Step::Tool { error: true, result, .. }
+            if result.contains("`@every 1h`") && result.contains("`0 12 * * *`"))),
+        "a schedule that is not there is refused and the real ones are listed"
+    );
+    assert_eq!(rt.store().get("news").unwrap().triggers.len(), 3, "nothing was removed");
+
+    ask();
+    let left = rt.store().get("news").unwrap().triggers;
+    assert_eq!(left.len(), 2, "one named schedule goes");
+    assert!(left
+        .iter()
+        .any(|t| matches!(t, Trigger::Schedule { cron, .. } if cron == "0 12 * * *")));
+
+    ask();
+    let left = rt.store().get("news").unwrap().triggers;
+    assert!(matches!(left.as_slice(), [Trigger::Event { .. }]), "all schedules go, events stay");
+}
+
+#[test]
 fn a_run_that_misses_a_required_tool_is_retried_on_the_next_model_of_its_chain() {
     let rt = runtime("escalate");
     let mock = |replies: &[&str]| ModelSpec::Mock {

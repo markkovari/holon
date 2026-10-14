@@ -140,6 +140,47 @@ pub fn project_targets(
     lead.filter(|l| members.iter().any(|m| m == l)).map(|l| vec![l.to_string()]).unwrap_or_default()
 }
 
+/// What an approval would do, in words, for the tools whose name alone says too little
+/// (`agent_delete` reads like "remove it from the list" and destroys the run history).
+/// `None` for any other tool: the poll then shows the call as it is.
+pub fn describe_approval(tool: &str, args: &Value) -> Option<String> {
+    let name = args["name"].as_str().unwrap_or("?");
+    Some(match tool {
+        "agent_delete" => format!(
+            "PERMANENTLY delete the agent `{name}`: its settings, schedules, run history, \
+             memory and workspace. This cannot be undone. To only stop a schedule, deny this \
+             and ask for the schedule to be removed; to stop it for now, ask for it to be paused."
+        ),
+        "agent_remove_schedule" => {
+            let which = match args["schedule"].as_str().filter(|s| !s.is_empty()) {
+                Some(s) => format!("the schedule `{s}`"),
+                None => "ALL schedules".to_string(),
+            };
+            format!(
+                "remove {which} from the agent `{name}`. The agent, its run history, its memory \
+                 and its other triggers stay."
+            )
+        }
+        "agent_save" => {
+            let mut fields: Vec<&str> = args
+                .as_object()
+                .map(|o| o.keys().map(String::as_str).filter(|k| *k != "name").collect())
+                .unwrap_or_default();
+            fields.sort_unstable();
+            let replaces = if fields.contains(&"schedule") {
+                " Giving a schedule replaces all of its current triggers with that one."
+            } else {
+                ""
+            };
+            format!(
+                "create or change the agent `{name}` (fields: {}).{replaces}",
+                fields.join(", ")
+            )
+        }
+        _ => return None,
+    })
+}
+
 /// What to say aloud of a written answer: the start of it, cut at a sentence end, short
 /// enough to listen to. The full text is always in the room.
 pub fn spoken_excerpt(answer: &str) -> String {
@@ -849,8 +890,11 @@ impl Bridge {
             } else {
                 format!(" (woken via {})", a.chain.join(" › "))
             };
+            let what = describe_approval(&a.tool, &a.args)
+                .map(|d| format!("\n\nThat means: {d}"))
+                .unwrap_or_default();
             let q = format!(
-                "{} wants to run {} {}{via}. Approve?",
+                "{} wants to run {} {}{via}.{what}\n\nApprove?",
                 a.agent,
                 a.tool,
                 clip(&a.args.to_string(), 300)
@@ -1057,6 +1101,28 @@ mod tests {
         let tight = history_lines(&cfg, &msgs, "$4", 30);
         assert_eq!(tight, "coach: Shall I ask the rower?");
         assert_eq!(history_lines(&cfg, &[], "", 100), "");
+    }
+
+    #[test]
+    fn an_admin_approval_says_what_it_destroys() {
+        let del = describe_approval("agent_delete", &json!({"name": "kevin-ishot"})).unwrap();
+        assert!(del.contains("PERMANENTLY") && del.contains("run history"), "{del}");
+        assert!(del.contains("`kevin-ishot`") && del.contains("cannot be undone"), "{del}");
+        let one = describe_approval(
+            "agent_remove_schedule",
+            &json!({"name": "weather", "schedule": "@every 1h"}),
+        )
+        .unwrap();
+        assert!(one.contains("`@every 1h`") && one.contains("stay"), "{one}");
+        let all = describe_approval("agent_remove_schedule", &json!({"name": "weather"})).unwrap();
+        assert!(all.contains("ALL schedules"), "{all}");
+        let save = describe_approval(
+            "agent_save",
+            &json!({"name": "w", "schedule": "@daily", "prompt": "p"}),
+        )
+        .unwrap();
+        assert!(save.contains("fields: prompt, schedule") && save.contains("replaces"), "{save}");
+        assert_eq!(describe_approval("write_file", &json!({"path": "x"})), None);
     }
 
     #[test]
