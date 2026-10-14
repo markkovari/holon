@@ -306,6 +306,12 @@ impl Bridge {
             }
         }
         for p in &projects {
+            // The runtime says whether a project is archived; the rooms follow it.
+            if p.archived {
+                self.archive_rooms(p);
+                continue;
+            }
+            self.restore_rooms(p);
             if let Err(e) = self.ensure_project(p) {
                 log(&format!("project {}: {e}", p.name));
             }
@@ -677,6 +683,7 @@ impl Bridge {
                 description: topic,
                 agents: vec![agent.to_string()],
                 lead: None,
+                ..Default::default()
             })
         };
         match result {
@@ -1187,6 +1194,125 @@ impl Bridge {
                 ));
             }
             Err(e) => log(&format!("approval {approval}: {e}")),
+        }
+    }
+
+    // ---- archived projects (ADR-0105, section 5) ------------------------------
+
+    /// Every room of a project, its children first and its Space last, so leaving them in
+    /// this order never leaves a room whose Space is gone.
+    fn rooms_of(&self, project: &str) -> Vec<String> {
+        self.state.read(|d| {
+            let Some(r) = d.projects.get(project) else { return Vec::new() };
+            let mut rooms: Vec<String> = d
+                .rooms
+                .iter()
+                .filter(|(_, p)| p.as_str() == project)
+                .map(|(room, _)| room.clone())
+                .collect();
+            rooms.extend([r.general.clone(), r.feed.clone()].into_iter().filter(|x| !x.is_empty()));
+            rooms.push(r.space.clone());
+            rooms
+        })
+    }
+
+    /// A Space the owner made and the bridge adopted: the bridge is not in it, so it can
+    /// only be re-entered by an agent that is.
+    fn is_adopted(&self, project: &str) -> bool {
+        self.state.read(|d| {
+            d.projects.get(project).is_some_and(|r| r.general.is_empty() && r.feed.is_empty())
+        })
+    }
+
+    /// The owner leaves and forgets the rooms of a project the runtime has archived, once.
+    fn archive_rooms(&self, p: &ProjectInfo) {
+        if self.state.read(|d| d.archived.contains(&p.name) || !d.projects.contains_key(&p.name)) {
+            return;
+        }
+        if self.is_adopted(&p.name) && p.agents.is_empty() {
+            log(&format!(
+                "{}: archived in the runtime, but its Space has no agent in it, so nothing could \
+                 invite you back; leaving its rooms alone",
+                p.name
+            ));
+            return;
+        }
+        for room in self.rooms_of(&p.name) {
+            if let Err(e) = self.mx.leave_and_forget_as_owner(&room) {
+                log(&format!("{}: could not leave {room}: {e}", p.name));
+            }
+        }
+        self.state.write(|d| d.archived.insert(p.name.clone()));
+        self.tell_owner(&format!(
+            "Archived {}: its agents are paused where nothing else holds them, and its rooms \
+             are out of your list. !project unarchive {} brings them back.",
+            p.name, p.name
+        ));
+    }
+
+    /// The runtime says the project is live again but the owner is out of its rooms:
+    /// invite them back (the bridge can in rooms it made; in an adopted Space an agent
+    /// that is in it does) and place them.
+    fn restore_rooms(&self, p: &ProjectInfo) {
+        if !self.state.read(|d| d.archived.contains(&p.name)) {
+            return;
+        }
+        let bridge = self.bridge_user();
+        let mut back = true;
+        for room in self.rooms_of(&p.name) {
+            // Idempotent, because a pass can be cut short (Synapse rate-limits joins): a room
+            // you are already in is done, and an invite a pass left pending is accepted as is.
+            let owner = &self.cfg.owner;
+            if self.mx.joined_as_owner(&room).is_ok_and(|j| j.contains(owner)) {
+                continue;
+            }
+            if self.mx.join_as_owner(&room).is_ok() {
+                continue;
+            }
+            let invited = self.mx.invite(&room, &bridge, owner).is_ok()
+                || p.agents
+                    .iter()
+                    .any(|a| self.mx.invite(&room, &self.cfg.ghost(a), owner).is_ok());
+            if !(invited && self.mx.join_as_owner(&room).is_ok()) {
+                back = false;
+                log(&format!("{}: could not bring you back into {room} yet; trying again", p.name));
+            }
+        }
+        if back {
+            self.state.write(|d| d.archived.remove(&p.name));
+        }
+    }
+
+    /// `!project archive <name>`: the guard for an adopted Space, then the runtime, then the
+    /// rooms.
+    pub fn archive_command(&self, name: &str) -> String {
+        match self.rt.projects() {
+            Err(e) => return format!("could not read projects: {e}"),
+            Ok(ps) => match ps.into_iter().find(|p| p.name == name) {
+                None => return format!("no project named {name}"),
+                Some(p) if p.archived => return format!("{name} is already archived."),
+                Some(p) if self.is_adopted(name) && p.agents.is_empty() => {
+                    return format!(
+                        "{name} is a Space you made and no agent is in it, so nothing could invite \
+                         you back after you left it. Add an agent first (!project add {name} <agent>)."
+                    )
+                }
+                Some(_) => {}
+            },
+        }
+        match self.rt.archive_project(name) {
+            Ok(paused) => {
+                let _ = self.reconcile();
+                format!(
+                    "{name} archived{}. !project unarchive {name} brings it back.",
+                    if paused.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {} paused", paused.join(", "))
+                    }
+                )
+            }
+            Err(e) => format!("could not archive {name}: {e}"),
         }
     }
 

@@ -110,6 +110,21 @@ nothing usable being refused with a note. It skips when Docker is not available.
 * The bridge manages rooms in an adopted Space **as you** (it holds your session), since
   it is not a member of rooms you made. It only invites and removes agents there.
 
+## Archiving a project
+
+`!project archive <name>` shelves a project; `!project unarchive <name>` brings it back.
+
+* **The runtime** marks the project archived and pauses each member that no other live
+  project holds. It records which agents *it* paused, so unarchiving resumes those and
+  never one you paused yourself. An agent also in a live project keeps running.
+* **The rooms:** you leave and forget the project's Space and every room in it, so it
+  drops out of your list and your Spaces bar; the server keeps the history. The bridge
+  makes the rooms follow the runtime's flag, so archiving through the API does the same.
+* **Unarchive** invites you back to the same rooms (the bridge does in rooms it made, an
+  agent that is in them does in a Space you made yourself) and resumes the agents.
+* A Space you made yourself with **no agent in it** is not archived: after you left it
+  nothing could invite you back. Add an agent first.
+
 ## When an agent is deleted
 
 The runtime tells the bridge nothing, so the bridge notices an agent missing from the

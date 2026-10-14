@@ -361,7 +361,10 @@ impl Runtime {
         self.store.put_project(&project)
     }
 
-    pub fn delete_project(&self, name: &str) -> Result<(), String> {
+    /// Forgets a project. An archived one is brought back first, so deleting it does not
+    /// leave its agents paused with nothing to say why.
+    pub fn delete_project(self: &Arc<Self>, name: &str) -> Result<(), String> {
+        let _ = self.unarchive_project(name);
         self.store.delete_project(name)
     }
 
@@ -380,10 +383,69 @@ impl Runtime {
         let mut p =
             self.store.get_project(name).ok_or_else(|| format!("no project named {name}"))?;
         p.agents.retain(|a| a != agent);
+        p.paused_by_archive.retain(|a| a != agent);
         if p.lead.as_deref() == Some(agent) {
             p.lead = None;
         }
         self.put_project(p)
+    }
+
+    /// Shelves a project: it is marked archived, and each member that no other live project
+    /// holds is paused (unless it already was, which is the owner's doing and is left alone).
+    /// Returns the agents it paused. Archiving an archived project changes nothing.
+    pub fn archive_project(self: &Arc<Self>, name: &str) -> Result<Vec<String>, String> {
+        let mut p =
+            self.store.get_project(name).ok_or_else(|| format!("no project named {name}"))?;
+        if p.archived {
+            return Ok(Vec::new());
+        }
+        let others = self.store.list_projects();
+        let mut paused = Vec::new();
+        for a in &p.agents {
+            let live_elsewhere =
+                others.iter().any(|q| q.name != p.name && !q.archived && q.agents.contains(a));
+            if live_elsewhere || self.store.get(a).is_none_or(|s| s.paused) {
+                continue;
+            }
+            self.set_paused(a, true)?;
+            paused.push(a.clone());
+        }
+        p.archived = true;
+        p.paused_by_archive = paused.clone();
+        self.store.put_project(&p)?;
+        Ok(paused)
+    }
+
+    /// Brings a project back, and resumes the members an archive paused: any member that a
+    /// project's record says archiving paused, whichever project that was. Returns them.
+    pub fn unarchive_project(self: &Arc<Self>, name: &str) -> Result<Vec<String>, String> {
+        let mut p =
+            self.store.get_project(name).ok_or_else(|| format!("no project named {name}"))?;
+        if !p.archived {
+            return Ok(Vec::new());
+        }
+        p.archived = false;
+        let mut all = self.store.list_projects();
+        let recorded: std::collections::HashSet<String> =
+            all.iter().flat_map(|q| q.paused_by_archive.clone()).collect();
+        let resume: Vec<String> =
+            p.agents.iter().filter(|a| recorded.contains(*a)).cloned().collect();
+        for a in &resume {
+            if self.store.get(a).is_some_and(|s| s.paused) {
+                self.set_paused(a, false)?;
+            }
+        }
+        // what was resumed is no longer a record of anything, in any project
+        for q in all.iter_mut().filter(|q| q.name != p.name) {
+            let before = q.paused_by_archive.len();
+            q.paused_by_archive.retain(|a| !resume.contains(a));
+            if q.paused_by_archive.len() != before {
+                self.store.put_project(q)?;
+            }
+        }
+        p.paused_by_archive.retain(|a| !resume.contains(a));
+        self.store.put_project(&p)?;
+        Ok(resume)
     }
 
     /// Takes the agent out of service and into the trash (see `Store::delete`).
