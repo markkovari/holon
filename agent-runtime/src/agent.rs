@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 
 use crate::kv::{Entry, Put};
 use crate::model::{Msg, Reply, Usage};
-use crate::spec::{glob_match, validate_topic, AgentSpec};
+use crate::spec::{glob_match, validate_topic, AgentSpec, Trigger};
 use crate::store::{confine, RunRecord, Status, Step, Store};
 use crate::trace::{new_span_id, new_trace_id};
 
@@ -282,19 +282,25 @@ const TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "agent_save",
         args: r#"{"name": "...", "description": "what it is for, as instructions to it", "capabilities": ["http_get"], "schedule": "@every 1h", "prompt": "what to do when the schedule fires", "model": "qwen"}"#,
-        about: "Create an agent, or change the fields you give of an existing one. The owner approves first.",
+        about: "Create an agent, or change the fields you give of an existing one; fields you leave out stay as they are. Giving `schedule` REPLACES all of that agent's triggers with that one schedule. The owner approves first.",
         sensitive: true,
     },
     ToolDef {
         name: "agent_delete",
         args: r#"{"name": "..."}"#,
-        about: "Delete an agent for good. The owner approves first.",
+        about: "PERMANENTLY delete a whole agent: its settings, schedules, run history, memory and workspace. This cannot be undone. Use it only when the owner clearly asks to delete the agent itself. To stop just a schedule use agent_remove_schedule; to stop an agent for now use agent_pause. The owner approves first.",
+        sensitive: true,
+    },
+    ToolDef {
+        name: "agent_remove_schedule",
+        args: r#"{"name": "...", "schedule": "@every 1h"}"#,
+        about: "Remove a schedule from an agent, and only that: the agent, its run history, memory and its other triggers stay. `schedule` is the cron line to remove; leave it out to remove all of the agent's schedules. The owner approves first.",
         sensitive: true,
     },
     ToolDef {
         name: "agent_pause",
         args: r#"{"name": "...", "paused": true}"#,
-        about: "Pause (true) or resume (false) an agent.",
+        about: "Pause (true) or resume (false) an agent: while paused none of its triggers fire, and nothing is deleted. Use this to stop an agent for now.",
         sensitive: false,
     },
 ];
@@ -318,7 +324,7 @@ fn required(name: &str) -> &'static [&'static str] {
         "transcribe" => &["path"],
         "speak" => &["text"],
         "http_get" => &["url"],
-        "agent_show" | "agent_delete" | "agent_pause" => &["name"],
+        "agent_show" | "agent_delete" | "agent_pause" | "agent_remove_schedule" => &["name"],
         "agent_save" => &["name"],
         "read_file" => &["path"],
         "write_file" => &["path", "content"],
@@ -339,7 +345,9 @@ fn primary(name: &str) -> Option<&'static str> {
         "store_get" | "store_list" => Some("ns"),
         "schedule_self" => Some("prompt"),
         "task_result" => Some("id"),
-        "agent_show" | "agent_delete" | "agent_pause" | "agent_save" => Some("name"),
+        "agent_show" | "agent_delete" | "agent_pause" | "agent_save" | "agent_remove_schedule" => {
+            Some("name")
+        }
         "transcribe" => Some("path"),
         "speak" => Some("text"),
         n if n.starts_with("agent:") => Some("message"),
@@ -887,8 +895,50 @@ fn exec(
             if name == spec.name {
                 return Err("you may not delete yourself".into());
             }
+            let runs = store.runs(&name, usize::MAX).len();
             host.delete_agent(&name)?;
-            Ok(format!("deleted {name}"))
+            Ok(format!(
+                "deleted {name} permanently: its settings, schedules, {runs} recorded runs, \
+                 memory and workspace are gone"
+            ))
+        }
+        "agent_remove_schedule" => {
+            let name = arg(args, "name");
+            if name == spec.name {
+                return Err("you may not change your own spec".into());
+            }
+            let mut target = store.get(&name).ok_or_else(|| format!("no agent named {name}"))?;
+            let only = arg(args, "schedule");
+            let wanted = |t: &Trigger| match t {
+                Trigger::Schedule { cron, .. } => only.is_empty() || *cron == only,
+                _ => false,
+            };
+            let before = target.triggers.len();
+            let have: Vec<String> = target
+                .triggers
+                .iter()
+                .filter_map(|t| match t {
+                    Trigger::Schedule { cron, .. } => Some(format!("`{cron}`")),
+                    _ => None,
+                })
+                .collect();
+            target.triggers.retain(|t| !wanted(t));
+            let removed = before - target.triggers.len();
+            if removed == 0 {
+                return Err(if have.is_empty() {
+                    format!("{name} has no schedule")
+                } else {
+                    format!(
+                        "{name} has no schedule `{only}`; its schedules are {}",
+                        have.join(", ")
+                    )
+                });
+            }
+            host.save_agent(target)?;
+            Ok(format!(
+                "removed {removed} schedule(s) from {name}; the agent, its run history, memory \
+                 and its other triggers are untouched"
+            ))
         }
         "agent_pause" => {
             let paused = !matches!(args.get("paused"), Some(Value::Bool(false)))
