@@ -364,7 +364,8 @@ impl Runtime {
     }
 
     /// Runs `agent` on `text`. The runtime's answer, or its error, as text; the
-    /// bool says whether it succeeded. `traceparent` joins an existing trace.
+    /// bool says whether it succeeded. `traceparent` joins an existing trace. `attach` names
+    /// photos in the agent's inbox that came with the message: they go to its model.
     pub fn run(
         &self,
         agent: &str,
@@ -372,6 +373,7 @@ impl Runtime {
         why: &str,
         traceparent: Option<&str>,
         project: Option<&str>,
+        attach: &[String],
     ) -> (bool, String) {
         // POST, so a long conversation is a body and not part of the URL.
         let mut req = self
@@ -380,6 +382,9 @@ impl Runtime {
             .query(&[("why", why)])
             .query(&project.map(|p| [("project", p)]).unwrap_or_default())
             .body(text.to_string());
+        if !attach.is_empty() {
+            req = req.query(&[("attach", attach.join(","))]);
+        }
         if let Some(tp) = traceparent {
             req = req.header("traceparent", tp);
         }

@@ -51,6 +51,13 @@ every run), `workspaces/<name>/` (the only place its file tools can reach).
   and the run is for that project: the agent must be a member, the task says so, and
   the bridge posts the result in that project's room), `event` (`emit_event` from another agent, or
   `POST /events/<topic>`; the payload is the task).
+* **Photos**: a run can come with photos from the agent's inbox: `POST /agents/<n>/run?attach=a.jpg,b.png`
+  (at most four, names only, so they cannot leave that agent's inbox). They go to the agent's model with
+  the first message, a large one shrunk and an iPhone HEIC converted (macOS `sips`). A model sees them only
+  if its spec says `"vision": true` (`deepseek-chat` does; the on-device and small local models do not): any
+  other is told a photo was attached and asks for it in words instead of failing. A photo that is missing
+  or is not an image is said in the message, not fatal. Every step of a run sends the pictures again, so
+  they are billed again; keep a photo-reading agent's `max_steps` small.
 * **Limits**: `max_steps`, `max_tokens` per run, `daily_token_budget`.
   A run always ends with an answer; an over-budget one says why.
 * **Approval**: `http_get` and `write_file` ask a human first unless listed in

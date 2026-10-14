@@ -131,8 +131,13 @@ pub enum ModelSpec {
         /// the runtime starts it on first use and stops it after it has sat idle.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         service: String,
+        /// Whether this server accepts images (an `image_url` part in a message). A photo
+        /// attached to a run is sent only to models that say so; one that cannot see is told a
+        /// photo was attached and to ask for it in words, which is better than a 400.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        vision: bool,
     },
-    /// Anthropic's Messages API. Same rule for the key.
+    /// Anthropic's Messages API. Same rule for the key. It sees images.
     Anthropic { model: String, api_key_env: String },
     /// Try each model in order and use the first that answers: a hosted one first, a local one
     /// as the floor. A model that errors (down, out of quota, over its limit) is skipped for

@@ -893,6 +893,11 @@ fn a_photo_sent_in_element_lands_in_the_agents_inbox_and_the_agent_is_told() {
         run.input
     );
     let file = run.input.split('`').nth(1).expect("the file name is in the note").to_string();
+    assert_eq!(
+        run.attachments,
+        std::slice::from_ref(&file),
+        "the photo came with the run, for the model to see"
+    );
     assert!(file.ends_with("-meal.png"), "{file}");
     let kept = rt.store().workspace("chef").unwrap().join("inbox").join(&file);
     assert_eq!(std::fs::read(kept).unwrap(), photo, "the very bytes that were sent");

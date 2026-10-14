@@ -109,6 +109,9 @@ pub struct RunRecord {
     /// to in. Empty for none; a chat bridge uses it to say where the result belongs.
     #[serde(default)]
     pub project: String,
+    /// Photos that came with it, by file name in the agent's inbox.
+    #[serde(default)]
+    pub attachments: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

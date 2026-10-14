@@ -1056,8 +1056,10 @@ impl Bridge {
         } else {
             format!(" with the caption: {caption}")
         };
+        // The photo goes to the agent's own model with the message (it is attached), and stays in
+        // its inbox; a model that cannot see is told so by the runtime.
         let text = format!(
-            "Mark sent a photo{said}. It is saved in your inbox as `{file}`; look at it with your photo tool."
+            "Mark sent a photo{said}. It is attached to this message and saved in your inbox as `{file}`."
         );
         let (ok, answer) = self.rt.run(
             agent,
@@ -1065,6 +1067,7 @@ impl Bridge {
             &self.why(room),
             None,
             self.project_of(room).as_deref(),
+            std::slice::from_ref(&file),
         );
         self.mx.typing(room, &ghost, false);
         let body = if ok {
@@ -1125,6 +1128,7 @@ impl Bridge {
             &self.why(room),
             None,
             self.project_of(room).as_deref(),
+            &[],
         );
         self.mx.typing(room, &ghost, false);
         let written = if ok {
@@ -1182,6 +1186,7 @@ impl Bridge {
             &self.why(room),
             None,
             self.project_of(room).as_deref(),
+            &[],
         );
         self.mx.typing(room, &ghost, false);
         let body = if ok {
