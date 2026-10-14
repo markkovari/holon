@@ -878,6 +878,40 @@ fn a_photo_sent_in_element_lands_in_the_agents_inbox_and_the_agent_is_told() {
     let photo: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
     let mxc = owner.upload(photo.clone(), "image/png", "meal.png");
 
+    // chef has a photo service: a stand-in that answers every photo with the same text
+    let service = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = service.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        use std::io::{BufRead, Read, Write};
+        for stream in service.incoming().flatten() {
+            let mut reader = std::io::BufReader::new(&stream);
+            let mut length = 0usize;
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+                if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = v.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut body = vec![0; length];
+            let _ = reader.read_exact(&mut body);
+            let reply = "confidence: medium\n- stand-in plate";
+            let _ = (&stream).write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}",
+                    reply.len()
+                )
+                .as_bytes(),
+            );
+        }
+    });
+    let mut chef = rt.store().get("chef").unwrap();
+    chef.allow_hosts = vec!["127.0.0.1".into()];
+    chef.photo_url = Some(format!("http://127.0.0.1:{port}/estimate"));
+    rt.update_agent(chef).unwrap();
+
     // a photo with a caption (Element sends the file name in `filename`)
     owner.send(
         &room,
@@ -890,6 +924,12 @@ fn a_photo_sent_in_element_lands_in_the_agents_inbox_and_the_agent_is_told() {
     assert!(
         run.input.contains("Mark sent a photo with the caption: post-row lunch"),
         "{}",
+        run.input
+    );
+    assert!(
+        run.input
+            .contains("A photo service read it and says:\nconfidence: medium\n- stand-in plate"),
+        "the service's reading reaches the agent: {}",
         run.input
     );
     let file = run.input.split('`').nth(1).expect("the file name is in the note").to_string();

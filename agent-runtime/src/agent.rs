@@ -734,7 +734,9 @@ fn entry_text(key: &str, e: &Entry) -> String {
     format!("{key} (v{}, by {}): {}", e.version, e.by, e.value)
 }
 
-fn http_get(spec: &AgentSpec, url: &str) -> Result<String, String> {
+/// Whether `spec` may reach `url`: http(s), no credentials in it, and its host (or host:port) in the
+/// agent's `allow_hosts`. The one rule behind `http_get` and an agent's `photo_url`.
+pub fn check_url_allowed(spec: &AgentSpec, url: &str) -> Result<(), String> {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))
@@ -750,6 +752,11 @@ fn http_get(spec: &AgentSpec, url: &str) -> Result<String, String> {
     if !spec.allow_hosts.iter().any(|a| a == authority || a == host) {
         return Err(format!("{authority} is not in this agent's allowed hosts"));
     }
+    Ok(())
+}
+
+fn http_get(spec: &AgentSpec, url: &str) -> Result<String, String> {
+    check_url_allowed(spec, url)?;
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none()) // a redirect could leave the allow-list

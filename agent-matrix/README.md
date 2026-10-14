@@ -167,8 +167,12 @@ looks at it with a tool; a connector gets the agent's workspace as `HOLON_WORKSP
 reads that agent's inbox and nobody else's. Only photos (jpg, png, webp, gif, heic, up to 20 MB)
 are kept, and only from unencrypted rooms, like voice messages.
 
-What looks at the photo is not decided here: the agent gets the file name and a tool or service
-of your choosing reads the inbox (a `vision:describe` component is the intended one).
+What looks at the photo is a service the agent is pointed at: set `photo_url` on the agent (its host
+must be in `allow_hosts`, the rule `http_get` follows) and the runtime posts each photo there with
+your caption as `?note=`, and the reply goes into the note the agent gets ("A photo service read it
+and says: …"). If the service fails, the agent is told that instead and asks you for the meal in
+words. The photo is kept either way. The `meal` app (`docs/apps/MEAL.md`, a wasm component) is the
+intended service for a nutrition agent.
 
 ## Not built yet
 

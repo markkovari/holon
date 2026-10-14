@@ -211,6 +211,19 @@ pub fn describe_approval(tool: &str, args: &Value) -> Option<String> {
     })
 }
 
+/// What an agent is told when a photo arrives: that it did, what it is called, and what the photo
+/// service made of it, or that there is none to ask.
+pub fn photo_note(said: &str, stored: &crate::runtime::StoredPhoto) -> String {
+    let reading = match (&stored.analysis, &stored.analysis_error) {
+        (Some(a), _) => format!(" A photo service read it and says:\n{}", a.trim()),
+        (None, Some(e)) => format!(
+            " The photo service could not read it ({e}). Say so, and ask Mark for the meal in words."
+        ),
+        (None, None) => " Look at it with your photo tool.".to_string(),
+    };
+    format!("Mark sent a photo{said}. It is saved in your inbox as `{}`.{reading}", stored.file)
+}
+
 /// The words a person wrote with a photo: Element puts the file name in `body` unless there is
 /// a caption, in which case `filename` holds the name and `body` the caption.
 pub fn photo_caption(content: &Value) -> String {
@@ -1041,11 +1054,11 @@ impl Bridge {
             .map_err(|e| format!("I could not fetch that photo: {e}"))
             .and_then(|bytes| {
                 self.rt
-                    .upload_inbox(agent, &name, bytes)
+                    .upload_inbox(agent, &name, bytes, caption)
                     .map_err(|e| format!("I could not keep that photo: {}", clip(&e, 300)))
             });
-        let file = match kept {
-            Ok(f) => f,
+        let stored = match kept {
+            Ok(s) => s,
             Err(e) => {
                 self.mx.typing(room, &ghost, false);
                 return note(&format!("⚠️ {e}"));
@@ -1056,9 +1069,7 @@ impl Bridge {
         } else {
             format!(" with the caption: {caption}")
         };
-        let text = format!(
-            "Mark sent a photo{said}. It is saved in your inbox as `{file}`; look at it with your photo tool."
-        );
+        let text = photo_note(&said, &stored);
         let (ok, answer) = self.rt.run(
             agent,
             &self.task(room, reply_to, &text),
@@ -1632,6 +1643,37 @@ mod tests {
         .unwrap();
         assert!(narrow.contains("work for the project `rowing`"), "{narrow}");
         assert_eq!(describe_approval("write_file", &json!({"path": "x"})), None);
+    }
+
+    #[test]
+    fn the_agent_is_told_what_the_photo_service_said_or_that_it_could_not() {
+        use crate::runtime::StoredPhoto;
+        let stored = |analysis: Option<&str>, error: Option<&str>| StoredPhoto {
+            file: "17-lunch.jpg".into(),
+            analysis: analysis.map(String::from),
+            analysis_error: error.map(String::from),
+        };
+        let with = photo_note(
+            " with the caption: post-row",
+            &stored(Some("confidence: medium\n- rice\n"), None),
+        );
+        assert!(with.starts_with("Mark sent a photo with the caption: post-row. It is saved in your inbox as `17-lunch.jpg`."), "{with}");
+        assert!(
+            with.ends_with("A photo service read it and says:\nconfidence: medium\n- rice"),
+            "{with}"
+        );
+        let failed = photo_note("", &stored(None, Some("the photo service answered 415")));
+        assert!(
+            failed.contains("could not read it (the photo service answered 415)")
+                && failed.contains("in words"),
+            "{failed}"
+        );
+        assert!(photo_note("", &stored(None, None)).ends_with("Look at it with your photo tool."));
+        assert_eq!(
+            photo_note("", &stored(None, None)).split('`').nth(1),
+            Some("17-lunch.jpg"),
+            "the file name is the first quoted thing"
+        );
     }
 
     #[test]

@@ -172,6 +172,12 @@ pub struct AgentSpec {
     /// Hosts `http_get` may reach. Empty = none; there is no wildcard.
     #[serde(default)]
     pub allow_hosts: Vec<String>,
+    /// Where a photo sent to this agent is posted to be read (a `meal` app's `/estimate`, say):
+    /// the reply travels with the photo into the note the agent gets, so it never needs a photo
+    /// tool. Its host must be in `allow_hosts`, the same rule as `http_get`. `None`: the photo is
+    /// only stored in the agent's inbox.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub photo_url: Option<String>,
     #[serde(default)]
     pub triggers: Vec<Trigger>,
     #[serde(default = "default_model")]
@@ -242,6 +248,7 @@ impl AgentSpec {
             ],
             auto_approve: Vec::new(),
             allow_hosts: Vec::new(),
+            photo_url: None,
             triggers: Vec::new(),
             model: ModelSpec::Local,
             max_steps: default_steps(),

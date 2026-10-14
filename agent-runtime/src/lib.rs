@@ -13,6 +13,7 @@ pub mod kv;
 pub mod lazy;
 pub mod model;
 pub mod otlp;
+pub mod photo;
 pub mod projects;
 pub mod runtime;
 pub mod server;

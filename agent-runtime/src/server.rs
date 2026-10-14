@@ -260,7 +260,20 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
             let filename = query_param(query, "name").unwrap_or_default();
             match rt.store().save_inbox(name, &filename, &raw) {
                 Ok(file) => {
-                    json_reply(req, 201, json!({ "file": file, "path": format!("inbox/{file}") }))
+                    let mut stored = json!({ "file": file, "path": format!("inbox/{file}") });
+                    // An agent with a `photo_url` has its photos read by that service, and what it
+                    // says (or why it could not) goes back with the photo. A failure never fails
+                    // the upload: the photo is kept, and the agent can tell the person.
+                    if let Some(url) = rt.store().get(name).and_then(|s| s.photo_url) {
+                        let (bytes, media_type) =
+                            crate::photo::prepare(raw.clone(), crate::photo::media_type_of(&file));
+                        let note = query_param(query, "note").unwrap_or_default();
+                        match crate::photo::analyze(&url, bytes, media_type, &note) {
+                            Ok(text) => stored["analysis"] = json!(text),
+                            Err(e) => stored["analysis_error"] = json!(e),
+                        }
+                    }
+                    json_reply(req, 201, stored)
                 }
                 Err(e) if e.starts_with("no agent") => text(req, 404, e),
                 Err(e) => text(req, 422, e),
@@ -581,6 +594,71 @@ mod tests {
         let v: Value = post("/projects/p/unarchive").json().unwrap();
         assert_eq!(v["resumed"], json!(["a"]));
         assert_eq!(post("/projects/missing/archive").status(), 404);
+    }
+
+    #[test]
+    fn an_agent_with_a_photo_url_has_its_photos_read_and_a_failure_does_not_lose_the_photo() {
+        let (rt, base) = start("photo-url");
+        let c = reqwest::blocking::Client::new();
+        let analyzer = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = analyzer.server_addr().to_ip().unwrap().port();
+        std::thread::spawn(move || {
+            for mut req in analyzer.incoming_requests() {
+                let mut body = Vec::new();
+                std::io::Read::read_to_end(req.as_reader(), &mut body).unwrap();
+                let (code, text) = if body.len() == 3 {
+                    (200, format!("saw {} bytes; note={}", body.len(), req.url()))
+                } else {
+                    (415, "not today".to_string())
+                };
+                let _ = req.respond(tiny_http::Response::from_string(text).with_status_code(code));
+            }
+        });
+        let mut chef = mock("chef", &["hi"]);
+        chef.allow_hosts = vec!["127.0.0.1".into()];
+        chef.photo_url = Some(format!("http://127.0.0.1:{port}/estimate"));
+        let put = |spec: &AgentSpec| {
+            c.put(format!("{base}/agents/{}", spec.name))
+                .bearer_auth("tok")
+                .json(spec)
+                .send()
+                .unwrap()
+        };
+        assert_eq!(put(&chef).status(), 201);
+        put(&mock("plain", &["hi"]));
+        let send = |agent: &str, bytes: Vec<u8>| -> Value {
+            c.post(format!("{base}/agents/{agent}/inbox?name=a.png&note=post-row"))
+                .bearer_auth("tok")
+                .body(bytes)
+                .send()
+                .unwrap()
+                .json()
+                .unwrap()
+        };
+        let ok = send("chef", vec![1, 2, 3]);
+        assert_eq!(ok["analysis"], "saw 3 bytes; note=/estimate?note=post-row", "{ok}");
+        let failed = send("chef", vec![1, 2, 3, 4]);
+        assert!(failed["analysis_error"].as_str().unwrap().contains("415"), "{failed}");
+        let kept = rt
+            .store()
+            .workspace("chef")
+            .unwrap()
+            .join("inbox")
+            .join(failed["file"].as_str().unwrap());
+        assert!(kept.exists(), "the photo is kept anyway");
+        // an agent with no photo_url just stores it
+        let plain = send("plain", vec![1, 2, 3]);
+        assert!(
+            plain.get("analysis").is_none() && plain.get("analysis_error").is_none(),
+            "{plain}"
+        );
+
+        // photo_url follows the same host rule as http_get, checked when the spec is saved
+        let mut stray = mock("stray", &["hi"]);
+        stray.photo_url = Some("http://elsewhere.example/estimate".into());
+        let r = put(&stray);
+        assert_eq!(r.status(), 422);
+        assert!(r.text().unwrap().contains("photo_url"), "says which setting");
     }
 
     #[test]

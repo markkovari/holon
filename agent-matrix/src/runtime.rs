@@ -78,6 +78,15 @@ pub struct Spoken {
     pub waveform: Vec<u16>,
 }
 
+/// A photo as the runtime kept it: the name it is stored under, and what the agent's photo service
+/// said about it or why it could not (neither when the agent has no such service).
+#[derive(Debug, PartialEq)]
+pub struct StoredPhoto {
+    pub file: String,
+    pub analysis: Option<String>,
+    pub analysis_error: Option<String>,
+}
+
 /// A deleted agent in the runtime's trash.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 pub struct Trashed {
@@ -277,18 +286,20 @@ impl Runtime {
         self.send(reqwest::Method::DELETE, &format!("/projects/{project}/agents/{agent}"), None)
     }
 
-    /// Puts a photo into the agent's inbox in the runtime (`POST /agents/<name>/inbox`) and
-    /// returns the file name it was stored under, which is what the agent's tools take.
+    /// Puts a photo into the agent's inbox in the runtime (`POST /agents/<name>/inbox`). `note` is
+    /// what the person said with it; an agent that has a `photo_url` gets the photo read there, and
+    /// what the service said (or why it could not) comes back with the stored name.
     pub fn upload_inbox(
         &self,
         agent: &str,
         filename: &str,
         bytes: Vec<u8>,
-    ) -> Result<String, String> {
+        note: &str,
+    ) -> Result<StoredPhoto, String> {
         let r = self
             .runner
             .post(format!("{}/agents/{agent}/inbox", self.base))
-            .query(&[("name", filename)])
+            .query(&[("name", filename), ("note", note)])
             .bearer_auth(&self.token)
             .body(bytes)
             .send()
@@ -298,10 +309,12 @@ impl Runtime {
         if !ok {
             return Err(text);
         }
-        serde_json::from_str::<Value>(&text)
-            .ok()
-            .and_then(|v| v["file"].as_str().map(String::from))
-            .ok_or_else(|| "unexpected reply".into())
+        let v: Value = serde_json::from_str(&text).map_err(|_| "unexpected reply".to_string())?;
+        Ok(StoredPhoto {
+            file: v["file"].as_str().ok_or("unexpected reply")?.to_string(),
+            analysis: v["analysis"].as_str().map(String::from),
+            analysis_error: v["analysis_error"].as_str().map(String::from),
+        })
     }
 
     /// Whether the runtime can transcribe and speak (`GET /speech`).

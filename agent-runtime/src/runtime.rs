@@ -162,6 +162,9 @@ pub fn validate_spec(spec: &AgentSpec) -> Result<(), String> {
     if !(1..=50).contains(&spec.max_steps) {
         return Err("max_steps must be 1-50".into());
     }
+    if let Some(url) = &spec.photo_url {
+        crate::agent::check_url_allowed(spec, url).map_err(|e| format!("photo_url: {e}"))?;
+    }
     let mut seen = HashSet::new();
     for c in &spec.capabilities {
         if c.name.is_empty() || !seen.insert(c.name.clone()) {
