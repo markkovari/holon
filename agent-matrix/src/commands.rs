@@ -8,6 +8,9 @@ use crate::runtime::ProjectInfo;
 pub enum Cmd {
     Help,
     Agents,
+    AgentTrash,
+    AgentRestore { name: String },
+    AgentPurge { name: String },
     ProjectList,
     ProjectNew { name: String, description: String },
     ProjectAdd { name: String, agents: Vec<String> },
@@ -35,6 +38,20 @@ pub fn parse(body: &str) -> Option<Cmd> {
     Some(match (words.next(), words.next()) {
         (Some("help"), _) | (Some("?"), _) => Cmd::Help,
         (Some("agents"), _) => Cmd::Agents,
+        (Some("agent"), Some(sub)) => match sub {
+            "trash" => Cmd::AgentTrash,
+            "restore" | "purge" => {
+                let name = agent_token(&word(words.next()));
+                if name.is_empty() {
+                    Cmd::Bad(format!("usage: !agent {sub} <agent>"))
+                } else if sub == "restore" {
+                    Cmd::AgentRestore { name }
+                } else {
+                    Cmd::AgentPurge { name }
+                }
+            }
+            other => Cmd::Bad(format!("unknown agent command `{other}`; try !help")),
+        },
         (Some("project"), Some(sub)) | (Some("projects"), Some(sub)) => match sub {
             "list" | "ls" => Cmd::ProjectList,
             "new" | "create" => {
@@ -84,6 +101,9 @@ pub fn parse(body: &str) -> Option<Cmd> {
 
 const HELP: &str = "\
 !agents                                  list the agents
+!agent trash                             deleted agents you can still restore (30 days)
+!agent restore <agent>                   bring a deleted agent back, as it was
+!agent purge <agent>                     remove a deleted agent from the trash for good
 !project list                            list projects and who is in them
 !project new <name> [description]        make a project (a Space with a general and a feed room)
 !project add <name> <agent> [<agent>…]   add agents to a project
@@ -92,6 +112,15 @@ const HELP: &str = "\
 !project delete <name>                   forget the project (its rooms stay)
 
 You can also invite an agent's user (@agent-<name>) into a project's room: that adds it.";
+
+/// Whole days left before the runtime empties the trash entry deleted at `deleted_at`.
+fn restorable_days(deleted_at: u64) -> u64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(deleted_at);
+    (deleted_at + 30 * 86_400).saturating_sub(now) / 86_400
+}
 
 impl Bridge {
     /// The reply to a control-room message.
@@ -106,6 +135,38 @@ impl Bridge {
                 Ok(a) if a.is_empty() => "no agents yet".into(),
                 Ok(a) => a.iter().map(|x| format!("{} — {}", x.name, x.description)).collect::<Vec<_>>().join("\n"),
                 Err(e) => format!("could not list agents: {e}"),
+            },
+            Cmd::AgentTrash => match self.rt.trash() {
+                Ok(t) if t.is_empty() => "the trash is empty".into(),
+                Ok(t) => t
+                    .iter()
+                    .map(|a| {
+                        format!(
+                            "{} — {} recorded runs{}; restorable for {} more days",
+                            a.name,
+                            a.runs,
+                            if a.projects.is_empty() {
+                                String::new()
+                            } else {
+                                format!(", was in {}", a.projects.join(", "))
+                            },
+                            restorable_days(a.deleted_at)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                Err(e) => format!("could not read the trash: {e}"),
+            },
+            Cmd::AgentRestore { name } => match self.rt.restore(&name) {
+                Ok(t) => {
+                    let _ = self.reconcile();
+                    format!("{} is back with its {} recorded runs, memory and schedules.", t.name, t.runs)
+                }
+                Err(e) => format!("could not restore {name}: {e}"),
+            },
+            Cmd::AgentPurge { name } => match self.rt.purge(&name) {
+                Ok(t) => format!("{} is gone for good ({} recorded runs).", t.name, t.runs),
+                Err(e) => format!("could not purge {name}: {e}"),
             },
             Cmd::ProjectList => match self.rt.projects() {
                 Ok(p) if p.is_empty() => "no projects yet. !project new <name>".into(),
@@ -190,6 +251,24 @@ impl Bridge {
             out.push_str(&format!("failed: {}", failed.join("; ")));
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod trash_tests {
+    use super::*;
+
+    #[test]
+    fn agent_trash_commands_parse() {
+        assert_eq!(parse("!agent trash"), Some(Cmd::AgentTrash));
+        assert_eq!(
+            parse("!agent restore @agent-kevin-ishot:s"),
+            Some(Cmd::AgentRestore { name: "kevin-ishot".into() })
+        );
+        assert_eq!(parse("!agent purge rower"), Some(Cmd::AgentPurge { name: "rower".into() }));
+        assert!(matches!(parse("!agent restore"), Some(Cmd::Bad(_))));
+        assert!(matches!(parse("!agent frobnicate"), Some(Cmd::Bad(_))));
+        assert_eq!(parse("!agents"), Some(Cmd::Agents));
     }
 }
 
