@@ -1,0 +1,16 @@
+// concept2:logbook — read a PUBLIC Concept2 logbook profile over HTTP.
+//
+// A stateless request/response tool, so by ADR-0095 a component and not a script: the only
+// capability it needs is outbound HTTPS, which WASI gives a guest. It reaches exactly one host,
+// log.concept2.com (the component refuses any other authority itself), needs no key, and keeps no
+// state. An agent calls it with a plain GET.
+package concept2:logbook@0.1.0;
+
+/// `concept2-logbook` serves two routes and fetches the matching logbook page:
+///
+///   GET /list?profile=<digits>[&limit=1..30][&page=n]   the newest workouts, one per line
+///   GET /workout/<id>?profile=<digits>                  one session: totals and splits
+world concept2-logbook {
+    export wasi:http/incoming-handler@0.2.0;
+    import wasi:http/outgoing-handler@0.2.0;
+}

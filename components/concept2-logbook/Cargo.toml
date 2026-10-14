@@ -1,0 +1,29 @@
+[package]
+name = "concept2-logbook"
+description = "Read a public Concept2 logbook profile: the newest workouts, and one session with its splits (concept2:logbook)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# `rlib` as well, so the parsing core is unit-tested natively; the guest side is wasm-only.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+guestio = { path = "../guestio" }
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "concept2-logbook:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "concept2-logbook"
+
+[package.metadata.component.target.dependencies]
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
