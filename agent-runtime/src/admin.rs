@@ -51,10 +51,16 @@ pub fn build_spec_with(
                     .get("prompt")
                     .and_then(Value::as_str)
                     .unwrap_or("Do your scheduled task.");
-                base.insert(
-                    "triggers".into(),
-                    json!([{"kind": "schedule", "cron": cron, "prompt": prompt}]),
-                );
+                let mut trigger = json!({"kind": "schedule", "cron": cron, "prompt": prompt});
+                if let Some(p) =
+                    given.get("project").and_then(Value::as_str).filter(|p| !p.is_empty())
+                {
+                    trigger["project"] = json!(p);
+                }
+                if given.get("notify").and_then(Value::as_bool) == Some(true) {
+                    trigger["notify"] = json!(true);
+                }
+                base.insert("triggers".into(), json!([trigger]));
             }
         } else if k == "model" {
             // a name from `models.json` (`qwen`, `apple`, ...) stands for the whole block
@@ -64,7 +70,7 @@ pub fn build_spec_with(
                 Some((n, None)) => return Err(format!("no model called `{n}`")),
                 None => base.insert(k.clone(), v.clone()),
             };
-        } else if k != "prompt" {
+        } else if !matches!(k.as_str(), "prompt" | "project" | "notify") {
             base.insert(k.clone(), v.clone());
         }
     }

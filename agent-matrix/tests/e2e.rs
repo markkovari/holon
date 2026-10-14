@@ -506,6 +506,12 @@ fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
         owner.texts_from(&rooms.general, &ghost("coach")).is_empty(),
         "only the mentioned agent answers"
     );
+    assert_eq!(
+        rt.store().runs("rower", 1)[0].project,
+        "rowing",
+        "a message written in a project's room is work for that project"
+    );
+    assert_eq!(rt.store().runs("rower", 5).last().unwrap().project, "", "in its own room: none");
     owner.say(&control, "!project lead rowing coach");
     wait_for("the lead to be set", 20, || {
         rt.store().get_project("rowing").filter(|p| p.lead.as_deref() == Some("coach"))

@@ -689,8 +689,18 @@ fn an_agent_granted_the_tools_can_create_change_pause_and_delete_other_agents() 
 fn removing_a_schedule_keeps_the_agent_its_history_and_its_other_triggers() {
     let rt = runtime("unschedule");
     let mut news = agent("news", &["ok"]);
-    news.triggers.push(Trigger::Schedule { cron: "@every 1h".into(), prompt: "p".into() });
-    news.triggers.push(Trigger::Schedule { cron: "0 12 * * *".into(), prompt: "q".into() });
+    news.triggers.push(Trigger::Schedule {
+        cron: "@every 1h".into(),
+        prompt: "p".into(),
+        notify: false,
+        project: None,
+    });
+    news.triggers.push(Trigger::Schedule {
+        cron: "0 12 * * *".into(),
+        prompt: "q".into(),
+        notify: false,
+        project: None,
+    });
     news.triggers.push(Trigger::Event { topic: "deploy".into(), filter: None });
     rt.create_agent(news).unwrap();
     let wrong = r#"{"tool":"agent_remove_schedule","args":{"name":"news","schedule":"@daily"}}"#;
@@ -783,6 +793,125 @@ fn the_trash_is_emptied_after_thirty_days_and_a_purge_empties_it_early() {
     rt.store().purge("gone").unwrap();
     assert_eq!(rt.store().sweep_trash(at("old") + 30 * day), 2, "the rest, at thirty days");
     assert!(rt.store().trash().is_empty());
+}
+
+fn sched(cron: &str, project: Option<&str>) -> Trigger {
+    Trigger::Schedule {
+        cron: cron.into(),
+        prompt: "report".into(),
+        notify: true,
+        project: project.map(String::from),
+    }
+}
+
+#[test]
+fn a_schedule_for_a_project_wakes_a_member_for_it_and_refuses_a_stranger() {
+    let rt = runtime("sched-project");
+    let mut member = agent_n("member", repeat("done", 5));
+    member.triggers.push(sched("@every 1s", Some("rowing")));
+    let mut stranger = agent_n("stranger", repeat("done", 5));
+    stranger.triggers.push(sched("@every 1s", Some("rowing")));
+    let mut plain = agent_n("plain", repeat("done", 5));
+    plain.triggers.push(sched("@every 1s", None));
+    for a in [member, stranger, plain] {
+        rt.create_agent(a).unwrap();
+    }
+    rt.put_project(project("rowing", &["member"])).unwrap();
+
+    rt.tick(agent_runtime::runtime::unix_now() + 10);
+    let m = wait_for("the member's run", || runs(&rt, "member").into_iter().next());
+    assert_eq!(
+        (m.status, m.project.as_str(), m.trigger.as_str()),
+        (Status::Ok, "rowing", "schedule: @every 1s")
+    );
+    let st = wait_for("the stranger's refusal", || runs(&rt, "stranger").into_iter().next());
+    assert_eq!(st.status, Status::Dropped);
+    assert!(st.answer.contains("not a member of the project rowing"), "{}", st.answer);
+    assert_eq!(st.project, "rowing", "the refusal still says which project");
+    let p = wait_for("the plain run", || runs(&rt, "plain").into_iter().next());
+    assert_eq!((p.status, p.project.as_str()), (Status::Ok, ""), "no project: the agent's own");
+}
+
+#[test]
+fn a_reminder_keeps_the_project_it_was_asked_for_in() {
+    let rt = runtime("remind-project");
+    let ask = r#"{"tool":"schedule_self","args":{"in_secs":1,"prompt":"stretch"}}"#;
+    let mut coach = agent("coach", &[ask, "noted", "time to stretch", ask, "noted"]);
+    coach.capabilities.push(Capability::named("schedule_self"));
+    rt.create_agent(coach).unwrap();
+    rt.put_project(project("rowing", &["coach"])).unwrap();
+
+    // asked for inside the project's room...
+    let in_project = Cause { project: Some("rowing".into()), ..Default::default() };
+    rt.run_agent(
+        "coach",
+        "http: mark wrote in the project rowing",
+        "remind me",
+        &in_project,
+        "",
+        true,
+    )
+    .unwrap();
+    rt.tick(agent_runtime::runtime::unix_now() + 10);
+    let fired =
+        wait_for("the reminder", || runs(&rt, "coach").into_iter().find(|r| r.trigger == "timer"));
+    assert_eq!(fired.project, "rowing", "it comes back where it was asked for");
+
+    // ...and asked for in the agent's own room: no project
+    rt.run_agent("coach", "http", "remind me", &Cause::default(), "", true).unwrap();
+    rt.tick(agent_runtime::runtime::unix_now() + 20);
+    let own = wait_for("the second reminder", || {
+        runs(&rt, "coach").into_iter().filter(|r| r.trigger == "timer").nth(1)
+    });
+    assert_eq!(own.project, "");
+}
+
+#[test]
+fn agent_save_with_a_project_joins_it_and_says_so() {
+    let rt = runtime("save-project");
+    rt.put_project(project("rowing", &[])).unwrap();
+    let make = r#"{"tool":"agent_save","args":{"name":"cox","description":"steers","schedule":"@daily","prompt":"report","project":"rowing","notify":true}}"#;
+    let nowhere =
+        r#"{"tool":"agent_save","args":{"name":"lost","description":"d","project":"nope"}}"#;
+    let mut holon = agent("holon", &[nowhere, "ok", make, "ok"]);
+    holon.capabilities.push(Capability::named("agent_save"));
+    holon.auto_approve = vec!["agent_save".into()];
+    rt.create_agent(holon).unwrap();
+    let ask = || rt.run_agent("holon", "http", "go", &Cause::default(), "", true).unwrap();
+
+    let r = ask();
+    assert!(
+        r.steps.iter().any(|s| matches!(s, Step::Tool { error: true, result, .. } if result.contains("no project named nope"))),
+        "a project that does not exist is refused before anything is created"
+    );
+    assert!(rt.store().get("lost").is_none());
+
+    ask();
+    let cox = rt.store().get("cox").expect("created");
+    assert_eq!(rt.store().get_project("rowing").unwrap().agents, ["cox"], "joined the project");
+    assert!(matches!(
+        cox.triggers.as_slice(),
+        [Trigger::Schedule { cron, notify: true, project: Some(p), .. }] if cron == "@daily" && p == "rowing"
+    ));
+}
+
+#[test]
+fn removing_a_schedule_can_be_narrowed_to_one_project() {
+    let rt = runtime("unschedule-project");
+    let mut a = agent("news", &["ok"]);
+    a.triggers.push(sched("@daily", Some("rowing")));
+    a.triggers.push(sched("@daily", Some("nutrition")));
+    rt.create_agent(a).unwrap();
+    let one = r#"{"tool":"agent_remove_schedule","args":{"name":"news","schedule":"@daily","project":"rowing"}}"#;
+    let mut holon = agent("holon", &[one, "ok"]);
+    holon.capabilities.push(Capability::named("agent_remove_schedule"));
+    holon.auto_approve = vec!["agent_remove_schedule".into()];
+    rt.create_agent(holon).unwrap();
+    rt.run_agent("holon", "http", "go", &Cause::default(), "", true).unwrap();
+    let left = rt.store().get("news").unwrap().triggers;
+    assert!(
+        matches!(left.as_slice(), [Trigger::Schedule { project: Some(p), .. }] if p == "nutrition")
+    );
 }
 
 #[test]

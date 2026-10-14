@@ -105,6 +105,9 @@ struct Timer {
     agent: String,
     at: u64,
     prompt: String,
+    /// The project the reminder was asked for in, so it is delivered back there.
+    #[serde(default)]
+    project: Option<String>,
 }
 
 const MAX_TIMERS_PER_AGENT: usize = 20;
@@ -181,8 +184,11 @@ pub fn validate_spec(spec: &AgentSpec) -> Result<(), String> {
     }
     for t in &spec.triggers {
         match t {
-            Trigger::Schedule { cron, prompt, .. } => {
+            Trigger::Schedule { cron, prompt, project, .. } => {
                 cron::parse(cron)?;
+                if let Some(p) = project {
+                    validate_name(p).map_err(|e| format!("schedule project: {e}"))?;
+                }
                 if prompt.trim().is_empty() {
                     return Err(
                         "a schedule trigger needs a prompt — the task it gives the agent".into()
@@ -417,6 +423,12 @@ impl Runtime {
         if cause.hops > MAX_HOPS {
             return Err(format!("chain is {} wake-ups deep; the limit is {MAX_HOPS}", cause.hops));
         }
+        if let Some(p) = &cause.project {
+            // `spec` is the effective one: its projects are the ones the agent is in.
+            if !spec.projects.iter().any(|x| &x.name == p) {
+                return Err(format!("{} is not a member of the project {p}", spec.name));
+            }
+        }
         let key = format!("{}|{via}", spec.name);
         if !via.is_empty() && cause.chain.contains(&key) {
             return Err(format!(
@@ -486,6 +498,7 @@ impl Runtime {
             parent_span_id: cause.parent_span_id.clone(),
             hops: cause.hops,
             chain: cause.chain.clone(),
+            project: cause.project.clone().unwrap_or_default(),
         };
         let _ = self.store.record_run(&rec);
         self.observe(Event::RunFinished(Box::new(rec)));
@@ -708,6 +721,7 @@ impl Runtime {
             hops: env.draft.hops,
             chain: env.draft.chain.clone(),
             budget: env.draft.budget,
+            project: None,
         };
         let _ = self.run_agent(agent, &label, &env.draft.payload, &cause, topic, true);
     }
@@ -740,7 +754,7 @@ impl Runtime {
                 continue;
             }
             for (i, t) in spec.triggers.iter().enumerate() {
-                let Trigger::Schedule { cron: expr, prompt, .. } = t else { continue };
+                let Trigger::Schedule { cron: expr, prompt, project, .. } = t else { continue };
                 let Ok(sched) = cron::parse(expr) else { continue };
                 let key = (spec.name.clone(), i);
                 let last = self.last_fired.lock().unwrap().get(&key).copied();
@@ -753,8 +767,9 @@ impl Runtime {
                         format!("schedule: {expr}"),
                         prompt.clone(),
                     );
+                    let cause = Cause { project: project.clone(), ..Cause::default() };
                     std::thread::spawn(move || {
-                        let _ = rt.run_agent(&name, &trig, &input, &Cause::default(), "", false);
+                        let _ = rt.run_agent(&name, &trig, &input, &cause, "", false);
                     });
                 }
             }
@@ -772,7 +787,8 @@ impl Runtime {
             fired += 1;
             let rt = self.clone();
             std::thread::spawn(move || {
-                let _ = rt.run_agent(&t.agent, "timer", &t.prompt, &Cause::default(), "", true);
+                let cause = Cause { project: t.project.clone(), ..Cause::default() };
+                let _ = rt.run_agent(&t.agent, "timer", &t.prompt, &cause, "", true);
             });
         }
         fired
@@ -1058,7 +1074,7 @@ impl Host for Runtime {
         agent: &str,
         in_secs: u64,
         prompt: &str,
-        _cause: &Cause,
+        cause: &Cause,
     ) -> Result<(), String> {
         if prompt.trim().is_empty() {
             return Err("`prompt` is empty".into());
@@ -1076,6 +1092,7 @@ impl Host for Runtime {
                 agent: agent.to_string(),
                 at: unix_now() + in_secs,
                 prompt: prompt.to_string(),
+                project: cause.project.clone(),
             });
         }
         self.save_timers();
@@ -1102,6 +1119,10 @@ impl Host for Runtime {
 
     fn delete_agent(&self, name: &str) -> Result<(), String> {
         Runtime::delete_agent(self, name)
+    }
+
+    fn add_to_project(&self, project: &str, agent: &str) -> Result<(), String> {
+        Runtime::add_to_project(self, project, agent)
     }
 
     fn restore_agent(&self, name: &str) -> Result<String, String> {

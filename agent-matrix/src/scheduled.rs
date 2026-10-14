@@ -16,16 +16,23 @@ use crate::state::Data;
 /// by a schedule `triggers` marks `notify`. A `dropped` run (refused by a loop guard
 /// or a rate limit) is not a result and is left out.
 pub fn due<'a>(triggers: &[Value], runs: &'a [RunInfo], after_ms: u64) -> Vec<&'a RunInfo> {
-    let notified = |cron: &str| {
+    // A schedule is the pair (cron, project): the same cron for two projects is two triggers.
+    let notified = |cron: &str, project: &str| {
         triggers.iter().any(|t| {
-            t["kind"] == "schedule" && t["cron"] == cron && t["notify"].as_bool().unwrap_or(false)
+            t["kind"] == "schedule"
+                && t["cron"] == cron
+                && t["notify"].as_bool().unwrap_or(false)
+                && t["project"].as_str().unwrap_or("") == project
         })
     };
+    // A run refused for want of project membership is a mistake the owner should hear of.
+    let worth_saying =
+        |r: &RunInfo| r.status != "dropped" || r.answer.contains("not a member of the project");
     let mut out: Vec<&RunInfo> = runs
         .iter()
-        .filter(|r| r.finished_at_ms() > after_ms && r.status != "dropped")
+        .filter(|r| r.finished_at_ms() > after_ms && worth_saying(r))
         .filter(|r| match r.trigger.strip_prefix("schedule: ") {
-            Some(cron) => notified(cron),
+            Some(cron) => notified(cron, &r.project),
             None => r.trigger == "timer",
         })
         .collect();
@@ -47,13 +54,26 @@ fn member_projects<'a>(agent: &str, projects: &'a [ProjectInfo]) -> Vec<&'a Proj
     mine
 }
 
-/// Where `agent`'s results go: the report room of the first project it belongs to that
-/// has one, else its own room.
+/// Where a result for no particular project goes: the agent's own room, and for an agent
+/// in a project (which has none) the report room of its first project by name.
 pub fn room_for(agent: &str, projects: &[ProjectInfo], data: &Data) -> Option<String> {
-    member_projects(agent, projects)
-        .iter()
-        .find_map(|p| report_room(&p.name, data))
-        .or_else(|| data.dms.get(agent).cloned())
+    data.dms.get(agent).cloned().or_else(|| {
+        member_projects(agent, projects).iter().find_map(|p| report_room(&p.name, data))
+    })
+}
+
+/// Where the result of `run` goes: the report room of the project it was for, else
+/// `room_for`.
+pub fn room_for_run(
+    run: &RunInfo,
+    agent: &str,
+    projects: &[ProjectInfo],
+    data: &Data,
+) -> Option<String> {
+    Some(run.project.as_str())
+        .filter(|p| !p.is_empty())
+        .and_then(|p| report_room(p, data))
+        .or_else(|| room_for(agent, projects, data))
 }
 
 /// Where `agent`'s approval poll goes: its own room; an agent in a project has none, so
@@ -96,6 +116,7 @@ mod tests {
             answer: format!("answer {id}"),
             finished: ms / 1000,
             finished_ms: ms,
+            project: String::new(),
         }
     }
 
@@ -158,7 +179,14 @@ mod tests {
                 ..Default::default()
             },
         ];
-        assert_eq!(room_for("coach", &projects, &d).as_deref(), Some("!f:s"));
+        d.dms.remove("coach");
+        assert_eq!(room_for("coach", &projects, &d).as_deref(), Some("!f:s"), "no room of its own");
+        d.dms.insert("coach".into(), "!dm:s".into());
+        assert_eq!(
+            room_for("coach", &projects, &d).as_deref(),
+            Some("!dm:s"),
+            "its own room first"
+        );
         assert_eq!(
             room_for("weather", &projects, &d).as_deref(),
             Some("!wdm:s"),
@@ -188,6 +216,57 @@ mod tests {
         d.dms.insert("coach".into(), "!own:s".into());
         assert_eq!(approval_room("coach", &projects, &d).as_deref(), Some("!own:s"));
         assert_eq!(approval_room("stray", &projects, &d).as_deref(), Some("!ctl:s"));
+    }
+
+    #[test]
+    fn the_same_cron_for_two_projects_is_two_schedules_and_each_goes_to_its_project() {
+        let triggers = vec![
+            json!({"kind": "schedule", "cron": "@daily", "notify": true, "project": "rowing"}),
+            json!({"kind": "schedule", "cron": "@daily", "notify": false, "project": "nutrition"}),
+        ];
+        let mut rowing = run("r", "schedule: @daily", "ok", 5_000);
+        rowing.project = "rowing".into();
+        let mut food = run("f", "schedule: @daily", "ok", 6_000);
+        food.project = "nutrition".into();
+        let own = run("o", "schedule: @daily", "ok", 7_000);
+        let runs = vec![rowing.clone(), food, own];
+        assert_eq!(
+            ids(due(&triggers, &runs, 0)),
+            ["r"],
+            "only the one marked notify, in its project"
+        );
+
+        let mut d = Data::default();
+        d.dms.insert("coach".into(), "!own:s".into());
+        d.projects.insert(
+            "rowing".into(),
+            ProjectRooms { space: "!sp:s".into(), general: "!g:s".into(), feed: "!f:s".into() },
+        );
+        let projects = vec![ProjectInfo {
+            name: "rowing".into(),
+            agents: vec!["coach".into()],
+            ..Default::default()
+        }];
+        assert_eq!(room_for_run(&rowing, "coach", &projects, &d).as_deref(), Some("!f:s"));
+        assert_eq!(
+            room_for_run(&runs[2], "coach", &projects, &d).as_deref(),
+            Some("!own:s"),
+            "no project: the agent's own room, not the first project's"
+        );
+    }
+
+    #[test]
+    fn a_refusal_for_want_of_membership_is_posted_and_other_drops_are_not() {
+        let triggers = vec![
+            json!({"kind": "schedule", "cron": "@daily", "notify": true, "project": "rowing"}),
+        ];
+        let mut refused = run("a", "schedule: @daily", "dropped", 2_000);
+        refused.project = "rowing".into();
+        refused.answer = "dropped: stranger is not a member of the project rowing".into();
+        let mut limited = run("b", "schedule: @daily", "dropped", 3_000);
+        limited.project = "rowing".into();
+        limited.answer = "dropped: rate limit: 3 runs per minute".into();
+        assert_eq!(ids(due(&triggers, &[refused, limited], 0)), ["a"]);
     }
 
     #[test]

@@ -46,6 +46,10 @@ pub enum Trigger {
         prompt: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         notify: bool,
+        /// The project the work is for. The run is told, only a member is woken for it, and
+        /// a chat bridge posts the result in that project's room. `None`: the agent's own.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<String>,
     },
     /// Runs when `topic` is emitted (by another agent, or `POST /events/<topic>`);
     /// the event payload is the task input. Durable: events published while the

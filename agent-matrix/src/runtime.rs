@@ -30,6 +30,9 @@ pub struct RunInfo {
     pub finished: u64,
     #[serde(default)]
     pub finished_ms: u64,
+    /// The project the run was for; empty for none.
+    #[serde(default)]
+    pub project: String,
 }
 
 impl RunInfo {
@@ -317,12 +320,14 @@ impl Runtime {
         text: &str,
         why: &str,
         traceparent: Option<&str>,
+        project: Option<&str>,
     ) -> (bool, String) {
         // POST, so a long conversation is a body and not part of the URL.
         let mut req = self
             .runner
             .post(format!("{}/agents/{agent}/run", self.base))
             .query(&[("why", why)])
+            .query(&project.map(|p| [("project", p)]).unwrap_or_default())
             .body(text.to_string());
         if let Some(tp) = traceparent {
             req = req.header("traceparent", tp);
