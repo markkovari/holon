@@ -147,9 +147,14 @@ pub fn describe_approval(tool: &str, args: &Value) -> Option<String> {
     let name = args["name"].as_str().unwrap_or("?");
     Some(match tool {
         "agent_delete" => format!(
-            "PERMANENTLY delete the agent `{name}`: its settings, schedules, run history, \
-             memory and workspace. This cannot be undone. To only stop a schedule, deny this \
-             and ask for the schedule to be removed; to stop it for now, ask for it to be paused."
+            "delete the agent `{name}`: its settings, schedules, run history, memory and \
+             workspace move to the trash and can be restored for 30 days, then they are gone. \
+             To only stop a schedule, deny this and ask for the schedule to be removed; to stop \
+             it for now, ask for it to be paused."
+        ),
+        "agent_restore" => format!(
+            "restore the deleted agent `{name}` from the trash, exactly as it was. It starts \
+             running on its schedules again."
         ),
         "agent_remove_schedule" => {
             let which = match args["schedule"].as_str().filter(|s| !s.is_empty()) {
@@ -1106,8 +1111,10 @@ mod tests {
     #[test]
     fn an_admin_approval_says_what_it_destroys() {
         let del = describe_approval("agent_delete", &json!({"name": "kevin-ishot"})).unwrap();
-        assert!(del.contains("PERMANENTLY") && del.contains("run history"), "{del}");
-        assert!(del.contains("`kevin-ishot`") && del.contains("cannot be undone"), "{del}");
+        assert!(del.contains("run history") && del.contains("restored for 30 days"), "{del}");
+        assert!(del.contains("`kevin-ishot`") && !del.contains("PERMANENTLY"), "{del}");
+        let back = describe_approval("agent_restore", &json!({"name": "kevin-ishot"})).unwrap();
+        assert!(back.contains("`kevin-ishot`") && back.contains("schedules again"), "{back}");
         let one = describe_approval(
             "agent_remove_schedule",
             &json!({"name": "weather", "schedule": "@every 1h"}),

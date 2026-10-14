@@ -247,6 +247,15 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
             Ok(()) => text(req, 200, "deleted"),
             Err(e) => text(req, 404, e),
         },
+        (Method::Get, ["trash"]) => json_reply(req, 200, json!(rt.store().trash())),
+        (Method::Post, ["trash", id, "restore"]) => match rt.restore_agent(id) {
+            Ok(t) => json_reply(req, 200, json!(t)),
+            Err(e) => text(req, 409, e),
+        },
+        (Method::Delete, ["trash", id]) => match rt.store().purge(id) {
+            Ok(t) => json_reply(req, 200, json!(t)),
+            Err(e) => text(req, 404, e),
+        },
         (Method::Post, ["agents", name, action @ ("pause" | "resume")]) => {
             match rt.set_paused(name, *action == "pause") {
                 Ok(()) => text(req, 200, "ok"),
@@ -476,6 +485,44 @@ mod tests {
             .is_success());
         assert_eq!(c.get(format!("{base}/agents/echo/run?q=x")).send().unwrap().status(), 423);
         assert_eq!(c.get(format!("{base}/agents/echo/ping")).send().unwrap().status(), 423);
+    }
+
+    #[test]
+    fn a_deleted_agent_is_listed_restored_and_purged_over_http() {
+        let (_rt, base) = start("trash-http");
+        let c = reqwest::blocking::Client::new();
+        let call = |m: reqwest::Method, path: &str| {
+            c.request(m, format!("{base}{path}")).bearer_auth("tok").send().unwrap()
+        };
+        for n in ["a", "b"] {
+            let r = c
+                .put(format!("{base}/agents/{n}"))
+                .bearer_auth("tok")
+                .json(&mock(n, &["hi"]))
+                .send()
+                .unwrap();
+            assert_eq!(r.status(), 201);
+            assert!(call(reqwest::Method::DELETE, &format!("/agents/{n}")).status().is_success());
+        }
+        let listed: Value = call(reqwest::Method::GET, "/trash").json().unwrap();
+        assert_eq!(listed.as_array().unwrap().len(), 2);
+        let back = call(reqwest::Method::POST, "/trash/a/restore");
+        assert_eq!(back.status(), 200);
+        assert_eq!(call(reqwest::Method::GET, "/agents/a").status(), 200, "it is back");
+        assert_eq!(
+            call(reqwest::Method::POST, "/trash/a/restore").status(),
+            409,
+            "nothing to restore"
+        );
+        assert_eq!(call(reqwest::Method::DELETE, "/trash/b").status(), 200, "purged");
+        assert_eq!(call(reqwest::Method::DELETE, "/trash/b").status(), 404);
+        assert_eq!(
+            call(reqwest::Method::DELETE, "/trash/..%2Fagents").status(),
+            404,
+            "an id is never a path"
+        );
+        let unauth = c.get(format!("{base}/trash")).send().unwrap();
+        assert_eq!(unauth.status(), 401, "the trash is an admin route");
     }
 
     #[test]

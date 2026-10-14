@@ -70,6 +70,18 @@ pub struct Spoken {
     pub waveform: Vec<u16>,
 }
 
+/// A deleted agent in the runtime's trash.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+pub struct Trashed {
+    pub id: String,
+    pub name: String,
+    pub deleted_at: u64,
+    #[serde(default)]
+    pub projects: Vec<String>,
+    #[serde(default)]
+    pub runs: usize,
+}
+
 pub struct Runtime {
     base: String,
     token: String,
@@ -168,6 +180,38 @@ impl Runtime {
     /// The newest `n` runs of `agent`, newest first.
     pub fn runs(&self, agent: &str, n: usize) -> Result<Vec<RunInfo>, String> {
         self.admin(&format!("/agents/{agent}/runs?limit={n}"))
+    }
+
+    /// The deleted agents still in the runtime's trash, newest first.
+    pub fn trash(&self) -> Result<Vec<Trashed>, String> {
+        self.admin("/trash")
+    }
+
+    /// Brings a deleted agent back (`id` is a trash id or the agent's name).
+    pub fn restore(&self, id: &str) -> Result<Trashed, String> {
+        self.call(reqwest::Method::POST, &format!("/trash/{id}/restore"))
+    }
+
+    /// Removes a deleted agent from the trash for good.
+    pub fn purge(&self, id: &str) -> Result<Trashed, String> {
+        self.call(reqwest::Method::DELETE, &format!("/trash/{id}"))
+    }
+
+    fn call<T: for<'a> Deserialize<'a>>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+    ) -> Result<T, String> {
+        let r = self
+            .http
+            .request(method, format!("{}{path}", self.base))
+            .bearer_auth(&self.token)
+            .send()
+            .map_err(|e| e.to_string())?;
+        if !r.status().is_success() {
+            return Err(r.text().unwrap_or_default());
+        }
+        r.json().map_err(|e| e.to_string())
     }
 
     pub fn projects(&self) -> Result<Vec<ProjectInfo>, String> {

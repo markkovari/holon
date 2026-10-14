@@ -723,6 +723,69 @@ fn removing_a_schedule_keeps_the_agent_its_history_and_its_other_triggers() {
 }
 
 #[test]
+fn a_deleted_agent_waits_in_the_trash_and_comes_back_whole() {
+    let rt = runtime("trash");
+    let mut news = agent("news", &["one", "two"]);
+    news.triggers.push(Trigger::Event { topic: "deploy".into(), filter: None });
+    rt.create_agent(news).unwrap();
+    rt.put_project(project("rowing", &["news"])).unwrap();
+    rt.run_agent("news", "http", "hi", &Cause::default(), "", true).unwrap();
+    rt.store().remember("news", "the gate rejects a bare unwrap", 1).unwrap();
+    std::fs::write(rt.store().workspace("news").unwrap().join("notes.txt"), "keep me").unwrap();
+
+    rt.delete_agent("news").unwrap();
+    assert!(rt.store().get("news").is_none(), "out of service");
+    assert!(rt.store().runs("news", 10).is_empty() && rt.store().memories("news").is_empty());
+    assert!(rt.store().get_project("rowing").unwrap().agents.is_empty(), "out of its projects");
+    let trash = rt.store().trash();
+    assert_eq!(trash.len(), 1);
+    assert_eq!(
+        (trash[0].name.as_str(), trash[0].runs, trash[0].projects.clone()),
+        ("news", 1, vec!["rowing".to_string()])
+    );
+
+    // a name that is in use is never overwritten by a restore
+    rt.create_agent(agent("news", &["x"])).unwrap();
+    assert!(rt.restore_agent("news").unwrap_err().contains("exists"));
+    rt.delete_agent("news").unwrap();
+    assert_eq!(rt.store().trash().len(), 2);
+    // the newest entry is the stand-in made above; the original is the older one
+    rt.store().purge(&rt.store().trash().first().unwrap().id.clone()).unwrap();
+
+    let back = rt.restore_agent("news").unwrap();
+    assert_eq!(back.name, "news");
+    assert!(rt.store().trash().is_empty(), "nothing left to restore");
+    let n = rt.store().get("news").unwrap();
+    assert!(matches!(n.triggers.as_slice(), [Trigger::Event { .. }]));
+    assert_eq!(rt.store().runs("news", 10).len(), 1, "its run history");
+    assert_eq!(rt.store().memories("news").len(), 1, "its memory");
+    assert_eq!(
+        std::fs::read_to_string(rt.store().workspace("news").unwrap().join("notes.txt")).unwrap(),
+        "keep me",
+        "its workspace"
+    );
+    assert_eq!(rt.store().get_project("rowing").unwrap().agents, ["news"], "its project");
+    assert!(rt.restore_agent("news").unwrap_err().contains("trash is empty"));
+}
+
+#[test]
+fn the_trash_is_emptied_after_thirty_days_and_a_purge_empties_it_early() {
+    let rt = runtime("sweep");
+    rt.create_agent(agent("old", &["x"])).unwrap();
+    rt.create_agent(agent("young", &["x"])).unwrap();
+    rt.create_agent(agent("gone", &["x"])).unwrap();
+    for n in ["old", "young", "gone"] {
+        rt.delete_agent(n).unwrap();
+    }
+    let at = |n: &str| rt.store().trash().into_iter().find(|t| t.name == n).unwrap().deleted_at;
+    let day = 86_400;
+    assert_eq!(rt.store().sweep_trash(at("old") + 30 * day - 1), 0, "not yet");
+    rt.store().purge("gone").unwrap();
+    assert_eq!(rt.store().sweep_trash(at("old") + 30 * day), 2, "the rest, at thirty days");
+    assert!(rt.store().trash().is_empty());
+}
+
+#[test]
 fn a_run_that_misses_a_required_tool_is_retried_on_the_next_model_of_its_chain() {
     let rt = runtime("escalate");
     let mock = |replies: &[&str]| ModelSpec::Mock {

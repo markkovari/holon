@@ -112,7 +112,9 @@ Open (loopback; these *are* the triggers): `GET|POST /agents/<n>/run?q=…`,
 `GET /agents/<n>/ping` (no model call), `POST /events/<topic>`.
 
 Admin (`Authorization: Bearer $(cat <state-dir>/admin-token)`): `GET /agents`,
-`PUT|GET|DELETE /agents/<n>`, `POST /agents/<n>/pause|resume`,
+`PUT|GET|DELETE /agents/<n>` (a delete moves the agent to a trash for 30 days),
+`GET /trash`, `POST /trash/<n>/restore`, `DELETE /trash/<n>` (purge),
+`POST /agents/<n>/pause|resume`,
 `GET /agents/<n>/runs|memory`, `GET /traces/<trace-id>[?format=runs]`,
 `GET|PUT /store/<ns>[/<key>]`, `GET /topics[/<topic>?after=N]`,
 `GET /approvals`, `POST /approvals/<id>/approve|deny`.

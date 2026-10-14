@@ -41,6 +41,9 @@ A room called **holon** is created for you. Say `!help`:
 
 ```
 !agents                                  list the agents
+!agent trash                             deleted agents you can still restore (30 days)
+!agent restore <agent>                   bring a deleted agent back, as it was
+!agent purge <agent>                     remove a deleted agent from the trash for good
 !project list                            list projects and who is in them
 !project new <name> [description]        make a project (a Space with a general and a feed room)
 !project add <name> <agent> [<agent>…]   add agents to a project

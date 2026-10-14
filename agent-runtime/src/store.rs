@@ -126,6 +126,24 @@ struct MemoryVec {
 /// of unrelated text sit well above zero, so a fixed floor would be arbitrary.
 const RECALL_SPREAD: f32 = 0.08;
 
+/// How long a deleted agent stays in `trash/` before it is removed for good.
+pub const TRASH_DAYS: u64 = 30;
+
+/// A deleted agent waiting in `trash/`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Trashed {
+    /// The directory under `trash/`: `<name>-<unix seconds of the deletion>`.
+    pub id: String,
+    pub name: String,
+    pub deleted_at: u64,
+    /// The projects it belonged to, so a restore can rejoin the ones that still exist.
+    #[serde(default)]
+    pub projects: Vec<String>,
+    /// How many runs of it are kept.
+    #[serde(default)]
+    pub runs: usize,
+}
+
 #[derive(Clone)]
 pub struct Store {
     dir: PathBuf,
@@ -341,19 +359,131 @@ impl Store {
         self.workspace(&spec.name).map(|_| ())
     }
 
-    /// Removes the spec and everything the agent accumulated.
+    /// The files an agent accumulates, as (where they live, their name in the trash).
+    fn agent_files(&self, name: &str) -> Result<[(PathBuf, &'static str); 5], String> {
+        Ok([
+            (self.path("agents", name, "json")?, "agent.json"),
+            (self.path("memory", name, "jsonl")?, "memory.jsonl"),
+            (self.path("memory", name, "vecs.jsonl")?, "memory.vecs.jsonl"),
+            (self.path("runs", name, "jsonl")?, "runs.jsonl"),
+            (self.dir.join("workspaces").join(name), "workspace"),
+        ])
+    }
+
+    /// Takes the agent out of service: the spec, its runs, memory and workspace move to
+    /// `trash/<name>-<time>/` and stay there for [`TRASH_DAYS`], so a deletion is
+    /// recoverable (`restore`). Nothing is removed for good here.
     pub fn delete(&self, name: &str) -> Result<(), String> {
         let spec = self.path("agents", name, "json")?;
         if !spec.exists() {
             return Err(format!("no agent named {name}"));
         }
-        fs::remove_file(spec).map_err(|e| e.to_string())?;
-        let _ = fs::remove_file(self.path("memory", name, "jsonl")?);
-        let _ = fs::remove_file(self.path("memory", name, "vecs.jsonl")?);
+        let at = crate::runtime::unix_now();
+        fs::create_dir_all(self.dir.join("trash")).map_err(|e| e.to_string())?;
+        // Two deletions of one name in the same second must not share a directory.
+        let (id, dir) = (0..)
+            .map(|n| if n == 0 { format!("{name}-{at}") } else { format!("{name}-{at}-{n}") })
+            .map(|id| (self.dir.join("trash").join(&id), id))
+            .find_map(|(dir, id)| fs::create_dir(&dir).ok().map(|()| (id, dir)))
+            .expect("an unused trash id");
+        let meta = Trashed {
+            id,
+            name: name.to_string(),
+            deleted_at: at,
+            projects: self
+                .list_projects()
+                .into_iter()
+                .filter(|p| p.agents.iter().any(|a| a == name))
+                .map(|p| p.name)
+                .collect(),
+            runs: self.runs(name, usize::MAX).len(),
+        };
+        fs::write(dir.join("meta.json"), serde_json::to_string(&meta).unwrap_or_default())
+            .map_err(|e| e.to_string())?;
+        for (from, to) in self.agent_files(name)? {
+            if from.exists() {
+                fs::rename(&from, dir.join(to)).map_err(|e| format!("{}: {e}", from.display()))?;
+            }
+        }
         self.indexes.lock().unwrap().remove(name);
-        let _ = fs::remove_file(self.path("runs", name, "jsonl")?);
-        let _ = fs::remove_dir_all(self.dir.join("workspaces").join(name));
         Ok(())
+    }
+
+    /// What is in the trash, newest deletion first.
+    pub fn trash(&self) -> Vec<Trashed> {
+        let mut v: Vec<Trashed> = fs::read_dir(self.dir.join("trash"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| fs::read_to_string(e.path().join("meta.json")).ok())
+            .filter_map(|s| serde_json::from_str(&s).ok())
+            .collect();
+        v.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at).then(b.id.cmp(&a.id)));
+        v
+    }
+
+    /// An entry by its id, else the newest one for that agent name. The text from outside
+    /// is only ever compared with what `trash` listed, never joined into a path.
+    fn trashed(&self, id_or_name: &str) -> Result<Trashed, String> {
+        let all = self.trash();
+        all.iter()
+            .find(|t| t.id == id_or_name)
+            .or_else(|| all.iter().find(|t| t.name == id_or_name))
+            .cloned()
+            .ok_or_else(|| {
+                if all.is_empty() {
+                    format!("no deleted agent `{id_or_name}`: the trash is empty")
+                } else {
+                    format!(
+                        "no deleted agent `{id_or_name}`; in the trash: {}",
+                        all.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", ")
+                    )
+                }
+            })
+    }
+
+    /// Puts a deleted agent back exactly as it was. Refused while an agent of that name
+    /// exists, so a restore cannot overwrite anything.
+    pub fn restore(&self, id_or_name: &str) -> Result<Trashed, String> {
+        let t = self.trashed(id_or_name)?;
+        let files = self.agent_files(&t.name)?;
+        if files.iter().any(|(live, _)| live.exists()) {
+            return Err(format!(
+                "an agent named {} exists; delete or rename it first, then restore",
+                t.name
+            ));
+        }
+        let dir = self.dir.join("trash").join(&t.id);
+        for (live, kept) in &files {
+            if dir.join(kept).exists() {
+                if let Some(parent) = live.parent() {
+                    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                fs::rename(dir.join(kept), live).map_err(|e| format!("{kept}: {e}"))?;
+            }
+        }
+        self.indexes.lock().unwrap().remove(&t.name);
+        let _ = fs::remove_dir_all(dir);
+        Ok(t)
+    }
+
+    /// Removes one entry from the trash for good.
+    pub fn purge(&self, id_or_name: &str) -> Result<Trashed, String> {
+        let t = self.trashed(id_or_name)?;
+        fs::remove_dir_all(self.dir.join("trash").join(&t.id)).map_err(|e| e.to_string())?;
+        Ok(t)
+    }
+
+    /// Removes what has been in the trash longer than [`TRASH_DAYS`].
+    pub fn sweep_trash(&self, now: u64) -> usize {
+        let old: Vec<Trashed> = self
+            .trash()
+            .into_iter()
+            .filter(|t| t.deleted_at + TRASH_DAYS * 86_400 <= now)
+            .collect();
+        old.iter()
+            .filter(|t| fs::remove_dir_all(self.dir.join("trash").join(&t.id)).is_ok())
+            .count()
     }
 
     pub fn workspace(&self, name: &str) -> Result<PathBuf, String> {
