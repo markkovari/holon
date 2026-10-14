@@ -45,6 +45,9 @@ pub struct Data {
     /// It is not a runtime project: membership is the grant, and this Space grants nothing.
     #[serde(default)]
     pub agents_space: Option<String>,
+    /// Projects whose rooms the owner has left because the runtime says they are archived.
+    #[serde(default)]
+    pub archived: std::collections::BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -54,6 +54,11 @@ pub struct ProjectInfo {
     pub agents: Vec<String>,
     #[serde(default)]
     pub lead: Option<String>,
+    /// Shelved in the runtime; round-tripped so a `put_project` never un-archives one.
+    #[serde(default)]
+    pub archived: bool,
+    #[serde(default)]
+    pub paused_by_archive: Vec<String>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -215,6 +220,25 @@ impl Runtime {
             return Err(r.text().unwrap_or_default());
         }
         r.json().map_err(|e| e.to_string())
+    }
+
+    /// Archives a project in the runtime: its agents that no live project holds are paused.
+    /// The agents paused.
+    pub fn archive_project(&self, name: &str) -> Result<Vec<String>, String> {
+        let v: Value = self.call(reqwest::Method::POST, &format!("/projects/{name}/archive"))?;
+        Ok(v["paused"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .unwrap_or_default())
+    }
+
+    /// Brings an archived project back and resumes the agents an archive paused.
+    pub fn unarchive_project(&self, name: &str) -> Result<Vec<String>, String> {
+        let v: Value = self.call(reqwest::Method::POST, &format!("/projects/{name}/unarchive"))?;
+        Ok(v["resumed"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .unwrap_or_default())
     }
 
     pub fn projects(&self) -> Result<Vec<ProjectInfo>, String> {

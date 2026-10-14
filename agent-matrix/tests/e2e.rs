@@ -769,6 +769,107 @@ fn deleting_an_agent_retires_its_room_and_restoring_it_brings_the_same_room_back
     assert_eq!(name_of(&ghost("coach")), "coach (deleted)");
 }
 
+/// Who is in `room`, asked as someone who stays in it (the bridge made the project's rooms).
+fn members(bridge: &Bridge, room: &str) -> Vec<String> {
+    bridge.mx.joined(room, &bridge.cfg.bridge_user()).unwrap_or_default()
+}
+
+#[test]
+fn archiving_a_project_pauses_its_agents_and_takes_its_rooms_out_of_your_list() {
+    let Some(World { rt, bridge, owner, _work, _down, _lock, .. }) = world() else { return };
+    let control = bridge.state.read(|d| d.control_room.clone()).expect("control room");
+    let paused = |n: &str| rt.store().get(n).unwrap().paused;
+
+    owner.say(&control, "!project new rowing");
+    owner.say(&control, "!project new side");
+    owner.say(&control, "!project add rowing rower coach chef");
+    owner.say(&control, "!project add side coach");
+    let rooms = wait_for("rowing's three rooms", 60, || {
+        bridge.state.read(|d| d.projects.get("rowing").cloned().filter(|r| !r.feed.is_empty()))
+    });
+    wait_for("the agents in the project", 40, || {
+        (rt.store().get_project("rowing")?.agents.len() == 3
+            && rt.store().get_project("side")?.agents.len() == 1)
+            .then_some(())
+    });
+    let all = [&rooms.space, &rooms.general, &rooms.feed];
+    assert!(all.iter().all(|r| owner.joined(r).contains(&owner.user)), "you are in all of them");
+    rt.set_paused("rower", true).unwrap(); // your own doing, not archiving's
+
+    // ---- archive: chef loses its last live home; coach is still in `side`; rower was yours
+    owner.say(&control, "!project archive rowing");
+    wait_for("the project to be archived", 60, || {
+        bridge.state.read(|d| d.archived.contains("rowing")).then_some(())
+    });
+    assert!(rt.store().get_project("rowing").unwrap().archived);
+    assert!(paused("chef") && !paused("coach") && paused("rower"));
+    for room in all {
+        assert!(!members(&bridge, room).contains(&owner.user), "you left {room}");
+    }
+    let reply = wait_for("the command reply", 20, || {
+        Some(owner.texts_from(&control, &bridge.cfg.bridge_user()))
+            .filter(|t| t.iter().any(|x| x.contains("rowing archived")))
+    });
+    assert!(reply.iter().any(|x| x.contains("chef paused")), "{reply:?}");
+    // an archived project is left alone by the next passes: nobody re-invites you
+    std::thread::sleep(Duration::from_secs(12));
+    assert!(!members(&bridge, &rooms.general).contains(&owner.user), "still out");
+
+    // ---- unarchive: the same rooms, you are back, chef runs again, rower stays as you left it
+    owner.say(&control, "!project unarchive rowing");
+    wait_for("the project back", 60, || {
+        bridge.state.read(|d| (!d.archived.contains("rowing")).then_some(()))
+    });
+    for room in all {
+        wait_for("you are invited back and placed", 30, || {
+            owner.joined(room).contains(&owner.user).then_some(())
+        });
+    }
+    assert!(!rt.store().get_project("rowing").unwrap().archived);
+    assert!(!paused("chef") && !paused("coach") && paused("rower"));
+}
+
+#[test]
+fn a_space_you_made_yourself_is_archived_and_brought_back_by_an_agent_in_it() {
+    let Some(World { rt, bridge, owner, _work, _down, _lock, .. }) = world() else { return };
+    let control = bridge.state.read(|d| d.control_room.clone()).expect("control room");
+    let (space, room) = owner.space_with_room("Pantry", "stock");
+    owner.invite(&space, &ghost("chef"));
+    wait_for("the Space adopted with chef in it and its room", 60, || {
+        (rt.store().get_project("pantry").is_some()
+            && owner.joined(&space).contains(&ghost("chef"))
+            && owner.joined(&room).contains(&ghost("chef")))
+        .then_some(())
+    });
+
+    // an adopted Space with nobody in it could not be re-entered: that is refused up front
+    rt.remove_from_project("pantry", "chef").unwrap();
+    owner.say(&control, "!project archive pantry");
+    let refused = wait_for("the refusal", 30, || {
+        Some(owner.texts_from(&control, &bridge.cfg.bridge_user()))
+            .filter(|t| t.iter().any(|x| x.contains("no agent is in it")))
+    });
+    assert!(!rt.store().get_project("pantry").unwrap().archived, "{refused:?}");
+    rt.add_to_project("pantry", "chef").unwrap();
+
+    // with an agent in it, the owner leaves, and the AGENT's user invites them back
+    owner.say(&control, "!project archive pantry");
+    wait_for("archived", 60, || bridge.state.read(|d| d.archived.contains("pantry")).then_some(()));
+    for r in [&room, &space] {
+        let still = bridge.mx.joined(r, &ghost("chef")).expect("chef is still in it");
+        assert!(still.contains(&ghost("chef")) && !still.contains(&owner.user), "{still:?}");
+    }
+    owner.say(&control, "!project unarchive pantry");
+    wait_for("unarchived", 60, || {
+        bridge.state.read(|d| (!d.archived.contains("pantry")).then_some(()))
+    });
+    for r in [&space, &room] {
+        wait_for("an agent invited you back", 30, || {
+            owner.joined(r).contains(&owner.user).then_some(())
+        });
+    }
+}
+
 #[test]
 fn you_can_talk_to_an_agent_and_it_talks_back() {
     let real = cfg!(target_os = "macos")
