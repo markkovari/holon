@@ -966,6 +966,94 @@ fn deleting_an_archived_project_does_not_leave_its_agents_paused() {
 }
 
 #[test]
+fn an_agent_with_the_google_tools_reads_adds_and_never_deletes_without_approval() {
+    use std::sync::Mutex;
+    let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+    let log = seen.clone();
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", server.server_addr().to_ip().unwrap());
+    std::thread::spawn(move || {
+        for mut req in server.incoming_requests() {
+            let mut body = String::new();
+            std::io::Read::read_to_string(req.as_reader(), &mut body).unwrap();
+            let key = format!("{} {}", req.method(), req.url().split('?').next().unwrap());
+            log.lock().unwrap().push(key.clone());
+            let reply = match key.as_str() {
+                "POST /token" => r#"{"access_token":"at","expires_in":3600}"#.to_string(),
+                "GET /users/me/calendarList" => {
+                    r#"{"items":[{"id":"m@gmail.com","summary":"Training","accessRole":"owner"}]}"#.to_string()
+                }
+                k if k.starts_with("GET /calendars/m%40gmail.com/events/") => {
+                    r#"{"id":"e1","summary":"Row","start":{"dateTime":"2026-10-15T19:00:00+02:00"},"end":{"dateTime":"2026-10-15T20:00:00+02:00"}}"#.to_string()
+                }
+                "GET /calendars/m%40gmail.com/events" => {
+                    r#"{"items":[{"id":"e1","summary":"Row","start":{"dateTime":"2026-10-15T19:00:00+02:00"},"end":{"dateTime":"2026-10-15T20:00:00+02:00"}}]}"#.to_string()
+                }
+                "POST /calendars/m%40gmail.com/events" => {
+                    r#"{"id":"n1","summary":"Stretch","start":{"dateTime":"2026-10-15T21:00:00+02:00"},"end":{"dateTime":"2026-10-15T21:15:00+02:00"}}"#.to_string()
+                }
+                _ => "{}".to_string(),
+            };
+            let _ = req.respond(tiny_http::Response::from_string(reply));
+        }
+    });
+    let creds = dir("google-creds");
+    std::fs::write(
+        creds.join("client.json"),
+        r#"{"installed":{"client_id":"c","client_secret":"s"}}"#,
+    )
+    .unwrap();
+    std::fs::write(creds.join("token.json"), r#"{"refresh_token":"r"}"#).unwrap();
+    let mut cfg = Config::new(dir("google-tools"));
+    cfg.google = agent_runtime::google::GoogleConfig {
+        dir: creds,
+        api_base: base.clone(),
+        token_url: format!("{base}/token"),
+        auth_url: format!("{base}/auth"),
+    };
+    cfg.approval_timeout = Duration::from_millis(200);
+    let rt = Runtime::new(cfg).unwrap();
+
+    let list = r#"{"tool":"gcal_list","args":{"from":"2026-10-15","calendar":"Training"}}"#;
+    let add = r#"{"tool":"gcal_add","args":{"title":"Stretch","start":"2026-10-15T21:00","end":"2026-10-15T21:15","calendar":"Training"}}"#;
+    let delete = r#"{"tool":"gcal_delete","args":{"calendar":"Training","id":"e1"}}"#;
+    let mut a = agent("planner", &[list, "read", add, "added", delete, "tried"]);
+    for t in ["gcal_list", "gcal_add", "gcal_delete"] {
+        a.capabilities.push(Capability::named(t));
+    }
+    a.auto_approve = vec!["gcal_add".into()]; // the owner's standing yes to adds, and only adds
+    rt.create_agent(a).unwrap();
+    let ask = || rt.run_agent("planner", "http", "go", &Cause::default(), "", true).unwrap();
+    let tool = |r: &RunRecord, name: &str| -> (bool, String) {
+        r.steps
+            .iter()
+            .find_map(|s| match s {
+                Step::Tool { name: n, error, result, .. } if n == name => {
+                    Some((*error, result.clone()))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no {name} step"))
+    };
+
+    let r = ask();
+    let (err, out) = tool(&r, "gcal_list");
+    assert!(!err && out == "2026-10-15 19:00–20:00  Row  [Training]  (id e1)", "{out}");
+    let r = ask();
+    let (err, out) = tool(&r, "gcal_add");
+    assert!(!err && out.starts_with("added: 2026-10-15 21:00–21:15  Stretch"), "{out}");
+    // the delete is sensitive and was not approved: denied, and Google was never asked to delete
+    let r = ask();
+    let (err, out) = tool(&r, "gcal_delete");
+    assert!(err, "refused: {out}");
+    assert!(
+        !seen.lock().unwrap().iter().any(|k| k.starts_with("DELETE")),
+        "nothing was deleted: {:?}",
+        seen.lock().unwrap()
+    );
+}
+
+#[test]
 fn a_run_that_misses_a_required_tool_is_retried_on_the_next_model_of_its_chain() {
     let rt = runtime("escalate");
     let mock = |replies: &[&str]| ModelSpec::Mock {

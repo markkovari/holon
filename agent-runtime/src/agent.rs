@@ -119,6 +119,10 @@ pub trait Host: Sync {
     fn restore_agent(&self, _name: &str) -> Result<String, String> {
         Err("agent management is not available".into())
     }
+    /// The Google Calendar client, when this host has one.
+    fn google(&self) -> Option<&crate::google::Google> {
+        None
+    }
     fn add_to_project(&self, _project: &str, _agent: &str) -> Result<(), String> {
         Err("agent management is not available".into())
     }
@@ -311,6 +315,36 @@ const TOOLS: &[ToolDef] = &[
         sensitive: true,
     },
     ToolDef {
+        name: "gcal_calendars",
+        args: "{}",
+        about: "The calendars on Mark's Google account, and which of them may be changed. Use these names for `calendar` in the other gcal_ tools.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "gcal_list",
+        args: r#"{"from": "2026-10-15", "to": "2026-10-18", "calendar": "Training"}"#,
+        about: "Events on Mark's Google calendars between two dates (to defaults to a week after from), one per line with the id at the end. `calendar` is a name, `all` for every calendar, or left out for his main one. Dates are his local time.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "gcal_add",
+        args: r#"{"title": "Row", "start": "2026-10-15T06:30", "end": "2026-10-15T07:30", "calendar": "Training", "notes": "UT2", "location": "the lake"}"#,
+        about: "Add an event to a Google calendar. `start` is local time (2026-10-15T06:30), or a date alone for an all-day event whose `end` is its last day. `end` defaults to an hour after `start`. No invitations are sent. The owner approves first.",
+        sensitive: true,
+    },
+    ToolDef {
+        name: "gcal_update",
+        args: r#"{"calendar": "Training", "id": "<id from gcal_list>", "title": "...", "start": "2026-10-16T06:30", "end": "...", "notes": "...", "location": "..."}"#,
+        about: "Change an event by its id, giving only what changes. Moving it (`start`) keeps its length unless `end` is given. It cannot turn a timed event into an all-day one. The owner approves first.",
+        sensitive: true,
+    },
+    ToolDef {
+        name: "gcal_delete",
+        args: r#"{"calendar": "Training", "id": "<id from gcal_list>"}"#,
+        about: "Delete an event by its id. This removes it from Mark's Google calendar. Use it only when he clearly asks, and read the event back to him first. The owner approves first.",
+        sensitive: true,
+    },
+    ToolDef {
         name: "agent_remove_schedule",
         args: r#"{"name": "...", "schedule": "@every 1h", "project": "rowing"}"#,
         about: "Remove a schedule from an agent, and only that: the agent, its run history, memory and its other triggers stay. `schedule` is the cron line to remove; leave it out to remove all of the agent's schedules. `project` narrows it to the schedules that work for that project. The owner approves first.",
@@ -348,6 +382,9 @@ fn required(name: &str) -> &'static [&'static str] {
         | "agent_pause"
         | "agent_remove_schedule"
         | "agent_restore" => &["name"],
+        "gcal_list" => &["from"],
+        "gcal_add" => &["title", "start"],
+        "gcal_update" | "gcal_delete" => &["id"],
         "agent_save" => &["name"],
         "read_file" => &["path"],
         "write_file" => &["path", "content"],
@@ -940,6 +977,16 @@ fn exec(
             ))
         }
         "agent_restore" => host.restore_agent(&arg(args, "name")),
+        "gcal_calendars" | "gcal_list" | "gcal_add" | "gcal_update" | "gcal_delete" => {
+            let g = host.google().ok_or("Google Calendar is not available here")?;
+            match name {
+                "gcal_calendars" => g.calendars(),
+                "gcal_list" => g.list(args),
+                "gcal_add" => g.add(args),
+                "gcal_update" => g.update(args),
+                _ => g.delete(args),
+            }
+        }
         "agent_remove_schedule" => {
             let name = arg(args, "name");
             if name == spec.name {

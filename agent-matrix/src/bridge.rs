@@ -178,6 +178,38 @@ pub fn describe_approval(tool: &str, args: &Value) -> Option<String> {
              To only stop a schedule, deny this and ask for the schedule to be removed; to stop \
              it for now, ask for it to be paused."
         ),
+        "gcal_add" => {
+            let cal =
+                args["calendar"].as_str().filter(|c| !c.is_empty()).unwrap_or("your main calendar");
+            format!(
+                "add the event \"{}\" at {} to your Google calendar `{cal}`. No invitations are sent.",
+                args["title"].as_str().unwrap_or("?"),
+                args["start"].as_str().unwrap_or("?"),
+            )
+        }
+        "gcal_update" => {
+            let cal =
+                args["calendar"].as_str().filter(|c| !c.is_empty()).unwrap_or("your main calendar");
+            let mut fields: Vec<&str> = ["title", "start", "end", "notes", "location"]
+                .into_iter()
+                .filter(|k| args[*k].as_str().is_some_and(|v| !v.is_empty()))
+                .collect();
+            fields.sort_unstable();
+            format!(
+                "change the Google Calendar event `{}` on `{cal}`: {}.",
+                args["id"].as_str().unwrap_or("?"),
+                if fields.is_empty() { "nothing".to_string() } else { fields.join(", ") }
+            )
+        }
+        "gcal_delete" => {
+            let cal =
+                args["calendar"].as_str().filter(|c| !c.is_empty()).unwrap_or("your main calendar");
+            format!(
+                "DELETE the Google Calendar event `{}` from `{cal}`. It disappears from your calendar; \
+                 there is no undo here.",
+                args["id"].as_str().unwrap_or("?")
+            )
+        }
         "agent_restore" => format!(
             "restore the deleted agent `{name}` from the trash, exactly as it was. It starts \
              running on its schedules again."
@@ -1722,6 +1754,34 @@ mod tests {
         )
         .unwrap();
         assert!(narrow.contains("work for the project `rowing`"), "{narrow}");
+        let add = describe_approval(
+            "gcal_add",
+            &json!({"title": "Row", "start": "2026-10-15T06:30", "calendar": "Training"}),
+        )
+        .unwrap();
+        assert!(
+            add.contains("\"Row\"")
+                && add.contains("2026-10-15T06:30")
+                && add.contains("`Training`")
+                && add.contains("No invitations"),
+            "{add}"
+        );
+        let change =
+            describe_approval("gcal_update", &json!({"id": "e1", "start": "x", "title": "y"}))
+                .unwrap();
+        assert!(
+            change.contains("`e1`")
+                && change.contains("start, title")
+                && change.contains("your main calendar"),
+            "{change}"
+        );
+        let gone =
+            describe_approval("gcal_delete", &json!({"id": "e1", "calendar": "Training"})).unwrap();
+        assert!(
+            gone.starts_with("DELETE the Google Calendar event `e1` from `Training`")
+                && gone.contains("no undo"),
+            "{gone}"
+        );
         assert_eq!(describe_approval("write_file", &json!({"path": "x"})), None);
     }
 
