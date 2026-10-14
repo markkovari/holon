@@ -14,9 +14,13 @@
 //!
 //! ## Deploy-time config
 //!
-//! - `vision:model` — default `deepseek-chat`. (DeepSeek's reasoning models spend a small token
+//! Named for this provider and with dashes, not `vision:*`: an app's `[config]` keys must be
+//! lowercase-with-dashes, and config is visible to every app on a host, so a second provider
+//! must not share these.
+//!
+//! - `deepseek-model` — default `deepseek-chat`. (DeepSeek's reasoning models spend a small token
 //!   budget thinking and return empty text, which this reports as `no-content`.)
-//! - `vision:base-url` — default `https://api.deepseek.com`; point it at a compatible server to
+//! - `deepseek-base-url` — default `https://api.deepseek.com`; point it at a compatible server to
 //!   run without a key.
 //! - the secret `deepseek-api-key`, required only when talking to `deepseek.com`.
 //!
@@ -203,9 +207,9 @@ mod guest {
         }
     }
 
-    /// POST a JSON body to `vision:base-url` + `/chat/completions`; (status, response bytes).
+    /// POST a JSON body to `deepseek-base-url` + `/chat/completions`; (status, response bytes).
     fn post(body: &[u8]) -> Result<(u16, Vec<u8>), String> {
-        let (tls, authority, prefix) = split_base(&config_or("vision:base-url", DEFAULT_BASE));
+        let (tls, authority, prefix) = split_base(&config_or("deepseek-base-url", DEFAULT_BASE));
         let headers = Fields::new();
         let _ = headers.set("content-type", &[b"application/json".to_vec()]);
         let _ = headers.set("content-length", &[body.len().to_string().into_bytes()]);
@@ -279,15 +283,15 @@ mod guest {
             // Refused HERE rather than by the far end: a request with no key comes back as a 401
             // about an Authorization header, which reads as a bug in this component rather than as
             // a deployment that never granted the secret. Only when a key is actually needed.
-            let (_, authority, _) = split_base(&config_or("vision:base-url", DEFAULT_BASE));
+            let (_, authority, _) = split_base(&config_or("deepseek-base-url", DEFAULT_BASE));
             if key_required(&authority) && api_key().is_none() {
                 return Err(DescribeError::ProviderDenied(format!(
                     "no deepseek-api-key in the vault, and {authority} requires one. Point \
-                     `vision:base-url` at a compatible server to run without a key."
+                     `deepseek-base-url` at a compatible server to run without a key."
                 )));
             }
             let body = request_body(
-                &config_or("vision:model", DEFAULT_MODEL),
+                &config_or("deepseek-model", DEFAULT_MODEL),
                 &media_type,
                 &image,
                 &prompt,

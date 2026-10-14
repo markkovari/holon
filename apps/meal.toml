@@ -8,12 +8,12 @@
 #
 # The provider needs the secret `deepseek-api-key` (comp:secrets/reader, ADR-0051). A host with
 # no platform (`--platform-url` empty) tells a component its secret is unavailable, so this app
-# needs a platform, or a vision:base-url that points at something holding the key.
+# needs a platform, or a deepseek-base-url that points at something holding the key.
 name = "meal"
 domain = "meal.example.com"
 artifact = "components/target/meal_domain.composed.wasm"
 components = ["meal-domain", "meal-estimate", "deepseek-vision"]
 
-# What the provider is told (vision:*), and nothing secret: config is visible to every app.
+# What the provider is told (deepseek-*), and nothing secret: config is visible to every app.
 [config]
-"vision:model" = "deepseek-chat"
+deepseek-model = "deepseek-chat"
