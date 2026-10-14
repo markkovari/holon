@@ -874,6 +874,16 @@ fn a_space_you_made_yourself_is_archived_and_brought_back_by_an_agent_in_it() {
 fn a_photo_sent_in_element_lands_in_the_agents_inbox_and_the_agent_is_told() {
     let Some(World { rt, bridge, owner, _work, _down, _lock, .. }) = world() else { return };
     let room = bridge.state.read(|d| d.dms.get("chef").cloned()).expect("chef's room");
+    // chef answers in markdown, as a model does
+    let mut chef = rt.store().get("chef").unwrap();
+    chef.model = ModelSpec::Mock {
+        replies: vec![
+            "**Total** ~475 kcal\n\n| Food | kcal |\n|---|---|\n| rice | 155 |".into(),
+            "About **475 kcal**, as before.".into(),
+            "Nothing to do with the photo.".into(),
+        ],
+    };
+    rt.update_agent(chef).unwrap();
     // bytes that are not a real picture are fine: the bridge neither looks at nor edits them
     let photo: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
     let mxc = owner.upload(photo.clone(), "image/png", "meal.png");
@@ -901,11 +911,40 @@ fn a_photo_sent_in_element_lands_in_the_agents_inbox_and_the_agent_is_told() {
     assert!(file.ends_with("-meal.png"), "{file}");
     let kept = rt.store().workspace("chef").unwrap().join("inbox").join(&file);
     assert_eq!(std::fs::read(kept).unwrap(), photo, "the very bytes that were sent");
-    // and the agent answered in the room, as itself
+    // and the agent answered in the room, as itself, and the markdown in it arrived as HTML
     wait_for("the answer", 40, || {
         Some(owner.texts_from(&room, &ghost("chef")))
-            .filter(|t| t.iter().any(|x| x.contains("Pasta tonight")))
+            .filter(|t| t.iter().any(|x| x.contains("**Total**")))
     });
+    let answer = owner
+        .events(&room)
+        .into_iter()
+        .find(|e| {
+            e["sender"] == ghost("chef")
+                && e["content"]["body"].as_str().is_some_and(|b| b.contains("**Total**"))
+        })
+        .expect("chef's answer");
+    assert_eq!(answer["content"]["format"], "org.matrix.custom.html");
+    let html = answer["content"]["formatted_body"].as_str().unwrap();
+    assert!(html.contains("<strong>Total</strong>") && html.contains("<table>"), "{html}");
+    assert!(
+        answer["content"]["body"].as_str().unwrap().contains("| rice | 155 |"),
+        "the body stays the model's own text"
+    );
+
+    // a follow-up text brings the same photo back: the agent cannot see a picture it was sent a
+    // message ago, and "how much is this?" is about the picture
+    owner.say(&room, "and how much is this?");
+    let follow = wait_for("chef to be run on the follow-up", 60, || {
+        rt.store().runs("chef", 5).into_iter().find(|r| r.input.contains("how much is this?"))
+    });
+    assert_eq!(follow.attachments, std::slice::from_ref(&file), "the same photo, attached again");
+    assert!(follow.input.contains("Mark's last photo, sent"), "{}", follow.input);
+    assert!(
+        follow.input.contains("[a photo] post-row lunch"),
+        "the history shows a photo as a photo, with its caption: {}",
+        follow.input
+    );
 
     // not a photo the runtime accepts: the agent says so instead of running on nothing
     let before = rt.store().runs("chef", 50).len();

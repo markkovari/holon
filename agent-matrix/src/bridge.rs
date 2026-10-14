@@ -1133,7 +1133,7 @@ impl Bridge {
         } else {
             format!("⚠️ {}", clip(&answer, 2_000))
         };
-        if let Err(e) = self.mx.send_text(room, &ghost, &body, Some(reply_to)) {
+        if let Err(e) = self.mx.send_markdown(room, &ghost, &body, Some(reply_to)) {
             log(&format!("{agent}: could not post the answer: {e}"));
         }
     }
@@ -1176,14 +1176,7 @@ impl Bridge {
             }
         };
         note(&format!("🎙️ “{}”", clip(&text, 1_000)));
-        let (ok, answer) = self.rt.run(
-            agent,
-            &self.task(room, "", &text),
-            &self.why(room),
-            None,
-            self.project_of(room).as_deref(),
-            &[],
-        );
+        let (ok, answer) = self.run_with_follow_up(agent, room, reply_to, &text);
         self.mx.typing(room, &ghost, false);
         let written = if ok {
             if answer.trim().is_empty() {
@@ -1194,7 +1187,7 @@ impl Bridge {
         } else {
             format!("⚠️ {}", clip(&answer, 2_000))
         };
-        if let Err(e) = self.mx.send_text(room, &ghost, &written, Some(reply_to)) {
+        if let Err(e) = self.mx.send_markdown(room, &ghost, &written, Some(reply_to)) {
             log(&format!("{agent}: could not post the answer: {e}"));
         }
         // ...and the same answer, spoken, if the runtime can speak.
@@ -1234,14 +1227,7 @@ impl Bridge {
         // The agent may not be in this room yet (a hand-made one it was invited to).
         let _ = self.mx.join(room, &ghost);
         self.mx.typing(room, &ghost, true);
-        let (ok, answer) = self.rt.run(
-            agent,
-            &self.task(room, reply_to, text),
-            &self.why(room),
-            None,
-            self.project_of(room).as_deref(),
-            &[],
-        );
+        let (ok, answer) = self.run_with_follow_up(agent, room, reply_to, text);
         self.mx.typing(room, &ghost, false);
         let body = if ok {
             if answer.trim().is_empty() {
@@ -1252,7 +1238,7 @@ impl Bridge {
         } else {
             format!("⚠️ {}", clip(&answer, 2_000))
         };
-        if let Err(e) = self.mx.send_text(room, &ghost, &body, Some(reply_to)) {
+        if let Err(e) = self.mx.send_markdown(room, &ghost, &body, Some(reply_to)) {
             log(&format!("{agent}: could not post the answer: {e}"));
         }
     }
@@ -1266,6 +1252,52 @@ impl Bridge {
             | Some(RoomKind::ProjectFeed(p)) => Some(p),
             _ => None,
         }
+    }
+
+    /// The photo a text message to `agent` is probably about, ready to attach: its file name in the
+    /// agent's inbox and the sentence that tells the agent so.
+    fn follow_up_photo(&self, room: &str, agent: &str, skip: &str) -> Option<(String, String)> {
+        let msgs = self.mx.messages_as_owner(room, 30).ok()?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let photos = self.state.read(|d| d.photos.clone());
+        let (file, mins) = recent_photo(&msgs, &self.cfg.owner, skip, now, &photos, agent)?;
+        let when = if mins == 0 { "just now".to_string() } else { format!("{mins} min ago") };
+        Some((file, format!("\n\n(Mark's last photo, sent {when}, is attached again.)")))
+    }
+
+    /// Runs `agent` on a text message. If the message follows a photo it was given a moment ago,
+    /// that photo comes along again: the agent cannot look at a picture it was only sent a message
+    /// ago, and "how much is this?" is about the picture. If that photo is no longer in its inbox
+    /// the question is asked without it rather than not at all.
+    fn run_with_follow_up(
+        &self,
+        agent: &str,
+        room: &str,
+        reply_to: &str,
+        text: &str,
+    ) -> (bool, String) {
+        let project = self.project_of(room);
+        let run = |text: &str, attach: &[String]| {
+            self.rt.run(
+                agent,
+                &self.task(room, reply_to, text),
+                &self.why(room),
+                None,
+                project.as_deref(),
+                attach,
+            )
+        };
+        let Some((file, note)) = self.follow_up_photo(room, agent, reply_to) else {
+            return run(text, &[]);
+        };
+        let (ok, answer) = run(&format!("{text}{note}"), std::slice::from_ref(&file));
+        if ok {
+            return (ok, answer);
+        }
+        run(text, &[])
     }
 
     /// Why an agent is being woken, for its `Trigger:` line.
@@ -1708,6 +1740,81 @@ mod tests {
             json!({"msgtype": "m.image", "body": "image", "info": {"mimetype": "image/png"}});
         assert_eq!(photo_name(&bare), "image.png");
         assert_eq!(photo_name(&json!({"msgtype": "m.image", "body": "a b c"})), "photo.jpg");
+    }
+
+    fn event(id: &str, sender: &str, msgtype: &str, body: &str, ts: u64) -> Value {
+        json!({"event_id": id, "sender": sender, "origin_server_ts": ts,
+               "content": {"msgtype": msgtype, "body": body}})
+    }
+
+    fn photo_ref(agent: &str, event: &str, file: &str) -> crate::state::PhotoRef {
+        crate::state::PhotoRef { agent: agent.into(), event: event.into(), file: file.into() }
+    }
+
+    #[test]
+    fn a_photo_in_the_history_is_a_photo_not_a_file_name() {
+        let cfg = cfg();
+        let mut caption = event("$p2", "@mark:s.net", "m.image", "post-row lunch", 2);
+        caption["content"]["filename"] = json!("IMG_1.jpg");
+        let msgs = vec![
+            event("$t", "@mark:s.net", "m.text", "how much is this?", 3),
+            caption,
+            event("$p1", "@mark:s.net", "m.image", "image.png", 1),
+        ];
+        let h = history_lines(&cfg, &msgs, "", 1000);
+        assert_eq!(h, "mark: [a photo]\nmark: [a photo] post-row lunch\nmark: how much is this?");
+        assert!(!h.contains("image.png"), "the file name says nothing to the agent");
+    }
+
+    #[test]
+    fn a_text_after_a_recent_photo_the_agent_was_given_brings_it_back() {
+        let owner = "@mark:s.net";
+        let now = 10 * 60 * 1000;
+        let msgs = vec![
+            event("$t", owner, "m.text", "how much is this?", now),
+            event("$p", owner, "m.image", "image.png", now - 3 * 60 * 1000),
+        ];
+        let photos = vec![photo_ref("chef", "$p", "17-image.png")];
+        assert_eq!(
+            recent_photo(&msgs, owner, "$t", now, &photos, "chef"),
+            Some(("17-image.png".into(), 3))
+        );
+        assert_eq!(
+            recent_photo(&msgs, owner, "$t", now, &photos, "coach"),
+            None,
+            "another agent was never given it"
+        );
+        assert_eq!(
+            recent_photo(&msgs, owner, "$t", now, &[], "chef"),
+            None,
+            "a photo the bridge did not keep"
+        );
+    }
+
+    #[test]
+    fn an_old_photo_a_stranger_s_photo_and_a_buried_one_are_not_brought_back() {
+        let owner = "@mark:s.net";
+        let photos = vec![photo_ref("chef", "$old", "a.png"), photo_ref("chef", "$mine", "b.png")];
+        let at = |mins: u64| mins * 60 * 1000;
+        // too old: past the window the text is about something else
+        let msgs = vec![event("$old", owner, "m.image", "x", 0)];
+        assert_eq!(recent_photo(&msgs, owner, "$t", at(16), &photos, "chef"), None);
+        assert_eq!(
+            recent_photo(&msgs, owner, "$t", at(14), &photos, "chef").map(|p| p.1),
+            Some(14)
+        );
+        // somebody else's photo is not the owner's subject
+        let theirs = vec![event("$mine", "@guest:s.net", "m.image", "x", at(1))];
+        assert_eq!(recent_photo(&theirs, owner, "$t", at(2), &photos, "chef"), None);
+        // only the NEWEST photo counts: if it did not reach this agent, no older one is dug up
+        let msgs = vec![
+            event("$new", owner, "m.image", "x", at(5)),
+            event("$old", owner, "m.image", "x", at(4)),
+        ];
+        assert_eq!(recent_photo(&msgs, owner, "$t", at(6), &photos, "chef"), None);
+        // and the message being answered is never its own follow-up
+        let msgs = vec![event("$mine", owner, "m.image", "x", at(5))];
+        assert_eq!(recent_photo(&msgs, owner, "$mine", at(5), &photos, "chef"), None);
     }
 
     #[test]
