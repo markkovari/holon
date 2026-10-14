@@ -1,0 +1,19 @@
+// deepseek:vision — the DeepSeek provider for `vision:describe`.
+//
+// The CONTRACT lives in `components/vision-describe`; this package declares only what is its
+// own: the world describing how this provider is wired. The exported interface is the one every
+// provider exports, `vision:describe/describer@0.1.0`, so a composition swaps this for
+// `anthropic-vision` (or a local model) without a guest noticing.
+package deepseek:vision@0.1.0;
+
+/// `deepseek-vision` satisfies `vision:describe` over DeepSeek's OpenAI-compatible Chat
+/// Completions API, with the picture sent as an `image_url` part.
+///
+/// The same shape as `anthropic-vision`: egress to one authority, the key revealed from the
+/// vault rather than read from config, and the model chosen by deployment.
+world deepseek-vision {
+    export vision:describe/describer@0.1.0;
+    import comp:secrets/reader@0.1.0;
+    import wasi:config/store@0.2.0-rc.1;
+    import wasi:http/outgoing-handler@0.2.0;
+}
