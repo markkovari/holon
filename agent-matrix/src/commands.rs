@@ -18,6 +18,8 @@ pub enum Cmd {
     ProjectRm { name: String, agents: Vec<String> },
     ProjectLead { name: String, agent: Option<String> },
     ProjectDelete { name: String },
+    ProjectArchive { name: String },
+    ProjectUnarchive { name: String },
     Bad(String),
 }
 
@@ -95,6 +97,16 @@ pub fn parse(body: &str) -> Option<Cmd> {
                     Cmd::ProjectDelete { name }
                 }
             }
+            "archive" | "unarchive" => {
+                let name = word(words.next());
+                if name.is_empty() {
+                    Cmd::Bad(format!("usage: !project {sub} <project>"))
+                } else if sub == "archive" {
+                    Cmd::ProjectArchive { name }
+                } else {
+                    Cmd::ProjectUnarchive { name }
+                }
+            }
             other => Cmd::Bad(format!("unknown project command `{other}`; try !help")),
         },
         (Some(other), _) => Cmd::Bad(format!("unknown command `!{other}`; try !help")),
@@ -114,6 +126,8 @@ const HELP: &str = "\
 !project rm <name> <agent> [<agent>…]    take agents out
 !project lead <name> <agent|none>        who answers when nobody is mentioned
 !project delete <name>                   forget the project (its rooms stay)
+!project archive <name>                  pause its agents and take its rooms out of your list
+!project unarchive <name>                bring it back: agents resumed, rooms invited back
 
 You can also invite an agent's user (@agent-<name>) into a project's room: that adds it.";
 
@@ -179,8 +193,9 @@ impl Bridge {
                     .iter()
                     .map(|p| {
                         format!(
-                            "{} — {}{}",
+                            "{}{} — {}{}",
                             p.name,
+                            if p.archived { " [archived]" } else { "" },
                             if p.agents.is_empty() { "(no agents)".to_string() } else { p.agents.join(", ") },
                             p.lead.as_ref().map(|l| format!("  [lead: {l}]")).unwrap_or_default()
                         )
@@ -190,7 +205,7 @@ impl Bridge {
                 Err(e) => format!("could not list projects: {e}"),
             },
             Cmd::ProjectNew { name, description } => {
-                match self.rt.put_project(&ProjectInfo { name: name.clone(), description, agents: vec![], lead: None }) {
+                match self.rt.put_project(&ProjectInfo { name: name.clone(), description, ..Default::default() }) {
                     Ok(()) => {
                         let _ = self.reconcile();
                         format!("Project {name} created. It is now a Space in your room list; add agents with !project add {name} <agent>.")
@@ -215,6 +230,21 @@ impl Bridge {
                         }
                     }
                 },
+            },
+            Cmd::ProjectArchive { name } => self.archive_command(&name),
+            Cmd::ProjectUnarchive { name } => match self.rt.unarchive_project(&name) {
+                Ok(resumed) => {
+                    let _ = self.reconcile();
+                    format!(
+                        "{name} is back: its rooms are in your list again{}.",
+                        if resumed.is_empty() {
+                            String::new()
+                        } else {
+                            format!(", and {} resumed", resumed.join(", "))
+                        }
+                    )
+                }
+                Err(e) => format!("could not unarchive {name}: {e}"),
             },
             Cmd::ProjectDelete { name } => match self.rt.delete_project(&name) {
                 Ok(()) => format!("Project {name} forgotten; its agents lose its grants. The rooms stay — leave them when you like."),
@@ -274,6 +304,15 @@ mod trash_tests {
         assert!(matches!(parse("!agent restore"), Some(Cmd::Bad(_))));
         assert!(matches!(parse("!agent frobnicate"), Some(Cmd::Bad(_))));
         assert_eq!(parse("!agents"), Some(Cmd::Agents));
+        assert_eq!(
+            parse("!project archive rowing"),
+            Some(Cmd::ProjectArchive { name: "rowing".into() })
+        );
+        assert_eq!(
+            parse("!project unarchive rowing"),
+            Some(Cmd::ProjectUnarchive { name: "rowing".into() })
+        );
+        assert!(matches!(parse("!project archive"), Some(Cmd::Bad(_))));
     }
 }
 

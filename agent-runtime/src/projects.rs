@@ -29,6 +29,14 @@ pub struct Project {
     /// addressed. Must be a member.
     #[serde(default)]
     pub lead: Option<String>,
+    /// Shelved: its agents are paused unless another live project still holds them, and a
+    /// chat bridge takes its rooms out of the owner's list. Nothing is deleted.
+    #[serde(default)]
+    pub archived: bool,
+    /// The agents archiving paused, so that unarchiving resumes those and never one the
+    /// owner paused on purpose.
+    #[serde(default)]
+    pub paused_by_archive: Vec<String>,
 }
 
 impl Project {
@@ -140,6 +148,7 @@ mod tests {
             description: "training".into(),
             agents: agents.iter().map(|a| a.to_string()).collect(),
             lead: None,
+            ..Default::default()
         }
     }
 

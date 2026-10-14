@@ -386,6 +386,17 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
                 },
             }
         }
+        (Method::Post, ["projects", name, verb @ ("archive" | "unarchive")]) => {
+            let done = if *verb == "archive" {
+                rt.archive_project(name).map(|v| json!({"paused": v}))
+            } else {
+                rt.unarchive_project(name).map(|v| json!({"resumed": v}))
+            };
+            match done {
+                Ok(v) => json_reply(req, 200, v),
+                Err(e) => text(req, 404, e),
+            }
+        }
         (Method::Delete, ["projects", name]) => match rt.delete_project(name) {
             Ok(()) => text(req, 200, "deleted"),
             Err(e) => text(req, 404, e),
@@ -510,6 +521,7 @@ mod tests {
             description: String::new(),
             agents: vec!["in".into()],
             lead: None,
+            ..Default::default()
         })
         .unwrap();
         let run = |n: &str| {
@@ -523,6 +535,36 @@ mod tests {
         assert_eq!(rt.store().runs("in", 1)[0].project, "rowing");
         assert_eq!(run("out").status(), 429, "not a member: dropped, not run");
         assert_eq!(rt.store().runs("out", 1)[0].status, Status::Dropped);
+    }
+
+    #[test]
+    fn a_project_is_archived_and_unarchived_over_http() {
+        let (rt, base) = start("archive-http");
+        let c = reqwest::blocking::Client::new();
+        assert_eq!(
+            c.put(format!("{base}/agents/a"))
+                .bearer_auth("tok")
+                .json(&mock("a", &["hi"]))
+                .send()
+                .unwrap()
+                .status(),
+            201
+        );
+        rt.put_project(crate::projects::Project {
+            name: "p".into(),
+            agents: vec!["a".into()],
+            ..Default::default()
+        })
+        .unwrap();
+        let post = |path: &str| c.post(format!("{base}{path}")).bearer_auth("tok").send().unwrap();
+        let v: Value = post("/projects/p/archive").json().unwrap();
+        assert_eq!(v["paused"], json!(["a"]));
+        let got: Value =
+            c.get(format!("{base}/projects/p")).bearer_auth("tok").send().unwrap().json().unwrap();
+        assert_eq!(got["archived"], true);
+        let v: Value = post("/projects/p/unarchive").json().unwrap();
+        assert_eq!(v["resumed"], json!(["a"]));
+        assert_eq!(post("/projects/missing/archive").status(), 404);
     }
 
     #[test]

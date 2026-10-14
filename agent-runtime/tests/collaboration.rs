@@ -530,6 +530,7 @@ fn project(name: &str, agents: &[&str]) -> Project {
         description: "training".into(),
         agents: agents.iter().map(|a| a.to_string()).collect(),
         lead: None,
+        ..Default::default()
     }
 }
 
@@ -912,6 +913,56 @@ fn removing_a_schedule_can_be_narrowed_to_one_project() {
     assert!(
         matches!(left.as_slice(), [Trigger::Schedule { project: Some(p), .. }] if p == "nutrition")
     );
+}
+
+#[test]
+fn archiving_pauses_only_the_agents_that_lose_their_last_live_home_and_unarchiving_resumes_only_those(
+) {
+    let rt = runtime("archive");
+    for n in ["chef", "coach", "rower"] {
+        rt.create_agent(agent(n, &["x"])).unwrap();
+    }
+    rt.put_project(project("rowing", &["rower", "coach", "chef"])).unwrap();
+    rt.put_project(project("side", &["coach"])).unwrap();
+    rt.set_paused("rower", true).unwrap(); // the owner's own doing
+    let paused = |n: &str| rt.store().get(n).unwrap().paused;
+
+    // coach is still in a live project, rower was already paused: only chef is paused by this
+    assert_eq!(rt.archive_project("rowing").unwrap(), ["chef"]);
+    assert!(paused("chef") && !paused("coach") && paused("rower"));
+    let p = rt.store().get_project("rowing").unwrap();
+    assert!(p.archived);
+    assert_eq!(p.paused_by_archive, ["chef"], "rower is not recorded: that pause was not ours");
+    assert!(rt.archive_project("rowing").unwrap().is_empty(), "archiving twice changes nothing");
+
+    // archive the other one: coach has no live home left now, so it is paused too
+    assert_eq!(rt.archive_project("side").unwrap(), ["coach"]);
+    assert!(paused("coach"));
+
+    // bring rowing back: chef (rowing's record) and coach (side's record) resume, rower does not
+    let mut resumed = rt.unarchive_project("rowing").unwrap();
+    resumed.sort();
+    assert_eq!(resumed, ["chef", "coach"]);
+    assert!(
+        !paused("chef") && !paused("coach") && paused("rower"),
+        "rower stays as the owner left it"
+    );
+    assert!(rt.store().get_project("side").unwrap().paused_by_archive.is_empty());
+    assert!(rt.store().get_project("side").unwrap().archived, "side is still shelved");
+    assert!(rt.unarchive_project("rowing").unwrap().is_empty());
+    assert!(rt.archive_project("nope").unwrap_err().contains("no project"));
+}
+
+#[test]
+fn deleting_an_archived_project_does_not_leave_its_agents_paused() {
+    let rt = runtime("archive-delete");
+    rt.create_agent(agent("x", &["x"])).unwrap();
+    rt.put_project(project("p", &["x"])).unwrap();
+    rt.archive_project("p").unwrap();
+    assert!(rt.store().get("x").unwrap().paused);
+    rt.delete_project("p").unwrap();
+    assert!(!rt.store().get("x").unwrap().paused);
+    assert!(rt.store().get_project("p").is_none());
 }
 
 #[test]
