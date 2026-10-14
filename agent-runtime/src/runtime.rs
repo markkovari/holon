@@ -181,7 +181,7 @@ pub fn validate_spec(spec: &AgentSpec) -> Result<(), String> {
     }
     for t in &spec.triggers {
         match t {
-            Trigger::Schedule { cron, prompt } => {
+            Trigger::Schedule { cron, prompt, .. } => {
                 cron::parse(cron)?;
                 if prompt.trim().is_empty() {
                     return Err(
@@ -729,7 +729,7 @@ impl Runtime {
                 continue;
             }
             for (i, t) in spec.triggers.iter().enumerate() {
-                let Trigger::Schedule { cron: expr, prompt } = t else { continue };
+                let Trigger::Schedule { cron: expr, prompt, .. } = t else { continue };
                 let Ok(sched) = cron::parse(expr) else { continue };
                 let key = (spec.name.clone(), i);
                 let last = self.last_fired.lock().unwrap().get(&key).copied();

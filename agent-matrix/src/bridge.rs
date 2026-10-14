@@ -42,7 +42,7 @@ fn log(msg: &str) {
     eprintln!("agent-matrix: {msg}");
 }
 
-fn clip(s: &str, n: usize) -> String {
+pub fn clip(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
         s.to_string()
     } else {
@@ -908,9 +908,56 @@ impl Bridge {
         }
     }
 
+    // ---- results nobody asked for ---------------------------------------------
+
+    /// Posts what the runtime ran on its own and the owner wants to read: see
+    /// `scheduled::due`. An agent the bridge has not seen before is only marked as
+    /// seen, so its history is not posted all at once.
+    pub fn deliver_scheduled(&self) {
+        let (agents, projects) = match (self.rt.agents(), self.rt.projects()) {
+            (Ok(a), Ok(p)) => (a, p),
+            _ => return,
+        };
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        for agent in agents {
+            let Some(after) = self.state.read(|d| d.delivered.get(&agent.name).copied()) else {
+                self.state.write(|d| d.delivered.insert(agent.name.clone(), now_ms));
+                continue;
+            };
+            let Ok(runs) = self.rt.runs(&agent.name, 20) else { continue };
+            let due = crate::scheduled::due(&agent.triggers, &runs, after);
+            if due.is_empty() {
+                continue;
+            }
+            let Some(room) =
+                self.state.read(|d| crate::scheduled::room_for(&agent.name, &projects, d))
+            else {
+                continue;
+            };
+            let ghost = self.cfg.ghost(&agent.name);
+            let _ = self.mx.join(&room, &ghost);
+            for run in due {
+                let body = crate::scheduled::render(run, MAX_REPLY);
+                if let Err(e) = self.mx.send_text(&room, &ghost, &body, None) {
+                    // Not marked delivered, so the next pass tries again.
+                    log(&format!(
+                        "{}: could not post the result of {}: {e}",
+                        agent.name, run.trigger
+                    ));
+                    break;
+                }
+                let at = run.finished_at_ms();
+                self.state.write(|d| d.delivered.insert(agent.name.clone(), at));
+            }
+        }
+    }
+
     // ---- background loops ---------------------------------------------------
 
-    /// Starts the reconcile and approval loops on their own threads.
+    /// Starts the reconcile, approval and scheduled-result loops on their own threads.
     pub fn spawn_loops(self: &Arc<Self>) {
         let me = self.clone();
         std::thread::spawn(move || loop {
@@ -923,6 +970,11 @@ impl Bridge {
         std::thread::spawn(move || loop {
             me.poll_approvals();
             std::thread::sleep(Duration::from_secs(2));
+        });
+        let me = self.clone();
+        std::thread::spawn(move || loop {
+            me.deliver_scheduled();
+            std::thread::sleep(Duration::from_secs(10));
         });
     }
 }
