@@ -7,6 +7,7 @@ pub mod config;
 pub mod init;
 pub mod jev;
 pub mod matrix;
+pub mod md;
 pub mod retire;
 pub mod runtime;
 pub mod scheduled;

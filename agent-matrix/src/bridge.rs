@@ -110,7 +110,20 @@ pub fn history_lines(cfg: &Config, msgs: &[Value], skip: &str, budget: usize) ->
         if m["event_id"].as_str() == Some(skip) {
             continue;
         }
-        let body = m["content"]["body"].as_str().unwrap_or_default().trim();
+        // A photo is its caption (or nothing) and not its file name: "image.png" tells the agent
+        // nothing and reads as a message that failed to arrive.
+        let photo_line;
+        let body = if m["content"]["msgtype"].as_str() == Some("m.image") {
+            let caption = photo_caption(&m["content"]);
+            photo_line = if caption.is_empty() {
+                "[a photo]".to_string()
+            } else {
+                format!("[a photo] {caption}")
+            };
+            photo_line.as_str()
+        } else {
+            m["content"]["body"].as_str().unwrap_or_default().trim()
+        };
         if body.is_empty() || m["content"]["m.relates_to"]["rel_type"].as_str() == Some("m.replace")
         {
             continue;
@@ -209,6 +222,35 @@ pub fn describe_approval(tool: &str, args: &Value) -> Option<String> {
         }
         _ => return None,
     })
+}
+
+/// A photo is still the subject for this long: past it, a text message is about something else.
+const PHOTO_FOLLOW_UP_MS: u64 = 15 * 60 * 1000;
+
+/// The photo a text message is probably about: the newest message from `owner` in `msgs` (newest
+/// first), when it is a photo, is recent, and `agent` was given it. Returns its file name in that
+/// agent's inbox and its age in minutes. Only the newest photo is considered: if that one did not
+/// reach this agent, an older one is not dug up.
+pub fn recent_photo(
+    msgs: &[Value],
+    owner: &str,
+    skip: &str,
+    now_ms: u64,
+    photos: &[crate::state::PhotoRef],
+    agent: &str,
+) -> Option<(String, u64)> {
+    let m = msgs.iter().find(|m| {
+        m["sender"].as_str() == Some(owner)
+            && m["content"]["msgtype"].as_str() == Some("m.image")
+            && m["event_id"].as_str() != Some(skip)
+    })?;
+    let age = now_ms.saturating_sub(m["origin_server_ts"].as_u64()?);
+    if age > PHOTO_FOLLOW_UP_MS {
+        return None;
+    }
+    let id = m["event_id"].as_str()?;
+    let file = photos.iter().rev().find(|p| p.agent == agent && p.event == id)?.file.clone();
+    Some((file, age / 60_000))
 }
 
 /// The words a person wrote with a photo: Element puts the file name in `body` unless there is
@@ -1045,7 +1087,19 @@ impl Bridge {
                     .map_err(|e| format!("I could not keep that photo: {}", clip(&e, 300)))
             });
         let file = match kept {
-            Ok(f) => f,
+            Ok(f) => {
+                // remember which message this was, so a follow-up text can bring it back
+                self.state.write(|d| {
+                    d.photos.push(crate::state::PhotoRef {
+                        agent: agent.to_string(),
+                        event: reply_to.to_string(),
+                        file: f.clone(),
+                    });
+                    let extra = d.photos.len().saturating_sub(100);
+                    d.photos.drain(..extra);
+                });
+                f
+            }
             Err(e) => {
                 self.mx.typing(room, &ghost, false);
                 return note(&format!("⚠️ {e}"));
