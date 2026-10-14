@@ -130,7 +130,7 @@ pub fn interpret(status: u16, bytes: &[u8]) -> Result<String, Failure> {
         let detail = parsed["error"]["message"].as_str().unwrap_or("no message").to_string();
         return Err(match status {
             400 | 422 => Failure::InvalidRequest(detail),
-            401 | 402 | 403 => Failure::ProviderDenied(detail),
+            401..=403 => Failure::ProviderDenied(detail),
             429 | 500..=599 => Failure::ProviderUnavailable(detail),
             _ => Failure::BadResponse(format!("{status}: {detail}")),
         });

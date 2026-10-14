@@ -1,0 +1,67 @@
+// nutrition:meal — read a vision model's description of a meal into numbers, and say which of
+// them a person should check.
+//
+// The DETERMINISTIC half of photographing a meal, the same split as `card:identify`. The vision
+// call is not in this contract and not in this component: a model call cannot be gated, and this
+// can. A `vision:describe` provider does the looking and hands the answer here.
+//
+// The prompt is part of the contract, and that is the point of `prompt`: the shape this parses
+// and the shape the model is asked for are ONE decision, and a prompt living in the provider is
+// a second place to change it.
+package nutrition:meal@0.1.0;
+
+interface estimator {
+    /// One food on the plate, in COOKED weight.
+    record item {
+        name: string,
+        grams: u32,
+        kcal: u32,
+        protein-g: u32,
+        carbs-g: u32,
+        fat-g: u32,
+    }
+
+    /// How sure the model said it was. A photo supports a rough estimate and never a precise
+    /// one, so `high` is rare and is not a promise.
+    enum confidence {
+        low,
+        medium,
+        high,
+    }
+
+    /// What the model thought it saw, with the sums done here and not by the model.
+    record estimate {
+        items: list<item>,
+        total-kcal: u32,
+        total-protein-g: u32,
+        total-carbs-g: u32,
+        total-fat-g: u32,
+        confidence: confidence,
+        /// What a person should check: what the model said it was unsure of, plus what this
+        /// component found implausible (calories that do not match the macros, a portion
+        /// that cannot be on one plate). Empty means nothing stood out, not that it is right.
+        unsure: list<string>,
+        notes: string,
+    }
+
+    /// Why an answer could not be read.
+    variant parse-error {
+        /// There was no JSON object in it.
+        not-json(string),
+        /// There was, and it listed nothing to eat.
+        no-items,
+        /// It had the right shape and the wrong content.
+        malformed(string),
+    }
+
+    /// The prompt whose answer `parse` reads. `note` is what the person said about the meal
+    /// ("post-row", "half portion"), already trimmed; empty for nothing.
+    prompt: func(note: string) -> string;
+
+    /// A vision model's answer, as an estimate.
+    parse: func(answer: string) -> result<estimate, parse-error>;
+}
+
+world meal-estimate {
+    export estimator;
+}

@@ -2320,6 +2320,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "meal-estimate"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "media-pipeline"
 version = "0.1.0"
 dependencies = [
