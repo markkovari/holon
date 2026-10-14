@@ -11,6 +11,7 @@ pub enum Cmd {
     AgentTrash,
     AgentRestore { name: String },
     AgentPurge { name: String },
+    AgentRetire { name: String },
     ProjectList,
     ProjectNew { name: String, description: String },
     ProjectAdd { name: String, agents: Vec<String> },
@@ -40,12 +41,14 @@ pub fn parse(body: &str) -> Option<Cmd> {
         (Some("agents"), _) => Cmd::Agents,
         (Some("agent"), Some(sub)) => match sub {
             "trash" => Cmd::AgentTrash,
-            "restore" | "purge" => {
+            "restore" | "purge" | "retire" => {
                 let name = agent_token(&word(words.next()));
                 if name.is_empty() {
                     Cmd::Bad(format!("usage: !agent {sub} <agent>"))
                 } else if sub == "restore" {
                     Cmd::AgentRestore { name }
+                } else if sub == "retire" {
+                    Cmd::AgentRetire { name }
                 } else {
                     Cmd::AgentPurge { name }
                 }
@@ -104,6 +107,7 @@ const HELP: &str = "\
 !agent trash                             deleted agents you can still restore (30 days)
 !agent restore <agent>                   bring a deleted agent back, as it was
 !agent purge <agent>                     remove a deleted agent from the trash for good
+!agent retire <agent>                    end the room of an agent the runtime no longer lists
 !project list                            list projects and who is in them
 !project new <name> [description]        make a project (a Space with a general and a feed room)
 !project add <name> <agent> [<agent>…]   add agents to a project
@@ -164,6 +168,7 @@ impl Bridge {
                 }
                 Err(e) => format!("could not restore {name}: {e}"),
             },
+            Cmd::AgentRetire { name } => self.retire_now(&name),
             Cmd::AgentPurge { name } => match self.rt.purge(&name) {
                 Ok(t) => format!("{} is gone for good ({} recorded runs).", t.name, t.runs),
                 Err(e) => format!("could not purge {name}: {e}"),

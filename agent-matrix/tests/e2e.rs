@@ -701,6 +701,51 @@ fn a_space_you_make_yourself_becomes_a_project_when_you_invite_an_agent_into_it(
 }
 
 #[test]
+fn deleting_an_agent_retires_its_room_and_restoring_it_brings_the_same_room_back() {
+    let Some(World { rt, bridge, owner, _work, _down, _lock, .. }) = world() else { return };
+    let name_of = |u: &str| {
+        owner.call(reqwest::Method::GET, &format!("/_matrix/client/v3/profile/{}", enc(u)), None)
+            ["displayname"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    };
+    let chef_room = bridge.state.read(|d| d.dms.get("chef").cloned()).expect("chef's room");
+    let coach_room = bridge.state.read(|d| d.dms.get("coach").cloned()).expect("coach's room");
+    assert!(owner.joined(&chef_room).contains(&owner.user), "you are in it to begin with");
+
+    // ---- deleted, still in the trash: the room leaves your list, the agent keeps its user in it
+    rt.delete_agent("chef").unwrap();
+    wait_for("chef retired", 120, || bridge.state.read(|d| d.retired.get("chef").cloned()));
+    assert!(bridge.state.read(|d| !d.dms.contains_key("chef")), "no longer a live room");
+    let members =
+        bridge.mx.joined(&chef_room, &ghost("chef")).expect("its own user is still in it");
+    assert!(members.contains(&ghost("chef")) && !members.contains(&owner.user), "{members:?}");
+    assert_eq!(name_of(&ghost("chef")), "chef (deleted)");
+
+    // ---- restored: the same room, you are back in it, and the name is back
+    rt.restore_agent("chef").unwrap();
+    wait_for("chef revived", 60, || {
+        bridge.state.read(|d| d.dms.get("chef").is_some_and(|r| *r == chef_room)).then_some(())
+    });
+    assert!(bridge.state.read(|d| d.retired.is_empty()));
+    wait_for("you are invited back and placed", 30, || {
+        owner.joined(&chef_room).contains(&owner.user).then_some(())
+    });
+    assert_eq!(name_of(&ghost("chef")), "chef");
+
+    // ---- purged at once: nothing to come back to, so its user leaves the room too
+    rt.delete_agent("coach").unwrap();
+    rt.store().purge("coach").unwrap();
+    wait_for("coach retired for good", 120, || {
+        bridge.state.read(|d| (!d.dms.contains_key("coach")).then_some(()))
+    });
+    assert!(bridge.state.read(|d| !d.retired.contains_key("coach")), "not kept for a restore");
+    assert!(bridge.mx.joined(&coach_room, &ghost("coach")).is_err(), "its user has left too");
+    assert_eq!(name_of(&ghost("coach")), "coach (deleted)");
+}
+
+#[test]
 fn you_can_talk_to_an_agent_and_it_talks_back() {
     let real = cfg!(target_os = "macos")
         && ["say", "ffmpeg", "swiftc"].iter().all(|c| {

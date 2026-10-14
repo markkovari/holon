@@ -36,6 +36,11 @@ pub struct Data {
     /// restart neither repeats a result nor posts an agent's whole history.
     #[serde(default)]
     pub delivered: BTreeMap<String, u64>,
+    /// agent name -> its old direct room, for an agent that was deleted but is still in
+    /// the runtime's trash: the owner has left the room, the agent's user is still in it,
+    /// and a restore invites the owner back to the same room, history intact.
+    #[serde(default)]
+    pub retired: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -427,6 +427,21 @@ impl Matrix {
         }
     }
 
+    /// The owner leaves `room` and forgets it, so it drops out of the room list. The
+    /// server keeps the history; an agent's user still in the room can invite the owner back.
+    pub fn leave_and_forget_as_owner(&self, room: &str) -> R<()> {
+        for verb in ["leave", "forget"] {
+            self.call(
+                reqwest::Method::POST,
+                &format!("/_matrix/client/v3/rooms/{}/{verb}", enc(room)),
+                None,
+                &self.admin_token,
+                Some(json!({})),
+            )?;
+        }
+        Ok(())
+    }
+
     /// Accepts the owner's pending invite to `room`, using the owner's own session.
     /// Every room the bridge makes invites the owner at creation; this is what turns
     /// "the agent made you a room" into a room that is already in your list, with no
