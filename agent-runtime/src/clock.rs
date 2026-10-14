@@ -56,24 +56,29 @@ pub fn describe(unix: u64, local: &dyn Fn(u64) -> (i64, String)) -> String {
     )
 }
 
-/// This machine's UTC offset and zone name at `unix`.
-#[allow(unsafe_code, clippy::unnecessary_cast)]
-pub fn local_offset(unix: u64) -> (i64, String) {
-    let t = unix as libc::time_t;
-    // SAFETY: `localtime_r` writes only into the `tm` we give it, and `tm_zone`, when set, is
-    // a NUL-terminated string the C library owns for at least as long as this call returns.
-    unsafe {
-        let mut tm: libc::tm = std::mem::zeroed();
-        if libc::localtime_r(&t, &mut tm).is_null() {
-            return (0, "UTC".into());
-        }
-        let zone = if tm.tm_zone.is_null() {
-            "local".to_string()
-        } else {
-            std::ffi::CStr::from_ptr(tm.tm_zone).to_string_lossy().into_owned()
-        };
-        (tm.tm_gmtoff as i64, zone)
-    }
+/// This machine's current UTC offset (seconds) and zone name, from the system `date`: the
+/// one place that already knows the user's time zone, and it needs no `unsafe` or C library.
+/// `now` is only ever asked about the present, so the argument is not used; a failure falls
+/// back to UTC.
+pub fn local_offset(_unix: u64) -> (i64, String) {
+    let out = std::process::Command::new("date").arg("+%z %Z").output();
+    let text = out
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    text.as_deref().and_then(parse_offset).unwrap_or((0, "UTC".to_string()))
+}
+
+/// `"+0200 CEST"` -> (7200, "CEST").
+fn parse_offset(s: &str) -> Option<(i64, String)> {
+    let (z, name) = s.split_once(' ')?;
+    let sign = match z.as_bytes().first()? {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let (h, m) = (z.get(1..3)?.parse::<i64>().ok()?, z.get(3..5)?.parse::<i64>().ok()?);
+    Some((sign * (h * 3600 + m * 60), name.to_string()))
 }
 
 pub fn now(unix: u64) -> String {
@@ -117,7 +122,12 @@ mod tests {
     }
 
     #[test]
-    fn this_machines_own_offset_is_sane() {
+    fn the_systems_offset_text_is_read_and_this_machines_own_is_sane() {
+        assert_eq!(parse_offset("+0200 CEST"), Some((7200, "CEST".into())));
+        assert_eq!(parse_offset("-0330 NST"), Some((-12_600, "NST".into())));
+        assert_eq!(parse_offset("+0000 UTC"), Some((0, "UTC".into())));
+        assert_eq!(parse_offset("garbage"), None);
+        assert_eq!(parse_offset("0200 CEST"), None);
         let (off, zone) = local_offset(T);
         assert!((-14 * 3600..=14 * 3600).contains(&off), "{off}");
         assert!(!zone.is_empty());
