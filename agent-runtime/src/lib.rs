@@ -9,6 +9,7 @@ pub mod clock;
 pub mod connector;
 pub mod cron;
 pub mod embed;
+pub mod google;
 pub mod html;
 pub mod kv;
 pub mod lazy;

@@ -52,9 +52,42 @@ struct Cli {
     /// Recognition language when a caller does not say.
     #[arg(long, default_value = "en-US")]
     speech_locale: String,
+    /// Where the Google Calendar login lives: `client.json` (the OAuth client Google gave) and
+    /// `token.json` (written by `agent-runtime google-auth`).
+    #[arg(long, env = "HOLON_GOOGLE_DIR")]
+    google_dir: Option<PathBuf>,
+}
+
+/// `agent-runtime google-auth [--google-dir DIR]`: sign in to Google once, in a browser.
+fn google_auth() -> Result<(), String> {
+    let mut cfg = agent_runtime::google::GoogleConfig::default();
+    let mut args = std::env::args().skip(2);
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "--google-dir" => {
+                cfg.dir = PathBuf::from(args.next().ok_or("--google-dir needs a directory")?)
+            }
+            other => return Err(format!("google-auth: unexpected argument `{other}`")),
+        }
+    }
+    agent_runtime::google::authorize(&cfg, &|url| {
+        println!("Opening Google to ask for access to your calendars. If nothing opens, go to:\n\n{url}\n");
+        let _ =
+            std::process::Command::new(if cfg!(target_os = "macos") { "open" } else { "xdg-open" })
+                .arg(url)
+                .status();
+    })?;
+    println!(
+        "Signed in. The login is saved in {} (readable only by you).",
+        cfg.dir.join("token.json").display()
+    );
+    Ok(())
 }
 
 fn main() -> Result<(), String> {
+    if std::env::args().nth(1).as_deref() == Some("google-auth") {
+        return google_auth();
+    }
     let cli = Cli::parse();
     std::fs::create_dir_all(&cli.state_dir).map_err(|e| e.to_string())?;
     let token = server::admin_token_in(&cli.state_dir)?;
@@ -70,6 +103,9 @@ fn main() -> Result<(), String> {
         ffmpeg: cli.ffmpeg,
         default_locale: cli.speech_locale,
     };
+    if let Some(dir) = cli.google_dir {
+        cfg.google.dir = dir;
+    }
     let rt = Runtime::new(cfg)?;
     let addr = server::serve(rt.clone(), &cli.listen, token)?;
     rt.start_scheduler();
