@@ -380,6 +380,7 @@ impl Runtime {
         self.put_project(p)
     }
 
+    /// Takes the agent out of service and into the trash (see `Store::delete`).
     pub fn delete_agent(&self, name: &str) -> Result<(), String> {
         self.store.delete(name)?;
         for p in
@@ -391,6 +392,16 @@ impl Runtime {
         self.timers.lock().unwrap().retain(|t| t.agent != name);
         self.save_timers();
         Ok(())
+    }
+
+    /// Brings a deleted agent back as it was, and into the projects it was in that
+    /// still exist. Its timers are not restored; the schedules in its spec are.
+    pub fn restore_agent(&self, id_or_name: &str) -> Result<crate::store::Trashed, String> {
+        let t = self.store.restore(id_or_name)?;
+        for p in &t.projects {
+            let _ = self.add_to_project(p, &t.name);
+        }
+        Ok(t)
     }
 
     // ---- running ----------------------------------------------------------
@@ -773,8 +784,15 @@ impl Runtime {
         self.recover();
         let rt = self.clone();
         std::thread::spawn(move || {
+            let mut swept = 0;
             while !rt.stop.load(Ordering::Relaxed) {
-                rt.tick(unix_now());
+                let now = unix_now();
+                rt.tick(now);
+                // The trash is checked once an hour, and once at start.
+                if now.saturating_sub(swept) >= 3600 {
+                    rt.store.sweep_trash(now);
+                    swept = now;
+                }
                 std::thread::sleep(Duration::from_secs(1));
             }
         });
@@ -1084,6 +1102,20 @@ impl Host for Runtime {
 
     fn delete_agent(&self, name: &str) -> Result<(), String> {
         Runtime::delete_agent(self, name)
+    }
+
+    fn restore_agent(&self, name: &str) -> Result<String, String> {
+        let t = Runtime::restore_agent(self, name)?;
+        let joined = if t.projects.is_empty() {
+            String::new()
+        } else {
+            format!(", back in its projects ({})", t.projects.join(", "))
+        };
+        Ok(format!(
+            "restored {} from the trash with its settings, schedules, {} recorded runs, memory \
+             and workspace{joined}; it runs on its schedules again",
+            t.name, t.runs
+        ))
     }
 
     fn pause_agent(&self, name: &str, paused: bool) -> Result<(), String> {

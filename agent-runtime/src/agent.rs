@@ -109,6 +109,9 @@ pub trait Host: Sync {
     fn delete_agent(&self, _name: &str) -> Result<(), String> {
         Err("agent management is not available".into())
     }
+    fn restore_agent(&self, _name: &str) -> Result<String, String> {
+        Err("agent management is not available".into())
+    }
     fn pause_agent(&self, _name: &str, _paused: bool) -> Result<(), String> {
         Err("agent management is not available".into())
     }
@@ -288,7 +291,13 @@ const TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "agent_delete",
         args: r#"{"name": "..."}"#,
-        about: "PERMANENTLY delete a whole agent: its settings, schedules, run history, memory and workspace. This cannot be undone. Use it only when the owner clearly asks to delete the agent itself. To stop just a schedule use agent_remove_schedule; to stop an agent for now use agent_pause. The owner approves first.",
+        about: "Delete a whole agent: its settings, schedules, run history, memory and workspace move to the trash and can be brought back with agent_restore for 30 days, after which they are gone. Use it only when the owner clearly asks to delete the agent itself. To stop just a schedule use agent_remove_schedule; to stop an agent for now use agent_pause. The owner approves first.",
+        sensitive: true,
+    },
+    ToolDef {
+        name: "agent_restore",
+        args: r#"{"name": "..."}"#,
+        about: "Bring a deleted agent back from the trash, exactly as it was: settings, schedules, run history, memory, workspace and the projects it was in. It starts running on its schedules again. Works for 30 days after the deletion. The owner approves first.",
         sensitive: true,
     },
     ToolDef {
@@ -324,7 +333,11 @@ fn required(name: &str) -> &'static [&'static str] {
         "transcribe" => &["path"],
         "speak" => &["text"],
         "http_get" => &["url"],
-        "agent_show" | "agent_delete" | "agent_pause" | "agent_remove_schedule" => &["name"],
+        "agent_show"
+        | "agent_delete"
+        | "agent_pause"
+        | "agent_remove_schedule"
+        | "agent_restore" => &["name"],
         "agent_save" => &["name"],
         "read_file" => &["path"],
         "write_file" => &["path", "content"],
@@ -345,9 +358,12 @@ fn primary(name: &str) -> Option<&'static str> {
         "store_get" | "store_list" => Some("ns"),
         "schedule_self" => Some("prompt"),
         "task_result" => Some("id"),
-        "agent_show" | "agent_delete" | "agent_pause" | "agent_save" | "agent_remove_schedule" => {
-            Some("name")
-        }
+        "agent_show"
+        | "agent_delete"
+        | "agent_pause"
+        | "agent_save"
+        | "agent_remove_schedule"
+        | "agent_restore" => Some("name"),
         "transcribe" => Some("path"),
         "speak" => Some("text"),
         n if n.starts_with("agent:") => Some("message"),
@@ -898,10 +914,11 @@ fn exec(
             let runs = store.runs(&name, usize::MAX).len();
             host.delete_agent(&name)?;
             Ok(format!(
-                "deleted {name} permanently: its settings, schedules, {runs} recorded runs, \
-                 memory and workspace are gone"
+                "deleted {name}: its settings, schedules, {runs} recorded runs, memory and \
+                 workspace are in the trash for 30 days; agent_restore brings it back"
             ))
         }
+        "agent_restore" => host.restore_agent(&arg(args, "name")),
         "agent_remove_schedule" => {
             let name = arg(args, "name");
             if name == spec.name {
