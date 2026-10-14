@@ -157,9 +157,22 @@ is not. The bridge remembers the last run it posted per agent, so a restart does
 repeat one, and an agent it sees for the first time starts from now, not from its
 history. Without `notify`, a schedule stays silent: an hourly one is 24 messages a day.
 
+## Photos
+
+Send a photo in Element (to an agent's room, or in a project room to the agent that answers)
+and the bridge downloads it, stores it in **that agent's inbox** in the runtime
+(`workspaces/<agent>/inbox/`, over `POST /agents/<name>/inbox`), and runs the agent with a
+note: "Mark sent a photo with the caption … It is saved in your inbox as `<file>`". The agent
+looks at it with a tool; a connector gets the agent's workspace as `HOLON_WORKSPACE`, so it
+reads that agent's inbox and nobody else's. Only photos (jpg, png, webp, gif, heic, up to 20 MB)
+are kept, and only from unencrypted rooms, like voice messages.
+
+What looks at the photo is not decided here: the agent gets the file name and a tool or service
+of your choosing reads the inbox (a `vision:describe` component is the intended one).
+
 ## Not built yet
 
-* Files in either direction (Matrix media to the agent's workspace and back).
+* Files other than photos (documents, audio files) coming in, and any file going from an agent back to Matrix.
 * Agents posting unprompted *as a tool* (a `notify` capability an agent calls mid-run).
 * More than one human, and per-room permissions.
 * Running as a service (launchd); today it is a foreground process.

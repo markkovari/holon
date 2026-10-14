@@ -497,6 +497,37 @@ impl Store {
         Ok(dir)
     }
 
+    /// Puts a file a person sent (a photo from a chat) into the agent's `inbox/` folder under
+    /// a name that cannot collide or escape, and returns that name. Only photos for now.
+    pub fn save_inbox(&self, name: &str, filename: &str, bytes: &[u8]) -> Result<String, String> {
+        const EXTS: [&str; 6] = ["jpg", "jpeg", "png", "webp", "gif", "heic"];
+        const MAX: usize = 20 << 20;
+        if self.get(name).is_none() {
+            return Err(format!("no agent named {name}"));
+        }
+        if bytes.is_empty() || bytes.len() > MAX {
+            return Err(format!("a photo must be 1 byte to {} MB", MAX >> 20));
+        }
+        // Only the last path component, and only characters that are safe in a file name.
+        let base = filename.rsplit(['/', '\\']).next().unwrap_or_default();
+        let safe: String = base
+            .chars()
+            .map(
+                |c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' },
+            )
+            .collect();
+        let ext = safe.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+        if !EXTS.contains(&ext.as_str()) {
+            return Err(format!("not a photo: use one of {}", EXTS.join(", ")));
+        }
+        let stem: String = safe.trim_start_matches('.').chars().take(60).collect();
+        let dir = self.workspace(name)?.join("inbox");
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let file = format!("{}-{stem}", crate::runtime::unix_now_ms());
+        fs::write(dir.join(&file), bytes).map_err(|e| e.to_string())?;
+        Ok(file)
+    }
+
     // ---- memory -----------------------------------------------------------
 
     pub fn remember(&self, agent: &str, text: &str, now: u64) -> Result<(), String> {

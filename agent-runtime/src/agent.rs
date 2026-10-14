@@ -1045,7 +1045,10 @@ fn exec(
                 .find(|c| c.name == other)
                 .and_then(|c| c.exec.as_ref())
             {
-                Some(x) => crate::connector::run(x, args),
+                Some(x) => {
+                    let workspace = store.workspace(&spec.name).ok();
+                    crate::connector::run(x, args, workspace.as_deref())
+                }
                 None => Err(format!("no such tool: {other}")),
             },
         },

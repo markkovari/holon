@@ -211,6 +211,55 @@ pub fn describe_approval(tool: &str, args: &Value) -> Option<String> {
     })
 }
 
+/// The words a person wrote with a photo: Element puts the file name in `body` unless there is
+/// a caption, in which case `filename` holds the name and `body` the caption.
+pub fn photo_caption(content: &Value) -> String {
+    let body = content["body"].as_str().unwrap_or_default().trim();
+    match content["filename"].as_str() {
+        Some(f) if f == body => String::new(),
+        Some(_) => body.to_string(),
+        None if looks_like_file_name(body) => String::new(),
+        None => body.to_string(),
+    }
+}
+
+fn looks_like_file_name(s: &str) -> bool {
+    !s.contains(' ')
+        && s.rsplit_once('.').is_some_and(|(_, e)| {
+            matches!(
+                e.to_ascii_lowercase().as_str(),
+                "jpg" | "jpeg" | "png" | "webp" | "gif" | "heic" | "heif"
+            )
+        })
+}
+
+/// The name to keep a photo under: its own, with an extension the runtime accepts (from its
+/// type when the name has none, as a camera roll upload sometimes does).
+pub fn photo_name(content: &Value) -> String {
+    let given = content["filename"]
+        .as_str()
+        .or(content["body"].as_str())
+        .unwrap_or("photo")
+        .trim()
+        .to_string();
+    let name = if given.is_empty() || given.contains(' ') && !looks_like_file_name(&given) {
+        "photo".to_string()
+    } else {
+        given
+    };
+    if looks_like_file_name(&name) {
+        return name;
+    }
+    let ext = match content["info"]["mimetype"].as_str().unwrap_or_default() {
+        "image/png" => "png",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/heic" | "image/heif" => "heic",
+        _ => "jpg",
+    };
+    format!("{name}.{ext}")
+}
+
 /// What to say aloud of a written answer: the start of it, cut at a sentence end, short
 /// enough to listen to. The full text is always in the room.
 pub fn spoken_excerpt(answer: &str) -> String {
@@ -833,22 +882,27 @@ impl Bridge {
             return;
         };
         let content = &ev["content"];
-        // A voice message (or any audio) is heard; text is read. Nothing else is input.
-        let heard = content["msgtype"].as_str() == Some("m.audio");
-        if !heard && content["msgtype"].as_str() != Some("m.text") {
+        // A voice message (or any audio) is heard, a photo is kept for the agent, text is read.
+        // Nothing else is input.
+        let msgtype = content["msgtype"].as_str();
+        let heard = msgtype == Some("m.audio");
+        let photo = msgtype == Some("m.image");
+        if !heard && !photo && msgtype != Some("m.text") {
             return;
         }
         let body = if heard {
             String::new()
+        } else if photo {
+            photo_caption(content)
         } else {
             content["body"].as_str().unwrap_or_default().trim().to_string()
         };
-        if !heard && body.is_empty() {
+        if !heard && !photo && body.is_empty() {
             return;
         }
         let agents: Vec<String> = match self.state.kind_of(room) {
-            // commands are typed; a voice message here is ignored
-            Some(RoomKind::Control) if heard => return,
+            // commands are typed; a voice message or a photo here is ignored
+            Some(RoomKind::Control) if heard || photo => return,
             Some(RoomKind::Control) => {
                 let me = self.clone();
                 let (room, bridge) = (room.to_string(), self.bridge_user());
@@ -950,9 +1004,80 @@ impl Bridge {
             );
             if heard {
                 std::thread::spawn(move || me.answer_voice(&agent, &room, &event_id, &content));
+            } else if photo {
+                std::thread::spawn(move || {
+                    me.answer_photo(&agent, &room, &event_id, &body, &content)
+                });
             } else {
                 std::thread::spawn(move || me.answer(&agent, &room, &event_id, &body));
             }
+        }
+    }
+
+    /// A photo to an agent: download it, put it in the agent's inbox in the runtime, and run the
+    /// agent with a note saying a photo arrived and what it is called there, so its photo tool
+    /// can look at it. The answer is posted as the agent, like any other.
+    fn answer_photo(
+        &self,
+        agent: &str,
+        room: &str,
+        reply_to: &str,
+        caption: &str,
+        content: &Value,
+    ) {
+        let ghost = self.cfg.ghost(agent);
+        let _ = self.mx.join(room, &ghost);
+        let note = |text: &str| {
+            let _ = self.mx.send_text(room, &ghost, text, Some(reply_to));
+        };
+        let Some(mxc) = content["url"].as_str() else {
+            return note("I can only look at photos in unencrypted rooms (this one is encrypted, or the message has no image).");
+        };
+        self.mx.typing(room, &ghost, true);
+        let name = photo_name(content);
+        let kept = self
+            .mx
+            .download(mxc, &ghost)
+            .map_err(|e| format!("I could not fetch that photo: {e}"))
+            .and_then(|bytes| {
+                self.rt
+                    .upload_inbox(agent, &name, bytes)
+                    .map_err(|e| format!("I could not keep that photo: {}", clip(&e, 300)))
+            });
+        let file = match kept {
+            Ok(f) => f,
+            Err(e) => {
+                self.mx.typing(room, &ghost, false);
+                return note(&format!("⚠️ {e}"));
+            }
+        };
+        let said = if caption.is_empty() {
+            String::new()
+        } else {
+            format!(" with the caption: {caption}")
+        };
+        let text = format!(
+            "Mark sent a photo{said}. It is saved in your inbox as `{file}`; look at it with your photo tool."
+        );
+        let (ok, answer) = self.rt.run(
+            agent,
+            &self.task(room, reply_to, &text),
+            &self.why(room),
+            None,
+            self.project_of(room).as_deref(),
+        );
+        self.mx.typing(room, &ghost, false);
+        let body = if ok {
+            if answer.trim().is_empty() {
+                "(no answer)".to_string()
+            } else {
+                clip(&answer, MAX_REPLY)
+            }
+        } else {
+            format!("⚠️ {}", clip(&answer, 2_000))
+        };
+        if let Err(e) = self.mx.send_text(room, &ghost, &body, Some(reply_to)) {
+            log(&format!("{agent}: could not post the answer: {e}"));
         }
     }
 
@@ -1507,6 +1632,23 @@ mod tests {
         .unwrap();
         assert!(narrow.contains("work for the project `rowing`"), "{narrow}");
         assert_eq!(describe_approval("write_file", &json!({"path": "x"})), None);
+    }
+
+    #[test]
+    fn a_photo_keeps_its_name_or_gets_one_from_its_type_and_its_caption_is_read() {
+        // no caption: Element puts the file name in body
+        let plain = json!({"msgtype": "m.image", "body": "IMG_4411.heic", "info": {"mimetype": "image/heic"}});
+        assert_eq!(photo_caption(&plain), "");
+        assert_eq!(photo_name(&plain), "IMG_4411.heic");
+        // a caption: filename holds the name, body the words
+        let said = json!({"msgtype": "m.image", "body": "post-row lunch", "filename": "lunch.png"});
+        assert_eq!(photo_caption(&said), "post-row lunch");
+        assert_eq!(photo_name(&said), "lunch.png");
+        // a name with no extension gets one from the type
+        let bare =
+            json!({"msgtype": "m.image", "body": "image", "info": {"mimetype": "image/png"}});
+        assert_eq!(photo_name(&bare), "image.png");
+        assert_eq!(photo_name(&json!({"msgtype": "m.image", "body": "a b c"})), "photo.jpg");
     }
 
     #[test]

@@ -277,6 +277,33 @@ impl Runtime {
         self.send(reqwest::Method::DELETE, &format!("/projects/{project}/agents/{agent}"), None)
     }
 
+    /// Puts a photo into the agent's inbox in the runtime (`POST /agents/<name>/inbox`) and
+    /// returns the file name it was stored under, which is what the agent's tools take.
+    pub fn upload_inbox(
+        &self,
+        agent: &str,
+        filename: &str,
+        bytes: Vec<u8>,
+    ) -> Result<String, String> {
+        let r = self
+            .runner
+            .post(format!("{}/agents/{agent}/inbox", self.base))
+            .query(&[("name", filename)])
+            .bearer_auth(&self.token)
+            .body(bytes)
+            .send()
+            .map_err(|e| e.to_string())?;
+        let ok = r.status().is_success();
+        let text = r.text().unwrap_or_default();
+        if !ok {
+            return Err(text);
+        }
+        serde_json::from_str::<Value>(&text)
+            .ok()
+            .and_then(|v| v["file"].as_str().map(String::from))
+            .ok_or_else(|| "unexpected reply".into())
+    }
+
     /// Whether the runtime can transcribe and speak (`GET /speech`).
     pub fn speech_caps(&self) -> (bool, bool) {
         match self.admin::<Value>("/speech") {
