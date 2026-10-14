@@ -66,6 +66,8 @@ pub struct Config {
     pub embed_url: String,
     /// The launchd service behind `embed_url`, started on demand (see `lazy.rs`).
     pub embed_service: String,
+    /// Where the Google login lives (`client.json`, `token.json`) and which API it talks to.
+    pub google: crate::google::GoogleConfig,
 }
 
 impl Config {
@@ -80,6 +82,7 @@ impl Config {
             speech: Default::default(),
             embed_url: String::new(),
             embed_service: String::new(),
+            google: Default::default(),
         }
     }
 }
@@ -123,6 +126,7 @@ pub struct Runtime {
     cfg: Config,
     speech: crate::speech::Speech,
     embedder: Option<crate::embed::Embedder>,
+    google: crate::google::Google,
     local: Mutex<LocalModel>,
     started: u64,
     busy: Mutex<HashMap<String, Arc<Mutex<()>>>>,
@@ -239,6 +243,7 @@ impl Runtime {
             local: Mutex::new(cfg.local.clone()),
             speech: crate::speech::Speech::new(cfg.speech.clone()),
             embedder: crate::embed::Embedder::new(&cfg.embed_url, &cfg.embed_service),
+            google: crate::google::Google::new(cfg.google.clone()),
             cfg,
             started: unix_now(),
             busy: Mutex::new(HashMap::new()),
@@ -1187,6 +1192,10 @@ impl Host for Runtime {
 
     fn add_to_project(&self, project: &str, agent: &str) -> Result<(), String> {
         Runtime::add_to_project(self, project, agent)
+    }
+
+    fn google(&self) -> Option<&crate::google::Google> {
+        Some(&self.google)
     }
 
     fn restore_agent(&self, name: &str) -> Result<String, String> {

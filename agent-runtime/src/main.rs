@@ -12,14 +12,31 @@ use std::path::PathBuf;
 
 use agent_runtime::model::LocalModel;
 use agent_runtime::{server, Config, Runtime};
-use clap::Parser;
+use clap::{Parser, Subcommand};
+
+#[derive(Subcommand)]
+enum Command {
+    /// Sign in to Google once, in a browser, so agents can use Google Calendar. The OAuth client
+    /// Google gave must be at `<google-dir>/client.json`; the login is saved beside it.
+    GoogleAuth {
+        /// Where `client.json` is and `token.json` is written.
+        #[arg(long, env = "HOLON_GOOGLE_DIR")]
+        google_dir: Option<PathBuf>,
+    },
+}
 
 #[derive(Parser)]
-#[command(name = "agent-runtime", about = "Run autonomous agents: schedules, events, HTTP.")]
+#[command(
+    name = "agent-runtime",
+    about = "Run autonomous agents: schedules, events, HTTP.",
+    args_conflicts_with_subcommands = true
+)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
     /// Where agents, memory, runs and the admin token live.
     #[arg(long)]
-    state_dir: PathBuf,
+    state_dir: Option<PathBuf>,
     /// Address to serve the trigger and admin API on.
     #[arg(long, default_value = "127.0.0.1:18017")]
     listen: String,
@@ -52,14 +69,42 @@ struct Cli {
     /// Recognition language when a caller does not say.
     #[arg(long, default_value = "en-US")]
     speech_locale: String,
+    /// Where the Google Calendar login lives: `client.json` (the OAuth client Google gave) and
+    /// `token.json` (written by `agent-runtime google-auth`).
+    #[arg(long, env = "HOLON_GOOGLE_DIR")]
+    google_dir: Option<PathBuf>,
+}
+
+/// `agent-runtime google-auth [--google-dir DIR]`: sign in to Google once, in a browser.
+fn google_auth(dir: Option<PathBuf>) -> Result<(), String> {
+    let mut cfg = agent_runtime::google::GoogleConfig::default();
+    if let Some(dir) = dir {
+        cfg.dir = dir;
+    }
+    agent_runtime::google::authorize(&cfg, &|url| {
+        println!("Opening Google to ask for access to your calendars. If nothing opens, go to:\n\n{url}\n");
+        let _ =
+            std::process::Command::new(if cfg!(target_os = "macos") { "open" } else { "xdg-open" })
+                .arg(url)
+                .status();
+    })?;
+    println!(
+        "Signed in. The login is saved in {} (readable only by you).",
+        cfg.dir.join("token.json").display()
+    );
+    Ok(())
 }
 
 fn main() -> Result<(), String> {
     let cli = Cli::parse();
-    std::fs::create_dir_all(&cli.state_dir).map_err(|e| e.to_string())?;
-    let token = server::admin_token_in(&cli.state_dir)?;
+    if let Some(Command::GoogleAuth { google_dir }) = cli.command {
+        return google_auth(google_dir);
+    }
+    let state_dir = cli.state_dir.ok_or("--state-dir is required")?;
+    std::fs::create_dir_all(&state_dir).map_err(|e| e.to_string())?;
+    let token = server::admin_token_in(&state_dir)?;
 
-    let mut cfg = Config::new(&cli.state_dir);
+    let mut cfg = Config::new(&state_dir);
     cfg.local = LocalModel { base_url: cli.local_url, model: cli.local_model };
     cfg.otlp_endpoint = cli.otlp_endpoint.filter(|e| !e.is_empty());
     cfg.embed_url = cli.embed_url;
@@ -70,10 +115,13 @@ fn main() -> Result<(), String> {
         ffmpeg: cli.ffmpeg,
         default_locale: cli.speech_locale,
     };
+    if let Some(dir) = cli.google_dir {
+        cfg.google.dir = dir;
+    }
     let rt = Runtime::new(cfg)?;
     let addr = server::serve(rt.clone(), &cli.listen, token)?;
     rt.start_scheduler();
-    eprintln!("agent-runtime listening on http://{addr} (state: {})", cli.state_dir.display());
+    eprintln!("agent-runtime listening on http://{addr} (state: {})", state_dir.display());
     loop {
         std::thread::park();
     }

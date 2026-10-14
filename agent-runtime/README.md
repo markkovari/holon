@@ -140,6 +140,37 @@ The runtime's address must be in the tenant's egress list, which the operator
 grants through `platform-domain`'s `default-egress` config (ADR-0008 holds: a
 tenant never authors its own egress).
 
+## Google Calendar
+
+Tools an agent can be granted by name: `gcal_calendars`, `gcal_list`, `gcal_add`, `gcal_update`,
+`gcal_delete`. They use the owner's own Google login, from files read at the moment they are needed
+(never in a spec): `~/.comp-secrets/google/client.json` (the OAuth client Google gave) and
+`token.json` (written by `agent-runtime google-auth`, mode 0600). `--google-dir` / `HOLON_GOOGLE_DIR`
+changes the directory. The three that change anything wait for the owner's approval (a poll in Matrix).
+
+* `gcal_list` takes `from`, `to` (default a week), `calendar` (a name, `all`, or nothing for the
+  main one); local dates. One event per line with its id, so a later call can change it. An event's
+  **description is never returned**: it is text anyone who invited you wrote.
+* `gcal_add` takes `title`, `start` (`2026-10-15T06:30`, or a date alone for an all-day event), `end`
+  (default an hour later), `calendar`, `notes`, `location`. No invitations are sent. A read-only
+  calendar is refused before Google is asked.
+* `gcal_update` changes only the fields given; moving an event keeps its length. `gcal_delete`
+  reads the event back before deleting it.
+
+**Setup, once (about five minutes in the Google Cloud Console):**
+
+1. Create a project and enable the **Google Calendar API**.
+2. OAuth consent screen: **External**, scope `https://www.googleapis.com/auth/calendar`. For a
+   personal account set the publishing status to **In production** (an "unverified app" notice is
+   fine for yourself): in *Testing*, Google expires the refresh token after 7 days.
+3. Credentials, *Create credentials*, **OAuth client ID**, type **Desktop app**; download the JSON to
+   `~/.comp-secrets/google/client.json` (`chmod 600`).
+4. `agent-runtime google-auth`: a browser opens, you allow access, and the login is saved. It uses a
+   loopback redirect with PKCE; nothing is sent anywhere but Google.
+
+Unlike the macOS `holon-calendar` connector this needs no macOS permission and works wherever the
+runtime does. It can also change and delete events, which that connector cannot.
+
 ## Not built yet
 
 * Argument schemas derived from a capability's `wit` ref, and a Jev check that
