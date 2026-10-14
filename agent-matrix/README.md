@@ -10,11 +10,18 @@ Element ── Synapse (malna, tailnet) ──appservice──▶ agent-matrix �
 
 ## What you get
 
-* **A room per agent.** `@agent-rower:<server>` has a direct room with you, already
-  in your room list (the bridge accepts your invites for you). Write, it runs, the
-  answer comes back as that agent, with a typing indicator while it works.
+* **Every agent lives in a Space.** An agent that is in no project has a room in the
+  **Agents** Space (`@agent-rower:<server>`, already in your room list: the bridge
+  accepts your invites for you). Write, it runs, the answer comes back as that agent,
+  with a typing indicator while it works. The Agents Space is Matrix-only and is *not* a
+  runtime project, so it grants nothing: only a project's membership shares a store or
+  topics. An agent that is in a project has no room of its own; it is in the project's.
+  (Direct rooms made before the Agents Space keep working.)
 * **A Space per project** (`rowing`, `nutrition`, whatever you start): a `general`
-  room where you talk to the project's agents and a `feed` room for what they report.
+  room where you talk to the project's agents and, once it has two agents, a `feed`
+  room for what they report. A project of none or one agent is one room (you talk to
+  the agent and it reports in the same place), and its only agent answers every message
+  that names nobody.
 * **Make a Space in Element, invite an agent into it: that is a project.** Element X
   has *Create space*. The bridge adopts the Space as a project named after it
   (`Nutrition & Meals` becomes `nutrition-meals`; the Space's topic becomes the

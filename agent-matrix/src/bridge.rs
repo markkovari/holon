@@ -131,7 +131,8 @@ pub fn history_lines(cfg: &Config, msgs: &[Value], skip: &str, budget: usize) ->
     picked.join("\n")
 }
 
-/// Who answers a message in a project room.
+/// Who answers a message in a project room: the agents mentioned, else the lead, else a
+/// lone member, else nobody.
 pub fn project_targets(
     members: &[String],
     lead: Option<&str>,
@@ -142,7 +143,14 @@ pub fn project_targets(
     if !addressed.is_empty() {
         return addressed;
     }
-    lead.filter(|l| members.iter().any(|m| m == l)).map(|l| vec![l.to_string()]).unwrap_or_default()
+    if let Some(l) = lead.filter(|l| members.iter().any(|m| m == l)) {
+        return vec![l.to_string()];
+    }
+    // A project of one is what a direct room was: its only member answers.
+    match members {
+        [only] => vec![only.clone()],
+        _ => Vec::new(),
+    }
 }
 
 /// What an approval would do, in words, for the tools whose name alone says too little
@@ -280,7 +288,8 @@ impl Bridge {
         // Before `ensure_agent`: a restored agent gets its old room back and not a new one.
         self.retire_gone_agents(&agents);
         for a in &agents {
-            if let Err(e) = self.ensure_agent(a) {
+            let in_project = projects.iter().any(|p| p.agents.contains(&a.name));
+            if let Err(e) = self.ensure_agent(a, in_project) {
                 log(&format!("agent {}: {e}", a.name));
             }
         }
@@ -367,6 +376,7 @@ impl Bridge {
         if let Err(e) = self.mx.leave_and_forget_as_owner(&room) {
             log(&format!("{name}: could not leave its room: {e}"));
         }
+        self.set_agents_space_child(&room, false);
         if in_trash {
             self.state.write(|d| {
                 d.dms.remove(name);
@@ -382,6 +392,14 @@ impl Bridge {
         ));
     }
 
+    /// Lists `room` in the Agents Space, or takes it out (an empty child event removes it),
+    /// so a retired agent's room is not left behind as an entry nobody can open.
+    fn set_agents_space_child(&self, room: &str, listed: bool) {
+        let Some(space) = self.state.read(|d| d.agents_space.clone()) else { return };
+        let content = if listed { json!({"via": [self.cfg.server_name]}) } else { json!({}) };
+        let _ = self.mx.set_state(&space, &self.bridge_user(), "m.space.child", room, content);
+    }
+
     /// A restored agent: the same room, the same user, the owner invited back.
     fn revive(&self, name: &str, room: &str) {
         let ghost = self.cfg.ghost(name);
@@ -390,6 +408,7 @@ impl Bridge {
             log(&format!("{name}: could not invite you back: {e}"));
         }
         self.place_owner(room);
+        self.set_agents_space_child(room, true);
         let _ = self.mx.send_text(room, &ghost, &format!("{name} is back."), None);
         self.state.write(|d| {
             d.retired.remove(name);
@@ -435,24 +454,57 @@ impl Bridge {
         Ok(())
     }
 
-    fn ensure_agent(&self, a: &AgentInfo) -> R<()> {
-        let ghost = self.cfg.ghost(&a.name);
-        if !self.state.read(|d| d.dms.contains_key(&a.name)) {
-            self.mx.register(&format!("agent-{}", a.name))?;
-            self.mx.set_displayname(&ghost, &a.name)?;
-            let room = self.mx.create_room(
-                &ghost,
-                json!({
-                    "name": a.name,
-                    "topic": a.description,
-                    "is_direct": true,
-                    "preset": "trusted_private_chat",
-                    "invite": [self.cfg.owner],
-                }),
-            )?;
-            self.place_owner(&room);
-            self.state.write(|d| d.dms.insert(a.name.clone(), room));
+    /// The Space that holds the room of every agent that is in no project.
+    fn ensure_agents_space(&self) -> R<String> {
+        if let Some(s) = self.state.read(|d| d.agents_space.clone()) {
+            return Ok(s);
         }
+        let space = self.mx.create_room(
+            &self.bridge_user(),
+            json!({
+                "name": "Agents",
+                "topic": "Agents that are in no project. Add one to a project to move it.",
+                "preset": "trusted_private_chat",
+                "invite": [self.cfg.owner],
+                "creation_content": {"type": "m.space"},
+            }),
+        )?;
+        self.place_owner(&space);
+        self.state.write(|d| d.agents_space = Some(space.clone()));
+        Ok(space)
+    }
+
+    /// An agent that is in no project gets a room in the Agents Space. One that is in a
+    /// project needs none: it is in that project's rooms. An agent that already has a
+    /// room (a direct room from before the Agents Space) keeps it.
+    fn ensure_agent(&self, a: &AgentInfo, in_project: bool) -> R<()> {
+        if in_project || self.state.read(|d| d.dms.contains_key(&a.name)) {
+            return Ok(());
+        }
+        let (bridge, ghost) = (self.bridge_user(), self.cfg.ghost(&a.name));
+        let space = self.ensure_agents_space()?;
+        self.mx.register(&format!("agent-{}", a.name))?;
+        self.mx.set_displayname(&ghost, &a.name)?;
+        let room = self.mx.create_room(
+            &ghost,
+            json!({
+                "name": a.name,
+                "topic": a.description,
+                "preset": "trusted_private_chat",
+                "invite": [self.cfg.owner],
+            }),
+        )?;
+        let via = json!({"via": [self.cfg.server_name]});
+        self.mx.set_state(&space, &bridge, "m.space.child", &room, via.clone())?;
+        self.mx.set_state(
+            &room,
+            &ghost,
+            "m.space.parent",
+            &space,
+            json!({"via": [self.cfg.server_name], "canonical": true}),
+        )?;
+        self.place_owner(&room);
+        self.state.write(|d| d.dms.insert(a.name.clone(), room));
         Ok(())
     }
 
@@ -465,54 +517,63 @@ impl Bridge {
         if let Some(r) = existing.as_ref().filter(|r| r.general.is_empty() && r.feed.is_empty()) {
             return self.sync_adopted(p, &r.space);
         }
-        let rooms = match existing {
+        let make = |name: String, topic: &str, space: bool| -> R<String> {
+            let mut body = json!({"name": name, "topic": topic, "preset": "trusted_private_chat", "invite": [owner]});
+            if space {
+                body["creation_content"] = json!({"type": "m.space"});
+            }
+            let room = self.mx.create_room(&bridge, body)?;
+            self.place_owner(&room);
+            Ok(room)
+        };
+        let link = |space: &str, child: &str| -> R<()> {
+            self.mx.set_state(space, &bridge, "m.space.child", child, json!({"via": [server]}))?;
+            self.mx.set_state(
+                child,
+                &bridge,
+                "m.space.parent",
+                space,
+                json!({"via": [server], "canonical": true}),
+            )
+        };
+        let make_feed = |space: &str| -> R<String> {
+            let feed =
+                make(format!("{} · feed", p.name), "What the project's agents report.", false)?;
+            link(space, &feed)?;
+            Ok(feed)
+        };
+        let mut rooms = match existing {
             Some(r) => r,
             None => {
-                let make = |name: String, topic: &str, space: bool| -> R<String> {
-                    let mut body = json!({"name": name, "topic": topic, "preset": "trusted_private_chat", "invite": [owner]});
-                    if space {
-                        body["creation_content"] = json!({"type": "m.space"});
-                    }
-                    let room = self.mx.create_room(&bridge, body)?;
-                    self.place_owner(&room);
-                    Ok(room)
-                };
+                // A project of none or one agent is one room: with no one else to keep a
+                // report apart from, a feed would only be a second place to look. The
+                // feed appears when a second agent joins.
                 let space = make(p.name.clone(), &p.description, true)?;
                 let general = make(
                     format!("{} · general", p.name),
                     "Talk to the project's agents. Mention one to address it.",
                     false,
                 )?;
-                let feed =
-                    make(format!("{} · feed", p.name), "What the project's agents report.", false)?;
-                for child in [&general, &feed] {
-                    self.mx.set_state(
-                        &space,
-                        &bridge,
-                        "m.space.child",
-                        child,
-                        json!({"via": [server]}),
-                    )?;
-                    self.mx.set_state(
-                        child,
-                        &bridge,
-                        "m.space.parent",
-                        &space,
-                        json!({"via": [server], "canonical": true}),
-                    )?;
-                }
+                link(&space, &general)?;
+                let feed = if p.agents.len() >= 2 { make_feed(&space)? } else { String::new() };
                 let r = ProjectRooms { space, general, feed };
                 self.state.write(|d| d.projects.insert(p.name.clone(), r.clone()));
                 r
             }
         };
+        if rooms.feed.is_empty() && p.agents.len() >= 2 {
+            rooms.feed = make_feed(&rooms.space)?;
+            let r = rooms.clone();
+            self.state.write(|d| d.projects.insert(p.name.clone(), r));
+        }
         // Membership: the runtime's list is the truth; the rooms follow it.
-        for room in [&rooms.general, &rooms.feed] {
+        for room in [&rooms.general, &rooms.feed].into_iter().filter(|r| !r.is_empty()) {
             let joined = self.mx.joined(room, &bridge)?;
             for agent in &p.agents {
                 let ghost = self.cfg.ghost(agent);
                 if !joined.contains(&ghost) {
                     self.mx.register(&format!("agent-{agent}"))?;
+                    let _ = self.mx.set_displayname(&ghost, agent);
                     self.mx.invite(room, &bridge, &ghost)?;
                     self.mx.join(room, &ghost)?;
                 }
@@ -1017,12 +1078,17 @@ impl Bridge {
     /// polls of approvals that are no longer pending (answered elsewhere, or timed out).
     pub fn poll_approvals(&self) {
         let Ok(pending) = self.rt.approvals() else { return };
+        let projects = self.rt.projects().ok();
         let have: HashSet<u64> = self.state.read(|d| d.polls.values().copied().collect());
         for a in &pending {
             if have.contains(&a.id) {
                 continue;
             }
-            let Some(room) = self.state.read(|d| d.dms.get(&a.agent).cloned()) else { continue };
+            let Some(room) = self.state.read(|d| {
+                projects.as_ref().and_then(|p| crate::scheduled::approval_room(&a.agent, p, d))
+            }) else {
+                continue;
+            };
             let via = if a.chain.is_empty() {
                 String::new()
             } else {
@@ -1216,8 +1282,9 @@ mod tests {
         assert!(project_targets(&members, None, &[]).is_empty(), "no mention, no lead: nobody");
         // someone who is not in the project is not addressed by mentioning them
         assert_eq!(project_targets(&members, Some("coach"), &names(&["stranger"])), ["coach"]);
-        // a lead that is no longer a member does not answer
-        assert!(project_targets(&names(&["rower"]), Some("gone"), &[]).is_empty());
+        // a lead that is no longer a member does not answer; a lone member still does
+        assert!(project_targets(&names(&["rower", "chef"]), Some("gone"), &[]).is_empty());
+        assert_eq!(project_targets(&names(&["rower"]), Some("gone"), &[]), ["rower"]);
     }
 
     #[test]
@@ -1263,6 +1330,15 @@ mod tests {
         .unwrap();
         assert!(save.contains("fields: prompt, schedule") && save.contains("replaces"), "{save}");
         assert_eq!(describe_approval("write_file", &json!({"path": "x"})), None);
+    }
+
+    #[test]
+    fn a_project_of_one_is_answered_by_its_only_member() {
+        let one = names(&["coach"]);
+        assert_eq!(project_targets(&one, None, &[]), ["coach"], "no lead, no mention: the member");
+        assert_eq!(project_targets(&one, None, &names(&["stranger"])), ["coach"]);
+        assert!(project_targets(&[], None, &[]).is_empty(), "an empty project answers nothing");
+        assert!(project_targets(&names(&["a", "b"]), None, &[]).is_empty(), "two is not one");
     }
 
     #[test]
