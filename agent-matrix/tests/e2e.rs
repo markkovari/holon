@@ -425,6 +425,14 @@ fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
         joined.contains(&owner.user) && joined.contains(&ghost("rower")),
         "owner and agent are both in: {joined:?}"
     );
+    // an agent in no project lives in the Agents Space, which is a Space and not a project
+    let agents_space = bridge.state.read(|d| d.agents_space.clone()).expect("the Agents Space");
+    assert_eq!(owner.state(&agents_space, "m.room.create", "")["type"], "m.space");
+    assert!(
+        owner.state(&agents_space, "m.space.child", &rower_room).get("via").is_some(),
+        "rower's room is listed in the Agents Space"
+    );
+    assert!(rt.store().list_projects().is_empty(), "and the runtime has no project for it");
     let control = bridge.state.read(|d| d.control_room.clone()).expect("control room");
     assert!(
         owner.joined(&control).contains(&owner.user),
@@ -455,10 +463,7 @@ fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
         owner.state(&rooms.space, "m.space.child", &rooms.general).get("via").is_some(),
         "general is a child of the space"
     );
-    assert!(
-        owner.state(&rooms.space, "m.space.child", &rooms.feed).get("via").is_some(),
-        "so is the feed"
-    );
+    assert!(rooms.feed.is_empty(), "a project with no agents is one room: there is no feed yet");
     assert!(owner.joined(&rooms.general).contains(&owner.user));
     let reply = wait_for("the command reply", 20, || {
         Some(owner.texts_from(&control, &bridge.cfg.bridge_user()))
@@ -473,6 +478,17 @@ fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
         (j.contains(&ghost("rower")) && j.contains(&ghost("coach"))).then_some(())
     });
     assert_eq!(rt.store().get_project("rowing").unwrap().agents, ["rower", "coach"]);
+    // the second agent is what gives the project a feed
+    let feed = wait_for("the feed room", 40, || {
+        bridge
+            .state
+            .read(|d| d.projects.get("rowing").map(|r| r.feed.clone()).filter(|f| !f.is_empty()))
+    });
+    assert!(
+        owner.state(&rooms.space, "m.space.child", &feed).get("via").is_some(),
+        "the feed is a child of the space"
+    );
+    let rooms = bridge.state.read(|d| d.projects.get("rowing").cloned()).unwrap();
 
     // ---- 5. who answers in a project room ---------------------------------------
     owner.say(&rooms.general, "good morning everyone"); // no mention, no lead: silence
@@ -654,15 +670,17 @@ fn a_space_you_make_yourself_becomes_a_project_when_you_invite_an_agent_into_it(
         matches!(bridge.state.kind_of(&room), Some(agent_matrix::state::RoomKind::ProjectRoom(p)) if p == "nutrition-meals")
     );
 
-    // 3. Inside the Space the usual rules hold: unaddressed is silent, a mention answers.
+    // 3. A project of one is what a direct room was: its only member answers a message that
+    // names nobody, and a mention answers too.
     owner.say(&room, "hello"); // no mention, no lead
-    std::thread::sleep(Duration::from_secs(4));
-    assert!(owner.texts_from(&room, &ghost("chef")).is_empty());
-    owner.say_to(&room, "chef: what is for dinner?", "chef");
-    let a = wait_for("chef's answer", 40, || {
+    let a = wait_for("chef's answer to an unaddressed message", 40, || {
         Some(owner.texts_from(&room, &ghost("chef"))).filter(|t| !t.is_empty())
     });
     assert_eq!(a[0], "Pasta tonight.");
+    owner.say_to(&room, "chef: what is for dinner?", "chef");
+    wait_for("chef's answer to the mention", 40, || {
+        Some(owner.texts_from(&room, &ghost("chef"))).filter(|t| t.len() >= 2)
+    });
 
     // 4. Inviting another agent to just the ROOM also puts it in the project (and the Space).
     owner.invite(&room, &ghost("coach"));
