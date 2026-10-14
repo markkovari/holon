@@ -23,6 +23,7 @@ use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::matrix::{Matrix, R};
+use crate::retire::Verdict;
 use crate::runtime::{AgentInfo, ProjectInfo, Runtime};
 use crate::state::{ProjectRooms, RoomKind, State};
 
@@ -36,6 +37,10 @@ pub struct Bridge {
     seen_events: Mutex<(HashSet<String>, VecDeque<String>)>,
     /// Serialises reconcile passes: one is enough, and two would race on room creation.
     reconciling: Mutex<()>,
+    /// How many passes each agent the bridge keeps a room for has been missing from the runtime.
+    absence: Mutex<crate::retire::Absence>,
+    /// Whether the owner has been told that a mass disappearance was left alone.
+    refusal_told: Mutex<bool>,
 }
 
 fn log(msg: &str) {
@@ -232,6 +237,8 @@ impl Bridge {
             state,
             seen_events: Mutex::new(Default::default()),
             reconciling: Mutex::new(()),
+            absence: Mutex::default(),
+            refusal_told: Mutex::new(false),
         })
     }
 
@@ -270,6 +277,8 @@ impl Bridge {
         let agents = self.rt.agents()?;
         let projects = self.rt.projects()?;
         self.ensure_control_room().map_err(|e| format!("control room: {e}"))?;
+        // Before `ensure_agent`: a restored agent gets its old room back and not a new one.
+        self.retire_gone_agents(&agents);
         for a in &agents {
             if let Err(e) = self.ensure_agent(a) {
                 log(&format!("agent {}: {e}", a.name));
@@ -281,6 +290,130 @@ impl Bridge {
             }
         }
         Ok(())
+    }
+
+    // ---- an agent that was deleted (ADR-0105, section 3) ----------------------
+
+    /// Retires the rooms of agents the runtime no longer lists, brings back the room of one
+    /// that was restored, and lets go of the room of one that left the trash.
+    fn retire_gone_agents(&self, active: &[AgentInfo]) {
+        let live: HashSet<String> = active.iter().map(|a| a.name.clone()).collect();
+        for (name, room) in self.state.read(|d| d.retired.clone()) {
+            if live.contains(&name) {
+                self.revive(&name, &room);
+            }
+        }
+        let known: Vec<String> = self.state.read(|d| d.dms.keys().cloned().collect());
+        let verdict = self.absence.lock().unwrap().observe(&known, &live);
+        let waiting: Vec<(String, String)> = self
+            .state
+            .read(|d| d.retired.clone())
+            .into_iter()
+            .filter(|(n, _)| !live.contains(n))
+            .collect();
+        if waiting.is_empty() && matches!(verdict, Verdict::Nothing) {
+            *self.refusal_told.lock().unwrap() = false;
+            return;
+        }
+        // What the trash holds decides what a farewell can promise. Without it, try again.
+        let Ok(trash) = self.rt.trash() else { return };
+        let in_trash = |n: &str| trash.iter().any(|t| t.name == n);
+        for (name, room) in waiting {
+            if !in_trash(&name) {
+                let _ = self.mx.leave(&room, &self.cfg.ghost(&name));
+                self.state.write(|d| d.retired.remove(&name));
+            }
+        }
+        match verdict {
+            Verdict::Nothing => *self.refusal_told.lock().unwrap() = false,
+            Verdict::Retire(gone) => {
+                *self.refusal_told.lock().unwrap() = false;
+                for name in gone {
+                    self.retire(&name, in_trash(&name));
+                }
+            }
+            Verdict::Refuse(gone) => {
+                if !std::mem::replace(&mut *self.refusal_told.lock().unwrap(), true) {
+                    self.tell_owner(&format!(
+                        "{} of my {} agents ({}) are missing from the runtime at once. That looks \
+                         like a runtime started against the wrong state directory, not a set of \
+                         deletions, so I am leaving their rooms alone. If they really were \
+                         deleted, retire them one by one: !agent retire <agent>.",
+                        gone.len(),
+                        self.state.read(|d| d.dms.len()),
+                        gone.join(", ")
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Ends an agent's direct room: it says so, its name shows it, and the owner leaves.
+    /// A deleted agent still in the trash keeps its user in the room, so that restoring it
+    /// can invite the owner back to the same room. Otherwise its user leaves too.
+    fn retire(&self, name: &str, in_trash: bool) {
+        let Some(room) = self.state.read(|d| d.dms.get(name).cloned()) else { return };
+        let ghost = self.cfg.ghost(name);
+        let note = if in_trash {
+            format!(
+                "{name} was deleted. It can be restored for 30 days: send `!agent restore {name}` \
+                 in the holon room."
+            )
+        } else {
+            format!("{name} was deleted.")
+        };
+        let _ = self.mx.send_text(&room, &ghost, &note, None);
+        let _ = self.mx.set_displayname(&ghost, &format!("{name} (deleted)"));
+        if let Err(e) = self.mx.leave_and_forget_as_owner(&room) {
+            log(&format!("{name}: could not leave its room: {e}"));
+        }
+        if in_trash {
+            self.state.write(|d| {
+                d.dms.remove(name);
+                d.retired.insert(name.to_string(), room);
+            });
+        } else {
+            let _ = self.mx.leave(&room, &ghost);
+            self.state.write(|d| d.dms.remove(name));
+        }
+        self.tell_owner(&format!(
+            "{name} was deleted, so its room is gone from your list{}.",
+            if in_trash { "; !agent restore brings both back" } else { "" }
+        ));
+    }
+
+    /// A restored agent: the same room, the same user, the owner invited back.
+    fn revive(&self, name: &str, room: &str) {
+        let ghost = self.cfg.ghost(name);
+        let _ = self.mx.set_displayname(&ghost, name);
+        if let Err(e) = self.mx.invite(room, &ghost, &self.cfg.owner) {
+            log(&format!("{name}: could not invite you back: {e}"));
+        }
+        self.place_owner(room);
+        let _ = self.mx.send_text(room, &ghost, &format!("{name} is back."), None);
+        self.state.write(|d| {
+            d.retired.remove(name);
+            d.dms.insert(name.to_string(), room.to_string());
+        });
+        self.tell_owner(&format!("{name} was restored; its old room is back in your list."));
+    }
+
+    /// `!agent retire <agent>`: retire the room of an agent the runtime does not list, for
+    /// when the automatic pass refused to.
+    pub fn retire_now(&self, name: &str) -> String {
+        match self.rt.agents() {
+            Err(e) => return format!("could not read the agents: {e}"),
+            Ok(a) if a.iter().any(|x| x.name == name) => {
+                return format!("{name} still exists in the runtime; delete it there first.")
+            }
+            Ok(_) => {}
+        }
+        if self.state.read(|d| !d.dms.contains_key(name)) {
+            return format!("I have no room for {name}.");
+        }
+        let in_trash = self.rt.trash().map(|t| t.iter().any(|a| a.name == name)).unwrap_or(false);
+        self.retire(name, in_trash);
+        format!("Retired {name}.")
     }
 
     fn ensure_control_room(&self) -> R<()> {
