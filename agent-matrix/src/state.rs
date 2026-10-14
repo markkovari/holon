@@ -41,6 +41,10 @@ pub struct Data {
     /// and a restore invites the owner back to the same room, history intact.
     #[serde(default)]
     pub retired: BTreeMap<String, String>,
+    /// The Matrix-only Space that holds the room of every agent that is in no project.
+    /// It is not a runtime project: membership is the grant, and this Space grants nothing.
+    #[serde(default)]
+    pub agents_space: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

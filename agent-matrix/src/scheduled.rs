@@ -33,15 +33,41 @@ pub fn due<'a>(triggers: &[Value], runs: &'a [RunInfo], after_ms: u64) -> Vec<&'
     out
 }
 
-/// Where `agent`'s results go: the feed room of the first project it belongs to that
-/// has one, else its direct room with the owner.
-pub fn room_for(agent: &str, projects: &[ProjectInfo], data: &Data) -> Option<String> {
+/// The room a project's agents report in: its feed, or its only room when it has no feed
+/// (a project of one agent, or a Space the owner made).
+fn report_room(project: &str, data: &Data) -> Option<String> {
+    let r = data.projects.get(project)?;
+    [&r.feed, &r.general].into_iter().find(|room| !room.is_empty()).cloned()
+}
+
+fn member_projects<'a>(agent: &str, projects: &'a [ProjectInfo]) -> Vec<&'a ProjectInfo> {
     let mut mine: Vec<&ProjectInfo> =
         projects.iter().filter(|p| p.agents.iter().any(|a| a == agent)).collect();
     mine.sort_by(|a, b| a.name.cmp(&b.name));
-    mine.iter()
-        .find_map(|p| data.projects.get(&p.name).map(|r| r.feed.clone()).filter(|f| !f.is_empty()))
+    mine
+}
+
+/// Where `agent`'s results go: the report room of the first project it belongs to that
+/// has one, else its own room.
+pub fn room_for(agent: &str, projects: &[ProjectInfo], data: &Data) -> Option<String> {
+    member_projects(agent, projects)
+        .iter()
+        .find_map(|p| report_room(&p.name, data))
         .or_else(|| data.dms.get(agent).cloned())
+}
+
+/// Where `agent`'s approval poll goes: its own room; an agent in a project has none, so
+/// the project's general room, where you talk to it; else the control room.
+pub fn approval_room(agent: &str, projects: &[ProjectInfo], data: &Data) -> Option<String> {
+    data.dms
+        .get(agent)
+        .cloned()
+        .or_else(|| {
+            member_projects(agent, projects).iter().find_map(|p| {
+                data.projects.get(&p.name).map(|r| r.general.clone()).filter(|g| !g.is_empty())
+            })
+        })
+        .or_else(|| data.control_room.clone())
 }
 
 /// The message: the answer as it is, or why there is none.
@@ -139,6 +165,29 @@ mod tests {
             "an adopted Space has no feed room, so the direct room it is"
         );
         assert_eq!(room_for("nobody", &projects, &d), None);
+    }
+
+    #[test]
+    fn a_one_room_project_reports_in_its_only_room_and_approvals_follow_the_agent() {
+        let mut d = Data { control_room: Some("!ctl:s".into()), ..Default::default() };
+        d.projects.insert(
+            "solo".into(),
+            ProjectRooms { space: "!sp:s".into(), general: "!g:s".into(), feed: String::new() },
+        );
+        let projects = vec![ProjectInfo {
+            name: "solo".into(),
+            agents: vec!["coach".into()],
+            ..Default::default()
+        }];
+        assert_eq!(room_for("coach", &projects, &d).as_deref(), Some("!g:s"));
+        assert_eq!(
+            approval_room("coach", &projects, &d).as_deref(),
+            Some("!g:s"),
+            "no room of its own"
+        );
+        d.dms.insert("coach".into(), "!own:s".into());
+        assert_eq!(approval_room("coach", &projects, &d).as_deref(), Some("!own:s"));
+        assert_eq!(approval_room("stray", &projects, &d).as_deref(), Some("!ctl:s"));
     }
 
     #[test]
