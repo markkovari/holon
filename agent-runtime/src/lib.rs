@@ -3,6 +3,7 @@
 
 pub mod admin;
 pub mod agent;
+pub mod attach;
 pub mod bus;
 pub mod clock;
 pub mod connector;

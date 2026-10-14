@@ -162,13 +162,13 @@ history. Without `notify`, a schedule stays silent: an hourly one is 24 messages
 Send a photo in Element (to an agent's room, or in a project room to the agent that answers)
 and the bridge downloads it, stores it in **that agent's inbox** in the runtime
 (`workspaces/<agent>/inbox/`, over `POST /agents/<name>/inbox`), and runs the agent with a
-note: "Mark sent a photo with the caption … It is saved in your inbox as `<file>`". The agent
-looks at it with a tool; a connector gets the agent's workspace as `HOLON_WORKSPACE`, so it
-reads that agent's inbox and nobody else's. Only photos (jpg, png, webp, gif, heic, up to 20 MB)
-are kept, and only from unencrypted rooms, like voice messages.
-
-What looks at the photo is not decided here: the agent gets the file name and a tool or service
-of your choosing reads the inbox (a `vision:describe` component is the intended one).
+note: "Mark sent a photo with the caption … It is attached to this message and saved in your inbox
+as `<file>`". **The photo is attached to the run**, so it goes to the agent's own model with the
+message: no separate service and no extra key. A model that can see says what is on the plate; one
+that cannot is told a photo was attached and asks you to describe it in words (see `vision` in
+`agent-runtime/README.md`). Only photos (jpg, png, webp, gif, heic, up to 20 MB) are kept, and
+only from unencrypted rooms, like voice messages. A connector also gets the agent's workspace as
+`HOLON_WORKSPACE`, so it reads that agent's inbox and nobody else's.
 
 ## Not built yet
 

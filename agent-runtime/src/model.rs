@@ -6,23 +6,78 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine as _;
 use serde_json::{json, Value};
 
 use crate::spec::ModelSpec;
+
+/// A picture that goes to the model with a message.
+#[derive(Clone, PartialEq)]
+pub struct Image {
+    /// `image/jpeg`, `image/png`, `image/webp` or `image/gif`.
+    pub media_type: String,
+    pub data: Vec<u8>,
+}
+
+// Never the bytes: a message is logged and compared in tests, and a photo is megabytes.
+impl std::fmt::Debug for Image {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Image({}, {} bytes)", self.media_type, self.data.len())
+    }
+}
+
+impl Image {
+    fn data_url(&self) -> String {
+        format!("data:{};base64,{}", self.media_type, B64.encode(&self.data))
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Msg {
     pub role: &'static str, // "user" | "assistant"
     pub content: String,
+    /// Pictures that came with it. Only a user message has any.
+    pub images: Vec<Image>,
 }
 
 impl Msg {
     pub fn user(c: impl Into<String>) -> Self {
-        Self { role: "user", content: c.into() }
+        Self { role: "user", content: c.into(), images: Vec::new() }
     }
     pub fn assistant(c: impl Into<String>) -> Self {
-        Self { role: "assistant", content: c.into() }
+        Self { role: "assistant", content: c.into(), images: Vec::new() }
     }
+    pub fn with_images(mut self, images: Vec<Image>) -> Self {
+        self.images = images;
+        self
+    }
+}
+
+/// The messages for a model that cannot see: the pictures are dropped and the message that carried
+/// them says so, so the model asks for the thing in words instead of answering as if it had looked.
+fn without_images(msgs: &[Msg]) -> std::borrow::Cow<'_, [Msg]> {
+    if msgs.iter().all(|m| m.images.is_empty()) {
+        return std::borrow::Cow::Borrowed(msgs);
+    }
+    std::borrow::Cow::Owned(
+        msgs.iter()
+            .map(|m| match m.images.len() {
+                0 => m.clone(),
+                n => Msg {
+                    role: m.role,
+                    content: format!(
+                        "{}\n\n({n} photo{} attached, but you cannot see images. Say so, and ask \
+                         Mark to describe {} in words.)",
+                        m.content,
+                        if n == 1 { " was" } else { "s were" },
+                        if n == 1 { "it" } else { "them" },
+                    ),
+                    images: Vec::new(),
+                },
+            })
+            .collect(),
+    )
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -59,9 +114,9 @@ pub fn complete(
                  OpenAi or Anthropic model instead",
             )?;
             let model = if local.model.is_empty() { "system" } else { &local.model };
-            openai(base, model, "", system, messages)
+            openai(base, model, "", system, &without_images(messages))
         }
-        ModelSpec::OpenAi { base_url, model, api_key_env, api_key_file, service } => {
+        ModelSpec::OpenAi { base_url, model, api_key_env, api_key_file, service, vision } => {
             let k = if api_key_file.is_empty() {
                 key(api_key_env)?
             } else {
@@ -70,7 +125,12 @@ pub fn complete(
             if !service.is_empty() {
                 crate::lazy::ensure(service, base_url)?;
             }
-            let r = openai(base_url, model, &k, system, messages);
+            let msgs = if *vision {
+                std::borrow::Cow::Borrowed(messages)
+            } else {
+                without_images(messages)
+            };
+            let r = openai(base_url, model, &k, system, &msgs);
             if !service.is_empty() {
                 crate::lazy::touch(service);
             }
@@ -128,7 +188,19 @@ fn http() -> Result<reqwest::blocking::Client, String> {
 
 fn openai(base: &str, model: &str, key: &str, system: &str, msgs: &[Msg]) -> Result<Reply, String> {
     let mut messages = vec![json!({"role": "system", "content": system})];
-    messages.extend(msgs.iter().map(|m| json!({"role": m.role, "content": m.content})));
+    messages.extend(msgs.iter().map(|m| {
+        if m.images.is_empty() {
+            return json!({"role": m.role, "content": m.content});
+        }
+        // text first, then each picture as a data URL
+        let mut parts = vec![json!({"type": "text", "text": m.content})];
+        parts.extend(
+            m.images
+                .iter()
+                .map(|i| json!({"type": "image_url", "image_url": {"url": i.data_url()}})),
+        );
+        json!({"role": m.role, "content": parts})
+    }));
     let mut req = http()?
         .post(format!("{}/v1/chat/completions", base.trim_end_matches('/')))
         // Room for a reasoning model to think AND answer; some servers default to a few hundred.
@@ -155,9 +227,30 @@ fn openai(base: &str, model: &str, key: &str, system: &str, msgs: &[Msg]) -> Res
     })
 }
 
+/// The Messages API's form of a conversation: a message with pictures is a list of blocks, the
+/// pictures first and then the words about them.
+fn anthropic_messages(msgs: &[Msg]) -> Vec<Value> {
+    msgs.iter()
+        .map(|m| {
+            if m.images.is_empty() {
+                return json!({"role": m.role, "content": m.content});
+            }
+            let mut blocks: Vec<Value> = m
+                .images
+                .iter()
+                .map(|i| {
+                    json!({"type": "image", "source": {"type": "base64",
+                        "media_type": i.media_type, "data": B64.encode(&i.data)}})
+                })
+                .collect();
+            blocks.push(json!({"type": "text", "text": m.content}));
+            json!({"role": m.role, "content": blocks})
+        })
+        .collect()
+}
+
 fn anthropic(model: &str, key: &str, system: &str, msgs: &[Msg]) -> Result<Reply, String> {
-    let messages: Vec<Value> =
-        msgs.iter().map(|m| json!({"role": m.role, "content": m.content})).collect();
+    let messages = anthropic_messages(msgs);
     let req = http()?
         .post("https://api.anthropic.com/v1/messages")
         .header("x-api-key", key)
@@ -193,6 +286,143 @@ fn clip(s: &str) -> String {
 }
 
 #[cfg(test)]
+mod vision_tests {
+    use super::*;
+
+    fn photo() -> Image {
+        Image { media_type: "image/png".into(), data: vec![0x89, b'P', b'N', b'G'] }
+    }
+
+    /// A one-request OpenAI-compatible server: gives back the JSON body it was sent.
+    fn stand_in() -> (String, std::sync::mpsc::Receiver<Value>) {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", server.server_addr().to_ip().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Ok(mut req) = server.recv() {
+                let mut body = String::new();
+                std::io::Read::read_to_string(req.as_reader(), &mut body).unwrap();
+                let _ = tx.send(serde_json::from_str(&body).unwrap());
+                let reply = json!({"choices": [{"message": {"content": "a plate of rice"}}],
+                                   "usage": {"prompt_tokens": 7, "completion_tokens": 4}});
+                let _ = req.respond(tiny_http::Response::from_string(reply.to_string()));
+            }
+        });
+        (base, rx)
+    }
+
+    fn openai_spec(base: &str, vision: bool) -> ModelSpec {
+        ModelSpec::OpenAi {
+            base_url: base.into(),
+            model: "deepseek-chat".into(),
+            api_key_env: String::new(),
+            api_key_file: String::new(),
+            service: String::new(),
+            vision,
+        }
+    }
+
+    fn ask(spec: &ModelSpec, msgs: &[Msg]) -> Result<Reply, String> {
+        complete(spec, &LocalModel::default(), "sys", msgs, &Mutex::new(0))
+    }
+
+    #[test]
+    fn a_vision_model_gets_the_words_then_each_picture_as_a_data_url() {
+        let (base, rx) = stand_in();
+        let r = ask(
+            &openai_spec(&base, true),
+            &[Msg::user("what is this?").with_images(vec![photo(), photo()])],
+        )
+        .unwrap();
+        assert_eq!(r.text, "a plate of rice");
+        let sent = rx.recv().unwrap();
+        let content = &sent["messages"][1]["content"];
+        assert_eq!(content[0], json!({"type": "text", "text": "what is this?"}));
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,iVBORw==");
+        assert_eq!(content[2], content[1], "each picture, in order");
+        assert_eq!(sent["messages"][0]["content"], "sys", "the system message stays text");
+    }
+
+    #[test]
+    fn a_message_without_pictures_is_exactly_what_it_always_was() {
+        let (base, rx) = stand_in();
+        ask(&openai_spec(&base, true), &[Msg::user("hi"), Msg::assistant("hello")]).unwrap();
+        let sent = rx.recv().unwrap();
+        assert_eq!(sent["messages"][1], json!({"role": "user", "content": "hi"}));
+        assert_eq!(sent["messages"][2], json!({"role": "assistant", "content": "hello"}));
+    }
+
+    #[test]
+    fn a_model_that_cannot_see_is_told_so_and_never_sent_a_picture() {
+        let (base, rx) = stand_in();
+        ask(&openai_spec(&base, false), &[Msg::user("what is this?").with_images(vec![photo()])])
+            .unwrap();
+        let sent = rx.recv().unwrap();
+        let text = sent["messages"][1]["content"].as_str().expect("plain text, not a parts list");
+        assert!(
+            text.starts_with("what is this?")
+                && text.contains("1 photo was attached, but you cannot see images"),
+            "{text}"
+        );
+        assert!(!sent.to_string().contains("base64"), "no picture left the runtime");
+
+        // the same for the local model
+        let (base, rx) = stand_in();
+        let local = LocalModel { base_url: Some(base), model: String::new() };
+        complete(
+            &ModelSpec::Local,
+            &local,
+            "sys",
+            &[Msg::user("x").with_images(vec![photo(), photo()])],
+            &Mutex::new(0),
+        )
+        .unwrap();
+        let text = rx.recv().unwrap()["messages"][1]["content"].as_str().unwrap().to_string();
+        assert!(
+            text.contains("2 photos were attached") && text.contains("describe them in words"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn in_a_fallback_chain_each_model_decides_for_itself() {
+        let (seeing, rx_seeing) = stand_in();
+        let (blind, rx_blind) = stand_in();
+        // the first (blind) model answers: it must have been sent text only
+        let chain = ModelSpec::Fallback {
+            models: vec![openai_spec(&blind, false), openai_spec(&seeing, true)],
+        };
+        ask(&chain, &[Msg::user("x").with_images(vec![photo()])]).unwrap();
+        assert!(!rx_blind.recv().unwrap().to_string().contains("base64"));
+        assert!(rx_seeing.try_recv().is_err(), "the second was never needed");
+    }
+
+    #[test]
+    fn anthropic_gets_the_pictures_first_as_image_blocks() {
+        let m = anthropic_messages(&[
+            Msg::user("what is this?").with_images(vec![photo()]),
+            Msg::assistant("a plate"),
+        ]);
+        assert_eq!(m[0]["content"][0]["type"], "image");
+        assert_eq!(
+            m[0]["content"][0]["source"],
+            json!({"type": "base64", "media_type": "image/png", "data": "iVBORw=="})
+        );
+        assert_eq!(m[0]["content"][1], json!({"type": "text", "text": "what is this?"}));
+        assert_eq!(m[1], json!({"role": "assistant", "content": "a plate"}));
+    }
+
+    #[test]
+    fn a_picture_is_never_printed_as_its_bytes() {
+        let m = Msg::user("x")
+            .with_images(vec![Image { media_type: "image/jpeg".into(), data: vec![0; 5000] }]);
+        let shown = format!("{m:?}");
+        assert!(shown.contains("Image(image/jpeg, 5000 bytes)") && shown.len() < 200, "{shown}");
+    }
+}
+
+#[cfg(test)]
 mod fallback_tests {
     use super::*;
 
@@ -224,6 +454,7 @@ mod fallback_tests {
                     api_key_env: String::new(),
                     api_key_file: String::new(),
                     service: String::new(),
+                    vision: false,
                 },
                 ModelSpec::Local,
             ],

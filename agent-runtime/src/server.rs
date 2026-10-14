@@ -188,6 +188,29 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
                 },
                 None => Cause::default(),
             };
+            // `?attach=a.jpg,b.png` names photos in the agent's inbox that came with the message.
+            let attachments: Vec<String> = query_param(query, "attach")
+                .map(|v| {
+                    v.split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default();
+            if attachments.len() > crate::attach::MAX_ATTACHMENTS {
+                return text(
+                    req,
+                    400,
+                    format!("at most {} attachments", crate::attach::MAX_ATTACHMENTS),
+                );
+            }
+            if let Some(missing) =
+                attachments.iter().find(|f| !crate::attach::exists(rt.store(), name, f))
+            {
+                return text(req, 400, format!("no attachment `{missing}` in {name}'s inbox"));
+            }
+            let cause = Cause { attachments, ..cause };
             // `?project=` says the message was written inside that project's room.
             let cause =
                 Cause { project: query_param(query, "project").filter(|p| !p.is_empty()), ..cause };
@@ -581,6 +604,53 @@ mod tests {
         let v: Value = post("/projects/p/unarchive").json().unwrap();
         assert_eq!(v["resumed"], json!(["a"]));
         assert_eq!(post("/projects/missing/archive").status(), 404);
+    }
+
+    #[test]
+    fn a_run_can_be_started_with_photos_from_the_agents_inbox() {
+        let (rt, base) = start("attach-http");
+        let c = reqwest::blocking::Client::new();
+        c.put(format!("{base}/agents/chef"))
+            .bearer_auth("tok")
+            .json(&mock("chef", &["it is rice"]))
+            .send()
+            .unwrap();
+        let file = rt.store().save_inbox("chef", "lunch.png", &[1, 2, 3]).unwrap();
+        let run = |query: &str| {
+            c.post(format!("{base}/agents/chef/run{query}"))
+                .bearer_auth("tok")
+                .body("what is this?")
+                .send()
+                .unwrap()
+        };
+        // a photo that is not in the inbox, or a name that leaves it, is refused before anything runs
+        let missing = run("?attach=nope.png");
+        assert_eq!(missing.status(), 400);
+        assert!(missing.text().unwrap().contains("no attachment `nope.png`"));
+        assert_eq!(run("?attach=..%2F..%2Fetc%2Fpasswd").status(), 400);
+        assert_eq!(run("?attach=1.png,2.png,3.png,4.png,5.png").status(), 400, "at most four");
+        assert!(rt.store().runs("chef", 5).is_empty(), "nothing ran");
+        // an existing one goes, and the record says so
+        let ok = run(&format!("?attach={file}"));
+        assert_eq!(ok.status(), 200);
+        assert_eq!(ok.text().unwrap(), "it is rice");
+        assert_eq!(rt.store().runs("chef", 1)[0].attachments, [file]);
+        // another agent's inbox is not reachable by name
+        c.put(format!("{base}/agents/other"))
+            .bearer_auth("tok")
+            .json(&mock("other", &["x"]))
+            .send()
+            .unwrap();
+        let theirs = c
+            .post(format!(
+                "{base}/agents/other/run?attach={}",
+                rt.store().runs("chef", 1)[0].attachments[0]
+            ))
+            .bearer_auth("tok")
+            .body("x")
+            .send()
+            .unwrap();
+        assert_eq!(theirs.status(), 400);
     }
 
     #[test]
