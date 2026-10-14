@@ -6,10 +6,21 @@ grows and a Matrix user that outlives its agent. This decides where agents live 
 Element, what "delete an agent" and "archive a project" mean on the Matrix side, and
 what has to be verified before any of it is built.*
 
-**Status: proposed.** Nothing here is built. Written first because the grant model
-(membership is permission) constrains the design more than the Matrix side does, and
-because "archive" has no Matrix primitive: the first idea for it is wrong in one
-case (adopted Spaces, below).
+**Status: accepted; slices 0–4 built, slice 5 not.** Written first because the grant
+model (membership is permission) constrains the design more than the Matrix side does,
+and because "archive" has no Matrix primitive: the first idea for it is wrong in one
+case (adopted Spaces, below). The four "verify first" items were run against a real
+Synapse while building and all held; the one thing building changed is noted where it
+applies.
+
+| slice | what | PR |
+|---|---|---|
+| 0 | soft delete: a 30-day trash, `agent_restore`, `!agent trash\|restore\|purge` | #332 |
+| 1 | retire a deleted agent's room; a restore brings the same room back | #333 |
+| 2 | the Agents Space; a project of one is one room; a lone member answers | #334 |
+| 3 | a schedule carries a project | #335 |
+| 4 | archive and unarchive | #336 |
+| 5 | cleanup command for old direct rooms | not built: slice 1 retires the rooms of agents that are gone, and the rest are a manual job |
 
 ## What exists, read from the code
 
@@ -187,7 +198,10 @@ business and a bridge restart must not forget it. The Matrix leave is the bridge
 
 ## Verify before building
 
-Each is one scenario in `agent-matrix/tests/e2e.rs`, which already runs a real Synapse:
+*All four held. Each ran as a scenario in `agent-matrix/tests/e2e.rs`; one change
+followed: an unarchive must be idempotent, because Synapse rate-limits joins (429) and a
+pass cut short has to be retried, not recorded as done.* Each is one scenario in
+`agent-matrix/tests/e2e.rs`, which already runs a real Synapse:
 
 1. A room created as a child of a Space with no `is_direct` shows in the Space and not
    under People in Element (manual, one look).
