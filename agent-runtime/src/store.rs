@@ -105,6 +105,10 @@ pub struct RunRecord {
     /// `agent|topic` for each wake-up that led here, oldest first.
     #[serde(default)]
     pub chain: Vec<String>,
+    /// The project this run was for: a schedule's, a reminder's, or the room it was talked
+    /// to in. Empty for none; a chat bridge uses it to say where the result belongs.
+    #[serde(default)]
+    pub project: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

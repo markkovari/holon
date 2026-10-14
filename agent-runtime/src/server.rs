@@ -183,6 +183,9 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
                 },
                 None => Cause::default(),
             };
+            // `?project=` says the message was written inside that project's room.
+            let cause =
+                Cause { project: query_param(query, "project").filter(|p| !p.is_empty()), ..cause };
             // Who or what woke the agent, in words it reads as the run's `Trigger:` line.
             let trigger = query_param(query, "why")
                 .map(|w| w.split_whitespace().collect::<Vec<_>>().join(" "))
@@ -488,6 +491,41 @@ mod tests {
     }
 
     #[test]
+    fn a_message_written_in_a_project_room_records_the_project() {
+        let (rt, base) = start("run-project");
+        let c = reqwest::blocking::Client::new();
+        for n in ["in", "out"] {
+            assert_eq!(
+                c.put(format!("{base}/agents/{n}"))
+                    .bearer_auth("tok")
+                    .json(&mock(n, &["hi"]))
+                    .send()
+                    .unwrap()
+                    .status(),
+                201
+            );
+        }
+        rt.put_project(crate::projects::Project {
+            name: "rowing".into(),
+            description: String::new(),
+            agents: vec!["in".into()],
+            lead: None,
+        })
+        .unwrap();
+        let run = |n: &str| {
+            c.post(format!("{base}/agents/{n}/run?project=rowing"))
+                .bearer_auth("tok")
+                .body("hello")
+                .send()
+                .unwrap()
+        };
+        assert_eq!(run("in").status(), 200);
+        assert_eq!(rt.store().runs("in", 1)[0].project, "rowing");
+        assert_eq!(run("out").status(), 429, "not a member: dropped, not run");
+        assert_eq!(rt.store().runs("out", 1)[0].status, Status::Dropped);
+    }
+
+    #[test]
     fn a_deleted_agent_is_listed_restored_and_purged_over_http() {
         let (_rt, base) = start("trash-http");
         let c = reqwest::blocking::Client::new();
@@ -543,6 +581,7 @@ mod tests {
             cron: "bogus".into(),
             prompt: "p".into(),
             notify: false,
+            project: None,
         });
         assert_eq!(put(&spec).status(), 422, "a bad cron is refused, not silently never fired");
         assert!(c
@@ -614,6 +653,7 @@ mod tests {
             cron: "@every 1s".into(),
             prompt: "tick".into(),
             notify: false,
+            project: None,
         });
         rt.create_agent(tick).unwrap();
 

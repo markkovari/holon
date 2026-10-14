@@ -222,6 +222,7 @@ mod tests {
             parent_span_id: Some(new_span_id()),
             hops: 1,
             chain: vec!["coach|store.rowing".into()],
+            project: String::new(),
         }
     }
 

@@ -809,6 +809,7 @@ pub fn spec_from_form(f: &FormInput) -> Result<AgentSpec, String> {
             cron: cron.trim().to_string(),
             prompt: prompt.trim().to_string(),
             notify: false,
+            project: None,
         });
     }
     for topic in csv(&f.events) {
@@ -1230,6 +1231,7 @@ mod tests {
             cron: "@every 4s".into(),
             prompt: "tick".into(),
             notify: false,
+            project: None,
         });
         rt.create_agent(spec).unwrap();
 

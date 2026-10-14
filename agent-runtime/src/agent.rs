@@ -37,6 +37,10 @@ pub struct Cause {
     pub chain: Vec<String>,
     /// Tokens the rest of the chain may still spend; `None` = this agent's own limit.
     pub budget: Option<u64>,
+    /// The project this work is for, when it is for one: a schedule that names it, a reminder
+    /// asked for inside it, a message in its room. The agent must be a member to be woken
+    /// for it, and a reminder it sets keeps it.
+    pub project: Option<String>,
 }
 
 /// A spawned task's state, as `task_result` reports it.
@@ -110,6 +114,9 @@ pub trait Host: Sync {
         Err("agent management is not available".into())
     }
     fn restore_agent(&self, _name: &str) -> Result<String, String> {
+        Err("agent management is not available".into())
+    }
+    fn add_to_project(&self, _project: &str, _agent: &str) -> Result<(), String> {
         Err("agent management is not available".into())
     }
     fn pause_agent(&self, _name: &str, _paused: bool) -> Result<(), String> {
@@ -284,8 +291,8 @@ const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "agent_save",
-        args: r#"{"name": "...", "description": "what it is for, as instructions to it", "capabilities": ["http_get"], "schedule": "@every 1h", "prompt": "what to do when the schedule fires", "model": "qwen"}"#,
-        about: "Create an agent, or change the fields you give of an existing one; fields you leave out stay as they are. Giving `schedule` REPLACES all of that agent's triggers with that one schedule. The owner approves first.",
+        args: r#"{"name": "...", "description": "what it is for, as instructions to it", "capabilities": ["http_get"], "schedule": "@every 1h", "prompt": "what to do when the schedule fires", "project": "rowing", "notify": true, "model": "qwen"}"#,
+        about: "Create an agent, or change the fields you give of an existing one; fields you leave out stay as they are. Giving `schedule` REPLACES all of that agent's triggers with that one schedule. `project` adds the agent to that existing project (which GRANTS it the project's shared store and topics) and makes the schedule work for it: the result is posted in that project's room, not the agent's own. `notify: true` asks a chat bridge to post each scheduled result to the owner. The owner approves first.",
         sensitive: true,
     },
     ToolDef {
@@ -302,8 +309,8 @@ const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "agent_remove_schedule",
-        args: r#"{"name": "...", "schedule": "@every 1h"}"#,
-        about: "Remove a schedule from an agent, and only that: the agent, its run history, memory and its other triggers stay. `schedule` is the cron line to remove; leave it out to remove all of the agent's schedules. The owner approves first.",
+        args: r#"{"name": "...", "schedule": "@every 1h", "project": "rowing"}"#,
+        about: "Remove a schedule from an agent, and only that: the agent, its run history, memory and its other triggers stay. `schedule` is the cron line to remove; leave it out to remove all of the agent's schedules. `project` narrows it to the schedules that work for that project. The owner approves first.",
         sensitive: true,
     },
     ToolDef {
@@ -433,7 +440,8 @@ fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
          did (a message, a schedule, another agent, an event) and the task is why you are \
          needed. You remember nothing between runs except what is written below or in the \
          task. If the task shows the conversation so far, use it to understand what is being \
-         asked, and answer only the latest message.\n\n",
+         asked, and answer only the latest message. A `Project:` line means the work is for \
+         that project, so work and report as a member of it.\n\n",
     );
     let mut tools = String::new();
     let mut abilities = String::new();
@@ -896,14 +904,24 @@ fn exec(
             if name == spec.name {
                 return Err("you may not change your own spec".into());
             }
+            let project = arg(args, "project");
+            if !project.is_empty() && store.get_project(&project).is_none() {
+                return Err(format!("no project named {project}; create it first"));
+            }
             let existing = store.get(&name);
             let new =
                 crate::admin::build_spec_with(existing.as_ref(), args, &|n| store.model_alias(n))?;
             host.save_agent(new)?;
-            Ok(if existing.is_some() {
-                format!("updated {name}")
+            let joined = if project.is_empty() {
+                String::new()
             } else {
-                format!("created {name}")
+                host.add_to_project(&project, &name)?;
+                format!(" and added it to the project {project}")
+            };
+            Ok(if existing.is_some() {
+                format!("updated {name}{joined}")
+            } else {
+                format!("created {name}{joined}")
             })
         }
         "agent_delete" => {
@@ -926,8 +944,13 @@ fn exec(
             }
             let mut target = store.get(&name).ok_or_else(|| format!("no agent named {name}"))?;
             let only = arg(args, "schedule");
+            let in_project = arg(args, "project");
             let wanted = |t: &Trigger| match t {
-                Trigger::Schedule { cron, .. } => only.is_empty() || *cron == only,
+                Trigger::Schedule { cron, project, .. } => {
+                    (only.is_empty() || *cron == only)
+                        && (in_project.is_empty()
+                            || project.as_deref() == Some(in_project.as_str()))
+                }
                 _ => false,
             };
             let before = target.triggers.len();
@@ -1088,6 +1111,7 @@ pub fn run(
         parent_span_id: cause.parent_span_id.clone(),
         hops: cause.hops,
         chain: cause.chain.clone(),
+        project: cause.project.clone().unwrap_or_default(),
     };
     let mut child_tokens = 0u64;
     let push = |rec: &mut RunRecord, step: Step| {
@@ -1109,7 +1133,9 @@ pub fn run(
     }
 
     let system = system_prompt(host, spec);
-    let mut msgs = vec![Msg::user(format!("Trigger: {trigger}\nTask: {input}"))];
+    let project_line =
+        cause.project.as_ref().map(|p| format!("Project: {p}\n")).unwrap_or_default();
+    let mut msgs = vec![Msg::user(format!("Trigger: {trigger}\n{project_line}Task: {input}"))];
     let mut usage = Usage::default();
     let mut last_text = String::new();
     let mut called_ok: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -1222,6 +1248,7 @@ pub fn run(
                         budget: Some(
                             max_tokens.saturating_sub(usage.input + usage.output + child_tokens),
                         ),
+                        project: cause.project.clone(),
                     };
                     match exec(host, spec, &name, &args, &me, &mut child_tokens) {
                         Ok(r) => (r, false, needs.then_some(true)),
