@@ -149,8 +149,13 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
     let method = req.method().clone();
 
     // Audio is bytes and can be large; everything else is small text.
-    let limit =
-        if path.starts_with("/speech") { crate::speech::MAX_AUDIO_IN as u64 } else { 1 << 20 };
+    let limit = if path.starts_with("/speech") {
+        crate::speech::MAX_AUDIO_IN as u64
+    } else if path.ends_with("/inbox") {
+        (20 << 20) + 1 // a photo: one byte over the store's limit, so it is refused, not cut
+    } else {
+        1 << 20
+    };
     let mut raw = Vec::new();
     let _ = req.as_reader().take(limit).read_to_end(&mut raw);
     let body = String::from_utf8_lossy(&raw).into_owned();
@@ -250,6 +255,17 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
             Ok(()) => text(req, 200, "deleted"),
             Err(e) => text(req, 404, e),
         },
+        // A photo (or other file) a person sent, put in the agent's workspace for its tools.
+        (Method::Post, ["agents", name, "inbox"]) => {
+            let filename = query_param(query, "name").unwrap_or_default();
+            match rt.store().save_inbox(name, &filename, &raw) {
+                Ok(file) => {
+                    json_reply(req, 201, json!({ "file": file, "path": format!("inbox/{file}") }))
+                }
+                Err(e) if e.starts_with("no agent") => text(req, 404, e),
+                Err(e) => text(req, 422, e),
+            }
+        }
         (Method::Get, ["trash"]) => json_reply(req, 200, json!(rt.store().trash())),
         (Method::Post, ["trash", id, "restore"]) => match rt.restore_agent(id) {
             Ok(t) => json_reply(req, 200, json!(t)),
@@ -565,6 +581,43 @@ mod tests {
         let v: Value = post("/projects/p/unarchive").json().unwrap();
         assert_eq!(v["resumed"], json!(["a"]));
         assert_eq!(post("/projects/missing/archive").status(), 404);
+    }
+
+    #[test]
+    fn a_photo_sent_to_an_agent_lands_in_its_inbox_and_nowhere_else() {
+        let (rt, base) = start("inbox-http");
+        let c = reqwest::blocking::Client::new();
+        c.put(format!("{base}/agents/chef"))
+            .bearer_auth("tok")
+            .json(&mock("chef", &["hi"]))
+            .send()
+            .unwrap();
+        let send = |agent: &str, name: &str, bytes: Vec<u8>| {
+            c.post(format!("{base}/agents/{agent}/inbox?name={name}"))
+                .bearer_auth("tok")
+                .body(bytes)
+                .send()
+                .unwrap()
+        };
+        let r = send("chef", "lunch.JPG", vec![0xff, 0xd8, 0xff, 1, 2, 3]);
+        assert_eq!(r.status(), 201);
+        let v: Value = r.json().unwrap();
+        let file = v["file"].as_str().unwrap().to_string();
+        assert!(file.ends_with("-lunch.JPG") && v["path"] == format!("inbox/{file}"), "{v}");
+        let on_disk = rt.store().workspace("chef").unwrap().join("inbox").join(&file);
+        assert_eq!(std::fs::read(on_disk).unwrap(), [0xff, 0xd8, 0xff, 1, 2, 3]);
+
+        // a path in the name is cut to its last component and made safe: it cannot escape
+        let v: Value = send("chef", "../../../etc/evil dinner.png", vec![1]).json().unwrap();
+        assert!(v["file"].as_str().unwrap().ends_with("-evil_dinner.png"), "{v}");
+        assert!(!rt.store().workspace("chef").unwrap().join("../../etc").exists());
+        // not a photo, nothing sent, nobody to send it to, and no token
+        assert_eq!(send("chef", "notes.sh", vec![1]).status(), 422);
+        assert_eq!(send("chef", "a.png", vec![]).status(), 422);
+        assert_eq!(send("nobody", "a.png", vec![1]).status(), 404);
+        let anon =
+            c.post(format!("{base}/agents/chef/inbox?name=a.png")).body(vec![1u8]).send().unwrap();
+        assert_eq!(anon.status(), 401, "an admin route");
     }
 
     #[test]

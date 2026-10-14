@@ -54,7 +54,10 @@ pub fn load(dir: &Path, name: &str) -> Option<Definition> {
 
 const MAX_OUT: usize = 64 * 1024;
 
-pub fn run(exec: &Exec, args: &Value) -> Result<String, String> {
+/// `workspace` is the calling agent's workspace directory, handed to the program as
+/// `HOLON_WORKSPACE` so a connector can read the files that were put there for that agent
+/// (a photo sent in chat) and nobody else's.
+pub fn run(exec: &Exec, args: &Value, workspace: Option<&Path>) -> Result<String, String> {
     let (prog, fixed) = exec.command.split_first().ok_or("connector has no command")?;
     let mut child = Command::new(prog)
         .args(fixed)
@@ -63,6 +66,7 @@ pub fn run(exec: &Exec, args: &Value) -> Result<String, String> {
             std::env::vars()
                 .filter(|(k, _)| matches!(k.as_str(), "PATH" | "HOME" | "LANG" | "TMPDIR")),
         )
+        .envs(workspace.map(|w| ("HOLON_WORKSPACE", w)))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -122,22 +126,29 @@ mod tests {
 
     #[test]
     fn arguments_arrive_as_json_on_stdin_and_stdout_comes_back() {
-        let out = run(&exec(&["cat"]), &json!({"from": "2026-10-06"})).unwrap();
+        let out = run(&exec(&["cat"]), &json!({"from": "2026-10-06"}), None).unwrap();
         assert_eq!(out, r#"{"from":"2026-10-06"}"#);
     }
 
     #[test]
     fn failure_reports_stderr_a_hang_times_out_and_nothing_goes_through_a_shell() {
         assert_eq!(
-            run(&exec(&["sh", "-c", "echo nope >&2; exit 3"]), &json!({})).unwrap_err(),
+            run(&exec(&["sh", "-c", "echo nope >&2; exit 3"]), &json!({}), None).unwrap_err(),
             "nope"
         );
         let mut slow = exec(&["sleep", "5"]);
         slow.timeout_secs = 1;
-        assert!(run(&slow, &json!({})).unwrap_err().contains("timed out"));
+        assert!(run(&slow, &json!({}), None).unwrap_err().contains("timed out"));
         // a hostile argument is just text on stdin, never a command
-        assert!(run(&exec(&["cat"]), &json!({"x": "; rm -rf /"})).unwrap().contains("rm -rf"));
-        assert!(run(&exec(&["/nonexistent/program"]), &json!({})).is_err());
+        assert!(run(&exec(&["cat"]), &json!({"x": "; rm -rf /"}), None)
+            .unwrap()
+            .contains("rm -rf"));
+        assert!(run(&exec(&["/nonexistent/program"]), &json!({}), None).is_err());
+        // the calling agent's workspace is handed over, and only when there is one
+        let ws = std::path::Path::new("/tmp/some-agent-workspace");
+        let sh = exec(&["sh", "-c", "printf %s \"${HOLON_WORKSPACE:-unset}\""]);
+        assert_eq!(run(&sh, &json!({}), Some(ws)).unwrap(), "/tmp/some-agent-workspace");
+        assert_eq!(run(&sh, &json!({}), None).unwrap(), "unset");
     }
 
     #[test]

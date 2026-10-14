@@ -871,6 +871,50 @@ fn a_space_you_made_yourself_is_archived_and_brought_back_by_an_agent_in_it() {
 }
 
 #[test]
+fn a_photo_sent_in_element_lands_in_the_agents_inbox_and_the_agent_is_told() {
+    let Some(World { rt, bridge, owner, _work, _down, _lock, .. }) = world() else { return };
+    let room = bridge.state.read(|d| d.dms.get("chef").cloned()).expect("chef's room");
+    // bytes that are not a real picture are fine: the bridge neither looks at nor edits them
+    let photo: Vec<u8> = (0..4096u32).map(|i| (i % 251) as u8).collect();
+    let mxc = owner.upload(photo.clone(), "image/png", "meal.png");
+
+    // a photo with a caption (Element sends the file name in `filename`)
+    owner.send(
+        &room,
+        json!({"msgtype": "m.image", "body": "post-row lunch", "filename": "meal.png", "url": mxc,
+               "info": {"mimetype": "image/png", "size": photo.len()}}),
+    );
+    let run = wait_for("chef to be run on the photo", 60, || {
+        rt.store().runs("chef", 3).into_iter().next()
+    });
+    assert!(
+        run.input.contains("Mark sent a photo with the caption: post-row lunch"),
+        "{}",
+        run.input
+    );
+    let file = run.input.split('`').nth(1).expect("the file name is in the note").to_string();
+    assert!(file.ends_with("-meal.png"), "{file}");
+    let kept = rt.store().workspace("chef").unwrap().join("inbox").join(&file);
+    assert_eq!(std::fs::read(kept).unwrap(), photo, "the very bytes that were sent");
+    // and the agent answered in the room, as itself
+    wait_for("the answer", 40, || {
+        Some(owner.texts_from(&room, &ghost("chef")))
+            .filter(|t| t.iter().any(|x| x.contains("Pasta tonight")))
+    });
+
+    // not a photo the runtime accepts: the agent says so instead of running on nothing
+    let before = rt.store().runs("chef", 50).len();
+    let junk = owner.upload(vec![1, 2, 3], "application/pdf", "notes.pdf");
+    owner.send(&room, json!({"msgtype": "m.file", "body": "notes.pdf", "url": junk}));
+    std::thread::sleep(Duration::from_secs(5));
+    assert_eq!(
+        rt.store().runs("chef", 50).len(),
+        before,
+        "a file that is not a photo starts no run"
+    );
+}
+
+#[test]
 fn you_can_talk_to_an_agent_and_it_talks_back() {
     let real = cfg!(target_os = "macos")
         && ["say", "ffmpeg", "swiftc"].iter().all(|c| {
