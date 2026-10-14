@@ -1,0 +1,16 @@
+// meal:app — post a photo of a meal, get back what is on the plate.
+//
+// The HTTP front of the photo-to-nutrition pipeline. It does neither the looking nor the reading:
+// `vision:describe` is a provider's (WHICH model is a deployment choice, and this app names no
+// vendor), and `nutrition:meal` owns the prompt and the parser. This app is the wiring and the
+// HTTP shape, which is why it is small and why everything it decides is testable without a key.
+package meal:app@0.1.0;
+
+world meal-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    /// Show a model the photograph.
+    import vision:describe/describer@0.1.0;
+    /// The prompt for it, and its answer read into items, calories and macros.
+    import nutrition:meal/estimator@0.1.0;
+}

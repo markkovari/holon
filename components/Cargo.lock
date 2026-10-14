@@ -2320,6 +2320,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "meal-domain"
+version = "0.1.0"
+dependencies = [
+ "guestio",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "meal-estimate"
 version = "0.1.0"
 dependencies = [

@@ -96,6 +96,7 @@ pub(crate) fn derive(comp_plug_bin: &Path, root: &str, dest: &str) -> Result<()>
 /// The ambiguous interfaces, and who exports them (as of this writing):
 ///   durable:workflow/orchestrator — golem-bridge, inproc-workflow
 ///   llm:inference/inference       — anthropic-provider, llm-inference, mock-provider, openai-provider
+///   vision:describe/describer     — anthropic-vision, deepseek-vision
 ///   ui:assets/files               — console-assets, grocery-assets, static-assets, track-assets
 ///   jev:decision/decision         — jev-decision, mock-jev-provider, typesafe-provider
 ///   graph:fitness/evaluator       — checks-runner, mock-fitness
@@ -108,6 +109,9 @@ fn app_plug_pins(app: &str) -> &'static [&'static str] {
     match app {
         // In-process durable workflow, not the Golem bridge.
         "jobs" => &["inproc-workflow"],
+        // The meal estimator looks with DeepSeek's vision model, not whichever vision provider
+        // sorts first (`anthropic-vision`, which `binder` keeps).
+        "meal" => &["deepseek-vision"],
         // Its own UI bundle, and the deterministic mock behind ai-inference
         // (the pick was anthropic-provider, which needs a network key).
         "track" => &["track-assets", "llm-inference"],

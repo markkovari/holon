@@ -1,0 +1,19 @@
+# meal — post a photo of a meal, get back items, calories and macros.
+#
+#   POST /estimate?note=post-row%20lunch      body: the image, Content-Type: image/jpeg|png|webp|gif
+#
+# `meal-domain` is the HTTP front; `deepseek-vision` does the looking (vision:describe) and
+# `meal-estimate` owns the prompt and reads the answer (nutrition:meal). Composed by
+# `cargo xtask compose meal`, which pins `deepseek-vision` as the vision provider.
+#
+# The provider needs the secret `deepseek-api-key` (comp:secrets/reader, ADR-0051). A host with
+# no platform (`--platform-url` empty) tells a component its secret is unavailable, so this app
+# needs a platform, or a vision:base-url that points at something holding the key.
+name = "meal"
+domain = "meal.example.com"
+artifact = "components/target/meal_domain.composed.wasm"
+components = ["meal-domain", "meal-estimate", "deepseek-vision"]
+
+# What the provider is told (vision:*), and nothing secret: config is visible to every app.
+[config]
+"vision:model" = "deepseek-chat"
