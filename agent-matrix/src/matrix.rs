@@ -222,6 +222,26 @@ impl Matrix {
         Ok(v["event_id"].as_str().unwrap_or_default().to_string())
     }
 
+    /// An agent's answer: its own text as the `body`, and the HTML for any markdown in it as the
+    /// `formatted_body`, which a client renders (a table, bold) and one that does not ignores.
+    pub fn send_markdown(
+        &self,
+        room: &str,
+        user: &str,
+        body: &str,
+        reply_to: Option<&str>,
+    ) -> R<String> {
+        let mut c = json!({"msgtype": "m.text", "body": body});
+        if let Some(html) = crate::md::to_html(body) {
+            c["format"] = json!("org.matrix.custom.html");
+            c["formatted_body"] = json!(html);
+        }
+        if let Some(e) = reply_to {
+            c["m.relates_to"] = json!({"m.in_reply_to": {"event_id": e}});
+        }
+        self.send_event(room, user, "m.room.message", c)
+    }
+
     pub fn send_text(
         &self,
         room: &str,

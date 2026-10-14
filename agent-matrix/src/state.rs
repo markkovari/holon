@@ -19,6 +19,14 @@ pub struct ProjectRooms {
     pub feed: String,
 }
 
+/// A photo kept for an agent: the Matrix event it came in, and its file name in that agent's inbox.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct PhotoRef {
+    pub agent: String,
+    pub event: String,
+    pub file: String,
+}
+
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct Data {
     pub control_room: Option<String>,
@@ -45,6 +53,11 @@ pub struct Data {
     /// It is not a runtime project: membership is the grant, and this Space grants nothing.
     #[serde(default)]
     pub agents_space: Option<String>,
+    /// Photos the bridge handed to an agent, newest last (the last 100): which Matrix message each
+    /// was, and what it is called in the agent's inbox. A follow-up text can then bring the same
+    /// photo back, since the agent cannot look at a picture it was only sent a message ago.
+    #[serde(default)]
+    pub photos: Vec<PhotoRef>,
     /// Projects whose rooms the owner has left because the runtime says they are archived.
     #[serde(default)]
     pub archived: std::collections::BTreeSet<String>,

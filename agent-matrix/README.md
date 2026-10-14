@@ -170,6 +170,20 @@ that cannot is told a photo was attached and asks you to describe it in words (s
 only from unencrypted rooms, like voice messages. A connector also gets the agent's workspace as
 `HOLON_WORKSPACE`, so it reads that agent's inbox and nobody else's.
 
+**A follow-up brings the photo back.** An agent cannot look at a picture it was sent a message ago,
+so when you write a text ("how much is this?") within 15 minutes of a photo that agent was given, the
+same photo is attached again and the agent is told so. Only your newest photo counts, only for an agent
+that already has it, and if it is gone from the inbox the question is asked without it. In the
+conversation history a photo shows as `[a photo]` with its caption, not as its file name.
+
+## Formatted answers
+
+Agents write markdown (`**bold**`, tables, lists, `code`). An answer is sent with its own text as the
+message `body` and the HTML for any markdown in it as the `formatted_body`, so Element shows a table
+and bold where a plain body showed pipes and asterisks, and a client that does not render HTML shows the
+text. A plain sentence is sent as the plain message it is. Raw HTML in an answer is shown as text, never
+passed through.
+
 ## Not built yet
 
 * Files other than photos (documents, audio files) coming in, and any file going from an agent back to Matrix.
