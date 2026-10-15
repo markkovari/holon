@@ -1,17 +1,12 @@
-//! The `docsearch:agent` answer gate, ported from
-//! `components/doc-search-domain/e2e-answer.sh`.
+//! The `docsearch:agent` answer gate, ported from `components/doc-search-domain/e2e-answer.sh`.
 //!
-//! One of the five that genuinely needs a model. Its assertions are about the app —
-//! step-up before an answer, a budget of one, a cache checked BEFORE the meter — but
-//! one of them is about the answer itself: the seeded document says the reconciler
-//! polls every three seconds, and a canned sentence mentions none of it. Pointing this
-//! at `mock-provider` would prove the app plumbed a string through.
+//! One of the five that needs a model. It asserts app behaviour (step-up before an answer, a budget of
+//! one, a cache checked BEFORE the meter) and one thing about the answer itself: the seeded document
+//! says the reconciler polls every three seconds, which a canned sentence would not mention.
+//! `mock-provider` would prove only that the app plumbed a string through, so `Shim::probe` skips
+//! loudly when nothing is listening, as `gate_shim_config` does.
 //!
-//! So the requirement is ported rather than removed: `Shim::probe` skips loudly when
-//! nothing is listening, exactly as `gate_shim_config` does.
-//!
-//! Verified against `mlx-community/Qwen3.8-27B-4bit` on csatapaci through
-//! `tools/openai-shim.mjs`.
+//! Verified against `mlx-community/Qwen3.8-27B-4bit` on csatapaci through `tools/openai-shim.mjs`.
 
 mod gatelib;
 use gatelib::{field, Gate, Shim};
@@ -25,8 +20,7 @@ fn parse(t: &str) -> Value {
 #[test]
 fn an_answer_is_paid_for_once_cached_forever_and_gated_by_step_up() {
     let Some(shim) = Shim::probe("docsearch/answer") else { return };
-    // A budget of one is the whole point: it is what makes "cache before meter"
-    // observable at all.
+    // A budget of one is what makes "cache before meter" observable.
     let mut config: Vec<String> = vec![
         "answer-budget=1".into(),
         "answer-period-secs=3600".into(),
@@ -50,16 +44,11 @@ fn an_answer_is_paid_for_once_cached_forever_and_gated_by_step_up() {
     );
     let ask = |q: &str| gate.post("/api/answer", Some(&t), json!({ "question": q }));
 
-    // --- no step-up, no answer ------------------------------------------------------
-    //
-    // Before the fixture marks anyone: the first check must be the one that costs
-    // nothing.
     let (c, _) = ask("How often does the reconciler poll inventory?");
     assert_eq!(c, 403, "a session that has not stepped up must be 403 step_up_required");
 
     gate.post("/test/stepup", None, json!({"subject":"ada"}));
 
-    // --- the first real question ----------------------------------------------------
     const Q: &str = "How long does the reconciler wait between inventory polls?";
     let (_, first) = ask(Q);
     assert!(
@@ -75,15 +64,14 @@ fn an_answer_is_paid_for_once_cached_forever_and_gated_by_step_up() {
         "an answer must name the documents it came from: {d}"
     );
     assert_eq!(d["remaining"], 0, "one answer out of a budget of one leaves 0 remaining: {d}");
-    // About THIS question, and not a slice of the source: the seeded document says the
-    // reconciler polls every three seconds, and a canned sentence mentions none of it.
+    // About THIS question, not a slice of the source: the seeded document says the reconciler polls
+    // every three seconds, which a canned sentence would not mention.
     let low = a.to_lowercase();
     assert!(
         ["three", "3 second", "3-second", "second"].iter().any(|w| low.contains(w)),
         "the answer says nothing about the interval it was asked for: {a:?}"
     );
 
-    // --- the same question again: free ---------------------------------------------
     let start = Instant::now();
     let (_, second) = ask(Q);
     let elapsed = start.elapsed().as_secs_f64();
@@ -98,17 +86,15 @@ fn an_answer_is_paid_for_once_cached_forever_and_gated_by_step_up() {
         "a cache hit must return the answer that was cached"
     );
     assert_eq!(d["remaining"], 0, "a cache hit spends nothing, so remaining is unchanged: {d}");
-    // A real model call through the shim takes seconds. A cache hit cannot.
+    // A real model call through the shim takes seconds; a cache hit cannot.
     assert!(
         elapsed < 4.0,
         "the second answer took {elapsed:.1}s — that is a model call, not a cache hit"
     );
 
-    // --- a question the library cannot support: also free --------------------------
     let (c, _) = ask("What temperature should I proof sourdough at?");
     assert_eq!(c, 404, "a question with no matching sources must be 404 no_sources");
 
-    // --- the budget is gone, and the paid-for answer is still served ---------------
     const OTHER: &str = "Why does raising the per-instance memory ceiling cost address space?";
     let (_, new) = ask(OTHER);
     let d = parse(&new);
@@ -120,9 +106,8 @@ fn an_answer_is_paid_for_once_cached_forever_and_gated_by_step_up() {
     let (c, _) = ask(OTHER);
     assert_eq!(c, 429, "a refused question must be 429");
 
-    // THE ordering check: an answer already paid for survives the budget running out.
-    // If the meter is consulted before the cache, this is a 429 and the part has the
-    // order wrong.
+    // THE ordering check: an answer already paid for survives the budget running out. If the meter is
+    // consulted before the cache, this is a 429.
     let (_, again) = ask(Q);
     let d = parse(&again);
     assert!(
@@ -132,23 +117,17 @@ fn an_answer_is_paid_for_once_cached_forever_and_gated_by_step_up() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// the composition — the gate no single part can pass
-// ---------------------------------------------------------------------------
+// the composition: the gate no single part can pass
 
-/// The whole doc-search agent: a document filed, a real second factor verified, and
-/// a question answered over what was filed.
+/// The whole doc-search agent: a document filed, a real second factor verified, and a question
+/// answered over what was filed. Ported from `components/doc-search-domain/e2e.sh`.
 ///
-/// Ported from `components/doc-search-domain/e2e.sh`. It lives beside the answer gate
-/// because it needs the same model on the shim.
+/// One request is the join: `POST /api/answer` succeeds only if `answer` found the mark `stepup`
+/// wrote, retrieved the document `library` indexed, and reached the model. Any disagreement about a
+/// shape gives a 403, a 404 or an answer about nothing, which no part's own gate sees.
 ///
-/// One request is the join. `POST /api/answer` succeeds only if `answer` found the
-/// mark `stepup` wrote, retrieved the document `library` indexed, and reached the
-/// model. Any one of the three disagreeing about a shape makes it a 403, a 404 or an
-/// answer about nothing — and each part's own gate sees only its own half.
-///
-/// The TOTP is computed here rather than stubbed: `otp:totp` is in the world and the
-/// step-up is only meaningful if the code is one a real authenticator would produce.
+/// The TOTP is computed, not stubbed: the step-up is only meaningful if the code is one a real
+/// authenticator would produce.
 #[test]
 fn the_whole_docsearch_agent_works() {
     let Some(shim) = Shim::probe("docsearch/whole") else { return };
@@ -183,7 +162,6 @@ fn the_whole_docsearch_agent_works() {
         "POST /test/token returned no token — the scaffold is broken, not the parts"
     );
 
-    // --- a document filed through the library part -------------------------
     let (_, doc) = gate.post(
         "/api/docs",
         Some(&t),
@@ -202,14 +180,12 @@ fn the_whole_docsearch_agent_works() {
 
     const Q: &str = "What happens to a digest scheduled inside the quiet hours window?";
 
-    // --- asking before stepping up: refused --------------------------------
     let (got, _) = gate.post("/api/answer", Some(&t), json!({"question": Q}));
     assert_eq!(
         got, 403,
         "the composed API answered a question for a session that never stepped up (got {got})"
     );
 
-    // --- stepping up for real, through the step-up part --------------------
     let (_, enrolled) = gate.post("/api/mfa/enroll", Some(&t), json!({}));
     let secret = field(&enrolled, "secret");
     assert!(!secret.is_empty(), "the step-up part did not provision a secret: {enrolled}");
@@ -222,7 +198,6 @@ fn the_whole_docsearch_agent_works() {
          not verify: {verified}"
     );
 
-    // --- and now the question, over the document that was filed ------------
     let (_, ans) = gate.post("/api/answer", Some(&t), json!({"question": Q}));
     assert!(
         !ans.trim().is_empty(),

@@ -1,14 +1,8 @@
-//! Which queued goals a batch-start should start — the pure decision behind
-//! `holon goal start --queued <project>` (not built yet; this is the piece
-//! it will call). Found talking through "if I want to start 20 goals at
-//! once": today that costs twenty individual `holon goal start <id>`
-//! round trips, one per goal, because nothing decides "these are the ones"
-//! in one place.
+//! Which queued goals a batch-start should start: the pure decision behind `holon goal start --queued
+//! <project>` (not built yet), replacing twenty individual `holon goal start <id>` round trips.
 //!
-//! This is the held-out judge: `comp_reconciler::goalbatch::goals_to_start`
-//! must exist with this exact signature and this exact behavior. Deliberately
-//! a plain unit test of a pure module — no fleet, no compose, no host — so
-//! this stays fast and reliable, the same discipline `goalexit.rs` uses.
+//! The held-out judge: `comp_reconciler::goalbatch::goals_to_start` must exist with this exact signature
+//! and behavior. A plain unit test of a pure module (no fleet, compose or host), as `goalexit.rs` does.
 
 use comp_reconciler::goalbatch::goals_to_start;
 use serde_json::json;
@@ -64,8 +58,8 @@ fn a_priority_equal_to_the_ceiling_is_included() {
 
 #[test]
 fn a_missing_priority_defaults_to_100_matching_the_platform() {
-    // components/platform-domain/src/goals.rs: `b.priority.unwrap_or(100)`
-    // — a goal created with none gets 100 there, so this must agree.
+    // components/platform-domain/src/goals.rs: `b.priority.unwrap_or(100)`; a goal with none gets 100 there,
+    // so this must agree.
     let rows = vec![json!({ "id": "a", "state": "queued" })];
     assert_eq!(
         goals_to_start(&rows, Some(100)),
@@ -81,9 +75,8 @@ fn a_missing_priority_defaults_to_100_matching_the_platform() {
 
 #[test]
 fn the_input_order_is_preserved_not_resorted() {
-    // The platform's own listing already returns priority-first-then-oldest
-    // (`goals_list`) — a caller passing that straight through must get the
-    // same order back, not a second, possibly-disagreeing sort.
+    // The platform's own listing (`goals_list`) is priority-first-then-oldest, so passing it straight
+    // through must give the same order back, not a second, possibly-disagreeing sort.
     let rows = vec![
         json!({ "id": "z", "state": "queued", "priority": 5 }),
         json!({ "id": "a", "state": "queued", "priority": 1 }),

@@ -1,13 +1,10 @@
-//! The `moderation:queue` verdict gate, ported from
-//! `components/moderation-domain/e2e-verdict.sh`.
+//! The `moderation:queue` verdict gate, ported from `components/moderation-domain/e2e-verdict.sh`.
 //!
-//! The interesting assertion is the ORDER: a deny rule that matched wins whatever the
-//! model said, and with the policy silent the model's label decides exactly. Both
-//! halves need a model — the second maps `allow|flag|block` onto `allowed|flagged|
-//! blocked`, so a canned answer would make the mapping untested.
+//! The interesting assertion is the ORDER: a matching deny rule wins whatever the model said, and with
+//! the policy silent the model's label decides exactly. Both need a model (the second maps
+//! `allow|flag|block` onto `allowed|flagged|blocked`, so a canned answer would leave the mapping untested).
 //!
-//! Verified against `mlx-community/Qwen3.8-27B-4bit` on csatapaci through
-//! `tools/openai-shim.mjs`.
+//! Verified against `mlx-community/Qwen3.8-27B-4bit` on csatapaci through `tools/openai-shim.mjs`.
 
 mod gatelib;
 use gatelib::{field, Gate, Shim};
@@ -48,7 +45,6 @@ fn a_matching_rule_wins_and_a_silent_policy_leaves_it_to_the_model() {
 
     let review = |id: &str| gate.json("POST", &format!("/api/items/{id}/review"), Some(&t), None);
 
-    // --- the rule fires, and it wins ------------------------------------------------
     let (_, raw) = review(&linked);
     assert!(
         !raw.trim().is_empty(),
@@ -88,7 +84,6 @@ fn a_matching_rule_wins_and_a_silent_policy_leaves_it_to_the_model() {
     assert_eq!(s["state"], "blocked", "the item's state must become the decision's final: {s}");
     assert_eq!(s["decision"]["policy_rule"], "no-links", "the stored decision is incomplete: {s}");
 
-    // --- nothing matches, and the model decides -------------------------------------
     let (_, raw) = review(&clean);
     let d = parse(&raw);
     assert!(
@@ -107,7 +102,6 @@ fn a_matching_rule_wins_and_a_silent_policy_leaves_it_to_the_model() {
         d["final"]
     );
 
-    // --- deciding twice ---------------------------------------------------------------
     let (code, again) = review(&clean);
     assert_eq!(code, 409, "reviewing an already-decided item must be 409");
     let d = parse(&again);
@@ -121,11 +115,9 @@ fn a_matching_rule_wins_and_a_silent_policy_leaves_it_to_the_model() {
     let (c, _) = gate.json("POST", &format!("/api/items/{clean}/review"), None, None);
     assert_eq!(c, 401, "reviewing with no bearer must be 401");
 
-    // --- both decisions left the system --------------------------------------------
-    //
-    // Read off the bus through the router's fixture reader, because `/api/events`
-    // belongs to `queue` and is a stub while this part is judged. A decision only this
-    // component can see is not a decision anything downstream can act on.
+    // --- both decisions left the system ---
+    // Read off the bus through the router's fixture reader (`/api/events` belongs to `queue`, a stub
+    // while this part is judged): a decision only this component can see is not one anything can act on.
     let evs = parse(&gate.get("/test/events", None).1);
     let mut published: BTreeMap<String, String> = BTreeMap::new();
     for e in evs["events"].as_array().cloned().unwrap_or_default() {
@@ -148,28 +140,18 @@ fn a_matching_rule_wins_and_a_silent_policy_leaves_it_to_the_model() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// the composition — the gate no single part can pass
-// ---------------------------------------------------------------------------
+// the composition: the gate no single part can pass
 
-/// The whole moderation API: a rule written, an item submitted, a review decided,
-/// and the outcome readable on the bus and in the queue.
+/// The whole moderation API: a rule written, an item submitted, a review decided, and the outcome
+/// readable on the bus and in the queue. Ported from `components/moderation-domain/e2e.sh`. It lives
+/// beside the verdict gate because it needs a real model on the shim, and skips loudly without one.
 ///
-/// Ported from `components/moderation-domain/e2e.sh`. It lives beside the verdict
-/// gate rather than in `gate_moderation.rs` because it needs the same thing that one
-/// does — a real model on the shim — and `gate_moderation.rs` is explicitly the file
-/// for the two gates that need nothing. Skips loudly without a shim, which is why CI
-/// classifies it the same way it classified the shell version.
+/// Only the composition can prove: the CONTENT is benign, so a model left alone would allow it, but the
+/// rule denies it because of who wrote it. That gap is the join: three parts agreeing on the item's
+/// shape, the attribute names, and who has the last word.
 ///
-/// What only the composition can prove: the CONTENT here is benign, so a model left
-/// to itself would allow it. The rule denies it because of who wrote it. That gap is
-/// the join — three parts agreeing on the item's shape, on the attribute names, and
-/// on who has the last word. Each part's own gate can see its own half of that and
-/// none of them can see the disagreement.
-///
-/// `author` rather than `has_link` in the rule, deliberately: the fixture's own rule
-/// is about links, so a part that depends on the fixture instead of on what was just
-/// written through `/api/rules` fails here rather than passing by luck.
+/// `author` rather than `has_link` in the rule, deliberately: the fixture's own rule is about links, so
+/// a part depending on the fixture instead of what was just written through `/api/rules` fails here.
 #[test]
 fn the_whole_moderation_api_works() {
     let Some(shim) = Shim::probe("moderation/whole") else { return };
@@ -205,7 +187,6 @@ fn the_whole_moderation_api_works() {
         "POST /test/token returned no token — the scaffold is broken, not the parts"
     );
 
-    // --- a rule, written through the part that owns rules ------------------
     let rules = json!({"rules":[{
         "id":"deny-ada","action":"publish","effect":"deny","priority":1,
         "conditions":[{"left":"resource.author","op":"eq","right":"ada"}],
@@ -216,7 +197,6 @@ fn the_whole_moderation_api_works() {
         "the queue part did not accept a rule set ({got}), so precedence cannot be judged"
     );
 
-    // --- an item, submitted through the part that owns submission ----------
     let (_, submitted) = gate.post(
         "/api/items",
         Some(&t),
@@ -228,7 +208,6 @@ fn the_whole_moderation_api_works() {
         "the intake part did not accept an item, so nothing else can be judged: {submitted}"
     );
 
-    // --- reviewed through the part that owns review ------------------------
     let (_, body) = gate.post(&format!("/api/items/{id}/review"), Some(&t), json!({}));
     assert!(
         !body.trim().is_empty(),
@@ -258,7 +237,6 @@ fn the_whole_moderation_api_works() {
         "the model's own label must be recorded: {body}"
     );
 
-    // --- and the decision is readable through the part that owns the bus ---
     let (_, evs) = gate.get("/api/events", Some(&t));
     let events = parse(&evs)["events"].as_array().cloned().unwrap_or_default();
     let found = events

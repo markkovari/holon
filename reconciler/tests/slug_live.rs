@@ -1,10 +1,6 @@
-//! The `slug` capability as a LIVE component, verified over the lattice.
-//!
-//! Everything else about a capability has been a host test or a manifest string.
-//! This deploys the real `slug` component (composed behind an HTTP front) to a
-//! running fleet and CALLS it over NATS through the ingress — the behavior
-//! exercised in the running system, which is the only place "the capability
-//! works" is actually true.
+//! The `slug` capability as a LIVE component, verified over the lattice: the real `slug` (composed behind
+//! an HTTP front) is deployed to a running fleet and CALLED over NATS through the ingress, the only place
+//! "the capability works" is actually true.
 
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -12,22 +8,18 @@ use std::time::{Duration, Instant};
 use comp_reconciler::fleet::{repo_root, Fleet};
 use serde_json::{json, Value};
 
-/// Compose slug-probe + slug into one self-contained HTTP component and hand back
-/// the bytes. The probe imports slug:generate; wac plug satisfies it with slug,
-/// so the deployed artifact answers HTTP and does the real slugging internally.
+/// Compose slug-probe + slug into one self-contained HTTP component and hand back the bytes
+/// (`wac plug` satisfies the probe's `slug:generate` import with slug).
 fn composed_slug_probe() -> Vec<u8> {
     let comp = repo_root().join("components");
     let rel = comp.join("target/wasm32-wasip2/release");
-    // Build both. slug-probe is p3 and makes its own bindings at compile time;
-    // `slug` is p2, and CI generates its bindings before this runs.
+    // Build both. slug-probe is p3 and makes its own bindings; `slug` is p2 and CI generates its bindings first.
     let args =
         vec!["build", "--release", "--target", "wasm32-wasip2", "-p", "slug-probe", "-p", "slug"];
     let out = Command::new("cargo").current_dir(&comp).args(&args).output().expect("cargo");
     assert!(out.status.success(), "{args:?} failed:\n{}", String::from_utf8_lossy(&out.stderr));
-    // Composed by the library rather than by shelling out to `wac`: the plug list
-    // comes from what slug-probe actually imports, so this does not have to name
-    // `slug` and cannot drift from the component (ADR-0087). It also drops a
-    // requirement that the `wac` binary be on PATH to run the test suite.
+    // Composed by the library, not `wac`: the plug list comes from what slug-probe imports, so it cannot
+    // drift from the component (ADR-0087) and `wac` need not be on PATH.
     let catalog = comp_reconciler::plug::Catalog::scan(std::slice::from_ref(&rel));
     comp_reconciler::plug::compose("slug-probe", &catalog).expect("slug-probe composes")
 }
@@ -82,8 +74,7 @@ impl Api {
     }
 }
 
-/// Call the capability over the lattice: ingress HTTP -> NATS -> slug-probe ->
-/// (internal) slug -> back. Returns the slug it produced.
+/// Call the capability over the lattice: ingress HTTP -> NATS -> slug-probe -> (internal) slug. Returns the slug.
 fn slugify_over_lattice(fleet: &Fleet, text: &str) -> Option<String> {
     let http =
         reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().unwrap();
@@ -124,7 +115,6 @@ fn the_slug_capability_runs_and_behaves_over_the_lattice() {
     assert_eq!(code, 201, "deploy failed: {dep}");
     let id = dep["id"].as_str().unwrap().to_string();
 
-    // Save until the capability answers over the lattice.
     let deadline = Instant::now() + Duration::from_secs(180);
     let mut live = false;
     while Instant::now() < deadline {
@@ -137,7 +127,6 @@ fn the_slug_capability_runs_and_behaves_over_the_lattice() {
     }
     assert!(live, "the slug capability never answered over the lattice\n{}", fleet.node_log("n1"));
 
-    // The behavior, exercised in the running system over NATS.
     let cases: &[(&str, &str)] = &[
         ("Hello, World!", "hello-world"),
         ("Café Déjà Señor", "cafe-deja-senor"),

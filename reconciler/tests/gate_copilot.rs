@@ -1,14 +1,10 @@
-//! The `invoice:copilot` gate, ported from
-//! `components/invoice-copilot-domain/e2e-copilot.sh`.
+//! The `invoice:copilot` gate, ported from `components/invoice-copilot-domain/e2e-copilot.sh`.
 //!
-//! The division is the point and the model is not allowed to do it. `money::allocate`
-//! splits 100.00 three ways as 3334 + 3333 + 3333; a model asked to divide loses the
-//! cent. So the arithmetic is asserted exactly and the model is judged only on the
-//! half it should own — memos that are about the work rather than placeholders or a
-//! slice of the prose.
+//! The model is not allowed to do the division: `money::allocate` splits 100.00 three ways as
+//! 3334 + 3333 + 3333, and a model loses the cent. So arithmetic is asserted exactly and the model is
+//! judged only on memos that are about the work rather than placeholders or a slice of the prose.
 //!
-//! Verified against `mlx-community/Qwen3.8-27B-4bit` on csatapaci through
-//! `tools/openai-shim.mjs`.
+//! Verified against `mlx-community/Qwen3.8-27B-4bit` on csatapaci through `tools/openai-shim.mjs`.
 
 mod gatelib;
 use gatelib::{field, Gate, Shim};
@@ -57,7 +53,6 @@ fn a_suggestion_is_allocated_to_the_cent_and_described_by_the_model() {
     };
     let body = json!({"prose": PROSE, "total":"100.00", "shares":3});
 
-    // --- the refusals, none of which costs a model call ----------------------------
     let (c, _) = gate.post(&format!("/api/invoices/{draft}/lines/suggest"), None, body.clone());
     assert_eq!(c, 401, "suggesting with no bearer must be 401");
     let (c, _) = suggest("nope", body.clone());
@@ -80,7 +75,6 @@ fn a_suggestion_is_allocated_to_the_cent_and_described_by_the_model() {
         assert_eq!(c, 400, "{why}");
     }
 
-    // --- the split, to the cent ----------------------------------------------------
     let (_, s) = suggest(&draft, body);
     assert!(
         !s.trim().is_empty(),
@@ -164,24 +158,15 @@ fn a_suggestion_is_allocated_to_the_cent_and_described_by_the_model() {
     assert_eq!(units.iter().sum::<i64>(), 5000, "the new total must be the new amount: {units:?}");
 }
 
-// ---------------------------------------------------------------------------
-// the composition — the gate no single part can pass
-// ---------------------------------------------------------------------------
+// the composition: the gate no single part can pass
 
-/// The whole invoice API: an invoice, lines the model described and `money` split,
-/// and a balanced ledger entry posted exactly once.
+/// The whole invoice API: an invoice, lines the model described and `money` split, and a balanced ledger
+/// entry posted exactly once. Ported from `components/invoice-copilot-domain/e2e.sh`.
 ///
-/// Ported from `components/invoice-copilot-domain/e2e.sh`. It lives beside the
-/// copilot gate because it needs the same model on the shim.
-///
-/// The chain is one number: **10.00 into 3 is 3.34 + 3.33 + 3.33**. A part that
-/// divides by hand loses a cent here, and the ledger refuses the entry two steps
-/// later — so a rounding error in `copilot` surfaces as a balance failure in
-/// `posting`, and neither part's own gate can see the other end of that.
-///
-/// What else only the composition proves: `copilot` stores lines and `posting` reads
-/// them, so a `nothing_to_post` here means they disagree about where lines live, and
-/// nothing in either part would notice.
+/// The chain is one number: **10.00 into 3 is 3.34 + 3.33 + 3.33**. A part dividing by hand loses a cent
+/// and the ledger refuses the entry two steps later, so a rounding error in `copilot` surfaces as a
+/// balance failure in `posting`. A `nothing_to_post` means `copilot` and `posting` disagree about where
+/// lines live.
 #[test]
 fn the_whole_invoice_api_works() {
     let Some(shim) = Shim::probe("invoice/whole") else { return };
@@ -221,7 +206,6 @@ fn the_whole_invoice_api_works() {
         "POST /test/token returned no token — the scaffold is broken, not the parts"
     );
 
-    // --- an invoice, through the part that owns invoices -------------------
     let (_, created) =
         gate.post("/api/invoices", Some(&t), json!({"customer":"acme-gmbh","currency":"EUR"}));
     let id = field(&created, "id");
@@ -230,7 +214,6 @@ fn the_whole_invoice_api_works() {
         "the invoices part did not accept an invoice, so nothing else can be judged: {created}"
     );
 
-    // --- lines, through the part that talks to the model -------------------
     let (_, s) = gate.post(
         &format!("/api/invoices/{id}/lines/suggest"),
         Some(&t),
@@ -259,7 +242,6 @@ fn the_whole_invoice_api_works() {
     sorted.sort_by(|a, b| b.cmp(a));
     assert_eq!(sorted, vec![334, 333, 333], "expected [334, 333, 333]: {units:?}");
 
-    // --- posted, through the part that owns posting ------------------------
     let (_, p) = gate.with_headers(
         "POST",
         &format!("/api/invoices/{id}/post"),

@@ -1,20 +1,14 @@
 //! A search: generations of generations, each seeded from the last one's best.
 //!
-//! `generation.rs` proves one round works. This proves the thing a round cannot
-//! do — and it is constructed so that a single generation CANNOT succeed:
+//! `generation.rs` proves one round works; this is built so a single generation CANNOT succeed:
 //!
 //!   * `max_attempts` is 1, so no branch can repair itself
-//!   * the only scripted answer that satisfies the gate matches on `step_one`,
-//!     text that can be in a prompt only if the branch was seeded with a previous
-//!     generation's winner
+//!   * the only scripted answer satisfying the gate matches on `step_one`, text that can be in a prompt
+//!     only if the branch was seeded with a previous generation's winner
 //!
-//! So an accepted candidate here is proof that generation two built on generation
-//! one. Remove the seeding and the run falls off the script.
-//!
-//! The other half is the branch that reads NOTHING. Once a generation is seeded
-//! from the last winner, every branch that reads it inherits its mistakes; one
-//! branch per generation starts from the original tree, and this asserts it
-//! really did — by the content it produced, not by a flag.
+//! So an accepted candidate proves generation two built on generation one. The other half is the branch
+//! that reads NOTHING: seeded branches inherit the last winner's mistakes, so one branch per generation
+//! starts from the original tree, asserted by the content it produced, not a flag.
 
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -101,8 +95,7 @@ fn plan(text: &str) -> Value {
             { "path": "README", "content": "a project\n" },
             { "path": "src/lib.rs", "content": "pub fn nothing() {}\n" },
         ],
-        // ONE. A branch that could repair itself would make this a test of the
-        // driver's loop, which `driver.rs` already covers.
+                // ONE: a self-repairing branch would make this a test of the driver's loop (`driver.rs`).
         "max_attempts": 1,
         "seed": 0,
     })
@@ -144,7 +137,6 @@ fn a_second_generation_builds_on_the_first_and_one_branch_refuses_to() {
         }
     });
 
-    // --- THE SEARCH ----------------------------------------------------------
     let found = search(&url, host, &plan("grow it"), bounds, SEED, timeout);
     for (r, round) in found.rounds.iter().enumerate() {
         for e in &round.entries {
@@ -161,9 +153,8 @@ fn a_second_generation_builds_on_the_first_and_one_branch_refuses_to() {
     assert_eq!(found.stopped, SearchStop::Accepted, "the search found nothing: {found:?}");
     assert_eq!(found.rounds.len(), 2, "it should take exactly two generations: {found:?}");
 
-    // --- NO GENERATION COULD HAVE DONE IT ALONE ------------------------------
-    // With `max_attempts` at 1 and the only winning rule keyed on text that comes
-    // from a previous winner, this is the assertion that the SEARCH did the work.
+    // --- NO GENERATION COULD HAVE DONE IT ALONE ---
+    // With `max_attempts` at 1 and the winning rule keyed on a previous winner's text, the SEARCH did the work.
     assert!(
         found.rounds[0].entries.iter().all(|e| !e.accepted),
         "the first generation passed the gate, so this proves nothing about seeding: {found:?}"
@@ -176,10 +167,9 @@ fn a_second_generation_builds_on_the_first_and_one_branch_refuses_to() {
         "the winner did not build on the first generation: {body}"
     );
 
-    // --- THE BRANCH THAT READS NOTHING REALLY DID NOT READ -------------------
-    // Asserted by what it PRODUCED, not by the flag that was set on it. It is the
-    // only escape from a local optimum once every other branch inherits the last
-    // winner, and a flag nobody checks is not an escape.
+    // --- THE BRANCH THAT READS NOTHING REALLY DID NOT READ ---
+    // Asserted by what it PRODUCED, not the flag: it is the only escape from a local optimum once every
+    // other branch inherits the last winner.
     let blind = &found.rounds[1].entries[BRANCHES as usize - 1];
     assert!(
         !body_of(&blind.files).contains("step_one"),
@@ -190,15 +180,13 @@ fn a_second_generation_builds_on_the_first_and_one_branch_refuses_to() {
         "and the branch that DOES read the winner is the one that finished it: {found:?}"
     );
 
-    // --- WHAT THE WHOLE SEARCH COST -----------------------------------------
     let summed: u64 =
         found.rounds.iter().flat_map(|r| r.entries.iter()).map(|e| e.spent_tokens).sum();
     assert_eq!(found.spent_tokens, summed, "a search's cost is every branch of every round");
     assert!(summed > 0, "nothing was spent, so nothing was asked: {found:?}");
 
-    // --- THE BUDGET IS ACROSS THE SEARCH, NOT PER BRANCH ---------------------
-    // Four branches each inside their own budget can put a project far outside
-    // its own, which is why this bound exists separately from the driver's.
+    // --- THE BUDGET IS ACROSS THE SEARCH, NOT PER BRANCH ---
+    // Four branches inside their own budgets can put a project far outside its own, hence a separate bound.
     let first_round: u64 = found.rounds[0].entries.iter().map(|e| e.spent_tokens).sum();
     let broke = search(
         &url,
@@ -215,9 +203,9 @@ fn a_second_generation_builds_on_the_first_and_one_branch_refuses_to() {
         "a budget of one generation's worth must stop after one, having overshot by none: {broke:?}"
     );
 
-    // --- A SEARCH THAT IS NOT GOING ANYWHERE STOPS ---------------------------
-    // Every generation produces the same useless thing, so the best score never
-    // improves. Four rounds were allowed; two are spent.
+    // --- A SEARCH THAT IS NOT GOING ANYWHERE STOPS ---
+    // Every generation produces the same useless thing, so the best score never improves. Four rounds
+    // were allowed; two are spent.
     let circling =
         search(&url, host, &plan("go nowhere"), Bounds { patience: 1, ..bounds }, SEED, timeout);
     assert_eq!(circling.stopped, SearchStop::NoProgress, "{circling:?}");

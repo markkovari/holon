@@ -1,7 +1,6 @@
 //! The `checkin` gate: scanned once, refused twice with the machine's own state.
 //!
-//! Ported from `components/events-domain/e2e-checkin.sh`. Assertions and failure
-//! sentences unchanged — ADR-0088 makes a gate's output the next prompt.
+//! Ported from `components/events-domain/e2e-checkin.sh`; unchanged assertions and failure sentences (ADR-0088).
 
 mod gatelib;
 use gatelib::{assert_unauthenticated, field, requires_capability, Gate};
@@ -26,9 +25,8 @@ fn checkin_scanned_once_and_refused_twice() {
     let (organizer, attendee) = (tok("organizer"), tok("attendee"));
     let event_id = seed["event_id"].as_str().unwrap_or_default().to_string();
 
-    // A ticket to scan. `tickets` owns claiming and may still be a stub, so the
-    // fixture's event is used through the same route and the gate says so clearly
-    // rather than blaming this part for it.
+    // A ticket to scan. `tickets` owns claiming and may be a stub, so the fixture's event is used through
+    // the same route and the gate says so rather than blaming this part.
     let (_, t) = gate.post(&format!("/api/events/{event_id}/tickets"), Some(&attendee), json!({}));
     let (code, tid) = (field(&t, "code"), field(&t, "id"));
     assert!(
@@ -38,11 +36,9 @@ fn checkin_scanned_once_and_refused_twice() {
 
     assert_unauthenticated(&gate, "POST", "/api/checkin", Some(json!({"code": code})));
 
-    // --- an attendee may not scan ----------------------------------------------------
     let (c, _) = gate.post("/api/checkin", Some(&attendee), json!({"code": code}));
     assert_eq!(c, 403, "an attendee has no checkin:write");
 
-    // --- the organizer scans ----------------------------------------------------------
     let (_, r#in) = gate.post("/api/checkin", Some(&organizer), json!({"code": code}));
     for want in ["\"ticket_id\"", "\"event_id\"", "\"holder\"", "\"state\""] {
         assert!(r#in.contains(want), "the check-in reply is missing {want}: {}", r#in);
@@ -56,7 +52,6 @@ fn checkin_scanned_once_and_refused_twice() {
         "the ticket DOCUMENT still does not say checked-in — move both (see CONTRACT.md): {doc}"
     );
 
-    // --- twice is a 409 that names the state -------------------------------------------
     let (c, again) = gate.post("/api/checkin", Some(&organizer), json!({"code": code}));
     assert!(
         again.contains("already_checked_in"),
@@ -68,7 +63,6 @@ fn checkin_scanned_once_and_refused_twice() {
     );
     assert_eq!(c, 409, "a repeat scan is 409");
 
-    // --- an unknown code ----------------------------------------------------------------
     let (c, _) =
         gate.post("/api/checkin", Some(&organizer), json!({"code":"not-a-real-code-at-all"}));
     assert_eq!(c, 404, "an unknown code is 404 no_such_ticket, not 500 and not 200");

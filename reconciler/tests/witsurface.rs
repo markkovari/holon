@@ -1,33 +1,18 @@
 //! A version is a claim about a SHAPE, and this is what checks it.
 //!
-//! An interface id carries its version — `graph:fitness/evaluator@0.2.0` — and
-//! `wac plug` matches an import to an export on that whole string. So the version
-//! is the only thing standing between "these two components fit" and a failure
-//! that reads:
-//!
-//!     the socket component had no matching imports for the plugs that were provided
-//!
-//! which names neither the interface nor the reason. Measured against this
-//! repository's own components rather than assumed:
+//! An interface id carries its version (`graph:fitness/evaluator@0.2.0`) and `wac plug` matches an
+//! import to an export on that whole string, so the version is all that stands between "these fit"
+//! and `the socket component had no matching imports for the plugs that were provided`. Measured:
 //!
 //!   - adding a FUNCTION to an interface keeps a stale consumer pluggable;
 //!   - adding a case to a VARIANT does not;
 //!   - adding a field to a RECORD does not.
 //!
-//! So most interesting changes to a data-carrying interface are breaking, and the
-//! version has to move with them. `graph:fitness` shipped one merge where it did
-//! not, and nothing caught it — one version string meaning two different shapes.
+//! So most changes to a data-carrying interface are breaking and the version must move with them.
 //!
-//! ## What is snapshotted, and why from the artifact
-//!
-//! `wit/SURFACES.md` holds every package this repository defines, as
-//! `wasm-tools component wit` renders it out of the BUILT COMPONENT. That is the
-//! shape that actually shipped, it is canonical, and it carries no doc comments —
-//! so editing a comment does not churn the file and changing a type does.
-//!
-//! The file is committed because the DIFF is the review. A pull request that
-//! changes a shape shows the reader exactly what moved, next to the version that
-//! did or did not move with it.
+//! `wit/SURFACES.md` holds every package this repository defines, as `wasm-tools component wit`
+//! renders it from the BUILT COMPONENT: the shape that shipped, canonical, with no doc comments, so
+//! editing a comment does not churn it. It is committed because the DIFF is the review.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -35,8 +20,8 @@ use std::process::Command;
 
 use comp_reconciler::fleet::repo_root;
 
-/// Namespaces this repository does not define. `root` is the anonymous world every
-/// component carries; `wasi` is upstream's and moves on its own schedule.
+/// Namespaces this repository does not define. `root` is the anonymous world every component
+/// carries; `wasi` is upstream's.
 const FOREIGN: &[&str] = &["wasi", "root"];
 
 fn artifacts(root: &Path) -> Vec<PathBuf> {
@@ -52,20 +37,13 @@ fn artifacts(root: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// The INTERFACES in one component's rendered WIT, ours only, keyed by the id
-/// `wac plug` actually matches on: `ns:pkg/iface@version`.
+/// The INTERFACES in one component's rendered WIT, ours only, keyed by the id `wac plug` matches on:
+/// `ns:pkg/iface@version`.
 ///
-/// Interfaces rather than packages, because a component renders only the parts of a
-/// package it uses — `binder-domain` prints three interfaces of `auth:identity`,
-/// `auth-guard` prints five.
-///
-/// And only the interfaces a component EXPORTS are its shape. A consumer renders
-/// only the FUNCTIONS it imports: `arena-domain` prints `id:generate/generator` as
-/// one function, `nanoid`, while the provider prints five. That is not staleness,
-/// it is the component model's subtyping made visible — and it is exactly why
-/// adding a function to an interface keeps an old consumer pluggable. So the shape
-/// worth versioning is the PROVIDER's, and a consumer's is a requirement rather
-/// than a definition.
+/// Interfaces rather than packages, because a component renders only the parts of a package it uses.
+/// And only the interfaces a component EXPORTS are its shape: a consumer renders only the FUNCTIONS it
+/// imports (component-model subtyping, and why adding a function keeps an old consumer pluggable), so
+/// a consumer's is a requirement rather than a definition.
 fn interfaces_in(text: &str) -> BTreeMap<String, String> {
     let lines: Vec<&str> = text.lines().collect();
     let mut out = BTreeMap::new();
@@ -120,7 +98,7 @@ fn surfaces(root: &Path) -> Option<BTreeMap<String, String>> {
         return None;
     }
     for f in &files {
-        // What this component EXPORTS — the interfaces it is the definition of.
+        // What this component EXPORTS: the interfaces it is the definition of.
         let Ok(bytes) = std::fs::read(f) else { continue };
         let Ok(surface) = comp_reconciler::plug::surface(&bytes) else { continue };
         if surface.exports.is_empty() {
@@ -140,9 +118,8 @@ fn surfaces(root: &Path) -> Option<BTreeMap<String, String>> {
                 continue;
             }
             match all.get(&id) {
-                // Two artifacts rendering one INTERFACE differently means one of
-                // them is stale — built against a shape that no longer exists.
-                // That is this test's own subject, caught from the other side.
+                // Two artifacts rendering one INTERFACE differently means one is stale (built against
+                // a shape that no longer exists).
                 Some(seen) if *seen != body => disagreements.push(format!(
                     "  {id} differs between artifacts — one of them is stale ({})",
                     f.file_name().unwrap_or_default().to_string_lossy()
@@ -215,19 +192,12 @@ fn the_committed_surfaces_are_not_stale() {
     );
 }
 
-/// The rule the file exists for: a package's shape may not change under a version
-/// that already had one.
+/// The rule the file exists for: a package's shape may not change under a version that already had one.
 ///
-/// Compared against the snapshot at `HEAD`, so bumping the version passes — the new
-/// version simply is not in the old file — and changing a shape in place does not.
-/// Skipped outside a git checkout, and on the first commit that adds the file.
-/// `wit/SURFACES.md` as the base branch has it.
-///
-/// `origin/main` first, because that is what a pull request is measured against.
-/// A local `main` is a fallback for a checkout with no remote, and it is a weaker
-/// oracle — a stale local main compares against something old, which is wrong in
-/// the safe direction: it reports a change that was already reviewed rather than
-/// missing one that was not.
+/// Compared against `wit/SURFACES.md` as the base branch has it, so bumping the version passes (the
+/// new version is not in the old file) and changing a shape in place does not. Skipped outside a git
+/// checkout and on the first commit adding the file. `origin/main` first, because that is what a pull
+/// request is measured against; a stale local `main` errs in the safe direction.
 fn base_surfaces(root: &std::path::Path) -> Option<String> {
     for reference in ["origin/main:wit/SURFACES.md", "main:wit/SURFACES.md"] {
         let Ok(out) = Command::new("git").args(["show", reference]).current_dir(root).output()
@@ -239,9 +209,8 @@ fn base_surfaces(root: &std::path::Path) -> Option<String> {
             return Some(String::from_utf8_lossy(&out.stdout).into_owned());
         }
     }
-    // A shallow clone has no `origin/main` — `actions/checkout` fetches one ref by
-    // default. Loud, because a guard that quietly does not run is worse than one
-    // that fails: the CI step that fetches main is in ci.yml next to this note.
+    // A shallow clone has no `origin/main` (`actions/checkout` fetches one ref). Loud, because a guard
+    // that quietly does not run is worse than one that fails; the CI step that fetches main is in ci.yml.
     eprintln!(
         "SKIPPED: neither origin/main nor main has wit/SURFACES.md — \
          a shallow clone needs `git fetch --depth=1 origin main` first"
@@ -254,22 +223,11 @@ fn a_shape_may_not_change_without_its_version() {
     let root = repo_root();
     let Some(all) = surfaces(&root) else { return };
 
-    // Against the BASE BRANCH, not HEAD.
-    //
-    // `HEAD:wit/SURFACES.md` on a branch is a file you wrote yourself, and the
-    // other test in this file — `the_committed_surfaces_are_not_stale` — tells you
-    // to write it. So the workflow that satisfies one silenced the other:
-    //
-    //   1. add a case to a variant, leave the version alone   -> this test FAILS
-    //   2. regenerate the snapshot (WIT_SURFACES=write), commit (what the other demands)
-    //   3. this test PASSES, and a breaking change ships
-    //
-    // Measured, not reasoned about: done to `qr:encode` on a scratch branch, and
-    // it passed at step 3. Every version bump made while the oracle was HEAD is
-    // unverified for the same reason.
-    //
-    // The base branch is the shape that SHIPPED. A branch cannot rewrite it by
-    // regenerating a file, which is the whole property an oracle needs.
+    // Against the BASE BRANCH, not HEAD: `HEAD:wit/SURFACES.md` is a file you wrote yourself, and
+    // `the_committed_surfaces_are_not_stale` tells you to write it. So (1) add a variant case leaving
+    // the version alone -> this FAILS, (2) regenerate the snapshot (WIT_SURFACES=write) -> this PASSES
+    // and a breaking change ships (measured with `qr:encode`). The base branch is the shape that
+    // SHIPPED, and a branch cannot rewrite it by regenerating a file.
     let Some(base) = base_surfaces(&root) else { return };
     let out = base;
     let before = packages_in_markdown(&out);

@@ -1,14 +1,8 @@
 //! The four `clinic` gates, ported from `components/clinic-domain/e2e-*.sh`.
 //!
-//! One file rather than four: they share a fixture-free start and differ only in what
-//! they drive, and four integration binaries would each pay for their own host.
-//! Assertions and failure sentences are unchanged — ADR-0088 makes a gate's output the
-//! next prompt a repair reads.
-//!
-//! The CSV and ranking checks were `python3` heredocs; `csv` is not a dependency here,
-//! so the reader is fifteen lines and handles exactly what the contract describes — a
-//! quoted field containing a comma. It is written out rather than pulled in because a
-//! test that needs a CSV parser to state its claim is testing the parser.
+//! One file rather than four: they share a fixture-free start and four binaries would each pay for a
+//! host. Assertions and failure sentences are unchanged (ADR-0088). The CSV reader is written out
+//! because a test needing a CSV parser to state its claim is testing the parser.
 
 mod gatelib;
 use gatelib::{field, requires_capability, Gate};
@@ -69,8 +63,8 @@ fn owners_and_pets() {
 fn visits_and_the_rule_a_compiler_cannot_check() {
     let Some(gate) = start() else { return };
 
-    // `visits` cannot create a pet: pets belong to the other half, and this gate has
-    // to pass while `src/owners.rs` is still a stub. `POST /test/seed` is scaffold.
+    // `visits` cannot create a pet (pets belong to the other half), so this gate passes while
+    // `src/owners.rs` is a stub. `POST /test/seed` is scaffold.
     let seed = gate.seed();
     let pet = seed["pet_id"].as_str().unwrap_or_default().to_string();
     assert!(!pet.is_empty(), "the seed fixture gave no pet: {seed}");
@@ -173,8 +167,7 @@ fn staff_access_and_pet_search() {
     let (_, dogs) = gate.get("/api/pets/search?q=dog", Some(&token));
     assert!(dogs.contains("Biscuit"), "searching by species does not find the dog");
 
-    // Ranked, best first: the pet whose NAME is the query outranks one that merely
-    // shares a species with it.
+    // Ranked, best first: the pet whose NAME is the query outranks one that merely shares its species.
     let (_, order) = gate.get("/api/pets/search?q=Marbles%20cat", Some(&token));
     let first = serde_json::from_str::<Value>(&order)
         .ok()
@@ -184,9 +177,7 @@ fn staff_access_and_pet_search() {
     assert_eq!(first, "Marbles", "results are not ranked best-first: {order}");
 }
 
-/// A CSV reader that handles exactly what the contract describes: quoted fields, and a
-/// comma inside one. Written out rather than depending on a parser, because a test
-/// that needs a CSV library to state its claim is testing the library.
+/// A CSV reader handling exactly what the contract describes: quoted fields, and a comma inside one.
 fn rows(text: &str) -> Vec<Vec<String>> {
     let mut out = Vec::new();
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
@@ -220,9 +211,8 @@ fn reports_csv_and_summary() {
          for this part to USE, not to reimplement (see CONTRACT.md)",
     );
 
-    // Built through the OTHER halves' routes: a report over a fixture nobody booked
-    // would not be a report. The name is the point — a comma inside a field is what
-    // separates a CSV encoder from `join(",")`.
+    // Built through the OTHER halves' routes (a report over a fixture nobody booked is not a report).
+    // The name matters: a comma inside a field separates a CSV encoder from `join(",")`.
     let (_, o) =
         gate.post("/api/owners", None, json!({"name":"Dana Vance","email":"dana@example.test"}));
     let owner = field(&o, "id");
@@ -285,7 +275,7 @@ fn reports_csv_and_summary() {
     sorted.sort();
     assert_eq!(starts, sorted, "not sorted by start: {starts:?}");
 
-    // A day nobody booked is the header alone — not a 404, not an empty body.
+    // A day nobody booked is the header alone: not a 404, not an empty body.
     let (_, empty) = gate.get("/api/reports/visits.csv?day=2026-09-29", None);
     assert!(
         empty
@@ -309,34 +299,22 @@ fn reports_csv_and_summary() {
     assert_eq!(s["by_species"], json!({"dog": 2, "cat": 1}), "by_species: {sum}");
 }
 
-// ---------------------------------------------------------------------------
-// the composition — the gate no single part can pass
-// ---------------------------------------------------------------------------
+// the composition: the gate no single part can pass
 
-/// The whole clinic, driven the way CONTRACT.md describes it.
+/// The whole clinic, driven the way CONTRACT.md describes it. Ported from
+/// `components/clinic-domain/e2e.sh`.
 ///
-/// Ported from `components/clinic-domain/e2e.sh`, the fifth and last of this app's
-/// gates to move. The four part gates came over in #180-#189; the composition gates
-/// did not, and CI never ran them either — its loop globbed
-/// `components/*/e2e-*.sh`, with a hyphen, which matches the part gates and none of
-/// the `e2e.sh` files.
+/// THE JOIN: the four parts share one component and one store, so a report must see visits the visits
+/// half wrote and a search must find a pet the owners half created; no half's own gate proves that.
 ///
-/// This is THE JOIN, and it is what the gate is for: the four parts share one
-/// component and one store, so a report has to see visits the visits half wrote, and
-/// a search has to find a pet the owners half created. Each half's own gate can only
-/// prove its half; nothing but this proves they add up to a clinic.
-///
-/// Dates here are INPUT, not derived — the visits are booked AT `2026-09-01` and
-/// queried for that day, so the app stores what it was given and the gate is
-/// date-independent. That is the opposite of the trap `triage`'s composition gate
-/// fell into, where `reported_at` came from the store's own clock and a hardcoded day
-/// made the gate correct for exactly one day.
+/// Dates are INPUT, not derived (visits are booked AT `2026-09-01` and queried for that day), so the
+/// gate is date-independent, unlike `triage`'s composition gate, whose `reported_at` came from the
+/// store's clock.
 #[test]
 fn the_whole_clinic_works() {
     let Some(gate) = start() else { return };
     const DAY: &str = "2026-09-01";
 
-    // --- owners and pets ---------------------------------------------------
     let (_, o) = gate.post("/api/owners", None, json!({"name":"Ada","email":"ada@example.test"}));
     let owner = field(&o, "id");
     assert!(!owner.is_empty(), "POST /api/owners returned no id");
@@ -373,7 +351,6 @@ fn the_whole_clinic_works() {
     let (_, pets) = gate.get(&format!("/api/owners/{owner}/pets"), None);
     assert!(pets.contains(&pet), "the owner's pets do not list: {pets}");
 
-    // --- visits, and the rule a compiler cannot check ----------------------
     let visit = |vet: &str, at: &str, minutes: u32| json!({"pet_id": pet, "vet": vet, "start": format!("{DAY}T{at}"), "minutes": minutes});
     let (_, v) = gate.post("/api/visits", None, visit("vet-a", "09:00:00Z", 30));
     let v1 = field(&v, "id");
@@ -402,7 +379,6 @@ fn the_whole_clinic_works() {
     let (c, _) = gate.post("/api/visits", None, visit("vet-a", "09:00:00Z", 30));
     assert_eq!(c, 201, "a deleted visit must free its slot");
 
-    // --- staff access, and search behind it --------------------------------
     let (c, _) = gate.post(
         "/api/staff",
         None,
@@ -421,7 +397,6 @@ fn the_whole_clinic_works() {
     let (_, hits) = gate.get("/api/pets/search?q=Rex", Some(&token));
     assert!(hits.contains(&pet), "search does not find the pet the owners half created: {hits}");
 
-    // --- reports over what the visits half booked --------------------------
     let (_, csv) = gate.get(&format!("/api/reports/visits.csv?day={DAY}"), None);
     assert!(
         csv.lines().next().unwrap_or_default().starts_with("id,pet_id,pet_name,vet,start,minutes"),
@@ -432,8 +407,7 @@ fn the_whole_clinic_works() {
     let (_, sum) = gate.get(&format!("/api/reports/summary?day={DAY}"), None);
     assert!(sum.contains("\"by_species\""), "the summary has no by_species: {sum}");
     let s: Value = serde_json::from_str(&sum).unwrap_or(Value::Null);
-    // Three visits survive the day: two for vet-a (one rebooked after a delete) and
-    // one for vet-b.
+    // Three visits survive the day: two for vet-a (one rebooked after a delete) and one for vet-b.
     assert_eq!(s["visits"], 3, "the summary does not count what the visits half booked: {sum}");
     assert_eq!(
         s["by_vet"]["vet-b"], 1,

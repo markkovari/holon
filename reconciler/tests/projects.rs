@@ -1,30 +1,17 @@
 //! Projects and the goal queue, through the real control plane.
 //!
-//! The lifecycle is the whole feature, and a lifecycle is only real if the
-//! ILLEGAL moves are refused. A state field that anything may set to anything is
-//! a state field, not a state machine — so most of this test is about the
-//! transitions that must not happen: a goal reaching `done` without running, a
-//! dead-lettered goal being quietly resurrected, two people starting the same
-//! goal and both believing they own it.
-//!
-//! What is deliberately NOT here: a goal that actually does anything. Starting
-//! one records that it started; what a run *does* needs the agent and the gate,
-//! which do not exist yet (ADR-0082). Testing the queue is honest; pretending
-//! there is something behind it would not be.
+//! A lifecycle is only real if the ILLEGAL moves are refused, so most of this tests transitions that
+//! must not happen: a goal reaching `done` without running, a dead-lettered goal resurrected, two
+//! people starting the same goal. Not tested: what a run does (needs the agent and gate, ADR-0082).
 
 use std::time::Duration;
 
 use comp_reconciler::fleet::Fleet;
 use serde_json::{json, Value};
 
-/// Guards the window between setting the fleet's env-var config and the fleet
-/// having read it.
-///
-/// Those vars are PROCESS-global and tests in one binary run on parallel
-/// threads, so without this a test that sets `max-placement-lag` low leaks it
-/// into a fleet another test is starting at that moment — and the other test
-/// fails for a reason that is nowhere in its own source. That happened
-/// immediately: three tests passing alone and one failing when run together.
+/// Guards the window between setting the fleet's env-var config and the fleet reading it. Those vars
+/// are PROCESS-global and tests run on parallel threads, so a low `max-placement-lag` would leak
+/// into another test's fleet.
 static FLEET_CONFIG: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Start a fleet with extra platform config, without leaking it to anyone else.
@@ -104,8 +91,7 @@ impl Api {
         }
     }
 
-    /// Post a fleet status as the reconciler does, so admission can be tested
-    /// against a number instead of against the weather.
+    /// Post a fleet status as the reconciler does, so admission is tested against a number.
     fn status(&self, body: Value) -> u16 {
         self.http
             .post(format!("{}/api/internal/status", self.base))
@@ -123,7 +109,6 @@ impl Api {
         v["id"].as_str().unwrap().to_string()
     }
 
-    /// A goal that is a part of another one.
     fn part(&self, project: &str, title: &str, parent: &str) -> (u16, Value) {
         self.post(
             &format!("/api/projects/{project}/goals"),
@@ -149,14 +134,12 @@ fn a_queue_that_only_a_person_can_start_and_that_refuses_illegal_moves() {
     let fleet = Fleet::start_with_platform("projects", 1);
     let api = Api::new(fleet.platform_url());
 
-    // --- a project owns one repo --------------------------------------------
     let (code, p) = api.post("/api/projects", json!({ "name": "widgets", "repo": "acme/widgets" }));
     assert_eq!(code, 201, "creating a project failed: {p}");
     assert_eq!(p["base"], json!("main"), "the base should default: {p}");
 
-    // A name that would not survive being part of a store or branch name, and a
-    // repo that is not `owner/name`, are refused HERE — where the message can say
-    // so — rather than at the first forge call, which answers 404.
+    // A name unfit for a store or branch name, and a repo that is not `owner/name`, are refused HERE
+    // rather than at the first forge call, which answers 404.
     for bad in [
         json!({ "name": "Widgets", "repo": "acme/widgets" }),
         json!({ "name": "-lead", "repo": "acme/widgets" }),
@@ -169,7 +152,6 @@ fn a_queue_that_only_a_person_can_start_and_that_refuses_illegal_moves() {
     let (code, v) = api.post("/api/projects", json!({ "name": "widgets", "repo": "acme/other" }));
     assert_eq!(code, 409, "a duplicate project name should conflict: {v}");
 
-    // --- the queue ----------------------------------------------------------
     let cache = api.goal("widgets", "add a cache");
     let rename = api.goal("widgets", "rename the thing");
     let doomed = api.goal("widgets", "something impossible");
@@ -181,8 +163,7 @@ fn a_queue_that_only_a_person_can_start_and_that_refuses_illegal_moves() {
         "everything starts queued and STAYS there — nothing drains this: {v}"
     );
 
-    // The queue does not move on its own. Waiting proves it: a loop that drained
-    // would have taken something by now, and this design deliberately has none.
+    // The queue does not move on its own; waiting proves it.
     std::thread::sleep(Duration::from_secs(6));
     assert_eq!(
         api.state_of("widgets", &cache),
@@ -190,30 +171,25 @@ fn a_queue_that_only_a_person_can_start_and_that_refuses_illegal_moves() {
         "something started a goal without being asked — a human starts every goal"
     );
 
-    // --- the one transition a person makes ----------------------------------
     let (code, v) = api.post(&format!("/api/goals/{cache}/start"), json!({}));
     assert_eq!(code, 200, "starting failed: {v}");
     assert_eq!(v["from"], json!("queued"));
     assert_eq!(api.state_of("widgets", &cache), "running");
 
-    // --- the illegal moves, which are the point -----------------------------
     // Straight to done without ever having been reviewed.
     let (code, v) = api.post(&format!("/api/goals/{cache}/done"), json!({}));
     assert_eq!(code, 409, "a running goal must not jump to done: {v}");
 
-    // Started twice. With one run per project this is the case the whole design
-    // exists to prevent, and the record's revision is what prevents it.
+    // Started twice: the case the design exists to prevent, and the record's revision prevents it.
     let (code, v) = api.post(&format!("/api/goals/{cache}/start"), json!({}));
     assert_eq!(code, 409, "a goal already running must not start again: {v}");
 
-    // The legal path through review.
     let (code, v) = api.post(&format!("/api/goals/{cache}/review"), json!({}));
     assert_eq!(code, 200, "running -> awaiting-human should be legal: {v}");
     let (code, v) = api.post(&format!("/api/goals/{cache}/done"), json!({}));
     assert_eq!(code, 200, "awaiting-human -> done should be legal: {v}");
     assert_eq!(api.state_of("widgets", &cache), "done");
 
-    // --- the dead-letter queue is terminal ----------------------------------
     let (code, _) = api.post(&format!("/api/goals/{doomed}/start"), json!({}));
     assert_eq!(code, 200);
     let (code, v) = api.post(
@@ -230,19 +206,16 @@ fn a_queue_that_only_a_person_can_start_and_that_refuses_illegal_moves() {
         "a dead letter with no reason is one nobody can act on: {dead}"
     );
 
-    // Nothing leaves `failed`. A retry is a NEW goal, so what was tried stays
-    // visible — resurrecting this one would erase the history of the attempt.
+    // Nothing leaves `failed`. A retry is a NEW goal, so resurrecting this one would erase history.
     for to in ["start", "review", "done"] {
         let (code, v) = api.post(&format!("/api/goals/{doomed}/{to}"), json!({}));
         assert_eq!(code, 409, "a dead-lettered goal must not be resurrected via {to}: {v}");
     }
 
-    // --- abandoning something never started ---------------------------------
     let (code, v) = api.delete(&format!("/api/goals/{rename}"));
     assert_eq!(code, 200, "abandoning a queued goal should work: {v}");
     assert_eq!(api.state_of("widgets", &rename), "abandoned");
 
-    // --- what the listing tells a person ------------------------------------
     let (_, v) = api.get("/api/projects");
     let widgets = v["projects"]
         .as_array()
@@ -255,20 +228,15 @@ fn a_queue_that_only_a_person_can_start_and_that_refuses_illegal_moves() {
     assert_eq!(widgets["failed"], json!(1), "one dead letter: {widgets}");
     assert_eq!(widgets["repo"], json!("acme/widgets"));
 
-    // A goal for a project that does not exist is a 404, not a goal filed under a
-    // typo that nobody will ever look at.
+    // A goal for a project that does not exist is a 404, not a goal filed under a typo.
     let (code, v) = api.post("/api/projects/nosuch/goals", json!({ "title": "x" }));
     assert_eq!(code, 404, "a goal needs a project that exists: {v}");
 
     println!("    a queue nothing drains, and six illegal transitions refused");
 }
 
-/// A review can name the pull request it is waiting on.
-///
-/// Without this, `awaiting-human` records only that SOMETHING is waiting for a
-/// person — not which pull request. A human reading the worklist has to go
-/// find it by guessing a branch name, and nothing can later watch that PR's
-/// own status to close the loop automatically.
+/// A review can name the pull request it is waiting on, so a human does not guess a branch name and
+/// something can later watch that PR.
 #[test]
 fn a_review_can_name_the_pull_request_it_is_waiting_on() {
     let fleet = Fleet::start_with_platform("projects-pr", 1);
@@ -292,8 +260,7 @@ fn a_review_can_name_the_pull_request_it_is_waiting_on() {
         "the pull request should be recorded on the goal: {v}"
     );
 
-    // An older caller, or one with nothing to name, still transitions cleanly
-    // — the field is additive, never required.
+    // A caller with nothing to name still transitions cleanly: the field is additive.
     let plain = api.goal("widgets", "rename the thing");
     api.post(&format!("/api/goals/{plain}/start"), json!({}));
     let (code, v) = api.post(&format!("/api/goals/{plain}/review"), json!({}));
@@ -305,14 +272,9 @@ fn a_review_can_name_the_pull_request_it_is_waiting_on() {
     println!("    a review names its pull request, and stays optional");
 }
 
-/// The event log is a fast, lossy-hint path over the same transitions —
-/// never a second place the truth lives.
-///
-/// Every transition already writes the goal record; this proves it ALSO
-/// shows up on the project's event topic, in order, and that acking moves a
-/// consumer group's offset so it does not see the same events twice — while
-/// a caller that never polls at all still gets the right state from
-/// `goals_list`, unaffected by whether anyone was watching the bus.
+/// The event log is a fast, lossy-hint path over the same transitions, never a second place the
+/// truth lives. It shows up on the project's event topic in order, acking moves a consumer group's
+/// offset, and `goals_list` is unaffected by whether anyone was watching.
 #[test]
 fn goal_transitions_appear_on_the_event_log_and_acking_advances_the_offset() {
     let fleet = Fleet::start_with_platform("projects-events", 1);
@@ -354,8 +316,7 @@ fn goal_transitions_appear_on_the_event_log_and_acking_advances_the_offset() {
         "the event should name the goal it happened to: {v}"
     );
 
-    // Ack everything, then poll again with the SAME group: nothing comes
-    // back, because acking is what stops a consumer re-reading history.
+    // Ack everything, then poll with the SAME group: nothing comes back.
     let ids: Vec<String> =
         events.iter().map(|e| e["id"].as_str().unwrap_or_default().to_string()).collect();
     let (code, v) =
@@ -366,8 +327,7 @@ fn goal_transitions_appear_on_the_event_log_and_acking_advances_the_offset() {
     let (_, v) = api.get("/api/projects/widgets/events?group=watcher");
     assert_eq!(v["count"], json!(0), "an acked group should see nothing new: {v}");
 
-    // A DIFFERENT group starting fresh still sees the whole history — groups
-    // do not steal each other's events, same as `event:bus`'s own contract.
+    // A DIFFERENT group starting fresh still sees the whole history, as in `event:bus`'s contract.
     let (_, v) = api.get("/api/projects/widgets/events?group=late-watcher");
     assert_eq!(v["count"], json!(3), "a new group should see the full backlog: {v}");
 
@@ -376,18 +336,9 @@ fn goal_transitions_appear_on_the_event_log_and_acking_advances_the_offset() {
 
 /// The reconciler actually SENDS the numbers admission reads.
 ///
-/// Every other admission test posts to `/api/internal/status` itself, with a body
-/// it wrote — which proves the platform's half and says nothing about the writer's.
-/// It said nothing for a long time: `report()` computed `lag` and `nodes`, took
-/// them as arguments, and posted a body containing neither. `fleet_lag()` therefore
-/// read a lag that was permanently 0 and a node count that permanently defaulted to
-/// 1, so the per-node limit was never per-node and the lag half of admission never
-/// fired. rustc had been calling those arguments unused the whole time.
-///
-/// Asserted against the SOURCES rather than by running a fleet, for the same reason
-/// `capgraph_store.rs` checks its coordinates that way: this is a disagreement
-/// between two files, and it survived precisely because every test that could see
-/// it supplied the body itself.
+/// Other admission tests post their own body, which says nothing about the writer: `report()`
+/// once took `lag` and `nodes` and posted neither, so `fleet_lag()` read 0 and admission never
+/// fired. Asserted against the SOURCES because it is a disagreement between two files.
 #[test]
 fn the_reconciler_reports_the_numbers_admission_reads() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
@@ -423,19 +374,9 @@ fn the_reconciler_reports_the_numbers_admission_reads() {
 
 /// The fleet refuses work it could not possibly place.
 ///
-/// A stress run grew 3906 environments and watched the platform accept 3125 of
-/// them in 1.4 seconds while nothing was being placed — every one recorded, every
-/// one reported to the caller as created, none ever started. Accepting work that
-/// cannot be done is worse than refusing it: a refusal is actionable and a
-/// phantom app is not.
-///
-/// The LAG is driven through the internal endpoint the reconciler posts to,
-/// rather than by growing a real backlog. That is deliberate. The first version
-/// of this test set the limit to 1 and waited for a fleet with nothing deployed
-/// to fall behind — which it never did, correctly, because a fleet with no
-/// desired state has no lag. It waited two minutes and proved nothing. Driving
-/// the contract directly tests the thing that failed in the stress run:
-/// admission, given a number.
+/// A stress run was accepted 3125 of 3906 environments while nothing was being placed; accepting
+/// work that cannot be done is worse than refusing it. The LAG is driven through the internal
+/// endpoint the reconciler posts to, since a fleet with no desired state has no lag to wait for.
 #[test]
 fn the_platform_refuses_work_the_fleet_cannot_place() {
     let fleet = fleet_with("admission", &[("COMP_MAX_PLACEMENT_LAG", "10")]);
@@ -444,13 +385,11 @@ fn the_platform_refuses_work_the_fleet_cannot_place() {
     let (code, p) = api.post("/api/projects", json!({ "name": "load", "repo": "acme/load" }));
     assert_eq!(code, 201, "creating a project failed: {p}");
 
-    // Caught up: a spawn gets as far as the app not existing, which is the 404
-    // path and proves admission did NOT refuse it.
+    // Caught up: a spawn reaches the 404 path, proving admission did NOT refuse it.
     assert_eq!(api.status(json!({ "lag": 0, "desired": 0, "placed": 0 })), 200);
     let (code, body) = api.post("/api/environments", json!({ "app": "anything", "env": "x" }));
     assert_eq!(code, 404, "a caught-up fleet must admit the request: {body}");
 
-    // Behind: refused before anything is written.
     assert_eq!(api.status(json!({ "lag": 5000, "desired": 5000, "placed": 0 })), 200);
     let (code, body) = api.post("/api/environments", json!({ "app": "anything", "env": "x" }));
     assert_eq!(
@@ -465,19 +404,14 @@ fn the_platform_refuses_work_the_fleet_cannot_place() {
          on it: {body}"
     );
 
-    // And it lets go again once the fleet catches up, rather than latching.
+    // And it lets go once the fleet catches up, rather than latching.
     assert_eq!(api.status(json!({ "lag": 1, "desired": 5000, "placed": 4999 })), 200);
     let (code, body) = api.post("/api/environments", json!({ "app": "anything", "env": "x" }));
     assert_eq!(code, 404, "a caught-up fleet must be admitted again: {body}");
 
-    // --- a BURST cannot outrun the report -------------------------------------
-    //
-    // Admission is only as fresh as the last report, so without counting what has
-    // been let through since, a burst faster than the reporting interval sails
-    // straight past the limit. That is not hypothetical: a stress run fired 625
-    // spawns in 0.2 seconds against a limit of 200 and every single one was
-    // admitted, because the newest number the platform had was seconds old and
-    // said the fleet was nearly caught up.
+    // --- a BURST cannot outrun the report ---
+    // Admission is only as fresh as the last report: a stress run fired 625 spawns in 0.2 s against a
+    // limit of 200 and all were admitted, so what has been let through since is counted.
     assert_eq!(api.status(json!({ "lag": 0, "desired": 0, "placed": 0 })), 200);
     let mut admitted = 0;
     let mut refused_at = None;
@@ -506,14 +440,9 @@ fn the_platform_refuses_work_the_fleet_cannot_place() {
     );
     println!("    a burst was cut off after {admitted} against a limit of 10");
 
-    // --- the limit scales with the fleet --------------------------------------
-    //
-    // A flat number is wrong everywhere except where it was measured: the same
-    // backlog that is reasonable across ten nodes is absurd on one. So the limit
-    // is per-node, and a bigger fleet is allowed to be further behind.
-    //
-    // This fleet's platform is configured with the flat override, so the scaling
-    // is checked on a second one.
+    // --- the limit scales with the fleet ---
+    // A flat number is wrong everywhere but where it was measured, so the limit is per-node. This
+    // platform has the flat override, so scaling is checked on a second one.
     {
         let big = fleet_with("scaling", &[("COMP_MAX_PLACEMENT_LAG_PER_NODE", "5")]);
         let api = Api::new(big.platform_url());
@@ -536,23 +465,17 @@ fn the_platform_refuses_work_the_fleet_cannot_place() {
         println!("    the limit scales: 8 behind refused on 1 node, admitted on 4");
     }
 
-    // --- and the REAL reconciler reports it, not just this test ---------------
-    //
-    // The endpoint did not exist until now and the reconciler posted into a 404
-    // with the result discarded, so `unschedulable` and `at_ceiling` had been
-    // reported into the void since they were written. A test that only drives the
-    // contract by hand would not have noticed that, and would not notice it
-    // breaking again.
+    // --- and the REAL reconciler reports it ---
+    // The endpoint once did not exist and the reconciler posted into a 404 unnoticed, so
+    // `unschedulable` and `at_ceiling` were reported into the void.
     let deadline = std::time::Instant::now() + Duration::from_secs(90);
     let mut reported = false;
     while std::time::Instant::now() < deadline {
-        // A report from the loop overwrites the one this test posted; `desired`
-        // is the field only the reconciler sets from real manifests.
+        // A report from the loop overwrites the one this test posted; `desired` is only set by the reconciler.
         if !fleet.reconciler_log().contains("could not report status")
             && !fleet.reconciler_log().contains("refused the status report")
         {
-            // Nothing refused it. Confirm something actually arrived by watching
-            // the lag move back to what the real fleet says.
+            // Nothing refused it; confirm something arrived by watching the lag move to the real fleet's.
             let (code, _) = api.post("/api/environments", json!({ "app": "anything", "env": "y" }));
             if code == 404 {
                 reported = true;
@@ -577,17 +500,9 @@ fn the_platform_refuses_work_the_fleet_cannot_place() {
     println!("    refused at lag 5000, admitted at lag 1, and the loop reports its own");
 }
 
-/// A stale fleet report fails CLOSED.
-///
-/// If the reconciler has stopped, accepting more work is pointless — nothing will
-/// place it — and failing open would mean unbounded acceptance at exactly the
-/// moment nothing is being done. That reasoning was written down when admission
-/// was built and nothing checked it, which by this repo's own rule (ADR-0081)
-/// makes it documentation.
-///
-/// `status-max-age` is set below the reconcile interval, so the report spends
-/// most of each cycle stale and the refusal can be observed without stopping
-/// anything.
+/// A stale fleet report fails CLOSED: with the reconciler stopped, nothing will place new work, and
+/// failing open would accept unboundedly (ADR-0081). `status-max-age` is set below the reconcile
+/// interval so the refusal can be observed without stopping anything.
 #[test]
 fn a_stale_fleet_report_stops_new_work() {
     let fleet =
@@ -599,8 +514,7 @@ fn a_stale_fleet_report_stops_new_work() {
     let (code, body) = api.post("/api/environments", json!({ "app": "anything", "env": "x" }));
     assert_eq!(code, 404, "a fresh report must be admitted: {body}");
 
-    // Let it go stale. The reconciler refreshes every few seconds, so this polls
-    // for the window rather than assuming one.
+    // Let it go stale; poll for the window since the reconciler refreshes every few seconds.
     let deadline = std::time::Instant::now() + Duration::from_secs(60);
     let mut refused = Value::Null;
     let mut saw = false;
@@ -630,16 +544,9 @@ fn a_stale_fleet_report_stops_new_work() {
 
 /// A sub-goal is an ordinary goal with a parent, and the queue keeps that honest.
 ///
-/// The pool holds the same relationship as a `decomposes_into` edge keyed by goal
-/// TEXT, and it answers a different question: the pool says what has been learned,
-/// the queue says what is still to do. This is the second half — the half that
-/// makes a decomposition something a person can come back to next week rather
-/// than something that lived for the length of one run.
-///
-/// What is asserted here is mostly the REFUSALS, because those are what stop a
-/// worklist becoming unreadable: a part under a parent in another project, a
-/// chain that closes on itself or runs away, and a parent finished or thrown away
-/// out from under parts that are still live.
+/// The pool holds the same relationship as a `decomposes_into` edge keyed by goal TEXT (what has
+/// been learned); the queue is what is still to do. Mostly REFUSALS are asserted: a part under a
+/// parent in another project, a cycle or runaway chain, and a parent finished under live parts.
 #[test]
 fn a_sub_goal_is_a_goal_with_a_parent_and_the_queue_refuses_the_shapes_that_are_not() {
     let fleet = Fleet::start_with_platform("subgoals", 1);
@@ -651,16 +558,14 @@ fn a_sub_goal_is_a_goal_with_a_parent_and_the_queue_refuses_the_shapes_that_are_
 
     let parent = api.goal("widgets", "serve invoices over http");
 
-    // --- the ordinary case ---------------------------------------------------
     let (code, back) = api.part("widgets", "store invoices in postgres", &parent);
     assert_eq!(code, 201, "a part of a goal in the same project is ordinary: {back}");
     let (code, front) = api.part("widgets", "render the invoice list", &parent);
     assert_eq!(code, 201, "{front}");
     let back = back["id"].as_str().unwrap().to_string();
 
-    // Listing: `?parent=<id>` is a goal's parts, `?parent=` is what is nobody's
-    // part, and no `parent` at all is everything — which is what every caller
-    // that predates this asks for and must keep getting.
+    // `?parent=<id>` is a goal's parts, `?parent=` is what is nobody's part, and no `parent` is
+    // everything (what callers that predate it must keep getting).
     let (_, parts) = api.get(&format!("/api/projects/widgets/goals?parent={parent}"));
     assert_eq!(parts["count"], json!(2), "both parts: {parts}");
     let (_, top) = api.get("/api/projects/widgets/goals?parent=");
@@ -668,7 +573,6 @@ fn a_sub_goal_is_a_goal_with_a_parent_and_the_queue_refuses_the_shapes_that_are_
     let (_, all) = api.get("/api/projects/widgets/goals");
     assert_eq!(all["count"], json!(3), "absent means every goal: {all}");
 
-    // --- the refusals --------------------------------------------------------
     let (code, v) = api.part("widgets", "an orphan", "goals:does-not-exist");
     assert_eq!(code, 422, "a parent that is not there must be refused: {v}");
 
@@ -680,8 +584,7 @@ fn a_sub_goal_is_a_goal_with_a_parent_and_the_queue_refuses_the_shapes_that_are_
         "the refusal has to name the project that owns the parent: {v}"
     );
 
-    // Depth. Eight levels is the bound; the ninth is refused, and the message has
-    // to say WHY rather than "invalid parent".
+    // Depth: eight levels is the bound; the ninth is refused and the message must say WHY.
     let mut chain = api.goal("widgets", "level 0");
     for i in 1..8 {
         let (code, v) = api.part("widgets", &format!("level {i}"), &chain);
@@ -695,7 +598,6 @@ fn a_sub_goal_is_a_goal_with_a_parent_and_the_queue_refuses_the_shapes_that_are_
         "and say it is depth, not a missing parent: {v}"
     );
 
-    // --- a parent may not be finished out from under live parts --------------
     api.post(&format!("/api/goals/{parent}/start"), json!({}));
     api.post(&format!("/api/goals/{parent}/review"), json!({}));
     let (code, v) = api.post(&format!("/api/goals/{parent}/done"), json!({}));
@@ -710,9 +612,8 @@ fn a_sub_goal_is_a_goal_with_a_parent_and_the_queue_refuses_the_shapes_that_are_
         "and name them, or the caller has to go looking: {detail}"
     );
 
-    // Finish the parts and the parent may finish. `failed` counts as finished
-    // here: it is terminal, and a parent held open forever by a part that can
-    // never move is worse than one that closes over a failure.
+    // Finish the parts and the parent may finish. `failed` counts as finished: a parent held open
+    // forever by an immovable part is worse.
     {
         let p = &back;
         api.post(&format!("/api/goals/{p}/start"), json!({}));

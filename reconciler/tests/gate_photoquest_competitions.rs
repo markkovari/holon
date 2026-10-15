@@ -25,8 +25,8 @@ use gatelib::{field, Gate};
 use photoquest_support::*;
 use serde_json::{json, Value};
 
-/// A photo taken through the whole pipeline to `evaluated`, with the callback
-/// body shaped by `tweak`. Returns the photo id.
+/// A photo taken through the whole pipeline to `evaluated`, with the callback body shaped by `tweak`.
+/// Returns the photo id.
 fn evaluated_photo(gate: &Gate, token: &str, tweak: impl Fn(&mut Value)) -> String {
     let (code, out) = gate.post(
         "/api/photos",
@@ -55,8 +55,8 @@ fn evaluated_photo(gate: &Gate, token: &str, tweak: impl Fn(&mut Value)) -> Stri
     id
 }
 
-/// Metrics that make auto-v1 easy to reason about: no face (so `subject_or_focus`
-/// is `focus_ratio`), a `grass` label, the given aesthetics and clipping.
+/// Metrics that make auto-v1 easy to reason about: no face (so `subject_or_focus` is `focus_ratio`), a
+/// `grass` label, the given aesthetics and clipping.
 fn metrics(
     sha: &str,
     focus: f64,
@@ -77,7 +77,6 @@ fn metrics(
     }
 }
 
-/// CONTRACT.md's auto-v1, for the metrics above.
 fn auto_v1(focus: f64, aesthetics: f64, clip_each: f64) -> f64 {
     let clip = ((2.0 * clip_each) / 5.0).min(1.0);
     0.5 * (focus / 8.0).clamp(0.0, 1.0) + 0.3 * aesthetics + 0.2 * (1.0 - clip)
@@ -106,7 +105,6 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
         return;
     };
 
-    // --- accounts ---------------------------------------------------------------
     let account = |who: &str| -> (String, String) {
         let email = if who == "root" {
             admin_email.clone()
@@ -131,7 +129,6 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
 
     let now = set_clock(&gate, 0);
 
-    // A photographer is not a curator.
     let (code, out) = gate.post("/api/curator/competitions", Some(&ada), json!({"title": "x"}));
     assert_eq!((code, error_of(&out)), (403, "forbidden_role".into()), "{out}");
 
@@ -143,7 +140,6 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
     );
     assert_eq!(code, 200, "admin grants curator (needs moderation.rs): {out}");
 
-    // --- the curator sets it up ---------------------------------------------------
     let good = json!({
         "title": "Grass, sharp", "brief": "Something green, in focus.",
         "requirements": {"subject": {"label": "grass", "min_confidence": 0.5},
@@ -179,7 +175,6 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
     let comp = field(&out, "id");
     assert_eq!(field(&out, "state"), "draft", "{out}");
 
-    // A draft is not public.
     let (code, _) = gate.get(&format!("/api/competitions/{comp}"), Some(&ada));
     assert_eq!(code, 404, "a draft competition is invisible to photographers");
     let (_, list) = gate.get("/api/competitions", Some(&ada));
@@ -208,7 +203,6 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
     let (code, out) = gate.get(&format!("/api/competitions/{comp}"), Some(&ada));
     assert_eq!((code, field(&out, "phase")), (200, "open".into()), "{out}");
 
-    // --- photos -------------------------------------------------------------------
     let sha = |c: &str| c.repeat(64);
     let a_photo = evaluated_photo(&gate, &ada, metrics(&sha("a"), 8.0, 0.9, 0.0, "grass"));
     let a_second = evaluated_photo(&gate, &ada, metrics(&sha("1"), 6.0, 0.5, 0.0, "grass"));
@@ -228,7 +222,6 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
         )
     };
 
-    // Not your photo.
     let (code, out) = enter(&bob, &a_photo);
     assert_eq!(code, 403, "entering someone else's photo: {out}");
 
@@ -242,7 +235,6 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
         "the verdict lists its checks: {out}"
     );
 
-    // Entries.
     let mut entry_of = std::collections::HashMap::new();
     for (who, token, photo) in [
         ("ada", &ada, &a_photo),
@@ -275,7 +267,6 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
         "same sha256 as ada's: {out}"
     );
 
-    // --- votes and judging -------------------------------------------------------------
     let vote = |token: &str, entry: &str, stars: Value| {
         gate.json(
             "PUT",
@@ -315,7 +306,6 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
     assert_eq!(judge(&cura, eb, json!(10)).0, 200);
     assert_eq!(judge(&cura, ea, json!(2)).0, 200);
 
-    // --- the leaderboard -----------------------------------------------------------------
     let board = || -> Vec<Value> {
         let (code, out) = gate.get(&format!("/api/competitions/{comp}/leaderboard"), Some(&dan));
         assert_eq!(code, 200, "leaderboard: {out}");
@@ -361,7 +351,6 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
     assert!(scores.windows(2).all(|w| w[0] >= w[1]), "highest first: {scores:?}");
     assert_eq!(rows[0]["entry"], *eb, "votes and judges carry bob to the top: {rows:?}");
 
-    // --- a hidden entry drops out ---------------------------------------------------------
     let (code, out) = gate.post(
         &format!("/api/admin/photos/{e_photo}/hide"),
         Some(&root),
@@ -379,23 +368,19 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
         assert_eq!(order, vec![eb.clone(), ea.clone(), ec.clone()], "bob, ada, cyd: {rows:?}");
     }
 
-    // Results are not out yet.
     let (code, out) = gate.get(&format!("/api/competitions/{comp}/results"), Some(&ada));
     assert_eq!((code, error_of(&out)), (409, "results_pending".into()), "{out}");
 
-    // --- past closes_at: no more entries ------------------------------------------------------
     set_clock(&gate, 1100);
     let (code, out) = enter(&dan, &d_late);
     assert_eq!((code, error_of(&out)), (409, "competition_closed".into()), "{out}");
     assert_eq!(vote(&dan, ec, json!(3)).0, 200, "voting stays open until voting_closes_at");
 
-    // --- past voting_closes_at: no more votes, judging still open -------------------------------
     set_clock(&gate, 2100);
     let (code, out) = vote(&dan, ea, json!(4));
     assert_eq!((code, error_of(&out)), (409, "voting_closed".into()), "{out}");
     assert_eq!(judge(&cura, ec, json!(4)).0, 200, "judging stays open until judging_closes_at");
 
-    // --- past judging_closes_at: frozen results, prizes once --------------------------------------
     set_clock(&gate, 3100);
     let (code, out) = judge(&cura, ec, json!(5));
     assert_eq!((code, error_of(&out)), (409, "judging_closed".into()), "{out}");
@@ -439,7 +424,6 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
     let (code, lb) = gate.get(&format!("/api/competitions/{comp}/leaderboard"), Some(&ada));
     assert_eq!(code, 200, "{lb}");
 
-    // --- prize XP is in the ledger exactly once ---------------------------------------------------
     let (code, prog) = gate.get("/api/me/progress", Some(&bob));
     if code == 200 {
         let p = parse(&prog);

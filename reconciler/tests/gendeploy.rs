@@ -1,21 +1,14 @@
 //! The loop, deployed into per-branch environments and driven through the platform.
 //!
-//! `generation.rs` fanned out to one app on one host. `envbranch.rs` proved a
-//! spawned environment has its own store and its own address. This joins them:
-//! the driver graph is DEPLOYED through the platform API — not put up from a
-//! fixture — an environment is spawned per branch, and the generation is driven
-//! across the environments' own derived hostnames.
+//! `generation.rs` fanned out to one app on one host and `envbranch.rs` proved an environment has its
+//! own store and address. This joins them: the driver graph is DEPLOYED through the platform API, an
+//! environment is spawned per branch, and the generation is driven across their derived hostnames. A
+//! branch is an environment, not a concurrent call to one shared app (the driver does not yet KEEP
+//! anything in that store).
 //!
-//! Each branch therefore runs in an app of its own, with a store of its own, at
-//! an address of its own. That the driver does not yet KEEP anything in that store
-//! is the next piece; what this proves is that the wiring is real — a branch is an
-//! environment now, not a concurrent call to one shared app.
-//!
-//! The gate is `mock-fitness`, scored from a script and reaching nothing. The real
-//! gate runs commands and needs egress the platform stamps only on a graph's front
-//! door (ADR-0008), so a linked gate buried in a deployed graph cannot dial out.
-//! The real gate is proven in `driver.rs`; this test is about the environments,
-//! and it keeps the whole graph egress-free on purpose.
+//! The gate is `mock-fitness`: the real gate needs egress the platform stamps only on a graph's front
+//! door (ADR-0008), so a linked gate in a deployed graph cannot dial out. The real gate is proven in
+//! `driver.rs`; the graph here stays egress-free on purpose.
 
 use std::time::{Duration, Instant};
 
@@ -97,8 +90,8 @@ fn wait_for(fleet: &Fleet, needle: &str, within: Duration) -> bool {
 
 const BRANCHES: usize = 2;
 
-/// The scripted model: branch seeds differ by `generation::STRIDE`, so a rule per
-/// seed makes the two branches disagree — one writes 42, one does not.
+/// The scripted model: branch seeds differ by `generation::STRIDE`, so a rule per seed makes the two
+/// branches disagree.
 const MOCK_SCRIPT: &str = r#"{"rules":[
   {"when":"make it 42","seed":700,"text":"=== FILE: src/lib.rs\npub fn answer() -> u32 { 42 }\n=== END"},
   {"when":"make it 42","seed":800,"text":"=== FILE: src/lib.rs\npub fn answer() -> u32 { 41 }\n=== END"}
@@ -110,7 +103,6 @@ fn a_generation_runs_one_branch_per_environment() {
     let fleet = Fleet::start_with_platform("deploy", 1);
     let api = Api::new(fleet.platform_url());
 
-    // --- upload the graph's parts, declaring each one's config keys ----------
     for (id, file, config) in [
         ("probe", "driver_probe.wasm", ""),
         ("driver", "agent_driver.wasm", ""),
@@ -121,8 +113,8 @@ fn a_generation_runs_one_branch_per_environment() {
         assert!(matches!(api.upload(id, file, config), 200 | 201), "upload {id} failed");
     }
 
-    // --- deploy it as a linked graph -----------------------------------------
-    // plug = provider, socket = consumer (reconciler's link table keys on socket).
+    // --- deploy it as a linked graph ---
+    // plug = provider, socket = consumer (the reconciler's link table keys on socket).
     let nodes = json!([
         { "id": "probe" },
         { "id": "driver" },
@@ -130,18 +122,13 @@ fn a_generation_runs_one_branch_per_environment() {
         { "id": "llm", "config": { "mock-model": "mock-agent", "mock-script": MOCK_SCRIPT } },
         { "id": "gate", "config": { "gate-script": "{\"be-42\":\"42\"}" } },
     ]);
-    // The versions here are the packages' own, and they have drifted once: the
-    // `graph:*` interfaces went 0.1.0 -> 0.2.0 in #158 and these edges did not
-    // follow, so every link silently failed to match. `save` then refused with
-    // `unsatisfied_imports` and NAMED the candidate for each gap — a member that
-    // exports something close but not the version asked for. Nothing caught it
-    // because no CI job runs this file. `llm:inference` really is still 0.1.0.
+    // The versions are the packages' own and have drifted once: `graph:*` went 0.1.0 -> 0.2.0 and these
+    // edges did not follow, so every link failed to match and `save` refused with `unsatisfied_imports`
+    // (no CI job runs this file). `llm:inference` really is still 0.1.0.
     //
-    // `graph:run/driver` does `use graph:agent/writer.{...}` and `use
-    // graph:fitness.{check}`, so a component that imports graph:run also imports
-    // those two as TYPE-transitive instance imports — the probe needs them
-    // satisfied even though it never calls them. Hence the probe edges for
-    // graph:agent and graph:fitness alongside the one it actually uses.
+    // `graph:run/driver` does `use graph:agent/writer.{...}` and `use graph:fitness.{check}`, so a
+    // component importing graph:run also imports those as TYPE-transitive instance imports; hence the
+    // probe edges for graph:agent and graph:fitness.
     let edges = json!([
         { "plug": "driver", "socket": "probe",  "iface": "graph:run/driver@0.2.0" },
         { "plug": "writer", "socket": "probe",  "iface": "graph:agent/writer@0.2.0" },
@@ -150,8 +137,7 @@ fn a_generation_runs_one_branch_per_environment() {
         { "plug": "gate",   "socket": "driver", "iface": "graph:fitness/evaluator@0.2.0" },
         { "plug": "llm",    "socket": "writer", "iface": "llm:inference/inference@0.1.0" },
     ]);
-    // Linked, not fused: the whole point is separate components the host links in
-    // process, and a graph of this shape does not fuse cleanly anyway.
+    // Linked, not fused: separate components the host links in process; this shape does not fuse cleanly.
     let (code, dep) = api.post(
         "/api/deployments",
         json!({ "name": "swarm", "strategy": "linked", "nodes": nodes, "edges": edges }),
@@ -176,7 +162,6 @@ fn a_generation_runs_one_branch_per_environment() {
         fleet.node_log("n1")
     );
 
-    // --- one environment per branch ------------------------------------------
     let names: Vec<String> = (0..BRANCHES).map(|i| format!("branch-{i}")).collect();
     for n in &names {
         let (code, spawned) = api.post("/api/environments", json!({ "app": "swarm", "env": n }));
@@ -190,8 +175,7 @@ fn a_generation_runs_one_branch_per_environment() {
         );
     }
 
-    // The branches' own derived hostnames (ADR-0083). Each is a strict suffix of
-    // the parent's, so it routes to that environment and no other.
+    // The branches' own derived hostnames (ADR-0083), each a strict suffix of the parent's.
     let hosts: Vec<String> = names.iter().map(|n| format!("{n}.{parent_host}")).collect();
     let strategies = on_hosts(&default_strategies(BRANCHES as u16), &hosts);
 
@@ -210,17 +194,15 @@ fn a_generation_runs_one_branch_per_environment() {
     let url = format!("http://127.0.0.1:{}/run", fleet.ingress_port);
     let timeout = Duration::from_secs(120);
 
-    // Every environment answering a real run on its own host, retried — not a
-    // readiness signal, which has gone green over a broken deployment here before.
-    // A one-branch fan-out pointed at the host IS the operation under test, so its
-    // own success is the readiness check (Fleet::until's rule).
+    // Every environment answering a real run on its own host, retried. Not a readiness signal (those
+    // have gone green over a broken deployment); a one-branch fan-out IS the operation under test
+    // (`Fleet::until`'s rule).
     for host in &hosts {
         let mut warm = strategies[0].clone();
         warm.host = host.clone();
         let deadline = Instant::now() + Duration::from_secs(150);
         let ok = loop {
-            // seed 700 is in the script; 999 would come back provider-down and no
-            // amount of waiting fixes an unscripted seed.
+            // seed 700 is in the script; 999 would come back provider-down.
             let r = fan_out_from(
                 &url,
                 "unused",
@@ -241,9 +223,8 @@ fn a_generation_runs_one_branch_per_environment() {
         assert!(ok, "environment at {host} never served a run:\n{}", fleet.node_log("n1"));
     }
 
-    // --- THE GENERATION, one branch per environment --------------------------
-    // base_seed 700 so branch 0 uses seed 700 (writes 42) and branch 1 uses
-    // 700 + STRIDE = 800 (writes 41). Each runs on its own environment host.
+    // --- THE GENERATION, one branch per environment ---
+    // base_seed 700: branch 0 uses seed 700 (writes 42), branch 1 uses 700 + STRIDE = 800 (writes 41).
     let entries = fan_out_from(&url, &parent_host, &base, &strategies, None, 700, timeout);
     for e in &entries {
         println!(
@@ -262,9 +243,8 @@ fn a_generation_runs_one_branch_per_environment() {
         "a branch never ran in its environment: {entries:?}"
     );
 
-    // The two branches disagree, which is the point of running more than one — and
-    // here they disagree BECAUSE they are separate environments running the same
-    // graph with different seeds, not one app answering twice.
+    // The two branches disagree BECAUSE they are separate environments running the same graph with
+    // different seeds, not one app answering twice.
     assert!(entries[0].accepted, "branch 0 was seeded to write 42 and pass: {entries:?}");
     assert!(!entries[1].accepted, "branch 1 was seeded to write 41 and fail: {entries:?}");
     assert_ne!(
@@ -272,8 +252,7 @@ fn a_generation_runs_one_branch_per_environment() {
         "the two environments produced the same candidate — they are one app wearing two names: {entries:?}"
     );
 
-    // Both environments really are placed and distinct in the fleet's own ledger,
-    // not merely answering — a shared app would show one instance.
+    // Both environments are placed and distinct in the fleet's own ledger (a shared app would show one instance).
     let ledger =
         std::fs::read_to_string(fleet.state_dir().join("n1/instances.json")).unwrap_or_default();
     for n in &names {

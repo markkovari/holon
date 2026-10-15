@@ -1,28 +1,19 @@
 //! A whole search tree, on three nodes, with a machine killed underneath it.
 //!
-//! `stress_env.rs` measured breadth and depth separately, on a healthy fleet.
-//! This is the shape a graph loop actually makes — a tree, both wide and deep at
-//! once — and it is run on hardware that fails partway through, because that is
-//! the only interesting question. A swarm that works while nothing goes wrong is
-//! a swarm that has not been tested.
+//! `stress_env.rs` measured breadth and depth separately on a healthy fleet; this is the shape a graph
+//! loop makes (wide and deep at once), on hardware that fails partway:
 //!
-//! What it does:
-//!
-//!   1. Grows a tree: `WIDTH` branches per level, `DEPTH` levels, every branch of
-//!      a generation spawned CONCURRENTLY.
-//!   2. Samples the whole fleet every second throughout, so the report shows the
-//!      shape of the ramp rather than one number at the end.
-//!   3. **Kills a node**, SIGKILL, mid-tree — no deregistration, no goodbye.
+//!   1. Grows a tree: `WIDTH` branches per level, `DEPTH` levels, each generation spawned CONCURRENTLY.
+//!   2. Samples the whole fleet every second, so the report shows the shape of the ramp.
+//!   3. **Kills a node**, SIGKILL, mid-tree: no deregistration.
 //!   4. Watches whether the lattice notices by itself and re-places the work.
 //!   5. Closes the root and checks the whole tree goes with it.
 //!
-//! It REPORTS rather than asserts most of what it measures. A throughput or a
-//! recovery time baked in here would be a fact about this laptop. What it does
-//! assert is what must hold however badly it goes: no two branches ever share a
-//! store, killing a machine never loses the tree entirely, and closing a branch
-//! closes its descendants.
+//! Most is REPORTED, not asserted (a threshold is a fact about this laptop). Asserted: no two branches
+//! ever share a store, killing a machine never loses the tree entirely, and closing a branch closes
+//! its descendants.
 //!
-//! Ten to twenty minutes. `#[ignore]`d, obviously.
+//! Ten to twenty minutes. `#[ignore]`d.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -33,12 +24,10 @@ use serde_json::{json, Value};
 mod harness;
 use harness::composed_gate;
 
-/// Branches per generation, and how many generations. The tree is `WIDTH^DEPTH`
-/// leaves, so this grows fast on purpose — the point is to find where it stops
-/// working, and "no ceiling found" is an invitation to turn it up.
+/// Branches per generation, and how many generations. The tree is `WIDTH^DEPTH` leaves, growing fast
+/// on purpose to find where it stops working.
 ///
-/// Overridable so the ceiling can be hunted without editing code:
-///   COMP_STRESS_WIDTH=5 COMP_STRESS_DEPTH=5 cargo test ... -- --ignored
+/// Overridable: COMP_STRESS_WIDTH=5 COMP_STRESS_DEPTH=5 cargo test ... -- --ignored
 fn width() -> usize {
     std::env::var("COMP_STRESS_WIDTH").ok().and_then(|v| v.parse().ok()).unwrap_or(4)
 }
@@ -46,8 +35,8 @@ fn width() -> usize {
 fn depth() -> usize {
     std::env::var("COMP_STRESS_DEPTH").ok().and_then(|v| v.parse().ok()).unwrap_or(4)
 }
-/// Nodes killed, and after which generation. Two, so the fleet has to survive a
-/// second failure while still carrying the first one's work.
+/// Nodes killed, and after which generation. Two, so the fleet survives a second failure while
+/// carrying the first one's work.
 const KILLS: &[(u16, usize)] = &[(2, 1), (3, 2)];
 
 struct Api {
@@ -117,7 +106,6 @@ impl Api {
             .as_u16()
     }
 
-    /// Spawn one branch. Returns the derived app name, or the refusal.
     fn spawn(&self, parent: &str, env: &str) -> Result<String, String> {
         let (code, body) = self.post("/api/environments", json!({ "app": parent, "env": env }));
         if code == 201 {
@@ -128,13 +116,8 @@ impl Api {
     }
 }
 
-/// What every LIVE node is running, per node.
-///
-/// A killed node's `instances.json` stays on disk — the process is gone, the file
-/// is not — so reading every ledger counts a dead node's last known state as
-/// running. The first version of this test did exactly that and reported a node
-/// holding eight apps immediately after it had been SIGKILLed. Dead nodes are
-/// therefore passed in and skipped, rather than the numbers being quietly wrong.
+/// What every LIVE node is running, per node. A killed node's `instances.json` stays on disk, so
+/// reading every ledger would count its last known state as running; dead nodes are passed in and skipped.
 fn per_node(fleet: &Fleet, dead: &[u16]) -> BTreeMap<String, Vec<String>> {
     let mut out = BTreeMap::new();
     for n in 1..=fleet.node_count() {
@@ -199,7 +182,6 @@ fn deploy_root(api: &Api, fleet: &Fleet, name: &str) -> String {
     panic!("the root never started:\n{}", fleet.reconciler_log());
 }
 
-/// One line of the timeline.
 struct Sample {
     at: f64,
     running: usize,
@@ -207,13 +189,8 @@ struct Sample {
     note: String,
 }
 
-/// The composed `gate-domain`, derived when nobody has run `cargo xtask compose gate`.
-///
-/// Reading the hand-composed path directly meant this suite failed with a bare
-/// `NotFound` in any checkout that had only run `cargo xtask build --force` — and, because cargo
-/// stops at the first failing test binary, each such suite hid the next one. This
-/// is the same rule `Fleet::start` follows: honour the hand-made artifact when it
-/// is there, derive it from gate-domain's own imports when it is not.
+/// The composed `gate-domain`, derived when nobody has run `cargo xtask compose gate`, as `Fleet::start`
+/// does (reading the hand-composed path directly failed with a bare `NotFound`).
 
 #[test]
 #[ignore = "10-20 minutes; run with --ignored --nocapture"]
@@ -236,16 +213,13 @@ fn a_search_tree_survives_a_machine_dying_under_it() {
     };
     note(&mut timeline, &fleet, &dead, "root running");
 
-    // --- grow the tree ------------------------------------------------------
     let mut generation = vec![root.clone()];
     let mut everything = vec![root.clone()];
 
     for level in 0..depth() {
         let gen_started = Instant::now();
-        // Every branch of a generation at once — a loop that let each settle
-        // would test nothing about contention, which is the whole point.
-        // Flattened first, so each thread borrows the shared `api` rather than the
-        // closure trying to move it once per parent.
+        // Every branch of a generation at once (settling each would test nothing about contention).
+        // Flattened first so each thread borrows the shared `api` rather than moving it per parent.
         let jobs: Vec<(String, usize)> = generation
             .iter()
             .flat_map(|parent| (0..width()).map(move |w| (parent.clone(), w)))
@@ -297,7 +271,6 @@ fn a_search_tree_survives_a_machine_dying_under_it() {
         everything.extend(next.iter().cloned());
         generation = next;
 
-        // --- kill a machine, mid-tree ---------------------------------------
         if let Some((victim, _)) = KILLS.iter().find(|(_, after)| *after == level) {
             let before = per_node(&fleet, &dead);
             let doomed = format!("n{victim}");
@@ -311,8 +284,7 @@ fn a_search_tree_survives_a_machine_dying_under_it() {
             );
             note(&mut timeline, &fleet, &dead, &format!("killed {doomed}, it held {held}"));
 
-            // Nothing told the lattice. Inventory has to expire on its own, the
-            // reconciler has to see a gap, and the work has to land elsewhere.
+            // Nothing told the lattice: inventory has to expire on its own and the work land elsewhere.
             let recover = Instant::now();
             let deadline = Instant::now() + Duration::from_secs(300);
             let mut recovered = false;
@@ -339,12 +311,10 @@ fn a_search_tree_survives_a_machine_dying_under_it() {
         }
     }
 
-    // --- the timeline -------------------------------------------------------
     println!("\n    time   running  per-node                       note");
     let mut last = String::new();
     for s in &timeline {
-        // Only print where something CHANGED, or the report is a wall of
-        // identical lines nobody reads.
+        // Only print where something CHANGED, or the report is a wall of identical lines.
         let shape = format!("{:?}", s.per_node);
         let line = format!("{}{}", s.running, shape);
         if line == last {
@@ -354,7 +324,6 @@ fn a_search_tree_survives_a_machine_dying_under_it() {
         println!("  {:6.1}s  {:>7}  {:<30} {}", s.at, s.running, shape, s.note);
     }
 
-    // --- what must hold however badly it went -------------------------------
     let mut names = everything.clone();
     names.sort();
     let before = names.len();
@@ -379,7 +348,6 @@ fn a_search_tree_survives_a_machine_dying_under_it() {
         survivors
     );
 
-    // --- and closing the root closes all of it ------------------------------
     let (code, body) = api.delete(&format!("/api/environments?app={root}&env=w0"));
     if code == 200 {
         let closed = body["closed"].as_array().map(|a| a.len()).unwrap_or(0);

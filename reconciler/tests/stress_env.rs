@@ -1,23 +1,15 @@
 //! Environments under load: how wide, how deep, and what breaks first.
 //!
-//! `environments.rs` proved ONE environment spins up and closes down. That is the
-//! existence proof. This is the other question, and it is the one a graph loop
-//! actually asks: a generation is eight or twenty branches at once, and a search
-//! is branches of branches. Neither had been run.
+//! `environments.rs` proved ONE environment spins up and closes down. A graph loop asks more: a
+//! generation is eight or twenty branches at once, and a search is branches of branches.
 //!
-//! "Theoretical" here means the inference is scripted with a **realistic delay**
-//! rather than real. A mock that answers in microseconds turns a load test into a
-//! measurement of the harness — real inference takes hundreds of milliseconds to
-//! seconds, and that latency is what decides how many branches are in flight, how
-//! long each environment is held open, and whether anything queues. Scripted
-//! delay gives the right shape for nothing.
+//! Inference is scripted with a **realistic delay**: a microsecond mock would measure the harness,
+//! while real latency decides how many branches are in flight and whether anything queues.
 //!
-//! These are EXPLORATORY. They report numbers rather than asserting a throughput,
-//! because a threshold baked in here would be a fact about this laptop. What they
-//! do assert is the thing that must hold at any scale: **no two environments ever
-//! share a store.**
+//! EXPLORATORY: numbers are reported, not asserted (a threshold is a fact about this laptop). What is
+//! asserted must hold at any scale: **no two environments ever share a store.**
 //!
-//! Run with `--ignored`; they are minutes long and not part of the ordinary suite.
+//! Run with `--ignored`; minutes long.
 
 use std::time::{Duration, Instant};
 
@@ -135,12 +127,9 @@ fn wait_for(fleet: &Fleet, needle: &str, within: Duration) -> bool {
     false
 }
 
-/// Every app the node currently holds, read from its ledger.
-///
-/// The ledger is a MAP keyed by instance id — `<tenant>/<app>/<component>` —
-/// not a list. Reading it as a list yields an empty answer, which is
-/// indistinguishable from "nothing is running" and would make every assertion
-/// here fail for the wrong reason. It did, once.
+/// Every app the node currently holds, read from its ledger. The ledger is a MAP keyed by instance id
+/// (`<tenant>/<app>/<component>`), not a list; reading it as a list yields an answer
+/// indistinguishable from "nothing is running".
 fn running_apps(fleet: &Fleet) -> Vec<String> {
     let path = fleet.state_dir().join("n1/instances.json");
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
@@ -157,16 +146,10 @@ fn running_apps(fleet: &Fleet) -> Vec<String> {
     out
 }
 
-// ---------------------------------------------------------------------------
-
-/// BREADTH — a generation of branches, all at once.
-/// The composed `gate-domain`, derived when nobody has run `cargo xtask compose gate`.
-///
-/// Reading the hand-composed path directly meant this suite failed with a bare
-/// `NotFound` in any checkout that had only run `cargo xtask build --force` — and, because cargo
-/// stops at the first failing test binary, each such suite hid the next one. This
-/// is the same rule `Fleet::start` follows: honour the hand-made artifact when it
-/// is there, derive it from gate-domain's own imports when it is not.
+/// BREADTH: a generation of branches, all at once.
+/// The composed `gate-domain`, derived when nobody has run `cargo xtask compose gate`, as
+/// `Fleet::start` does (reading the hand-composed path directly failed with a bare `NotFound`, and
+/// cargo stopping at the first failing binary hid the next suite).
 
 #[test]
 #[ignore = "minutes long; run with --ignored"]
@@ -177,9 +160,7 @@ fn a_generation_of_branches_spins_up_together() {
     let api = Api::new(fleet.platform_url());
     let parent = deploy_parent(&api, &fleet, "wide");
 
-    // Fired concurrently, the way a generation actually arrives — not in a loop
-    // that lets each one settle before the next, which would test nothing about
-    // contention.
+    // Fired concurrently, as a generation arrives; settling each first would test nothing about contention.
     let started = Instant::now();
     let results: Vec<(usize, u16, Value)> = std::thread::scope(|s| {
         let handles: Vec<_> = (0..WIDTH)
@@ -206,7 +187,6 @@ fn a_generation_of_branches_spins_up_together() {
         println!("      b{i} refused {code}: {body}");
     }
 
-    // Then wait for the loop to converge on all of them.
     let converge = Instant::now();
     let deadline = Instant::now() + Duration::from_secs(300);
     let mut up: Vec<String> = Vec::new();
@@ -225,16 +205,14 @@ fn a_generation_of_branches_spins_up_together() {
         converge.elapsed().as_secs_f64()
     );
 
-    // The assertion that must hold at ANY width: distinct environments, distinct
-    // apps. A duplicate here would mean two branches in one store.
+    // Must hold at ANY width: distinct environments, distinct apps (a duplicate is two branches in one store).
     let mut sorted = up.clone();
     sorted.sort();
     let before = sorted.len();
     sorted.dedup();
     assert_eq!(before, sorted.len(), "two branches share an app name: {up:?}");
 
-    // The parent is still there, which is the other thing a generation must not
-    // break.
+    // The parent is still there: the other thing a generation must not break.
     assert!(
         running_apps(&fleet).iter().any(|a| a == "wide"),
         "spawning a generation took the parent down: {:?}",
@@ -255,25 +233,14 @@ fn a_generation_of_branches_spins_up_together() {
     }
 }
 
-/// DEPTH — branches of branches, and where that stops.
+/// DEPTH: branches of branches, and where that stops. A tree search explores FROM a promising branch.
+/// Asserts only what must hold at whatever depth is reached.
 ///
-/// A tree search wants to explore FROM a promising branch, so depth is not a
-/// nicety. This measures how far it currently goes and asserts only what must
-/// hold at whatever depth is reached.
-///
-/// It found the ceiling on its first run: an environment could not be a parent,
-/// because `spawn_environment` writes a REVISIONS record for the derived app and
-/// never a DEPLOYMENTS one, while the parent lookup only searched deployments —
-/// so the second level came back `404 no deployment`. ADR-0078 never said so
-/// because nothing had ever asked for two.
-///
-/// Fixed: the lookup now falls back to the newest revision of that NAME when it
-/// carries an `environment`, so a branch can be explored from. This test is what
-/// says whether it stayed fixed.
-///
-/// The naming hazard that would have bitten at depth six or seven is fixed
-/// regardless (`host/src/tenant.rs`): sibling environments used to truncate to
-/// one bucket and silently share a store.
+/// It found the ceiling on its first run: `spawn_environment` writes a REVISIONS record but never a
+/// DEPLOYMENTS one, and the parent lookup only searched deployments (second level: `404 no deployment`).
+/// The lookup now falls back to the newest revision of that NAME when it carries an `environment`;
+/// this test says whether it stayed fixed. Sibling environments also used to truncate to one bucket and
+/// share a store (fixed in `host/src/tenant.rs`).
 #[test]
 #[ignore = "minutes long; run with --ignored"]
 fn branches_of_branches_find_the_depth_ceiling() {
@@ -315,7 +282,6 @@ fn branches_of_branches_find_the_depth_ceiling() {
         None => println!("    no ceiling found within {WANTED} levels"),
     }
 
-    // What must hold at whatever depth was reached.
     assert!(chain.len() >= 2, "not one level of nesting worked:\n{}", fleet.reconciler_log());
 
     let mut names = chain.clone();
@@ -324,8 +290,8 @@ fn branches_of_branches_find_the_depth_ceiling() {
     names.dedup();
     assert_eq!(before, names.len(), "an ancestor and a descendant share a name: {chain:?}");
 
-    // Every generation runs BESIDE the ones before it. A nested branch that
-    // evicted its parent would make a tree search impossible even at depth two.
+    // Every generation runs BESIDE the ones before it: a nested branch evicting its parent would make
+    // tree search impossible.
     let apps = running_apps(&fleet);
     for name in &chain {
         assert!(
@@ -336,11 +302,9 @@ fn branches_of_branches_find_the_depth_ceiling() {
     }
     println!("    {} generations running side by side", chain.len());
 
-    // --- closing a branch closes what grew out of it ------------------------
-    // Nesting creates this obligation. A descendant left behind is an app still
-    // running that nobody can name: its parent is gone, so nothing lists it and
-    // no despawn reaches it — it just consumes a node until somebody reads a
-    // ledger by hand.
+    // --- closing a branch closes what grew out of it ---
+    // A descendant left behind is an app nobody can name: its parent is gone, so nothing lists it and
+    // no despawn reaches it.
     if chain.len() >= 3 {
         // Close the FIRST environment; everything below it must go too.
         let (code, body) = api.delete("/api/environments?app=deep&env=n");
@@ -376,9 +340,8 @@ fn branches_of_branches_find_the_depth_ceiling() {
         println!("    the whole subtree is gone, the root is untouched");
     }
 
-    // The ceiling is REPORTED, not asserted, on purpose: baking the current depth
-    // limit into an assertion would turn fixing it into a test failure. What is
-    // asserted is that it is at least one — i.e. that environments work at all.
+    // The ceiling is REPORTED, not asserted: baking the depth limit in would make fixing it a test
+    // failure. Only that it is at least one (environments work at all) is asserted.
     if let Some(why) = ceiling {
         println!(
             "    NOTE: depth is limited to {}. {why}\n\

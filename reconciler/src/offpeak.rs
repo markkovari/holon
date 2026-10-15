@@ -1,25 +1,13 @@
 //! Is DeepSeek's off-peak discount active right now?
 //!
-//! Per their own pricing notice (docs.deepseek.com/quick_start/pricing):
-//! off-peak is 01:00–04:00 and 06:00–10:00 UTC on a weekday, PLUS "weekends
-//! with adjusted working days and Chinese public holidays are all billed at
-//! off-peak rates" — off-peak is not just a daily window, weekends and
-//! announced holidays are off-peak for their entire 24 hours.
+//! Off-peak (docs.deepseek.com/quick_start/pricing) is 01:00-04:00 and 06:00-10:00 UTC on weekdays,
+//! plus all 24 hours of weekends and Chinese public holidays.
 //!
-//! Pure integer arithmetic over a Unix timestamp rather than a date/time
-//! crate: UTC has no timezone or DST to get wrong, and the whole calculation
-//! is a modulo, a lookup table, and one well-known civil-calendar formula.
-//!
-//! The Chinese public holiday calendar is NOT hardcoded here — it moves every
-//! year (and "adjusted working days" swap a weekend for a weekday and vice
-//! versa, which no formula can predict). Callers supply it as a list of
-//! dates, so this stays correct indefinitely instead of quietly going stale
-//! every January the way a baked-in table would.
+//! Pure integer arithmetic over a Unix timestamp, no date crate. The holiday calendar moves every
+//! year, so callers supply it as a list of dates instead of a baked-in table that would go stale.
 
-/// Whether `unix_secs` (UTC) falls in DeepSeek's off-peak window.
-///
-/// `off_peak_days` is a set of Unix DAY numbers (`unix_secs / 86400`) that are
-/// off-peak regardless of time or weekday — built from [`parse_holidays`].
+/// Whether `unix_secs` (UTC) falls in DeepSeek's off-peak window. `off_peak_days` is a set of Unix
+/// DAY numbers (`unix_secs / 86400`) that are off-peak regardless, built from [`parse_holidays`].
 pub fn deepseek_off_peak(unix_secs: u64, off_peak_days: &[i64]) -> bool {
     const SECS_PER_DAY: u64 = 86_400;
     let day = (unix_secs / SECS_PER_DAY) as i64;
@@ -36,39 +24,30 @@ pub fn deepseek_off_peak(unix_secs: u64, off_peak_days: &[i64]) -> bool {
 
 /// Saturday or Sunday, for a Unix day number.
 ///
-/// 1970-01-01 (day 0) was a Thursday. Counting Monday as weekday 0, that
-/// makes day 0 weekday 3 — `(day + 3) % 7`, valid for negative days too
-/// because Rust's `%` on `i64` and `rem_euclid` agree once we ask for the
-/// non-negative remainder explicitly.
+/// Day 0 (1970-01-01) was a Thursday, so with Monday as 0 the weekday is `(day + 3) % 7`;
+/// `rem_euclid` keeps it valid for negative days.
 fn is_weekend(day: i64) -> bool {
     let weekday = (day + 3).rem_euclid(7);
     weekday == 5 || weekday == 6
 }
 
-/// Whether `model` is billed under DeepSeek's clock-dependent pricing — the
-/// same substring match `cost_cents` uses to pick a price tier. Every other
-/// model's price ignores the clock entirely, so this is the one question
-/// worth asking before bothering with [`deepseek_off_peak`] at all.
+/// Whether `model` is billed under DeepSeek's clock-dependent pricing (the same substring match
+/// `cost_cents` uses). Every other model's price ignores the clock.
 pub fn is_deepseek_model(model: &str) -> bool {
     model.contains("deepseek")
 }
 
-/// Pull a `--model <value>` argument out of a `comp-goalrun` argv slice — the
-/// same trailing args `comp-goald` hands `comp-goalrun` verbatim. `None` if
-/// the flag is absent, or present with nothing after it.
+/// Pull a `--model <value>` argument out of a `comp-goalrun` argv slice. `None` if the flag is
+/// absent or has nothing after it.
 pub fn model_arg(argv: &[String]) -> Option<&str> {
     argv.iter().position(|a| a == "--model").and_then(|i| argv.get(i + 1)).map(String::as_str)
 }
 
-/// Whether a run using `model` should be held back right now rather than
-/// spent, given whether off-peak enforcement is even turned on.
+/// Whether a run using `model` should be held back right now, given whether off-peak enforcement is
+/// turned on.
 ///
-/// `enforce=false` never defers — enforcement is opt-in, because a daemon
-/// nobody told to save money must not go silent for hours on its own
-/// initiative. A model that is not DeepSeek's, or unknown entirely (`None` —
-/// `comp-goald` found no `--model` flag to read), is never held back either:
-/// off-peak pricing is a DeepSeek-only fact, so enforcing it against every
-/// other model would just be an outage with a schedule.
+/// Enforcement is opt-in: a daemon nobody told to save money must not go silent for hours. A model
+/// that is not DeepSeek's, or unknown (`None`), is never held back.
 pub fn should_defer(now: u64, off_peak_days: &[i64], enforce: bool, model: Option<&str>) -> bool {
     if !enforce {
         return false;
@@ -80,12 +59,7 @@ pub fn should_defer(now: u64, off_peak_days: &[i64], enforce: bool, model: Optio
     !deepseek_off_peak(now, off_peak_days)
 }
 
-/// Unix day number for a Gregorian civil date (UTC, proleptic Gregorian).
-///
-/// Howard Hinnant's `days_from_civil` (public domain, widely used — e.g. in
-/// LLVM's libc++): pure integer arithmetic, correct across the whole
-/// calendar, no date/time crate needed for something this small and this
-/// well-established.
+/// Unix day number for a Gregorian civil date (UTC). Howard Hinnant's `days_from_civil`.
 fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     let y = if month <= 2 { year - 1 } else { year };
     let era = if y >= 0 { y } else { y - 399 } / 400;
@@ -96,9 +70,7 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-/// Parse `YYYY-MM-DD` lines into Unix day numbers. Blank lines and lines
-/// starting with `#` are ignored, so a holiday file can carry a comment
-/// naming the calendar year and its source.
+/// Parse `YYYY-MM-DD` lines into Unix day numbers. Blank lines and `#` lines are ignored.
 pub fn parse_holidays(text: &str) -> Result<Vec<i64>, String> {
     text.lines()
         .map(str::trim)
@@ -123,20 +95,18 @@ pub fn parse_holidays(text: &str) -> Result<Vec<i64>, String> {
 mod tests {
     use super::*;
 
-    /// unix_secs for a UTC instant, built the same way a caller would: date
-    /// math plus a time-of-day offset. Test-only — production callers get
-    /// their timestamp from the clock or from an attempt's own record.
+    /// unix_secs for a UTC instant, built the way a caller would. Test-only.
     fn at(year: i64, month: u32, day: u32, hour: u64, minute: u64) -> u64 {
         (days_from_civil(year, month, day) as u64) * 86_400 + hour * 3600 + minute * 60
     }
 
     #[test]
     fn the_epoch_is_a_thursday_and_the_formula_knows_it() {
-        assert!(!is_weekend(0)); // 1970-01-01, Thursday
-        assert!(!is_weekend(1)); // Friday
-        assert!(is_weekend(2)); // Saturday
-        assert!(is_weekend(3)); // Sunday
-        assert!(!is_weekend(4)); // Monday
+        assert!(!is_weekend(0));
+        assert!(!is_weekend(1));
+        assert!(is_weekend(2));
+        assert!(is_weekend(3));
+        assert!(!is_weekend(4));
     }
 
     #[test]
@@ -148,7 +118,7 @@ mod tests {
 
     #[test]
     fn a_weekday_morning_window_is_off_peak() {
-        // Tuesday 2026-09-15, 02:30 UTC — inside 01:00-04:00.
+        // Tuesday 2026-09-15, 02:30 UTC: inside 01:00-04:00.
         assert!(deepseek_off_peak(at(2026, 9, 15, 2, 30), &[]));
         // Same day, 07:00 UTC — inside 06:00-10:00.
         assert!(deepseek_off_peak(at(2026, 9, 15, 7, 0), &[]));

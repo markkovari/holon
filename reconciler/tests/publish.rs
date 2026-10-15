@@ -1,13 +1,6 @@
-//! `public` visibility, which ADR-0007 said requires a signature and which
-//! returned 501 for as long as it had no way to check one.
-//!
-//! The rule being enforced (ADR-0007 rule 3): a version cannot become public
-//! unless its digest is signed by the publisher's key, and the platform verifies
-//! before allowing the transition. Everything below is either that rule working
-//! or an attempt to get round it.
-//!
-//! The harness holds the private key and the platform never sees it — which is
-//! the point, and also what makes these tests worth having: they sign for real.
+//! `public` visibility, which ADR-0007 said requires a signature (rule 3): a version cannot become
+//! public unless its digest is signed by the publisher's key, verified by the platform. The harness
+//! holds the private key and the platform never sees it, so these tests sign for real.
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
@@ -35,11 +28,8 @@ impl Publisher {
     }
 }
 
-/// Upload a real component and record a push for it, so it has a digest to sign.
-///
-/// The bytes have to be a genuine component: the upload validates by reflecting
-/// the WIT surface (ADR-0006), so a placeholder would be refused before any of
-/// this got interesting. `slug` is the smallest one built here.
+/// Upload a real component and record a push for it, so it has a digest to sign. The bytes must be a
+/// genuine component: the upload reflects the WIT surface (ADR-0006). `slug` is the smallest one built.
 fn component_with_digest(p: &Platform, token: &str, id: &str) -> (String, String) {
     let wasm = harness::repo_root().join("components/target/wasm32-wasip2/release/slug.wasm");
     let bytes = std::fs::read(&wasm).unwrap_or_else(|e| {
@@ -55,9 +45,7 @@ fn component_with_digest(p: &Platform, token: &str, id: &str) -> (String, String
     let code = r.status().as_u16();
     let row: Value = r.json().unwrap_or(Value::Null);
     assert!(code == 201 || code == 200, "upload of {id} failed: {code} {row}");
-    // Taken from the response rather than assumed: the catalogue key is the
-    // tenant's, and a test that guesses it passes for the wrong reason the day
-    // the naming changes.
+    // Taken from the response rather than assumed: the catalogue key is the tenant's.
     let key = row["key"].as_str().unwrap_or_default().to_string();
     assert!(!key.is_empty(), "the upload did not report a catalogue key: {row}");
 
@@ -76,8 +64,7 @@ fn public_requires_a_signature_over_the_digest() {
 
     let (_key, digest) = component_with_digest(&p, &ada, "widget");
 
-    // 1. Without a key registered, a correct signature still cannot be trusted:
-    //    the platform has nothing to check it against.
+    // 1. Without a key registered, a correct signature still cannot be trusted.
     let (code, body) = p.post(
         &ada,
         "/api/components/publish",
@@ -90,8 +77,7 @@ fn public_requires_a_signature_over_the_digest() {
         p.post(&ada, "/api/keys", json!({ "name": "release", "public_key": pubr.public_b64() }));
     assert_eq!(code, 201, "registering a key failed: {body}");
 
-    // 3. A signature over the WRONG digest must not pass. This is the attack that
-    //    matters: sign something harmless, publish something else.
+    // 3. A signature over the WRONG digest must not pass: sign something harmless, publish something else.
     let (code, body) = p.post(
         &ada,
         "/api/components/publish",
@@ -126,9 +112,8 @@ fn public_requires_a_signature_over_the_digest() {
 
 #[test]
 fn new_bytes_do_not_inherit_a_signature() {
-    // ADR-0007 rule 1: visibility widens only by an explicit act. This catalogue
-    // keys rows by name rather than by version, so without this the next push
-    // would publish bytes nobody signed under the previous version's blessing.
+    // ADR-0007 rule 1: visibility widens only by an explicit act. The catalogue keys rows by name, so
+    // without this the next push would publish bytes nobody signed.
     let p = Platform::start(8462);
     let ada = p.user("ada");
     let pubr = Publisher::new();
@@ -164,10 +149,8 @@ fn new_bytes_do_not_inherit_a_signature() {
 
 #[test]
 fn revoking_a_key_unpublishes_what_it_signed() {
-    // ADR-0073 left this open in as many words: "removing a key does not
-    // un-publish what it signed, and 'distrust everything this key signed' has no
-    // answer". This is the answer, and it is only possible because a public row
-    // records WHICH key vouched for it.
+    // ADR-0073 left open that "removing a key does not un-publish what it signed". This is the answer,
+    // possible because a public row records WHICH key vouched for it.
     let p = Platform::start(8463);
     let ada = p.user("ada");
     let old = Publisher::new();
@@ -175,8 +158,7 @@ fn revoking_a_key_unpublishes_what_it_signed() {
     p.post(&ada, "/api/keys", json!({ "name": "old", "public_key": old.public_b64() }));
     p.post(&ada, "/api/keys", json!({ "name": "new", "public_key": new.public_b64() }));
 
-    // Two components: one signed by the key that will be revoked, one by the key
-    // that survives. Only the first may be affected.
+    // Two components: one signed by the key to be revoked, one by the survivor. Only the first may be affected.
     let (_k1, d1) = component_with_digest(&p, &ada, "doomed");
     let (_k2, d2) = component_with_digest(&p, &ada, "innocent");
     assert_eq!(
@@ -225,8 +207,7 @@ fn revoking_a_key_unpublishes_what_it_signed() {
     );
     assert_eq!(code, 403, "a revoked key still verifies: {body}");
 
-    // The surviving key can re-publish the same component — revocation distrusts
-    // a signer, it does not blacklist bytes.
+    // The surviving key can re-publish the same component: revocation distrusts a signer, not bytes.
     let (code, body) = p.post(
         &ada,
         "/api/components/publish",
@@ -234,8 +215,7 @@ fn revoking_a_key_unpublishes_what_it_signed() {
     );
     assert_eq!(code, 200, "a live key could not re-vouch for the same bytes: {body}");
 
-    // The revoked key is still LISTED, marked — an auditor looking at an old
-    // signature has to be able to find out what happened to the key.
+    // The revoked key is still LISTED, marked, so an auditor can find out what happened to it.
     let (_, keys) = p.get(&ada, "/api/keys");
     let old_row = keys["keys"]
         .as_array()

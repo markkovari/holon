@@ -1,26 +1,15 @@
 //! The document a person writes, which is not the document the platform stores.
 //!
-//! The stored manifest (`plan::Manifest`) carries `digest: ""`, `host_needs`,
-//! `egress` and `tenant` — all stamped by the platform: the digest by the upload, the
-//! host needs by `wit-reflect`, the egress by policy (ADR-0008, never authored by a
-//! tenant), the tenant by the org. Handing someone that document to fill in is the
-//! actual reason the old JSON fixtures read badly; the syntax was never the problem.
+//! The stored manifest (`plan::Manifest`) carries `digest`, `host_needs`, `egress` and `tenant`,
+//! all stamped by the platform (ADR-0008: egress is never authored by a tenant), so there are two
+//! documents and a resolve step between them.
 //!
-//! So there are two documents and a resolve step between them, which is the one idea
-//! worth taking from both OAM (application vs configuration) and Kubernetes (spec vs
-//! status).
+//! **Not OAM:** its untyped `properties` bags push field checks to runtime (ADR-0010 wants typed
+//! errors) and its links name a package, not an import of an instance. Right IMPORT format, not
+//! native.
 //!
-//! **Not OAM.** Its traits carry untyped `properties` bags, so every field check
-//! happens at runtime — and the best errors this platform has are the typed ones
-//! (ADR-0010's "unknown key, here are the legal ones"). Its links also name a
-//! package, while ours name which import of which instance, so adopting it would mean
-//! translating into our vocabulary anyway. It is the right IMPORT format, not the
-//! right native one.
-//!
-//! **Not the Kubernetes envelope.** `apiVersion`/`kind`/`metadata`/`spec` promises
-//! namespaces, selectors, update strategies and a status subresource — none of which
-//! exist here, and ceremony without machinery is something a reader has to unlearn.
-//! The one thing worth stealing is a version field, for the reason ADR-0044 gives.
+//! **Not the Kubernetes envelope:** it promises namespaces, selectors and a status subresource that
+//! do not exist here. Only the version field is taken (ADR-0044).
 
 use std::collections::BTreeMap;
 
@@ -29,20 +18,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::plan::{Component, Ingress, Link, Manifest, Placement, Scale, SecretRef, Strategy};
 
-/// The only schema version. Present from the first file rather than added later,
-/// because ADR-0044 is about exactly this and it is free now.
+/// The only schema version. Present from the first file (ADR-0044).
 pub const VERSION: &str = "comp/v1";
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-// A typo silently ignored is worse than a parse error: the author believes they
-// configured something. Same rule as `comp.toml`.
+// A silently ignored typo is worse than a parse error. Same rule as `comp.toml`.
 #[serde(deny_unknown_fields)]
 pub struct AppSpec {
-    /// `comp/v1`. Refused if it is anything else, rather than guessed at.
+    /// `comp/v1`. Refused if anything else.
     pub version: String,
     pub app: String,
-    /// Normally the org acting on the request. Explicit only where there is no
-    /// control plane to supply it — fixtures, tests, `comp app plan` offline.
+    /// Normally the org acting on the request. Explicit only where there is no control plane
+    /// (fixtures, tests, `comp app plan` offline).
     #[serde(default)]
     pub tenant: Option<String>,
     #[serde(default)]
@@ -58,8 +45,7 @@ pub struct AppSpec {
 #[serde(deny_unknown_fields)]
 pub struct ComponentSpec {
     pub id: String,
-    /// Fixed replica count. Ignored when `scale` is present, which is why they are
-    /// not both required.
+    /// Fixed replica count. Ignored when `scale` is present.
     #[serde(default = "one")]
     pub replicas: u32,
     #[serde(default)]
@@ -71,21 +57,17 @@ pub struct ComponentSpec {
     /// By reference only. A value must never appear in a manifest (ADR-0010).
     #[serde(default)]
     pub secrets: Vec<SecretRef>,
-    /// Normally stamped from the component's own WIT by `wit-reflect`, never
-    /// authored — an author cannot know it and would get it wrong. Accepted here so a
-    /// fixture can ask for a capability no host grants and assert the refusal.
+    /// Normally stamped from the component's own WIT by `wit-reflect`, never authored. Accepted here
+    /// so a fixture can ask for a capability no host grants and assert the refusal.
     #[serde(default)]
     pub host_needs: Vec<String>,
-    /// Stamped by platform policy, never by a tenant (ADR-0008). Same reasoning.
+    /// Stamped by platform policy, never by a tenant (ADR-0008).
     #[serde(default)]
     pub egress: Vec<String>,
 }
 
-/// `from` imports `import`, and `to` provides it.
-///
-/// Deliberately plainer than the internal `plug`/`socket`, which read backwards to
-/// everyone who has not internalised the composer's vocabulary. The conversion is
-/// mechanical and happens once, here.
+/// `from` imports `import`, and `to` provides it. Plainer than the internal `plug`/`socket`, which
+/// read backwards to newcomers; converted once, here.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct LinkSpec {
@@ -120,9 +102,8 @@ impl AppSpec {
         if spec.components.is_empty() {
             bail!("`{}` declares no components", spec.app);
         }
-        // Catch a link naming a component that is not in the graph HERE, where the
-        // file and the line are still in front of the author, rather than as an
-        // unsatisfied import at deploy time.
+        // Catch a link naming an unknown component HERE, where the file and line are in front of
+        // the author, not as an unsatisfied import at deploy time.
         let ids: Vec<&str> = spec.components.iter().map(|c| c.id.as_str()).collect();
         for l in &spec.links {
             for (role, id) in [("from", &l.from), ("to", &l.to)] {
@@ -142,12 +123,9 @@ impl AppSpec {
         Ok(spec)
     }
 
-    /// Resolve into the document the platform stores.
-    ///
-    /// `tenant` comes from the caller — the org acting on the request — and only
-    /// falls back to the file when there is none. `digest` is left empty on purpose:
-    /// it is filled by the distribution pass from the uploaded artifact, and a digest
-    /// an author could type would be a digest they could get wrong (ADR-0006).
+    /// Resolve into the document the platform stores. `tenant` comes from the caller and only falls
+    /// back to the file when there is none. `digest` is left empty: the distribution pass fills it
+    /// from the uploaded artifact (ADR-0006).
     pub fn to_manifest(&self, tenant: Option<&str>) -> Result<Manifest> {
         let tenant = tenant
             .or(self.tenant.as_deref())
@@ -176,8 +154,7 @@ impl AppSpec {
                 .links
                 .iter()
                 .map(|l| Link {
-                    // `to` provides, so it is the plug; `from` consumes, so it is the
-                    // socket. This is the whole of the vocabulary change.
+                    // `to` provides, so it is the plug; `from` consumes, so it is the socket.
                     plug: l.to.clone(),
                     socket: l.from.clone(),
                     iface: l.import.clone(),
@@ -212,8 +189,7 @@ ingress:
         let m = spec.to_manifest(None).unwrap();
         assert_eq!((m.app.as_str(), m.tenant.as_str()), ("shop", "acme"));
         assert_eq!(m.components.len(), 1);
-        // Everything the platform stamps is absent from the file and empty here,
-        // waiting to be filled by the parts of the system that know it.
+        // Everything the platform stamps is absent from the file and empty here.
         assert_eq!(m.components[0].digest, "");
         assert!(m.components[0].host_needs.is_empty());
         assert!(m.components[0].egress.is_empty());
@@ -222,8 +198,7 @@ ingress:
 
     #[test]
     fn from_import_to_becomes_socket_iface_plug() {
-        // The one piece of vocabulary translation, and the easiest thing to get
-        // backwards: `to` PROVIDES the interface, so it is the plug.
+        // `to` PROVIDES the interface, so it is the plug (easy to get backwards).
         let spec = AppSpec::parse(
             "
 version: comp/v1
@@ -249,17 +224,15 @@ links:
 
     #[test]
     fn the_caller_s_tenant_beats_the_file() {
-        // In the real path the org comes from the request, and a `tenant:` in the
-        // file must never let an author deploy into someone else's org.
+        // A `tenant:` in the file must never let an author deploy into someone else's org.
         let spec = AppSpec::parse(MINIMAL).unwrap();
         assert_eq!(spec.to_manifest(Some("globex")).unwrap().tenant, "globex");
     }
 
     #[test]
     fn a_misspelled_key_is_refused_with_the_name_in_the_message() {
-        // Formatted with `{:#}` — the whole chain — because that is what the CLI
-        // prints and therefore what the author actually reads. `{}` would show only
-        // "reading the app spec", which names no field and helps nobody.
+        // Formatted with `{:#}` (the whole chain), as the CLI prints it; `{}` would show only
+        // "reading the app spec".
         let err = format!(
             "{:#}",
             AppSpec::parse(
@@ -309,8 +282,7 @@ links:
 
     #[test]
     fn a_spec_round_trips_through_yaml() {
-        // The converter has to be able to read what it writes, or `comp app show`
-        // produces something that cannot be re-applied.
+        // The converter must read what it writes, or `comp app show` output cannot be re-applied.
         let spec = AppSpec::parse(MINIMAL).unwrap();
         let out = serde_norway::to_string(&spec).unwrap();
         assert_eq!(AppSpec::parse(&out).unwrap(), spec, "{out}");

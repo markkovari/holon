@@ -1,23 +1,18 @@
 //! `openai-provider`, live against the real DeepSeek API.
 //!
-//! The whole claim: DeepSeek needs zero provider code, because it speaks the
-//! OpenAI chat-completions contract already — only `wasi:config` changes
-//! (`openai:base-url` to `https://api.deepseek.com`, `openai:model` to
-//! `deepseek-flash`; see `fixtures/llm-deepseek-live.yaml`). This is the one
-//! check that doesn't take that on faith:
+//! The claim: DeepSeek needs zero provider code, since it speaks the OpenAI chat-completions contract and
+//! only `wasi:config` changes (`openai:base-url` to `https://api.deepseek.com`, `openai:model` to
+//! `deepseek-flash`; see `fixtures/llm-deepseek-live.yaml`). This is the one check that does not take it on faith:
 //!
 //!   llm-probe (wasm) -> llm:inference -> openai-provider (wasm)
 //!     -> wasi:http/outgoing-handler -> egress allow-list -> api.deepseek.com
 //!
-//! **Live and `#[ignore]`d.** It spends real money on a real account. Put the
-//! key in `~/.comp-secrets/deepseek` (nothing else — no quotes, no trailing
-//! newline needed, it's trimmed) and run:
+//! **Live and `#[ignore]`d**: it spends real money. Put the key in `~/.comp-secrets/deepseek` (trimmed) and run:
 //!
 //!   cargo test --release --test deepseek_live -- --ignored --nocapture
 //!
-//! The key never appears in this file, in the fixture, or in any test output:
-//! it is read from disk by `comp-reconciler-stub` (the `@path` convention in
-//! `stub.rs`, curl's own idiom), and only the model's ANSWER is ever printed.
+//! The key never appears in this file, the fixture or test output: `comp-reconciler-stub` reads it from
+//! disk (the `@path` convention in `stub.rs`), and only the model's ANSWER is printed.
 
 use std::time::{Duration, Instant};
 

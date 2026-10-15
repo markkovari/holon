@@ -1,22 +1,16 @@
 //! The code store end to end (ADR-0099): every request goes
 //!
-//!   this test → comp-host (vcs-gateway ⊕ vcs-store) → comp-vcs → NATS JetStream + SurrealDB
+//!   this test -> comp-host (vcs-gateway + vcs-store) -> comp-vcs -> NATS JetStream + SurrealDB
 //!
-//! over real HTTP, through the component model, against a real NATS and a real
-//! SurrealDB — never the library. `bash e2e/vcs.sh` brings those two up (a
-//! private `nats-server -js` on a free port, the compose SurrealDB), builds what
-//! this needs, runs this file and tears everything down.
+//! over real HTTP, through the component model, against a real NATS and SurrealDB, never the library.
+//! `bash e2e/vcs.sh` brings those up, builds what is needed, runs this file and tears down.
 //!
-//! Without `VCS_E2E_NATS_URL` and `VCS_E2E_SURREAL_URL` every test here prints
-//! `SKIPPED` and returns: CI compiles this file (`--no-run`) and does not run it,
-//! because a skip that returns `ok` is a green tick for a test that did not run.
-//! With them set, a missing `comp-host` or unbuilt component is a failure, not a
-//! skip — the script promised them.
+//! Without `VCS_E2E_NATS_URL` and `VCS_E2E_SURREAL_URL` every test prints `SKIPPED` and returns (CI
+//! compiles with `--no-run`, since a skip that returns `ok` is a green tick for a test that did not
+//! run). With them set, a missing `comp-host` or unbuilt component is a failure.
 //!
-//! Each test owns its buckets (`--bucket-prefix`), its SurrealDB database, its
-//! `comp-vcs` port and its `comp-host`, so they run in parallel and a restart's
-//! startup repair only ever sees its own test's workspaces.
-//!
+//! Each test owns its buckets, SurrealDB database, `comp-vcs` port and `comp-host`, so they run in
+//! parallel and a restart's startup repair only sees its own workspaces.
 //! The scenarios:
 //!   A  two agents, two functions of one file, at once: both land, one
 //!      `commuted` naming the other, the export has both
@@ -52,8 +46,6 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 const COMPONENT: &str = "shop";
-
-// ---- the stack ------------------------------------------------------------------
 
 struct Services {
     nats: String,
@@ -287,8 +279,6 @@ impl Stack {
         self.call(func, body).unwrap_or_else(|r| panic!("{func} refused: {r:?}"))
     }
 
-    // ---- the contract, typed -----------------------------------------------------
-
     fn apply(&self, r: &PatchRequest) -> Result<CommitResult, Refusal> {
         self.call("apply-patch", serde_json::to_value(r).unwrap())
     }
@@ -505,8 +495,6 @@ fn timed(test: &str, t0: Instant) {
     eprintln!("e2e_vcs::{test}: {:.2}s", t0.elapsed().as_secs_f64());
 }
 
-// ---- fixtures ---------------------------------------------------------------------
-
 const ORDERS: &str = "src/orders.rs";
 
 /// Two functions next to each other: git's adjacency conflict, and not ours.
@@ -533,8 +521,6 @@ fn text_of(v: &SymbolView) -> String {
         Content::Blob(_) => panic!("a fixture symbol should be inline"),
     }
 }
-
-// ---- A ------------------------------------------------------------------------------
 
 #[test]
 fn a_two_agents_two_functions_both_land_one_commutes() {
@@ -587,8 +573,6 @@ fn a_two_agents_two_functions_both_land_one_commutes() {
     assert_clean(&s.verify(&ws));
     timed("a", t0);
 }
-
-// ---- B ------------------------------------------------------------------------------
 
 #[test]
 fn b_same_function_conflicts_export_waits_for_the_resolution() {
@@ -671,8 +655,6 @@ fn b_same_function_conflicts_export_waits_for_the_resolution() {
     assert_clean(&s.verify(&ws));
     timed("b", t0);
 }
-
-// ---- C ------------------------------------------------------------------------------
 
 /// What the crashed op does.
 #[derive(Clone, Copy, Debug)]
@@ -813,8 +795,6 @@ fn c_crash_at_every_write_step_then_restart_repairs() {
     timed("c", t0);
 }
 
-// ---- D ------------------------------------------------------------------------------
-
 #[test]
 fn d_commuted_is_exact_with_read_at_and_over_reports_without() {
     let t0 = Instant::now();
@@ -887,8 +867,6 @@ fn d_commuted_is_exact_with_read_at_and_over_reports_without() {
     timed("d", t0);
 }
 
-// ---- E ------------------------------------------------------------------------------
-
 #[test]
 fn e_eight_renames_to_one_name_one_wins() {
     let t0 = Instant::now();
@@ -938,8 +916,6 @@ fn e_eight_renames_to_one_name_one_wins() {
     assert_clean(&s.verify(&ws));
     timed("e", t0);
 }
-
-// ---- F ------------------------------------------------------------------------------
 
 const IDLIST: &str = "src/idlist.rs";
 
@@ -1093,8 +1069,6 @@ fn f_real_files_ingest_export_materialize_and_race() {
     timed("f", t0);
 }
 
-// ---- G ------------------------------------------------------------------------------
-
 #[test]
 fn g_a_function_moved_by_ingest_exports_exactly_and_back() {
     let t0 = Instant::now();
@@ -1133,8 +1107,6 @@ fn g_a_function_moved_by_ingest_exports_exactly_and_back() {
     assert_clean(&s.verify(&ws));
     timed("g", t0);
 }
-
-// ---- H ------------------------------------------------------------------------------
 
 #[test]
 fn h_a_crashed_writers_intent_blocks_export_until_the_lease_passes() {

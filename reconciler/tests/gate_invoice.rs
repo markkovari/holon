@@ -125,7 +125,6 @@ fn posting_writes_one_balanced_entry_and_a_retry_is_not_a_second_charge() {
         )
     };
 
-    // --- the refusals ---------------------------------------------------------------
     let (c, _) = gate.with_headers(
         "POST",
         &format!("/api/invoices/{filled}/post"),
@@ -152,7 +151,6 @@ fn posting_writes_one_balanced_entry_and_a_retry_is_not_a_second_charge() {
     let (c, _) = gate.get(&format!("/api/invoices/{filled}/entry"), Some(&t));
     assert_eq!(c, 404, "an unposted invoice has no entry: must be 404 not_posted");
 
-    // --- posted once ----------------------------------------------------------------
     let (_, first) = post_it(&filled, "key-abc");
     assert!(
         !first.trim().is_empty(),
@@ -186,7 +184,6 @@ fn posting_writes_one_balanced_entry_and_a_retry_is_not_a_second_charge() {
         "the entry route answered nothing usable: {entry}"
     );
 
-    // --- and the retry gets the same answer ----------------------------------------
     let (_, again) = post_it(&filled, "key-abc");
     let (code, _) = post_it(&filled, "key-abc");
     assert_eq!(
@@ -201,8 +198,7 @@ fn posting_writes_one_balanced_entry_and_a_retry_is_not_a_second_charge() {
          the point of the key is that a retry is indistinguishable from the original."
     );
 
-    // A DIFFERENT key on an already-posted invoice is the one that must refuse: this is
-    // not a retry, it is a second posting, and it must not add a second entry.
+    // A DIFFERENT key on an already-posted invoice must refuse: it is a second posting, not a retry.
     let before = gate.stored("invoice", &filled);
     let (c, _) = post_it(&filled, "key-xyz");
     assert_eq!(

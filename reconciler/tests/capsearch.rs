@@ -1,14 +1,11 @@
 //! "Do we already have something for this?", asked of the real catalogue.
 //!
-//! The unit tests in `capsearch.rs` pin the scoring against a fixture. This asks
-//! the question a goal would actually ask, of the 150 components that are really
-//! here, and it exists as much to record where the answer is WRONG as where it is
-//! right.
+//! The unit tests in `capsearch.rs` pin the scoring against a fixture; this asks the questions a goal
+//! would ask of the real components, and records where the answer is WRONG as well as right.
 //!
-//! No model, and deliberately so (ADR-0089): term overlap over each package's WIT
-//! header, with the capability graph breaking ties towards what applications
-//! already carry. It costs nothing and runs in a millisecond, which is what makes
-//! it something a planner can call on every goal.
+//! No model (ADR-0089): term overlap over each package's WIT header, with the capability graph
+//! breaking ties towards what applications already carry. Free and a millisecond, so a planner can
+//! call it on every goal.
 
 use std::collections::BTreeMap;
 
@@ -16,19 +13,15 @@ use comp_reconciler::capsearch::{capabilities, find, Capability};
 use comp_reconciler::fleet::repo_root;
 use comp_reconciler::plug::{default_dirs, Catalog};
 
-/// Questions somebody would really type, and the component that answers them.
-///
-/// Phrased as a person describes a need, not as the component describes itself —
-/// otherwise this tests that a name matches itself.
+/// Questions somebody would really type, and the component that answers them. Phrased as a person
+/// describes a need, not as the component describes itself, or this tests that a name matches itself.
 const SHOULD_FIND: &[(&str, &str)] = &[
     ("hash a password and issue a session token", "auth-guard"),
     ("rank documents by relevance", "search-index"),
     ("store records and find them by a field", "record-store"),
     ("format some rows as CSV", "csv"),
     ("generate a unique identifier", "id-generate"),
-    // Added when the 57 tautological descriptions were replaced with sentences a
-    // CALLER would write. Every one of these failed beforehand, and none of them
-    // needed a change to the searcher — only to what it was searching.
+    // Added when the tautological descriptions were replaced with sentences a CALLER would write.
     ("stop a caller making too many requests", "rate-limiter"),
     ("record who did what and when", "audit-log"),
     ("make a mutating request safe to retry", "idempotency-guard"),
@@ -37,31 +30,17 @@ const SHOULD_FIND: &[(&str, &str)] = &[
     ("do this later, on a timer", "scheduler-timer"),
     ("the books have to balance", "ledger"),
     ("render an email from a template", "email-render"),
-    // In the top 3 rather than first: `event-bus` still wins on "event" matching
-    // its name. Kept as a positive because "reachable" is the thing a branch
-    // needs, and the ranking flaw is recorded in KNOWN_MISSES below.
+    // In the top 3 rather than first: `event-bus` still wins on "event" matching its name (see KNOWN_MISSES).
     ("expand a repeating event", "rrule"),
 ];
 
 /// Questions this searcher gets WRONG, kept here on purpose.
 ///
-/// The original entry — "stop a caller making too many requests" — is gone,
-/// because it now passes. Nothing about the searcher changed; `rate-limiter`'s
-/// description stopped being "reference implementation of `ratelimit:guard`" and
-/// started being a sentence about what a caller wants. 57 descriptions were like
-/// that, and this list is what survived fixing them.
-///
-/// Both survivors have the SAME cause, and it is not vocabulary: a match on a
-/// component's NAME or interface scores 3, a match on its description scores 1 —
-/// so any query using a word that happens to appear in some component's name
-/// outranks a component that actually does the thing.
-///
-/// It bites hardest because the pool contains 33 DOMAIN APPS. Nobody reuses
-/// `jobs-domain`; they reuse `lock-mutex`. An application is not a capability, and
-/// having them in the same pool is what lets "job" reach a showcase before it
-/// reaches the mutex. The fix is the app-local tier — apps are not in the
-/// catalogue at all — not a synonym list and not a weight somebody tuned until
-/// these two passed.
+/// Both survivors have the SAME cause, not vocabulary: a match on a component's NAME or interface
+/// scores 3 and on its description 1, so a query word that appears in some component's name outranks
+/// the component that does the thing. It bites hardest because the pool contains 33 DOMAIN APPS;
+/// nobody reuses `jobs-domain`, they reuse `lock-mutex`. The fix is the app-local tier (apps are not in
+/// the catalogue), not a synonym list or a tuned weight.
 const KNOWN_MISSES: &[(&str, &str)] = &[
     // `jobs-domain` wins on "job" matching its name.
     ("two workers must not do the same job", "lock-mutex"),
@@ -123,12 +102,8 @@ fn the_known_misses_are_still_missing() {
     );
 }
 
-/// The most valuable answer a searcher gives is "nothing".
-///
-/// A search that always returns its closest row sends every goal off to reuse
-/// something unrelated, which is worse than not searching: the whole point of
-/// asking is to decide between REUSE and BUILD (ADR-0089), and a confident wrong
-/// answer makes that decision badly.
+/// The most valuable answer a searcher gives is "nothing": always returning the closest row sends
+/// every goal off to reuse something unrelated, which spoils the REUSE vs BUILD decision (ADR-0089).
 #[test]
 fn a_question_the_catalogue_cannot_answer_returns_nothing() {
     let Some(pool) = pool() else { return };
@@ -145,10 +120,8 @@ fn a_question_the_catalogue_cannot_answer_returns_nothing() {
     }
 }
 
-/// Interfaces two components are SUPPOSED to export, and why.
-///
-/// Every one of these is a substitution point — the reason a WIT interface exists
-/// at all. What the audit is looking for is the entry nobody put here.
+/// Interfaces two components are SUPPOSED to export, and why. Each is a substitution point; the audit
+/// looks for the entry nobody put here.
 const DELIBERATE: &[(&str, &str)] = &[
     (
         "durable:workflow/orchestrator",
@@ -187,13 +160,9 @@ const DELIBERATE: &[(&str, &str)] = &[
 
 /// Nobody built the same thing twice.
 ///
-/// ADR-0089's last unbuilt gap, in the cheapest form that works. Prevention is the
-/// real mechanism — `capsearch` consulted before writing — but a working search and
-/// a broken one look identical from outside, so this counts what got through.
-///
-/// Structural on purpose. "Exports the same interface" is a fact the catalogue
-/// already holds; it needs no model and no descriptions, which matters because 57
-/// of the 109 descriptions are tautologies.
+/// Prevention is `capsearch` consulted before writing, but a working search and a broken one look
+/// identical from outside, so this counts what got through. Structural on purpose: "exports the same
+/// interface" needs no model and no descriptions (many are tautologies).
 #[test]
 fn the_same_capability_was_not_built_twice() {
     let root = repo_root();
@@ -205,10 +174,8 @@ fn the_same_capability_was_not_built_twice() {
 
     let mut undeclared = Vec::new();
     for t in comp_reconciler::capsearch::twins(&catalog) {
-        // A standard interface exported by everything is the shape of the system,
-        // not a duplicate — and `wasi:http/incoming-handler`'s 65 exporters are
-        // the population that would stop owning their own entry point, which is a
-        // design question rather than a mistake.
+        // A standard interface exported by everything is the shape of the system, not a duplicate
+        // (`wasi:http/incoming-handler` has 65 exporters).
         if t.interface.starts_with("wasi:") {
             continue;
         }
@@ -233,20 +200,11 @@ fn the_same_capability_was_not_built_twice() {
 
 /// A capability describes itself in a caller's words, not its own.
 ///
-/// 57 of 109 catalogue entries once read "`x` — reference implementation of
-/// `x:y`", which is true, tautological, and matches nothing anybody would type.
-/// `rate-limiter` shipped in 22 applications and could not be found by "stop a
-/// caller making too many requests", because the words it used were "counts
-/// failures against an opaque key".
-///
-/// The description is generated from the FIRST `//!` line of `src/lib.rs`
-/// (`tools/gen-catalog.py`), so that line is what this checks — the place a person
-/// writes, rather than the generated file they would have to remember to rebuild.
-///
-/// Deliberately blunt. It does not judge whether a description is *good*; it
-/// refuses the one form that is known to be useless. A rule that tried to score
-/// prose would be argued with, and this one cannot be: restating your own name is
-/// not a description.
+/// Entries once read "`x` — reference implementation of `x:y`", which matches nothing anybody would
+/// type (`rate-limiter` shipped in 22 applications and could not be found by "stop a caller making too
+/// many requests"). The description is generated from the FIRST `//!` line of `src/lib.rs`
+/// (`tools/gen-catalog.py`), so that is what is checked. Deliberately blunt: it refuses the one known
+/// useless form (restating your own name) rather than scoring prose.
 #[test]
 fn a_capability_does_not_describe_itself_as_its_own_reference_implementation() {
     let root = repo_root();
@@ -284,20 +242,10 @@ fn a_capability_does_not_describe_itself_as_its_own_reference_implementation() {
 
 /// A component with NO description is invisible to a caller's words.
 ///
-/// ADR-0094 made the first `//!` line the searchable one and lints the one form
-/// known to be useless — describing yourself as a reference implementation of
-/// your own interface. It could not catch the other useless form, because the
-/// walk `continue`s on a crate with no `//!` line at all: a component that says
-/// nothing was skipped rather than failed.
-///
-/// 31 of them had accumulated that way. `capsearch` still had them in the pool
-/// via artifact reflection, so the loop knew they EXISTED and had no prose to
-/// match a goal against — which is the same as not having them, for the one
-/// question the pool is asked.
-///
-/// Blunt in the same way as its sibling, and for the same reason: this does not
-/// judge whether a description is good. "You wrote none" is not a rule anybody
-/// can argue with.
+/// ADR-0094 lints the reference-implementation form, but the walk `continue`s on a crate with no
+/// `//!` line at all, so 31 silent components were skipped rather than failed. `capsearch` knew they
+/// EXISTED via artifact reflection but had no prose to match. Blunt like its sibling: "you wrote none"
+/// cannot be argued with.
 #[test]
 fn every_component_has_a_description() {
     let root = repo_root();
@@ -310,8 +258,7 @@ fn every_component_has_a_description() {
     for entry in dirs.flatten() {
         let manifest = entry.path().join("Cargo.toml");
         let Ok(toml) = std::fs::read_to_string(&manifest) else { continue };
-        // Only components. A plain library crate — `semver-range`, `capman` —
-        // is not in the pool and has nothing to be findable by.
+        // Only components: a plain library crate (`semver-range`, `capman`) is not in the pool.
         if !toml.contains("[package.metadata.component]") {
             continue;
         }
@@ -342,22 +289,10 @@ fn every_component_has_a_description() {
 
 /// The catalogue's idea of "reusable" matches what the artifacts export.
 ///
-/// `reusable_as_is` used to be a NAME check — `ends_with("-domain")` plus a list of
-/// ten exceptions — and it disagreed with the components themselves 33 times out of
-/// 212, in both directions: every probe and all five `eshop-*` parts were advertised
-/// as reusable while exporting nothing but `wasi:http/incoming-handler`, and
-/// `login-app`, `reddit-domain` and `power-domain` were hidden from search while
-/// exporting real contracts.
-///
-/// It is now read off the exports: a component offers a contract when it exports
-/// something outside `wasi:`. `comp-catalog` reads that from the SOURCE and `capsearch`
-/// reads it from the ARTIFACT, which is two paths to one answer — so this asserts they
-/// agree, on every component, rather than trusting that they do. Both are computed
-/// here and now; neither is read from a file.
-///
-/// It also caught two rounds of getting the source half wrong: an unanchored regex
-/// matching the word "export" inside prose, and a crate pointing at the shared
-/// repo-root `wit/` picking up worlds it does not build.
+/// `reusable_as_is` was a NAME check (`ends_with("-domain")` plus exceptions) and disagreed with the
+/// components 33 times of 212 in both directions. It is now read off the exports (a contract is
+/// anything exported outside `wasi:`): `comp-catalog` reads the SOURCE and `capsearch` the ARTIFACT,
+/// and this asserts the two paths agree on every component. Both are computed here, not read from a file.
 #[test]
 fn the_catalogue_and_the_artifacts_agree_on_what_is_reusable() {
     let root = comp_reconciler::fleet::repo_root();
@@ -366,9 +301,7 @@ fn the_catalogue_and_the_artifacts_agree_on_what_is_reusable() {
         eprintln!("SKIPPED: nothing is built — run `cargo xtask build --force`");
         return;
     }
-    // The PROGRAM, not a committed snapshot of what it once said. There used to be a
-    // `catalog.json`, and once `capsearch` stopped reading it the only things left
-    // reading it were the tests checking whether it had gone stale.
+    // The PROGRAM, not a committed snapshot (a `catalog.json` was only read by tests checking staleness).
     let Ok(out) = std::process::Command::new(env!("CARGO_BIN_EXE_comp-catalog"))
         .arg("--json")
         .current_dir(&root)

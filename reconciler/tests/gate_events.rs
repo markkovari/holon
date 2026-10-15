@@ -1,36 +1,13 @@
 //! The `events` gate, as a Rust integration test rather than a bash script.
 //!
-//! A PROTOTYPE, and an argument with a number attached. `components/events-domain/
-//! e2e-events.sh` asserts exactly what this does; the difference is what a machine
-//! must have installed before it can run.
+//! A PROTOTYPE asserting exactly what `components/events-domain/e2e-events.sh` does, minus the
+//! installed tools. The gates are distributed across machines, and every external tool a gate needs
+//! (`curl`, `python3`, `grep`, `cargo`, `MailHog`, `docker`, ...) is a way one worker can differ from
+//! another. This needs `comp-host` and a composed `.wasm`, artifacts this repository builds and can ship
+//! to a worker.
 //!
-//! ## Why this exists
-//!
-//! The gates are being distributed across machines and scheduled between actors, and
-//! every external tool a gate needs is a way one worker can differ from another. A
-//! gate run today needs THIRTEEN of them — `curl` (207 references), `python3` (156),
-//! `grep`, `cargo`, `sed`, `MailHog`, `mktemp`, `go`, `wasm-tools`, `awk`, `date`,
-//! `base64`, `docker` — each at a compatible version, on every worker, or a gate
-//! fails on one machine and passes on another for a reason that is not the code.
-//!
-//! This needs `comp-host` and a composed `.wasm`. Both are artifacts THIS REPOSITORY
-//! BUILDS, which is the difference that matters for scheduling: they can be shipped
-//! to a worker, and `cargo test --no-run` turns this file into one more binary that
-//! can be shipped beside them.
-//!
-//! ## What is deliberately unchanged
-//!
-//! Every failure message, verbatim. ADR-0088 says a gate's output IS the next prompt,
-//! and these sentences were written carefully — the comment in the bash version about
-//! the `?state=open` assertion records a round where a gate GUESSED a cause, reported
-//! the guess as a finding, and sent a repair to fix a query that was working. A port
-//! that rewords them is a port that changes what the loop reads.
-//!
-//! ## What it costs
-//!
-//! One host process for the whole gate rather than one plus thirty-one short-lived
-//! ones. Instrumented, `e2e-events.sh` spawns 26 `curl` and 5 `python3`; this spawns
-//! `comp-host` and nothing else.
+//! Every failure message is verbatim: ADR-0088 says a gate's output IS the next prompt. One host process
+//! serves the whole gate, where the bash version spawns 26 `curl` and 5 `python3`.
 
 mod gatelib;
 use gatelib::{field, Gate};
@@ -41,10 +18,8 @@ const COMPOSED: &str = "events_domain.composed.wasm";
 const CONFIG: &[&str] =
     &["allow-test-routes=1", "allowed-types=image/png,image/jpeg,image/webp", "max-size=2097152"];
 
-/// A real PNG, byte for byte — the same bytes the bash gate writes with `printf`.
-/// The round trip is the point: the router used to read every body through
-/// `from_utf8_lossy`, which turns each byte that is not valid UTF-8 into U+FFFD, so
-/// the upload succeeds and stores something that is not an image.
+/// A real PNG, byte for byte, as the bash gate writes with `printf`. The round trip is the point: the
+/// router once read every body through `from_utf8_lossy`, so an upload stored something that is not an image.
 const PNG: &[u8] = &[
     0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, b'I', b'H', b'D', b'R',
     0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
@@ -57,7 +32,6 @@ const PNG: &[u8] = &[
 fn events_created_read_amended_and_cancelled() {
     let Some(gate) = Gate::start(APP, COMPOSED, CONFIG) else { return };
 
-    // --- the fixture -------------------------------------------------------------
     let seed = gate.seed();
     let raw = seed.to_string();
     let tok = |who: &str| seed["tokens"][who]["token"].as_str().unwrap_or_default().to_string();
@@ -70,7 +44,6 @@ fn events_created_read_amended_and_cancelled() {
         "the fixture did not come back with an event and three tokens: {raw}"
     );
 
-    // --- anonymous callers are refused --------------------------------------------
     let (code, _) = gate.json(
         "POST",
         "/api/events",
@@ -82,7 +55,6 @@ fn events_created_read_amended_and_cancelled() {
         "an unauthenticated POST /api/events must be refused (got {code})"
     );
 
-    // --- an organizer creates one --------------------------------------------------
     let (_, new) = gate.json(
         "POST",
         "/api/events",
@@ -104,7 +76,6 @@ fn events_created_read_amended_and_cancelled() {
         "a new event must be state=open: {doc}"
     );
 
-    // --- an attendee may not create ------------------------------------------------
     let (code, _) = gate.json(
         "POST",
         "/api/events",
@@ -113,7 +84,6 @@ fn events_created_read_amended_and_cancelled() {
     );
     assert_eq!(code, 403, "an attendee has no event:write and must be refused");
 
-    // --- validation ----------------------------------------------------------------
     let (code, _) = gate.json(
         "POST",
         "/api/events",
@@ -129,7 +99,6 @@ fn events_created_read_amended_and_cancelled() {
     );
     assert_eq!(code, 400, "capacity below 1 is a 400");
 
-    // --- reading it back ------------------------------------------------------------
     let (_, one) = gate.json("GET", &format!("/api/events/{new_id}"), Some(&attendee), None);
     for want in ["\"claimed\"", "\"remaining\""] {
         assert!(
@@ -143,10 +112,8 @@ fn events_created_read_amended_and_cancelled() {
         "a brand-new event with capacity 50 has 50 remaining"
     );
 
-    // Two separate claims with two separate messages ON PURPOSE — see the note in
-    // e2e-events.sh: an earlier version asserted only that the id appeared, and when
-    // it did not it reported a GUESS about the cause as a finding. It was wrong, and
-    // a repair round was sent to fix a query that worked.
+    // Two separate claims with two separate messages ON PURPOSE: asserting only that the id appeared
+    // once reported a GUESS about the cause as a finding and sent a repair to fix a working query.
     let (_, list) = gate.json("GET", "/api/events?state=open", Some(&attendee), None);
     assert!(
         list.contains("\"Wasm Night, moved\"") || list.contains("\"Wasm Night\""),
@@ -163,7 +130,6 @@ fn events_created_read_amended_and_cancelled() {
     let (code, _) = gate.json("GET", "/api/events/does-not-exist", Some(&attendee), None);
     assert_eq!(code, 404, "an unknown event is a 404");
 
-    // --- only the owning organizer may amend ----------------------------------------
     let (code, _) = gate.json(
         "PATCH",
         &format!("/api/events/{new_id}"),
@@ -172,7 +138,6 @@ fn events_created_read_amended_and_cancelled() {
     );
     assert_eq!(code, 200, "the organizer who created the event must be able to PATCH it");
 
-    // --- cancelling is soft ----------------------------------------------------------
     let (code, _) = gate.json("DELETE", &format!("/api/events/{new_id}"), Some(&organizer), None);
     assert_eq!(code, 204, "DELETE must answer 204");
     let doc = gate.stored("events", &new_id);
@@ -181,7 +146,6 @@ fn events_created_read_amended_and_cancelled() {
         "DELETE is a SOFT delete — the document stays and state becomes cancelled: {doc}"
     );
 
-    // --- an optional description ------------------------------------------------------
     let (_, with) = gate.json(
         "POST",
         "/api/events",
@@ -196,8 +160,7 @@ fn events_created_read_amended_and_cancelled() {
         "description was dropped on create: {}",
         gate.stored("events", &wid)
     );
-    // Absent, not empty, when it is not given — a caller reading "" cannot tell
-    // "nobody wrote one" from "somebody cleared it".
+    // Absent, not empty, when not given: "" cannot tell "nobody wrote one" from "somebody cleared it".
     assert!(
         !gate.stored("events", &new_id).contains("\"description\""),
         "an event created without a description must not carry the key"
@@ -215,7 +178,6 @@ fn events_created_read_amended_and_cancelled() {
         gate.stored("events", &wid)
     );
 
-    // --- an optional poster -------------------------------------------------------------
     let (code, _) = gate.send(
         "POST",
         &format!("/api/events/{wid}/image"),
@@ -248,32 +210,19 @@ fn events_created_read_amended_and_cancelled() {
     assert_eq!(code, 404, "an event with no poster is a 404, not an empty 200");
 }
 
-// ---------------------------------------------------------------------------
-// the composition — the gate no single part can pass
-// ---------------------------------------------------------------------------
+// the composition: the gate no single part can pass
 
-/// The whole evening: event opened, place taken, ticket passed on, and the right
-/// person walks in.
+/// The whole evening: event opened, place taken, ticket passed on, and the right person walks in.
 ///
-/// Ported from `components/events-domain/e2e.sh`. This app has four part gates
-/// (`events`, `tickets`, `swaps`, `checkin`) and they came over in #180-#189; the
-/// composition gates did not, and CI never ran them either — its loop globbed
-/// `components/*/e2e-*.sh`, with a hyphen, which matches the part gates and none of
-/// the `e2e.sh` files.
+/// Ported from `components/events-domain/e2e.sh`. It lives here rather than in a fifth file because
+/// the chain starts with an event and a fifth binary would pay for its own host. What only the
+/// composition can prove:
 ///
-/// It lives here rather than in a fifth file because the chain starts with an event,
-/// and because a fifth integration binary would pay for its own host to assert what
-/// this one can.
-///
-/// What only the composition can prove, and each of these is a plausible local
-/// success in isolation:
-///
-///   * `events` reads `remaining` from `quota:meter`, and `tickets` must be the thing
-///     that moved it — two parts, one counter, and neither gate sees the other's.
-///   * a swap moves a ticket between holders and must NOT free a seat: the house did
-///     not empty one, someone else is sitting in it.
-///   * `checkin` admits by the holder `swaps` last wrote. A door reading a stale
-///     holder lets the wrong person in and is invisible to both parts alone.
+///   * `events` reads `remaining` from `quota:meter` and `tickets` must be what moved it: two parts,
+///     one counter.
+///   * a swap moves a ticket between holders and must NOT free a seat.
+///   * `checkin` admits by the holder `swaps` last wrote; a door reading a stale holder lets the wrong
+///     person in.
 #[test]
 fn the_whole_evening_works() {
     let Some(gate) = Gate::start(APP, COMPOSED, CONFIG) else { return };
@@ -284,7 +233,6 @@ fn the_whole_evening_works() {
         |who: &str| seed["tokens"][who]["subject"].as_str().unwrap_or_default().to_string();
     let (organizer, attendee, other) = (tok("organizer"), tok("attendee"), tok("other"));
 
-    // --- an organizer opens the doors --------------------------------------
     let (_, e) = gate.post(
         "/api/events",
         Some(&organizer),
@@ -293,7 +241,6 @@ fn the_whole_evening_works() {
     let eid = field(&e, "id");
     assert!(!eid.is_empty(), "events: no event was created: {e}");
 
-    // --- an attendee takes a place -----------------------------------------
     let (_, t) = gate.post(&format!("/api/events/{eid}/tickets"), Some(&attendee), json!({}));
     let tid = field(&t, "id");
     assert!(!tid.is_empty(), "tickets: no ticket was issued: {t}");
@@ -306,7 +253,6 @@ fn the_whole_evening_works() {
          from quota:meter, which tickets must be the thing that moved"
     );
 
-    // --- they cannot come, and pass it on ----------------------------------
     let (_, s) = gate.post("/api/swaps", Some(&attendee), json!({"ticket_id": tid}));
     let sid = field(&s, "id");
     assert!(!sid.is_empty(), "swaps: no offer was created: {s}");
@@ -321,7 +267,6 @@ fn the_whole_evening_works() {
          not empty a seat"
     );
 
-    // --- the new holder is the one who gets in -----------------------------
     let (_, held) = gate.get(&format!("/api/tickets/{tid}"), Some(&other));
     let code = field(&held, "code");
     assert!(
@@ -343,7 +288,6 @@ fn the_whole_evening_works() {
          checkin is reading a holder that swaps already changed"
     );
 
-    // --- and the person who gave it away cannot get in ---------------------
     let (c, _) = gate.post("/api/checkin", Some(&organizer), json!({"code": code}));
     assert_eq!(c, 409, "the ticket is spent — a second scan is refused whoever presents it");
 }

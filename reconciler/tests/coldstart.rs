@@ -1,13 +1,7 @@
 //! What a start costs, and that a corrupt cache cannot brick a node.
 //!
-//! This was `bench/coldstart/` — a bash script plus three Python files — and there
-//! was never a reason for it to be shell: it drives the command bus, which is a Rust
-//! trait, and reads timings the host prints itself. Shell is for orchestrating
-//! processes across machines; nothing here leaves this one.
-//!
-//! It measures AND asserts. A benchmark nobody runs rots, and an assertion with no
-//! number tells you it passed but not what it cost — so this prints ADR-0040's table
-//! and fails if the cache stops paying for itself.
+//! It drives the command bus (a Rust trait) and reads timings the host prints, so it was never a shell
+//! job. It measures AND asserts: it prints ADR-0040's table and fails if the cache stops paying for itself.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -17,9 +11,8 @@ use comp_lattice::CommandBus;
 use comp_reconciler::fleet::Fleet;
 use serde_json::Value;
 
-/// The start command the node last accepted, read from its own ledger — the same
-/// bytes the reconciler sent, so replaying it is exactly a restart and not an
-/// approximation of one.
+/// The start command the node last accepted, read from its own ledger: the same bytes the reconciler
+/// sent, so replaying it is exactly a restart.
 fn ledger_entry(state_dir: &std::path::Path) -> (String, Value) {
     let path = state_dir.join("instances.json");
     let text = std::fs::read_to_string(&path)
@@ -55,10 +48,8 @@ fn a_cached_artifact_starts_far_faster_than_a_compile() {
         .block_on(NatsLattice::connect(&fleet.nats_url, &fleet.lattice, Duration::from_secs(15)))
         .unwrap();
 
-    // Stop and start by hand, with the reconciler's own commands. Every other
-    // iteration also clears BOTH caches — the pulled .wasm and the compiled .cwasm —
-    // so the run contains real cold starts rather than re-pulls that still hit the
-    // compile cache.
+    // Stop and start by hand with the reconciler's own commands. Every other iteration clears BOTH
+    // caches (pulled .wasm and compiled .cwasm) so the run has real cold starts.
     for i in 0..6 {
         rt.block_on(bus.send(
             "n1",
@@ -101,9 +92,7 @@ fn a_cached_artifact_starts_far_faster_than_a_compile() {
     println!("    warm (cached):   {w:.2} ms over {} start(s)", warm.len());
     println!("    {:.0}x", c / w.max(0.01));
 
-    // Loose on purpose: the exact ratio is hardware, but "the cache is worth having"
-    // is the property, and a regression that makes a warm start as slow as a compile
-    // is what this must catch.
+    // Loose on purpose: the ratio is hardware, but a warm start as slow as a compile is what this must catch.
     assert!(
         w < c / 5.0,
         "a cached start ({w:.2} ms) should be far cheaper than a compile ({c:.2} ms)"
@@ -112,10 +101,8 @@ fn a_cached_artifact_starts_far_faster_than_a_compile() {
 
 #[test]
 fn a_corrupt_cache_falls_back_to_compiling() {
-    // `deserialize_file` maps machine code straight in, so a cache written by another
-    // wasmtime build — or a torn write — must be dropped rather than propagated. This
-    // is the branch that could brick a node, which is worth more than testing the
-    // happy path twice.
+    // `deserialize_file` maps machine code straight in, so a cache from another wasmtime build or a torn
+    // write must be dropped, not propagated: the branch that could brick a node.
     let fleet = Fleet::start("corrupt", &["fixtures/one-replica.yaml"], 1, None);
     assert!(fleet.serves("shop.eve.test", Duration::from_secs(90)), "never served");
 

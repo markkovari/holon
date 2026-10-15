@@ -1,18 +1,10 @@
-//! The `support:desk` courier gate, ported from
-//! `components/support-desk-domain/e2e-courier.sh`.
+//! The `support:desk` courier gate, ported from `components/support-desk-domain/e2e-courier.sh`.
 //!
-//! This is the gate that needed the harness to run a SERVER, not just a host. Delivery
-//! is the whole subject and none of it is observable against a far end that always
-//! works: an app that sends inline, one that acks a refusal, and one that retries
-//! something already delivered all look identical on the happy path. So the gate runs
-//! its own receiver and breaks it on purpose.
+//! This gate needed the harness to run a SERVER: delivery is not observable against a far end that
+//! always works, so the gate runs its own receiver and breaks it on purpose.
 //!
-//! The shell version writes JSON lines to a temp file and re-reads them, with a
-//! footnote about `grep -c` printing 0 AND exiting 1 on an empty file — the empty case
-//! being exactly the one that means "nothing was sent". `Sink::arrivals()` is a `Vec`.
-//!
-//! The sleeps stay. `base-backoff=1` is real time in the outbox, and a retry that has
-//! not come due yet is indistinguishable from one that never will.
+//! The sleeps stay: `base-backoff=1` is real time in the outbox, and a retry not yet due is
+//! indistinguishable from one that never will be.
 
 mod gatelib;
 use gatelib::{field, Gate, Shim, Sink};
@@ -57,7 +49,6 @@ fn a_reply_is_delivered_once_retried_on_refusal_and_finally_dead_lettered() {
         );
     };
 
-    // --- the refusals ---------------------------------------------------------------
     let (c, _) = gate.json("POST", "/api/deliver", None, None);
     assert_eq!(c, 401, "running a delivery pass with no bearer must be 401");
     let (_, ro) =
@@ -65,13 +56,11 @@ fn a_reply_is_delivered_once_retried_on_refusal_and_finally_dead_lettered() {
     let (c, _) = gate.json("POST", "/api/deliver", Some(&field(&ro, "token")), None);
     assert_eq!(c, 403, "delivering needs tickets:deliver — a read-only token must be 403");
 
-    // --- nothing to do is not an error ---------------------------------------------
     let d = deliver();
     for k in ["claimed", "delivered", "failed", "dead"] {
         assert_eq!(d[k], 0, "an empty outbox is a pass that did nothing: {d}");
     }
 
-    // --- a 2xx is delivered, once --------------------------------------------------
     enqueue("the first reply");
     let d = deliver();
     assert_eq!(d["claimed"], 1, "one event was waiting: {d}");
@@ -109,7 +98,6 @@ fn a_reply_is_delivered_once_retried_on_refusal_and_finally_dead_lettered() {
         "the reply was delivered twice — the first pass did not ack it"
     );
 
-    // --- a 500 is NOT delivered, and comes back -----------------------------------
     sink.fail();
     enqueue("the second reply");
     let d = deliver();
@@ -134,13 +122,9 @@ fn a_reply_is_delivered_once_retried_on_refusal_and_finally_dead_lettered() {
     assert_eq!(d["delivered"], 1, "the far end works again and the retry did not land: {d}");
     assert_eq!(sink.deliveries(), 3, "the retry did not reach the sink");
 
-    // --- enough refusals dead-letter it, and a dead letter can be replayed --------
-    //
-    // The pass that exhausts `max-attempts` must SAY so. The outbox dead-letters on its
-    // own whatever the courier reads, so the dead-letter list below would pass a part
-    // that never looks at `fail`'s return value — and then nothing in the app ever
-    // reports that a reply was abandoned. This is the only place that distinguishes the
-    // two.
+    // --- enough refusals dead-letter it, and a dead letter can be replayed ---
+    // The pass that exhausts `max-attempts` must SAY so: the outbox dead-letters on its own, so the
+    // dead-letter list would pass a part that never looks at `fail`'s return value.
     sink.fail();
     enqueue("the third reply");
     let mut last = Value::Null;
@@ -179,31 +163,19 @@ fn a_reply_is_delivered_once_retried_on_refusal_and_finally_dead_lettered() {
     assert_eq!(c, 404, "replaying something the outbox does not know must be 404");
 }
 
-// ---------------------------------------------------------------------------
-// the composition — the gate no single part can pass
-// ---------------------------------------------------------------------------
+// the composition: the gate no single part can pass
 
-/// The whole support desk: a ticket, a drafted reply, and what actually arrives at
-/// the customer's endpoint.
+/// The whole support desk: a ticket, a drafted reply, and what actually arrives at the customer's
+/// endpoint. Ported from `components/support-desk-domain/e2e.sh`; it needs a `Sink` and a real model on
+/// the shim, like the courier gate. Only the composition proves:
 ///
-/// Ported from `components/support-desk-domain/e2e.sh`. It lives beside the courier
-/// gate because it needs the same two things that one does — a `Sink` for the far end
-/// and a real model on the shim — and because everything it asserts about delivery is
-/// already spelled out in this file's header.
+///   * the reply must NOT reach the far end before a delivery pass runs (a part sending inline passes
+///     its own gate and defeats the app).
+///   * what ARRIVES must be the draft that was STORED, field by field: `reply` writes the payload and
+///     `courier` reads it.
 ///
-/// Two things only the composition can prove:
-///
-///   * the reply must NOT reach the far end before a delivery pass runs. A part that
-///     sends inline passes its own gate and defeats the entire point of the app.
-///   * what ARRIVES must be the draft that was STORED, field by field. `reply` writes
-///     the payload and `courier` reads it, and nothing else in the app would notice
-///     if they disagreed about a field name.
-///
-/// The fields are compared individually and not as a re-serialised blob, and the
-/// shell version carries the scar: `json.dumps` escapes non-ASCII by default, so a
-/// draft containing an em dash — which a model writes constantly — appears as
-/// `—` in the dump and no substring of the original is found in it. That failed
-/// a run in which all three parts were correct.
+/// Fields are compared individually, not as a re-serialised blob: `json.dumps` escapes non-ASCII by
+/// default, so a draft with an em dash appeared as `—` and no substring of the original was found.
 #[test]
 fn the_whole_support_desk_works() {
     let Some(shim) = Shim::probe("support/whole") else { return };
@@ -250,7 +222,6 @@ fn the_whole_support_desk_works() {
     let (_, sess) = gate.post("/test/session", None, json!({}));
     let (sid, csrf) = (field(&sess, "session"), field(&sess, "csrf"));
 
-    // --- a ticket, through the part that owns tickets ----------------------
     let (_, created) = gate.post(
         "/api/tickets",
         Some(&t),
@@ -266,7 +237,6 @@ fn the_whole_support_desk_works() {
         "the tickets part did not accept a ticket, so nothing else can be judged: {created}"
     );
 
-    // --- a reply, through the part that drafts -----------------------------
     let (_, r) = gate.with_headers(
         "POST",
         &format!("/api/tickets/{id}/reply"),
@@ -286,7 +256,6 @@ fn the_whole_support_desk_works() {
          sending inline, which is the failure this app exists to prevent"
     );
 
-    // --- delivered, through the part that sends ----------------------------
     let (_, body) = gate.post("/api/deliver", Some(&t), json!({}));
     assert!(
         !body.trim().is_empty(),
@@ -309,10 +278,9 @@ fn the_whole_support_desk_works() {
         sink.deliveries()
     );
 
-    // --- THE join assertion ------------------------------------------------
-    //
-    // What arrived is what the customer should read, which means the two parts agreed
-    // on every field of a payload neither of them shows anyone.
+    // --- THE join assertion ---
+    // What arrived is what the customer should read: the two parts agreed on every field of a payload
+    // neither shows anyone.
     let arrivals = sink.arrivals();
     let arrival = arrivals.first().expect("nothing arrived at the far end at all");
     let arrived = arrival.body.trim();

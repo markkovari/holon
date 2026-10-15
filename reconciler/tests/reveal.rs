@@ -1,18 +1,14 @@
 //! `comp:secrets/reader`, end to end: a manifest grants a key, a guest reveals it.
 //!
-//! ADR-0051 designed this and the platform half was built and tested — tokens, scope,
-//! 401/403 — but the READER was never wired into the host. `secrets::fetch` had no
-//! callers, `comp:secrets/reader` was on neither the linker nor `HOST_IFACES`, and no
-//! component in the repo imported it. Every claim in that ADR about what a guest sees
-//! was therefore untested. These are the three assertions that make it true or not:
+//! ADR-0051's platform half was tested but the READER was never wired into the host (`secrets::fetch` had
+//! no callers, the interface was on neither the linker nor `HOST_IFACES`), so its claims about what a
+//! guest sees were untested:
 //!
 //!   1. a granted key comes back as a handle carrying the manifest's name;
-//!   2. a key that was not granted comes back as `none` — no error, no other tenant's
-//!      secret, and no string the guest can send that reaches one;
-//!   3. `reveal` returns the value the vault holds.
-//!
-//! And the fourth, which is the gap ADR-0051 admitted and did not close: a reference
-//! that does not resolve stops the instance at START, not on the first request.
+//!   2. a key that was not granted comes back as `none`: no error, no other tenant's secret, and no
+//!      string the guest can send that reaches one;
+//!   3. `reveal` returns the value the vault holds;
+//!   4. a reference that does not resolve stops the instance at START, not on the first request.
 
 use std::time::Duration;
 
@@ -61,25 +57,22 @@ fn a_granted_key_reveals_its_value_and_an_ungranted_one_is_absent() {
         &["vault://acme/stripe=sk_live_e2e".to_string()],
     );
 
-    // The handle first. `name` is read back OFF the handle, so this also says the
-    // host put the manifest's key on it rather than echoing the guest's string.
+    // The handle first: `name` is read back OFF the handle, so the host put the manifest's key on it
+    // rather than echoing the guest's string.
     let has = poll(&fleet, "probe.acme.test", "/has?k=stripe", Duration::from_secs(90));
     assert_eq!(has["granted"], serde_json::json!(true), "the granted key was not granted: {has}");
     assert_eq!(has["name"], serde_json::json!("stripe"), "the handle lost its key: {has}");
 
-    // The boundary. `billing` is a perfectly good key — for somebody else. A guest
-    // cannot name a REFERENCE at all, so there is no string that widens this.
+    // The boundary: `billing` is a good key for somebody else. A guest cannot name a REFERENCE at all.
     let no = poll(&fleet, "probe.acme.test", "/has?k=billing", Duration::from_secs(30));
     assert_eq!(no["granted"], serde_json::json!(false), "a key nobody granted resolved: {no}");
     assert!(no["value"].is_null(), "an ungranted key carried a value: {no}");
 
-    // And the value itself, which is the half that was never wired.
+    // And the value itself, the half that was never wired.
     let v = poll(&fleet, "probe.acme.test", "/reveal?k=stripe", Duration::from_secs(30));
     assert_eq!(v["value"], serde_json::json!("sk_live_e2e"), "reveal did not return it: {v}");
 
-    // The audit line, which is the reason `reveal` is a separate call from `get`.
-    // Key and identity, never a value — a log that carried the plaintext would undo
-    // the whole design.
+    // The audit line (why `reveal` is separate from `get`): key and identity, never a value.
     let log = fleet.node_log("n1");
     assert!(log.contains("secret.reveal"), "the reveal was not audited:\n{log}");
     assert!(log.contains("\"key\":\"stripe\""), "the audit line does not name the key:\n{log}");
@@ -92,8 +85,7 @@ fn a_granted_key_reveals_its_value_and_an_ungranted_one_is_absent() {
 
 #[test]
 fn a_reference_that_does_not_resolve_stops_the_instance_at_start() {
-    // Same fixture shape, empty vault. The reference is well-formed and granted; it
-    // just does not exist — a secret that was deleted, or a manifest with a typo.
+    // Same fixture shape, empty vault: well-formed and granted, but the secret does not exist.
     let fleet =
         Fleet::start_with_secrets("nosecret", &["fixtures/secret-missing.yaml"], &artifacts(), &[]);
 
@@ -107,8 +99,7 @@ fn a_reference_that_does_not_resolve_stops_the_instance_at_start() {
         std::thread::sleep(Duration::from_millis(500));
     }
     assert!(log.contains("cannot start"), "it started with a broken reference:\n{log}");
-    // The refusal has to name the key AND the reference, or an operator with five
-    // secrets on one component is left guessing which one is broken.
+    // The refusal has to name the key AND the reference, or an operator with five secrets is left guessing.
     for expected in ["stripe", "vault://acme/gone"] {
         assert!(log.contains(expected), "the refusal does not name {expected:?}:\n{log}");
     }

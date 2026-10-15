@@ -1,29 +1,17 @@
 //! A fixture link names a version that something actually exports.
 //!
-//! `wit/SURFACES.md` (see `witsurface.rs`) catches a SHAPE that moved without its
-//! version. This catches the other half of the same mistake: a version that moved
-//! and left every consumer behind.
+//! `wit/SURFACES.md` (see `witsurface.rs`) catches a SHAPE that moved without its version; this catches a
+//! version that moved and left every consumer behind. `wac plug` matches on the WHOLE versioned string,
+//! so thirteen `links:` entries across seven fixtures asking for 0.1.0 after `graph:fitness/evaluator` and
+//! `graph:run/driver` went to 0.2.0 silently resolved to nothing, and the agent loop died as
 //!
-//! Both happened, one merge apart, and neither was noticed. `graph:fitness/evaluator`
-//! went to 0.2.0 in #147 and `graph:run/driver` in #148; thirteen `links:` entries
-//! across seven fixtures kept asking for 0.1.0. `wac plug` matches an import to an
-//! export on the WHOLE versioned string, so every one of those links silently
-//! resolved to nothing — and the entire agent loop could not start. A run died as
+//!     goalrun.acme.test never served within 180s - last: HTTP 503
 //!
-//!     goalrun.acme.test never served within 180s — last: HTTP 503
+//! naming no interface, component or version. `fixtures.rs` asks whether a fixture PARSES and its ids
+//! RESOLVE, a different kind of thing from a YAML version against a built artifact.
 //!
-//! which names no interface, no component and no version.
-//!
-//! `fixtures.rs` passed throughout, and correctly: it asks whether a fixture PARSES
-//! and whether its ids RESOLVE against each other. Nothing compared a version in a
-//! YAML file against a version in a built artifact, because those are different
-//! kinds of thing living in different directories — which is exactly why it needed
-//! a test of its own rather than an extra assertion in that one.
-//!
-//! Deliberately narrow. It says nothing about whether the interface is the RIGHT
-//! one, only that some component in the tree exports the version being asked for.
-//! An import naming a package this repository does not build at all is skipped: a
-//! host satisfies those, and they are `hostsurface.rs`'s business.
+//! Deliberately narrow: only that some component exports the version being asked for. An import naming a
+//! package this repository does not build is skipped (a host satisfies it; see `hostsurface.rs`).
 
 use std::collections::{BTreeMap, BTreeSet};
 

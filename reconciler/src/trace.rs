@@ -1,30 +1,13 @@
-//! What a run leaves behind (ADR-0092).
+//! What a run leaves behind (ADR-0092): the run's history appended to the merged store, so "why did
+//! branch 3 beat branch 7" survives the terminal.
 //!
-//! `comp-goalrun` printed to stdout and the run died with the terminal. This
-//! appends the run's history to the merged store instead, so "why did branch 3
-//! beat branch 7, and what did either of them read" survives the session.
+//! Writes SurrealQL directly, not `knowledge:memory/observe`: ADR-0084 makes `observe` what a
+//! branch BELIEVES, and an event log written through it would make "branch 7 started at 12:04"
+//! retrievable as advice. `goalrun` is a native driver, not a component, so this does not bypass
+//! `knowledge:graph` (`comp-capgraph` does the same, ADR-0091).
 //!
-//! ## Why this writes SurrealQL and not `knowledge:memory/observe`
-//!
-//! `observe` is right there, already appends, already has a transport in
-//! `memory.rs`. It is the wrong door: ADR-0084 makes `observe` what a branch
-//! BELIEVES and `promote` what the swarm believes. A run's event log is the
-//! history those are distilled from, and writing it through `observe` would make
-//! "branch 7 started at 12:04" retrievable as advice.
-//!
-//! Writing directly is also not a violation of "components reach the store
-//! through `knowledge:graph`". `goalrun` is not a component — it is the native
-//! driver that deploys the fleet and already holds `--surreal-url` as an
-//! argument. `comp-capgraph` writes the capability graph's projection the same
-//! way, for the same reason (ADR-0091).
-//!
-//! ## Nothing here may fail a run
-//!
-//! Every call returns `()`. A run that dies because its telemetry could not be
-//! written is strictly worse than a run with no telemetry — the work is the
-//! point and the trace is the record of it. Failures are counted and reported
-//! once at the end rather than per event, so a database that is down costs one
-//! line of output instead of one per attempt.
+//! Nothing here may fail a run: every call returns `()`. Failures are counted and reported once at
+//! the end, so a down database costs one line, not one per event.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -34,16 +17,12 @@ use serde_json::{json, Value};
 const RUN: &str = "run";
 const ATTEMPT: &str = "attempt";
 const EVENT: &str = "event";
-/// What the pool gained. Its own table because "what can this system do" is a
-/// question about the capability, not about the run that happened to add it.
+/// What the pool gained. Its own table: "what can this system do" is about the capability, not the
+/// run that added it.
 const CAPABILITY: &str = "capability";
 
-/// Where the trace goes, and the credentials to get in.
-///
-/// `None` everywhere the driver has no `--surreal-url`: a run without a database
-/// is a supported configuration (ADR-0080 keeps the database out of the
-/// platform), so this is an `Option` the caller holds rather than a hard
-/// dependency it must satisfy.
+/// Where the trace goes, and the credentials to get in. An `Option` the caller holds: a run
+/// without a database is supported (ADR-0080).
 pub struct Trace {
     url: String,
     namespace: String,
@@ -55,47 +34,32 @@ pub struct Trace {
     dropped: AtomicU64,
     /// Whether the namespace and database have been defined this process.
     ///
-    /// A fresh SurrealDB has neither, and every statement against a namespace
-    /// that does not exist is rejected — with a 200 carrying a per-statement
-    /// error, so it looks like a successful request. `knowledge-graph` defines
-    /// them the same way for the same reason.
-    ///
-    /// Done once, lazily, rather than in `new`: a `Trace` may be constructed for
-    /// a run that then writes nothing, and a constructor that dials a database
-    /// is a constructor that can hang.
+    /// A fresh SurrealDB has neither, and statements against a missing namespace come back as a 200
+    /// carrying a per-statement error. Done once, lazily, not in `new`, so constructing a `Trace`
+    /// never dials a database.
     defined: AtomicBool,
 }
 
 impl Trace {
-    /// `url` is the SurrealDB HTTP endpoint — the same one the graph component
-    /// is pointed at. `password` is the value, already read from its file by the
-    /// caller: a path is a secret's location and this takes the secret.
+    /// `url` is the SurrealDB HTTP endpoint. `password` is the value, already read from its file.
     pub fn new(url: &str, database: &str, password: Option<&str>) -> Self {
         Self {
             url: url.trim_end_matches('/').to_string(),
-            // The same namespace the graph component uses, so a trace and the
-            // lessons it produced are in one place and can be joined (ADR-0091).
+            // The graph component's namespace, so a trace and its lessons can be joined (ADR-0091).
             namespace: "comp".to_string(),
             database: database.to_string(),
             user: "root".to_string(),
-            // Kept as an Option rather than defaulted. An `--unauthenticated`
-            // SurrealDB REJECTS a Basic header naming a user it does not have,
-            // so "no password" and "the password is root" are different requests
-            // — and `goalrun` already treats absent as "the server takes
-            // unauthenticated writes". Defaulting here erased that distinction,
-            // and every write against a local unauthenticated database failed.
+            // An Option, not defaulted: an `--unauthenticated` SurrealDB REJECTS a Basic header
+            // naming a user it does not have, so "no password" differs from "the password is root".
             password: password.map(|p| p.to_string()),
             dropped: AtomicU64::new(0),
             defined: AtomicBool::new(false),
         }
     }
 
-    /// A run began. Carries what makes the run replayable (ADR-0078): the seed,
-    /// and the base every branch is judged against.
-    /// `spec` is the goal FILE this run was driven from, relative to the checkout.
-    /// It is what joins a run back to the queue entry that started it: `goal` is
-    /// prose and two goals can open with the same sentence, so a UI matching on it
-    /// hangs a run under whichever entry it happened to find first.
+    /// A run began. Carries what makes it replayable (ADR-0078): the seed and the base every branch
+    /// is judged against. `spec` is the goal FILE, relative to the checkout; it joins a run to its
+    /// queue entry, since two goals can open with the same sentence.
     pub fn run_started(
         &self,
         run: &str,
@@ -135,9 +99,8 @@ impl Trace {
         );
     }
 
-    /// What the gate said (ADR-0088). The score AND the verdict text, because
-    /// the verdict is what the next attempt reads and a score alone cannot be
-    /// argued with later.
+    /// What the gate said (ADR-0088): the score AND the verdict text, since the next attempt reads
+    /// the verdict.
     pub fn gate_verdict(
         &self,
         run: &str,
@@ -154,8 +117,7 @@ impl Trace {
         );
     }
 
-    /// Which lessons reached the prompt. The other half of `attribute`: that
-    /// records what happened to what was read, this records what was read.
+    /// Which lessons reached the prompt. The other half of `attribute`.
     pub fn lesson_read(&self, run: &str, attempt: &str, keys: &[String]) {
         if keys.is_empty() {
             return;
@@ -165,18 +127,12 @@ impl Trace {
 
     /// An attempt ended, and what it produced.
     ///
-    /// `outcome` is `passed`, `failed`, `errored` or `interrupted` — the last one
-    /// records a branch that was stopped, whose partial work is discarded rather
-    /// than judged (ADR-0092).
+    /// `outcome` is `passed`, `failed`, `errored` or `interrupted` (a stopped branch whose partial
+    /// work is discarded, ADR-0092).
     ///
-    /// The PATHS are recorded and the contents are not. What a person asks of a
-    /// finished run is "which branch touched what, and what did it cost" — and a
-    /// branch's whole diff is already in the pull request, addressable and
-    /// reviewable, whereas a copy of it here would be a second copy that can
-    /// disagree with the first. Cost and duration are the two facts that exist
-    /// nowhere else once the terminal is gone.
-    // Two over clippy's default threshold; each is its own recorded fact
-    // (see the doc above), not a struct's fields waiting to be extracted.
+    /// PATHS are recorded, not contents: the diff is already in the pull request and a copy here
+    /// could disagree. Cost and duration exist nowhere else once the terminal is gone.
+    // Two over clippy's default threshold; each is its own recorded fact, not fields to extract.
     #[allow(clippy::too_many_arguments)]
     pub fn attempt_finished(
         &self,
@@ -190,15 +146,9 @@ impl Trace {
         tries: u64,
     ) {
         let paths = file_paths(files);
-        // NONE rather than 0 when nothing was reported.
-        //
-        // A finished attempt made at least one model call, so it did not cost zero
-        // tokens — a 0 here means the provider reported no usage, which is exactly
-        // what `tools/claude-shim.mjs` does on purpose: `claude -p` bills against a
-        // subscription and it refuses to fabricate a count. Storing that as 0 makes
-        // the wallet read "this run was free" when the truth is "nobody measured",
-        // and a column of zeroes is indistinguishable from a cheap run. Absent is
-        // the honest answer and the one a reader cannot mistake.
+        // NONE rather than 0 when nothing was reported: a finished attempt made model calls, so 0
+        // means the provider reported no usage (`tools/claude-shim.mjs` does this on purpose).
+        // Storing 0 would make the wallet read "free" when the truth is "nobody measured".
         let tokens_sql = tokens_sql(tokens);
         self.send(&format!(
             "UPSERT {} SET outcome = {}, score = {score}, paths = {}, files = {}, \
@@ -218,13 +168,9 @@ impl Trace {
         );
     }
 
-    /// A run left the pool able to do something it could not do before.
-    ///
-    /// This is ADR-0089's whole claim made visible: a solved problem should leave
-    /// the system MORE capable, and until now the only way to know it had was to
-    /// notice a new directory. A `capability` node rather than only an event,
-    /// because "what can this system do, and which run taught it" is a question
-    /// about the capability, not about the moment it appeared.
+    /// A run left the pool able to do something it could not before (ADR-0089). A `capability` node
+    /// rather than only an event, since "what can this system do, and which run taught it" is about
+    /// the capability.
     pub fn capability_added(&self, run: &str, name: &str, path: &str) {
         self.send(&format!(
             "UPSERT {} SET name = {}, path = {}, added_by = {}, added_at = time::now();",
@@ -236,20 +182,15 @@ impl Trace {
         self.event(run, None, "capability-added", json!({ "name": name, "path": path }));
     }
 
-    /// Whether reuse discovery found anything. A MISS is the most useful row
-    /// here: it is the graph naming a capability the pool lacks, which is the
-    /// signal for what to build next (ADR-0089).
+    /// Whether reuse discovery found anything. A MISS is the most useful row: the graph naming a
+    /// capability the pool lacks (ADR-0089).
     pub fn capsearch(&self, run: &str, query: &str, hits: usize) {
         let kind = if hits == 0 { "capsearch-miss" } else { "capsearch-hit" };
         self.event(run, None, kind, json!({ "query": query, "hits": hits }));
     }
 
-    /// How many of `capsearch`'s hits `capability-advisor` confirmed actually
-    /// fit the goal, vs. matched only on term overlap. A separate event from
-    /// `capsearch` itself: this only fires when an advisor was configured AND
-    /// reachable, so its absence in a run's history means "not asked", never
-    /// "asked and found nothing" (`capsearch`'s own hit/miss split already
-    /// carries that answer).
+    /// How many of `capsearch`'s hits `capability-advisor` confirmed actually fit the goal. Only
+    /// fires when an advisor was configured AND reachable, so absence means "not asked".
     pub fn capsearch_confirmed(&self, run: &str, confirmed: usize, rejected: usize) {
         self.event(
             run,
@@ -276,10 +217,7 @@ impl Trace {
         );
     }
 
-    /// One line for the operator, or nothing when everything landed.
-    ///
-    /// Reported once rather than per failure: a database that is down should
-    /// cost one line, not one per attempt drowning the run's real output.
+    /// One line for the operator, or nothing when everything landed. Once, not per failure.
     pub fn report(&self) -> Option<String> {
         match self.dropped.load(Ordering::Relaxed) {
             0 => None,
@@ -289,11 +227,8 @@ impl Trace {
         }
     }
 
-    // ---- the append ---------------------------------------------------------
-
     fn event(&self, run: &str, attempt: Option<&str>, kind: &str, data: Value) {
-        // No id: an event is append-only and never addressed individually, so
-        // letting SurrealDB mint one avoids inventing a key that has to be
+        // No id: an event is append-only, so SurrealDB mints one rather than us inventing a key
         // unique across concurrent branches.
         self.send(&format!(
             "CREATE {EVENT} SET run = {}, attempt = {}, kind = {}, data = {}, at = time::now();",
@@ -304,11 +239,8 @@ impl Trace {
         ));
     }
 
-    /// Define the namespace and database, once.
-    ///
-    /// Marked done even when the call fails: retrying it before every write on a
-    /// database that is down turns one dropped write into two, and the write
-    /// that follows will fail and be counted anyway.
+    /// Define the namespace and database, once. Marked done even when the call fails: retrying
+    /// before every write on a down database would just double the dropped writes.
     fn ensure_defined(&self) {
         if self.defined.swap(true, Ordering::Relaxed) {
             return;
@@ -343,7 +275,6 @@ impl Trace {
     }
 }
 
-/// POST one body to `/sql`. Returns whether every statement in it was accepted.
 fn ureq_post(
     url: &str,
     ns: &str,
@@ -353,8 +284,7 @@ fn ureq_post(
     surql: &str,
 ) -> bool {
     let client = match reqwest::blocking::Client::builder()
-        // Short on purpose: a trace write must never be the reason a run stalls,
-        // and the run has already done the expensive part by the time we write.
+        // Short on purpose: a trace write must never be why a run stalls.
         .timeout(std::time::Duration::from_secs(5))
         .build()
     {
@@ -362,7 +292,6 @@ fn ureq_post(
         Err(_) => return false,
     };
     let mut req = client.post(format!("{url}/sql"));
-    // Only when there is one: see the `password` field.
     if let Some(p) = password {
         req = req.basic_auth(user, Some(p));
     }
@@ -378,17 +307,14 @@ fn ureq_post(
     if !r.status().is_success() {
         return false;
     }
-    // A 200 whose statements were rejected is the failure that would otherwise
-    // look like a success — SurrealDB answers 200 with per-statement status.
+    // A 200 can carry per-statement rejections, so check each status.
     let text = r.text().unwrap_or_default();
     serde_json::from_str::<Vec<Value>>(&text)
         .map(|statements| statements.iter().all(|s| s["status"] == "OK"))
         .unwrap_or(false)
 }
 
-/// `tokens` as SurrealQL: the count, or `NONE` when nothing was reported.
-///
-/// See `attempt_finished` for why absent and zero must not be the same value.
+/// `tokens` as SurrealQL: the count, or `NONE` when nothing was reported (see `attempt_finished`).
 fn tokens_sql(tokens: u64) -> String {
     if tokens == 0 {
         "NONE".to_string()
@@ -397,11 +323,8 @@ fn tokens_sql(tokens: u64) -> String {
     }
 }
 
-/// The paths a branch wrote, from the driver's `[{path, content}]`.
-///
-/// Sorted and de-duplicated: a branch that rewrites the same file across repairs
-/// reports it once, and a stable order means two runs of the same branch produce
-/// comparable rows rather than a diff that is only ordering.
+/// The paths a branch wrote, from the driver's `[{path, content}]`. Sorted and de-duplicated so
+/// rows from repeated runs compare without ordering noise.
 fn file_paths(files: &Value) -> Vec<String> {
     let mut out: Vec<String> = files
         .as_array()
@@ -412,9 +335,8 @@ fn file_paths(files: &Value) -> Vec<String> {
     out
 }
 
-/// A record id. `⟨…⟩` is SurrealDB's own quoting for an arbitrary id, and the
-/// closing bracket is the one character that could end it early. Run ids carry
-/// `/` (`seed/g1/risk-first`), which is exactly why they need quoting.
+/// A record id. `⟨…⟩` is SurrealDB's quoting for an arbitrary id; run ids carry `/`
+/// (`seed/g1/risk-first`), which is why they need it, and `⟩` is the one character that could end it.
 fn rid(table: &str, id: &str) -> String {
     format!("{table}:⟨{}⟩", id.replace('⟩', ""))
 }
@@ -428,9 +350,8 @@ fn lit(s: &str) -> String {
 mod tests {
     use super::*;
 
-    /// A goal is prose a person wrote, and prose contains quotes. If it reached
-    /// the statement unescaped it would either break the write or — worse —
-    /// close the string and run as SurrealQL.
+    /// A goal is prose and contains quotes; unescaped it would break the write or close the string
+    /// and run as SurrealQL.
     #[test]
     fn a_goal_containing_quotes_cannot_break_out_of_its_statement() {
         let nasty = r#"add a "search" box'; DROP TABLE memory; --"#;
@@ -446,21 +367,17 @@ mod tests {
         );
     }
 
-    /// Run ids are `seed/g1/branch` — the `/` is why the id is bracket-quoted at
-    /// all, and a `⟩` in one would end the quoting early.
+    /// Run ids carry `/`, which is why the id is bracket-quoted, and a `⟩` would end it early.
     #[test]
     fn a_run_id_keeps_its_slashes_and_cannot_end_its_own_quoting() {
         assert_eq!(rid("run", "42/g1/risk-first"), "run:⟨42/g1/risk-first⟩");
         assert_eq!(rid("run", "42⟩; DELETE memory"), "run:⟨42; DELETE memory⟩");
     }
 
-    /// Dropped writes are counted, and silence means everything landed — the
-    /// report is what tells an operator the history is incomplete.
+    /// Dropped writes are counted; silence means everything landed.
     #[test]
     fn an_unmeasured_cost_is_absent_rather_than_zero() {
-        // The shim reports no usage on purpose — `claude -p` bills against a
-        // subscription and it will not fabricate a count. Stored as 0, a whole run
-        // reads as free; stored as NONE, it reads as unmeasured, which is true.
+        // The shim reports no usage on purpose. Stored as 0 a run reads as free; as NONE, unmeasured.
         assert_eq!(tokens_sql(0), "NONE");
         assert_eq!(tokens_sql(1), "1");
         assert_eq!(tokens_sql(31_500), "31500");

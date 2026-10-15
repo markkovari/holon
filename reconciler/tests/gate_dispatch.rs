@@ -1,27 +1,16 @@
 //! The four `dispatch` gates: one per part, and one only the composition can pass.
 //!
-//! Written as Rust from the start rather than ported from shell, which is the point
-//! of #180-#189 having happened first.
+//! Every gate judges two things:
 //!
-//! Every gate judges two different things, because one of them is not enough:
+//!   * BEHAVIOUR, because compiling proves nothing: `cargo component check`/`build` succeed on a
+//!     crate implementing none of its world. So the component is started and asked for things.
+//!   * COMPOSITION, because a hand-rolled `@`-finder and a real PII scanner both answer 201 on a
+//!     well-behaved body, and a hand-rolled haversine and `geo` both answer a plausible number of
+//!     metres. The component's IMPORTS tell them apart (`requires_capability`).
 //!
-//!   * BEHAVIOUR, because compiling proves nothing. `cargo component check` and
-//!     `cargo component build` both succeed on a crate that implements none of its
-//!     world — measured twice, while running a real goal. So these start the
-//!     component and ask it for things.
-//!   * COMPOSITION, because a hand-rolled `@`-finder and a real PII scanner both
-//!     answer 201 on a well-behaved body, and a hand-rolled haversine and `geo`
-//!     both answer a plausible number of metres. The component's IMPORTS tell them
-//!     apart, and `requires_capability` reads them out of the compiled binary.
-//!
-//! What is deliberately NOT asserted anywhere here: that any particular distance in
-//! metres is geometrically correct. `geo` has its own tests and this is not a second
-//! copy of them. What these assert is that the number is in the right ORDER OF
-//! MAGNITUDE — which is what a degrees-for-radians or a missing-cosine bug breaks —
-//! and, in `the_whole_dispatch_api_works`, that `schedule` and `manifest` agree on
-//! it. Two parts that each hand-roll the formula can be internally consistent and
-//! disagree with each other, and that is the one failure three independent parts can
-//! produce and no single part's gate can see.
+//! Not asserted: that any distance is geometrically correct (`geo` has its own tests), only the
+//! right ORDER OF MAGNITUDE (what degrees-for-radians breaks) and, in `the_whole_dispatch_api_works`,
+//! that `schedule` and `manifest` agree on it, which no single part's gate can see.
 
 mod gatelib;
 use gatelib::{field, requires_capability, Gate};
@@ -33,10 +22,8 @@ fn start() -> Option<Gate> {
     Gate::compose_and_start("dispatch", CRATE, &[])
 }
 
-/// The three request ids the fixture seeds, in the order it wrote them.
-///
-/// Read by index rather than by `mapfile`'s shell equivalent, and named here so a
-/// gate reads `boiler` instead of `ids[0]` three assertions later.
+/// The three request ids the fixture seeds, in the order it wrote them, named so a gate reads
+/// `boiler` instead of `ids[0]`.
 fn seeded(gate: &Gate) -> (String, String, String) {
     let seed = gate.seed();
     let ids: Vec<String> = seed["request_ids"]
@@ -54,19 +41,16 @@ fn parse(text: &str) -> Value {
     serde_json::from_str(text).unwrap_or(Value::Null)
 }
 
-/// The document as STORED, through the router's scaffold route.
-///
-/// Not `GET /api/requests/{id}`: that belongs to `requests` and is a stub while the
-/// other two parts are judged alone, so a gate that read it back that way would
-/// blame `schedule` for a route `schedule` does not own.
+/// The document as STORED, through the router's scaffold route, not `GET /api/requests/{id}` (a stub
+/// while the other two parts are judged alone, which would blame `schedule` for a route it does not own).
 fn stored(gate: &Gate, id: &str) -> Value {
     let (status, body) = gate.get(&format!("/test/request/{id}"), None);
     assert_eq!(status, 200, "the stored document for {id} was not readable: {body}");
     parse(&body)
 }
 
-/// A CSV reader, because a test that needs a parser to state its claim is testing
-/// the parser. Handles the one case the gate turns on: a quoted field with a comma.
+/// A CSV reader, so a test needing a parser to state its claim is not testing the parser. Handles a
+/// quoted field with a comma.
 fn rows(text: &str) -> Vec<Vec<String>> {
     let mut out = Vec::new();
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
@@ -94,16 +78,13 @@ fn distance(v: &Value) -> i64 {
     v["distance_m"].as_i64().unwrap_or(-1)
 }
 
-// ---------------------------------------------------------------------------
-// part 1 — requests
-// ---------------------------------------------------------------------------
+// part 1: requests
 
 #[test]
 fn requests_masks_validates_and_deduplicates() {
     let Some(gate) = start() else { return };
 
-    // The notes carry an email, which is the point: the contract says what is STORED
-    // is masked, so the raw address must not come back out.
+    // The notes carry an email: what is STORED is masked, so the raw address must not come back.
     let body = json!({
         "title": "Radiator cold",
         "lat": 47.4979, "lon": 19.0402,
@@ -132,14 +113,13 @@ fn requests_masks_validates_and_deduplicates() {
         "`created` is RFC3339 UTC: {doc}"
     );
 
-    // The duplicate rule: same title AND same point, on a request that is not
-    // finished.
+    // The duplicate rule: same title AND same point, on a request that is not finished.
     let (status, dup) = gate.post("/api/requests", None, body.clone());
     assert_eq!(status, 409, "the same title at the same point is a duplicate: {dup}");
     assert_eq!(field(&dup, "existing"), id, "a 409 names the request that blocks it: {dup}");
 
-    // A blank title is invalid; an out-of-range coordinate is a different error, and
-    // the contract distinguishes them because the caller can fix only one of them.
+    // A blank title is invalid; an out-of-range coordinate is a different error, because the caller
+    // can fix only one of them.
     let (status, body_out) =
         gate.post("/api/requests", None, json!({"title":"", "lat":47.0, "lon":19.0}));
     assert_eq!(status, 400, "a blank title is invalid: {body_out}");
@@ -154,7 +134,6 @@ fn requests_masks_validates_and_deduplicates() {
         "an out-of-range coordinate is `bad_coordinate`, not `invalid`: {body_out}"
     );
 
-    // The list, and the filter on it.
     let (status, list) = gate.get("/api/requests", None);
     assert_eq!(status, 200, "GET /api/requests did not answer: {list}");
     let all = parse(&list);
@@ -187,18 +166,15 @@ fn requests_masks_validates_and_deduplicates() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// part 2 — schedule
-// ---------------------------------------------------------------------------
+// part 2: schedule
 
 #[test]
 fn schedule_assigns_the_nearest_and_refuses_illegal_moves() {
     let Some(gate) = start() else { return };
     let (boiler, lift, _meter) = seeded(&gate);
 
-    // `boiler` sits about a kilometre due north of `cili` and several kilometres from
-    // the other two, so the nearest engineer is not a close call — which is
-    // deliberate: this asserts the CHOICE, not the arithmetic.
+    // `boiler` sits about a kilometre due north of `cili` and several from the other two, so the
+    // nearest engineer is no close call: this asserts the CHOICE, not the arithmetic.
     let (status, assigned) = gate.post(&format!("/api/requests/{boiler}/assign"), None, json!({}));
     assert_eq!(status, 200, "assigning a `new` request did not answer 200: {assigned}");
     let doc = parse(&assigned);
@@ -216,8 +192,7 @@ fn schedule_assigns_the_nearest_and_refuses_illegal_moves() {
          a distance and not a coordinate difference: {assigned}"
     );
 
-    // The document, not just the response: the contract says the document carries
-    // `state`, so a transition has to move the fsm instance AND the document.
+    // The document, not just the response: a transition must move the fsm instance AND the document.
     let stored_doc = stored(&gate, &boiler);
     assert_eq!(stored_doc["state"], "assigned", "the document's state did not move: {stored_doc}");
     assert_eq!(stored_doc["engineer"], "cili", "the engineer was not written down: {stored_doc}");
@@ -227,8 +202,7 @@ fn schedule_assigns_the_nearest_and_refuses_illegal_moves() {
         "the response and the stored document disagree about the distance: {stored_doc}"
     );
 
-    // Assigning twice is not legal, and the 409 says what state it is in NOW —
-    // which `fsm:workflow`'s `IllegalTransition` already carries.
+    // Assigning twice is not legal, and the 409 says what state it is in NOW (from `IllegalTransition`).
     let (status, again) = gate.post(&format!("/api/requests/{boiler}/assign"), None, json!({}));
     assert_eq!(status, 409, "assigning an already-assigned request is illegal: {again}");
     assert_eq!(field(&again, "error"), "illegal_transition", "wrong error code: {again}");
@@ -238,7 +212,6 @@ fn schedule_assigns_the_nearest_and_refuses_illegal_moves() {
         "the 409 must report the state the request is in now: {again}"
     );
 
-    // The lifecycle, forwards.
     let (status, departed) =
         gate.post(&format!("/api/requests/{boiler}/transition"), None, json!({"event":"depart"}));
     assert_eq!(status, 200, "`depart` from `assigned` is legal: {departed}");
@@ -254,7 +227,6 @@ fn schedule_assigns_the_nearest_and_refuses_illegal_moves() {
     assert_eq!(status, 400, "an event that is not in the contract is invalid: {bogus}");
     assert_eq!(field(&bogus, "error"), "invalid", "wrong error code: {bogus}");
 
-    // `cancel` is legal from `new`, and terminal.
     let (status, cancelled) =
         gate.post(&format!("/api/requests/{lift}/transition"), None, json!({"event":"cancel"}));
     assert_eq!(status, 200, "`cancel` from `new` is legal: {cancelled}");
@@ -264,7 +236,6 @@ fn schedule_assigns_the_nearest_and_refuses_illegal_moves() {
         gate.post(&format!("/api/requests/{lift}/transition"), None, json!({"event":"depart"}));
     assert_eq!(status, 409, "`cancelled` is terminal — nothing leaves it: {after}");
 
-    // The queue: open work only, ordered by distance, unassigned first.
     let (status, queue) = gate.get("/api/queue", None);
     assert_eq!(status, 200, "GET /api/queue did not answer: {queue}");
     let q = parse(&queue);
@@ -300,9 +271,7 @@ fn schedule_assigns_the_nearest_and_refuses_illegal_moves() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// part 3 — manifest
-// ---------------------------------------------------------------------------
+// part 3: manifest
 
 #[test]
 fn manifest_counts_quotes_and_filters_by_radius() {
@@ -330,8 +299,7 @@ fn manifest_counts_quotes_and_filters_by_radius() {
          assigned request carries 557 while the two `new` ones carry 0: {body}"
     );
 
-    // Nothing here is a 404. A day with no work is a manifest of zero, and a caller
-    // that has to tell "no work" from "route is broken" cannot do it from a 404.
+    // Nothing here is a 404: a caller cannot tell "no work" from "route is broken" by a 404.
     let (status, csv) = gate.get("/api/manifest.csv", None);
     assert_eq!(status, 200, "GET /api/manifest.csv did not answer: {csv}");
     let (_, ct, _) = gate.bytes("/api/manifest.csv", None);
@@ -364,10 +332,9 @@ fn manifest_counts_quotes_and_filters_by_radius() {
          parser read it as {titles:?} from: {csv}"
     );
 
-    // The radius filter. `cili` is the centre; the seeded `assigned` request is about
-    // 557 m away and `boiler` about 1 km, while `lift` is roughly 7 km north. 2000 m
-    // is nowhere near any of those boundaries on purpose — a gate that turns on a
-    // point being 1000 m from a 1000 m radius is testing floating point.
+    // The radius filter. `cili` is the centre; `assigned` is about 557 m away, `boiler` 1 km, `lift`
+    // 7 km. 2000 m is nowhere near a boundary on purpose (a point 1000 m from a 1000 m radius tests
+    // floating point).
     let (status, near) =
         gate.get("/api/manifest?near_lat=47.4700&near_lon=19.0600&within_m=2000", None);
     assert_eq!(status, 200, "the radius filter did not answer: {near}");
@@ -380,7 +347,6 @@ fn manifest_counts_quotes_and_filters_by_radius() {
          the radius, so `contains` then `distance_meters` is the pair: {near}"
     );
 
-    // All three or none: a half-specified filter is not a filter.
     let (_, half) = gate.get("/api/manifest?near_lat=47.4700&within_m=2000", None);
     assert_eq!(
         parse(&half)["total"],
@@ -409,25 +375,19 @@ fn manifest_counts_quotes_and_filters_by_radius() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// the composition — the gate no single part can pass
-// ---------------------------------------------------------------------------
+// the composition: the gate no single part can pass
 
-/// One request driven the whole way through all three parts.
-///
-/// `requests` takes it in and masks it, `schedule` assigns it and moves it, and
-/// `manifest` reports it — so a part that stored its own shape passes its own gate
-/// and fails here. The last two assertions are the ones that need all three: the
-/// distance `schedule` computed has to be the distance `manifest` prints, and the
-/// request `schedule` placed has to fall inside a radius `manifest` measures with the
-/// same component. Two independently hand-rolled formulas can each be self-consistent
-/// and still fail both.
+/// One request driven the whole way through all three parts: `requests` takes it in and masks it,
+/// `schedule` assigns it, `manifest` reports it. The last two assertions need all three: the distance
+/// `schedule` computed must be the one `manifest` prints, and the request `schedule` placed must fall
+/// inside a radius `manifest` measures. Independently hand-rolled formulas can each be self-consistent
+/// and fail both.
 #[test]
 fn the_whole_dispatch_api_works() {
     let Some(gate) = start() else { return };
     let (_boiler, _lift, _meter) = seeded(&gate);
 
-    // Near `bela`, and about 200 m from it — far from the other two.
+    // Near `bela`, about 200 m from it, far from the other two.
     let (status, created) = gate.post(
         "/api/requests",
         None,
@@ -441,7 +401,6 @@ fn the_whole_dispatch_api_works() {
     let id = field(&created, "id");
     assert!(!id.is_empty(), "no id came back: {created}");
 
-    // `requests` did its half: readable through its own route, and masked.
     let (status, read_back) = gate.get(&format!("/api/requests/{id}"), None);
     assert_eq!(status, 200, "GET /api/requests/{{id}} did not answer: {read_back}");
     assert!(
@@ -449,7 +408,6 @@ fn the_whole_dispatch_api_works() {
         "the site contact's email survived into the store: {read_back}"
     );
 
-    // `schedule` did its half.
     let (status, assigned) = gate.post(&format!("/api/requests/{id}/assign"), None, json!({}));
     assert_eq!(status, 200, "assign did not answer 200: {assigned}");
     let doc = parse(&assigned);
@@ -467,7 +425,6 @@ fn the_whole_dispatch_api_works() {
         gate.post(&format!("/api/requests/{id}/transition"), None, json!({"event":"depart"}));
     assert_eq!(status, 200, "`depart` was refused: {departed}");
 
-    // `manifest` did its half, over what the other two wrote.
     let (_, body) = gate.get("/api/manifest", None);
     let m = parse(&body);
     assert_eq!(m["total"], 4, "three seeded plus the one just created: {body}");
@@ -481,8 +438,7 @@ fn the_whole_dispatch_api_works() {
          number it did not store, lands here: {body}"
     );
 
-    // THE JOIN. `manifest`'s CSV has to carry the distance `schedule` computed. Two
-    // parts, one number, and neither part's own gate can compare them.
+    // THE JOIN: `manifest`'s CSV must carry the distance `schedule` computed.
     let (_, csv) = gate.get("/api/manifest.csv", None);
     let parsed = rows(&csv);
     let row = parsed
@@ -500,9 +456,8 @@ fn the_whole_dispatch_api_works() {
         row[4]
     );
 
-    // AND the radius, measured by `manifest`, has to contain the request `schedule`
-    // placed. Within 2 km of `bela` there is this request and the seeded `lift`
-    // (about 200 m away, still `new` and therefore carrying 0), and nothing else.
+    // AND the radius measured by `manifest` must contain the request `schedule` placed: within 2 km of
+    // `bela` there is this request and the seeded `lift` (about 200 m away, still `new`, carrying 0).
     let (_, near) = gate.get("/api/manifest?near_lat=47.5316&near_lon=19.0430&within_m=2000", None);
     let n = parse(&near);
     assert_eq!(
