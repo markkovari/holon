@@ -1,14 +1,11 @@
 //! helpdesk:app — support/ticketing SaaS domain over composed contracts.
 //!
-//! The lifecycle is a declarative fsm:workflow machine, not scattered
-//! `if status == ...` checks: replies and agent verbs FIRE events, the engine
-//! validates legality and keeps the history. The ticket record mirrors the
-//! FSM state in a `status` field (indexed) so list/filter is a lookup, the
-//! machine stays the source of truth for transitions.
+//! The lifecycle is a declarative fsm:workflow machine, not scattered `if status == ...` checks: replies and
+//! agent verbs FIRE events, the engine validates legality and keeps history. The ticket record mirrors the
+//! FSM state in an indexed `status` field so list/filter is a lookup; the machine stays the source of truth.
 //!
-//! Access model (rung 1): role `agent`/`admin` sees and drives everything;
-//! everyone else is a requester who sees only their own tickets and never the
-//! internal notes.
+//! Access (rung 1): role `agent`/`admin` sees and drives everything; everyone else is a requester who sees
+//! only their own tickets and never the internal notes.
 
 #[allow(warnings)]
 mod bindings {
@@ -162,8 +159,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- seeding ---------------------------------------------------------------
-
 fn store_crdt_new(
     collection: &str,
     data: &Value,
@@ -193,8 +188,7 @@ fn parse_crdt_value(state: &str) -> Value {
     serde_json::from_str(&v).unwrap_or(Value::Null)
 }
 
-/// Idempotent: register the ticket lifecycle machine. Gated on one record so
-/// steady-state requests pay a single count() read.
+/// Idempotent: register the ticket lifecycle machine, gated on one record so steady state pays a single count() read.
 fn ensure_seeded() {
     if records::count("meta").map(|n| n > 0).unwrap_or(false) {
         return;
@@ -223,8 +217,6 @@ fn ensure_seeded() {
     let _ = fsm::define(MACHINE, &def);
     let _ = store_crdt_new("meta", &json!({"seeded":true}), &[]);
 }
-
-// ---- auth ------------------------------------------------------------------
 
 #[derive(Deserialize)]
 struct RegisterReq {
@@ -339,8 +331,6 @@ fn audit_log(p: &Principal, action: &str, target: &str, outcome: &str) {
     let _ = audit::record_event(&e);
 }
 
-// ---- event processor ---------------------------------------------------------
-
 fn process_events(request: &Request) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
@@ -362,7 +352,6 @@ fn process_events(request: &Request) -> Outcome {
         match idempotency::begin(&idempotency_key, 24 * 60 * 60) {
             Ok(None) => {} // lock acquired
             Ok(Some(_)) => {
-                // already processed
                 ack_ids.push(ev.id);
                 continue;
             }
@@ -371,7 +360,6 @@ fn process_events(request: &Request) -> Outcome {
 
         let payload: Value = serde_json::from_slice(&ev.payload).unwrap_or(Value::Null);
 
-        // Example: Render localized email and dispatch
         let subject =
             i18n::translate("en-US", "ticket_update_subject", &[]).unwrap_or("Update".into());
         let _ = email::render("ticket_update", &[]); // placeholder for template engine
@@ -382,18 +370,12 @@ fn process_events(request: &Request) -> Outcome {
             body: payload.to_string(),
         });
 
-        // Example: Sign webhook payload and enqueue to outbox
         let _signed = webhook_sign::sign(&ev.payload, "dummy-secret", webhook_sign::Scheme::Github);
         let _ = outbox::enqueue("tenant_webhooks", &ev.payload, 0);
 
-        // Core Event Choreography: Update Ticket Assigned
         if payload["type"].as_str() == Some("ticket_assigned") {
             if let Some(ticket_id) = payload["ticket"].as_str() {
                 if let Some(assignee) = payload["assignee"].as_str() {
-                    // We don't need to update the ticket here if the assignment worker
-                    // already updated it, but in strict choreography, the domain might own it.
-                    // The assignment worker currently updates `records:store` directly.
-                    // We will just log it here for now.
                     audit_log(&p, "choreography:ticket_assigned", ticket_id, assignee);
                 }
             }
@@ -410,11 +392,7 @@ fn process_events(request: &Request) -> Outcome {
     Outcome::Json(200, json!({ "processed": ack_ids.len() }).to_string())
 }
 
-// ---- inbound webhooks --------------------------------------------------------
-
 async fn ingest_email(request: Request) -> Outcome {
-    // 1. Check signature & dedup
-    // Mailgun-style example: X-Mailgun-Signature, X-Mailgun-Timestamp
     let headers = request.get_headers();
     let sig = get_header(&headers, "x-signature").unwrap_or_default();
     let msg_id = get_header(&headers, "message-id").unwrap_or_else(|| ids::short_code(16));
@@ -424,11 +402,10 @@ async fn ingest_email(request: Request) -> Outcome {
         Err(_) => return Outcome::Bad("could not read body".into()),
     };
 
-    // The webhook secret key would come from configuration, assumed "mail-secret" here.
+    // The webhook secret would come from configuration; "mail-secret" is a placeholder.
     match webhook_ingest::ingest(&body, &sig, "mail-secret", &msg_id) {
         Ok(v) => {
             if !v.accepted {
-                // Duplicate delivery / replay
                 return Outcome::Json(
                     200,
                     json!({"status": "ignored", "reason": "replay"}).to_string(),
@@ -441,28 +418,21 @@ async fn ingest_email(request: Request) -> Outcome {
         Err(webhook_ingest::IngestError::BackendUnavailable(m)) => return Outcome::Err(503, m),
     }
 
-    // 2. Parse email
     let email = match mail_parse::parse(&body) {
         Ok(e) => e,
         Err(e) => return Outcome::Bad(format!("mail parse error: {:?}", e)),
     };
 
-    // 3. Process to ticket/message
     ensure_seeded();
 
-    // Check if in-reply-to matches an existing ticket (using a naive search for simplicity)
     let is_reply = email.in_reply_to.is_some();
 
-    // In a real app we'd map sender to an existing user/requester. We'll use the email string.
     let requester = email.sender.clone();
 
     if is_reply {
-        // Naive fallback: try to find ticket by `in_reply_to` or just create new if not found.
-        // For the sake of the mock, we assume creating a new ticket if we don't have it.
-        // Let's create a new ticket.
+        // Not matched to an existing ticket (mock): a new ticket is created either way.
     }
 
-    // Creating new ticket. Assignment happens asynchronously via TicketCreated event.
     let data = json!({
         "ref": format!("HD-{}", ids::short_code(6)),
         "subject": email.subject,
@@ -501,8 +471,7 @@ fn get_header(headers: &Fields, name: &str) -> Option<String> {
     headers.get(name).first().and_then(|v| String::from_utf8(v.clone()).ok())
 }
 
-/// Load a ticket; requesters only see their own (404, not 403 — existence is
-/// not leaked across requesters).
+/// Load a ticket; requesters only see their own (404, not 403: existence is not leaked across requesters).
 fn load_ticket(p: &Principal, id: &str) -> Result<(records::Entry, Value), Outcome> {
     let entry = match records::get(TICKETS, id) {
         Ok(e) => e,
@@ -515,8 +484,6 @@ fn load_ticket(p: &Principal, id: &str) -> Result<(records::Entry, Value), Outco
     }
     Ok((entry, data))
 }
-
-// ---- tickets -----------------------------------------------------------------
 
 async fn create_ticket(request: Request) -> Outcome {
     ensure_seeded();
@@ -539,7 +506,6 @@ async fn create_ticket(request: Request) -> Outcome {
     }
     let req: Req = match parse(request).await {
         Ok(v) => {
-            // successful parse, clear rate limit
             let _ = ratelimit::reset(&rl_key);
             v
         }
@@ -549,7 +515,6 @@ async fn create_ticket(request: Request) -> Outcome {
         }
     };
 
-    // quota check: 1000 tickets per month limit
     let month_secs = 30 * 24 * 60 * 60;
     if let Err(QuotaError::Exceeded(_)) = quota::reserve(&p.tenant, 1, 1000, month_secs) {
         return Outcome::Err(402, "quota exceeded".into());
@@ -566,7 +531,6 @@ async fn create_ticket(request: Request) -> Outcome {
         return Outcome::Bad(format!("priority must be one of {PRIORITIES:?}"));
     }
 
-    // Creating new ticket. Assignment happens asynchronously via TicketCreated event.
     let data = json!({
         "ref": format!("HD-{}", ids::short_code(6)),
         "subject": req.subject,
@@ -576,13 +540,11 @@ async fn create_ticket(request: Request) -> Outcome {
         "status": "new",
     });
 
-    // Spawn the ticket actor
     let ticket_id = format!("ticket:{}", ids::short_code(16));
     if let Err(e) = actor_system::spawn(&ticket_id, data.to_string().as_bytes()) {
         return Outcome::Err(503, format!("actor spawn error: {:?}", e));
     }
 
-    // Save to the store for list/search operations
     let entry =
         match store_crdt_new(TICKETS, &data, &["requester".to_string(), "status".to_string()]) {
             Ok(e) => e,
@@ -601,22 +563,16 @@ async fn create_ticket(request: Request) -> Outcome {
         return e;
     }
 
-    // record usage post-hoc just to be sure, though reserve already decremented
     let _ = quota::record_usage(&p.tenant, 1, 1000, month_secs);
 
-    // schedule SLA timers
     let now = system_clock::now().seconds as u64;
     let _ = timer::schedule_at(&format!("sla:first-response:{}", entry.id), now + 86400, &[]);
     let _ = timer::schedule_at(&format!("sla:resolution:{}", entry.id), now + 259200, &[]);
-
-    // Search indexing now happens asynchronously via TicketCreated event.
 
     Outcome::Json(201, ticket_json(&entry).to_string())
 }
 
 fn search_tickets(_request: &Request) -> Outcome {
-    // In Phase 1 choreography, search indexing is decoupled.
-    // Querying will move to a specialized search-domain or the Phase 3 GraphQL Gateway.
     Outcome::Err(501, "Search queries have been migrated to the GraphQL gateway.".into())
 }
 
@@ -680,8 +636,6 @@ fn get_ticket(request: &Request, id: &str) -> Outcome {
     Outcome::Json(200, out.to_string())
 }
 
-// ---- messages + lifecycle -----------------------------------------------------
-
 async fn add_message(request: Request, id: &str) -> Outcome {
     let p = match introspect(&request) {
         Ok(p) => p,
@@ -718,7 +672,6 @@ async fn add_message(request: Request, id: &str) -> Outcome {
         Err(e) => return e,
     };
 
-    // Send message to the ticket actor
     let actor_msg = json!({
         "type": "AddMessage",
         "author": p.subject,
@@ -758,8 +711,6 @@ async fn add_message(request: Request, id: &str) -> Outcome {
         let _ = timer::cancel(&format!("sla:first-response:{}", id));
     }
 
-    // Search indexing now happens asynchronously via TicketUpdated event.
-
     Outcome::Json(201, json!({"id": created.id, "kind": kind, "status": status}).to_string())
 }
 
@@ -789,7 +740,6 @@ async fn change_state(request: Request, id: &str) -> Outcome {
         return Outcome::Bad(format!("event must be one of {AGENT_EVENTS:?}"));
     }
 
-    // Send message to the ticket actor
     let actor_msg = json!({
         "type": "ChangeState",
         "event": req.event,
@@ -845,7 +795,6 @@ async fn assign(request: Request, id: &str) -> Outcome {
     };
     data["assignee"] = json!(req.subject);
 
-    // Send message to the ticket actor
     let actor_msg = json!({
         "type": "Assign",
         "assignee": req.subject,
@@ -917,8 +866,6 @@ fn mirror_status(entry: &records::Entry, data: &Value, state: &str) {
     let _ = store_crdt_update(TICKETS, &entry.id, &entry.data, &data, 0);
 }
 
-// ---- SLA Timer Breach --------------------------------------------------------
-
 async fn timers_fire(request: Request) -> Outcome {
     #[derive(Deserialize)]
     struct Req {
@@ -957,8 +904,6 @@ async fn timers_fire(request: Request) -> Outcome {
 
     Outcome::Json(200, json!({"status": "ok"}).to_string())
 }
-
-// ---- helpers ---------------------------------------------------------------------
 
 fn ticket_json(entry: &records::Entry) -> Value {
     let data = parse_crdt_value(&entry.data);
@@ -1004,26 +949,15 @@ async fn parse<T: for<'a> Deserialize<'a>>(request: Request) -> Result<T, String
     serde_json::from_slice(&body).map_err(|e| format!("bad json: {e}"))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be, before the component stops reading it. Without a ceiling a guest
+/// accumulated until wasmtime's 64 MiB per-store cap TRAPPED, reaching the caller as a bare closed
+/// connection. Generous: a backstop, not a content policy; uploads police themselves with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 guestio::guest_p3_respond!();
 
 guestio::guest_p3_bearer!();
-
-// ---- responses --------------------------------------------------------------------
 
 fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {

@@ -1,15 +1,11 @@
 //! The specification, held out: this file is not writable by the goal.
 //!
-//! Three tests here were WRONG in their first version and are corrected against
-//! `cucumber/gherkin`'s `testdata/`: `*` is a step keyword rather than a
-//! continuation, a plain `Scenario:` with an `Examples:` under it is an outline, and
-//! a scenario with no steps parses. The corpus is the authority, not my reading of
-//! the grammar — see `corpus.rs`.
+//! Corrected against `cucumber/gherkin`'s `testdata/` (see `corpus.rs`): `*` is a step keyword rather than a
+//! continuation, a plain `Scenario:` with an `Examples:` under it is an outline, and a scenario with no steps parses.
 //!
-//! The cases that decide this component are the quiet ones — an `Examples` row one
-//! cell short, a `<placeholder>` with a typo, a `Given` inside a docstring. A test
-//! suite that only proves valid files pass and garbage fails would be green with an
-//! implementation that is useless in the way that matters.
+//! The cases that decide this component are the quiet ones (an `Examples` row one cell short, a typo'd
+//! `<placeholder>`, a `Given` inside a docstring); a suite proving only that valid files pass would be green
+//! for a useless implementation.
 
 use gherkin_validate::{validate, Kind, Problem, Severity};
 
@@ -22,8 +18,7 @@ fn at(source: &str) -> Vec<(u32, u32)> {
     validate(source).into_iter().map(|p| (p.line, p.column)).collect()
 }
 
-/// A feature file with every construct in it at once. This has to be clean, or
-/// every other assertion here is measuring a parser that cannot read Gherkin.
+/// A feature file with every construct in it at once. It has to be clean, or every other assertion measures a parser that cannot read Gherkin.
 #[test]
 fn a_real_feature_file_is_valid() {
     let src = r#"# language: en
@@ -119,8 +114,7 @@ fn a_continuation_with_nothing_to_continue() {
     let ok = "Feature: T\n  Scenario: S\n    Given a\n    And b\n    But not c\n    * d\n";
     assert!(validate(ok).is_empty(), "{:?}", validate(ok));
 
-    // `*` is NOT a continuation. A file of bullets is idiomatic Gherkin, and
-    // `testdata/good/star-keywords.feature` is exactly that.
+    // `*` is NOT a continuation: a file of bullets is idiomatic Gherkin (`testdata/good/star-keywords.feature`).
     let stars =
         "Feature: Stars\n  Scenario: Beautiful tonight\n    * Betelgeuse\n    * Alpha Centauri\n";
     assert!(validate(stars).is_empty(), "a bullet needs nothing above it: {:?}", validate(stars));
@@ -136,16 +130,12 @@ fn an_outline_with_no_examples_can_never_run() {
     );
 }
 
-/// `Examples:` under a plain `Scenario:` PROMOTES it to an outline — Gherkin treats
-/// the keywords as interchangeable. `testdata/good/scenario_outline.feature` is a
-/// `Scenario:` with an `Examples:` under it, and refusing that flagged three files
-/// the corpus calls good.
+/// `Examples:` under a plain `Scenario:` PROMOTES it to an outline (`testdata/good/scenario_outline.feature`).
 #[test]
 fn examples_promote_a_plain_scenario_to_an_outline() {
     let promoted = "Feature: T\n  Scenario: S\n    Given the <what>\n\n    Examples:\n      | what |\n      | this |\n";
     assert!(validate(promoted).is_empty(), "{:?}", validate(promoted));
 
-    // Promoted means the placeholders are checked, which is the point of promoting.
     let typo = "Feature: T\n  Scenario: S\n    Given the <waht>\n\n    Examples:\n      | what |\n      | this |\n";
     assert_eq!(kinds(typo), vec![Kind::UnknownPlaceholder("waht".into())]);
 }
@@ -280,8 +270,7 @@ fn an_unterminated_docstring() {
     }
 }
 
-/// Gherkin keywords inside a docstring are text. Getting this wrong turns every
-/// example in the documentation of a testing tool into a parse error.
+/// Gherkin keywords inside a docstring are text.
 #[test]
 fn gherkin_inside_a_docstring_is_text() {
     let src = "\
@@ -361,18 +350,9 @@ Feature: T
     assert!(validate(src).is_empty(), "an escaped pipe is one cell: {:?}", validate(src));
 }
 
-// ---- what the corpus exposed --------------------------------------------
-//
-// Every one of these is a file in `cucumber/gherkin`'s `testdata/bad/` that the
-// first version of this component called clean.
-
-/// `testdata/bad/unfinished_datatable.feature` — a row that got cut — and
-/// `backslash_at_end_of_line_in_datatable.feature`, where a trailing backslash eats
-/// the closing pipe.
-///
-/// Neither needs a rule of its own. Only what is BETWEEN pipes is a cell, so a cut
-/// row yields fewer of them and the width check does the work — which is also why
-/// `good/extra_table_content.feature`, whose rows carry trailing junk, stays clean.
+/// `testdata/bad/unfinished_datatable.feature` (a cut row) and `backslash_at_end_of_line_in_datatable.feature`
+/// (a trailing backslash eats the closing pipe). Only what is BETWEEN pipes is a cell, so a cut row yields fewer
+/// and the width check does the work, which is also why `good/extra_table_content.feature` stays clean.
 #[test]
 fn only_what_is_between_pipes_is_a_cell() {
     let cut = "Feature: T\n  Scenario: S\n    When I press\n      | foo |\n      | bar\n";
@@ -392,8 +372,7 @@ Feature: Extra table content
     assert!(validate(extra).is_empty(), "{:?}", validate(extra));
 }
 
-/// `testdata/bad/whitespace_in_tags.feature`. A tag cannot contain whitespace, so
-/// `@a tag containing whitespace` reads as a sentence and is four broken tags.
+/// `testdata/bad/whitespace_in_tags.feature`: `@a tag containing whitespace` is four broken tags.
 #[test]
 fn a_tag_line_has_to_be_tags() {
     let src = "Feature: T\n\n  @a tag containing whitespace\n  Scenario: S\n    Given a\n";
@@ -403,8 +382,7 @@ fn a_tag_line_has_to_be_tags() {
     assert!(validate(ok).is_empty(), "{:?}", validate(ok));
 }
 
-/// A dialect that exists is declined; one that does not is the file being wrong
-/// about itself. `testdata/bad/invalid_language.feature` is the second.
+/// A dialect that exists is declined; one that does not is the file being wrong about itself (`testdata/bad/invalid_language.feature`).
 #[test]
 fn a_real_dialect_is_declined_and_a_made_up_one_is_an_error() {
     let real = validate("# language: fr\nFonctionnalité: X\n");
@@ -419,8 +397,7 @@ fn a_real_dialect_is_declined_and_a_made_up_one_is_an_error() {
     assert_eq!(fake[0].severity(), Severity::Error);
 }
 
-/// `testdata/bad/repeated_step_docstring.feature`. The first docstring is the step's
-/// argument; there is nowhere for a second to go.
+/// `testdata/bad/repeated_step_docstring.feature`. The first docstring is the step's argument; a second has nowhere to go.
 #[test]
 fn one_docstring_per_step() {
     let src =
@@ -444,9 +421,7 @@ fn a_tag_with_nothing_to_tag() {
     assert!(validate(ok).is_empty(), "{:?}", validate(ok));
 }
 
-/// The severity split exists because cucumber's GOOD corpus contains files holding
-/// an empty scenario and an outline with no examples. Refusing those would make this
-/// disagree with the reference about validity, and be useless as a gate.
+/// The severity split exists because cucumber's GOOD corpus contains files with an empty scenario and an outline with no examples.
 #[test]
 fn what_parses_is_a_warning_and_what_does_not_is_an_error() {
     let parses_but_pointless =

@@ -1,11 +1,8 @@
 //! `golem-bridge` — durable:workflow/orchestrator over `wasi:http`, to Golem.
 //!
-//! Satisfies the same execution seam as the in-process backend and the native
-//! provider, but runs as a component on the wasmCloud v2 operator: `trigger`
-//! POSTs the job payload to a durable Golem worker's gateway endpoint (the same
-//! HTTP call `providers/golem-workflow` makes) and returns its result. The v2
-//! host supplies `wasi:http/outgoing-handler`; Golem's address comes from
-//! `wasi:config`. `start`/`status` (async) are left to the native provider.
+//! Satisfies the same execution seam as the in-process backend and the native provider, as a component on the wasmCloud
+//! v2 operator: `trigger` POSTs the job payload to a durable Golem worker's gateway endpoint (as `providers/golem-workflow`
+//! does) and returns its result. Golem's address comes from `wasi:config`. `start`/`status` (async) are left to the native provider.
 
 #[allow(warnings)]
 mod bindings;
@@ -46,9 +43,8 @@ fn golem_post(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), RunError> {
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // Golem gateway subdomain routing: CONNECT to the golem-url authority, but
-    // send the agent's vhost as the Host header (e.g. golem-agent.localhost:9006).
-    // These are distinct — conflating them dials a name the pod can't resolve.
+    // Golem gateway subdomain routing: CONNECT to the golem-url authority but send the agent's vhost as the Host header
+    // (e.g. golem-agent.localhost:9006). Conflating them dials a name the pod can't resolve.
     let host = cfg("golem-host", "");
     if !host.is_empty() {
         let _ = headers.set("host", &[host.into_bytes()]);

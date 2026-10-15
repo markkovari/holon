@@ -1,9 +1,5 @@
-//! `inspection-domain` — router: auth (register/login/logout/me) and dispatch
-//! into `handlers.rs` for the site-inspection routes. The router is the same
-//! `guestauth`/`guestio` macro sequence every app here uses; the row-level
-//! ownership rule (`guestauth::guest_owner_or_admin_policy!` over `inspector`,
-//! the same macro `crm-domain` uses over `owner`) and the real generated PDF
-//! both live in `handlers.rs`.
+//! `inspection-domain` — router: auth (register/login/logout/me) and dispatch into `handlers.rs`, using the usual
+//! `guestauth`/`guestio` macro sequence. The row-level ownership rule and the generated PDF live in `handlers.rs`.
 
 #[allow(warnings)]
 mod bindings {
@@ -44,8 +40,7 @@ mod handlers;
 pub use guestauth::Route;
 
 pub const TENANT: &str = "inspection";
-/// The roles this app grants. Anything else in a register request degrades to
-/// `inspector` — a role is a privilege, not a free-text field.
+/// The roles this app grants. Anything else in a register request degrades to `inspector`: a role is a privilege, not free text.
 const ROLES: &[&str] = &["admin", "inspector"];
 
 guestio::guest_p3_respond!();

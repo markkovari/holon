@@ -1,35 +1,25 @@
 //! Every statement this component sends, and the parser for what comes back.
 //!
-//! Separate from `lib.rs` for one reason: it takes and returns PLAIN Rust types,
-//! no generated bindings anywhere in its signatures. That is what lets the
-//! scenario suite (`scenarios.rs`) run these exact strings against a real
-//! SurrealDB and assert what the database answers. A scenario suite that rebuilt
-//! the statements to test them would be testing itself.
-//!
-//! Everything a caller supplies is quoted or restricted on the way in: ids get
-//! SurrealDB's angle-bracket form with the closing bracket removed, and text goes
-//! through JSON re-serialisation so a value cannot carry syntax (ADR-0080).
+//! Separate from `lib.rs` because it takes and returns PLAIN Rust types, so `scenarios.rs` can run these
+//! exact strings against a real SurrealDB. Everything a caller supplies is quoted or restricted on the
+//! way in: ids get SurrealDB's angle-bracket form with the closing bracket removed, and text goes through
+//! JSON re-serialisation so a value cannot carry syntax (ADR-0080).
 
 use serde_json::{json, Value};
 
-/// Entries live in one table with their namespace a property, so a handle
-/// addresses an entry on its own.
+/// Entries live in one table with their namespace a property, so a handle addresses an entry on its own.
 pub const ENTRIES: &str = "memory";
 
-/// Evaluated goals. A different table because it answers a different question —
-/// "has this been done?" rather than "what should I read?".
+/// Evaluated goals: a different table because it answers "has this been done?".
 pub const TASKS: &str = "task";
 
-/// A record id. The angle brackets are SurrealDB's own quoting for an arbitrary
-/// id, and the closing bracket is the one character that could end the quoting
-/// early, so it is removed. Caller-supplied keys reach here, which makes this a
-/// trust boundary rather than a formatting detail.
+/// A record id. Angle brackets are SurrealDB's quoting for an arbitrary id; the closing bracket is the one
+/// character that could end quoting early, so it is removed. Caller-supplied keys reach here: a trust boundary.
 pub fn rid(table: &str, id: &str) -> String {
     format!("{table}:⟨{}⟩", id.replace('⟩', ""))
 }
 
-/// A SurrealQL string literal, via JSON. Every escape SurrealQL needs is one JSON
-/// needs too, and re-serialising is how a value stops being able to carry syntax.
+/// A SurrealQL string literal, via JSON: every escape SurrealQL needs JSON needs too, and re-serialising stops a value carrying syntax.
 pub fn lit(s: &str) -> String {
     Value::String(s.to_string()).to_string()
 }
@@ -38,9 +28,8 @@ pub fn vec_lit(v: &[f32]) -> String {
     json!(v).to_string()
 }
 
-/// `DEFINE INDEX IF NOT EXISTS` beside the write. Idempotent, ~1ms, and it is what
-/// makes a change of embedding model a rejection rather than a silent mixture: the
-/// index carries its width and SurrealDB refuses any other.
+/// `DEFINE INDEX IF NOT EXISTS` beside the write. Idempotent, ~1ms, and it makes a change of embedding
+/// model a rejection rather than a silent mixture: the index carries its width.
 pub fn define_index(table: &str, dim: usize) -> String {
     format!(
         "DEFINE INDEX IF NOT EXISTS {table}_vec ON {table} FIELDS vec HNSW DIMENSION {dim} DIST COSINE;"
@@ -58,21 +47,15 @@ pub struct EntryWrite<'a> {
     pub attempt: &'a str,
     pub score: i32,
     pub promoted: bool,
-    /// What the work TOUCHED, read off the capability graph rather than authored:
-    /// the interfaces the part's component imports (ADR-0090). These are what make
-    /// a lesson findable by a later goal that shares an interface but shares no
-    /// wording — which is most of them, since a fact about `csv:codec/codec` is
-    /// true for a billing ledger and a veterinary clinic alike.
+    /// What the work TOUCHED, read off the capability graph rather than authored: the interfaces the part's
+    /// component imports (ADR-0090). Makes a lesson findable by a goal that shares an interface but no wording.
     pub tags: &'a [String],
 }
 
 /// Store an entry, with or without its vector.
 ///
-/// One statement, and no read first. `uses += 0` creates the counter when it is
-/// absent and preserves it when it is not, which is how re-observing a lesson
-/// keeps the standing it earned without this component ever holding a counter in
-/// a variable — the read-modify-write that does that lost 88% of its writes under
-/// concurrency (ADR-0084).
+/// One statement, no read first: `uses += 0` creates the counter or preserves it, so re-observing keeps
+/// earned standing without a read-modify-write (which lost 88% of writes under concurrency, ADR-0084).
 pub fn upsert_entry(e: &EntryWrite, vector: Option<&[f32]>, dim_conflict: bool) -> String {
     let id = rid(ENTRIES, e.handle);
     let mut set = format!(
@@ -110,17 +93,12 @@ pub fn knn_entries(query: &[f32], k: u32, pools: &[&str]) -> String {
     )
 }
 
-/// Recall by what the work TOUCHED rather than by what the goal SAID.
+/// Recall by what the work TOUCHED rather than by what the goal SAID: an exact tag match, no embedding,
+/// because an interface name is an identifier, not a sentence. This is the half of retrieval that crosses
+/// applications (ADR-0090).
 ///
-/// An exact match on a tag, with no embedding involved, because an interface name
-/// is an identifier and not a sentence: `csv:codec/codec@0.1.0` either was imported
-/// or was not. This is the half of retrieval that crosses applications — the two
-/// paid runs this repository has made both died on facts about an interface that a
-/// similarity search over goal text had no way to surface (ADR-0090).
-///
-/// `LIMIT` is generous relative to `k` because these candidates are ranked and
-/// trimmed with the dense ones afterwards; taking k here would let a tag match
-/// crowd out a better textual hit.
+/// `LIMIT` is generous relative to `k` because candidates are ranked and trimmed with the dense ones
+/// afterwards; taking k here could let a tag match crowd out a better textual hit.
 pub fn tagged_entries(tags: &[String], k: u32, pools: &[&str]) -> String {
     if tags.is_empty() {
         return String::new();
@@ -134,9 +112,7 @@ pub fn tagged_entries(tags: &[String], k: u32, pools: &[&str]) -> String {
     )
 }
 
-/// The lexical candidates the dense pass did not already return, in ONE statement.
-/// One read per candidate is the N+1 of ADR-0077, and a retrieval path would do it
-/// k×4 times per branch.
+/// The lexical candidates the dense pass did not already return, in ONE statement (the N+1 of ADR-0077).
 pub fn hydrate(handles: &[String]) -> String {
     let ids: Vec<String> = handles.iter().map(|h| rid(ENTRIES, h)).collect();
     format!("SELECT * FROM {};", ids.join(", "))
@@ -144,16 +120,10 @@ pub fn hydrate(handles: &[String]) -> String {
 
 /// Forget what nobody used.
 ///
-/// Two conditions, and the second one is a guard rather than a filter: an entry
-/// with NO `last_used` at all would otherwise be swept, because SurrealDB
-/// evaluates `NONE < time::now() - 30d` as TRUE — measured. Every write stamps the
-/// field, so an unstamped row means a write path that forgot, and deleting rows
-/// because of a bug in this component is the one outcome worth writing an extra
-/// clause to avoid.
-///
-/// `uses` rather than a score: an entry two runs have read has earned its place
-/// whatever it says, and one nobody has read in a month has not, whatever it
-/// promised. Time is the database's own — nothing here imports a clock.
+/// The second condition is a guard, not a filter: an entry with NO `last_used` would be swept because
+/// SurrealDB evaluates `NONE < time::now() - 30d` as TRUE (measured). Every write stamps the field, so an
+/// unstamped row means a buggy write path, and deleting rows over that is the outcome to avoid.
+/// Time is the database's own; nothing here imports a clock.
 pub fn decay(max_age_days: u32, min_uses: u64) -> String {
     format!(
         "DELETE FROM {ENTRIES} WHERE uses < {min_uses} AND last_used != NONE \
@@ -163,10 +133,8 @@ pub fn decay(max_age_days: u32, min_uses: u64) -> String {
 
 /// A whole verdict in one transaction.
 ///
-/// `UPDATE` and not `UPSERT`, deliberately: a handle a human deleted stays
-/// deleted, where `UPSERT` would resurrect it as a node with counters and no
-/// lesson. The `used_in` edges are the record; the counters are a denormalised
-/// read of them, which is why both land under one commit.
+/// `UPDATE` not `UPSERT`: a handle a human deleted stays deleted rather than resurrected with counters and
+/// no lesson. The `used_in` edges are the record; the counters a denormalised read, so both land under one commit.
 pub fn attribute(handles: &[String], run: &str, succeeded: bool) -> String {
     let mut stmt = String::from("BEGIN;");
     for h in handles {
@@ -186,21 +154,13 @@ pub fn attribute(handles: &[String], run: &str, succeeded: bool) -> String {
 
 /// Record that a goal was evaluated, whatever the verdict.
 ///
-/// The verdict is an EDGE with a deterministic id, `<task>|<run>`, and re-reporting
-/// the same run overwrites that one edge rather than adding another — measured
-/// against v3.1.3, where `RELATE` with an explicit id is an upsert and not a
-/// duplicate-key error. So this verb is idempotent per `(goal, run)`, which is
-/// what lets the landing path call it a second time to attach the pull request
-/// once the forge has opened one, without inventing a second evaluation.
+/// The verdict is an EDGE with a deterministic id, `<task>|<run>`; `RELATE` with an explicit id is an
+/// upsert (measured on v3.1.3), so this verb is idempotent per `(goal, run)` and the landing path can call
+/// it again to attach the pull request. Counts are DERIVED from the edges (see `already_done_*`), not
+/// stored: "exactly once" across a fan-out of branches is broken by a retry.
 ///
-/// Counts are therefore DERIVED from the edges (see `already_done_*`) and are not
-/// stored. A counter would have had to be bumped exactly once per run, and
-/// "exactly once" across a fan-out of branches that each report is the kind of
-/// promise that is broken by a retry.
-///
-/// Only a passing verdict overwrites the winner fields. A goal five runs have
-/// failed is knowledge too — it is the count that says whether a sixth attempt is
-/// worth buying — but it is not finished work.
+/// Only a passing verdict overwrites the winner fields. A goal five runs have failed is knowledge too (the
+/// count says whether a sixth attempt is worth buying), but it is not finished work.
 // One over clippy's default threshold, each a distinct scalar this query
 // binds; a params struct would only exist to satisfy the lint.
 #[allow(clippy::too_many_arguments)]
@@ -242,24 +202,12 @@ pub fn evaluated(
 
 /// Record that one goal was decomposed into another.
 ///
-/// A task -> task edge, so the pool can answer two questions it could not answer
-/// before: what did this goal break into, and whose sub-goal is this. Both halves
-/// matter — the first is how a decomposition is reviewed, the second is how a
-/// sub-goal found later by similarity is put back in context.
+/// A task -> task edge, so the pool can say what a goal broke into and whose sub-goal this is. Deterministic
+/// id, `<parent>|<child>`, so re-running a decomposed goal (the NORMAL case) reinforces one edge.
 ///
-/// Deterministic id, `<parent>|<child>`, for the same reason the verdict edge has
-/// one: a run that decomposes the same goal twice reinforces one edge instead of
-/// growing a fan of duplicates. Re-running a decomposed goal is the NORMAL case,
-/// not an error, so this verb has to be idempotent per `(parent, child)`.
-///
-/// The child node is UPSERTed here with its goal text, so a sub-goal exists in the
-/// pool the moment it is named — before anything has run it, and whether or not
-/// anything ever does. That is what makes an abandoned decomposition legible
-/// rather than invisible.
-///
-/// `ordinal` and `why` travel on the EDGE, not on either node: they are facts
-/// about the relationship. The same sub-goal reached from two parents is one node
-/// with two edges, and each edge carries its own reason.
+/// The child node is UPSERTed with its goal text, so a sub-goal exists the moment it is named, which makes
+/// an abandoned decomposition legible. `ordinal` and `why` travel on the EDGE: they describe the
+/// relationship, and one sub-goal under two parents has two edges, each with its own reason.
 pub fn decomposed_into(
     parent_key: &str,
     parent_goal: &str,
@@ -284,12 +232,8 @@ fn part_edge(parent: &str, child: &str) -> String {
     rid("decomposes_into", &format!("{}|{}", parent.replace('|', ""), child.replace('|', "")))
 }
 
-/// What a goal broke into, in the order it was decomposed.
-///
-/// Each child carries whether anything has PASSED on it, counted off its own
-/// verdict edges — the same derivation `already_done` uses, so the two cannot
-/// disagree about what is finished. That count is the whole point: a parent is
-/// resumable only if you can tell which of its parts are already done.
+/// What a goal broke into, in the order it was decomposed. Each child carries whether anything has PASSED
+/// on it, counted off its verdict edges (as `already_done` does), so a parent is resumable.
 pub fn parts_of(parent_key: &str) -> String {
     format!(
         "SELECT out.goal AS goal, out.id AS id, ordinal, why,          count(out->evaluated_by[WHERE passed = true]) > 0 AS done          FROM {}->decomposes_into ORDER BY ordinal;",
@@ -297,9 +241,7 @@ pub fn parts_of(parent_key: &str) -> String {
     )
 }
 
-/// The goals this one is a part of. Plural on purpose: the same sub-goal reached
-/// from two parents is one node, and hiding the second parent would make the pool
-/// disagree with the edges it holds.
+/// The goals this one is a part of. Plural on purpose: one sub-goal under two parents is one node.
 pub fn parents_of(child_key: &str) -> String {
     format!(
         "SELECT in.goal AS goal, in.id AS id, ordinal, why          FROM {}<-decomposes_into ORDER BY ordinal;",
@@ -313,26 +255,18 @@ fn verdict_edge(key: &str, run: &str) -> String {
     rid("evaluated_by", &format!("{}|{}", key.replace('|', ""), run.replace('|', "")))
 }
 
-/// `evaluations` is counted off the edges rather than read off the node, which is
-/// what makes a re-report free. `passes` is counted the same way and is spent in
-/// the WHERE clause rather than returned.
+/// `evaluations` and `passes` are counted off the edges rather than read off the node, which makes a re-report free.
 ///
-/// ponytail: a traversal per candidate where a stored integer would be one read.
-/// Irrelevant at a pool this size, and the moment it is not, the fix is a
-/// materialised count maintained by the same statement that writes the edge.
+/// ponytail: a traversal per candidate where a stored integer would be one read. Irrelevant at this pool
+/// size; the fix is a materialised count maintained by the statement that writes the edge.
 const PRIOR_FIELDS: &str = "goal, score, run, artifact, count(->evaluated_by) AS evaluations";
 
-/// A goal counts as done when at least one verdict on it passed. Note this is a
-/// count over EDGES, so it cannot disagree with the trail the way a counter can.
+/// A goal counts as done when at least one verdict on it passed (a count over EDGES, so it cannot disagree with the trail).
 const HAS_PASSED: &str = "count(->evaluated_by[WHERE passed = true]) > 0";
 
-/// Nearest passing goal, computed in the database.
-///
-/// "At least one verdict passed", not "the last verdict passed": a goal that
-/// passed once and failed twice is still done work. Note that this returns the
-/// nearest row that qualifies even when nothing is near — measured, and asked
-/// about an unrelated goal it will happily answer with something orthogonal. The
-/// caller's similarity floor is what makes the answer correct, not the query.
+/// Nearest passing goal, computed in the database. "At least one verdict passed", not "the last one": a
+/// goal that passed once and failed twice is still done work. It returns the nearest qualifying row even
+/// when nothing is near (measured), so the caller's similarity floor is what makes the answer correct.
 pub fn already_done_knn(query: &[f32]) -> String {
     format!(
         "SELECT {PRIOR_FIELDS}, vector::distance::knn() AS dist FROM {TASKS} \
@@ -341,29 +275,22 @@ pub fn already_done_knn(query: &[f32]) -> String {
     )
 }
 
-/// The same question with no embedding provider linked: an exact match on the
-/// normalised goal. It still catches the duplicated work that dominates — a
-/// retried generation asking for the same thing again.
+/// The same question with no embedding provider linked: an exact match on the normalised goal.
 pub fn already_done_exact(key: &str) -> String {
     format!("SELECT {PRIOR_FIELDS} FROM {} WHERE {HAS_PASSED};", rid(TASKS, key))
 }
 
-/// `vector::distance::knn()` answers a COSINE DISTANCE — 0.0 for an exact match —
-/// and every threshold in this design is a similarity. Converting in one named
-/// place is the difference between a floor that filters and one that keeps
-/// everything.
+/// `vector::distance::knn()` answers a COSINE DISTANCE (0.0 for an exact match) but every threshold here is
+/// a similarity, so converting in one named place keeps the floor from keeping everything.
 pub fn similarity_of(distance: f64) -> f64 {
     1.0 - distance
 }
 
 /// The rows a statement answered with, or the database's own words.
 ///
-/// `Ok(empty)` covers the two shapes that are not failures: a table nobody has
-/// written yet and a namespace nobody has defined yet both answer "does not
-/// exist", and the first `recall` of a project always precedes its first write.
-///
-/// An error in ANY statement of the body is an error, not just the last one:
-/// inside `BEGIN`/`COMMIT` one failed statement takes the whole transaction down.
+/// `Ok(empty)` covers a table or namespace nobody has defined yet (both answer "does not exist"; the first
+/// `recall` precedes the first write). An error in ANY statement of the body is an error, since inside
+/// `BEGIN`/`COMMIT` one failed statement takes the transaction down.
 pub fn rows(body: &str) -> Result<Vec<Value>, String> {
     let v: Value =
         serde_json::from_str(body).map_err(|e| format!("unreadable answer from the graph: {e}"))?;
@@ -381,8 +308,7 @@ pub fn rows(body: &str) -> Result<Vec<Value>, String> {
     Ok(statements.last().and_then(|s| s["result"].as_array().cloned()).unwrap_or_default())
 }
 
-/// Did the database refuse this vector because the index is a different width?
-/// The one rejection worth handling rather than reporting.
+/// Did the database refuse this vector because the index is a different width? The one rejection worth handling.
 pub fn is_dimension_conflict(msg: &str) -> bool {
     msg.contains("vector dimension")
 }

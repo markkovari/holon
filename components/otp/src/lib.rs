@@ -1,14 +1,11 @@
 //! `otp` — generate and verify a one-time password for two-factor login — TOTP and HOTP, RFC 6238 and 4226
 //!
-//! Second-factor primitive over HMAC-SHA1, the algorithm Google Authenticator /
-//! Authy expect:
+//! Second-factor primitive over HMAC-SHA1, the algorithm Google Authenticator / Authy expect:
 //!   - HOTP (RFC 4226): code = dynamic-truncate(HMAC-SHA1(secret, counter)) mod 10^digits
 //!   - TOTP (RFC 6238): HOTP with counter = unix-time / period
 //!
-//! Fully stateless and pure crypto + clock: the shared secret is always supplied
-//! by the caller (store it in `secrets:vault`), so this component persists
-//! nothing. `wasi:clocks/wall-clock` supplies "now"; `wasi:random/random`
-//! supplies fresh secret + recovery-code entropy.
+//! Stateless: the caller always supplies the shared secret (store it in `secrets:vault`), so nothing is persisted.
+//! `wasi:clocks/wall-clock` supplies "now"; `wasi:random/random` supplies secret + recovery-code entropy.
 
 #[allow(warnings)]
 mod bindings;
@@ -22,8 +19,6 @@ use bindings::wasi::random::random::get_random_bytes;
 type HmacSha1 = Hmac<sha1::Sha1>;
 
 struct Component;
-
-// ---- base32 (RFC 4648, A-Z 2-7, no padding) ----------------------------
 
 const B32_ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
@@ -42,15 +37,13 @@ fn base32_encode(data: &[u8]) -> String {
         }
     }
     if bits > 0 {
-        // pad the trailing partial group on the right with zero bits.
         let idx = ((buffer << (5 - bits)) & 0x1f) as usize;
         out.push(B32_ALPHABET[idx] as char);
     }
     out
 }
 
-/// Map a base32 character to its 5-bit value. Accepts upper- and lower-case;
-/// returns `None` for anything outside the A-Z2-7 alphabet (padding included).
+/// Map a base32 character to its 5-bit value (either case); `None` outside the A-Z2-7 alphabet, padding included.
 fn base32_value(c: u8) -> Option<u32> {
     match c {
         b'A'..=b'Z' => Some((c - b'A') as u32),
@@ -87,9 +80,6 @@ fn decode_secret(secret: &str) -> Result<Vec<u8>, OtpError> {
     base32_decode(secret).ok_or(OtpError::BadSecret)
 }
 
-// ---- HOTP / TOTP core ----------------------------------------------------
-
-/// Validate the requested digit count is within the supported 6..=8 range.
 fn check_digits(digits: u8) -> Result<u32, OtpError> {
     if (6..=8).contains(&digits) {
         Ok(digits as u32)
@@ -103,12 +93,10 @@ fn check_digits(digits: u8) -> Result<u32, OtpError> {
 fn hotp(secret_bytes: &[u8], counter: u64, digits: u8) -> Result<String, OtpError> {
     let digits = check_digits(digits)?;
 
-    // HMAC-SHA1 accepts a key of any length, so this never errors.
     let mut mac = HmacSha1::new_from_slice(secret_bytes).unwrap();
     mac.update(&counter.to_be_bytes());
     let out = mac.finalize().into_bytes(); // 20 bytes
 
-    // Dynamic truncation (RFC 4226 §5.3).
     let offset = (out[19] & 0x0f) as usize;
     let bin_code = ((out[offset] & 0x7f) as u32) << 24
         | (out[offset + 1] as u32) << 16
@@ -120,7 +108,6 @@ fn hotp(secret_bytes: &[u8], counter: u64, digits: u8) -> Result<String, OtpErro
     Ok(format!("{code:0width$}", width = digits as usize))
 }
 
-/// Resolve a caller-supplied period, treating 0 as the conventional 30 seconds.
 fn period_or_default(period: u32) -> u64 {
     if period == 0 {
         30
@@ -133,8 +120,7 @@ fn now() -> u64 {
     wall_clock::now().seconds
 }
 
-/// Constant-time byte comparison (length-checked, XOR-accumulated) so code
-/// verification does not leak via timing.
+/// Constant-time byte comparison (length-checked, XOR-accumulated) so code verification does not leak via timing.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -146,11 +132,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-// ---- minimal percent-encoding for the otpauth:// URI --------------------
-
-/// Percent-encode the characters that would break an `otpauth://` label or
-/// query value. Keeps unreserved chars + a few label-safe ones verbatim; this
-/// is intentionally minimal but yields a valid URI.
+/// Percent-encode the characters that would break an `otpauth://` label or query value; intentionally minimal but yields a valid URI.
 fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for &b in s.as_bytes() {
@@ -202,7 +184,6 @@ impl Guest for Component {
         skew: u32,
     ) -> Result<bool, OtpError> {
         let bytes = decode_secret(&secret)?;
-        // Validate digits up front so a bad request fails before any compare.
         check_digits(digits)?;
 
         let step = period_or_default(period);
@@ -215,8 +196,7 @@ impl Guest for Component {
         let mut c = lo;
         loop {
             let candidate = hotp(&bytes, c, digits)?;
-            // Constant-time per-candidate compare; do not early-return so the
-            // loop's cost does not depend on which window matched.
+            // Constant-time per-candidate compare, with no early return, so the loop's cost does not depend on which window matched.
             if constant_time_eq(candidate.as_bytes(), code.as_bytes()) {
                 matched = true;
             }

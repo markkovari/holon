@@ -98,7 +98,6 @@ impl Guest for Component {
 
                 let stream = out.write().unwrap();
 
-                // Very basic JSON parse of GraphQL request
                 if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
                     if let Some(query) = json.get("query").and_then(|q| q.as_str()) {
                         let res = juniper::execute_sync(

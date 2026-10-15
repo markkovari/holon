@@ -1,18 +1,12 @@
 //! `llm-probe` — an instrument for `llm:inference` (see wit/probe.wit).
 //!
 //!   GET  /chat?q=…    one user message in the query string, the model's reply
-//!   POST /chat?seed=  the same, with the message as the BODY
+//!   POST /chat?seed=  the same, with the message as the BODY (a prompt outgrew a URL: the contract-negotiation call, ADR-0086,
+//!                     carries a whole interface definition and a candidate's failures)
 //!   GET  /describe    what the provider says it is
 //!
-//! The POST exists because a prompt outgrew a URL: the contract-negotiation call
-//! (ADR-0086) carries a whole interface definition and a candidate's failures, and
-//! a query string is not where that belongs.
-//!
-//! Errors come back as JSON with a 200, because the four `infer-error` cases are
-//! the interesting output here: `provider-denied` (the key was wrong),
-//! `provider-unavailable` (the host refused the egress, or nothing was
-//! listening) and `bad-response` want completely different fixes, and a status
-//! code flattens all three into "it didn't work".
+//! Errors come back as JSON with a 200: the `infer-error` cases are the interesting output (`provider-denied` = wrong
+//! key, `provider-unavailable` = egress refused or nothing listening, `bad-response`) and want different fixes, which a status code flattens.
 
 #[allow(warnings)]
 mod bindings {
@@ -55,9 +49,7 @@ fn param(query: &str, key: &str) -> String {
         .unwrap_or_default()
 }
 
-/// A ceiling on a request body, not a policy: past this the read gives up and
-/// the body reads as empty, rather than growing until the store's memory cap
-/// traps the component and the connection simply closes.
+/// A ceiling on a request body, not a policy: past this the read gives up and the body reads as empty.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
@@ -77,10 +69,7 @@ fn err(e: llm::InferError) -> String {
     format!("{{\"error\":\"{kind}\",\"detail\":\"{}\"}}", esc(&msg))
 }
 
-/// The SEED is the interesting knob here. It exists in the contract for
-/// reproducibility, and a swarm uses it for the same reason in reverse: N
-/// branches asking one question with N seeds is how they explore differently
-/// while staying replayable.
+/// The SEED exists in the contract for reproducibility; a swarm uses it in reverse: N branches with N seeds explore differently while staying replayable.
 fn options(seed: u64) -> llm::Options {
     llm::Options { model: String::new(), temperature: 0, max_tokens: 0, stop: Vec::new(), seed }
 }
@@ -94,8 +83,7 @@ impl Guest for Component {
         };
 
         let method = request.get_method();
-        // Read the body BEFORE matching: `consume` takes the request, so it cannot
-        // happen inside an arm that also needs the method.
+        // Read the body BEFORE matching: `consume` takes the request, so it cannot happen inside an arm that also needs the method.
         let posted = match method {
             Method::Post => read_body(request).await,
             _ => String::new(),

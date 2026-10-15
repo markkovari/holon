@@ -64,7 +64,6 @@ impl Guest for Component {
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
-        // Support OPTIONS for CORS preflight
         if let Method::Options = method {
             return respond_cors(204, "text/plain", Vec::new());
         }
@@ -72,12 +71,10 @@ impl Guest for Component {
         let is_get_or_head = matches!(method, Method::Get | Method::Head);
 
         let outcome = match (&method, seg.as_slice()) {
-            // Health / API status
             (Method::Get, ["api", "health"]) => {
                 Outcome::Json(200, json!({ "status": "ok", "service": "grocery" }).to_string())
             }
 
-            // Auth Endpoints
             (Method::Post, ["api", "auth", "register"]) => auth::handle_register(request).await,
             (Method::Post, ["api", "auth", "login"]) => auth::handle_login(request).await,
             (Method::Get, ["api", "auth", "me"]) | (Method::Get, ["auth", "me"]) => {
@@ -85,7 +82,6 @@ impl Guest for Component {
             }
             (Method::Post, ["api", "auth", "logout"]) => auth::handle_logout(&request),
 
-            // Admin User Management Endpoints (RBAC Admin-Only)
             (Method::Get, ["api", "admin", "users"]) => auth::handle_list_users(&request),
             (Method::Post, ["api", "admin", "users"]) => {
                 auth::handle_admin_create_user(request).await
@@ -97,10 +93,8 @@ impl Guest for Component {
                 auth::handle_delete_user(&request, id)
             }
 
-            // Real WASI Barcode Decoding (Allow Shoppers, Admins & In-Store Kiosk)
             (Method::Post, ["api", "scan"]) => scanner::scan_barcode(request).await,
 
-            // Products Catalog
             (Method::Get, ["api", "products"]) => catalog::list_products(),
             (Method::Post, ["api", "products"]) => {
                 if let Err(e) = auth::require_role(&request, "admin") {
@@ -117,7 +111,6 @@ impl Guest for Component {
                 }
             }
 
-            // Low Stock Alerts (Admin-Only RBAC)
             (Method::Get, ["api", "alerts"]) => {
                 if let Err(e) = auth::require_role(&request, "admin") {
                     e
@@ -126,7 +119,6 @@ impl Guest for Component {
                 }
             }
 
-            // Cart and Checkout
             (Method::Get, ["api", "cart"]) => orders::get_cart(),
             (Method::Post, ["api", "cart", "items"]) => orders::add_cart_item(request).await,
             (Method::Delete, ["api", "cart", "items", barcode]) => {
@@ -134,13 +126,11 @@ impl Guest for Component {
             }
             (Method::Post, ["api", "checkout"]) => orders::checkout(request).await,
 
-            // Serve real fixture images for browser tests
             (Method::Get, ["fixtures", filename]) => match scanner::get_fixture(filename) {
                 Some(bytes) => Outcome::File(200, "image/png".into(), bytes.to_vec()),
                 None => Outcome::Err(404, "Fixture not found".into()),
             },
 
-            // Non-API GETs and HEADs -> Embedded React SPA via ui:assets/files
             _ if is_get_or_head => serve_static(&route),
 
             _ => Outcome::Err(404, "Endpoint not found".into()),

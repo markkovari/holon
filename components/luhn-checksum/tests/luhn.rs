@@ -1,8 +1,7 @@
 // The specification for `luhn-checksum`. Not writable by the goal that implements
 // `src/lib.rs` — see `.comp/goals/luhn-checksum.toml`.
 
-// Real numbers whose Luhn-validity is publicly documented: the classic Wikipedia
-// example, and IIN test numbers from card networks' own published test-card lists.
+// Real numbers whose Luhn-validity is publicly documented: the Wikipedia example and card networks' published test-card IINs.
 const VALID: &[&str] = &[
     "79927398713",      // Wikipedia's own worked example
     "4111111111111111", // Visa test number
@@ -63,9 +62,7 @@ fn parity_is_counted_from_the_right_not_the_left() {
 
 #[test]
 fn doubling_that_overflows_nine_folds_by_subtracting_nine_not_modulo() {
-    // "9" doubled is 18 -> fold to 9 (1+8), which is a valid single check digit
-    // for a lone "9": 9 (doubled to 18, folds to 9) + check digit must sum to a
-    // multiple of 10, so the check digit is 1.
+    // "9" doubled is 18, folding to 9, so the check digit that brings the sum to a multiple of 10 is 1.
     assert_eq!(luhn_checksum::checksum_digit("9"), Some(1));
     assert!(luhn_checksum::is_valid("91"));
 }

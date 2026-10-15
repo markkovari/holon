@@ -1,11 +1,9 @@
 //! `idempotency-guard` — make a mutating request safe to retry — dedup by idempotency key and replay the stored result
 //!
-//! Store-and-replay request deduplication, backed by `wasi:keyvalue`.
-//! State per key: `id_{key}` -> one line, two shapes:
+//! Store-and-replay request deduplication on `wasi:keyvalue`. State per key: `id_{key}` -> one line, two shapes:
 //!   pending:{created}                       reserved, operation in flight
 //!   done:{created}:{status}:{base64 body}   operation completed, result stored
-//! A `pending` record older than its ttl is treated as expired and reclaimed,
-//! so a crashed in-flight request never wedges a key forever.
+//! A `pending` record older than its ttl is expired and reclaimed, so a crashed in-flight request never wedges a key.
 //!
 //! Config (wasi:config/store):
 //!   default-ttl   reservation / record lifetime, seconds (default 86400)
@@ -27,8 +25,6 @@ struct Component;
 
 const BUCKET: &str = "default";
 
-// ---- config -------------------------------------------------------------
-
 fn default_ttl() -> u64 {
     match config::get("default-ttl") {
         Ok(Some(v)) => v.parse().unwrap_or(86400),
@@ -43,8 +39,6 @@ fn ttl_or_default(ttl_seconds: u64) -> u64 {
         ttl_seconds
     }
 }
-
-// ---- record state -------------------------------------------------------
 
 enum Record {
     Pending { created: u64, nonce: String },
@@ -91,14 +85,12 @@ fn load(bucket: &kv::Bucket, key: &str) -> Result<Option<Record>, IdemError> {
 }
 
 fn parse(s: &str) -> Result<Record, IdemError> {
-    // `pending:{created}:{nonce}` | `done:{created}:{status}:{b64}`
     if let Some(rest) = s.strip_prefix("pending:") {
         let (created_str, nonce) = rest.split_once(':').unwrap_or((rest, ""));
         let created = created_str.parse().unwrap_or(0);
         return Ok(Record::Pending { created, nonce: nonce.to_string() });
     }
     if let Some(rest) = s.strip_prefix("done:") {
-        // rest = {created}:{status}:{b64}
         let mut parts = rest.splitn(3, ':');
         let _created = parts.next();
         let status = parts
@@ -127,9 +119,7 @@ impl Guest for Component {
         let k = id_key(&key);
         let now = now();
         match load(&bucket, &k)? {
-            // already completed -> replay the stored response.
             Some(Record::Done { status, body }) => Ok(Some(CachedResponse { status, body })),
-            // in flight and still within ttl -> concurrent duplicate.
             Some(Record::Pending { created, .. }) if now.saturating_sub(created) < ttl => {
                 Err(IdemError::InProgress)
             }
@@ -147,13 +137,10 @@ impl Guest for Component {
                 set(&bucket, &k, &format!("pending:{now}:{mine}"))?;
                 match load(&bucket, &k)? {
                     Some(Record::Pending { nonce, .. }) if nonce == mine => Ok(None),
-                    // someone overwrote our reservation -> they win.
                     Some(Record::Pending { .. }) => Err(IdemError::InProgress),
-                    // raced with a completer -> replay theirs.
                     Some(Record::Done { status, body }) => {
                         Ok(Some(CachedResponse { status, body }))
                     }
-                    // disappeared (forget) -> we proceed.
                     None => Ok(None),
                 }
             }

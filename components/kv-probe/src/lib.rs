@@ -1,16 +1,14 @@
 //! `kv-probe` — an instrument for one specific unknown (see wit/probe.wit).
 //!
-//! The bucket it opens comes from `wasi:config` (`bucket`, default `"default"`),
-//! because the question is what the operator's `hostInterfaces[].name` does, and
-//! that cannot be asked by a component with the name compiled in.
+//! The bucket comes from `wasi:config` (`bucket`, default `"default"`): the question is what the operator's
+//! `hostInterfaces[].name` does, which a component with the name compiled in cannot ask.
 //!
 //!   GET /who        which bucket name it opened, and whether the open SUCCEEDED
 //!   GET /put?k=&v=  write
 //!   GET /get?k=     read (`found: false` is a miss, not an error)
 //!
-//! `/who` reporting an open failure is the interesting outcome, not a bug: it means
-//! a name no `hostInterfaces` entry declares fails closed rather than falling back
-//! to a shared store.
+//! `/who` reporting an open failure is the interesting outcome: a name no `hostInterfaces` entry declares fails closed
+//! rather than falling back to a shared store.
 
 #[allow(warnings)]
 mod bindings {
@@ -45,12 +43,8 @@ guestio::guest_p3_respond!();
 
 struct Component;
 
-/// The bucket comes from the QUERY, not from `wasi:config`.
-///
-/// Deliberate: the question is what `hostInterfaces[].name` does, and mixing in a
-/// second host interface this host does not advertise (`wasi:config` is absent from
-/// its "Host provides interfaces" list) would confound a link failure with a naming
-/// failure. `?bucket=` keeps the probe's world to http + keyvalue and nothing else.
+/// The bucket comes from the QUERY, not `wasi:config`: a second host interface this host does not advertise would
+/// confound a link failure with a naming failure, so `?bucket=` keeps the probe's world to http + keyvalue.
 fn bucket_of(query: &str) -> String {
     let b = param(query, "bucket");
     if b.is_empty() {
@@ -92,12 +86,9 @@ impl Guest for Component {
                     Err(e) => format!("{{\"bucket\":\"{name}\",\"error\":\"{e:?}\"}}"),
                 }
             }
-            // Keeps the imported `bucket` resource the same shape as `record-store`'s
-            // {get,set,delete}, since a component's embedded type only carries the
-            // methods it references. This was a suspect for the bind failure and was
-            // NOT the cause — `hostInterfaces[].name` was (ADR-0015). Whether a
-            // strict subset also fails is untested; matching a known-good shape keeps
-            // that variable out of future runs.
+            // Keeps the imported `bucket` resource the same shape as `record-store`'s {get,set,delete}, since a component's embedded
+            // type only carries the methods it references. Not the cause of the bind failure (`hostInterfaces[].name` was, ADR-0015);
+            // whether a strict subset also fails is untested, so matching a known-good shape keeps that variable out.
             (Method::Get, "/del") => {
                 let k = param(&query, "k");
                 match kv::open(&name).and_then(|b| b.delete(&k)) {

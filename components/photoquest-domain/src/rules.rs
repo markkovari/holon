@@ -2,10 +2,9 @@
 //! "Timed competitions"). Pure functions over a stored photo record: no I/O, so
 //! every rule is unit-tested here and quests and competitions judge the same way.
 //!
-//! The one idea every check below follows: a value that is MISSING because the
-//! stage that produces it did not run is not a bad value. Such a check reports
-//! `ok: null` with a detail saying which stage was missing, and counts as not
-//! passed — so a photographer is told "not looked at", never "bad photo".
+//! One idea every check follows: a value MISSING because the stage that produces it did not run is not a
+//! bad value. Such a check reports `ok: null` with a detail naming the missing stage and counts as not
+//! passed, so a photographer is told "not looked at", never "bad photo".
 //!
 //! Where each value comes from (the callback body, stored verbatim on the photo):
 //!
@@ -31,10 +30,7 @@ const EXPOSURE_KEYS: &[&str] =
 
 const NEEDS_VISION: &str = "needs Vision; this photo was evaluated without it";
 
-// ---- reading a photo record -------------------------------------------------
-
-/// Did the Vision stage run for this photo? `backend.vision` is what the daemon
-/// says; a `vision` object has to be there too, or there is nothing to read.
+/// Did the Vision stage run for this photo? `backend.vision` is what the daemon says; a `vision` object has to be there too.
 fn vision_ran(photo: &Map<String, Value>) -> bool {
     let flagged = photo
         .get("backend")
@@ -100,8 +96,6 @@ fn original_kind(photo: &Map<String, Value>) -> String {
     }
 }
 
-// ---- time ---------------------------------------------------------------------
-
 /// Days since 1970-01-01 for a proleptic Gregorian date (Howard Hinnant).
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
@@ -156,15 +150,12 @@ pub fn format_utc(secs: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}", tod / 3600, (tod % 3600) / 60, tod % 60)
 }
 
-// ---- the verdict --------------------------------------------------------------
-
 fn check(name: &str, ok: Option<bool>, detail: String) -> Value {
     json!({ "name": name, "ok": ok, "detail": detail })
 }
 
-/// A number formatted for a detail: at most two decimals, at least one
-/// (`5.0`, `3.1`, `0.69`), whole numbers ≥ 100 bare (`6400`), and small
-/// fractions as they are (`0.004`) so a shutter speed does not read as zero.
+/// A number formatted for a detail: at most two decimals, at least one (`5.0`, `0.69`), whole numbers
+/// ≥ 100 bare (`6400`), small fractions as they are (`0.004`) so a shutter speed does not read as zero.
 fn f(x: f64) -> String {
     if x.fract() == 0.0 && x.abs() >= 100.0 {
         return format!("{x:.0}");
@@ -181,7 +172,6 @@ fn f(x: f64) -> String {
     }
 }
 
-/// `value ≥ min` style: `ok` when `pass(value)`.
 fn compare(
     name: &str,
     value: Option<f64>,
@@ -235,12 +225,9 @@ fn subject_check(req: &Value, photo: &Map<String, Value>) -> Value {
     }
 }
 
-/// Judge `photo` against `requirements`. `starts_at` is the quest's or
-/// competition's start, for `captured_after_start`.
-///
-/// Every requirement present yields one check (`captured_after_start` is on
-/// unless explicitly `false`), in a fixed order. `pass` is true only when every
-/// check is `ok: true` — a `null` is not a pass.
+/// Judge `photo` against `requirements`. `starts_at` is the quest's or competition's start, for
+/// `captured_after_start` (on unless explicitly `false`). One check per requirement present, in a fixed
+/// order; `pass` only when every check is `ok: true` (a `null` is not a pass).
 pub fn verdict(requirements: &Value, photo: &Map<String, Value>, starts_at: u64) -> Value {
     let empty = Map::new();
     let req = requirements.as_object().unwrap_or(&empty);
@@ -361,8 +348,6 @@ pub fn verdict(requirements: &Value, photo: &Map<String, Value>, starts_at: u64)
     json!({ "pass": pass, "checks": checks })
 }
 
-// ---- validation ---------------------------------------------------------------
-
 fn unknown_keys(obj: &Map<String, Value>, allowed: &[&str], within: &str) -> Result<(), String> {
     match obj.keys().find(|k| !allowed.contains(&k.as_str())) {
         Some(k) if within.is_empty() => Err(format!("unknown requirement {k:?}")),
@@ -473,14 +458,11 @@ pub fn validate(requirements: &Value) -> Result<(), String> {
     Ok(())
 }
 
-// ---- auto-v1 ------------------------------------------------------------------
-
 /// `auto-v1`, 0..=1, plus flags for parts that could not be computed.
 ///
-/// `0.5·clamp(subject_or_focus/8) + 0.3·aesthetics + 0.2·(1 − clip_penalty)`:
-/// `subject_or_focus` is the best face ratio × 10 when a face was measured, else
-/// `focus_ratio`; `clip_penalty = min(1, (shadows% + highlights%)/5)`. A part
-/// whose input is missing counts 0 and is flagged — never guessed.
+/// `0.5·clamp(subject_or_focus/8) + 0.3·aesthetics + 0.2·(1 − clip_penalty)`: `subject_or_focus` is the
+/// best face ratio × 10 when a face was measured, else `focus_ratio`; `clip_penalty = min(1,
+/// (shadows% + highlights%)/5)`. A part with missing input counts 0 and is flagged, never guessed.
 pub fn auto_v1(photo: &Map<String, Value>) -> (f64, Vec<String>) {
     let mut flags = Vec::new();
     let clamp = |x: f64| x.clamp(0.0, 1.0);

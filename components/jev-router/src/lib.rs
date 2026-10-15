@@ -1,11 +1,8 @@
 //! `jev-router` — deterministic intent-routing gateway over `jev:decision`.
 //!
-//! Where `intent-router` classifies by prompting a chat model (generative,
-//! `llm:inference`), this component classifies with a discrete decision call
-//! (`jev:decision/decision`) — no prompt, no free-form text, just a closed set
-//! of candidate domains and a typed confidence. The two stay separate
-//! components on purpose: this is the "System One" fast path, and nothing
-//! generative ever runs in it.
+//! `intent-router` classifies by prompting a chat model; this component classifies with a discrete decision call
+//! (`jev:decision/decision`): no prompt, a closed set of candidate domains and a typed confidence. The "System One"
+//! fast path; nothing generative runs in it.
 //!
 //! ## The routing contract
 //!
@@ -15,14 +12,9 @@
 //!   - `{"domain": "unknown", "decision": "disambiguate", "confidence": <c>,
 //!      "distribution": [...]}` otherwise.
 //!
-//! Dispatching the request to whichever domain was selected — `helpdesk-domain`,
-//! `agent-writer`, or anything else — is deliberately NOT this component's job.
-//! The Component Model requires static imports, and the plausible dispatch
-//! targets export mutually incompatible interfaces (`graph:agent/writer` vs.
-//! `wasi:http/incoming-handler`), so there is no single generic call this
-//! component could make to "the" selected domain. `intent-router` already
-//! draws this same boundary — a router's contract ends at producing the
-//! decision; a caller or gateway/composition layer does the forwarding.
+//! Dispatching to the selected domain is deliberately NOT this component's job: the Component Model requires static
+//! imports and the plausible targets export incompatible interfaces (`graph:agent/writer` vs. `wasi:http/incoming-handler`),
+//! so no single generic call exists. As in `intent-router`, a router's contract ends at the decision.
 //!
 //! Config (wasi:config/store):
 //!   jev:confidence-threshold  milli-units, 0-1000 (default 650). Below this,
@@ -89,19 +81,15 @@ struct RouteReq {
     query: String,
 }
 
-/// The only domains this router will ever offer a decision provider. Unlike
-/// `intent-router`'s `KNOWN_DOMAINS`, `"unknown"` is not among them — it is
-/// never something a provider *selects*, only what this router reports when
-/// it isn't confident enough in whatever the provider did select.
+/// The only domains this router offers a decision provider. Unlike `intent-router`'s `KNOWN_DOMAINS`, `"unknown"` is
+/// never *selected* by a provider, only reported when the router is not confident enough.
 const ROUTABLE_DOMAINS: &[&str] =
     &["helpdesk-domain", "clinic-domain", "studio-domain", "grocery-domain"];
 
-/// The Choice question's `instructions` — what the provider is deciding,
-/// distinct from `state` (the query text itself).
+/// The Choice question's `instructions`: what the provider is deciding, distinct from `state` (the query text).
 const ROUTING_INSTRUCTIONS: &str = "Which backend domain should handle this query?";
 
-/// Milli-units, 0..=1000. Below this — or a provider-reported flat
-/// distribution — the caller gets "disambiguate" rather than a route.
+/// Milli-units, 0..=1000. Below this, or on a provider-reported flat distribution, the caller gets "disambiguate".
 const DEFAULT_THRESHOLD: u32 = 650;
 
 fn confidence_threshold() -> u32 {
@@ -113,8 +101,7 @@ fn confidence_threshold() -> u32 {
         .unwrap_or(DEFAULT_THRESHOLD)
 }
 
-/// 1 to 1000 characters — long enough for a real question, short enough that
-/// a caller cannot turn this into a place to paste a document.
+/// 1 to 1000 characters: long enough for a real question, too short to paste a document.
 fn validate_query(query: &str) -> Result<(), String> {
     if query.is_empty() || query.len() > 1000 {
         return Err("query must be between 1 and 1000 characters".into());
@@ -129,8 +116,7 @@ fn distribution_json(dist: &[jev::OptionScore]) -> Value {
         .collect::<Vec<_>>())
 }
 
-/// Turn a `choice-result` into the JSON this endpoint promises, gated on the
-/// confidence threshold and the provider's own flat-distribution judgment.
+/// Turn a `choice-result` into the JSON this endpoint promises, gated on the confidence threshold and the provider's flat-distribution judgment.
 fn shape_decision(result: &jev::ChoiceResult, threshold: u32) -> Value {
     if result.flat || result.confidence < threshold {
         return json!({
@@ -177,8 +163,6 @@ async fn route_intent(request: Request) -> Outcome {
         Err(e) => Outcome::Err(503, format!("jev decision failed: {}", decision_error_message(e))),
     }
 }
-
-// ---- helpers ---------------------------------------------------------------------
 
 async fn parse<T: for<'a> Deserialize<'a>>(request: Request) -> Result<T, String> {
     let body = read_body(request).await.map_err(|_| "could not read body".to_string())?;
@@ -247,8 +231,7 @@ mod tests {
 
     #[test]
     fn a_flat_distribution_forces_disambiguate_regardless_of_confidence() {
-        // High confidence number, but the provider itself says the distribution
-        // carries no signal — that judgment overrides the number.
+        // High confidence number, but the provider says the distribution carries no signal: that overrides the number.
         let out = shape_decision(&result("helpdesk-domain", 900, true), 650);
         assert_eq!(out["domain"], "unknown");
         assert_eq!(out["decision"], "disambiguate");

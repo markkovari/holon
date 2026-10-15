@@ -1,23 +1,19 @@
-//! Moderation — CONTRACT.md "Moderation", plus the helpers every game module
-//! calls (`require_role`, `require_active`, `is_hidden`) and the bootstrap admin.
+//! Moderation — CONTRACT.md "Moderation", plus the helpers every game module calls (`require_role`,
+//! `require_active`, `is_hidden`) and the bootstrap admin.
 //!
 //! Collections this module owns:
 //!
-//! - `accounts` — `{subject, email, created_at}`, indexed by `subject`. Written at
-//!   register (`auth:identity` has no "list accounts"), read by `GET /api/admin/users`
-//!   and to check that an admin action names a real account.
-//! - `account_flags` — `{subject, suspended, reason, at, by}`, indexed by `subject`;
-//!   at most one per subject.
-//! - `reports` — `{photo, photo_owner, reporter, reason, note, state, created_at,
-//!   resolved_at, resolved_by, resolution_note}`, indexed by `photo`, `state`, `reporter`.
+//! - `accounts` — `{subject, email, created_at}`, indexed by `subject`. Written at register (`auth:identity`
+//!   has no "list accounts"); read by `GET /api/admin/users` and to check an admin action names a real account.
+//! - `account_flags` — `{subject, suspended, reason, at, by}`, indexed by `subject`; at most one per subject.
+//! - `reports` — `{photo, photo_owner, reporter, reason, note, state, created_at, resolved_at, resolved_by,
+//!   resolution_note}`, indexed by `photo`, `state`, `reporter`.
 //!
-//! It reads `competition_entries` (`{competition, photo, owner, sha256}`, indexed by
-//! `photo`) and `competitions` (`state`), which `competitions.rs` writes, to decide
-//! whether a photo is visible to someone other than its owner.
+//! It reads `competition_entries` and `competitions`, which `competitions.rs` writes, to decide whether a photo
+//! is visible to someone other than its owner.
 //!
-//! Roles live in `auth:identity/rbac`, not here. `auth-guard` re-resolves a session's
-//! roles from the RBAC store on every `introspect`, so a grant or revoke takes effect
-//! on the grantee's NEXT request with the token they already hold — no re-login.
+//! Roles live in `auth:identity/rbac`, not here. `auth-guard` re-resolves a session's roles on every
+//! `introspect`, so a grant or revoke takes effect on the grantee's NEXT request, no re-login.
 
 use crate::bindings::auth::identity::rbac;
 use crate::bindings::auth::identity::types::Principal;
@@ -36,8 +32,7 @@ const COMPETITIONS: &str = "competitions";
 
 const REPORT_REASONS: &[&str] = &["inappropriate", "stolen", "spam", "other"];
 const REPORT_STATES: &[&str] = &["open", "dismissed", "actioned"];
-/// The roles an admin may grant or revoke. `photographer` is everyone's and is
-/// not an admin's to take away.
+/// The roles an admin may grant or revoke. `photographer` is everyone's and not an admin's to take away.
 const GRANTABLE: &[&str] = &["curator", "admin"];
 
 pub fn handle(method: &Method, route: &Route, body: &str, query: &str) -> Reply {
@@ -49,8 +44,6 @@ pub fn handle(method: &Method, route: &Route, body: &str, query: &str) -> Reply 
     }
 }
 
-// ---- helpers every game module calls ----
-
 /// `Ok(())` when `principal` holds `role`, else the `403 forbidden_role` reply.
 pub fn require_role(principal: &Principal, role: &str) -> Result<(), Reply> {
     if principal.roles.iter().any(|r| r == role) {
@@ -60,9 +53,7 @@ pub fn require_role(principal: &Principal, role: &str) -> Result<(), Reply> {
     }
 }
 
-/// `Err(403 suspended)` when the account is suspended. A store that cannot answer
-/// is a 503, not a pass: a suspension that silently lapses whenever the store
-/// hiccups is not a suspension.
+/// `Err(403 suspended)` when the account is suspended. A store that cannot answer is a 503, not a pass: a suspension that lapses whenever the store hiccups is not a suspension.
 pub fn require_active(principal: &Principal) -> Result<(), Reply> {
     match flags_of(&principal.subject) {
         Ok(Some((_, f))) if bool_of(&f, "suspended") => {
@@ -78,8 +69,6 @@ pub fn require_active(principal: &Principal) -> Result<(), Reply> {
 pub fn is_hidden(photo: &Map<String, Value>) -> bool {
     photo.get("moderation").and_then(|m| m.get("hidden")).and_then(Value::as_bool).unwrap_or(false)
 }
-
-// ---- register: the account book and the bootstrap admin ----
 
 /// `POST /register` — the `guestauth` register, then two things it cannot do: keep
 /// `{subject, email}` for the admin user list, and grant `admin` to the account
@@ -120,8 +109,6 @@ pub fn register(body: &str) -> Reply {
     }
     reply
 }
-
-// ---- small store helpers ----
 
 fn doc(entry: &records::Entry) -> Map<String, Value> {
     let mut m = match serde_json::from_str::<Value>(&entry.data) {
@@ -210,8 +197,6 @@ fn visible_to_others(photo_id: &str, photo: &Map<String, Value>) -> bool {
     })
 }
 
-// ---- reports ----
-
 #[derive(serde::Deserialize)]
 struct ReportReq {
     #[serde(default)]
@@ -242,8 +227,7 @@ fn report(route: &Route, id: &str, body: &str) -> Reply {
     if owner == principal.subject {
         return Reply::err(400, "own_photo");
     }
-    // Not visible to you is indistinguishable from not existing: a 404, so a
-    // report cannot be used to probe which photo ids exist.
+    // Not visible to you is indistinguishable from not existing (404), so a report cannot probe which photo ids exist.
     if !visible_to_others(id, &photo) {
         audit("photo.report", "deny", &principal.subject, id);
         return Reply::err(404, "not_found");
@@ -277,8 +261,6 @@ fn report(route: &Route, id: &str, body: &str) -> Reply {
     );
     Reply::json(201, Value::Object(doc(&created)))
 }
-
-// ---- admin ----
 
 fn admin_audit(event: &str, actor: &Principal, target: &str, reason: &str) {
     audit(event, "allow", &actor.subject, &json!({"target": target, "reason": reason}).to_string());

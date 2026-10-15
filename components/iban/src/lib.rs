@@ -1,9 +1,7 @@
 //! `iban` — validate a bank account number — IBAN mod-97 checksum and the per-country length
 //!
-//! Normalize an IBAN (strip spaces, upper-case), check its length against the
-//! country's rule (for known countries), and verify the ISO 7064 mod-97
-//! checksum: move the first four characters to the end, map each letter to two
-//! digits (A=10 … Z=35), and require the whole number ≡ 1 (mod 97). Pure compute.
+//! Normalize an IBAN (strip spaces, upper-case), check its length against the country's rule, and verify the ISO 7064
+//! mod-97 checksum: move the first four characters to the end, map letters to two digits (A=10 … Z=35), require ≡ 1 (mod 97).
 
 #[allow(warnings)]
 mod bindings;
@@ -83,7 +81,6 @@ fn mod97_step(rem: u32, digit: u32) -> u32 {
 
 impl Guest for Component {
     fn validate(iban: String) -> Result<IbanInfo, IbanError> {
-        // normalize: drop ASCII whitespace, upper-case.
         let norm: String =
             iban.chars().filter(|c| !c.is_whitespace()).map(|c| c.to_ascii_uppercase()).collect();
         if norm.len() < 5 {
@@ -97,7 +94,6 @@ impl Guest for Component {
         if !bytes[2].is_ascii_digit() || !bytes[3].is_ascii_digit() {
             return Err(IbanError::BadCheck); // check digits must be numeric
         }
-        // only letters + digits allowed anywhere.
         for &b in bytes {
             if !b.is_ascii_alphanumeric() {
                 return Err(IbanError::BadChar((b as char).to_string()));
@@ -131,7 +127,6 @@ impl Guest for Component {
             return Err(IbanError::BadCheck);
         }
 
-        // group in fours for display.
         let formatted = norm
             .as_bytes()
             .chunks(4)

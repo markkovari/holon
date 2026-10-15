@@ -1,13 +1,6 @@
-//! Agreement with the reference implementation, over its own test data.
-//!
-//! The held-out specification in `validate.rs` says what this component should do.
-//! This says something narrower and harder to fake: that it does not DISAGREE with
-//! cucumber about whether a file is valid Gherkin.
-//!
-//! It is the check that corrected six mistakes, listed in `corpus/README.md`. Every
-//! one was mine; the corpus was right each time. Three of them were assertions in
-//! the held-out spec, written from a reading of the grammar rather than from the
-//! implementation that defines it.
+//! Agreement with the reference implementation, over its own test data: the component must not DISAGREE with
+//! cucumber about whether a file is valid Gherkin. This corrected six mistakes (listed in `corpus/README.md`),
+//! all mine, three of them assertions in the held-out spec written from a reading of the grammar.
 
 use gherkin_validate::{validate, Severity};
 
@@ -38,12 +31,8 @@ fn errors(source: &str) -> Vec<String> {
         .collect()
 }
 
-/// Nothing cucumber accepts may be called broken here.
-///
-/// A `warning` is fine — those are the files that parse and mean nothing. So is a
-/// `declined`, which is the five files written in a language this component does not
-/// read. An `error` is the claim "cucumber cannot parse this", and on these files
-/// that claim is false.
+/// Nothing cucumber accepts may be called broken here. A `warning` is fine (parses, means nothing), so is a
+/// `declined` (the five files in a language this component does not read); an `error` claims "cucumber cannot parse this", which is false here.
 #[test]
 fn no_file_the_reference_accepts_is_reported_as_broken() {
     let files = features("good");
@@ -64,11 +53,8 @@ fn no_file_the_reference_accepts_is_reported_as_broken() {
     );
 }
 
-/// And everything it refuses has to be caught.
-///
-/// A warning is not enough here. `whitespace_in_tags.feature` used to produce only
-/// an "empty scenario" warning, which would have let a genuinely broken file through
-/// a gate that acts on errors.
+/// And everything it refuses has to be caught. A warning is not enough: `whitespace_in_tags.feature` once produced
+/// only an "empty scenario" warning, which would let a broken file through a gate that acts on errors.
 #[test]
 fn every_file_the_reference_refuses_is_caught() {
     let files = features("bad");

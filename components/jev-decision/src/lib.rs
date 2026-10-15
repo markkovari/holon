@@ -1,25 +1,14 @@
 //! `jev-decision` — the TRIVIAL REFERENCE provider for `jev:decision@0.1.0`.
 //!
-//! This is the reference implementation of the decision boundary: the SWAP
-//! POINT a router imports. It does NOT call a real classifier — there is no
-//! http, no wasi:config, no secrets here, since the world `jev-decision` is
-//! intentionally minimal and imports nothing (mirrors `llm-inference`'s own
-//! built-in mock for the same reason).
+//! The reference implementation of the decision boundary: the SWAP POINT a router imports. It does NOT call a real
+//! classifier: the world imports nothing (no http, config or secrets), as with `llm-inference`'s built-in mock.
 //!
-//! `choose` picks the first option whose text appears (case-insensitively) as
-//! a substring of `state`, reporting high confidence and an uneven
-//! distribution; if none match, it falls back to the first option with a flat,
-//! low-confidence distribution — deterministic, and honest that it found
-//! nothing. `score` always reports the middle level with a flat distribution,
-//! and `gate` always reports 50/50 — this provider has no actual judgment to
-//! offer, only a shape to satisfy.
+//! `choose` picks the first option whose text appears (case-insensitively) in `state`, with high confidence and an
+//! uneven distribution; with no match it picks the first option with a flat, low-confidence distribution
+//! (deterministic, and honest that it found nothing). `score` always reports the middle level, flat; `gate` always 50/50.
 //!
-//! A real provider (TypeSafe's Jev) is a SEPARATE component
-//! (`typesafe-provider`) that implements this same `decision` interface but
-//! additionally imports `wasi:http`, `wasi:config` and `comp:secrets`. A
-//! scripted mock (`mock-jev-provider`) exists for deterministic, offline
-//! testing of routing logic that needs specific, repeatable answers — this
-//! crate is only the baseline every real provider is measured against.
+//! A real provider (`typesafe-provider`) is a SEPARATE component implementing the same interface plus `wasi:http`,
+//! `wasi:config` and `comp:secrets`; `mock-jev-provider` scripts specific answers for offline routing tests.
 
 #[allow(warnings)]
 mod bindings;
@@ -85,8 +74,7 @@ fn gate_impl(instructions: &str) -> Result<GateResult, DecisionError> {
     Ok(GateResult { probability: NEUTRAL_PROBABILITY })
 }
 
-/// One `question`, answered against the shared `state` — the same logic
-/// `choose`/`score`/`gate` use standalone, dispatched by `kind`.
+/// One `question`, answered against the shared `state`: the logic `choose`/`score`/`gate` use standalone, dispatched by `kind`.
 fn answer_one(state: &str, q: &Question) -> Answered {
     let result = match &q.kind {
         QuestionKind::Choice(options) => choose_impl(&ChoiceRequest {
@@ -136,9 +124,7 @@ bindings::export!(Component with_types_in bindings);
 #[cfg(test)]
 mod tests {
     use super::*;
-    // Only a test builds a `Gate` question by hand; the real request path
-    // never constructs one, which is why this isn't in the file's own
-    // `use` list above.
+    // Only a test builds a `Gate` question by hand, so it is not in the file's own `use` list.
     use bindings::exports::jev::decision::decision::GateCriteria;
 
     #[test]
@@ -148,8 +134,7 @@ mod tests {
             instructions: "classify".into(),
             options: vec!["helpdesk-domain".into(), "clinic-domain".into()],
         };
-        // Neither option is literally a substring here, so this exercises the
-        // fallback path deterministically.
+        // Neither option is literally a substring here, so this exercises the fallback path.
         let out = choose_impl(&req).unwrap();
         assert_eq!(out.selected, "helpdesk-domain");
         assert!(out.flat);

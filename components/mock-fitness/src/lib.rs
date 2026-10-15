@@ -1,23 +1,16 @@
 //! `mock-fitness` — `graph:fitness`, scored by a scripted rule (see wit/fitness.wit).
 //!
-//! The real gate runs commands and needs egress the platform gives only a
-//! graph's front door. This one reaches nothing: it scores a candidate from a
-//! `gate-script` config value the same way `mock-provider` scripts a completion,
-//! so a whole driver loop can be deployed as a linked graph with no egress at all
-//! and driven one branch per environment.
+//! The real gate runs commands and needs egress the platform gives only a graph's front door. This one reaches
+//! nothing: it scores a candidate from a `gate-script` config value (as `mock-provider` scripts a completion), so a
+//! whole driver loop can be deployed as a linked graph with no egress and driven one branch per environment.
 //!
-//! ## The script
-//!
-//! `gate-script` is JSON: for each check id, the substring a candidate's changed
-//! files must contain to pass it.
+//! `gate-script` is JSON: for each check id, the substring a candidate's changed files must contain to pass it.
 //!
 //! ```json
 //! { "has-two": "step_two", "be-42": "42" }
 //! ```
 //!
-//! A check whose id is not in the map fails — silence is a fail, not a pass, for
-//! the same reason the real evaluator refuses an empty gate: a gate that passes
-//! what it was not told about is how a swarm accepts everything.
+//! A check whose id is not in the map fails: a gate that passes what it was not told about is how a swarm accepts everything.
 
 #[allow(warnings)]
 mod bindings;
@@ -34,9 +27,8 @@ fn script() -> serde_json::Value {
     serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null)
 }
 
-/// Everything the candidate would write, concatenated — what a rule matches on.
-/// The base tree is deliberately NOT included: a scripted gate judges the change,
-/// and matching the base would pass a candidate for what it inherited.
+/// Everything the candidate would write, concatenated: what a rule matches on. The base tree is deliberately NOT
+/// included: a scripted gate judges the change, and matching the base would pass a candidate for what it inherited.
 fn changed_text(c: &Candidate) -> String {
     c.changes.iter().map(|f| f.content.clone()).collect::<Vec<_>>().join("\n")
 }
@@ -52,9 +44,7 @@ impl Guest for Component {
         let mut outcomes: Vec<Outcome> = checks
             .iter()
             .map(|k| {
-                // A check with no rule in the script fails. Not passes: an
-                // unscripted gate that waved everything through would make this a
-                // stub that proves the loop RUNS by proving nothing about it.
+                // A check with no rule in the script fails, not passes: an unscripted gate waving everything through proves nothing.
                 let passed =
                     script[&k.id].as_str().map(|needle| text.contains(needle)).unwrap_or(false);
                 Outcome {
@@ -69,12 +59,9 @@ impl Guest for Component {
             })
             .collect();
 
-        // The same arithmetic the real evaluator recomputes, and for the same
-        // reason: the gate is every required check, the score is the weighted
-        // fraction of all of them.
-        // The graph, honoured here too. A mock that ran everything regardless
-        // would let a test pass against a gate the real evaluator would block —
-        // which is the one thing a stub of a gate must never do.
+        // The same arithmetic the real evaluator recomputes: the gate is every required check, the score the weighted
+        // fraction of all of them. The graph is honoured too: a mock that ran everything regardless would let a test pass
+        // against a gate the real evaluator would block.
         let mut stopped: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();
         for o in outcomes.iter() {
@@ -123,8 +110,7 @@ mod tests {
     }
 
     fn with_script(script: &str, c: Candidate, checks: Vec<Check>) -> Verdict {
-        // `evaluate` reads config, which a unit test cannot set, so exercise the
-        // arithmetic directly against a parsed script.
+        // `evaluate` reads config, which a unit test cannot set, so exercise the arithmetic directly against a parsed script.
         let script: serde_json::Value = serde_json::from_str(script).unwrap();
         let text = changed_text(&c);
         let mut outcomes: Vec<Outcome> = checks
@@ -142,8 +128,7 @@ mod tests {
                 }
             })
             .collect();
-        // The graph, here too: a helper that ran everything would let a test pass
-        // against a gate the component itself would block.
+        // The graph, here too: a helper that ran everything would let a test pass against a gate the component would block.
         let mut stopped: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();
         for o in outcomes.iter() {
@@ -188,8 +173,7 @@ mod tests {
         assert_eq!(v.score, 500, "but half the checks is half the score — the selection signal");
     }
 
-    /// A check the script never mentions fails. A gate that passed the unscripted
-    /// would prove the loop runs by proving nothing about the gate.
+    /// A check the script never mentions fails: a gate that passed the unscripted would prove nothing.
     #[test]
     fn an_unscripted_check_fails_rather_than_passes() {
         let v = with_script(

@@ -1,32 +1,21 @@
 //! Request bodies, as types.
 //!
-//! Everything else in this platform now refuses a misspelled key and says which ones
-//! are legal: `comp.toml` (ADR-0041's settings), the app spec (`AppSpec`), and a
-//! component's config keys (ADR-0047). The HTTP API was the exception — handlers read
-//! `b["name"]` and an unknown field simply did nothing.
+//! The rest of the platform refuses a misspelled key and says which are legal (`comp.toml`, `AppSpec`,
+//! component config keys). The HTTP API does too: otherwise `POST /api/deployments` with `"noodes"` would
+//! create an empty-graph deployment and report success.
 //!
-//! That is the same bug in a different place. `POST /api/deployments` with `"noodes"`
-//! created a deployment with an empty graph and reported success; `"stratgey"` got
-//! you a fused build you did not ask for. The author is told nothing, and finds out
-//! at deploy or in production.
-//!
-//! `deny_unknown_fields` plus serde's own message is the whole fix — it already
-//! produces `unknown field 'noodes', expected one of 'name', 'strategy', 'nodes',
-//! 'edges'`, which is exactly the shape ADR-0010 asked for and ADR-0047 built by hand.
+//! `deny_unknown_fields` plus serde's own message is the whole mechanism: `unknown field 'noodes', expected one
+//! of 'name', 'strategy', 'nodes', 'edges'` is the shape ADR-0010 asked for.
 
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::Outcome;
 
-/// Parse a body into `T`, or produce the 422 the author needs.
-///
-/// 422 rather than 400: the JSON was fine, it just said something this endpoint does
-/// not accept. A 400 tells a client its serialiser is broken, which is misleading
-/// when the real problem is a typo.
+/// Parse a body into `T`, or produce the 422 the author needs. 422 rather than 400: the JSON was fine,
+/// it said something this endpoint does not accept, and a 400 would suggest a broken serialiser.
 pub fn parse<T: for<'de> Deserialize<'de>>(raw: &[u8]) -> Result<T, Outcome> {
-    // An empty body is an empty object, so endpoints whose fields are all optional
-    // (a save that changes nothing) keep working without a body.
+    // An empty body is an empty object, so endpoints whose fields are all optional keep working without one.
     if raw.is_empty() {
         return serde_json::from_str::<T>("{}")
             .map_err(|e| Outcome::Err(422, format!("empty body: {e}")));
@@ -40,8 +29,7 @@ pub fn parse<T: for<'de> Deserialize<'de>>(raw: &[u8]) -> Result<T, Outcome> {
 pub struct CreateDeployment {
     #[serde(default)]
     pub name: String,
-    /// `fused` or `linked`; validated by `Strategy::parse`, not here, so the error
-    /// keeps naming the legal values.
+    /// `fused` or `linked`; validated by `Strategy::parse`, not here, so the error names the legal values.
     #[serde(default)]
     pub strategy: Option<String>,
     /// The canvas: component ids, optionally with `config`.
@@ -81,12 +69,8 @@ pub struct Satisfies {
     pub plug: String,
 }
 
-/// The config a deployment's node carries, by component id.
-///
-/// Pulled out of `deployment_save` because its test was written here and the
-/// function never was — so the test referenced a name that did not exist and the
-/// whole native test target of this component failed to compile. Nothing in it
-/// had run since, including anything added later.
+/// The config a deployment's node carries, by component id. Pulled out of `deployment_save` so its test
+/// has a real function to reference.
 pub fn node_config(
     nodes: &[serde_json::Value],
     id: &str,
@@ -103,8 +87,7 @@ pub fn node_config(
 mod tests {
     use super::*;
 
-    /// `Outcome` carries a response, not a diagnostic, so it has no `Debug` — which
-    /// means `unwrap` cannot report why. Unwrapping by hand keeps the failure legible.
+    /// `Outcome` carries a response, not a diagnostic, so it has no `Debug` and `unwrap` cannot report why.
     fn ok<T>(r: Result<T, Outcome>) -> T {
         match r {
             Ok(v) => v,
@@ -122,8 +105,7 @@ mod tests {
 
     #[test]
     fn a_misspelled_field_is_named_along_with_the_legal_ones() {
-        // The bug this file exists for: `noodes` used to create a deployment with an
-        // empty graph and report success.
+        // The bug this file exists for: `noodes` created an empty-graph deployment and reported success.
         let e = err::<CreateDeployment>(r#"{"name":"shop","noodes":[]}"#);
         assert!(e.starts_with("422"), "{e}");
         assert!(e.contains("noodes"), "the typo must be named: {e}");
@@ -146,8 +128,7 @@ mod tests {
 
     #[test]
     fn an_empty_body_is_an_empty_save_rather_than_an_error() {
-        // `POST /save` with no body means "save what is already there", which several
-        // callers rely on.
+        // `POST /save` with no body means "save what is already there", which several callers rely on.
         let s: SaveDeployment = ok(parse(b""));
         assert!(s.nodes.is_none() && s.edges.is_none() && s.strategy.is_none());
     }
@@ -172,9 +153,8 @@ mod tests {
 
 /// `POST /api/projects`
 ///
-/// One repository per project (ADR-0082). Multi-repo is an open goal, and the
-/// shape it would take — a list — is deliberately not built, because every
-/// downstream thing that says "the base" would have to become "the base of each".
+/// One repository per project (ADR-0082). Multi-repo is deliberately not built: everything saying "the
+/// base" would have to become "the base of each".
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NewProject {
@@ -183,14 +163,12 @@ pub struct NewProject {
     pub repo: String,
     #[serde(default)]
     pub base: Option<String>,
-    /// A `vault://` reference. Never a token — a manifest and a record are the
-    /// same kind of place as far as ADR-0010 is concerned.
+    /// A `vault://` reference. Never a token: a manifest and a record are the same kind of place (ADR-0010).
     #[serde(default)]
     pub forge_token_ref: Option<String>,
     #[serde(default)]
     pub llm_key_ref: Option<String>,
-    /// Units per run. Recorded, and enforced by nothing yet — said out loud in
-    /// ADR-0082 so it cannot be mistaken for working.
+    /// Units per run. Recorded, and enforced by nothing yet (ADR-0082).
     #[serde(default)]
     pub budget: Option<u64>,
 }
@@ -200,25 +178,17 @@ pub struct NewProject {
 #[serde(deny_unknown_fields)]
 pub struct NewGoal {
     pub title: String,
-    /// A path in the repository — `.comp/goals/x.md`. The spec lives in git so it
-    /// is versioned, reviewable, and content-addressed for free (ADR-0081).
+    /// A path in the repository — `.comp/goals/x.md`. The spec lives in git so it is versioned and reviewable (ADR-0081).
     #[serde(default)]
     pub spec: Option<String>,
-    /// Lower runs sooner. Only an ordering hint: a human starts every goal, so
-    /// this sorts a worklist rather than driving anything.
+    /// Lower runs sooner. Only an ordering hint: a human starts every goal.
     #[serde(default)]
     pub priority: Option<i64>,
-    /// The goal this one is a part of, when it is a sub-goal.
+    /// The goal this one is a part of, when it is a sub-goal. Otherwise an ORDINARY goal (same lifecycle,
+    /// queue and "a human starts it" rule, ADR-0082); this lets a decomposition outlive one run.
     ///
-    /// A sub-goal is an ORDINARY goal in every other respect — same lifecycle,
-    /// same queue, same "a human starts it" rule (ADR-0082). This field is the
-    /// only difference, and it exists so a decomposition can be picked up later
-    /// rather than living for the length of one run.
-    ///
-    /// The knowledge pool holds the same relationship as a `decomposes_into`
-    /// edge, keyed by goal TEXT. This is keyed by goal ID and answers a different
-    /// question: the pool says what has been learned, the queue says what is
-    /// still to do.
+    /// The knowledge pool holds the same relationship as a `decomposes_into` edge keyed by goal TEXT; this is
+    /// keyed by goal ID: the pool says what has been learned, the queue what is still to do.
     #[serde(default)]
     pub parent: Option<String>,
 }
@@ -227,18 +197,14 @@ pub struct NewGoal {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FailGoal {
-    /// Why. A dead-letter entry with no reason is a dead-letter entry nobody can
-    /// act on, which is the only thing a DLQ is for.
+    /// Why. A dead-letter entry with no reason cannot be acted on.
     pub reason: String,
 }
 
 /// `POST /api/goals/{id}/review`
 ///
-/// Optional and additive: a caller with no PR to name (or an older client)
-/// still transitions the goal, it just carries no link. Without this, nothing
-/// records which pull request an `awaiting-human` goal is actually waiting
-/// on — a human reviewing the worklist has to go find it by guessing a branch
-/// name, and nothing can later watch that PR's own status.
+/// Optional and additive: without a PR to name, the goal still transitions but carries no link, so
+/// nothing records which pull request an `awaiting-human` goal waits on.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewGoal {

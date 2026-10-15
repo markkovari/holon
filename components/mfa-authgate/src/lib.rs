@@ -1,19 +1,11 @@
-//! mfa:app — TOTP 2FA enrollment + challenge-response login over composed
-//! contracts.
+//! mfa:app — TOTP 2FA enrollment + challenge-response login over composed contracts.
 //!
-//! The challenge-response axis: three states over one account.
-//!
-//! 1. **enroll** — `otp::provision` mints a random shared secret + an
-//!    `otpauth://` URI (the QR an authenticator app scans). The secret is
-//!    sealed in `secrets:vault` (envelope-encrypted; only ciphertext hits the
-//!    store) and the account is recorded `pending`.
-//! 2. **activate** — the user types the first code from their app; we
-//!    `vault::get` the secret and `otp::verify` it. Only a correct first code
-//!    flips the account to `enrolled` and issues single-use **recovery codes**
-//!    (we store their SHA-256 hashes, never the codes).
-//! 3. **login** — a live TOTP code (or a not-yet-burned recovery code) is
-//!    verified; on success `session::create` mints an opaque server-side
-//!    session + CSRF token. The secret is write-once, read-only-to-verify.
+//! 1. **enroll** — `otp::provision` mints a random shared secret + an `otpauth://` URI (the QR an authenticator
+//!    scans). The secret is sealed in `secrets:vault` (only ciphertext hits the store); the account is `pending`.
+//! 2. **activate** — the user types the first code; we `vault::get` the secret and `otp::verify` it. Only a correct
+//!    first code flips the account to `enrolled` and issues single-use **recovery codes** (stored as SHA-256 hashes).
+//! 3. **login** — a live TOTP code (or a not-yet-burned recovery code) is verified; on success `session::create`
+//!    mints an opaque server-side session + CSRF token. The secret is write-once, read-only-to-verify.
 
 #[allow(warnings)]
 mod bindings {
@@ -107,9 +99,7 @@ fn secret_name(account: &str) -> String {
     format!("totp/{account}")
 }
 
-/// Look up the enrollment record by account (a secondary index — the store keys
-/// by its own minted id). Returns the store entry so callers can `update` by
-/// `entry.id` at the correct revision.
+/// Look up the enrollment record by account (a secondary index; the store keys by its own minted id). Returns the entry so callers can `update` at the right revision.
 fn find_account(account: &str) -> Result<Option<records::Entry>, records::StoreError> {
     let hits = records::find_by(ACCOUNTS, "account", &json!(account).to_string())?;
     Ok(hits.into_iter().next())
@@ -139,8 +129,6 @@ fn usage_json() -> Outcome {
         .to_string(),
     )
 }
-
-// ---- 1. enroll: provision + seal ---------------------------------------------
 
 async fn enroll(request: Request) -> Outcome {
     let body = match parse_body(request).await {
@@ -196,8 +184,6 @@ async fn enroll(request: Request) -> Outcome {
     )
 }
 
-// ---- 2. activate: first correct code -> enrolled + recovery codes ------------
-
 async fn activate(request: Request) -> Outcome {
     let body = match parse_body(request).await {
         Ok(v) => v,
@@ -241,8 +227,6 @@ async fn activate(request: Request) -> Outcome {
         json!({"account": account, "state": "enrolled", "recovery_codes": codes}).to_string(),
     )
 }
-
-// ---- 3. login: challenge -> session ------------------------------------------
 
 async fn login(request: Request) -> Outcome {
     let body = match parse_body(request).await {
@@ -347,8 +331,6 @@ fn status(account: &str) -> Outcome {
     }
 }
 
-// ---- error mapping -----------------------------------------------------------
-
 fn otp_err(e: otp::OtpError) -> Outcome {
     match e {
         otp::OtpError::BadSecret => Outcome::err(500, "bad secret"),
@@ -389,8 +371,6 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-// ---- http plumbing -----------------------------------------------------------
-
 async fn parse_body(request: Request) -> Result<Value, Outcome> {
     let body = read_body(request).await.map_err(|_| Outcome::err(400, "could not read body"))?;
     if body.is_empty() {
@@ -400,18 +380,9 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
         .map_err(|e| Outcome::Json(400, json!({"error": format!("bad json: {e}")}).to_string()))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be, before the component stops reading it. Without a ceiling a guest
+/// accumulated until wasmtime's 64 MiB per-store cap TRAPPED, reaching the caller as a bare closed
+/// connection. Generous: a backstop, not a content policy; uploads police themselves with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

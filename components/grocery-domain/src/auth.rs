@@ -73,7 +73,6 @@ pub async fn handle_register(request: Request) -> Outcome {
     users.push(new_user.clone());
     save_users(&users);
 
-    // Create session token
     let token = format!("tok_{}_{}", username, sec % 100_000);
     let mut sessions = load_sessions();
     sessions.push(Session {
@@ -222,7 +221,6 @@ pub async fn handle_update_user_role(request: Request, user_id: &str) -> Outcome
     if let Some(pub_user) = updated_user {
         save_users(&users);
 
-        // Update active sessions for this user
         let mut sessions = load_sessions();
         for s in sessions.iter_mut().filter(|s| s.user_id == user_id) {
             s.role = new_role.clone();

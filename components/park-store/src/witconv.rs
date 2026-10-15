@@ -1,12 +1,7 @@
-//! The contract's records, between this crate's generated bindings and
-//! `holon_park::model` (the serde types the wire is made of) — both
-//! directions.
-//!
-//! Shared by `park-store` and `park-gateway` as a SOURCE file (`#[path]`), not
-//! a library — see `components/vcs-store/src/witconv.rs`'s own doc for why:
-//! each crate's `bindings.rs` makes its own Rust types for the same WIT types
-//! (ADR-0095), so this is compiled once per crate against `crate::wit::t`
-//! (the `holon:park/types` bindings), which each crate points at its own.
+//! The contract's records, between this crate's generated bindings and `holon_park::model` (the serde types of the
+//! wire), both directions. Shared by `park-store` and `park-gateway` as a SOURCE file (`#[path]`), not a library: each
+//! crate's `bindings.rs` makes its own Rust types for the same WIT types (ADR-0095), so it is compiled once per crate
+//! against `crate::wit::t` (the `holon:park/types` bindings). See `components/vcs-store/src/witconv.rs`.
 
 use holon_park::model as m;
 use holon_park::ParkError;

@@ -1,8 +1,6 @@
-//! Part 4 — the payout ledger. A vendor's balance, the platform's own
-//! cash/fees balance and the payout that zeroes a vendor all read
-//! `ledger_entries` back through `ledger:doubleentry/ledger`'s own
-//! `trial-balance` — never a hand-rolled sum, which is the way two parts
-//! silently disagree about "the same" balance (CONTRACT.md).
+//! Part 4 — the payout ledger. Balances and payouts all read `ledger_entries` back through
+//! `ledger:doubleentry/ledger`'s `trial-balance`, never a hand-rolled sum (CONTRACT.md): that is how two
+//! parts silently disagree about "the same" balance.
 
 use crate::bindings::ledger::doubleentry::ledger as doubleentry;
 use crate::bindings::p3::http::types::Method;
@@ -21,9 +19,8 @@ pub fn handle(method: &Method, route: &Route, _body: &str) -> Reply {
     }
 }
 
-/// Every stored `ledger_entries` document, converted into a
-/// `ledger:doubleentry/ledger` `entry`. `records:store` is the only surface
-/// shared between parts, so this is where a part 4 balance comes from.
+/// Every stored `ledger_entries` document, converted into a `ledger:doubleentry/ledger` `entry`
+/// (`records:store` is the only surface shared between parts).
 fn load_entries() -> Result<Vec<doubleentry::Entry>, ()> {
     let mut out = Vec::new();
     for stored in crate::list_all("ledger_entries")? {
@@ -46,9 +43,8 @@ fn load_entries() -> Result<Vec<doubleentry::Entry>, ()> {
     Ok(out)
 }
 
-/// The trial balance over EVERY stored entry — the one source all three
-/// routes read. An account with nothing posted to it is simply absent from
-/// `accounts`; every caller reads that as `0`, not as an error.
+/// The trial balance over EVERY stored entry, the one source all three routes read. An account with
+/// nothing posted is absent from `accounts`; callers read that as `0`.
 fn trial_accounts() -> Result<Vec<doubleentry::AccountBalance>, Reply> {
     let entries = load_entries().map_err(|_| Reply::err(500, "store_error"))?;
     match doubleentry::trial_balance(&entries) {
@@ -59,12 +55,9 @@ fn trial_accounts() -> Result<Vec<doubleentry::AccountBalance>, Reply> {
     }
 }
 
-/// `trial-balance`'s own `net` is debit-positive (debits − credits) — the
-/// natural direction for an ASSET like `platform:cash`, but the opposite of
-/// the natural direction for a liability/income account. A vendor with 900
-/// credited is owed +900, not −900, and fees earned are +100, not −100. Both
-/// readings are the SAME `trial-balance` result; the sign is which way the
-/// account faces, not a second, hand-rolled sum.
+/// `trial-balance`'s `net` is debit-positive (debits − credits): natural for an ASSET like `platform:cash`,
+/// opposite for liability/income accounts (a vendor with 900 credited is owed +900). Same result, read
+/// from the account's facing; not a second hand-rolled sum.
 fn net_for(accounts: &[doubleentry::AccountBalance], account: &str) -> i64 {
     accounts.iter().find(|a| a.account == account).map(|a| a.net).unwrap_or(0)
 }
@@ -157,8 +150,7 @@ fn payout(route: &Route, subject: &str) -> Reply {
             },
         ],
     };
-    // The ledger invariant is the component's, not ours: nothing is stored
-    // that it has not called valid.
+    // The ledger invariant is the component's, not ours: nothing is stored that it has not called valid.
     if doubleentry::validate(&entry).is_err() {
         return Reply::err(500, "ledger_error");
     }

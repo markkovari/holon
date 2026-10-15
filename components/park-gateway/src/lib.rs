@@ -1,23 +1,18 @@
 //! `park-gateway` — the parking lot as HTTP routes, for agents and tests
 //! (ADR-0100).
 //!
-//! It imports `holon:park/lot` and serves each function at `POST
-//! /v1/<function>` with the same JSON `comp-park` takes (`holon_park::wire`):
-//! parse the body into the contract's records, make ONE import call, write the
-//! result back. Composed with `park-store`, the chain is
+//! It imports `holon:park/lot` and serves each function at `POST /v1/<function>` with the same JSON `comp-park` takes
+//! (`holon_park::wire`): parse the body into the contract's records, make ONE import call, write the result back.
+//! Composed with `park-store` the chain is
 //!
 //!   agent → comp-host (park-gateway ⊕ park-store) → comp-park → NATS JetStream
 //!
-//! and every request here is a real round trip through the component model —
-//! the same reasoning `vcs-gateway`'s doc gives for why an e2e suite drives a
-//! store through this, not through the library.
+//! so every request is a real round trip through the component model (as `vcs-gateway`'s doc explains for e2e suites).
 //!
-//! Errors are `{error, detail, message}` with the status `holon_park::wire`
-//! gives each `park-error` case, exactly as the daemon sends them.
+//! Errors are `{error, detail, message}` with the status `holon_park::wire` gives each `park-error` case, as the daemon sends them.
 //!
-//! No auth of its own: whoever can reach this may park, wake, or cancel any
-//! session's ticket. It is a tailnet app and meant for agents on that network,
-//! the same reasoning `apps/vcs.toml` gives.
+//! No auth of its own: whoever can reach this may park, wake, or cancel any session's ticket. It is a tailnet app for
+//! agents on that network (see `apps/vcs.toml`).
 
 #[allow(warnings)]
 mod bindings {
@@ -60,8 +55,7 @@ mod wit {
 }
 use wit::t;
 
-/// Generous, and irrelevant in practice: every body here is small JSON
-/// (a ticket id, a call description), never a file tree.
+/// Generous and irrelevant in practice: every body here is small JSON (a ticket id, a call description).
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 struct Component;
@@ -181,8 +175,7 @@ guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 mod tests {
     use super::*;
 
-    /// A malformed body never reaches the import: it is refused here, in the
-    /// daemon's own words.
+    /// A malformed body never reaches the import: it is refused here, in the daemon's own words.
     #[test]
     fn a_body_that_is_not_the_routes_json_is_a_bad_request() {
         let (s, v) = dispatch("park", b"{\"session\": 1}");
@@ -194,8 +187,7 @@ mod tests {
         assert_eq!((s, v["error"].as_str()), (404, Some("not-found")));
     }
 
-    /// A refusal from the import is written with the case, payload and status
-    /// the daemon uses — an agent reads one format whichever it talks to.
+    /// A refusal from the import is written with the case, payload and status the daemon uses, so an agent reads one format.
     #[test]
     fn import_refusals_are_written_as_the_daemon_writes_them() {
         let (s, v) = refusal(t::ParkError::NotFound("t1".into()));

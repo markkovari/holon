@@ -96,10 +96,8 @@ pub fn now_secs() -> u64 {
     bindings::p3::clocks::system_clock::now().seconds as u64
 }
 
-/// A test token, minted directly (never a real register/login) — the ROUTER's
-/// fixture, never `handlers.rs`'s: a fixture that mints its own tokens can
-/// drift from what the verifier actually accepts, and then `handlers.rs` fails
-/// for the router's reason, not its own.
+/// A test token, minted directly (never a real register/login): the ROUTER's fixture, never `handlers.rs`'s, since a
+/// fixture minting its own tokens can drift from what the verifier accepts and make `handlers.rs` fail for the router's reason.
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let subject = req.get("subject").and_then(Value::as_str).unwrap_or("test").to_string();

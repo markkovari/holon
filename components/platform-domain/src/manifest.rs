@@ -1,38 +1,25 @@
 //! The manifest: `(graph, strategy, tenant, plan) -> desired state`.
 //!
-//! Successor to `render.rs`, which turned the same inputs into Kubernetes YAML by
-//! string concatenation. There is no Kubernetes any more (ADR-0021), so this emits
-//! the document the reconciler diffs against lattice inventory instead.
+//! Emits the document the reconciler diffs against lattice inventory (successor to the Kubernetes YAML
+//! renderer; ADR-0021). Still a pure function: it decides which store a workload may touch and where it
+//! may dial, so it has no I/O and no clock; everything arrives as an argument.
 //!
-//! Still a pure function, and for the same reason: it decides which store a
-//! workload may touch and where it may dial, so it has no I/O, no clock, and
-//! nothing it could get wrong asynchronously. Everything arrives as an argument.
+//! A manifest names components by digest, the links between them, where they may run, and what they may
+//! reach. Two rules encode expensive lessons:
 //!
-//! The vocabulary shrank a lot, which is the point. A manifest names components by
-//! digest, the links between them, where they may run, and what they may reach.
-//! Namespaces, quotas, network policies, pod specs, sidecars and volume claims are
-//! all gone — they were Kubernetes' way of saying things the host now enforces in
-//! its own linker.
-//!
-//! Two rules survived the move because they encode expensive lessons:
-//!
-//! 1. **A digest, never a tag** (ADR-0006). Re-deriving desired state must select
-//!    the same bytes it selected last time.
-//! 2. **`egress` needs both the bare and port-qualified forms.** Observed in
-//!    `examples/jobs/k8s/jobs.yaml`; egress is fail-closed, so a missing form is a
-//!    silent connection refusal at runtime rather than an error at deploy.
+//! 1. **A digest, never a tag** (ADR-0006): re-deriving desired state must select the same bytes.
+//! 2. **`egress` needs both the bare and port-qualified forms** (seen in `examples/jobs/k8s/jobs.yaml`):
+//!    egress is fail-closed, so a missing form is a silent connection refusal at runtime.
 
 use std::collections::BTreeSet;
 
 use serde_json::{json, Value};
 
-/// What a tenant's plan permits. Stamped by the platform, never tenant-authored
-/// (ADR-0008).
+/// What a tenant's plan permits. Stamped by the platform, never tenant-authored (ADR-0008).
 #[derive(Clone, Debug)]
 pub struct Plan {
     pub replicas: u32,
-    /// Warm pre-instantiated instances, capped against the node's core-instance
-    /// budget — see `safe_pool_size`.
+    /// Warm pre-instantiated instances, capped against the node's core-instance budget — see `safe_pool_size`.
     pub pool_size: u32,
     pub max_invocations: u32,
     /// Destinations this tenant may dial, emitted both bare and port-qualified.
@@ -44,8 +31,7 @@ pub struct Plan {
 
 impl Default for Plan {
     fn default() -> Self {
-        // Mirrors what the vet-clinic settled on after `poolSize: 48` starved a
-        // host (1344 core instances against a 1000 cap) — ADR-0008.
+        // Mirrors what the vet-clinic settled on after `poolSize: 48` starved a host (1344 core instances against a 1000 cap) — ADR-0008.
         Plan {
             replicas: 1,
             pool_size: 8,
@@ -85,20 +71,14 @@ impl Strategy {
 #[derive(Clone, Debug)]
 pub struct Part {
     pub name: String,
-    /// Config this component was given, already validated against the keys its
-    /// uploader declared. Empty is legal; unknown is not, and is refused before a
-    /// `Part` is ever built (ADR-0010).
+    /// Config this component was given, already validated against the keys its uploader declared (ADR-0010).
     pub config: std::collections::BTreeMap<String, String>,
-    /// Secrets this component asks for, BY REFERENCE. Validated at save — every ref
-    /// resolves and belongs to this org — and the value is never read, so it cannot
-    /// reach a manifest, a revision, or a log (ADR-0010).
+    /// Secrets this component asks for, BY REFERENCE. Validated at save and the value is never read, so it
+    /// cannot reach a manifest, a revision, or a log (ADR-0010).
     pub secrets: Vec<(String, String)>,
-    /// The content address of the bytes — `sha256:...`, bare. ADR-0024: the digest
-    /// IS the identity, and a node fetches by it from the object store.
+    /// The content address of the bytes — `sha256:...`, bare (ADR-0024): the digest IS the identity.
     pub digest: String,
-    /// Host imports as `ns:pkg/iface` triples, from `wit:reflect`. Stamped into the
-    /// manifest so the reconciler can place with a set comparison and never needs
-    /// to inspect a component itself.
+    /// Host imports as `ns:pkg/iface` triples, from `wit:reflect`, so the reconciler can place with a set comparison.
     pub host_imports: Vec<HostIface>,
     /// Nested core modules, for the pool-size ceiling.
     pub nested_instances: u32,
@@ -114,10 +94,8 @@ pub struct HostIface {
 }
 
 impl HostIface {
-    /// The form a node advertises in its inventory, and the form the reconciler
-    /// matches against. Versionless on purpose: a node advertises a concrete
-    /// version and a component imports one, and requiring the strings to be equal
-    /// would make a patch bump unschedulable.
+    /// The form a node advertises in its inventory and the reconciler matches against. Versionless on
+    /// purpose: requiring equal version strings would make a patch bump unschedulable.
     // ponytail: family match; tighten to semver when two incompatible versions of
     // one interface actually coexist.
     fn family(&self) -> String {
@@ -125,30 +103,18 @@ impl HostIface {
     }
 }
 
-/// Host interface families a node can be asked for.
-///
-/// The successor to `OPERATOR_BOUND`, and still the highest-consequence list here:
-/// everything on it is something a tenant's component may import. Everything a
-/// component imports from `wasi:*` that is NOT on it — `cli`, `io`, `clocks`,
-/// `random`, `filesystem` — is ambient, provided without being asked, and must not
-/// appear in `host_needs` or every deployment would be unschedulable.
-///
-/// `wasi:http/types` is the trap: components import it (the request/response types
-/// live there) but it is type-only and has no backend, so it is not listed.
+/// Host interface families a node can be asked for: the highest-consequence list here, since everything
+/// on it is something a tenant's component may import. Ambient `wasi:*` imports NOT on it (`cli`, `io`,
+/// `clocks`, `random`, `filesystem`) must not appear in `host_needs` or every deployment would be
+/// unschedulable. `wasi:http/types` is type-only with no backend, so it is not listed.
 const SCHEDULABLE: &[(&str, &str, &[&str])] = &[
     ("wasi", "http", &["incoming-handler", "outgoing-handler"]),
     ("wasi", "keyvalue", &["store", "atomics", "batch"]),
     ("wasi", "config", &["store"]),
     ("wasi", "blobstore", &["blobstore", "container"]),
-    // The `comp:` extensions, and they were missing for two ADRs. A component
-    // importing one could not be deployed at all: the platform reported
-    // `unsatisfied_imports` for an interface the host grants on every node.
-    //
-    // `record-store` imports `comp:store/cas` since ADR-0066, so this refused
-    // every app built on records — and nothing noticed, because no test deployed
-    // a record-using component through the real control plane until one did.
-    // `host/src/agent.rs`'s `HOST_IFACES` is the same list from the other side and
-    // says the two must agree; nothing checks that, which is how they drifted.
+    // The `comp:` extensions: without them a component importing one could not be deployed (`unsatisfied_imports`
+    // for an interface the host grants everywhere). `host/src/agent.rs`'s `HOST_IFACES` is the same list from the
+    // other side and the two must agree; nothing checks that.
     ("comp", "secrets", &["reader"]),
     ("comp", "store", &["cas"]),
 ];
@@ -177,8 +143,7 @@ pub struct ManifestInput<'a> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ManifestError {
-    /// A component with no content address. ADR-0006 makes this fatal: re-deriving
-    /// desired state must select the same bytes it selected last time.
+    /// A component with no content address. ADR-0006 makes this fatal.
     NotDigestPinned(String),
     Empty,
     BadName(String),
@@ -204,9 +169,8 @@ impl ManifestError {
     }
 }
 
-/// One application's identity across the fleet. Derived from tenant + name, never
-/// supplied: a tenant able to set this would be a tenant able to name someone
-/// else's storage. The host derives its bucket from the same rule.
+/// One application's identity across the fleet. Derived from tenant + name, never supplied: a tenant able
+/// to set this could name someone else's storage. The host derives its bucket from the same rule.
 pub fn env_for(tenant: &str, name: &str) -> String {
     let e = format!("app-{}-{}", dns_label(tenant), dns_label(name));
     e.chars().take(53).collect::<String>().trim_matches('-').to_string()
@@ -227,9 +191,8 @@ pub fn is_dns_label(s: &str) -> bool {
         && s.starts_with(|c: char| c.is_ascii_alphanumeric())
 }
 
-/// `poolSize × modules-per-instance` has to stay under a node's concurrent
-/// core-instance cap. The vet-clinic proved the failure: pool 48 over a ~28-module
-/// graph starved a 1000-instance host. Clamp rather than trust the plan.
+/// `poolSize × modules-per-instance` has to stay under a node's concurrent core-instance cap (pool 48 over
+/// a ~28-module graph starved a 1000-instance host). Clamp rather than trust the plan.
 pub fn safe_pool_size(requested: u32, total_modules: u32) -> u32 {
     const CORE_INSTANCE_BUDGET: u32 = 800; // of ~1000, leaving headroom
     let modules = total_modules.max(1);
@@ -239,12 +202,9 @@ pub fn safe_pool_size(requested: u32, total_modules: u32) -> u32 {
 
 /// Expand an egress allow-list into every form an authority can arrive in.
 ///
-/// * A scheme-qualified entry passes through untouched. Splitting it on `:` to find
-///   a port would turn `https://api.example.com` into the host `https` — silently
-///   allow-listing the wrong thing, since `https` is itself a legal host.
-/// * A bare authority is emitted both bare and port-qualified, because egress is
-///   fail-closed and a missing form is a connection refused at runtime rather than
-///   an error at deploy.
+/// * A scheme-qualified entry passes through untouched: splitting on `:` would turn
+///   `https://api.example.com` into the host `https`, silently allow-listing the wrong thing.
+/// * A bare authority is emitted both bare and port-qualified (egress is fail-closed).
 pub fn expand_egress(egress: &[String]) -> Vec<String> {
     let mut out: BTreeSet<String> = BTreeSet::new();
     for e in egress {
@@ -305,9 +265,7 @@ pub fn build(input: &ManifestInput) -> Result<Value, ManifestError> {
         .iter()
         .map(|p| {
             let is_root = p.name == input.root;
-            // Only the entry point is replicated. A plug is linked in-process by
-            // whatever calls it, so a second copy on the same node would be a second
-            // idle `InstancePre` and nothing else.
+            // Only the entry point is replicated: a plug is linked in-process by its caller, so a copy would be an idle `InstancePre`.
             let replicas = if is_root { input.plan.replicas } else { 1 };
             let host_needs: Vec<String> = p
                 .host_imports
@@ -325,8 +283,7 @@ pub fn build(input: &ManifestInput) -> Result<Value, ManifestError> {
                     "constraints": constraints,
                 },
                 "host_needs": host_needs,
-                // Validated at save against the keys the uploader declared, so a
-                // node never receives a key the component does not read.
+                // Validated at save against the keys the uploader declared, so a node never receives a key the component does not read.
                 "config": p.config,
                 "secrets": p.secrets
                     .iter()
@@ -342,9 +299,7 @@ pub fn build(input: &ManifestInput) -> Result<Value, ManifestError> {
         .collect();
 
     let links: Vec<Value> = if input.strategy == Strategy::Fused {
-        // `wac plug` erased these at build time. They stay in the manifest anyway:
-        // they are the build recipe, and without them a revision cannot be rebuilt
-        // or diffed against its successor.
+        // `wac plug` erased these at build time; they stay as the build recipe so a revision can be rebuilt or diffed.
         input.edges.iter().map(|(p, s, i)| json!({ "plug": p, "socket": s, "iface": i })).collect()
     } else {
         input.edges.iter().map(|(p, s, i)| json!({ "plug": p, "socket": s, "iface": i })).collect()
@@ -357,8 +312,7 @@ pub fn build(input: &ManifestInput) -> Result<Value, ManifestError> {
         "components": components,
         "links": links,
         "ingress": { "host": input.ingress_host, "component": input.root },
-        // Not read by the reconciler; here so a stored revision is self-describing
-        // when someone opens it at 3am.
+        // Not read by the reconciler; keeps a stored revision self-describing.
         "env": env_for(input.tenant, input.name),
     }))
 }
@@ -398,7 +352,6 @@ mod tests {
 
     #[test]
     fn a_tag_is_refused_because_it_cannot_be_re_derived() {
-        // ADR-0006, and the reason the whole platform speaks digests.
         let parts = vec![part("api", "registry.example/api:latest")];
         let plan = Plan::default();
         let err = build(&input(&parts, &plan, &[])).unwrap_err();
@@ -408,8 +361,7 @@ mod tests {
 
     #[test]
     fn egress_is_emitted_bare_and_port_qualified() {
-        // The jobs.yaml lesson: egress is fail-closed, so a missing form is a
-        // mystery at runtime rather than an error at deploy.
+        // Egress is fail-closed, so a missing form is a mystery at runtime rather than an error at deploy.
         let parts = vec![part("api", "sha256:a")];
         let plan = Plan { egress: vec!["api.stripe.com".into()], ..Plan::default() };
         let m = build(&input(&parts, &plan, &[])).unwrap();
@@ -422,8 +374,7 @@ mod tests {
 
     #[test]
     fn a_scheme_qualified_egress_entry_is_not_split_on_its_colon() {
-        // Splitting this would allow-list the host `https`, which is legal and
-        // would be a very quiet hole.
+        // Splitting this would allow-list the host `https`: a very quiet hole.
         assert_eq!(
             expand_egress(&["https://api.example.com".into()]),
             vec!["https://api.example.com"]
@@ -432,8 +383,7 @@ mod tests {
 
     #[test]
     fn only_schedulable_host_imports_become_host_needs() {
-        // Ambient WASI must not land in host_needs: a node does not advertise
-        // `wasi:cli`, so every deployment would be permanently unschedulable.
+        // Ambient WASI must not land in host_needs: a node does not advertise `wasi:cli`, so nothing would schedule.
         let mut p = part("api", "sha256:a");
         p.host_imports = vec![
             HostIface { namespace: "wasi".into(), pkg: "keyvalue".into(), iface: "store".into() },
@@ -454,7 +404,6 @@ mod tests {
 
     #[test]
     fn pool_size_is_clamped_against_the_core_instance_budget() {
-        // ADR-0008's starvation: 48 × 28 = 1344 against a 1000 cap.
         let mut p = part("api", "sha256:a");
         p.nested_instances = 28;
         let parts = vec![p];
@@ -496,9 +445,7 @@ mod tests {
 
     #[test]
     fn the_manifest_matches_what_the_reconciler_parses() {
-        // The two crates cannot share a type — one is wasm32, one is native — so
-        // the wire shape is the contract. A field renamed on either side breaks
-        // deployment silently, which is what this guards.
+        // The two crates cannot share a type (wasm32 vs native), so the wire shape is the contract; a rename on either side breaks deployment silently.
         let parts = vec![part("api", "sha256:a")];
         let plan = Plan::default();
         let m = build(&input(&parts, &plan, &[])).unwrap();

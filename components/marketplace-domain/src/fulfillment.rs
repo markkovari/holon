@@ -32,15 +32,12 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     }
 }
 
-/// Ask the fsm engine itself whether a transition is legal — never a
-/// hand-rolled comparison of a status string.
+/// Ask the fsm engine itself whether a transition is legal, never a hand-rolled status string comparison.
 fn can_fire(machine: &str, instance: &str, event: &str) -> bool {
     matches!(fsm::can_fire(machine, instance, event), Ok(true))
 }
 
-/// The vendor the order's money settles to — read straight off the first
-/// item's listing (the contract's ledger shape is one vendor account per
-/// entry).
+/// The vendor the order's money settles to: read off the first item's listing (the ledger shape is one vendor account per entry).
 fn order_vendor(order: &Value) -> Option<String> {
     let items = order.get("items")?.as_array()?;
     let listing_id = items.first()?.get("listing_id")?.as_str()?;
@@ -211,10 +208,8 @@ fn deliver(route: &Route, shipment_id: &str) -> Reply {
     if order_id.is_empty() {
         return Reply::err(500, "shipment_missing_order");
     }
-    // Cross-machine rule: the ORDER's `deliver` is fired (and confirmed)
-    // FIRST, so a failure there never leaves the shipment half-applied —
-    // `fsm:workflow` has no cross-machine transaction, so the shipment's own
-    // transition goes SECOND.
+    // Cross-machine rule: the ORDER's `deliver` is fired (and confirmed) FIRST so a failure never leaves the
+    // shipment half-applied (`fsm:workflow` has no cross-machine transaction); the shipment's transition goes SECOND.
     if fsm::fire("order", &order_id, "deliver").is_err() {
         return Reply::json(409, json!({"error": "illegal_transition", "machine": "order"}));
     }
@@ -258,8 +253,7 @@ fn refund(route: &Route, order_id: &str, body: &str) -> Reply {
     {
         return Reply::err(500, "store_error");
     }
-    // The machine only tracks THAT a refund happened; a later partial refund
-    // against an already-`refunded` instance just updates the amount.
+    // The machine only tracks THAT a refund happened; a later partial refund on a `refunded` instance just updates the amount.
     if can_fire("payment", order_id, "refund") {
         let _ = fsm::fire("payment", order_id, "refund");
     }

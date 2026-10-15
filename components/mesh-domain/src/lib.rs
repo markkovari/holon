@@ -1,20 +1,17 @@
-//! `mesh-domain` — the resilience playground (docs/apps/MESH.md) as ONE composed wasm HTTP
-//! component. Exports `wasi:http`; imports only WIT contracts: `resilience:breaker`
-//! (the stateless breaker + backoff math), `records:store` (the durable per-key
-//! circuit state), and `proxy:route` (the real outgoing hop to the upstream).
+//! `mesh-domain` — the resilience playground (docs/apps/MESH.md) as ONE composed wasm HTTP component.
+//! Exports `wasi:http`; imports only WIT contracts: `resilience:breaker` (stateless breaker + backoff
+//! math), `records:store` (durable per-key circuit state), `proxy:route` (the real outgoing hop).
 //!
 //! One guarded call, in order:
 //!
-//!   1. `admit` — if the circuit is OPEN the request is SHED here: 503, and the
-//!      upstream is never dialled. That is the whole point of a breaker.
+//!   1. `admit` — if the circuit is OPEN the request is SHED here (503, upstream never dialled).
 //!   2. forward the real HTTP request through `proxy:route`.
-//!   3. judge it: a 5xx, an unreachable upstream, or a response slower than
-//!      `slo_ms` is a FAILURE. `observe` feeds that back into the circuit.
-//!   4. on failure, wait `backoff(attempt)` and go again — re-checking `admit`
-//!      each time, because our own retries may be what trips the breaker.
+//!   3. judge it: a 5xx, an unreachable upstream, or a response slower than `slo_ms` is a FAILURE;
+//!      `observe` feeds that into the circuit.
+//!   4. on failure, wait `backoff(attempt)` and go again, re-checking `admit` each time since our own
+//!      retries may trip the breaker.
 //!
-//! Every circuit mutation is a revision-guarded `records:store` update, so
-//! concurrent callers converge on one circuit instead of clobbering each other.
+//! Every circuit mutation is a revision-guarded `records:store` update, so concurrent callers converge.
 
 #[allow(warnings)]
 mod bindings {
@@ -59,10 +56,8 @@ struct Component;
 
 const CIRCUITS: &str = "circuits";
 const CAS_TRIES: u32 = 40;
-/// Hard ceiling on attempts per request, whatever the client asks for — a
-/// playground still shouldn't let one request hold the host for a minute.
+/// Hard ceiling on attempts per request, whatever the client asks for.
 const MAX_ATTEMPTS_CAP: u32 = 8;
-/// Hard ceiling on a single backoff sleep (ms), same reason.
 const MAX_BACKOFF_CAP: u32 = 2_000;
 
 impl Guest for Component {
@@ -122,8 +117,6 @@ fn usage() -> Outcome {
     )
 }
 
-// ---- policy (defaults + client overrides) -----------------------------------
-
 struct Policies {
     breaker: rb::Policy,
     retry: rb::RetryPolicy,
@@ -152,8 +145,6 @@ fn policies(b: &Value) -> Policies {
         slo_ms: u64of("slo_ms", 0),
     }
 }
-
-// ---- durable circuit state (records CAS = one circuit per key) --------------
 
 fn zero_circuit() -> rb::Circuit {
     rb::Circuit {
@@ -201,14 +192,10 @@ fn circuit_json(c: &rb::Circuit) -> Value {
     })
 }
 
-/// Read-modify-write one key's circuit under a revision compare-and-set.
-///
-/// `f` gets the current circuit plus the record's counters and returns
-/// `(result, new circuit, counter deltas)`. Retried on a revision conflict, so a
-/// racing caller can't lose a trip. Returns none only under sustained contention.
-///
-/// `open_ms` is stored alongside the state purely so a READ of the circuit can
-/// report an honest "probe admitted in N ms" without guessing the policy.
+/// Read-modify-write one key's circuit under a revision compare-and-set. `f` gets the current circuit plus
+/// the record's counters and returns `(result, new circuit, counter deltas)`. Retried on a revision conflict,
+/// so a racing caller can't lose a trip; returns none only under sustained contention. `open_ms` is stored
+/// with the state so a READ can report an honest "probe admitted in N ms".
 fn cas_circuit<T>(
     key: &str,
     open_ms: u64,
@@ -242,7 +229,6 @@ fn cas_circuit<T>(
         if committed {
             return Some(out);
         }
-        // revision conflict (or a lost create race) -> re-read and retry.
     }
     None
 }
@@ -284,8 +270,6 @@ fn stats_json(c: &Counters) -> Value {
     json!({ "attempts": c.attempts, "ok": c.ok, "failed": c.failed, "shed": c.shed, "trips": c.trips })
 }
 
-// ---- the guarded call -------------------------------------------------------
-
 async fn call(request: Request) -> Outcome {
     let b = match body(request).await {
         Ok(v) => v,
@@ -295,11 +279,9 @@ async fn call(request: Request) -> Outcome {
         Some(k) => k.to_string(),
         None => return Outcome::Err(422, "key required".into()),
     };
-    // The client picks which upstream path to hit (that's how the demo asks for a
-    // failure: /upstream/hit?fail=1). It is NOT an open proxy: `proxy:route` only
-    // forwards paths that match its configured route table, everything else is
-    // `no-route`. Still require an absolute path so a stray value can't be read
-    // as a full URL.
+    // The client picks the upstream path (the demo asks for failure with /upstream/hit?fail=1). Not an open
+    // proxy: `proxy:route` only forwards paths in its route table, else `no-route`. Still require an absolute
+    // path so a stray value can't be read as a full URL.
     let path = b["path"].as_str().unwrap_or("/upstream/hit").to_string();
     if !path.starts_with('/') {
         return Outcome::Err(422, "path must start with /".into());
@@ -311,7 +293,6 @@ async fn call(request: Request) -> Outcome {
     let mut last_error: Option<String> = None;
 
     for attempt in 1..=pol.retry.max_attempts {
-        // Wait out the backoff before a retry (never before the first attempt).
         if attempt > 1 {
             match rb::backoff(attempt, pol.retry, now_ms() ^ attempt as u64) {
                 Some(ms) => sleep_ms(ms.min(MAX_BACKOFF_CAP)).await,
@@ -319,7 +300,6 @@ async fn call(request: Request) -> Outcome {
             }
         }
 
-        // ---- 1. admit? (an open circuit sheds the request right here) -------
         let now = now_ms();
         let admission = cas_circuit(&key, pol.breaker.open_ms, |c| {
             let (a, next) = rb::admit(c, now, pol.breaker);
@@ -331,7 +311,7 @@ async fn call(request: Request) -> Outcome {
             None => return Outcome::Err(503, "circuit contended, retry".into()),
         };
         if !admission.admit {
-            // Fail fast. Note `attempts` here counts only calls that were MADE.
+            // Fail fast. `attempts` here counts only calls that were MADE.
             return Outcome::Json(
                 503,
                 json!({
@@ -344,24 +324,19 @@ async fn call(request: Request) -> Outcome {
             );
         }
 
-        // ---- 2. the real outgoing HTTP hop ---------------------------------
         let t0 = mono_ms();
         let forwarded = router::forward("GET", &path, &[], &[]);
         let elapsed = mono_ms().saturating_sub(t0);
 
-        // ---- 3. judge it ---------------------------------------------------
         let (ok, status, err) = match &forwarded {
             Ok(r) if r.status >= 500 => (false, r.status, Some(format!("upstream {}", r.status))),
             Ok(r) if pol.slo_ms > 0 && elapsed > pol.slo_ms => {
-                // Slow is not success. We cannot cancel an in-flight wasi:http
-                // request, so this is an SLO judgement after the fact, not a
-                // timeout that frees the connection.
+                // Slow is not success. An in-flight wasi:http request cannot be cancelled, so this is an SLO judgement after the fact, not a timeout.
                 (false, r.status, Some(format!("slo breach: {elapsed}ms > {}ms", pol.slo_ms)))
             }
             Ok(r) => (true, r.status, None),
             Err(router::ProxyError::NoRoute) => {
-                // A missing route is OUR misconfiguration, not an upstream
-                // failure — don't let it trip the breaker.
+                // A missing route is OUR misconfiguration, not an upstream failure: don't let it trip the breaker.
                 return Outcome::Err(
                     502,
                     format!("no route configured for {path} (set CFG_ROUTES)"),
@@ -374,7 +349,6 @@ async fn call(request: Request) -> Outcome {
         last_status = status;
         last_error = err.clone();
 
-        // ---- 4. feed the outcome back --------------------------------------
         let now = now_ms();
         let state = cas_circuit(&key, pol.breaker.open_ms, |c| {
             let before = c.state;
@@ -412,7 +386,6 @@ async fn call(request: Request) -> Outcome {
         }
     }
 
-    // Every attempt failed — surface it as a bad gateway with the whole trail.
     let state =
         current_doc(&key).map(|v| v["circuit"]["state"].as_str().unwrap_or("closed").to_string());
     Outcome::Json(
@@ -426,8 +399,6 @@ async fn call(request: Request) -> Outcome {
     )
 }
 
-// ---- reads ------------------------------------------------------------------
-
 fn current_doc(key: &str) -> Option<Value> {
     records::find_by(CIRCUITS, "key", &json!(key).to_string())
         .ok()?
@@ -436,9 +407,8 @@ fn current_doc(key: &str) -> Option<Value> {
         .and_then(|e| serde_json::from_str::<Value>(&e.data).ok())
 }
 
-/// A circuit as the UI wants it: state, counters, and — when open — how long
-/// until a probe is admitted. Derived on read; nothing here mutates the circuit
-/// (a GET must not spend the half-open probe budget).
+/// A circuit as the UI wants it: state, counters, and, when open, how long until a probe is admitted. Derived
+/// on read; a GET must not spend the half-open probe budget.
 fn view(doc: &Value, now: u64) -> Value {
     let c = circuit_from(doc);
     let open_ms = doc["open_ms"].as_u64().unwrap_or(2_000);
@@ -492,8 +462,6 @@ async fn reset(request: Request) -> Outcome {
     Outcome::Json(200, json!({ "ok": true, "key": key }).to_string())
 }
 
-// ---- http plumbing ----------------------------------------------------------
-
 async fn body(request: Request) -> Result<Value, Outcome> {
     let raw =
         read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
@@ -503,18 +471,9 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be, before the component stops reading it. Without a ceiling a guest
+/// accumulated until wasmtime's 64 MiB per-store cap TRAPPED, reaching the caller as a bare closed
+/// connection. Generous: a backstop, not a content policy; uploads police themselves with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

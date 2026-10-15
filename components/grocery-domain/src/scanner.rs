@@ -34,7 +34,6 @@ pub async fn scan_barcode(request: Request) -> Outcome {
         _ => return Outcome::Err(400, "Request body is empty or not readable".into()),
     };
 
-    // Invoke pure compute WASI decoder:
     match barcode::decode_png(&image_bytes) {
         Ok(symbol) => {
             let products = load_products();

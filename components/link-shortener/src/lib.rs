@@ -1,8 +1,7 @@
 //! shortlink:app — link shortener over composed capability contracts.
 //!
-//! Hot path (`GET /{code}`): cache read -> atomic click bump -> 302. A miss
-//! falls back to the `code` index in records:store and warms the cache, so
-//! steady-state redirects never touch the record store.
+//! Hot path (`GET /{code}`): cache read -> atomic click bump -> 302. A miss falls back to the `code` index in
+//! records:store and warms the cache, so steady-state redirects never touch the record store.
 
 #[allow(warnings)]
 mod bindings {
@@ -95,8 +94,6 @@ enum Outcome {
     NotFound,
 }
 
-// ---- routes --------------------------------------------------------------
-
 #[derive(Deserialize)]
 struct CreateReq {
     url: String,
@@ -107,8 +104,7 @@ struct CreateReq {
 }
 
 async fn create_link(request: Request) -> Outcome {
-    // fixed-window create limit per client; no auth, so the client IP (or a
-    // shared anonymous key behind proxies that strip it) is the identity.
+    // fixed-window create limit per client; no auth, so the client IP (or a shared anonymous key behind proxies that strip it) is the identity.
     let client = format!(
         "shortlink:create:{}",
         header(&request, "x-forwarded-for").unwrap_or_else(|| "anon".to_string())
@@ -144,11 +140,9 @@ async fn create_link(request: Request) -> Outcome {
         Err(e) => return store_err(e),
     };
 
-    // warm the redirect cache; the redirect path can always rebuild it, so a
-    // cache failure does not fail the create.
+    // warm the redirect cache; the redirect path can rebuild it, so a cache failure does not fail the create.
     let _ = cache::set(&code, req.url.as_bytes(), 0);
-    // count this create against the window (the limiter is a failure counter;
-    // here every create "spends" one attempt).
+    // count this create against the window (the limiter is a failure counter; every create "spends" one attempt).
     let _ = limiter::record_failure(&client);
 
     Outcome::Json(201, link_json(&entry, None).to_string())
@@ -278,8 +272,6 @@ fn list_links(query: &str) -> Outcome {
     }
 }
 
-// ---- helpers ---------------------------------------------------------------
-
 fn link_json(entry: &records::Entry, clicks: Option<u64>) -> Value {
     let data: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);
     let mut v = json!({
@@ -308,18 +300,9 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be, before the component stops reading it. Without a ceiling a guest
+/// accumulated until wasmtime's 64 MiB per-store cap TRAPPED, reaching the caller as a bare closed
+/// connection. Generous: a backstop, not a content policy; uploads police themselves with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
@@ -335,8 +318,6 @@ fn query_param(query: &str, key: &str) -> Option<String> {
         (it.next()? == key).then(|| it.next().unwrap_or("").to_string())
     })
 }
-
-// ---- responses -------------------------------------------------------------
 
 fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {

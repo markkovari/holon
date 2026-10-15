@@ -3,20 +3,13 @@
 //!
 //! ## What is scaffold and what is the goal
 //!
-//! This file is the ROUTER and no part may write it: it dispatches to `intake`,
-//! `verdict` and `queue`, answers `/health`, mints a test token, seeds a queue, and
-//! writes one policy rule directly. Three parts need it and none owns it.
+//! This file is the ROUTER and no part may write it: it dispatches to `intake`, `verdict` and `queue`, answers
+//! `/health`, mints a test token, seeds a queue and writes one policy rule directly. `src/intake.rs`,
+//! `src/verdict.rs` and `src/queue.rs` are the goal; `CONTRACT.md` is what they must agree on.
 //!
-//! `src/intake.rs`, `src/verdict.rs` and `src/queue.rs` are the goal.
-//! `CONTRACT.md` is what they must agree on.
-//!
-//! ## Why these three
-//!
-//! The chain is about PRECEDENCE. `queue` writes the rules, `verdict` is the only part
-//! that asks a model and the only one that may overrule it, and `intake` decides what
-//! ever gets that far. A part that lets the model win, or that reports an outcome
-//! without saying what overruled what, passes every request-shaped check and leaves an
-//! app nobody can govern or audit.
+//! The chain is about PRECEDENCE: `queue` writes the rules, `verdict` is the only part that asks a model and
+//! the only one that may overrule it, and `intake` decides what gets that far. A part that lets the model win,
+//! or reports an outcome without saying what overruled what, leaves an app nobody can govern or audit.
 
 #[allow(warnings)]
 mod bindings {
@@ -92,11 +85,8 @@ impl Reply {
     }
 }
 
-/// One request, as a part sees it.
-///
-/// The bearer is handed over as a STRING and not as a principal: resolving it is
-/// `auth:identity/authorizer`'s job and doing it here would take the part's whole
-/// reason for importing that capability away.
+/// One request, as a part sees it. The bearer is handed over as a STRING, not a principal: resolving it is
+/// `auth:identity/authorizer`'s job, which is the part's reason for importing that capability.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
@@ -117,10 +107,7 @@ impl Route {
 
 use guestfmt::percent_decode as percent;
 
-/// A `wasi:config` value, with a default.
-///
-/// Scaffold: reading config is plumbing every part would otherwise write out, and the
-/// contract names the keys. What a part does with the value is the goal.
+/// A `wasi:config` value, with a default. Scaffold: plumbing every part would write; the contract names the keys.
 pub fn cfg(key: &str, default: &str) -> String {
     bindings::wasi::config::store::get(key)
         .ok()
@@ -136,13 +123,8 @@ pub fn now_secs() -> u64 {
 
 use guestfmt::rfc3339;
 
-/// A token for a test caller, so no gate has to log in through a part it is not
-/// judging.
-///
-/// Scaffold, and it is `session::issue` rather than a hand-built JWT for the same
-/// reason the parts are made to call `authorize`: a fixture that mints its own
-/// tokens is a fixture that can drift from what the verifier accepts, and then
-/// every part fails for the router's reason.
+/// A token for a test caller, so no gate has to log in through a part it is not judging. Scaffold; uses
+/// `session::issue` rather than a hand-built JWT, since a fixture minting its own tokens can drift from what the verifier accepts.
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let subject = req.get("subject").and_then(Value::as_str).unwrap_or("ada").to_string();
@@ -165,13 +147,9 @@ fn mint(body: &str) -> Reply {
     }
 }
 
-/// Two pending items, so `verdict` and `queue` can be judged before `intake` exists.
-///
-/// Scaffold, and it says what it is: `decision` is absent on purpose, because producing
-/// one is `verdict`'s job and a fixture that pre-filled it would let a part that decides
-/// nothing pass. One item carries a link and one does not — the only fact the contract's
-/// `has_link` attribute is about, and therefore the only way a rule can be seen to fire
-/// on one and not the other.
+/// Two pending items, so `verdict` and `queue` can be judged before `intake` exists. Scaffold: `decision` is
+/// absent on purpose (a pre-filled one would let a part that decides nothing pass). One item carries a link and
+/// one does not, the only fact the contract's `has_link` attribute is about.
 fn seed() -> Reply {
     let mut ids = Vec::new();
     for (text, author) in [
@@ -194,13 +172,9 @@ fn seed() -> Reply {
     Reply::json(201, json!({ "item_ids": ids }))
 }
 
-/// One rule, written straight through `policy:guard`.
-///
-/// `verdict` is judged with `queue` stubbed, and its whole reason for existing is what a
-/// matching rule does to a model's opinion — without a rule it could only ever be judged
-/// on the case where the policy stays silent. Deny anything whose text carries a link,
-/// which is a fact about the item and not about the model, so the rule fires whatever the
-/// model happens to say.
+/// One rule, written straight through `policy:guard`. `verdict` is judged with `queue` stubbed, and without a
+/// rule could only be judged where policy stays silent. Denies anything whose text carries a link, a fact about
+/// the item and not the model, so the rule fires whatever the model says.
 fn seed_rules() -> Reply {
     let rule = policy::Rule {
         id: "no-links".to_string(),
@@ -219,14 +193,9 @@ fn seed_rules() -> Reply {
     }
 }
 
-/// What has been published, straight off the bus.
-///
-/// Scaffold. `verdict`'s whole job ends in a publish, and the route that reads the bus
-/// belongs to `queue` — which is a stub while `verdict` is judged. Without this, the one
-/// thing proving a decision left the system is unobservable exactly when it matters.
-///
-/// A different consumer group from the contract's, so a gate reading here never competes
-/// with `queue`'s own reads.
+/// What has been published, straight off the bus. Scaffold: `verdict` ends in a publish and the route that reads
+/// the bus belongs to `queue` (a stub while `verdict` is judged). A different consumer group from the contract's,
+/// so a gate reading here never competes with `queue`'s reads.
 fn peek_bus() -> Reply {
     match bus::poll("moderation.decided", "fixture-reader", 50) {
         Ok(events) => Reply::json(
@@ -285,15 +254,12 @@ impl Guest for Component {
             ["test", "seed"] => seed(),
             ["test", "rules"] => seed_rules(),
             ["test", "events"] => peek_bus(),
-            // The stored document, straight out of the store. Scaffold, and it says
-            // what it is: a part must be judgeable on what it WROTE without
-            // depending on the part that owns the route for reading it back.
+            // The stored document straight out of the store (scaffold): a part must be judgeable on what it WROTE.
             ["test", "item", id] => match records::get("items", id) {
                 Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
                 Err(_) => Reply::err(404, "not_found"),
             },
-            // Before the `api/items` arm: a match on ["api","items",..] would hand the
-            // review route to `intake` instead.
+            // Before the `api/items` arm: a match on ["api","items",..] would hand the review route to `intake`.
             ["api", "items", _, "review"] => verdict::handle(&method, &route, &body),
             ["api", "items", ..] => intake::handle(&method, &route, &body),
             ["api", "rules"] | ["api", "queue"] | ["api", "events"] => {
