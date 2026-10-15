@@ -121,12 +121,9 @@ async fn get(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    // Unique, not unpredictable — and that is the whole requirement. The attacker
-    // here holds a request they captured; guessing a future nonce gains them
-    // nothing, because the platform refuses a nonce it has already seen. Process
-    // id, nanoseconds and a counter are unique across everything that can race:
-    // two hosts, two threads, or the same thread twice in one nanosecond. No
-    // dependency needed for that.
+    // Unique, not unpredictable: guessing a future nonce gains an attacker nothing,
+    // since the platform refuses one it has seen. Process id, nanoseconds and a
+    // counter are unique across hosts, threads, and the same thread twice in one ns.
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nonce = format!(
         "{}-{}-{}",

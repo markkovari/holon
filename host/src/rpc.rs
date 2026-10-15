@@ -1,18 +1,7 @@
-//! Cross-node invocation over wRPC — the wiring, and what it still needs.
-//!
-//! ADR-0028 established that this is wRPC's job rather than a codec of our own.
-//! This module is the integration point, and it exists now to settle the question
-//! everything else depends on: **can this host's `Host` state satisfy wRPC's
-//! traits?** If it could not, the whole approach would need rethinking, and finding
-//! that out after building placement and a two-machine harness would be expensive.
-//!
-//! It can. `WrpcCtx` wants four things — a per-invocation context, an `Invoke`
-//! client, a table of shared exported resources, and an optional timeout — and all
-//! four are things a `Scope` already knows or a NATS client already is.
-//!
-//! **This is not wired.** Nothing calls it yet: no import is bound to a remote
-//! instance and no export is served. What remains is listed at the bottom, and it
-//! is placement and lifecycle work rather than protocol work.
+//! Cross-node invocation over wRPC (ADR-0028): binds this host's `Host` state to
+//! wRPC's traits. `WrpcCtx` wants a per-invocation context, an `Invoke` client, a
+//! table of shared exported resources and an optional timeout, all of which a
+//! `Scope` or a NATS client already provides.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,14 +22,10 @@ pub fn prefix(lattice: &str, instance_id: &str) -> String {
 
 /// A client per linked interface — for EVERY link, local target or not.
 ///
-/// There is deliberately no local short-circuit. Two separately started components
-/// have no in-process path between them: the host satisfies an import from a host
-/// capability or from wRPC, full stop. Skipping a co-located target leaves its
-/// import unbound and the instance refuses to start. Components that do link
-/// in-process were fused by `wac` at build time, which is ADR-0005's other strategy
-/// and a different mechanism.
-///
-/// The loopback case costs about 0.3% — measured, not assumed.
+/// There is deliberately no local short-circuit: two separately started components
+/// have no in-process path between them (components that link in-process were fused
+/// by `wac` at build time, ADR-0005), so skipping a co-located target leaves its
+/// import unbound. The loopback case costs about 0.3%, measured.
 pub async fn remote_clients(
     nats: Arc<async_nats::Client>,
     lattice: &str,
@@ -337,46 +322,6 @@ pub fn linkable_imports(
         })
         .collect()
 }
-
-// ---- the blocker, stated precisely ----------------------------------------
-//
-// Two problems remain, and the second is a design question rather than work.
-//
-// 1. `impl WrpcView for Host` requires every store to hold a live `Invoke` client.
-//    A single-app run (`comp-host --component x.wasm`) has NO NATS — that lane's
-//    entire point is that it needs no broker, and it is the lane 30-odd example
-//    recipes and the whole self-hosting story use. So the trait cannot be
-//    satisfied honestly in one of the two lanes this binary serves.
-//
-//    Three ways out, none obviously right:
-//      a. Make `Host` generic over the transport, with a null implementation for
-//         the single-app lane. Correct, and it touches every capability impl and
-//         every `Store` construction on the request path.
-//      b. Split the two lanes into different `Host` types. Duplicates the
-//         capability impls, which are the security-critical ones (ADR-0023) and
-//         are exactly what should not exist twice.
-//      c. Connect a NATS client unconditionally. Cheapest, and it silently makes
-//         the self-hosting lane depend on a broker, which is a lie about what the
-//         lane is for.
-//
-// 2. `link_instance` resolves its target from the client held in `WrpcCtx`, so one
-//    store implies ONE remote prefix. A component importing from two different
-//    remote instances therefore cannot be served by one client, and the link table
-//    is explicitly a map of MANY ifaces to MANY instance ids. Whether wRPC expects
-//    a client per target, or a prefix that is a namespace rather than an address,
-//    needs reading its invocation path properly — not guessing from a signature.
-//
-// What IS settled and worth keeping:
-//   * `WrpcCtx` is satisfiable by our types (the test below).
-//   * The addressing scheme: `comp.<lattice>.rpc.<tenant>/<app>/<component>`, with
-//     a queue group on the serve side so replicas share invocations and failover is
-//     free — the thing NATS queue groups were wanted for from the start.
-//   * Which exports are worth serving and which imports are candidates for linking,
-//     both read from the component's own type rather than from a manifest that
-//     could drift from it.
-//   * async-nats is unified at 0.49 across host, lattice and reconciler. That was a
-//     hard blocker — wrpc-transport-nats needs 0.49 and everything else was on
-//     0.38, giving two incompatible `async_nats::Client` types — and it is fixed.
 
 #[cfg(test)]
 mod tests {

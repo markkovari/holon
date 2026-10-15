@@ -1,17 +1,10 @@
-//! An in-process implementation of all three traits.
+//! An in-process implementation of all three traits. It exists for two reasons:
+//! an interface with exactly one implementation has never been shown to be one
+//! (anything NATS-shaped that leaked into the traits is awkward to write here), and
+//! it lets the reconcile loop be tested without a broker.
 //!
-//! Not a toy. It exists for two reasons and both are load-bearing:
-//!
-//! 1. **An interface with exactly one implementation has never been shown to be an
-//!    interface.** Everything NATS-shaped that leaked into the trait signatures
-//!    shows up here as something awkward or impossible to write, which is the only
-//!    honest test of whether the abstraction is real.
-//! 2. **It lets the reconcile loop be tested without a broker.** A test that needs
-//!    `nats-server` running is a test that gets skipped.
-//!
-//! Entry expiry is implemented with a real clock, because it is the property the
-//! whole design leans on — a node that stops publishing has to disappear on its
-//! own, or `plan()` will keep placing work on a corpse.
+//! Entry expiry uses a real clock: a node that stops publishing has to disappear on
+//! its own, or `plan()` will keep placing work on a corpse.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

@@ -1,16 +1,10 @@
-//! The gate for `--kv surreal`, deliberately OUTSIDE the file that implements it.
-//!
-//! `kv.rs` is the only writable path in this goal, so these assertions cannot be
-//! edited by whatever writes the backend — a test living beside the code it
-//! judges is a test the code can rewrite, and a goal whose gate is writable is
-//! not gated at all.
+//! The gate for `--kv surreal`, deliberately OUTSIDE the file that implements it: a
+//! test living beside the code it judges is a test the code can rewrite.
 //!
 //! Each test starts its OWN real SurrealDB in Docker and tears it down when it
-//! finishes, because the whole claim being tested is "this survives a restart
-//! and is visible to another process", and an in-memory double proves neither —
-//! but a test that assumes a server is already up on some fixed port is not an
-//! end-to-end test, it is a test with an undeclared dependency. Skipped, loudly,
-//! when Docker cannot start one (same convention as `reconciler/tests/`).
+//! finishes, because the claim is "this survives a restart and is visible to another
+//! process" and an in-memory double proves neither. Skipped, loudly, when Docker
+//! cannot start one (same convention as `reconciler/tests/`).
 
 use std::process::{Command, Stdio};
 

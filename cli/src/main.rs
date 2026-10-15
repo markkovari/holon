@@ -1,10 +1,7 @@
 //! `holon` — the CLI: renders app specs and fleet layouts into what a box, a
-//! lattice node, or wasmCloud actually needs, and a handful of platform/goal/org
-//! commands over the control-plane API.
-//!
-//! The renderers themselves (`Spec`, `check`, every `render_*`) live in
-//! [`selfhost`] — pure functions, tested there. This file is the CLI shell around
-//! them: argument parsing (`Args`/`Cmd`) and the dispatch in `main`.
+//! lattice node, or wasmCloud needs, plus platform/goal/org commands over the
+//! control-plane API. The renderers live in [`selfhost`]; this file is argument
+//! parsing (`Args`/`Cmd`) and dispatch.
 
 mod fleet;
 mod platform;
@@ -21,8 +18,6 @@ use selfhost::{
     render_goald_unit, render_ingress_route, render_relay_unit, render_route, render_unit,
     write_secret_file, GoaldFormat, GoaldSpec, Layout, Router, Spec,
 };
-
-// ---- cli --------------------------------------------------------------------
 
 #[derive(Parser)]
 #[command(

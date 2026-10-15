@@ -2,21 +2,13 @@
 //! wasmtime. No Node, no Kubernetes, no wasmCloud, no NATS required: this binary IS
 //! the host.
 //!
-//! It started life running one app (hence its old name, `vet-host`) and is now the
-//! self-hosting lane for anything in this repo: point it at a composed artifact from
-//! `cargo xtask compose <app>`, and it serves that component's
-//! `wasi:http/incoming-handler` export over a hyper TCP listener while satisfying
-//! the component's imports host-side:
-//!   - standard WASI (cli/clocks/random/io/filesystem) via wasmtime-wasi
-//!   - wasi:http via wasmtime-wasi-http
-//!   - wasi:keyvalue@0.2.0-draft  -> memory, sqlite, redis or NATS (--kv). Two axes,
-//!     and they are not the same: `memory` loses everything on restart, and
-//!     `memory`/`sqlite` are NODE-LOCAL, so two replicas of one app on two nodes get
-//!     two stores under one bucket name. The reconciler refuses to spread a stateful
-//!     app onto them (docs/adr/0027).
-//!   - wasi:config@0.2.0-draft    -> per-instance, from the start command or
-//!     `--config k=v` / `--config-file`. NOT the process environment: in a host
-//!     shared by every tenant on the node that would be a cross-tenant read.
+//! It serves a composed artifact's `wasi:http/incoming-handler` export over a hyper
+//! TCP listener and satisfies the component's imports host-side: standard WASI,
+//! wasi:http, wasi:keyvalue (memory, sqlite, redis or NATS via `--kv`; `memory` and
+//! `sqlite` are NODE-LOCAL, so the reconciler refuses to spread a stateful app onto
+//! them, docs/adr/0027) and wasi:config (per-instance, from the start command or
+//! `--config`/`--config-file`; NOT the process environment, which in a shared host
+//! would be a cross-tenant read).
 //!
 //! Two lanes, one binary: without `--lattice-nats` it serves one `--component`;
 //! with it, instances arrive as start commands and it holds every tenant on the
@@ -96,11 +88,6 @@ use bindings::wasi::keyvalue::atomics;
 use bindings::wasi::keyvalue::batch;
 use bindings::wasi::keyvalue::store;
 
-// ---- the key-value store -------------------------------------------------
-// The guest's wasi:keyvalue is backed by a swappable `KvBackend` (memory /
-// redis / nats — chosen by `--kv`). The component bytes never change; only this
-// host-side impl does. (See kv.rs.)
-
 pub type Kv = Arc<dyn KvBackend>;
 /// The `cache:store` component's backing map (flat guest key -> bytes).
 ///
@@ -110,8 +97,6 @@ pub type Kv = Arc<dyn KvBackend>;
 /// choosing the same key. A process-global map here would let that collide;
 /// each `Instance` getting its own means there is nothing to collide with.
 pub type CacheBacking = Arc<Mutex<HashMap<String, Vec<u8>>>>;
-
-// ---- the instance table ---------------------------------------------------
 
 /// One running component: its scope, and the pre-instantiated world it serves.
 ///
@@ -126,9 +111,8 @@ pub struct Instance {
     /// The HTTP world, when this component exports one.
     ///
     /// `None` for a plug: it exports interfaces other components call, not a door
-    /// requests arrive at. Before cross-node serving existed a plug could not start
-    /// at all; now it starts, serves its exports over the bus, and simply never
-    /// appears in the route table.
+    /// requests arrive at. It serves its exports over the bus and never appears in
+    /// the route table.
     pub(crate) pre: Option<HttpPre>,
     /// Clients for this instance's REMOTE imports, keyed by interface. Built once
     /// at start, because resolving a target per request would put a lookup on the
@@ -243,8 +227,6 @@ pub struct HostBucket {
     id: BucketId,
 }
 
-// ---- the per-request store state -----------------------------------------
-
 struct Host {
     table: ResourceTable,
     wasi: WasiCtx,
@@ -306,8 +288,6 @@ impl wasmtime_wasi_http::p3::WasiHttpView for Host {
         }
     }
 }
-
-// ---- wasi:keyvalue/store host impl ---------------------------------------
 
 impl store::Host for Host {
     /// The one function ADR-0012 was about.
@@ -389,8 +369,6 @@ impl store::HostBucket for Host {
     }
 }
 
-// ---- wasi:keyvalue/atomics host impl -------------------------------------
-
 impl atomics::Host for Host {
     fn increment(
         &mut self,
@@ -403,7 +381,6 @@ impl atomics::Host for Host {
     }
 }
 
-// ---- wasi:keyvalue/batch host impl ----------------------------------------
 // One guest call instead of N for multi-key reads/writes. The backend loop is
 // host-side, so even without a backend-native multi-get this removes the
 // per-key guest<->host round-trips.
@@ -455,8 +432,6 @@ impl batch::Host for Host {
     }
 }
 
-// ---- cache:store source + sink host impl (the cache backing store) -------
-
 impl cache_source::Host for Host {
     fn load(&mut self, key: String) -> wasmtime::Result<Result<Option<Vec<u8>>, String>> {
         Ok(Ok(crate::sync::held(&self.cache_backing).get(&key).cloned()))
@@ -473,8 +448,6 @@ impl cache_sink::Host for Host {
     }
 }
 
-// ---- wasi:config/store host impl ---------------------------------------
-
 impl config::Host for Host {
     fn get(&mut self, key: String) -> wasmtime::Result<Result<Option<String>, config::Error>> {
         Ok(Ok(self.scope.cfg.get(&key).cloned()))
@@ -484,8 +457,6 @@ impl config::Host for Host {
     }
 }
 
-// ---- comp:store/cas host impl --------------------------------------------
-//
 // The guard, enforced where the data is (ADR-0065). Both calls take the same
 // `HostBucket` resource `wasi:keyvalue` hands out, so the guest still cannot name
 // a store it was not given — the ADR-0012 boundary is untouched by this.
@@ -523,7 +494,6 @@ impl cas::Host for Host {
     }
 }
 
-// ---- actor:entity/actor host impl ------------------------------------------
 // Mock implementation to satisfy the compiler and capability graph.
 
 impl bindings::actor::entity::actor::Host for Host {
@@ -557,8 +527,6 @@ impl bindings::actor::entity::actor::Host for Host {
     }
 }
 
-// ---- comp:secrets/reader host impl ---------------------------------------
-//
 // The guest names a KEY; `Scope::secret` is the only way from that string to a
 // `SecretRef`, and `SecretRef` cannot be built outside `tenant.rs` (ADR-0051).
 // Same shape as buckets and links, for the third time.
@@ -646,8 +614,6 @@ impl reader::Host for Host {
         }
     }
 }
-
-// ---- egress: the wasi:http outbound allow-list ---------------------------
 
 /// Outbound HTTP policy for one instance.
 ///
@@ -967,18 +933,10 @@ async fn reqwest_fetch(
     builder.body(bytes).map_err(|_| "response build".to_string())
 }
 
-// ---- config ---------------------------------------------------------------
-//
-// `build_config()` used to live here, reading `wasi:config` out of the process
-// environment (a `VET_*` block plus a generic `CFG_*` passthrough). It is gone
-// rather than scoped: in a process shared by every tenant on the node, process
-// environment as config is a cross-tenant read by construction — one `getenv` and
-// every app sees every other app's knobs, including the ones people put secrets in.
-//
-// Config now arrives per component in the start command and lives on the `Scope`.
-// For a single-app run, `--config k=v` supplies it (see `Args`).
-
-// ---- CLI -----------------------------------------------------------------
+// There is deliberately no process-environment `wasi:config`: in a process shared
+// by every tenant on the node that is a cross-tenant read by construction. Config
+// arrives per component in the start command and lives on the `Scope`; for a
+// single-app run, `--config k=v` supplies it (see `Args`).
 
 #[derive(Parser)]
 #[command(name = "comp-host", about = "Run the composed vet-domain wasm over wasmtime")]
@@ -1106,7 +1064,6 @@ struct Args {
     #[arg(long, default_value = "0")]
     kv_replicas: usize,
 
-    // ---- who this instance is -------------------------------------------
     /// Tenant this component belongs to. With `--app` it decides the store the
     /// guest's `open("default")` resolves to, so two hosts started with different
     /// tenants cannot see each other's records even on one backend.
@@ -1146,7 +1103,6 @@ struct Args {
     #[arg(long, default_value = "50")]
     slice_ms: u64,
 
-    // ---- lattice mode ----------------------------------------------------
     /// Join a lattice at this NATS URL and take instances from start commands
     /// instead of `--component`. Omit for the single-app lane, which is unchanged
     /// and needs no NATS at all.
@@ -1229,8 +1185,6 @@ pub(crate) fn build_linker(engine: &Engine) -> Result<Linker<Host>> {
     cas::add_to_linker::<_, HasSelf<Host>>(&mut linker, |h| h)?;
     Ok(linker)
 }
-
-// ---- main: instantiate + serve -------------------------------------------
 
 /// `--blob s3`'s settings, with the secrets read from their files (or the
 /// environment) and never from a flag.
@@ -1405,9 +1359,6 @@ async fn main() -> Result<()> {
 
     let addr: SocketAddr = args.addr.parse()?;
 
-    // Who this instance is. A single-app run builds its scope from flags; the
-    // lattice will build the same struct from a start command, which is the only
-    // difference between the two lanes.
     let limits = Limits {
         mem_cap: args.mem_cap_mb << 20,
         slice_ms: args.slice_ms,
@@ -1626,13 +1577,9 @@ async fn main() -> Result<()> {
 /// The single-app lane's route key. A lattice node never has one.
 const CATCH_ALL: &str = "*";
 
-/// Which instance answers this request.
-///
-/// The `Host` header, lower-cased, port stripped. A miss is a 404 and **never** a
-/// fallback to "the only app" — on a node holding several tenants, a fallback turns
-/// one bad DNS record into one tenant's traffic arriving at another tenant's
-/// component. The catch-all is inserted only by the single-app lane, where there is
-/// exactly one instance and no one to confuse it with.
+/// Which instance answers this request: the `Host` header, lower-cased, port
+/// stripped. A miss is a 404 and **never** a fallback to "the only app"; the
+/// catch-all is inserted only by the single-app lane.
 fn resolve(
     routes: &Routes,
     instances: &Instances,
@@ -1747,12 +1694,9 @@ fn content_type(p: &std::path::Path) -> &'static str {
     }
 }
 
-/// One `Store` with this instance's scope, limits and egress policy.
-///
-/// Factored out because a wRPC-served invocation must get exactly the same store an
-/// HTTP request gets — same tenant boundary, same memory cap, same CPU slice, same
-/// allow-list. A second construction path would be a second place for one of those
-/// to be forgotten, and they are the ones ADR-0023 is about.
+/// One `Store` with this instance's scope, limits and egress policy. Shared by the
+/// HTTP and wRPC paths so the tenant boundary, memory cap, CPU slice and allow-list
+/// cannot diverge between them (ADR-0023).
 pub(crate) fn store_for(
     engine: &Engine,
     scope: SharedScope,

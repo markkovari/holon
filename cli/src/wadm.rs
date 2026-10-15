@@ -1,61 +1,18 @@
 //! The wasmCloud lanes: one app spec, four manifests.
 //!
-//! `examples/vet-clinic-wasmcloud/gen-manifest.py` did this for one app, with a
-//! `CAPS` table typed out by hand and a `LATTICE=1` flag to switch topology. This is
-//! that generator generalised over `apps/<name>.toml` and moved into the CLI, where
-//! it can be tested without a cluster.
+//! Two axes. Topology (`fused` = one `wac plug` artifact; `linked` = every capability
+//! its own component wired by wadm `link` traits) is not a style choice: wasmtime
+//! allows 30 nested instances per component and the full vet-clinic is 104 core
+//! modules. A linked hop costs 57 µs on comp's own lattice and 1.2 ms on wasmCloud v1
+//! (`docs/SELFHOST.md`), hence `hybrid`: fuse pure compute, link only stateful parts.
 //!
-//! ## Two axes, and both are real
+//! API version (v1 or v2) is a property of the CLUSTER, so it is a flag, not a spec
+//! field. Getting it wrong fails silently: wadm 0.21 accepted a v2 manifest and
+//! created no scalers. The renderer stamps a `holon` annotation so `holon wadm check`
+//! can say which version a stored manifest was rendered for.
 //!
-//! **Topology — fused or linked.** `Strategy` already names this (ADR-0005), and it
-//! is not a style choice:
-//!
-//! * `fused` is one artifact from `wac plug`, one component in the manifest, and no
-//!   hop between capabilities. It is the faster shape and the simpler manifest.
-//! * `linked` is every capability as its own component wired by wadm `link` traits.
-//!   It is the shape that DEPLOYS when fusing cannot: wasmtime allows 30 nested
-//!   instances per component, and the full vet-clinic is 104 core modules. That is a
-//!   measured wall, recorded in the generator this replaces, not a preference.
-//!
-//! The hop is not free, and the number depends on which wasmCloud you are on:
-//!
-//! | | per component boundary |
-//! |---|---|
-//! | comp's own lattice (wrpc, ADR-0032) | 57 µs |
-//! | wasmCloud v1 (wadm links over NATS) | **1.2 ms** (`docs/SELFHOST.md`) |
-//!
-//! Quote the microseconds rather than a percentage: ADR-0032's 5.4% was of a
-//! do-nothing request, and `docs/CURRENT.md` warns that the ratio is not a platform
-//! property. On v1 a linked graph pays roughly twenty times what comp's lattice
-//! charges, which is why `hybrid` exists — fuse the pure-compute capabilities, link
-//! only the stateful ones, and pay the hop only where state forces it.
-//!
-//! **API version — v1 or v2.** wadm's manifest schema changed, and a cluster runs
-//! one or the other:
-//!
-//! * `v1` is `core.oam.dev/v1beta1` with `spreadscaler` and `link` traits. It is
-//!   what wadm 0.21 speaks and what the operator 0.4.0 reconciles.
-//! * `v2` is the newer `wasmcloud.dev/v1alpha1` shape.
-//!
-//! This is a property of the CLUSTER, never of the app, so it is a flag rather than
-//! a field in the spec: the same app deploys to both.
-//!
-//! **Getting that flag wrong fails SILENTLY, which is why the renderer stamps it.**
-//! Measured against a real wadm 0.21: a v2 manifest was accepted by `model.put`,
-//! deployed with `"result":"acknowledged"`, and produced NO scalers at all — wadm
-//! ignores a trait type it does not know rather than refusing it. The links still
-//! reconciled, so the app looked deployed and ran zero instances. A `holon`
-//! annotation in the metadata is what lets `holon wadm check` say which version a
-//! stored manifest was rendered for, since the manifest itself cannot be trusted to
-//! fail loudly.
-//!
-//! ## What is NOT here
-//!
-//! No `wash` invocation. wash 2.x removed `wash app put`, which is what the existing
-//! `wadm.yaml` header still instructs — but the API underneath it is a set of NATS
-//! subjects (`wadm.api.<lattice>.model.put`) that both versions still serve, and
-//! those are what the deploy recipe uses. A renderer that shelled out to a CLI whose
-//! command set moves would be the fragile half of this.
+//! No `wash` invocation: wash 2.x removed `wash app put`, while the NATS subjects
+//! (`wadm.api.<lattice>.model.put`) that both versions serve are stable.
 
 use std::collections::BTreeMap;
 
@@ -65,12 +22,8 @@ use serde::Deserialize;
 
 use crate::selfhost::{Daemon, Spec};
 
-/// One interface, as `comp-capgraph --format json` reports it.
-///
-/// The capability graph is DERIVED from the built artifacts — it reads what a
-/// component actually imports out of the binary (ADR-0087), so it cannot drift from
-/// the code the way a hand-maintained table does. `gen-manifest.py` typed its edges
-/// out by hand; this reads them.
+/// One interface, as `comp-capgraph --format json` reports it. The graph is derived
+/// from the built artifacts (ADR-0087), so it cannot drift like a hand-kept table.
 #[derive(Debug, Deserialize)]
 pub struct Iface {
     /// Fully qualified: `records:store/store@0.1.0`.
@@ -149,28 +102,10 @@ pub enum Topology {
 
 /// Which wasmCloud a manifest is for.
 ///
-/// **These are not two versions of one document.** An earlier version of this file
-/// assumed they were — that v2 changed the `apiVersion` string and renamed
-/// `spreadscaler` to `scaler` — and that was wrong in both halves. wadm's own
-/// source has never had another value:
-///
-/// ```text
-/// pub const OAM_VERSION: &str = "core.oam.dev/v1beta1";
-/// pub const SPREADSCALER_TRAIT: &str = "spreadscaler";
-/// pub const DAEMONSCALER_TRAIT: &str = "daemonscaler";
-/// pub const LINK_TRAIT: &str = "link";
-/// ```
-///
-/// What actually happened is larger: **wasmCloud 2.x dropped wadm and OAM
-/// entirely.** v1 deploys an OAM `Application` to wadm over NATS; v2 applies a
-/// `Workload` to the Kubernetes API and there is no wadm in the picture at all. So
-/// `render` produces a different KIND of document per target, not a different
-/// envelope around the same one.
-///
-/// The mistake was not caught by deploying it, which is the part worth recording:
-/// wadm 0.21 accepted the bogus v2 manifest, answered `"result":"acknowledged"`,
-/// and created no scalers — it ignores a trait type it does not recognise. It looked
-/// deployed and ran nothing.
+/// These are different KINDS of document, not two versions of one: v1 deploys an OAM
+/// `Application` to wadm over NATS; wasmCloud 2.x dropped wadm and OAM, and applies a
+/// `Workload` to the Kubernetes API. wadm 0.21 accepts a bogus "v2" OAM manifest,
+/// answers `"result":"acknowledged"` and creates no scalers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ApiVersion {
     /// wasmCloud 1.x: an OAM `Application` for wadm, over NATS.
@@ -603,7 +538,6 @@ pub fn render(
         topo
     ));
 
-    // ---- the root component ------------------------------------------------
     y.push_str(&format!(
         "    - name: {}\n      type: component\n      properties:\n        image: oci://{}/{}:latest\n",
         dns(&root),
@@ -651,7 +585,6 @@ pub fn render(
         }
     }
 
-    // ---- the capabilities, when they are separate components ---------------
     if topo == Topology::Linked {
         let fused: Vec<&str> = fusable(&spec.components);
         let linked: Vec<String> = match graph {
@@ -675,7 +608,6 @@ pub fn render(
         }
     }
 
-    // ---- the keyvalue provider ---------------------------------------------
     // wadm refuses a manifest whose link names a capability the manifest does not
     // declare ("The following capability component(s) are missing"), so a target is
     // not enough — the provider is a component like any other. Emitted only when
@@ -690,7 +622,6 @@ pub fn render(
         );
     }
 
-    // ---- the door ----------------------------------------------------------
     // An http-server provider, not the app listening itself: on wasmCloud the
     // component exports wasi:http/incoming-handler and a provider brings the socket.
     y.push_str(&format!(
@@ -877,14 +808,10 @@ mod tests {
 
     #[test]
     fn v1_and_v2_are_different_documents_not_two_envelopes() {
-        // The premise this test used to assert was WRONG, and deploying it is what
-        // proved that: wadm 0.21 accepted a hand-made "v2" OAM manifest, reported
-        // success, and created no scalers, because it ignores an unrecognised trait.
-        //
-        // wasmCloud 2.x did not re-version the manifest — it dropped wadm and OAM
-        // entirely. v1 is an OAM Application for wadm over NATS; v2 is a Workload
-        // for the Kubernetes API. Verified against wadm 0.21 + wasmCloud 1.6.0 and
-        // runtime-operator 2.8.0 + wash 2.8.0 respectively.
+        // v1 and v2 are different KINDS of document: v1 is an OAM Application for wadm
+        // over NATS; v2 is a Workload for the Kubernetes API (wadm and OAM are gone).
+        // Verified against wadm 0.21 + wasmCloud 1.6.0 and runtime-operator 2.8.0 +
+        // wash 2.8.0 respectively.
         let s = spec("components = [\"gate-domain\", \"record-store\"]\n");
         let t = Target::default();
 

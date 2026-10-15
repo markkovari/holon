@@ -1,13 +1,8 @@
-//! `comp` talking to the platform.
+//! `comp` talking to the platform: one HTTP call and a bit of printing, deliberately
+//! thin so the platform's rules live in one place.
 //!
-//! Everything here is one HTTP call and a bit of printing. It is deliberately thin:
-//! the platform decides, and a CLI that re-implemented any of its rules would be a
-//! second place for them to be wrong.
-//!
-//! The session token lives in `~/.config/comp/credentials.json`, mode 0600. Not a
-//! keyring: this is a bearer token with an expiry, the same thing every `~/.netrc`
-//! and `~/.docker/config.json` on the box already holds in the clear, and a keyring
-//! dependency would buy nothing a file permission does not.
+//! The session token lives in `~/.config/comp/credentials.json`, mode 0600 — not a
+//! keyring, matching `~/.netrc` and `~/.docker/config.json`.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -53,9 +48,7 @@ fn save(s: &Session) -> Result<()> {
 }
 
 /// One request. Returns the parsed body, or an error carrying whatever the platform
-/// said — its 422s name the component and the interface, and swallowing that in
-/// favour of "request failed" would be the single most annoying thing this tool
-/// could do.
+/// said — its 422s name the component and the interface.
 fn call(
     s: &Session,
     method: &str,
@@ -90,11 +83,8 @@ fn call(
     }
 }
 
-/// Turn the platform's error body into something worth reading.
-///
-/// The structured 422 is the one that matters: an unsatisfied import is not a
-/// sentence, it is a list of gaps each with the components that would fill it, and
-/// printing it as JSON would waste the work the platform did to compute it.
+/// Turn the platform's error body into something worth reading. The structured 422
+/// is a list of gaps with the components that would fill each; print it as such.
 fn explain(v: &Value) -> String {
     if v["error"] == json!("unsatisfied_imports") {
         let mut out = String::from("the graph has unsatisfied imports:");
@@ -312,8 +302,6 @@ pub fn app_rm(id: &str, confirm: &str) -> Result<()> {
     Ok(())
 }
 
-// ---- organisations ---------------------------------------------------------
-
 pub fn org_create(name: &str) -> Result<()> {
     let s = load()?;
     let v = call(
@@ -403,17 +391,9 @@ pub fn org_remove(org: &str, subject: &str) -> Result<()> {
     Ok(())
 }
 
-// ---- secrets ---------------------------------------------------------------
-
-/// Store a secret, reading the VALUE from a file or stdin — never from argv.
-///
-/// A token on a command line is a token in `~/.bash_history`, in `ps` output for
-/// every other user on the box, and in the shell's own recall. Those are three
-/// disclosures that no amount of care at the platform end can undo, so this tool
-/// will not accept one that way.
-///
-/// The reference it prints is what a manifest carries (ADR-0010): the manifest
-/// gets a pointer, never the value.
+/// Store a secret, reading the VALUE from a file or stdin — never from argv, where it
+/// would land in shell history and `ps` output. The printed reference is what a
+/// manifest carries (ADR-0010).
 pub fn secret_set(name: &str, from: Option<&PathBuf>, org: Option<&str>) -> Result<()> {
     let s = load()?;
     let value = match from {
@@ -525,8 +505,6 @@ extern "C" {
     fn libc_isatty(fd: i32) -> i32;
 }
 
-// ---- projects and goals (ADR-0082) -----------------------------------------
-
 pub fn project_add(name: &str, repo: &str, base: &str, org: Option<&str>) -> Result<()> {
     let s = load()?;
     let path = match org {
@@ -613,9 +591,7 @@ pub fn goal_add(
     Ok(())
 }
 
-/// Shared by `goal ls` (once) and `goal watch` (every refresh) — the
-/// snapshot, tier 1 of ADR-0081's own client-tier design, and the one every
-/// richer view must agree with.
+/// Shared by `goal ls` (once) and `goal watch` (every refresh).
 fn print_goals(project: &str, rows: &[Value]) {
     if rows.is_empty() {
         println!("no goals — `comp goal add {project} \"what to do\"` queues one");
@@ -655,17 +631,10 @@ pub fn goal_ls(project: &str, state: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Tier 2 of ADR-0081's client design, applied to the goal queue: list, then
-/// poll the event log as a fast path, then re-list on a timer REGARDLESS —
-/// the event feed only ever decides how soon to refresh, never what to show.
-/// A dropped event costs a few extra seconds of staleness, not a wrong
-/// answer, because `full_refresh` alone would eventually show the same
-/// thing.
-///
-/// Each invocation gets its own consumer group (`watch-<pid>`) so two people
-/// — or two terminals — watching the same project do not steal events from
-/// each other; harmless either way, since acking only decides how soon THIS
-/// view notices, never what it shows.
+/// `goal watch`: list, then poll the event log as a fast path, then re-list on a
+/// timer regardless — events only decide how soon to refresh, never what to show.
+/// Each invocation gets its own consumer group (`watch-<pid>`) so concurrent
+/// watchers do not steal events from each other.
 pub fn goal_watch(project: &str, interval: u64, full_refresh: u64) -> Result<()> {
     let s = load()?;
     let group = format!("watch-{}", std::process::id());

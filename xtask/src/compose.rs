@@ -18,10 +18,7 @@ pub(crate) struct ResolvedApp {
 }
 
 /// One answer to "which component is app X, and where does its composition go",
-/// shared by `compose`, `host` and `e2e` — they each used to guess separately,
-/// and disagreed: `compose` looked for a `<name>-domain` crate while `host`
-/// looked for `<name>_domain.composed.wasm`, so `authgate` (root `mfa-authgate`)
-/// failed to compose and `eshop` composed to a file `host` never looked for.
+/// shared by `compose`, `host` and `e2e` so they cannot disagree.
 pub(crate) fn resolve_app(name: &str) -> ResolvedApp {
     // apps/<name>.toml first: its `artifact` (and `root`, if it sets one) are the
     // app's own statement of what it is. `discover_apps` resolves the root from
@@ -71,7 +68,7 @@ pub(crate) fn resolve_app(name: &str) -> ResolvedApp {
 }
 
 /// `comp-plug <root>` — which composes `root` against its own imports — copied
-/// to `dest`. The old `_derive` recipe, which every `compose-*` was one call of.
+/// to `dest`.
 pub(crate) fn derive(comp_plug_bin: &Path, root: &str, dest: &str) -> Result<()> {
     let output = Command::new(comp_plug_bin).arg(root).output()?;
     if !output.status.success() {
@@ -203,14 +200,12 @@ pub(crate) fn compose_app(app: Option<&str>, build_ui: bool) -> Result<()> {
         }
         Some("grocery") => {
             println!("{}", "Composing grocery-domain application...".cyan().bold());
-            // Build UI
             if Path::new("examples/grocery/ui/package.json").exists() {
                 let mut npm = Command::new("npm");
                 npm.args(["--prefix", "examples/grocery/ui", "run", "build"]);
                 run_cmd(&mut npm, "npm run build (grocery UI)")?;
             }
 
-            // Build components
             let mut cargo_wasm = Command::new("cargo");
             cargo_wasm.args([
                 "build",
@@ -244,7 +239,6 @@ pub(crate) fn compose_app(app: Option<&str>, build_ui: bool) -> Result<()> {
             ]);
             run_cmd(&mut plug, "comp-plug grocery-domain")?;
 
-            // Copy to canonical target artifact location
             let canonical = "components/target/grocery_domain.composed.wasm";
             if let Ok(entries) = fs::read_dir("components/target/composed") {
                 for e in entries.flatten() {
@@ -262,17 +256,11 @@ pub(crate) fn compose_app(app: Option<&str>, build_ui: bool) -> Result<()> {
         Some("intent-router") => {
             println!("{}", "Composing intent-router...".cyan().bold());
 
-            // `intent-router` imports `llm:inference/inference`, and more than one
-            // built component satisfies it — `anthropic-provider`,
-            // `openai-provider`, `mock-provider`. Nothing in the generic path
-            // below disambiguates that (grocery is the only other app that
-            // needed to), so this pins it the same way grocery pins its
-            // override: an override dir holding only the one candidate this
-            // app composes against. `mock-provider` because this app is meant
-            // to compose and run for free, offline, with no API key — see
-            // apps/intent-router.toml's own comment. A deployment wanting a
-            // real provider composes by hand against a dir holding that one
-            // instead.
+            // `intent-router` imports `llm:inference/inference`, which several built
+            // components satisfy. Pin `mock-provider` (an override dir holding only
+            // that candidate) because this app is meant to compose and run offline
+            // with no API key. A real provider composes by hand against a dir holding
+            // that one instead.
             let mut cargo_wasm = Command::new("cargo");
             cargo_wasm.args([
                 "build",
@@ -312,13 +300,11 @@ pub(crate) fn compose_app(app: Option<&str>, build_ui: bool) -> Result<()> {
         Some(name) => {
             println!("{}", format!("Composing {name}...").cyan().bold());
 
-            // Check if UI build exists. `e2e` skips it, as the old `e2e-*`
-            // recipes did: the tests drive the API, not the SPA.
+            // `e2e` skips the UI: the tests drive the API, not the SPA.
             let ui_pkg = format!("examples/{name}/ui/package.json");
             if build_ui && Path::new(&ui_pkg).exists() {
-                // A fresh checkout has no node_modules, and `vite build` then
-                // fails as `vite: command not found` — the old `build-<app>-ui`
-                // recipes ran `npm ci` first for exactly this.
+                // A fresh checkout has no node_modules, and `vite build` then fails
+                // as `vite: command not found`.
                 if !Path::new(&format!("examples/{name}/ui/node_modules")).is_dir() {
                     let mut ci = Command::new("npm");
                     ci.args(["--prefix", &format!("examples/{name}/ui"), "ci"]);
