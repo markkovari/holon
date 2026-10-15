@@ -34,7 +34,6 @@ fn ms(t: Instant) -> u64 {
     t.elapsed().as_millis() as u64
 }
 
-/// Everything from "the original is in the bucket" to "here is the result".
 async fn evaluate(d: &Daemon, job: &Job, dir: &Path) -> Result<Value> {
     let (_, object) = parse_key(&job.key).ok_or_else(|| anyhow!("bad key {}", job.key))?;
     let ext = object.rsplit_once('.').map(|(_, e)| e.to_string()).unwrap_or_default();

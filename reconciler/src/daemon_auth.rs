@@ -1,23 +1,15 @@
 //! Shared-secret auth for the ADR-0095 daemons' loopback HTTP.
 //!
-//! Loopback binding alone is not a boundary. The egress allow-list
-//! (`host/src/tenant.rs`) gates what a wasm component's OWN sandbox may dial —
-//! it says nothing about who may reach a daemon that's already listening.
-//! Any other local process — another tenant's component whose own manifest
-//! happens to allow the same port, or anything else on the box with loopback
-//! access at all — could otherwise ask `comp-docker` for the container list,
-//! `comp-clipboard` for the clipboard's contents, `comp-cron` for the full
-//! crontab, with no caller-identity check of any kind. Fixed, documented port
-//! numbers (8000-8011) make this scan-free.
+//! Loopback binding alone is not a boundary: the egress allow-list (`host/src/tenant.rs`) gates what a
+//! component's own sandbox may dial, not who may reach a daemon already listening. Any other local
+//! process (another tenant's component whose manifest allows the same port, anything on the box)
+//! could ask `comp-docker` for the container list, `comp-clipboard` for its contents or `comp-cron`
+//! for the crontab; the fixed port numbers (8000-8011) make that scan-free.
 //!
-//! `--token` closes it: the wasm component reads `<name>-token` from
-//! `wasi:config` and sends it as `Authorization: Bearer <token>`; the daemon
-//! refuses anything else. A daemon started with no `--token` still answers
-//! every request — same shape as an empty `--allow-path`, but inverted:
-//! there, absence is the safe default (refuses everything); here, absence is
-//! convenience over security (a single-user dev box has no other local
-//! process to defend against), so it stays permissive but says so loudly
-//! rather than silently.
+//! `--token` closes it: the component reads `<name>-token` from `wasi:config` and sends it as
+//! `Authorization: Bearer <token>`; the daemon refuses anything else. With no `--token` it still
+//! answers everything but says so loudly: unlike an empty `--allow-path` (safe by refusing), here
+//! absence is convenience over security, for a single-user dev box.
 
 use axum::body::Body;
 use axum::extract::{Extension, Request};
@@ -26,9 +18,8 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use std::sync::Arc;
 
-/// A daemon comparing an operator-issued token against what a request sent is
-/// exactly the place a timing side-channel would matter — this is the one
-/// comparison across these daemons worth being constant-time about.
+/// The one comparison across these daemons worth being constant-time about: a timing side-channel on
+/// the operator-issued token would matter.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -36,11 +27,10 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// Axum middleware: refuses any request whose `Authorization: Bearer <token>`
-/// doesn't match, when a token was configured. Install with
-/// `.layer(axum::middleware::from_fn(require_token)).layer(Extension(Arc::new(token)))`
-/// — the `Extension` carries the expected token in, independent of whatever
-/// state type a daemon's own routes already use.
+/// Axum middleware: refuses any request whose `Authorization: Bearer <token>` doesn't match, when a
+/// token was configured. Install with
+/// `.layer(axum::middleware::from_fn(require_token)).layer(Extension(Arc::new(token)))`; the
+/// `Extension` carries the expected token independent of a daemon's own state type.
 pub async fn require_token(
     Extension(expected): Extension<Arc<Option<String>>>,
     req: Request<Body>,
@@ -61,13 +51,9 @@ pub async fn require_token(
     next.run(req).await
 }
 
-/// `--token <value>` on a command line is `ps`-readable by any local user —
-/// the exact reason `comp-host`'s own unit reads its config through
-/// `LoadCredential` rather than argv (see `render_unit`'s doc). `--token-file`
-/// is the same fix here: a systemd `LoadCredential` path the unit points at,
-/// read once at startup rather than passed as a value. `--token` still exists
-/// for a bare `cargo run` during local development, where there is no `ps`
-/// argv boundary worth protecting on a single-user box.
+/// `--token <value>` on a command line is `ps`-readable by any local user, the reason `comp-host`'s
+/// unit reads its config through `LoadCredential` (see `render_unit`). `--token-file` is the same
+/// fix: a `LoadCredential` path read once at startup. `--token` remains for local `cargo run`.
 pub fn resolve_token(direct: Option<String>, file: Option<std::path::PathBuf>) -> Option<String> {
     if let Some(path) = file {
         return std::fs::read_to_string(&path)
@@ -78,8 +64,7 @@ pub fn resolve_token(direct: Option<String>, file: Option<std::path::PathBuf>) -
     direct
 }
 
-/// The startup warning every daemon prints when run without `--token` — one
-/// place to word it so all twelve say the same thing.
+/// The startup warning every daemon prints when run without `--token`: one place to word it.
 pub fn warn_if_unauthenticated(bin: &str, token: &Option<String>) {
     if token.is_none() {
         eprintln!(
@@ -118,8 +103,8 @@ mod tests {
 
     #[test]
     fn a_missing_token_file_falls_back_to_none_not_the_direct_value() {
-        // A configured file that cannot be read is a misconfiguration worth
-        // failing loudly on, not silently falling back to a weaker value.
+        // A configured file that cannot be read is a misconfiguration worth failing loudly on, not silently
+        // falling back to a weaker value.
         let path = std::env::temp_dir().join("daemon-auth-test-does-not-exist.token"); // nosemgrep: rust.lang.security.temp-dir.temp-dir
         assert_eq!(resolve_token(Some("from-argv".into()), Some(path)), None);
     }

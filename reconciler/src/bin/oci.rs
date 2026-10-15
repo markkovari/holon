@@ -8,29 +8,22 @@
 //!
 //! ## Why this exists
 //!
-//! Push has been in `reconciler/src/oci.rs` since ADR-0017 with nothing to pull it
-//! back, so the only ways to obtain a component's bytes were to build it or to
-//! download CI's artifact (`gh run download`, `docs/REGISTRY.md`). Building now
-//! means five toolchains, one of them a 200 MB wasi-sdk and one a gigabyte of .NET
-//! (`docs/POLYGLOT.md`). GitHub Actions artifacts expire after thirty days, need a
-//! green run for that exact commit, and arrive as all 205 components or none.
-//!
-//! None of those is a way to get ONE component you did not build. This is.
+//! Push has existed (`reconciler/src/oci.rs`, ADR-0017) with nothing to pull it back, so the only ways
+//! to get a component's bytes were to build it (five toolchains, `docs/POLYGLOT.md`) or download
+//! CI's artifact (expires after thirty days, needs a green run for that commit, all 205 components
+//! or none). This is the way to get ONE component you did not build.
 //!
 //! ## What it is not
 //!
-//! Not on the runtime path. ADR-0024 moved distribution to a JetStream object store
-//! keyed by sha256 and that is unchanged: a node still fetches by digest and never
-//! talks to a registry. This is for people and for CI.
+//! Not on the runtime path: ADR-0024 moved distribution to a JetStream object store keyed by sha256,
+//! so a node still fetches by digest and never talks to a registry. This is for people and for CI.
 //!
 //! ## Digests, not tags
 //!
-//! Every push is tagged with the first twelve hex of the component's own sha256, so
-//! a tag can never change meaning under someone (ADR-0006). There is no `latest`
-//! tag. What it PRINTS is the digest, and
-//! `--lock` writes the digest for every component pushed. Pull verifies the bytes
-//! against the digest the manifest named before it writes a file, because a registry
-//! is a cache and the digest is the trust boundary (ADR-0024).
+//! Every push is tagged with the first twelve hex of the component's own sha256, so a tag never
+//! changes meaning (ADR-0006); there is no `latest`. It PRINTS the digest, and `--lock` writes it for
+//! every component pushed. Pull verifies the bytes against the manifest's digest before writing a
+//! file: a registry is a cache and the digest is the trust boundary (ADR-0024).
 
 use std::path::PathBuf;
 
@@ -70,7 +63,6 @@ enum Cmd {
     },
 }
 
-/// Split `ghcr.io/owner/repo` into the host to talk to and the repo prefix.
 fn split_registry(registry: &str) -> (String, String) {
     match registry.split_once('/') {
         Some((host, prefix)) => (host.to_string(), prefix.to_string()),
@@ -87,10 +79,9 @@ fn repo_for(prefix: &str, name: &str) -> String {
     }
 }
 
-/// Every `.wasm` a path names: the file itself, or the ones directly inside a
-/// directory. Not recursive — `components/target` has composed artifacts and build
-/// intermediates under it, and sweeping those up would publish things nobody meant
-/// to publish.
+/// Every `.wasm` a path names: the file itself, or the ones directly inside a directory. Not
+/// recursive: `components/target` has composed artifacts and build intermediates that nobody meant to
+/// publish.
 fn wasm_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     for p in paths {
@@ -116,20 +107,15 @@ fn wasm_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 
 /// The component's surface, for the OCI config blob.
 ///
-/// `plug::surface` is the reader this repository already uses to decide what can be
-/// plugged into what, so the strings a puller sees are the same strings the composer
-/// reasons about rather than a second opinion from another parser.
-///
-/// Best-effort on purpose: the BYTES are the artifact. A core module or an adapter
-/// sitting in the same directory has no surface and is still worth publishing, so a
-/// failure here is an empty list rather than a refusal.
+/// `plug::surface` is the reader the composer uses, so a puller sees the same strings the composer
+/// reasons about. Best-effort: the BYTES are the artifact, and a core module or adapter with no
+/// surface is still worth publishing, so a failure is an empty list.
 fn surface(wasm: &[u8]) -> (Vec<String>, Vec<String>) {
     match comp_reconciler::plug::surface(wasm) {
         Ok(s) => (
             s.exports.into_iter().collect(),
-            // Both kinds, because a puller wants to know everything this thing will
-            // reach for — and `docs/POLYGLOT.md` is exactly about host imports a
-            // component acquired without asking.
+            // Both kinds, because a puller wants to know everything the component will reach for
+            // (`docs/POLYGLOT.md` is about host imports acquired without asking).
             s.imports.into_iter().chain(s.host_imports).collect(),
         ),
         Err(_) => (Vec::new(), Vec::new()),
@@ -140,16 +126,15 @@ fn surface(wasm: &[u8]) -> (Vec<String>, Vec<String>) {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let http = reqwest::Client::builder()
-        // A component is megabytes and a registry can be slow; the default is not
-        // generous enough for a 17 MB Python build over a home connection.
+        // A component is megabytes and a registry can be slow; the default is too short for a 17 MB Python
+        // build over a home connection.
         .timeout(std::time::Duration::from_secs(300))
         .build()?;
     let creds = Creds::from_env();
 
     match args.cmd {
         Cmd::Push { registry, paths, lock } => {
-            // Only on push. Anonymous is the NORMAL case for pull — it is how you
-            // fetch anything public — so warning about it there is noise.
+            // Only on push: anonymous is the NORMAL case for pull, so warning there is noise.
             if creds.is_none() {
                 eprintln!("no OCI_USER/OCI_PASSWORD set; a push will almost certainly be refused");
             }
@@ -162,8 +147,7 @@ async fn main() -> Result<()> {
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .with_context(|| format!("unnameable path {}", path.display()))?
-                    // The repo builds `portfolio_value.wasm`; a registry path reads
-                    // better with the name the catalogue uses.
+                    // The repo builds `portfolio_value.wasm`; a registry path reads better with the catalogue's name.
                     .replace('_', "-");
                 let wasm =
                     std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
@@ -193,8 +177,7 @@ async fn main() -> Result<()> {
         Cmd::Pull { registry, reference, out } => {
             let (host, prefix) = split_registry(&registry);
             let base = format!("{}://{host}", args.scheme);
-            // `name@sha256:…` first: a digest is the reference that cannot drift, so
-            // it wins over the `:tag` split, and a digest contains a colon itself.
+            // `name@sha256:…` first: a digest cannot drift, so it wins over the `:tag` split (and contains a colon).
             let (name, reference) = match reference.split_once('@') {
                 Some((n, d)) => (n.to_string(), d.to_string()),
                 None => match reference.split_once(':') {

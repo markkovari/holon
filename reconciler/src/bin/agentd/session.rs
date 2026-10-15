@@ -71,7 +71,6 @@ pub enum Refusal {
     Busy,
 }
 
-/// `session.json`.
 #[derive(Serialize, Deserialize)]
 struct Meta {
     id: String,
@@ -211,7 +210,6 @@ impl Session {
         write_atomic(&dir.join("session.json"), &serde_json::to_vec_pretty(&meta)?)
     }
 
-    /// Rewrite `history.json`. Called when a task ends.
     pub fn save_history(&self, h: &[Msg]) {
         if let Some(dir) = &self.dir {
             let r = serde_json::to_vec(h)

@@ -1,16 +1,12 @@
 //! Joining the parts of a decomposed goal: the mocks that let them diverge, the
 //! merge that puts them back together, and the gate that judges the whole.
 //!
-//! Two green parts are not a green whole (ADR-0086). Each part gates alone —
-//! the backend against the contract, the frontend against fixtures generated from
-//! the same contract — and neither waits for the other. This module is what
-//! happens after both are green: merge the winners, run the goal's own checks over
-//! the joined tree, and refuse loudly when the halves were built against different
-//! versions.
+//! Two green parts are not a green whole (ADR-0086). Each part gates alone and neither waits for the
+//! other; this module merges the winners, runs the goal's own checks over the joined tree, and
+//! refuses loudly when the halves were built against different contract versions.
 //!
-//! The gate here is **the same runner** the branches were judged by. A composition
-//! judged by different machinery than the parts is a composition whose failures
-//! are arguments about the harness.
+//! The gate here is **the same runner** the branches were judged by: a composition judged by
+//! different machinery is a composition whose failures are arguments about the harness.
 
 use std::time::Duration;
 
@@ -23,12 +19,10 @@ pub const MOCK_DIR: &str = ".contract-mocks";
 
 /// How a part asks for a change to the contract.
 ///
-/// A model has no tool: it cannot call the registry, and giving it one would mean
-/// an agent that can reach the shared interface directly. So a request rides the
-/// channel a branch already has — **a file in its candidate**. First line is the
-/// subject, the rest is the body, and the orchestrator turns it into an `ask` and
-/// then drops it: it is a question, not code, and merging it would land a
-/// question in the pull request.
+/// A model has no tool and giving it the registry would mean an agent reaching the shared interface
+/// directly, so a request rides the channel a branch already has: **a file in its candidate**. First
+/// line is the subject, the rest the body; the orchestrator turns it into an `ask` and drops it, as
+/// merging it would land a question in the pull request.
 pub const REQUEST_PATH: &str = "CONTRACT-REQUEST.md";
 
 /// The request a candidate is carrying, if any.
@@ -37,13 +31,10 @@ pub fn request_of(entry: &Entry) -> Option<(String, String)> {
     let f = files.iter().find(|f| f["path"] == json!(REQUEST_PATH))?;
     let content = f["content"].as_str()?.trim();
     let (subject, body) = match content.split_once('\n') {
-        // A model writing a markdown file writes a markdown TITLE, so the first
-        // line comes back as `# Contract Request` and every request in a run
-        // dedups onto that one subject. Measured on the first real run.
+        // A model writing a markdown file writes a markdown TITLE, so the first line comes back as
+        // `# Contract Request` and every request dedups onto that one subject.
         Some((s, b)) => (s.trim().trim_start_matches('#').trim(), b.trim()),
-        // A subject with no body is a question with no argument. Allowed — the
-        // answering part still has the contract and the subject — but the body
-        // being empty is not an error worth failing a round over.
+        // A subject with no body is a question with no argument; allowed, not worth failing a round over.
         None => (content, ""),
     };
     if subject.is_empty() {
@@ -54,10 +45,8 @@ pub fn request_of(entry: &Entry) -> Option<(String, String)> {
 
 /// Every distinct request in a generation's worth of candidates.
 ///
-/// Read from ALL the entries, not from the winner: a branch that scored zero can
-/// still be the one that noticed the interface is wrong, and when no branch passes
-/// there is no winner to read at all — which is exactly the round in which a part
-/// most needs to ask for something.
+/// Read from ALL entries, not the winner: a branch that scored zero may be the one that noticed the
+/// interface is wrong, and when no branch passes there is no winner, the round a part most needs to ask.
 pub fn requests_in(entries: &[Entry]) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     for e in entries {
@@ -72,19 +61,15 @@ pub fn requests_in(entries: &[Entry]) -> Vec<(String, String)> {
 
 /// Fixtures a part can develop against, derived from the contract.
 ///
-/// This is "mock generation" in the only form that costs nothing and works in
-/// every language: **files**, not a server. A generated mock server needs a
-/// runtime per stack, a port, and something to keep it alive for the length of a
-/// check; a fixture is a file any test framework can read, and the part's tree is
-/// already how a branch is handed everything else it knows.
+/// "Mock generation" in the only form that costs nothing and works in every language: **files**, not a
+/// server (which needs a runtime per stack, a port and a keeper). The part's tree is already how a
+/// branch is handed everything it knows.
 ///
-/// The contract's own `example` is the fixture. A route without one produces no
-/// file, which is deliberate: inventing an example would put a shape into the
-/// frontend's tests that the backend never agreed to.
+/// The contract's own `example` is the fixture. A route without one produces no file: inventing one
+/// would put a shape in the frontend's tests the backend never agreed to.
 pub fn mocks(contract: &str) -> Vec<(String, String)> {
     let Ok(v) = serde_json::from_str::<Value>(contract) else {
-        // A contract that is not JSON is a contract this cannot read, and a
-        // fixture guessed at from prose is worse than no fixture.
+        // A contract that is not JSON cannot be read, and a fixture guessed from prose is worse than none.
         return Vec::new();
     };
     let mut out = Vec::new();
@@ -105,7 +90,6 @@ pub fn mocks(contract: &str) -> Vec<(String, String)> {
     out
 }
 
-/// `GET /api/search?q=` → `GET_api_search.json`. A path is not a filename.
 fn fixture_name(method: &str, path: &str) -> String {
     let cleaned: String = path
         .split('?')
@@ -117,7 +101,6 @@ fn fixture_name(method: &str, path: &str) -> String {
     format!("{}_{}.json", method.to_uppercase(), cleaned.trim_matches('_'))
 }
 
-/// Lay the generated fixtures into a part's plan, beside the contract.
 pub fn with_mocks(plan: &Value, contract: &str) -> Value {
     let mut plan = plan.clone();
     let mut context = plan["context"].as_array().cloned().unwrap_or_default();
@@ -134,10 +117,8 @@ pub fn with_mocks(plan: &Value, contract: &str) -> Value {
 
 /// Every part's winner, as one set of changes.
 ///
-/// Two parts writing the same path is refused rather than resolved. Their
-/// `writable` sets are supposed to be disjoint — that is most of what makes them
-/// separate parts — so an overlap is a decomposition bug, and silently taking one
-/// side of it would land half of each.
+/// Two parts writing the same path is refused rather than resolved: their `writable` sets should be
+/// disjoint, so an overlap is a decomposition bug and taking one side would land half of each.
 pub fn merge(winners: &[(String, Entry)]) -> Result<Value, Vec<String>> {
     let mut merged: Vec<Value> = Vec::new();
     let mut owner: Vec<(String, String)> = Vec::new();
@@ -145,9 +126,7 @@ pub fn merge(winners: &[(String, Entry)]) -> Result<Value, Vec<String>> {
     for (part, entry) in winners {
         for f in entry.files.as_array().cloned().unwrap_or_default() {
             let path = f["path"].as_str().unwrap_or_default().to_string();
-            // A request is a question, not code. It has already been asked by the
-            // time anything is merged, and landing it would put a question in the
-            // pull request.
+            // A request is a question, not code, and landing it would put a question in the pull request.
             if path == REQUEST_PATH {
                 continue;
             }
@@ -169,22 +148,17 @@ pub fn merge(winners: &[(String, Entry)]) -> Result<Value, Vec<String>> {
     Ok(Value::Array(merged))
 }
 
-/// What the composition gate found.
 #[derive(Debug, Clone)]
 pub struct Report {
     pub passed: bool,
     pub score: u64,
-    /// One line per failing check — what a human acts on.
     pub failures: Vec<String>,
 }
 
-/// Run the goal's own checks over the joined tree, on the same runner that judged
-/// the parts.
+/// Run the goal's own checks over the joined tree, on the same runner that judged the parts.
 pub fn gate(
     checks_url: &str,
-    // `checks_token` is the runner's bearer token, when it wants one. `None` is a
-    // supported way to run and the shape a runner somebody else started on
-    // loopback may have.
+    // `checks_token` is the runner's bearer token, when it wants one; `None` is a supported way to run.
     checks_token: Option<&str>,
     base_commit: &str,
     base_tree: &Value,
@@ -193,8 +167,7 @@ pub fn gate(
     timeout: Duration,
 ) -> Result<Report, String> {
     if checks.as_array().map(|c| c.is_empty()).unwrap_or(true) {
-        // The same refusal the evaluator makes: an empty gate accepts everything,
-        // which is never what was meant.
+        // The same refusal the evaluator makes: an empty gate accepts everything, never what was meant.
         return Err("no composition checks — an empty gate would accept any two halves".into());
     }
     let body = json!({
@@ -222,11 +195,9 @@ pub fn gate(
 
 /// The runner's report, read the way the evaluator reads it.
 ///
-/// Two field names to get right, both captured from `comp-checks` rather than
-/// guessed: the per-check list is **`results`**, and the gate is **`accepted`** —
-/// `passed` at the top level is a COUNT of how many checks passed, so reading it
-/// as a boolean makes every composition fail with an empty list of reasons, which
-/// is precisely as confusing as it sounds.
+/// Two field names captured from `comp-checks`: the per-check list is **`results`**, the gate is
+/// **`accepted`**. `passed` at the top level is a COUNT, so reading it as a boolean fails every
+/// composition with an empty list of reasons.
 pub fn report_of(v: &Value) -> Report {
     let outcomes = v["results"].as_array().cloned().unwrap_or_default();
     let failures: Vec<String> = outcomes
@@ -247,9 +218,8 @@ pub fn report_of(v: &Value) -> Report {
         })
         .collect();
     Report {
-        // The runner has already decided the gate; trusting its verdict rather than
-        // re-deriving it keeps the gate in one place. `failures` is belt and braces
-        // for a report that says accepted with a required check missing.
+        // The runner has already decided the gate; trusting it keeps the gate in one place. `failures` is
+        // belt and braces for a report that says accepted with a required check missing.
         passed: v["accepted"].as_bool().unwrap_or(false) && failures.is_empty(),
         score: v["score"].as_u64().unwrap_or(0),
         failures,
@@ -287,7 +257,6 @@ mod tests {
         assert_eq!(out.len(), 1, "a route with no example invents nothing: {out:?}");
         assert_eq!(out[0].0, ".contract-mocks/GET_api_search.json");
         assert!(out[0].1.contains("has_more"));
-        // Pretty-printed, because a human reads these in a diff.
         assert!(out[0].1.contains('\n'), "{}", out[0].1);
     }
 
@@ -345,7 +314,6 @@ mod tests {
         );
         assert!(body.starts_with("I cannot paginate"));
 
-        // And the question does not land.
         let merged = merge(&[("frontend".to_string(), asking)]).unwrap();
         let paths: Vec<&str> =
             merged.as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
@@ -368,8 +336,7 @@ mod tests {
     #[test]
     fn a_candidate_with_no_question_asks_nothing() {
         assert!(request_of(&entry(json!([{ "path": "ui/app.ts", "content": "x" }]))).is_none());
-        // An empty request file is not a request: a model that wrote the file and
-        // nothing in it has not asked anybody anything.
+        // An empty request file is not a request.
         assert!(request_of(&entry(json!([{ "path": REQUEST_PATH, "content": "  \n " }]))).is_none());
     }
 
@@ -386,8 +353,7 @@ mod tests {
             "{}",
             out[0]
         );
-        // The message has to say what to do, or the critic is a thing people
-        // disable rather than fix.
+        // The message has to say what to do, or the critic gets disabled rather than fixed.
         assert!(out[0].contains("Make it fail against the code as it stands"), "{}", out[0]);
         assert!(out[0].contains("may_pass_base = true"), "{}", out[0]);
         assert!(refusal(&[]).is_empty());
@@ -423,7 +389,6 @@ mod tests {
         assert!(e.contains("empty gate"), "{e}");
     }
 
-    /// The real shape, captured from `comp-checks`. Note `passed` is a COUNT.
     #[test]
     fn a_report_names_what_failed() {
         let v = json!({
@@ -456,16 +421,10 @@ mod tests {
     }
 }
 
-// ===========================================================================
 // The whole decomposed run, in one place.
-// ===========================================================================
-//
-// This lived in `comp-goalrun` and again in the e2e that was supposed to cover
-// it, which meant the test exercised a re-spelling of the binary rather than the
-// binary. Two copies of an orchestration drift, and the one that drifts is always
-// the one nothing runs — the same reason the SurrealDB fixture moved into the
-// shared harness. So the loop is library code with a thin caller: the binary
-// prints and lands, the test asserts, and both drive THIS.
+// This lived in `comp-goalrun` and again in the e2e meant to cover it, so the test exercised a
+// re-spelling of the binary; two copies drift. The loop is library code with a thin caller: the
+// binary prints and lands, the test asserts, both drive THIS.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -476,24 +435,18 @@ use crate::generation::{
 };
 use crate::memory::{self, Memory, Reading};
 
-/// What a decomposed run came to, in the order a caller has to check it.
 pub struct Composed {
     pub composition: Composition,
-    /// Every negotiation line, in order — the part a reviewer most needs and
-    /// could never reconstruct.
+    /// Every negotiation line, in order: the part a reviewer most needs and could never reconstruct.
     pub log: Vec<String>,
-    /// Why there is nothing to land, or empty. A part that never passed, halves on
-    /// different contract versions, two parts writing one path, a join that failed:
-    /// four different problems, each of which must name itself.
+    /// Why there is nothing to land, or empty: a part that never passed, halves on different contract
+    /// versions, two parts writing one path, a failed join. Each must name itself.
     pub blocked: Vec<String>,
-    /// The merged tree, when there is one.
     pub changes: Option<Value>,
-    /// The composition gate's verdict, when it ran.
     pub report: Option<Report>,
 }
 
 impl Composed {
-    /// There is a joined tree that passed a gate neither half could pass alone.
     pub fn landable(&self) -> bool {
         self.blocked.is_empty()
             && self.changes.is_some()
@@ -501,32 +454,26 @@ impl Composed {
     }
 }
 
-/// Where the parts run, what judges them, and who they agree through.
 pub struct Wiring<'a> {
     pub driver_url: &'a str,
     pub driver_host: &'a str,
     pub checks_url: &'a str,
-    /// The token the COMPOSITION gate presents. The per-part gates go through the
-    /// `checks-runner` component, which reads its own from `comp:secrets`; this
-    /// is the one call the loop makes directly, and it needs the same credential
-    /// or the composition is 401 while every part was fine — the most confusing
-    /// arrangement available.
+    /// The token the COMPOSITION gate presents. The per-part gates go through `checks-runner`, which reads
+    /// its own from `comp:secrets`; this is the one call the loop makes directly, and without the same
+    /// credential the composition is 401 while every part was fine.
     pub checks_token: Option<&'a str>,
     pub registry: &'a Registry,
-    /// `None` runs the loop without answering anything: requests accumulate, the
-    /// run continues on the current contract, and nothing blocks. A supported way
-    /// to run and the shape a deployment with no provider gets.
+    /// `None` runs the loop without answering anything: requests accumulate, the run continues on the
+    /// current contract, nothing blocks.
     pub answerer: Option<&'a Answerer>,
-    /// `None` runs the parts with no memory: they read nothing, write nothing, and
-    /// the run is what it was before the pool existed.
+    /// `None` runs the parts with no memory: they read nothing and write nothing.
     pub memory: Option<&'a Memory>,
 }
 
 /// Run a decomposed goal to the point where a pull request could be opened.
 ///
-/// Deliberately does no printing and opens nothing: what a run should SAY and
-/// whether it should land are the caller's, and a function that did both could not
-/// be tested without a forge.
+/// Does no printing and opens nothing: what a run should SAY and whether it lands are the caller's,
+/// and doing both would need a forge to test.
 #[allow(clippy::too_many_arguments)]
 pub fn run_parts(
     w: &Wiring,
@@ -541,13 +488,10 @@ pub fn run_parts(
     composition_checks: &Value,
 ) -> Composed {
     let log = RefCell::new(Vec::<String>::new());
-    // What each (part, branch) read, so a verdict can be attributed to it.
     let readings: RefCell<BTreeMap<(String, usize), Vec<String>>> = RefCell::new(BTreeMap::new());
 
-    // What a round taught, and what it owed. Called at every boundary AND once
-    // after the loop, because the loop breaks when every part passes — so the
-    // boundary never sees the round that succeeded, and a run would learn nothing
-    // from the only round that worked.
+    // What a round taught, and what it owed. Called at every boundary AND once after the loop: the loop
+    // breaks when every part passes, so the boundary never sees the round that succeeded.
     let learn = |outcomes: &[PartOutcome]| {
         let Some(m) = w.memory else { return };
         for o in outcomes {
@@ -581,16 +525,14 @@ pub fn run_parts(
         bounds,
         seed,
         timeout,
-        // What each part reads, per round. A part asks about ITS OWN goal: a
-        // backend and a frontend attempting one feature want different lessons,
-        // and the pool is keyed by the goal that was asked.
+        // What each part reads, per round. A part asks about ITS OWN goal: a backend and a frontend attempting
+        // one feature want different lessons, and the pool is keyed by the goal asked.
         |part: &Part, _round: u16| -> Vec<Strategy> {
             let mut ss = default_strategies(bounds.branches);
             let Some(m) = w.memory else { return ss };
             let goal = part.plan["text"].as_str().unwrap_or_default().to_string();
-            // What this part's work touches, so what it learns is findable by the
-            // next part to build against the same interfaces rather than only by
-            // the next part to describe its goal the same way (ADR-0090).
+            // What this part's work touches, so what it learns is findable by the next part to build against the
+            // same interfaces (ADR-0090).
             let writable: Vec<String> = part.plan["writable"]
                 .as_array()
                 .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
@@ -600,8 +542,7 @@ pub fn run_parts(
                 &crate::plug::Catalog::scan(&crate::plug::default_dirs(&crate::fleet::repo_root())),
             );
             for (i, s) in ss.iter_mut().enumerate() {
-                // The control arm reads nothing here too — it is the only way to
-                // tell whether the pool helps this part or merely costs it.
+                // The control arm reads nothing here too: the only way to tell whether the pool helps this part.
                 if !s.reads_prior {
                     continue;
                 }
@@ -633,16 +574,12 @@ pub fn run_parts(
             ss
         },
         |round, outcomes| {
-            // What the round just run taught, before anything is negotiated.
             learn(outcomes);
-            // A part asks by writing a file, and the orchestrator turns it into a
-            // request: a model has no tool, and giving it one would mean an agent
-            // that can reach the shared interface directly.
+            // A part asks by writing a file and the orchestrator turns it into a request: a model has no tool.
             for o in outcomes {
                 let Some(last) = o.rounds.last() else { continue };
                 for (subject, body) in requests_in(&last.entries) {
-                    // Addressed to the other part. With more than two this needs a
-                    // routing rule; with two it is the only other one there is.
+                    // Addressed to the other part. With more than two this needs a routing rule.
                     let Some(to) = parts.iter().map(|p| &p.name).find(|n| **n != o.part) else {
                         continue;
                     };
@@ -668,10 +605,8 @@ pub fn run_parts(
             let mut lines = log.borrow_mut();
             match w.registry.boundary(outcomes, w.answerer, &mut lines) {
                 Ok(next) => next,
-                // A boundary that cannot say what the contract is has nothing to
-                // hand the next round, and carrying on from a guess is how two
-                // halves that each pass fail together. The round repeats on what
-                // each part had.
+                // A boundary that cannot say what the contract is has nothing to hand the next round, and carrying on
+                // from a guess is how two passing halves fail together. The round repeats on what each part had.
                 Err(e) => {
                     lines.push(format!("generation {round}: the boundary failed: {e}"));
                     Vec::new()
@@ -680,11 +615,10 @@ pub fn run_parts(
         },
     );
 
-    // The round that succeeded is the one the boundary never saw.
     learn(&composition.parts);
     let mut log = log.into_inner();
 
-    // 1. Every part, or nothing. A brilliant backend and no frontend is nothing.
+    // 1. Every part, or nothing.
     if !composition.blocked.is_empty() {
         let blocked = composition.blocked.clone();
         return Composed { composition, log, blocked, changes: None, report: None };
@@ -747,65 +681,42 @@ pub fn run_parts(
     }
 }
 
-// ===========================================================================
 // Criticising the gate (goal 07).
-// ===========================================================================
 
 /// A check that already passes on the UNMODIFIED base tree.
 ///
-/// Such a check cannot fail, so it cannot judge: a candidate that changes nothing
-/// satisfies it, and a run gated on it accepts anything. This is not theoretical —
-/// the first real decomposed run on this repository scored a perfect 1000 on two
-/// candidates that had deleted their own component exports, because
-/// `cargo component check` passes on a crate that implements none of its world.
-///
-/// The critic runs BEFORE the money is spent, which is the whole point: a wrong
-/// gate discovered after a generation has already bought the wrong answer.
+/// Such a check cannot fail, so it cannot judge: a run gated on it accepts anything. The first real
+/// decomposed run scored 1000 on two candidates that had deleted their own component exports, because
+/// `cargo component check` passes on a crate that implements none of its world. The critic runs
+/// BEFORE the money is spent.
 #[derive(Debug, Clone)]
 pub struct Vacuous {
     pub id: String,
-    /// Why it is being allowed anyway, when it is.
     pub excused: bool,
 }
 
-/// What the base tree looked like to the gate: which checks were vacuous, and WHY the
 /// others failed.
 ///
-/// The reasons are carried out rather than dropped because "every check fails" is two
-/// very different states wearing one face. A check failing because the work is not
-/// done is a gate that can judge. A check failing because the tree it was handed
-/// cannot even build is a gate that will fail every candidate identically — and it
-/// reads as healthy here. That cost run 1 of docs/measure/complex-five.md its entire
-/// budget: one directory missing from the goal's `base_paths`, thirty-six model calls,
-/// and a precheck that said the gate was ready.
+/// The reasons are carried out because "every check fails" is two states: the work is not done (a gate
+/// that can judge) or the tree cannot even build (a gate that fails every candidate identically yet
+/// reads as healthy; this cost run 1 of docs/measure/complex-five.md its whole budget, 36 model calls).
 #[derive(Debug)]
 pub struct BaseVerdict {
     pub vacuous: Vec<Vacuous>,
-    /// One entry per failing check, as the runner reported it: `id: reason`.
     pub reasons: Vec<String>,
 }
 
 /// Put the base tree in the runner's cache, and confirm it landed.
 ///
-/// The point is what comes AFTER: once the runner has the tree keyed by commit,
-/// nothing downstream has to carry it. The plan a branch runs from names the
-/// commit and nothing else, so 500 KB of repository stops crossing the lattice
-/// once per generation — and the ceiling on a message stops being a ceiling on
-/// how large a goal's tree may be.
+/// Once the runner has the tree keyed by commit nothing downstream carries it: a branch's plan names
+/// the commit only, so 500 KB stops crossing the lattice per generation and the message ceiling stops
+/// limiting a goal's tree. A commit id is a content address, so no invalidation logic is needed.
 ///
-/// A commit id is a content address, so "does the runner have the right tree"
-/// needs no invalidation logic: `ensure_base` returns the cached directory when
-/// the key is there and asks for the bytes when it is not.
+/// Sent with NO checks, because this is not a judgement: `comp-checks` caches the tree in `ensure_base`
+/// before it looks at the check list, so an empty list materialises the base and runs nothing.
 ///
-/// Sent with NO checks, because this is not a judgement. `comp-checks` caches the
-/// tree in `ensure_base` before it looks at the check list, so an empty list
-/// materialises the base and runs nothing — the cheapest call that has the
-/// required side effect.
-///
-/// Failure is fatal to the caller and deliberately so. This was previously a side
-/// effect of the base critic, which is allowed to fail — "could not be criticised,
-/// running anyway" — and a run that proceeded from there had an unseeded runner
-/// and no tree in the plan to fix it with.
+/// Failure is fatal to the caller on purpose: a run that proceeded would have an unseeded runner and
+/// no tree in the plan to fix it with.
 pub fn seed_base(
     checks_url: &str,
     checks_token: Option<&str>,
@@ -836,8 +747,8 @@ pub fn seed_base(
     let status = r.status().as_u16();
     let text = r.text().unwrap_or_default();
     if status != 200 {
-        // 409 here means the runner did not accept the tree it was just handed,
-        // which is a different fault from a cold cache and must not read as one.
+        // 409 here means the runner did not accept the tree it was just handed, a different fault from a cold
+        // cache.
         return Err(format!(
             "the runner would not take the base tree ({status}): {}",
             text.chars().take(300).collect::<String>()
@@ -848,10 +759,8 @@ pub fn seed_base(
 
 /// Run the checks against the base tree alone and report the ones that pass.
 ///
-/// `excuse` names the checks a caller has declared may legitimately pass on the
-/// base — a regression test, a benchmark that must not get slower, an invariant
-/// that is already true. Those are real shapes, and refusing them would make the
-/// critic something people turn off rather than something they trust.
+/// `excuse` names checks a caller declared may legitimately pass on the base (a regression test, a
+/// benchmark that must not get slower); refusing them would make the critic something people turn off.
 pub fn criticise(
     checks_url: &str,
     checks_token: Option<&str>,
@@ -865,8 +774,8 @@ pub fn criticise(
     if list.is_empty() {
         return Err("no checks to criticise — an empty gate accepts everything".into());
     }
-    // The same runner, the same tree, and NO changes. Anything green here is green
-    // for a candidate that did nothing.
+    // The same runner, the same tree, and NO changes: anything green here is green for a candidate that
+    // did nothing.
     let report =
         gate(checks_url, checks_token, base_commit, base_tree, &json!([]), checks, timeout)?;
     let failed: Vec<&str> = report.failures.iter().filter_map(|f| f.split(':').next()).collect();
@@ -881,7 +790,6 @@ pub fn criticise(
     })
 }
 
-/// One line per unexcused vacuous check, or nothing.
 pub fn refusal(vacuous: &[Vacuous]) -> Vec<String> {
     vacuous
         .iter()

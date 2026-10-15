@@ -1,9 +1,5 @@
 //! What a whole run has spent, in cents.
-//!
-//! `cost_cents` (in `cost.rs`) prices one completion. A run makes many, on
-//! possibly different models once a tier router exists, so the run's spend is the
-//! sum of its attempts' costs — the number a project budget is actually checked
-//! against (goal 01 — fuel is money).
+//! Each attempt is priced by `cost_cents` (`cost.rs`); the sum is what a project budget is checked against.
 
 use crate::cost::cost_cents;
 
@@ -13,9 +9,7 @@ use crate::cost::cost_cents;
 pub type Usage<'a> = (u32, u32, &'a str, bool);
 
 /// The total cost, in whole cents, of every attempt in a run.
-///
-/// The sum of each attempt priced by `cost_cents` — not a re-derivation, so the
-/// per-model pricing lives in exactly one place. An empty run has spent nothing.
+/// Each attempt is priced by `cost_cents`, so per-model pricing lives in one place.
 pub fn spent_cents(attempts: &[Usage]) -> u64 {
     attempts
         .iter()
@@ -23,10 +17,7 @@ pub fn spent_cents(attempts: &[Usage]) -> u64 {
         .sum()
 }
 
-/// Has this run spent past its cap? `cap_cents` of 0 means no cap, so a run with
-/// no budget is never over one — matching the codebase's "0 is unbounded"
-/// convention (a cap of zero is the absence of a cap, not a cap of nothing).
-/// Equal to the cap is within it; only strictly more is over.
+/// Has this run spent past its cap? `cap_cents` of 0 means no cap; equal to the cap is within it.
 pub fn over_budget(cap_cents: u64, attempts: &[Usage]) -> bool {
     if cap_cents == 0 {
         return false;

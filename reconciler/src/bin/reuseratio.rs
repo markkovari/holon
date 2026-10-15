@@ -2,29 +2,16 @@
 //!
 //!     comp-reuse-ratio .comp/goals/triage-assist.toml.archived [...]
 //!
-//! Two numbers per app, from the capability graph (`comp-capgraph`, ADR-0091) —
-//! rows a query can join against, kept current by the build — rather than by
-//! shelling out to `comp-plug`/`wasm-tools` and regexing their output or a
-//! `.wit` file per invocation:
+//! Two numbers per app, from the capability graph (`comp-capgraph`, ADR-0091), rather than shelling
+//! out to `comp-plug`/`wasm-tools` and regexing their output:
 //!
-//!   COMPOSITION   the other artifacts this app's `carries` edges name — the
-//!                 same wiring `comp-plug` computes, already projected.
-//!   CAPABILITIES  the interfaces this artifact's `imports` edges name — what
-//!                 the compiled binary actually calls.
+//! COMPOSITION   the other artifacts this app's `carries` edges name.
+//! CAPABILITIES  the interfaces this artifact's `imports` edges name: what the compiled binary calls.
 //!
-//! What this trades away: the graph's `imports` edges are derived from the
-//! BUILT artifact (same as the old `wasm-tools` reading), not from the `.wit`
-//! world source, so there is no record here of a capability a world OFFERS but
-//! nothing calls — the old "world offers N, UNUSED: ..." half of the report.
-//! That is a real capability this version does not have, not an oversight;
-//! restoring it means projecting the world's declared surface into the graph
-//! too, which is a `comp-capgraph` schema change, not one to make from here.
-//!
-//! Also: the graph reflects whatever `comp-capgraph`'s last run projected, not
-//! necessarily this exact tree — unlike the artifact-derived path this
-//! replaces, which read the measured tree's own build. `REUSE_ROOT` still
-//! selects which tree's goal spec and written files are read (the stub check
-//! below), just no longer which tree's build the composition numbers come from.
+//! Limits: `imports` edges derive from the BUILT artifact, not the `.wit` world source, so a capability a
+//! world OFFERS but nothing calls is not recorded (restoring it is a `comp-capgraph` schema change).
+//! The graph also reflects `comp-capgraph`'s last run, not necessarily this exact tree. `REUSE_ROOT`
+//! still selects which tree's goal spec and written files are read (the stub check below).
 //!
 //!     comp-reuse-ratio --surreal-url http://node.tailnet.ts.net:8000 <goal>...
 
@@ -57,9 +44,8 @@ struct Args {
     surreal_password: Option<PathBuf>,
 }
 
-/// A thin client over SurrealDB's `/sql` HTTP endpoint — the same wire
-/// protocol `reconciler/src/trace.rs` already uses, at the `comp`/`goalmemory`
-/// coordinates `comp-capgraph --format surql` projects into.
+/// A thin client over SurrealDB's `/sql` HTTP endpoint, as `reconciler/src/trace.rs` uses it, at the
+/// `comp`/`goalmemory` coordinates `comp-capgraph --format surql` projects into.
 struct Surreal {
     url: String,
     password: Option<String>,
@@ -75,10 +61,8 @@ impl Surreal {
         Self { url: url.trim_end_matches('/').to_string(), password, client }
     }
 
-    /// Run one SurrealQL statement and return its `result` array. Empty on any
-    /// failure (unreachable database, bad auth, a rejected statement) — a
-    /// measurement tool that cannot reach its data source reports nothing for
-    /// that app rather than crashing the whole run over one.
+    /// Run one SurrealQL statement and return its `result` array. Empty on any failure: a measurement tool
+    /// that cannot reach its data reports nothing for that app rather than crashing the run.
     fn query(&self, surql: &str) -> Vec<Value> {
         let mut req = self.client.post(format!("{}/sql", self.url));
         if let Some(p) = &self.password {
@@ -107,14 +91,13 @@ impl Surreal {
     }
 }
 
-/// A JSON string literal, so a crate name cannot carry SurrealQL syntax
-/// (matches `comp-capgraph`'s own `lit()`, ADR-0080's reasoning).
+/// A JSON string literal, so a crate name cannot carry SurrealQL syntax (as `comp-capgraph`'s `lit()`,
+/// ADR-0080).
 fn lit(s: &str) -> String {
     Value::String(s.to_string()).to_string()
 }
 
-/// A SurrealDB record id in `comp-capgraph`'s escaped form — same escaping, so
-/// ids always agree with what the projection wrote.
+/// A SurrealDB record id in `comp-capgraph`'s escaped form, so ids agree with what the projection wrote.
 fn rid(table: &str, id: &str) -> String {
     format!("{table}:⟨{}⟩", id.replace('⟩', ""))
 }
@@ -127,9 +110,8 @@ fn first_array<'a>(rows: &'a [Value], field: &str) -> Vec<&'a str> {
         .unwrap_or_default()
 }
 
-/// The other artifacts wired into the app whose domain component is
-/// `crate_name` — `comp-capgraph`'s `carries` edges, minus the root itself
-/// (which `carries` includes; see `capgraph.rs`'s own comment on why).
+/// The other artifacts wired into the app whose domain component is `crate_name`: `comp-capgraph`'s
+/// `carries` edges, minus the root itself.
 fn wired_peers(surreal: &Surreal, crate_name: &str) -> Vec<String> {
     let rows = surreal.query(&format!(
         "SELECT ->carries->artifact.name AS parts FROM app WHERE root = {};",
@@ -138,8 +120,7 @@ fn wired_peers(surreal: &Surreal, crate_name: &str) -> Vec<String> {
     first_array(&rows, "parts").into_iter().filter(|s| *s != crate_name).map(String::from).collect()
 }
 
-/// The interfaces `crate_name`'s compiled artifact imports — `comp-capgraph`'s
-/// `imports` edges, read out of the binary the same way `wasm-tools` did.
+/// The interfaces `crate_name`'s compiled artifact imports: `comp-capgraph`'s `imports` edges.
 fn imported_interfaces(surreal: &Surreal, crate_name: &str) -> Vec<String> {
     let rows = surreal.query(&format!(
         "SELECT ->imports->interface.name AS imported FROM {};",
@@ -175,8 +156,8 @@ fn report(root: &Path, surreal: &Surreal, goal_path: &str) -> Option<Row> {
         (parts.len() > 2 && parts[0] == "components").then(|| parts[1].to_string())
     })?;
 
-    // A stub tree would report a 99% ratio against sixteen lines of `not_implemented`,
-    // which is true and meaningless. Say so rather than print it as a result.
+    // A stub tree would report a 99% ratio against sixteen lines of `not_implemented`: true and
+    // meaningless, so say so.
     let stub_count = written_files
         .iter()
         .filter(|w| {

@@ -2,27 +2,23 @@
 //!
 //! ## Why this is a process and not a component
 //!
-//! Reading crontab needs `crontab -l`, and a `wasm32-wasip2` guest cannot spawn
-//! a process (ADR-0095). That is the sandbox working rather than a gap to
-//! route around, so the part that needs an operating system is native and is
-//! reached over HTTP exactly like the watcher and the transcoder are.
+//! Reading crontab needs `crontab -l`, and a `wasm32-wasip2` guest cannot spawn a process (ADR-0095).
+//! So the part that needs an operating system is native and reached over HTTP like the watcher and
+//! the transcoder.
 //!
-//! `components/system-cron` is the component side: it holds the WIT contract
-//! and dials this. Nothing here knows what a goal is.
+//! `components/system-cron` is the component side: it holds the WIT contract and dials this.
 //!
 //! ## No allow-list here
 //!
-//! `comp-fswatch` and `comp-ffmpeg` take `--allow-path` because a request
-//! names a filesystem path a model chose. This daemon reads exactly one
-//! thing — the crontab of the user running it — so there is nothing for a
-//! request to name and nothing for an allow-list to scope.
+//! `comp-fswatch` and `comp-ffmpeg` take `--allow-path` because a request names a path a model chose.
+//! This daemon reads exactly one thing, the crontab of the user running it, so there is nothing to
+//! scope.
 //!
 //! ## No crontab installed is not a failure
 //!
-//! `crontab -l` exits nonzero and writes "no crontab for <user>" to stderr
-//! when nobody has installed one. That is an empty job list, not
-//! `unavailable`: `unavailable` is reserved for the daemon failing to run
-//! `crontab` at all (binary missing, spawn failed).
+//! `crontab -l` exits nonzero and writes "no crontab for <user>" to stderr when nobody installed one.
+//! That is an empty job list, not `unavailable`, which is reserved for failing to run `crontab` at
+//! all (binary missing, spawn failed).
 //!
 //!   comp-cron --addr 127.0.0.1:8008
 
@@ -60,8 +56,7 @@ struct Job {
 
 /// One 5-field cron line -> a job. Blank lines and comments are not jobs.
 ///
-/// `0 3 * * * /usr/bin/backup.sh` -> schedule `"0 3 * * *"`, command
-/// `"/usr/bin/backup.sh"`.
+/// `0 3 * * * /usr/bin/backup.sh` -> schedule `"0 3 * * *"`, command `"/usr/bin/backup.sh"`.
 fn parse_line(line: &str) -> Option<Job> {
     let line = line.trim();
     if line.is_empty() || line.starts_with('#') {
@@ -82,8 +77,7 @@ async fn list_jobs() -> Json<Value> {
     let out = tokio::process::Command::new("crontab").arg("-l").output().await;
     let out = match out {
         Ok(o) => o,
-        // The binary itself could not be found or spawned — that is the only
-        // thing this reports as unavailable.
+        // The binary itself could not be found or spawned: the only thing reported as unavailable.
         Err(e) => {
             return Json(
                 json!({ "error": "unavailable", "detail": format!("failed to run crontab: {e}") }),
@@ -93,8 +87,7 @@ async fn list_jobs() -> Json<Value> {
 
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
-        // "no crontab for <user>" is the standard message crontab prints when
-        // nobody has installed one — that is an empty list, not a failure.
+        // The standard message when nobody has installed a crontab: an empty list, not a failure.
         if stderr.to_lowercase().contains("no crontab for") || out.stdout.is_empty() {
             return Json(json!({ "jobs": [] }));
         }

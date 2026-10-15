@@ -3,18 +3,15 @@
 //!
 //! ## Why this is a process and not a component
 //!
-//! Raising a desktop notification needs the platform's notification bus —
-//! D-Bus on Linux, native APIs on macOS/Windows — and a `wasm32-wasip2` guest
-//! has none of that (ADR-0095). `components/ui-notifier` is the component
-//! side: it holds the WIT contract and dials this over HTTP.
+//! Raising a desktop notification needs the platform's notification bus (D-Bus on Linux, native APIs
+//! elsewhere), which a `wasm32-wasip2` guest lacks (ADR-0095). `components/ui-notifier` is the
+//! component side and dials this over HTTP.
 //!
 //! ## What "unavailable" means here
 //!
-//! This needs a real, running notification bus. In a headless environment —
-//! most CI, most servers, many containers — there isn't one, and `notify-rust`
-//! reports that as an error. `unavailable` is the honest answer in that case,
-//! not a bug: a notification with nowhere to appear was never going to be
-//! delivered.
+//! This needs a real, running notification bus. Headless environments (most CI, servers, containers)
+//! have none, and `notify-rust` reports an error: `unavailable` is the honest answer, since a
+//! notification with nowhere to appear was never going to be delivered.
 //!
 //!   comp-uinotify --addr 127.0.0.1:8009
 
@@ -78,9 +75,8 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
 
-    /// The request body round-trips through serde the same way the
-    /// component's own JSON does — a quote or backslash in the message must
-    /// survive intact rather than breaking the shape.
+    /// The request body round-trips through serde as the component's own JSON does: a quote or backslash
+    /// in the message must survive intact.
     #[test]
     fn a_message_with_quotes_round_trips() {
         let body = r#"{"msg":"say \"hi\""}"#;

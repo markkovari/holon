@@ -1,21 +1,15 @@
 //! `comp-docker` — native daemon for container-docker
 //!
-//! Listing containers needs the docker socket, and a `wasm32-wasip2` guest
-//! has none of those (ADR-0095). `components/container-docker` is the
-//! component side: it holds the WIT contract and dials this over HTTP.
-//! Nothing here knows what a goal is.
+//! Listing containers needs the docker socket, which a `wasm32-wasip2` guest lacks (ADR-0095).
+//! `components/container-docker` is the component side and dials this over HTTP.
 //!
 //! ## What "ps" means here
 //!
-//! `bollard::Docker::list_containers(None)` — no filters — lists only
-//! running containers, matching plain `docker ps` without `-a`. A stopped
-//! container is not reported. That is deliberate rather than an oversight:
-//! this component's contract is about what is running, and a caller wanting
-//! everything can ask for a different capability.
+//! `bollard::Docker::list_containers(None)` lists only running containers, like `docker ps` without
+//! `-a`; deliberate, since the contract is about what is running.
 //!
-//! Any connection failure — the docker daemon not running, the socket not
-//! found — comes back as `{"error":"unavailable","detail":"..."}` rather than
-//! a crash: that is the honest answer for an environment with no docker.
+//! Any connection failure (daemon not running, socket not found) comes back as
+//! `{"error":"unavailable","detail":"..."}` rather than a crash: the honest answer with no docker.
 
 use anyhow::Result;
 use axum::{routing::post, Json, Router};
@@ -43,15 +37,13 @@ struct Args {
     addr: String,
 }
 
-/// The short id `docker ps` shows: the first 12 characters of the full one.
-/// A shorter id is returned as-is rather than padded — that only happens for
-/// a test fixture or a very unusual engine, never a real docker daemon.
+/// The short id `docker ps` shows: the first 12 characters. A shorter id is returned as-is (only a test
+/// fixture or unusual engine).
 fn short_id(id: &str) -> &str {
     &id[..id.len().min(12)]
 }
 
-/// `bollard` gives each name prefixed with `/` (docker's own convention, left
-/// over from a Swarm-mode addressing scheme). The first name, unprefixed, or
+/// `bollard` gives each name prefixed with `/` (a Swarm-era convention). The first name, unprefixed, or
 /// empty if the engine reported none.
 fn primary_name(names: &[String]) -> &str {
     names.first().map(|n| n.strip_prefix('/').unwrap_or(n)).unwrap_or("")

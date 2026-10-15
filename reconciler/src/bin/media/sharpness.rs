@@ -55,8 +55,8 @@ fn blur3(p: &[f32], w: usize, h: usize) -> Vec<f32> {
     out
 }
 
-/// `green-stab-v1` on a linear 0–1 plane, in the callback's `sharpness` shape
-/// (minus `subjects`, which need Vision's faces).
+/// `green-stab-v1` on a linear 0–1 plane, in the callback's `sharpness` shape (minus `subjects`, which
+/// need Vision's faces).
 pub(crate) fn green_stab_v1(plane: &[f32], w: usize, h: usize) -> Value {
     let stab: Vec<f32> = plane.iter().map(|v| v.max(0.0).sqrt()).collect();
     let tiles = tile_variances(&blur3(&stab, w, h), w, h, GRID);
@@ -91,8 +91,8 @@ pub(crate) fn round(v: f64, places: i32) -> f64 {
 mod tests {
     use super::*;
 
-    /// A tiny deterministic noise source — the test must not depend on a
-    /// crate's RNG, and must give the same plane every run.
+    /// A tiny deterministic noise source: the test must not depend on a crate's RNG and must give the same
+    /// plane every run.
     fn noise(seed: &mut u64) -> f32 {
         *seed ^= *seed << 13;
         *seed ^= *seed >> 7;
@@ -100,8 +100,8 @@ mod tests {
         (*seed % 10_000) as f32 / 10_000.0 - 0.5
     }
 
-    /// 256×256: a vertical edge at x=128 in the middle tile rows, sharp or
-    /// blurred, on a mid-grey with shot-like noise everywhere.
+    /// 256×256: a vertical edge at x=128 in the middle tile rows, sharp or blurred, on a mid-grey with
+    /// shot-like noise everywhere.
     fn plane(edge: Option<usize>, noise_amp: f32) -> Vec<f32> {
         let (w, h) = (256usize, 256usize);
         let mut seed = 0x9e3779b97f4a7c15u64;
@@ -133,9 +133,8 @@ mod tests {
         v["peak"].as_f64().unwrap()
     }
 
-    /// A sharp edge beats a blurred one at the same noise, and a frame of
-    /// pure noise — however loud — has no focus to speak of: its best tile is
-    /// barely above its own floor.
+    /// A sharp edge beats a blurred one at the same noise, and a frame of pure noise has no focus: its
+    /// best tile is barely above its own floor.
     #[test]
     fn green_stab_v1_ranks_a_sharp_edge_over_a_blurred_one_and_noise_has_no_focus() {
         let sharp = green_stab_v1(&plane(Some(0), 0.02), 256, 256);
@@ -159,11 +158,9 @@ mod tests {
         assert_eq!(sharp["method"], "green-stab-v1");
     }
 
-    /// The finding that made the metric: at high ISO a bright, flat,
-    /// out-of-focus area (a white shirt) has the most absolute noise in the
-    /// frame, and a raw Laplacian variance calls it the sharpest thing there.
-    /// After the square root the shirt is as quiet as everything else and the
-    /// real edge wins.
+    /// The finding that made the metric: at high ISO a bright, flat, out-of-focus area (a white shirt) has
+    /// the most absolute noise and a raw Laplacian variance calls it the sharpest thing. After the square
+    /// root the shirt is as quiet as everything else and the real edge wins.
     #[test]
     fn a_bright_noisy_flat_patch_does_not_beat_a_real_edge() {
         let (w, h) = (256usize, 256usize);
@@ -208,7 +205,6 @@ mod tests {
         );
     }
 
-    /// The sharp tiles are where the edge is: columns 7 and 8 of 16.
     #[test]
     fn the_peak_is_in_the_tiles_under_the_edge() {
         let v = green_stab_v1(&plane(Some(0), 0.02), 256, 256);

@@ -2,26 +2,18 @@
 //!
 //! ## Why this is a process and not a component, and the tension worth naming
 //!
-//! ADR-0095's own text motivates a native daemon here with "re-encoding an
-//! image needs an image codec and CPU time" — but pure-Rust image codecs (this
-//! file uses the `image` crate) compile to `wasm32-wasip2` just fine, and a
-//! wasm guest has CPU time same as any other code. Read strictly, this
-//! capability could be a component like any other.
-//!
-//! It is a daemon anyway, because ADR-0095 commits all twelve host
-//! capabilities to the same daemon-behind-a-contract shape "so
-//! `container-docker` and `ui-notifier` do not deserve the same blast radius,
-//! and one daemon for all twelve would give them one" — picking one-off
-//! exceptions per capability is how that boundary erodes. So this follows the
-//! pattern for consistency with the accepted ADR, not because its own
-//! three-question test strictly requires it for this one capability.
+//! ADR-0095 motivates a native daemon with "re-encoding an image needs an image codec and CPU time",
+//! but pure-Rust codecs (the `image` crate here) compile to `wasm32-wasip2` and a guest has CPU time,
+//! so read strictly this could be a component. It is a daemon anyway because ADR-0095 commits all
+//! twelve host capabilities to one daemon-behind-a-contract shape ("so `container-docker` and
+//! `ui-notifier` do not deserve the same blast radius"); per-capability exceptions erode that
+//! boundary.
 //!
 //! ## An allow-list, for the same reason `comp-fswatch` has one
 //!
-//! The path in a request can come from a model. Nothing is permitted by
-//! default; `--allow-path /var/photos` permits that directory and anything
-//! beneath it, canonicalised on both sides before comparing so `..` cannot
-//! walk out.
+//! The path in a request can come from a model. Nothing is permitted by default; `--allow-path
+//! /var/photos` permits that directory and anything beneath it, canonicalised on both sides so `..`
+//! cannot walk out.
 //!
 //!   comp-imageopt --addr 127.0.0.1:8004 --allow-path /var/photos --max-width 1600 --quality 80
 
@@ -79,18 +71,14 @@ struct Daemon {
 }
 
 impl Daemon {
-    /// Is `path` inside something an operator listed? Returns the CANONICAL
-    /// path when it is — the caller must act on that, not the path it was
-    /// given, or a symlink swapped in between this check and the read that
-    /// follows it resolves to somewhere this check never approved (TOCTOU).
+    /// Is `path` inside something an operator listed? Returns the CANONICAL path; the caller must act on
+    /// that, not the path it was given, or a symlink swapped in after this check resolves somewhere it
+    /// never approved (TOCTOU).
     ///
-    /// Canonicalises the PARENT directory rather than `path` itself: `path`
-    /// (a file, not `fs-watcher`'s directory) need not exist yet for this
-    /// check — a missing file is `no-such-file`, not `not-permitted`, and
-    /// canonicalizing the whole path would fail for both the same way,
-    /// collapsing that distinction. The parent must exist and be real; a
-    /// symlink swapped in for the final component between this check and
-    /// `image::open` is a narrower race this does not close.
+    /// Canonicalises the PARENT directory rather than `path`: a missing file is `no-such-file`, not
+    /// `not-permitted`, and canonicalizing the whole path would fail both the same way. The parent must
+    /// exist and be real; a symlink swapped in for the final component before `image::open` is a
+    /// narrower race this does not close.
     fn permits(&self, path: &Path) -> Option<PathBuf> {
         let dir = path.parent()?;
         let name = path.file_name()?;
@@ -108,9 +96,8 @@ struct OptimizeReq {
     img: String,
 }
 
-/// `/x/y/photo.jpg` -> `/x/y/photo.opt.jpg`. A sibling file rather than an
-/// overwrite, so a caller keeps the original to compare against or fall back
-/// to.
+/// `/x/y/photo.jpg` -> `/x/y/photo.opt.jpg`. A sibling file rather than an overwrite, so a caller
+/// keeps the original to compare against or fall back to.
 fn output_path(input: &Path) -> PathBuf {
     let stem = input.file_stem().unwrap_or_default().to_string_lossy();
     let ext = input.extension().map(|e| e.to_string_lossy().into_owned());
@@ -121,9 +108,8 @@ fn output_path(input: &Path) -> PathBuf {
     input.with_file_name(name)
 }
 
-/// Save `img` to `out`, format-preserving — except a JPEG output, where the
-/// crate's generic `save()` would ignore `quality` and re-encode at its
-/// default (75). A JPEG is the one format this daemon has a quality knob for.
+/// Save `img` to `out`, format-preserving, except a JPEG, where the crate's generic `save()` would
+/// ignore `quality` and re-encode at its default (75).
 fn save(img: &image::DynamicImage, out: &Path, quality: u8) -> image::ImageResult<()> {
     let is_jpeg = matches!(
         out.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
@@ -144,12 +130,9 @@ async fn optimize(
 ) -> Json<Value> {
     let requested = PathBuf::from(&req.img);
 
-    // Not-permitted and no-such-file are different answers on purpose: one is
-    // a decision an operator made and the other is a fact about the disk, and
-    // a caller retrying a refusal forever is the worse mistake.
-    //
-    // Act on the CANONICAL path `permits` approved, not the one the caller
-    // sent — see `permits`'s own doc for why.
+    // Not-permitted and no-such-file are different answers on purpose: one is an operator's decision, the
+    // other a fact about the disk, and a caller retrying a refusal forever is worse. Act on the
+    // CANONICAL path `permits` approved (see its doc).
     let Some(input) = d.permits(&requested) else {
         return Json(json!({ "error": "not-permitted", "detail": req.img }));
     };
@@ -224,7 +207,6 @@ mod tests {
         }
     }
 
-    /// The allow-list is the boundary, and `..` is how a path escapes one.
     #[test]
     fn a_dot_dot_cannot_walk_out_of_the_allow_list() {
         // Test scaffolding, not a security-sensitive file: the path only ever
@@ -247,7 +229,6 @@ mod tests {
         assert!(d.permits(Path::new("/etc/photo.jpg")).is_none(), "nor is somewhere unrelated");
     }
 
-    /// Nothing is permitted by default.
     #[test]
     fn an_unscoped_daemon_touches_nothing() {
         let d = daemon(&[]);
@@ -255,11 +236,8 @@ mod tests {
         assert!(d.permits(Path::new("/photo.jpg")).is_none());
     }
 
-    /// `permits` checks the PARENT directory, not the file itself — a
-    /// missing file inside an allowed directory must come back permitted
-    /// (`no-such-file` is the caller's job to report), not `not-permitted`.
-    /// Canonicalizing the whole path instead would fail identically for
-    /// both, collapsing a real distinction the WIT contract makes.
+    /// `permits` checks the PARENT directory, not the file: a missing file inside an allowed directory must
+    /// come back permitted (`no-such-file` is the caller's to report), not `not-permitted`.
     #[test]
     fn a_missing_file_in_an_allowed_directory_is_still_permitted() {
         let tmp = std::env::temp_dir().canonicalize().expect("temp dir"); // nosemgrep: rust.lang.security.temp-dir.temp-dir
@@ -278,9 +256,7 @@ mod tests {
         assert_eq!(output_path(Path::new("/a/no-ext")), PathBuf::from("/a/no-ext.opt"));
     }
 
-    /// The JPEG branch of `save()` builds its own encoder rather than calling
-    /// the crate's generic `save()` — worth a real round trip rather than
-    /// trusting it compiles.
+    /// The JPEG branch of `save()` builds its own encoder, so it is worth a real round trip.
     #[test]
     fn a_jpeg_saved_at_a_given_quality_round_trips() {
         let img = image::DynamicImage::new_rgb8(4, 4);

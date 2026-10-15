@@ -9,8 +9,6 @@ use std::path::Path;
 pub(crate) const PART_SIZE: u64 = 16 * 1024 * 1024;
 pub(crate) const ALLOWED_EXTS: &[&str] = &["arw", "jpg", "jpeg"];
 
-// ---- validation --------------------------------------------------------------
-
 /// `[A-Za-z0-9_-]{1,64}`. A `photo_id` becomes part of an object key and a
 /// `job_id` a directory name, so neither may carry a `/` or a `..`.
 pub(crate) fn valid_id(id: &str) -> bool {

@@ -15,10 +15,9 @@ use serde_json::{json, Value};
 use crate::setup::wait_serving;
 use crate::{Args, GoalSpec};
 
-/// The tracked files the gate materialises and runs its checks over — the
-/// source, the tests, and whatever the build needs (`pyproject.toml`, `uv.lock`,
-/// `Cargo.toml`). Scoped to `base_paths` when given, so a goal against one crate
-/// of a large repo ships that crate and its path-deps, not the whole tree.
+/// The tracked files the gate materialises and runs its checks over: source, tests, and whatever the
+/// build needs (`pyproject.toml`, `uv.lock`, `Cargo.toml`). Scoped to `base_paths` when given, so a
+/// goal against one crate of a large repo ships that crate and its path-deps.
 pub(crate) fn base_tree(checkout: &Path, base_paths: &[String]) -> Result<Vec<Value>> {
     let out = Command::new("git")
         .arg("-C")
@@ -36,9 +35,8 @@ pub(crate) fn base_tree(checkout: &Path, base_paths: &[String]) -> Result<Vec<Va
             continue;
         }
         let full = checkout.join(path);
-        // Skip anything that is not valid UTF-8 (a stray binary) rather than fail
-        // the whole run; a source tree is text and a binary in it is not a gate
-        // input.
+        // Skip anything that is not valid UTF-8 (a stray binary) rather than fail the whole run; it is not a
+        // gate input.
         let Ok(content) = std::fs::read_to_string(&full) else { continue };
         bytes += content.len();
         tree.push(json!({ "path": path, "content": content }));
@@ -50,16 +48,10 @@ pub(crate) fn base_tree(checkout: &Path, base_paths: &[String]) -> Result<Vec<Va
             checkout.display()
         );
     }
-    // The whole tree travels over wrpc as one message, and NATS refuses one past
-    // `max_payload` with a failure that is opaque at this end — so it is caught
-    // here, with a message that says what to do.
-    //
-    // The bound comes from `fleet::max_tree_payload()` rather than a constant
-    // here, because the same number configures the server (`fleet.rs` writes it
-    // into the nats config it starts with). Hardcoded at one end and configured at
-    // the other is how a raised server still gets refused by its own client, which
-    // is precisely the bug this replaced: 900_000 stayed put when the ceiling
-    // moved to 8 MB.
+    // The whole tree travels over wrpc as one message and NATS refuses one past `max_payload` with an
+    // opaque failure, so it is caught here with a message that says what to do. The bound comes from
+    // `fleet::max_tree_payload()` because the same number configures the server: hardcoded at one end
+    // and configured at the other is how a raised server still gets refused by its own client.
     let ceiling = comp_reconciler::fleet::max_tree_payload();
     if bytes > ceiling {
         bail!(
@@ -87,13 +79,9 @@ pub(crate) fn head_commit(checkout: &Path) -> Result<String> {
 
 /// The components a run created, as (name, path).
 ///
-/// `components/<name>/...` is the only shape that names a component in this
-/// repository — the same rule `plug::tags_for` already uses to decide what a
-/// lesson is about, so the two cannot disagree about what a component is.
-///
-/// Derived from paths rather than announced by the model: a run that SAYS it
-/// built a reusable component and a run that actually left one in the tree are
-/// different things, and only the second changes what the pool can do.
+/// `components/<name>/...` is the only shape that names a component (the rule `plug::tags_for` uses
+/// for what a lesson is about). Derived from paths, not announced by the model: only a component
+/// actually left in the tree changes what the pool can do.
 pub(crate) fn new_capabilities(files: &Value) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = files
         .as_array()
@@ -115,12 +103,11 @@ pub(crate) fn new_capabilities(files: &Value) -> Vec<(String, String)> {
 
 /// Write a candidate's files under `target/goalrun/candidate/`, mirroring paths.
 ///
-/// Returns the directory. The tree it was run against is never touched — the point
-/// is to be able to diff, not to have been changed.
+/// Returns the directory. The tree it was run against is never touched, so it can be diffed.
 pub(crate) fn write_candidate(checkout: &Path, files: &Value) -> std::io::Result<PathBuf> {
     let dir = checkout.join("target/goalrun/candidate");
-    // Cleared rather than merged: a stale file from an earlier run sitting beside a
-    // fresh one is indistinguishable from the candidate having written it.
+    // Cleared rather than merged: a stale file beside a fresh one is indistinguishable from the candidate
+    // having written it.
     if dir.exists() {
         std::fs::remove_dir_all(&dir)?;
     }
@@ -130,9 +117,8 @@ pub(crate) fn write_candidate(checkout: &Path, files: &Value) -> std::io::Result
         else {
             continue;
         };
-        // A candidate's paths are checked by the applier before it can land; this is
-        // a second look, because writing one to disk is the moment a `../` would
-        // escape the directory.
+        // A candidate's paths are checked by the applier before it can land; this is a second look, since
+        // writing to disk is where a `../` would escape.
         if path.contains("..") || Path::new(path).is_absolute() {
             continue;
         }
@@ -147,20 +133,13 @@ pub(crate) fn write_candidate(checkout: &Path, files: &Value) -> std::io::Result
 
 /// Gate commands whose script is not in the shipped tree.
 ///
-/// The third state the critic could not see. A check that fails because its script
-/// is missing looks EXACTLY like a check that fails because the work is not done:
-/// both are a non-zero exit on the base tree, so the critic says "every check can
-/// judge" and the run proceeds to score every branch zero for the operator's
-/// reason. `gate.sh` was untracked once and cost a smoke cycle to find; a real run
-/// would have cost four branches and a repair round.
+/// A check that fails because its script is missing looks EXACTLY like one that fails because the work
+/// is not done, so the critic would say "every check can judge" and every branch would score zero for
+/// the operator's reason (`gate.sh` was untracked once). Needs no log heuristic: the tree is a list of
+/// paths and the command names one.
 ///
-/// Unlike "did this fail because the tree cannot build", this needs no heuristic on
-/// the words in a log. The tree is a list of paths and the command names one, so the
-/// question is answered by looking.
-///
-/// Only arguments that are unambiguously a repo file are considered — a path-shaped
-/// argument with a script extension, no URL scheme, not a flag. `cargo test -p x`
-/// names no path and is left alone.
+/// Only arguments unambiguously a repo file count: path-shaped, a script extension, no URL scheme, not
+/// a flag. `cargo test -p x` names no path.
 pub(crate) fn gates_missing_from_the_tree(goal: &GoalSpec, tree: &[Value]) -> Vec<String> {
     let shipped: std::collections::BTreeSet<&str> =
         tree.iter().filter_map(|f| f.get("path").and_then(Value::as_str)).collect();
@@ -192,16 +171,12 @@ pub(crate) fn gates_missing_from_the_tree(goal: &GoalSpec, tree: &[Value]) -> Ve
 
 /// Can this gate judge anything at all?
 ///
-/// A check that already passes on the base tree cannot judge a candidate: one that
-/// changes nothing satisfies it. The first real decomposed run on this repository
-/// scored 1000 on two candidates that had deleted their own component exports,
-/// because `cargo component check` passes on a crate implementing none of its
-/// world (goal 07). This is the cheapest possible place to find that out — before
-/// a generation buys the wrong answer.
+/// A check that already passes on the base tree cannot judge: a candidate that changes nothing
+/// satisfies it (goal 07: 1000 scored on candidates that had deleted their exports). This is the
+/// cheapest place to find out, before a generation buys the wrong answer.
 ///
-/// `Ok(false)` means the run should stop, having spent nothing. A critic that
-/// cannot RUN is reported and ignored: a guard that fails must not stop work a
-/// person asked for.
+/// `Ok(false)` means stop, having spent nothing. A critic that cannot RUN is reported and ignored: a
+/// failing guard must not stop work a person asked for.
 pub(crate) fn gate_can_judge(
     goal: &GoalSpec,
     checks: &[Value],
@@ -260,20 +235,16 @@ pub(crate) fn gate_can_judge(
                 return false;
             }
             println!("gate: every check fails on the base tree, so every check can judge");
-            // WHY each one failed, because "it failed" is two states wearing one face:
-            // work not done yet (a gate that can judge) and a tree that cannot build (a
-            // gate that will fail every branch identically, for the operator's reason).
-            // Printed rather than guessed at: a heuristic on the word "compile" would
-            // refuse legitimate goals, and `tools/goal-rehearse.sh` is where this is
-            // actually caught before anything is spent.
+            // WHY each one failed, because "it failed" is two states: work not done (a gate that can judge) and a
+            // tree that cannot build (a gate that fails every branch identically). Printed rather than guessed:
+            // a heuristic on the word "compile" would refuse legitimate goals.
             for r in &base.reasons {
                 let first = r.lines().next().unwrap_or(r).trim();
                 println!("  · {}", &first[..first.len().min(160)]);
             }
             true
         }
-        // Reported, not fatal: the critic is a guard, and a guard that cannot run
-        // must not stop a run a person asked for.
+        // Reported, not fatal: a guard that cannot run must not stop a run a person asked for.
         Err(e) => {
             println!("gate: could not be criticised ({e}) — running anyway");
             true
@@ -283,13 +254,9 @@ pub(crate) fn gate_can_judge(
 
 /// Prove the whole rig without spending anything.
 ///
-/// Both apps serving already proves a lot: an app whose secret cannot be granted,
-/// or whose egress is malformed, fails to START and never serves (`select.rs` saw
-/// exactly this). So reaching here means links resolve, egress allow-lists parsed,
-/// and every secret was granted.
-///
-/// A `max_attempts: 0` run is refused by the driver BEFORE any model call, so the
-/// last round trip proves probe→driver for free.
+/// Both apps serving already proves a lot: an app whose secret cannot be granted or whose egress is
+/// malformed fails to START (`select.rs` saw this). A `max_attempts: 0` run is refused by the driver
+/// BEFORE any model call, so the last round trip proves probe→driver for free.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn smoke(
     args: &Args,
@@ -300,13 +267,6 @@ pub(crate) fn smoke(
     base_commit: &str,
     allow: &[&str],
 ) -> Result<()> {
-    // Both apps serving already proves a lot: an app whose secret cannot be
-    // granted, or whose egress is malformed, fails to START and never serves
-    // (select.rs saw exactly this). So reaching here means links resolve,
-    // egress allow-lists parsed, and BOTH secrets were granted.
-    //
-    // A max_attempts:0 run is refused by the driver BEFORE any model call, so
-    // this last round-trip proves probe→driver without spending anything.
     let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(60)).build()?;
     let probe = http
         .post(format!("http://127.0.0.1:{port}/run"))
@@ -315,10 +275,8 @@ pub(crate) fn smoke(
             json!({
                 "text": goal.text, "writable": goal.writable, "context": context,
                 "previous": [], "checks": checks, "base_commit": base_commit,
-                // Empty, like every other plan: the runner holds the tree. This
-                // one runs `max_attempts: 0` and never reaches the gate at all —
-                // it exists to prove probe -> driver — so carrying a repository
-                // through it was pure postage.
+                // Empty, like every other plan: the runner holds the tree, and this `max_attempts: 0` run never
+                // reaches the gate.
                 "base_tree": [], "max_attempts": 0, "seed": 1,
             })
             .to_string(),
@@ -330,11 +288,9 @@ pub(crate) fn smoke(
     println!("  · both graphs started and serve → links, egress and secret GRANTS are correct");
     println!("  · driver reachable → {body}");
 
-    // A decomposed goal brings up two more apps and a database, and every one
-    // of them can be proved for FREE: an app whose secret cannot be granted or
-    // whose egress is malformed never serves, publishing the contract exercises
-    // the registry through the graph to a real SurrealDB, and `describe` asks
-    // the provider what it is without asking it to think.
+    // A decomposed goal brings up two more apps and a database, each provable for FREE: an unservable app
+    // never serves, publishing the contract exercises the registry through to a real SurrealDB, and
+    // `describe` asks the provider what it is without asking it to think.
     if !goal.parts.is_empty() {
         wait_serving(port, "goalcontract.acme.test", Duration::from_secs(180))?;
         wait_serving(port, "goalanswer.acme.test", Duration::from_secs(180))?;
@@ -353,8 +309,8 @@ pub(crate) fn smoke(
                 "  · contract v{v} published from {contract_path} → registry → graph → \
                  SurrealDB, and the database's secret was granted"
             ),
-            // A second smoke run against the same database finds the contract
-            // already there, which proves the same chain and is not a failure.
+            // A second smoke run against the same database finds the contract already there: same chain, not a
+            // failure.
             Err(e) if e.contains("already published") => match registry.current() {
                 Ok(c) => println!(
                     "  · contract v{} already in the registry, and readable → the whole \
@@ -395,10 +351,8 @@ mod tests {
     use super::*;
     use crate::CheckSpec;
 
-    /// A gate whose script is not in the shipped tree must be refused BEFORE a
-    /// branch is spent, because a missing script and unfinished work are the same
-    /// exit code — and the run would score every candidate zero for the operator's
-    /// reason. This is the case `gate.sh` being untracked actually produced.
+    /// A gate whose script is not in the shipped tree must be refused BEFORE a branch is spent: a missing
+    /// script and unfinished work are the same exit code (the `gate.sh` case).
     #[test]
     fn a_gate_script_missing_from_the_tree_is_refused() {
         let goal = |cmd: Vec<&str>| GoalSpec {
@@ -439,8 +393,7 @@ mod tests {
             missing[0]
         );
 
-        // The discriminator has to leave ordinary commands alone. None of these
-        // names a repo script, and refusing any of them would break real goals.
+        // The discriminator has to leave ordinary commands alone; none of these names a repo script.
         for cmd in [
             vec!["cargo", "test", "-p", "card-identify"],
             vec!["curl", "-sf", "http://127.0.0.1:8080/health"],
@@ -454,11 +407,8 @@ mod tests {
         }
     }
 
-    /// A component is `components/<name>/…` and nothing else.
-    ///
-    /// The rule matters because it decides what the pool believes it gained: a
-    /// path outside `components/` is app code, and counting it would report a
-    /// capability that no future run can reuse.
+    /// A component is `components/<name>/…` and nothing else: a path outside `components/` is app code,
+    /// and counting it would report a capability no future run can reuse.
     #[test]
     fn only_components_count_as_a_new_capability() {
         let files = serde_json::json!([
@@ -478,8 +428,7 @@ mod tests {
         );
     }
 
-    /// A run that wrote no component gained the pool nothing, and must say so
-    /// rather than reporting an empty-named capability.
+    /// A run that wrote no component gained the pool nothing, and must say so.
     #[test]
     fn a_run_that_built_no_component_adds_no_capability() {
         let files = serde_json::json!([

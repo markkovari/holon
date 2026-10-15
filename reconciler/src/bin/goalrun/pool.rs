@@ -1,15 +1,11 @@
 //! What a run reads from the knowledge pool, and what it writes back.
 //!
-//! `memory.rs` is the CLIENT — how to reach the pool and what the wire shapes
-//! are. This is the POLICY: which of those calls a run makes, in what order, and
-//! what it does when the pool cannot answer.
+//! `memory.rs` is the CLIENT (how to reach the pool, wire shapes). This is the POLICY: which calls a
+//! run makes, in what order, and what it does when the pool cannot answer.
 //!
-//! One asymmetry runs through all of it and is the reason this is a file rather
-//! than a handful of inline blocks (ADR-0084): **an error means DO THE WORK.**
-//! An unreachable pool answers "not done", never "probably done". Redoing work
-//! costs money; skipping work that was never done is a silent wrong answer, and
-//! the two are not the same kind of mistake. Every function here fails in that
-//! direction, and keeping them together is what makes that checkable.
+//! One asymmetry runs through all of it (ADR-0084): **an error means DO THE WORK.** An unreachable
+//! pool answers "not done", never "probably done", since skipping work never done is a silent wrong
+//! answer. Every function here fails in that direction.
 
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -27,12 +23,8 @@ use comp_reconciler::trace::Trace;
 use crate::{Args, GoalSpec};
 /// Has this goal already been done?
 ///
-/// Asked ONCE per goal, before anything is spawned — the call that saves a whole
-/// generation. Its failure mode had to be decided rather than defaulted: an
-/// unreachable pool answers "no", because redoing work costs money and skipping
-/// work that was never done is a silent wrong answer.
-///
-/// `false` means stop.
+/// Asked ONCE per goal, before anything is spawned: the call that saves a whole generation. An
+/// unreachable pool answers "no". `false` means stop.
 pub fn worth_running(memory: Option<&Memory>, goal: &GoalSpec, skip_above: f64) -> bool {
     let Some(m) = memory else { return true };
     match m.already_done(&goal.text, skip_above) {
@@ -55,30 +47,19 @@ pub fn worth_running(memory: Option<&Memory>, goal: &GoalSpec, skip_above: f64) 
     }
 }
 
-/// "Do we already have something for this?" — asked of the pool, before a single
-/// token is spent, whatever the answer turns out to be.
+/// "Do we already have something for this?" Asked of the pool before a single token is spent,
+/// whatever the answer.
+/// ADR-0089 made reuse ENFORCED but never DISCOVERED: a human wrote the interfaces into the goal's WIT
+/// and the branch had no choice, which does not compound.
 ///
-/// ADR-0089 made reuse ENFORCED (a gate fails a part that reimplements
-/// `auth-guard`) but never DISCOVERED: a human wrote the interfaces into the
-/// goal's WIT and the branch then had no choice. That does not compound — every
-/// new goal needed somebody who already knew what 150 components contained.
+/// Mandatory because the ANSWER is the point in both directions: a hit is reuse a branch would have
+/// missed; a miss is the graph naming a capability the pool lacks, which accumulates only if the
+/// question is asked on every run. No model, nothing blocked: a run whose search found nothing
+/// proceeds, with a row recorded saying so (ADR-0094).
 ///
-/// Mandatory rather than advisory because the ANSWER is the point in both
-/// directions. A hit is reuse a branch would otherwise have missed. A miss is the
-/// graph naming a capability the pool lacks — the only corpus in this system that
-/// answers "what should we build next" — and it accumulates only if the question
-/// is asked on every run, including the ones where nobody expected an answer.
-///
-/// No model, and nothing is blocked on the result: one millisecond of term overlap
-/// over the catalogue, and a run whose search found nothing proceeds, with a row
-/// recorded saying so (ADR-0094).
-///
-/// `advisor_url`, given, adds ONE further step: `capsearch`'s own admission is
-/// that term overlap over-matches (many descriptions are tautological and match
-/// nothing a caller would type), so each hit gets one Jev question — does this
-/// specific capability plausibly fit THIS goal — batched into a single call to
-/// `capability-advisor`. `None`, or the advisor being unreachable, changes
-/// nothing: every hit is trusted exactly as it was before this existed.
+/// `advisor_url`, given, adds ONE step: term overlap over-matches (many descriptions are tautological),
+/// so each hit gets one Jev question, batched into a single call to `capability-advisor`. `None`, or
+/// an unreachable advisor, trusts every hit as before.
 pub fn search_the_pool(
     goal_text: &str,
     run: &str,
@@ -144,9 +125,8 @@ pub fn search_the_pool(
     (reuse, confirmed)
 }
 
-/// One HTTP call to `capability-advisor`, batching one Jev question per hit.
-/// `None` on ANY failure (unreachable, bad status, bad body) — the caller
-/// falls back to trusting every hit unfiltered, never blocks on this.
+/// One HTTP call to `capability-advisor`, batching one Jev question per hit. `None` on ANY failure:
+/// the caller trusts every hit unfiltered and never blocks on this.
 fn confirm_with_advisor(
     advisor_url: &str,
     goal_text: &str,
@@ -183,16 +163,11 @@ fn confirm_with_advisor(
 
 /// Context content as a part should see it, trimmed for a small window.
 ///
-/// A `.wit` shown as context is 68–79% comment (measured across this repository's interfaces),
-/// and every load-bearing fact those comments carry is already in the contract — that is the
-/// "KEPT" discipline the goals are written to. So the comments are redundant for a part and pure
-/// cost for its context window: stripping them takes a WIT from ~700 tokens to ~200 and lets a
-/// self-hosted model spend its window on the signatures it will call rather than on prose it can
-/// read in the canonical file.
-///
-/// Only `.wit`, and only read-only context — a part's own writable `.rs` stub keeps every
-/// comment, because there the comments ARE the brief. The canonical files are never touched;
-/// this transforms the copy that goes into the prompt.
+/// A `.wit` shown as context is 68–79% comment (measured), and every load-bearing fact is already in
+/// the contract, so stripping the comments (~700 tokens to ~200) lets a self-hosted model spend its
+/// window on signatures. Only `.wit`, and only read-only context: a part's own writable `.rs` stub
+/// keeps every comment, because there the comments ARE the brief. Canonical files are never touched;
+/// this transforms the prompt copy.
 pub fn lean_context(path: &str, content: String) -> String {
     if !path.ends_with(".wit") {
         return content;
@@ -202,15 +177,10 @@ pub fn lean_context(path: &str, content: String) -> String {
 
 /// What the pool already has, as prose in every branch's context.
 ///
-/// Prose rather than an instruction: the gate decides whether reuse happened, and
-/// a branch TOLD to reuse something that does not fit would do it badly.
-///
-/// `confirmed`, given (i.e. `search_the_pool` had an advisor and it answered),
-/// splits the listing into what Jev thinks actually fits and what it doesn't —
-/// term overlap alone over-matches, and a hit `capsearch` only found because a
-/// description shares a word is worth telling apart from one that plausibly
-/// satisfies the goal. `None` (no advisor, or it was unreachable) lists
-/// everything exactly as before this existed.
+/// Prose rather than an instruction: the gate decides whether reuse happened, and a branch TOLD to
+/// reuse something that does not fit would do it badly.
+/// `confirmed`, given, splits the listing into what Jev thinks fits and what does not, since term
+/// overlap alone over-matches. `None` (no advisor, or unreachable) lists everything.
 pub fn pool_context(
     reuse: &[comp_reconciler::capsearch::Capability],
     confirmed: Option<&BTreeSet<String>>,
@@ -262,14 +232,10 @@ pub fn pool_context(
 
 /// Distil what the winner taught, and keep the pool bounded.
 ///
-/// An agent may record what it OBSERVED; only a passing gate may promote
-/// (ADR-0084). So this runs after the verdict, through the `promotion` interface an
-/// agent's world does not contain — and it costs one cheap call that most
-/// candidates answer with NOTHING, which is the correct answer for a candidate
-/// that taught nobody anything.
-///
-/// The sweep is last on purpose: one that ran first could delete a lesson this run
-/// was about to read.
+/// An agent may record what it OBSERVED; only a passing gate may promote (ADR-0084). So this runs after
+/// the verdict, through the `promotion` interface an agent's world does not contain, and costs one
+/// cheap call that most candidates answer with NOTHING. The sweep is last on purpose: one that ran
+/// first could delete a lesson this run was about to read.
 pub fn promote_and_sweep(
     memory: Option<&Memory>,
     args: &Args,
@@ -313,15 +279,10 @@ pub fn promote_and_sweep(
 
 /// Promote what each part's winner taught, on a composed run.
 ///
-/// The single-part path promotes through `promote_and_sweep`; the decomposed path never did,
-/// which is why — measured across twelve runs of this experiment — the pool held only `errors`
-/// rows and not one promotion, even from runs that opened a pull request. A perfect run taught
-/// the graph nothing.
-///
-/// Each part is promoted keyed on the PART's own text, exactly as `compose.rs` RECALLS it: a
-/// lesson keyed on the whole-goal wording would be invisible to the next part that recalls on
-/// its own. Only a part whose gate accepted is promoted (ADR-0084), and the distiller answers
-/// most of them with nothing, which is the right answer for a part that taught nobody anything.
+/// The single-part path promotes through `promote_and_sweep`; the decomposed path never did, so across
+/// twelve runs the pool held only `errors` rows. Each part is promoted keyed on the PART's own text,
+/// as `compose.rs` RECALLS it: a lesson keyed on the whole-goal wording would be invisible to the
+/// next part. Only a part whose gate accepted is promoted (ADR-0084).
 pub fn promote_parts(
     memory: Option<&Memory>,
     goal: &GoalSpec,
@@ -336,7 +297,6 @@ pub fn promote_parts(
     };
     for outcome in parts {
         let Some(best) = outcome.best.as_ref().filter(|b| b.accepted) else { continue };
-        // The part's own text is the key recall uses; the part name is its env.
         let Some(spec) = goal.parts.iter().find(|p| p.name == outcome.part) else { continue };
         let prompt = memory::distil_prompt(&spec.text, &best.files, best.score);
         match door.reply_to(&prompt).map(|r| memory::distilled(&r)) {
@@ -354,14 +314,11 @@ pub fn promote_parts(
 
 /// What each branch is allowed to read, and what it actually read.
 ///
-/// Varied ACROSS branches on purpose: a generation whose branches all read the
-/// same top-k is an expensive way to run one branch (ADR-0081's herding), and the
-/// branch that reads nothing is the only way to tell whether the pool helps at
-/// all. `default_strategies` already keeps one branch from reading the previous
-/// winner; that same branch reads no lessons either.
-///
-/// Returns the strategies and, per branch, the keys it read — which is the other
-/// half of attribution when the run ends.
+/// Varied ACROSS branches on purpose: branches that all read the same top-k are an expensive way to
+/// run one (ADR-0081's herding), and the branch that reads nothing is the only way to tell whether
+/// the pool helps. `default_strategies` already keeps one branch from reading the previous winner;
+/// that same branch reads no lessons either. Returns the strategies and, per branch, the keys it read
+/// (the other half of attribution).
 pub(crate) fn reading_per_branch(
     args: &Args,
     goal: &GoalSpec,
@@ -369,9 +326,8 @@ pub(crate) fn reading_per_branch(
 ) -> (Vec<generation_mod::Strategy>, Vec<Vec<String>>) {
     let mut strategies = generation_mod::default_strategies(args.branches);
     let mut read_by_branch: Vec<Vec<String>> = vec![Vec::new(); strategies.len()];
-    // What this goal's work touches, so what it learns is findable by the next
-    // goal that builds against the same interfaces rather than only by the next
-    // goal worded like this one (ADR-0090).
+    // What this goal's work touches, so what it learns is findable by the next goal that builds against
+    // the same interfaces (ADR-0090).
     let tags = comp_reconciler::plug::tags_for(
         &goal.writable,
         &comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&repo_root())),
@@ -382,8 +338,7 @@ pub(crate) fn reading_per_branch(
                 continue; // the control arm reads nothing, and that is the point
             }
             let reading = memory::Reading {
-                // Deliberately unequal: 3, 4, 5 … so two branches do not arrive at
-                // the same prompt by arriving at the same advice.
+                // Deliberately unequal (3, 4, 5 …) so two branches do not reach the same prompt via the same advice.
                 k: 3 + (i as u32 % 3),
                 budget: 1200,
                 tags: tags.clone(),
@@ -405,15 +360,11 @@ pub(crate) fn reading_per_branch(
                     read_by_branch[i] = lessons.iter().map(|l| l.key.clone()).collect();
                     s.knowledge = memory::render(&lessons);
                 }
-                // A pool that is down costs a branch its advice and nothing else.
                 Err(e) => println!("  branch-{i} runs cold: {e}"),
             }
         }
-        // Herding is branches reading the SAME thing, not branches reading
-        // nothing: an empty pool makes every reading identical and that is a cold
-        // start, not convergence. Saying otherwise would cry wolf on every first
-        // run, and a warning that fires when it should not is a warning people
-        // learn to skip.
+        // Herding is branches reading the SAME thing, not nothing: an empty pool makes every reading
+        // identical, a cold start rather than convergence; warning on it would cry wolf on every first run.
         let readers = read_by_branch.iter().filter(|r| !r.is_empty()).count();
         if readers > 1 {
             let distinct: std::collections::BTreeSet<&Vec<String>> =
