@@ -1,15 +1,11 @@
 //! flags:app — a live feature-rollout console over composed contracts.
 //!
-//! Rules live entirely in `featureflags:guard` (runtime rules in its kv store,
-//! config-defined flags from wasi:config). The domain stores nothing durable of
-//! its own — it evaluates, mutates rules, and publishes each change on
-//! `event:bus` (`flags`). `GET /api/cohort` evaluates a flag across N synthetic
-//! subjects (`subject-0 … subject-{n-1}`) — the on/off grid the console renders;
-//! because the contract buckets percentage rollouts on a stable hash, the same
-//! subjects stay on across evaluations (STICKY cohorts, the visible payoff).
-//! `GET /api/stream` sets its HTTP response early then LOOPS, writing each rule
-//! change as an SSE `data:` frame while the host streams to the browser — the
-//! same server-push trick as pulse, carrying live config propagation.
+//! Rules live entirely in `featureflags:guard`; the domain stores nothing durable, it
+//! evaluates, mutates rules, and publishes each change on `event:bus` (`flags`).
+//! `GET /api/cohort` evaluates a flag across N synthetic subjects (`subject-0 … subject-{n-1}`);
+//! because percentage rollouts bucket on a stable hash, the same subjects stay on (STICKY
+//! cohorts). `GET /api/stream` sets its HTTP response early then LOOPS, writing each rule
+//! change as an SSE `data:` frame, the same server-push trick as pulse.
 
 #[allow(warnings)]
 mod bindings {
@@ -110,8 +106,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- rule read/write ---------------------------------------------------------
-
 fn ctx(tenant: &str, subject: &str) -> flags::Context {
     flags::Context { tenant: tenant.to_string(), subject: subject.to_string() }
 }
@@ -208,8 +202,6 @@ fn publish_change(flag: &str, tenant: &str, rule: &Value) {
     let _ = bus::publish(CHANGES, frame.to_string().as_bytes());
 }
 
-// ---- evaluation --------------------------------------------------------------
-
 fn eval_one(path: &str) -> Outcome {
     let flag = query_str(path, "flag").unwrap_or_default();
     let tenant = query_str(path, "tenant").unwrap_or_default();
@@ -247,8 +239,6 @@ fn cohort(path: &str) -> Outcome {
     }
     Outcome::Json(200, json!({ "flag": flag, "n": n, "on": on, "cells": cells }).to_string())
 }
-
-// ---- the SSE stream ----------------------------------------------------------
 
 /// Hold the connection open and push each rule change as an SSE `data:` frame.
 /// A browser re-fetches `/api/cohort` on each frame to repaint the grid live.
@@ -318,8 +308,6 @@ fn current_seq() -> i64 {
         .unwrap_or(-1)
 }
 
-// ---- http plumbing -----------------------------------------------------------
-
 fn flag_err(e: flags::FlagError) -> Outcome {
     match e {
         flags::FlagError::BackendUnavailable(m) => Outcome::Err(503, m),
@@ -335,23 +323,12 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
+/// guest traps and the caller just sees a closed connection.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
-/// Read query param `key` as a string.
 fn query_str(path: &str, key: &str) -> Option<String> {
     let query = path.split('?').nth(1)?;
     query.split('&').find_map(|pair| {
@@ -360,7 +337,6 @@ fn query_str(path: &str, key: &str) -> Option<String> {
     })
 }
 
-/// Read query param `key` as an i64.
 fn query_i64(path: &str, key: &str) -> Option<i64> {
     query_str(path, key)?.parse().ok()
 }

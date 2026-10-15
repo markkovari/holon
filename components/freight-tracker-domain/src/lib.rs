@@ -50,7 +50,6 @@ const TENANT: &str = "freight-tracker";
 
 impl Guest for Component {
     async fn handle(request: Request) -> Result<Response, ErrorCode> {
-        // Measure usage
         if let Ok(bucket) = store::open("default") {
             let count_bytes = bucket.get("usage_count").unwrap_or(None).unwrap_or(b"0".to_vec());
             let count = String::from_utf8_lossy(&count_bytes).parse::<u64>().unwrap_or(0);
@@ -132,7 +131,6 @@ fn introspect(request: &Req) -> Result<Principal, Outcome> {
 }
 
 fn body(request: &Req) -> Result<Value, Outcome> {
-    // simplified body reader
     let raw = request.raw.clone().map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
         return Ok(Value::Object(Map::new()));
@@ -140,7 +138,8 @@ fn body(request: &Req) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// Ceiling on a request body, matching the rest of the tree.
+/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
+/// guest traps and the caller just sees a closed connection.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
@@ -195,7 +194,6 @@ fn create_item(request: &Req) -> Outcome {
         Err(o) => return o,
     };
 
-    // RBAC check: Only admins can create items
     if !p.roles.contains(&"dispatcher".to_string()) {
         return Outcome::Err(403, "forbidden".into());
     }

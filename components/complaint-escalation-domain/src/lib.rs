@@ -54,7 +54,6 @@ guestio::guest_p3_bearer!();
 
 struct Component;
 
-/// What a handler answers with: a status and a JSON body.
 pub struct Reply {
     pub status: u16,
     pub json: Value,

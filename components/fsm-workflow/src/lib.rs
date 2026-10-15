@@ -1,31 +1,19 @@
 //! `fsm-workflow` — enforce a lifecycle — declare the legal state transitions and refuse the illegal ones
 //!
-//! A declarative finite-state-machine / workflow engine. Many app entities
-//! have a lifecycle with *legal* transitions: an appointment goes
-//! `booked -> confirmed -> completed` (or `-> cancelled`), and must never jump
-//! `booked -> completed` or move out of a terminal state. Rather than scatter
-//! `if status == ...` checks across an app, this component makes the rules a
-//! first-class, declarative DEFINITION:
+//! A declarative finite-state-machine engine: an entity's lifecycle (`booked -> confirmed ->
+//! completed`, never `booked -> completed`, nothing out of a terminal state) is a first-class
+//! DEFINITION rather than scattered `if status == ...` checks.
 //!
-//!   * `define` registers a machine: its full state set, the initial state, the
-//!     legal transitions (each keyed by an `event`), and which states are
-//!     terminal. The definition is validated up front — `invalid-definition`
-//!     if the initial state, a transition endpoint, or a terminal state is not
-//!     in the state list (or the state list is empty).
-//!   * `create-instance` spins up a live INSTANCE of a machine in its initial
-//!     state, with an empty append-only history.
-//!   * `fire` drives an instance: it finds the transition matching
-//!     `(current-state, event)`; if none exists the move is rejected with
-//!     `illegal-transition(current)`. Otherwise the instance advances to the
-//!     target state, the step count increments, and a timestamped entry is
-//!     appended to history. Every move is validated against the definition.
-//!   * `can-fire` / `allowed-events` / `get-status` / `history` are read-only
-//!     introspection over an instance.
+//!   * `define` registers a machine (states, initial state, transitions keyed by `event`,
+//!     terminal states), validated up front: `invalid-definition` if the initial state, a
+//!     transition endpoint or a terminal state is not in the state list.
+//!   * `create-instance` / `fire` / `can-fire` / `allowed-events` / `get-status` / `history`:
+//!     `fire` is rejected with `illegal-transition(current)` when no transition matches
+//!     `(current-state, event)`; otherwise the step count increments and a timestamped entry
+//!     joins the append-only history.
 //!
-//! Everything is persisted in `wasi:keyvalue` as JSON (via serde_json); the
-//! clock (`wasi:clocks/wall-clock`) stamps each history entry with Unix
-//! seconds. App-agnostic: the appointment lifecycle is just one machine;
-//! orders, tickets, onboarding flows are others.
+//! Persisted in `wasi:keyvalue` as JSON; `wasi:clocks/wall-clock` stamps history in Unix
+//! seconds. App-agnostic.
 //!
 //! Storage layout (all values are JSON bytes; name segments byte-sanitized to
 //! kv-safe chars so ids containing `:` etc. never break a key):
@@ -51,8 +39,6 @@ const BUCKET: &str = "default";
 fn now() -> u64 {
     wall_clock::now().seconds
 }
-
-// ---- key naming ---------------------------------------------------------
 
 /// Sanitize one opaque segment to kv-safe chars (same byte scheme as
 /// idempotency-guard's `id_key` / config-store's `sanitize`): A-Za-z0-9-/=
@@ -82,8 +68,6 @@ fn inst_key(machine: &str, instance: &str) -> String {
 fn hist_key(machine: &str, instance: &str) -> String {
     format!("fsm_hist_{}_{}", sanitize(machine), sanitize(instance))
 }
-
-// ---- serde records (mirror the WIT) -------------------------------------
 
 #[derive(Serialize, Deserialize)]
 struct StoredDef {
@@ -146,13 +130,10 @@ impl StoredHist {
     }
 }
 
-// ---- kv plumbing --------------------------------------------------------
-
 fn open() -> Result<kv::Bucket, FsmError> {
     kv::open(BUCKET).map_err(|e| FsmError::BackendUnavailable(format!("open: {e:?}")))
 }
 
-/// Load + deserialize a JSON record at `k`, `None` if the key is absent.
 fn load_json<T: for<'de> Deserialize<'de>>(
     bucket: &kv::Bucket,
     k: &str,
@@ -168,14 +149,11 @@ fn load_json<T: for<'de> Deserialize<'de>>(
     }
 }
 
-/// Serialize a record to JSON and persist it at `k`.
 fn store_json<T: Serialize>(bucket: &kv::Bucket, k: &str, value: &T) -> Result<(), FsmError> {
     let bytes = serde_json::to_vec(value)
         .map_err(|e| FsmError::BackendUnavailable(format!("encode {k}: {e}")))?;
     bucket.set(k, &bytes).map_err(|e| FsmError::BackendUnavailable(format!("set {k}: {e:?}")))
 }
-
-// ---- higher-level loaders -----------------------------------------------
 
 fn load_def(bucket: &kv::Bucket, machine: &str) -> Result<StoredDef, FsmError> {
     load_json::<StoredDef>(bucket, &def_key(machine))?.ok_or(FsmError::UnknownMachine)
@@ -203,11 +181,8 @@ fn build_status(def: &StoredDef, machine: &str, instance: &str, inst: &StoredIns
     }
 }
 
-// ---- guest --------------------------------------------------------------
-
 impl Guest for Component {
     fn define(name: String, def: Definition) -> Result<(), FsmError> {
-        // Validate before touching the store.
         if def.states.is_empty() {
             return Err(FsmError::InvalidDefinition("states must be non-empty".into()));
         }
@@ -256,7 +231,6 @@ impl Guest for Component {
 
         let inst = StoredInst { state: def.initial.clone(), steps: 0 };
         store_json(&bucket, &inst_key(&machine, &instance), &inst)?;
-        // Empty/clear the history.
         store_json::<Vec<StoredHist>>(&bucket, &hist_key(&machine, &instance), &Vec::new())?;
 
         Ok(build_status(&def, &machine, &instance, &inst))
@@ -295,7 +269,6 @@ impl Guest for Component {
         let def = load_def(&bucket, &machine)?;
         let mut inst = load_inst(&bucket, &machine, &instance)?;
 
-        // Find the transition legal from the current state for this event.
         let target = def
             .transitions
             .iter()
@@ -310,7 +283,6 @@ impl Guest for Component {
         let mut hist = load_hist(&bucket, &machine, &instance)?;
         hist.push(StoredHist { event: event.clone(), source, target, at: now() });
 
-        // Persist instance state + appended history.
         store_json(&bucket, &inst_key(&machine, &instance), &inst)?;
         store_json(&bucket, &hist_key(&machine, &instance), &hist)?;
 

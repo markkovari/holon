@@ -116,8 +116,6 @@ fn usage() -> Outcome {
     )
 }
 
-// ---- auth (host only) -------------------------------------------------------
-
 guestio::guest_p3_bearer!();
 guestio::guest_p3_respond!();
 
@@ -176,8 +174,6 @@ fn logout(request: &Request) -> Outcome {
     }
 }
 
-// ---- records helpers --------------------------------------------------------
-
 fn get(coll: &str, id: &str) -> Option<Value> {
     records::get(coll, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok()).map(
         |mut v| {
@@ -203,8 +199,6 @@ fn find(coll: &str, field: &str, value: &str) -> Vec<Value> {
 fn game_by_pin(pin: &str) -> Option<Value> {
     find(GAMES, "pin", pin).into_iter().next()
 }
-
-// ---- quizzes ----------------------------------------------------------------
 
 async fn create_quiz(request: Request) -> Outcome {
     let p = match introspect(&request) {
@@ -253,8 +247,6 @@ fn list_quizzes(request: &Request) -> Outcome {
     Outcome::Json(200, json!({ "items": items }).to_string())
 }
 
-// ---- games (host) -----------------------------------------------------------
-
 fn mint_pin() -> String {
     for _ in 0..20 {
         let pin = format!("{:06}", get_random_u64() % 1_000_000);
@@ -288,7 +280,6 @@ async fn create_game(request: Request) -> Outcome {
     }
 }
 
-/// Load the game (by pin) for its host, or an error.
 fn host_game(p: &Principal, pin: &str) -> Result<Value, Outcome> {
     let g = game_by_pin(pin).ok_or(Outcome::Err(404, "no such game".into()))?;
     if g["host"].as_str() != Some(&p.subject) {
@@ -313,7 +304,6 @@ fn players_ranked(pin: &str) -> Vec<Value> {
     ps
 }
 
-/// Answers for the game's current question index.
 fn answers_for(pin: &str, q: i64) -> Vec<Value> {
     find(ANSWERS, "game", pin).into_iter().filter(|a| a["q"].as_i64() == Some(q)).collect()
 }
@@ -380,14 +370,12 @@ fn grade(pin: &str, g: &Value, questions: &[Value]) {
         } else {
             0
         };
-        // record the grade on the answer.
         let aid = a["id"].as_str().unwrap_or("").to_string();
         let mut av = a.clone();
         av["correct"] = json!(correct);
         av["points"] = json!(points);
         av.as_object_mut().map(|m| m.remove("id"));
         let _ = records::update(ANSWERS, &aid, &av.to_string(), 0);
-        // bump the player's score.
         if points > 0 {
             if let Some(player) = a["player"].as_str().and_then(|pid| get(PLAYERS, pid)) {
                 let pid = player["id"].as_str().unwrap_or("").to_string();
@@ -438,8 +426,6 @@ fn host_view(request: &Request, pin: &str) -> Outcome {
     }
     Outcome::Json(200, out.to_string())
 }
-
-// ---- players (anonymous) ----------------------------------------------------
 
 async fn join(request: Request, pin: &str) -> Outcome {
     let g = match game_by_pin(pin) {
@@ -554,8 +540,6 @@ fn play_view(request: &Request, pin: &str, path: &str) -> Outcome {
     Outcome::Json(200, out.to_string())
 }
 
-// ---- demo seed --------------------------------------------------------------
-
 fn seed_demo(subject: &str) {
     let d = json!({
         "host": subject, "title": "WIT Warm-up", "created": now_ms(),
@@ -567,8 +551,6 @@ fn seed_demo(subject: &str) {
     });
     let _ = records::create(QUIZZES, &d.to_string(), &["host".to_string()]);
 }
-
-// ---- http plumbing ----------------------------------------------------------
 
 fn hydrate(id: &str, data: &str) -> String {
     let mut v: Value = serde_json::from_str(data).unwrap_or_else(|_| json!({}));
@@ -606,18 +588,8 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
+/// guest traps and the caller just sees a closed connection.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

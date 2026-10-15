@@ -1,25 +1,14 @@
 //! `events-domain` — free event ticketing, as one component.
 //!
-//! ## What is scaffold and what is the goal
+//! This file is the ROUTER and no part may write it: it dispatches to the four parts, answers
+//! `/health`, and seeds the fixture every part is judged against. `src/events.rs`,
+//! `src/tickets.rs`, `src/checkin.rs` and `src/swaps.rs` are the goal; `CONTRACT.md` is what
+//! they must agree on.
 //!
-//! This file is the ROUTER and no part may write it. It dispatches to the four
-//! parts, answers `/health` so a harness can tell "the component is not up" from
-//! "the component is wrong", and seeds the fixture every part is judged against.
-//! Four parts need it and none owns it.
-//!
-//! `src/events.rs`, `src/tickets.rs`, `src/checkin.rs` and `src/swaps.rs` are the
-//! goal. `CONTRACT.md` is what they must agree on.
-//!
-//! ## Why the fixture registers people and hands back tokens
-//!
-//! Every route here is behind `auth:identity`, so a part cannot be judged at all
-//! without a real bearer for a real principal with real roles. Making each gate
-//! register its own users would put four copies of the same twenty lines in four
-//! scripts, and the first one to drift would fail a part for the harness's reason
-//! rather than its own. So the fixture does it once and returns the tokens.
-//!
-//! It does NOT create tickets. Issuing one is `tickets`' whole job, and a fixture
-//! that pre-issued would let a part that never calls `quota::reserve` pass.
+//! The fixture registers people and hands back tokens: every route is behind
+//! `auth:identity`, and per-gate registration would put four copies of the same twenty lines
+//! in four scripts. It does NOT create tickets: issuing one is `tickets`' whole job, and
+//! pre-issuing would let a part that never calls `quota::reserve` pass.
 
 #[allow(warnings)]
 mod bindings {
@@ -85,21 +74,16 @@ guestio::guest_p3_respond!();
 
 struct Component;
 
-/// The tenant every principal in this app belongs to. One tenant: multi-tenancy is
-/// `auth-guard`'s problem and it already solves it, so spending a part's budget on
-/// it would test nothing about ticketing.
+/// The tenant every principal belongs to. One tenant: multi-tenancy is `auth-guard`'s problem.
 pub const TENANT: &str = "events";
 
-/// What a handler answers with.
 pub struct Reply {
     pub status: u16,
     /// `Value::Null` means no body at all — see `no_content`.
     pub json: Value,
-    /// A body the router must NOT serialise as JSON, with its content type.
-    ///
-    /// An image cannot be expressed as a `Value`. Even setting aside the size, a
-    /// `Value::String` serialises to a JSON string LITERAL — surrounding quotes and
-    /// escapes included — so a browser asked to render it gets a quoted blob.
+    /// A body the router must NOT serialise as JSON, with its content type: `Value::String`
+    /// serialises to a JSON string LITERAL, so a browser asked to render an image gets a quoted
+    /// blob.
     pub raw: Option<(String, Vec<u8>)>,
 }
 
@@ -144,11 +128,8 @@ pub fn perm(target: &str, action: &str) -> Permission {
     Permission { target: target.to_string(), action: action.to_string() }
 }
 
-/// Authorise, or produce the reply that says why.
-///
-/// Shared because the mapping is a CONTRACT decision, not a per-part one: a missing
-/// bearer is 401 and a valid bearer without the permission is 403, and four parts
-/// deciding that separately is four chances to get it different.
+/// Authorise, or produce the reply that says why. Shared because the mapping is a CONTRACT
+/// decision: a missing bearer is 401, a valid bearer without the permission is 403.
 pub fn require(route: &Route, target: &str, action: &str) -> Result<Principal, Reply> {
     if route.bearer.is_empty() {
         return Err(Reply::err(401, "unauthorized"));
@@ -167,16 +148,9 @@ pub fn has_role(p: &Principal, role: &str) -> bool {
     p.roles.iter().any(|r| r == role)
 }
 
-/// What each role may do — the app's own definition, not a fixture's.
-///
-/// This lived inside `seed()`, which meant the permission table was established by
-/// a TEST ROUTE. With that route correctly switched off, nothing granted anything:
-/// a person could register, get a token carrying `attendee`, and be refused by
-/// every route in the app — including their own tickets. The gate that turned the
-/// fixture off is what found it.
-///
-/// Idempotent, and called from both entry points a principal can arrive through,
-/// because there is no startup here in which to do it once.
+/// What each role may do. Lives here, not in `seed()`: with the test route off, nothing else
+/// would grant anything. Idempotent, called from both entry points a principal can arrive
+/// through (there is no startup).
 fn ensure_roles() {
     let roles: [(&str, &[(&str, &str)]); 3] = [
         (
@@ -212,21 +186,11 @@ fn ensure_roles() {
     }
 }
 
-/// Give this person the roles the DEPLOYMENT named for them.
-///
-/// Somebody has to be able to open the first event, and nobody can be granted a role
-/// by an organizer who does not exist yet. So `organizer-emails` in the app spec says
-/// who, rather than the app promoting whoever registered first — which makes the
-/// account that matters depend on who got there first.
-///
-/// Still a grant and not a claim: the list is config, written by whoever deploys the
-/// box, and a person asking for a role cannot put themselves on it.
-///
-/// Applied on LOGIN as well as registration, and that is the point. Doing it only at
-/// registration means an operator who adds an address to the spec and redeploys
-/// changes nothing for an account that already exists — the person stays an attendee
-/// and there is no way in the app to fix it. Idempotent, so a login costs one
-/// no-op write.
+/// Give this person the roles the DEPLOYMENT named for them: `organizer-emails` in the app
+/// spec says who (somebody must be able to open the first event), rather than promoting
+/// whoever registered first. Still a grant, not a claim: the list is config. Applied on LOGIN
+/// as well as registration, so an operator who adds an address and redeploys changes an
+/// existing account too. Idempotent.
 fn grant_configured_roles(email: &str, subject: &str) {
     if organizer_emails().iter().any(|e| e.eq_ignore_ascii_case(email)) {
         let _ = rbac::assign_role(TENANT, subject, "organizer");
@@ -245,16 +209,10 @@ fn organizer_emails() -> Vec<String> {
         .collect()
 }
 
-/// Is the fixture allowed to run at all?
-///
-/// It registers three people and hands their bearers back, which is exactly what a
-/// gate needs and exactly what nobody else may have. It was compiled into the
-/// artifact that got deployed to a real box, where the SPA called it on load — so
-/// the app had no login screen because it did not need one, and neither did anyone
-/// else who could reach the URL.
-///
-/// Absent is OFF. A switch whose entire purpose is to be off in production must not
-/// depend on somebody remembering to turn it off.
+/// Is the fixture allowed to run at all? It registers three people and hands their bearers
+/// back, which only a gate may have: it once shipped to a real box where the SPA called it
+/// on load. Absent is OFF; a switch whose purpose is to be off in production must not depend
+/// on somebody remembering to turn it off.
 fn test_routes_allowed() -> bool {
     bindings::wasi::config::store::get("allow-test-routes")
         .ok()
@@ -320,10 +278,8 @@ fn login(body: &str) -> Reply {
     }
 }
 
-/// Three people, their roles, the permissions those roles carry, and one event —
-/// everything a part needs to be judged before the other three exist.
-///
-/// Returns the bearers, because a gate cannot mint one.
+/// Three people, their roles, the permissions those roles carry, and one event, so a part can
+/// be judged before the other three exist. Returns the bearers, because a gate cannot mint one.
 fn seed() -> Reply {
     ensure_roles();
 
@@ -358,22 +314,13 @@ fn seed() -> Reply {
         tokens[key] = json!({ "token": pair.access_token, "subject": principal.subject });
     }
 
-    // TWO events, and the second one is the whole reason.
-    //
-    // `event_id` has capacity 3 so a gate can claim a few places without issuing a
-    // hundred tickets. `contested_event_id` has capacity ONE, because a capacity
-    // that is not smaller than the number of people in the fixture can never be
-    // contended: three principals racing for three places all win, and the check
-    // that was supposed to catch "count, compare, create" passes for a component
-    // that does exactly that. One place and two claimants is the smallest shape
-    // that can tell the two implementations apart.
+    // TWO events, and the second is the point: `contested_event_id` has capacity ONE, because
+    // with capacity not smaller than the fixture's people nothing can be contended (three
+    // principals racing for three places all win, so "count, compare, create" would pass).
+    // One place and two claimants is the smallest shape that tells the implementations apart.
     let organizer = tokens["organizer"]["subject"].as_str().unwrap_or_default().to_string();
-    //
-    // Find-or-create by title, because the fixture is called by five gates AND by
-    // every pane of the screencast. Creating unconditionally made each caller add
-    // two more events: the door showed the same evening four times, and a gate that
-    // seeded twice was reading a different event from the one it had just claimed
-    // against.
+    // Find-or-create by title: the fixture is called by five gates AND every screencast pane,
+    // and creating unconditionally added two events per caller.
     let existing = records::find_by("events", "state", "\"open\"").unwrap_or_default();
     let mut made = Vec::new();
     for (title, capacity) in [("Rust, Wasm and a Free Drink", 3), ("The Last Seat In The House", 1)]
@@ -419,11 +366,9 @@ fn seed() -> Reply {
 /// traps the component and the connection simply closes.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-// The body as BYTES vs as text is a real choice here, so both come from
-// `guest_read_body_text!`: `read_body` decodes lossily, which is right for JSON and
-// silently destroys an image — every byte sequence that is not valid UTF-8 becomes
-// U+FFFD, so the upload succeeds and stores something that is not a JPEG. Anything
-// binary goes through `read_body_bytes`.
+// Body as BYTES vs text is a real choice: `read_body` decodes lossily (right for JSON),
+// which destroys an image (non-UTF-8 becomes U+FFFD, so the upload stores a non-JPEG).
+// Binary goes through `read_body_bytes`.
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
 use guestfmt::percent_decode as percent;
@@ -491,10 +436,8 @@ impl Guest for Component {
             // not advertise that it exists somewhere else.
             ["test", ..] if !test_routes_allowed() => Reply::err(404, "not_found"),
             ["test", "seed"] => seed(),
-            // Scaffold, and it says what it is: a part must be judgeable on what it
-            // WROTE without depending on the part that owns the read route. The
-            // check-in gate needs to see a ticket document while `tickets` is still
-            // a stub answering `not_implemented`.
+            // Scaffold: a part must be judgeable on what it WROTE without the part that owns
+            // the read route (the check-in gate needs a ticket document while `tickets` is a stub).
             ["test", coll @ ("events" | "tickets" | "swaps"), id] => match records::get(coll, id) {
                 Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
                 Err(_) => Reply::err(404, "not_found"),

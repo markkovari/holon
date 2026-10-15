@@ -26,7 +26,6 @@ pub fn lit(s: &str) -> String {
     Value::String(s.to_string()).to_string()
 }
 
-/// Claim the next version number, atomically.
 pub fn next_version() -> String {
     format!("UPSERT {}:⟨1⟩ SET n += 1 RETURN n;", SEQ)
 }
@@ -91,15 +90,10 @@ pub fn put_request(
     body: &str,
     at_version: u32,
 ) -> String {
-    // The edge is the history: who asked whom. Deterministic id, so a retried
-    // `ask` reinforces one row rather than asking twice (ADR-0084).
-    //
-    // `answered` is NOT set here, which is load-bearing. Setting it to false on
-    // every ask means a part that asks the same thing again — which it will, every
-    // generation, until the contract moves — silently un-answers the verdict it
-    // was already given, and the answering model is paid to make the same decision
-    // for ever. An absent field reads as unanswered (`!= true`) and an answered one
-    // stays answered.
+    // The edge is the history: who asked whom. Deterministic id, so a retried `ask`
+    // reinforces one row (ADR-0084). `answered` is NOT set here: setting it false on every
+    // ask would silently un-answer a verdict already given, and the answering model would
+    // be paid to re-decide for ever. An absent field reads as unanswered (`!= true`).
     format!(
         "BEGIN;UPSERT {} SET from_part = {}, to_part = {}, subject = {}, body = {}, \
          at_version = {at_version};\
@@ -115,14 +109,10 @@ pub fn put_request(
     )
 }
 
-/// What a part has been asked and has not answered.
-///
-/// `SELECT *` is load-bearing, not laziness: SurrealDB requires the `ORDER BY`
-/// field to be IN THE PROJECTION, and answers an explicit projection that omits it
-/// with *"Missing order idiom `at_version` in statement selection"* — a parse
-/// error, so the whole statement fails rather than the ordering being ignored.
-/// Narrowing these columns later would break the sort, at a distance, with an
-/// error about parsing.
+/// What a part has been asked and has not answered. `SELECT *` is load-bearing: SurrealDB
+/// requires the `ORDER BY` field to be IN THE PROJECTION and otherwise fails the whole
+/// statement with *"Missing order idiom `at_version`"*; narrowing the columns later would
+/// break the sort at a distance.
 pub fn pending(to_part: &str) -> String {
     format!(
         "SELECT * FROM {REQUESTS} WHERE to_part = {} AND answered != true ORDER BY at_version;",

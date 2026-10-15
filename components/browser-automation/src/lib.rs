@@ -1,26 +1,17 @@
 //! `browser-automation` — capture a page's rendered content, since a wasm guest cannot render one
 //!
-//! The rendering happens in `comp-browser`, which is native because driving a
-//! real browser process needs a process, and a `wasm32-wasip2` guest cannot
-//! start one (ADR-0095). This is the component side: it holds the contract,
-//! and reaches the daemon over HTTP the same way `fs-watcher` reaches
-//! `comp-fswatch`.
+//! The rendering happens in `comp-browser`, which is native because driving a real
+//! browser needs a process and a `wasm32-wasip2` guest cannot start one (ADR-0095). This
+//! component holds the contract and reaches the daemon over HTTP, like `fs-watcher`
+//! reaches `comp-fswatch`.
 //!
-//! Two things follow from that split, and both are the point rather than a
-//! cost:
-//!
-//!   * what this may dial is a MANIFEST decision (ADR-0008). The daemon's
-//!     address is `browser-url` in `wasi:config`, and the deployment's egress
-//!     allow-list decides whether the call leaves at all.
-//!   * the daemon has its own allow-list of hosts. Neither side trusts the
-//!     url in the request, because it can come from a model.
+//! What this may dial is a MANIFEST decision (ADR-0008): the daemon's address is
+//! `browser-url` in `wasi:config` and the egress allow-list decides whether the call
+//! leaves at all. The daemon has its own host allow-list; neither side trusts the url in
+//! the request, because it can come from a model.
 //!
 //! Config (wasi:config/store):
 //!   browser-url    where `comp-browser` is listening, e.g. http://127.0.0.1:8001
-//!
-//! It used to return a plausible-looking constant, which no caller could tell
-//! apart from a real snapshot. That is what the old `-> string` contract
-//! permitted; the current one cannot express it.
 
 #[allow(warnings)]
 mod bindings;
@@ -40,14 +31,11 @@ struct Component;
 /// browser is in trouble" than wait past that.
 const TIMEOUT_NS: u64 = 30_000_000_000;
 
-/// A ceiling on how much of the daemon's reply this buffers.
-///
-/// A rendered page's HTML has no natural bound, and the daemon truncates its
-/// own answer to the same size (see `comp-browser`'s doc comment), but this
-/// side does not trust that: a read loop with no ceiling turns a daemon bug or
-/// a hostile response into unbounded guest memory growth. 2 MiB is generous
-/// for a page snapshot and small next to the 16 MiB most components use for a
-/// request body, because a snapshot is read-only output rather than an upload.
+/// A ceiling on how much of the daemon's reply this buffers. The daemon truncates its own
+/// answer to the same size, but this side does not trust that: an unbounded read loop
+/// turns a daemon bug or hostile response into unbounded guest memory. 2 MiB is generous
+/// for a snapshot and below the 16 MiB request-body ceiling because a snapshot is
+/// read-only output, not an upload.
 const MAX_REPLY_BYTES: usize = 2 * 1024 * 1024;
 
 fn daemon_url() -> Result<String, BrowserError> {
@@ -136,9 +124,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, BrowserError> {
         match stream.blocking_read(8192) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => {
-                // A ceiling, not a policy: past this the read stops and the
-                // caller is told, rather than growing until the store's
-                // memory cap traps the component with nothing said.
+                // A ceiling, not a policy: past this the read stops and the caller is told.
                 if buf.len() + c.len() > MAX_REPLY_BYTES {
                     return Err(net("reply exceeded the size ceiling"));
                 }
@@ -154,11 +140,8 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, BrowserError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser.
-///
-/// The daemon's replies have two flat shapes — `{"content": "..."}` or
-/// `{"error": "...", "detail": "..."}` — so a full serde dependency would be
-/// more code than the thing it reads.
+/// Pull one JSON string field out without a parser: the daemon's replies have two flat
+/// shapes, so serde would be more code than the thing it reads.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];

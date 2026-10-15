@@ -1,15 +1,8 @@
 //! `clinic-domain` — owners, pets and visits, as one component.
 //!
-//! ## What is scaffold and what is the goal
-//!
-//! This file is the ROUTER and it is not writable by either part: it dispatches to
-//! `owners` and `visits`, and it answers `/health` so the harness can tell "the
-//! component is not up" from "the component is wrong". Both halves need it and
-//! neither owns it, which is exactly the shape a shared file has to have when two
-//! agents are working at once — the alternative is a merge conflict on every run.
-//!
-//! `src/owners.rs` and `src/visits.rs` are the goal. `CONTRACT.md` is what they
-//! must agree on.
+//! This file is the ROUTER and not writable by either part: it dispatches to `owners` and
+//! `visits` and answers `/health` so the harness can tell "not up" from "wrong".
+//! `src/owners.rs` and `src/visits.rs` are the goal; `CONTRACT.md` is what they must agree on.
 
 mod access;
 #[allow(warnings)]
@@ -66,13 +59,9 @@ pub struct Reply {
     pub status: u16,
     /// The JSON body. `Value::Null` means no body at all — see `no_content`.
     pub json: Value,
-    /// A body the router must NOT serialise as JSON, with its content type.
-    ///
-    /// `text/csv` cannot be expressed as a `Value`: `Value::String` serialises
-    /// to a JSON string *literal*, surrounding quotes and `\"` escapes included,
-    /// so a CSV parser reads one quoted blob instead of six columns. Both parts
-    /// of the run that needed this asked for it in the same words before the
-    /// scaffold had it.
+    /// A body the router must NOT serialise as JSON, with its content type: `Value::String`
+    /// serialises to a JSON string *literal* (quotes and escapes), so a CSV parser would
+    /// read one quoted blob instead of six columns.
     pub raw: Option<(String, Vec<u8>)>,
 }
 
@@ -93,11 +82,8 @@ impl Reply {
     }
 }
 
-/// The path segments of a request, its query string, and its bearer token.
-///
-/// `bearer` is here rather than read per-handler because the header plumbing is
-/// scaffold: `Request` is consumed to read the body, so a part that went
-/// looking for the header afterwards would find nothing. Empty when absent.
+/// The path segments of a request, its query string, and its bearer token. `bearer` is read
+/// here because `Request` is consumed to read the body.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
@@ -117,12 +103,8 @@ impl Route {
 
 use guestfmt::percent_decode as percent;
 
-/// One owner and three pets, written straight to the store.
-///
-/// Three, because `access-and-search` is judged on RANKING and a corpus of one
-/// ranks trivially. `pet_id` stays the first of them: the visits gate — now
-/// `gate_clinic::visits_and_the_rule_a_compiler_cannot_check` — books against that
-/// field and predates this.
+/// One owner and three pets, written straight to the store. Three because `access-and-search`
+/// is judged on RANKING; `pet_id` stays the first (the visits gate books against it).
 fn seed() -> Reply {
     let owner = match records::create(
         "owners",
@@ -191,11 +173,8 @@ impl Guest for Component {
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
         let Reply { status, json: payload, raw } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
-            // A fixture, not a feature. The `visits` half cannot book anything
-            // without a pet, and pets belong to the OTHER half — so a gate that
-            // judges visits alone needs a way to get one that does not depend on
-            // code the branch under test has not written. Scaffold, not writable,
-            // and it says what it is.
+            // A fixture, not a feature: the `visits` half cannot book without a pet and pets
+            // belong to the OTHER half. Scaffold, not writable.
             ["test", "seed"] => seed(),
             // Before the `api/pets` arm below, or `/api/pets/search` reads as a
             // pet whose id is "search" and the owners half answers 404.

@@ -130,8 +130,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- seeding ---------------------------------------------------------------
-
 /// Idempotent: ABAC rules for the project domain + RBAC perms for admin.
 /// Gated on one record so steady-state requests pay a single count() read.
 fn ensure_seeded() {
@@ -176,8 +174,6 @@ fn ensure_seeded() {
     );
     let _ = records::create("meta", "{\"seeded\":true}", &[]);
 }
-
-// ---- auth ------------------------------------------------------------------
 
 #[derive(Deserialize)]
 struct RegisterReq {
@@ -257,8 +253,6 @@ fn introspect(request: &Request) -> Result<Principal, Outcome> {
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
-// ---- ABAC helper -------------------------------------------------------------
-
 /// Load the project and enforce `action` for the principal via policy:guard.
 fn authorize_project(
     p: &Principal,
@@ -285,8 +279,6 @@ fn authorize_project(
         Err(Outcome::Forbidden(format!("{action} denied")))
     }
 }
-
-// ---- projects ----------------------------------------------------------------
 
 async fn create_project(request: Request) -> Outcome {
     ensure_seeded();
@@ -407,8 +399,6 @@ async fn set_webhook(request: Request, id: &str) -> Outcome {
     }
 }
 
-// ---- api keys ------------------------------------------------------------------
-
 async fn mint_key(request: Request, project_id: &str) -> Outcome {
     let p = match introspect(&request) {
         Ok(p) => p,
@@ -527,8 +517,6 @@ fn key_usage(request: &Request, key_id: &str) -> Outcome {
     }
 }
 
-// ---- gateway (the metered data plane) ------------------------------------------
-
 async fn gateway_echo(request: Request) -> Outcome {
     let Some(key) = header(&request, "x-api-key") else {
         return Outcome::Err(401, "missing x-api-key".into());
@@ -569,8 +557,6 @@ async fn gateway_echo(request: Request) -> Outcome {
         .to_string(),
     )
 }
-
-// ---- outbox + signed webhook delivery -------------------------------------------
 
 fn enqueue_event(topic: &str, project_id: &str, key_id: &str, prefix: &str) {
     // durable intent; delivery happens on drain. A lost enqueue is logged by
@@ -653,8 +639,6 @@ fn admin_drain(request: &Request) -> Outcome {
     )
 }
 
-// ---- helpers ---------------------------------------------------------------------
-
 fn hash_key(key: &str) -> String {
     let digest = Sha256::digest(key.as_bytes());
     digest.iter().map(|b| format!("{b:02x}")).collect()
@@ -713,18 +697,8 @@ async fn parse<T: for<'a> Deserialize<'a>>(request: Request) -> Result<T, String
     serde_json::from_slice(&body).map_err(|e| format!("bad json: {e}"))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
+/// guest traps and the caller just sees a closed connection.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
@@ -735,8 +709,6 @@ guestio::guest_p3_bearer!();
 fn header(request: &Request, name: &str) -> Option<String> {
     request.get_headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
 }
-
-// ---- responses --------------------------------------------------------------------
 
 fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {

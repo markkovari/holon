@@ -123,8 +123,6 @@ fn usage() -> Outcome {
     )
 }
 
-// ---- auth -------------------------------------------------------------------
-
 guestio::guest_p3_bearer!();
 guestio::guest_p3_respond!();
 
@@ -184,8 +182,6 @@ fn logout(request: &Req) -> Outcome {
         Err(e) => Outcome::Auth(e),
     }
 }
-
-// ---- dashboards + panels ----------------------------------------------------
 
 fn create_dashboard(request: &Req) -> Outcome {
     let p = match introspect(request) {
@@ -294,7 +290,6 @@ fn panel(id: &str) -> Option<Value> {
     )
 }
 
-/// The panel, if the caller owns its dashboard.
 fn owned_panel(p: &Principal, id: &str) -> Option<Value> {
     let pn = panel(id)?;
     let dash = pn["dashboard"].as_str()?;
@@ -326,8 +321,6 @@ fn panel_chart(request: &Req, id: &str) -> Outcome {
     Outcome::File(200, "image/svg+xml".into(), svg_doc.into_bytes())
 }
 
-// ---- svg:chart bridge -------------------------------------------------------
-
 fn kind_of(s: &str) -> svg::Kind {
     match s {
         "line" => svg::Kind::Line,
@@ -337,7 +330,6 @@ fn kind_of(s: &str) -> svg::Kind {
     }
 }
 
-/// Build the svg:chart request from a stored panel.
 fn chart_of(pn: &Value) -> svg::Chart {
     let data = pn["data"]
         .as_array()
@@ -387,8 +379,6 @@ fn seed_demo(subject: &str) {
     }
 }
 
-// ---- http plumbing ----------------------------------------------------------
-
 /// Attach the record id to its stored JSON.
 fn hydrate(id: &str, data: &str) -> String {
     let mut v: Value = serde_json::from_str(data).unwrap_or_else(|_| json!({}));
@@ -413,18 +403,8 @@ fn body(request: &Req) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
+/// guest traps and the caller just sees a closed connection.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

@@ -49,19 +49,10 @@ struct Component;
 
 const GCRA: &str = "gcra";
 const BATCHES: &str = "batches";
-/// How many times a contended compare-and-set is retried before giving up.
-///
-/// 200, not the 40 it was, and the number is arithmetic rather than taste. With
-/// N concurrent writers on one key exactly one wins each round, so a request
-/// fails after K rounds with probability ((N-1)/N)^K. At 20 writers and 40
-/// rounds that is 12.9% — and a measured 9.7% of hot-key requests came back 503
-/// when the rate limiter stopped going through `record-store`.
-///
-/// It was hidden before: `record-store::update` ran its OWN 40-try loop inside
-/// each of these, so the effective budget was 1600. Doing two store operations
-/// per attempt instead of eight silently cut the budget by 40×. At 200 the same
-/// arithmetic gives 0.0035%, and each attempt is now cheap enough that the worst
-/// case is still less work than one old attempt.
+/// How many times a contended compare-and-set is retried. With N concurrent writers on one key
+/// exactly one wins each round, so a request fails after K rounds with probability
+/// ((N-1)/N)^K: at 20 writers and 40 rounds that is 12.9% (9.7% of hot-key requests measured
+/// 503). At 200 it is 0.0035%, and an attempt is cheap (two store operations).
 const CAS_TRIES: u32 = 200;
 
 impl Guest for Component {
@@ -109,8 +100,6 @@ fn usage() -> Outcome {
     )
 }
 
-// ---- durable per-key state (records CAS = the single-writer worker) ---------
-
 /// The current record for `key` in `coll`: (id, revision, data). `find_by`
 /// returns id-ordered, so racers converge on the same (earliest) record.
 fn state_of(coll: &str, key: &str) -> Option<(String, u64, Value)> {
@@ -121,13 +110,9 @@ fn state_of(coll: &str, key: &str) -> Option<(String, u64, Value)> {
         .and_then(|e| serde_json::from_str::<Value>(&e.data).ok().map(|v| (e.id, e.revision, v)))
 }
 
-// ---- rate limit (token bucket) ----------------------------------------------
-
-/// Where one key's bucket lives. Not a record: a bucket has no identity beyond
-/// its key, is never listed, and is rewritten on every single request — so the
-/// id index and secondary index a `record` carries are pure overhead on the
-/// hottest path in this component (bench/FLEET-BENCH.md measured ~8 store round
-/// trips per request, of which two were the actual read and write).
+/// Where one key's bucket lives. Not a record: a bucket has no identity beyond its key, is
+/// never listed, and is rewritten every request, so a record's id and secondary indexes are
+/// pure overhead on the hottest path in this component.
 fn bucket_key(key: &str) -> String {
     let mut out = String::from("rl_");
     for b in key.bytes() {
@@ -163,10 +148,8 @@ async fn ratelimit(request: Request) -> Outcome {
     };
     let bkey = bucket_key(&key);
 
-    // Two store operations per request: the guarded read, and the guarded write.
-    // The revision comes from the store rather than from a record's own counter,
-    // so this is the same optimistic-concurrency loop it always was — it just no
-    // longer pays for an index it never queries.
+    // Two store operations per request: the guarded read and the guarded write. The revision
+    // comes from the store, so this is an optimistic-concurrency loop that pays for no index.
     for _ in 0..CAS_TRIES {
         let (rev, state) = match cas::get(&bucket, &bkey) {
             Ok(Some(v)) => {
@@ -196,8 +179,6 @@ async fn ratelimit(request: Request) -> Outcome {
     }
     Outcome::Err(503, "contended, retry".into())
 }
-
-// ---- throttle (GCRA) --------------------------------------------------------
 
 async fn throttle(request: Request) -> Outcome {
     let b = match body(request).await {
@@ -242,8 +223,6 @@ fn decide_response(dec: &shaper::Decision, algo: &str, key: &str) -> Outcome {
     Outcome::Json(if dec.allowed { 200 } else { 429 }, body)
 }
 
-// ---- batch (durable coalescer, atomic flush) --------------------------------
-
 /// The "downstream work" a batch performs, per item — here an uppercase to make
 /// the coalescing visible. In a real gateway this is the one batched call.
 fn process(item: &str) -> String {
@@ -265,7 +244,6 @@ async fn batch_submit(request: Request) -> Outcome {
     let now = now_ms();
 
     for _ in 0..CAS_TRIES {
-        // an OPEN (not-yet-flushed) batch for this key, if any.
         let open = records::find_by(BATCHES, "key", &json!(key).to_string())
             .unwrap_or_default()
             .into_iter()
@@ -276,7 +254,6 @@ async fn batch_submit(request: Request) -> Outcome {
 
         match open {
             None => {
-                // start a new batch with this item.
                 let d = json!({
                     "key": key, "items": [item], "created_ms": now,
                     "max_size": max_size, "max_age_ms": max_age, "flushed": false, "results": Value::Null
@@ -288,7 +265,6 @@ async fn batch_submit(request: Request) -> Outcome {
                             .to_string(),
                     );
                 }
-                // lost the create race -> loop, find the open batch, append.
             }
             Some((id, rev, mut v)) => {
                 let items = v["items"].as_array_mut().unwrap();
@@ -296,7 +272,6 @@ async fn batch_submit(request: Request) -> Outcome {
                 let index = items.len() - 1;
                 let size = items.len() as u64;
                 let created = v["created_ms"].as_u64().unwrap_or(now);
-                // flush when full or the window has aged out.
                 let flush = size >= v["max_size"].as_u64().unwrap_or(max_size)
                     || now.saturating_sub(created) >= v["max_age_ms"].as_u64().unwrap_or(max_age);
                 let mut my_result = Value::Null;
@@ -320,7 +295,6 @@ async fn batch_submit(request: Request) -> Outcome {
                         json!({ "batch": id, "index": index, "size": size, "flushed": flush, "result": my_result }).to_string(),
                     );
                 }
-                // revision conflict -> another submit landed first; retry.
             }
         }
     }
@@ -338,8 +312,6 @@ fn batch_get(id: &str) -> Outcome {
     v["age_ms"] = json!(now_ms().saturating_sub(v["created_ms"].as_u64().unwrap_or(0)));
     Outcome::Json(200, v.to_string())
 }
-
-// ---- reset (clear a key's durable state, for demo replay) -------------------
 
 async fn reset(request: Request) -> Outcome {
     let b = match body(request).await {
@@ -364,8 +336,6 @@ async fn reset(request: Request) -> Outcome {
     Outcome::Json(200, json!({ "ok": true, "key": key }).to_string())
 }
 
-// ---- http plumbing ----------------------------------------------------------
-
 async fn body(request: Request) -> Result<Value, Outcome> {
     let raw = read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
@@ -374,18 +344,8 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
+/// guest traps and the caller just sees a closed connection.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

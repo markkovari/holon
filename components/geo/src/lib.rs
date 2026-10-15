@@ -29,7 +29,6 @@ const EARTH_RADIUS_M: f64 = 6_371_008.8;
 /// Meters per degree of latitude (approx, treating the Earth as a sphere).
 const M_PER_DEG_LAT: f64 = 111_320.0;
 
-/// Validate a coordinate's ranges: lat -90..=90, lon -180..=180.
 fn validate(p: &Point) -> Result<(), GeoError> {
     if (-90.0..=90.0).contains(&p.lat) && (-180.0..=180.0).contains(&p.lon) {
         Ok(())

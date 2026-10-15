@@ -110,8 +110,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- seeding -----------------------------------------------------------------
-
 /// Idempotent: register the order lifecycle machine, helpdesk-domain style.
 fn ensure_seeded() {
     if records::count("meta").map(|n| n > 0).unwrap_or(false) {
@@ -161,8 +159,6 @@ fn grace_secs() -> u64 {
 fn now() -> u64 {
     system_clock::now().seconds as u64
 }
-
-// ---- HTTP: order queries + verbs ----------------------------------------------
 
 fn is_admin(p: &Principal) -> bool {
     p.roles.iter().any(|r| r == "admin")
@@ -301,8 +297,6 @@ fn mirror_status(entry: &records::Entry, data: &Value, state: &str) {
     // revision 0 = last-write-wins; the FSM already serialized the transition.
     let _ = records::update(ORDERS, &entry.id, &data.to_string(), 0);
 }
-
-// ---- pump: the choreography ------------------------------------------------------
 
 #[derive(Deserialize)]
 struct CheckoutEvent {
@@ -486,8 +480,6 @@ fn advance_order(order_id: &str, event: &str, next_topic: &str) -> bool {
     true
 }
 
-// ---- helpers ----------------------------------------------------------------------
-
 fn store_err(e: records::StoreError) -> Outcome {
     match e {
         records::StoreError::NotFound => Outcome::NotFound,
@@ -520,8 +512,6 @@ fn auth_error(e: &AuthError) -> (u16, &'static str) {
 
 guestio::guest_p3_bearer!();
 guestio::guest_p3_respond!();
-
-// ---- responses ---------------------------------------------------------------------
 
 fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {

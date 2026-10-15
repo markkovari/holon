@@ -1,22 +1,15 @@
 //! `doc-search-domain` — retrieval-augmented answers over an indexed library, behind
 //! a TOTP step-up, a per-subject budget and a cache.
 //!
-//! ## What is scaffold and what is the goal
+//! This file is the ROUTER and no part may write it: it dispatches to `library`, `answer`
+//! and `stepup`, answers `/health`, mints a test token, seeds a library, and can mark a
+//! session stepped-up directly. `src/library.rs`, `src/answer.rs` and `src/stepup.rs` are
+//! the goal; `CONTRACT.md` is what they must agree on.
 //!
-//! This file is the ROUTER and no part may write it: it dispatches to `library`,
-//! `answer` and `stepup`, answers `/health`, mints a test token, seeds a library, and
-//! can mark a session stepped-up directly. Three parts need it and none owns it.
-//!
-//! `src/library.rs`, `src/answer.rs` and `src/stepup.rs` are the goal.
-//! `CONTRACT.md` is what they must agree on.
-//!
-//! ## Why these three
-//!
-//! The chain is about COST, not order. `library` decides what can be found, `stepup`
-//! decides who may spend, and `answer` is the only part that spends anything — so a
-//! second identical question must cost nothing, and a refusal must not be remembered
-//! as an answer. Neither is visible in one request, and neither is checkable inside
-//! one part.
+//! The chain is about COST, not order: `library` decides what can be found, `stepup` who
+//! may spend, and `answer` is the only part that spends, so a second identical question
+//! must cost nothing and a refusal must not be remembered as an answer. Neither is
+//! checkable inside one part.
 
 mod answer;
 #[allow(warnings)]
@@ -74,7 +67,6 @@ guestio::guest_p3_bearer!();
 
 struct Component;
 
-/// What a handler answers with: a status and a JSON body.
 pub struct Reply {
     pub status: u16,
     /// `Value::Null` means no body at all — see `no_content`.
@@ -94,11 +86,9 @@ impl Reply {
     }
 }
 
-/// One request, as a part sees it.
-///
-/// The bearer is handed over as a STRING and not as a principal: resolving it is
-/// `auth:identity/authorizer`'s job and doing it here would take the part's whole
-/// reason for importing that capability away.
+/// One request, as a part sees it. The bearer is a STRING, not a principal: resolving it
+/// is `auth:identity/authorizer`'s job, and doing it here would remove the part's reason
+/// to import that capability.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
@@ -119,11 +109,8 @@ impl Route {
 
 use guestfmt::percent_decode as percent;
 
-/// A `wasi:config` value as a number, with a default.
-///
-/// Scaffold: reading config is plumbing every part would otherwise write out, and the
-/// contract names the four keys. What a part does with the number is the goal; parsing
-/// it is not.
+/// A `wasi:config` value as a number, with a default. Scaffold: reading config is
+/// plumbing; what a part does with the number is the goal.
 pub fn cfg_u64(key: &str, default: u64) -> u64 {
     bindings::wasi::config::store::get(key)
         .ok()
@@ -132,18 +119,13 @@ pub fn cfg_u64(key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-/// Unix seconds, for anything that has to be stamped.
 pub fn now_secs() -> u64 {
     system_clock::now().seconds as u64
 }
 
-/// A token for a test caller, so no gate has to log in through a part it is not
-/// judging.
-///
-/// Scaffold, and it is `session::issue` rather than a hand-built JWT for the same
-/// reason the parts are made to call `authorize`: a fixture that mints its own
-/// tokens is a fixture that can drift from what the verifier accepts, and then
-/// every part fails for the router's reason.
+/// A token for a test caller, so no gate has to log in through a part it is not judging.
+/// `session::issue` rather than a hand-built JWT: a fixture minting its own tokens can drift
+/// from what the verifier accepts, and then every part fails for the router's reason.
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let subject = req.get("subject").and_then(Value::as_str).unwrap_or("ada").to_string();
@@ -165,12 +147,8 @@ fn mint(body: &str) -> Reply {
 }
 
 /// Three documents, stored AND indexed, so `answer` and `stepup` can be judged before
-/// `library` exists.
-///
-/// Scaffold, and it says what it is: the documents are deliberately specific, because
-/// `answer`'s gate has to tell a real model answer from a canned sentence, and the only
-/// way to do that without comparing strings is to ask about something that appears
-/// nowhere else.
+/// `library` exists. Deliberately specific, so `answer`'s gate can tell a real model answer
+/// from a canned sentence without comparing strings.
 fn seed() -> Reply {
     let mut ids = Vec::new();
     for (title, text, tag) in [
@@ -259,9 +237,8 @@ impl Guest for Component {
             ["test", "token"] => mint(&body),
             ["test", "seed"] => seed(),
             ["test", "stepup"] => mark_stepped_up(&body),
-            // The stored document, straight out of the store. Scaffold, and it says
-            // what it is: a part must be judgeable on what it WROTE without
-            // depending on the part that owns the route for reading it back.
+            // The stored document, straight out of the store. Scaffold: a part must be
+            // judgeable on what it WROTE without depending on the part that owns the read route.
             ["test", "doc", id] => match records::get("docs", id) {
                 Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
                 Err(_) => Reply::err(404, "not_found"),

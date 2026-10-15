@@ -112,7 +112,6 @@ fn create_order(route: &Route, body: &str) -> Reply {
 
     let order_id = Uuid::new_v4().to_string();
 
-    // Create ledger entry instead of posting
     let ledger_entry = ledger::Entry {
         id: format!("tx-{}", order_id),
         memo: format!("Order {}", order_id),
@@ -143,7 +142,6 @@ fn create_order(route: &Route, body: &str) -> Reply {
         ]
     });
 
-    // Store ledger entry
     if store::create("ledger_entries", &serde_json::to_string(&ledger_data).unwrap(), &[]).is_err()
     {
         return Reply::err(500, "store_ledger_failed");

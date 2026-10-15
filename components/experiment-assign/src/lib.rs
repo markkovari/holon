@@ -27,8 +27,6 @@ const PREFIX: &str = "ex_";
 const RANGE: u64 = 1000; // cumulative-weight resolution (0.1% granularity)
 const COHORT_MAX: u32 = 1000;
 
-// ---- key scheme (mirrors feature-flags) ---------------------------------
-
 fn exp_key(tenant: &str, name: &str) -> String {
     let mut out = String::with_capacity(name.len() + tenant.len() + 4);
     out.push_str(PREFIX);
@@ -50,8 +48,6 @@ fn sanitize_into(out: &mut String, s: &str) {
 fn open() -> Result<kv::Bucket, AssignError> {
     kv::open(BUCKET).map_err(|e| AssignError::BackendUnavailable(format!("open: {e:?}")))
 }
-
-// ---- variant-set (de)serialization ---------------------------------------
 
 /// `name:weight` pairs, comma-joined. Arm names are sanitized so `,` / `:`
 /// can't appear literally; weights are plain decimal.
@@ -98,8 +94,6 @@ fn unsanitize(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-// ---- bucketing ------------------------------------------------------------
-
 /// FNV-1a 64-bit — deterministic, stable across runs (same as featureflags).
 fn fnv1a(s: &str) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -133,8 +127,6 @@ fn pick<'a>(variants: &'a [Arm], subject: &str) -> Option<&'a str> {
     // Floating edge (scaled == total-1 with integer division): last positive arm.
     variants.iter().rev().find(|v| v.weight > 0).map(|v| v.name.as_str())
 }
-
-// ---- read helpers ---------------------------------------------------------
 
 fn read_set(bucket: &kv::Bucket, key: &str) -> Result<Option<Vec<Arm>>, AssignError> {
     match bucket.get(key) {

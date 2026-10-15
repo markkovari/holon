@@ -24,8 +24,6 @@ struct Component;
 
 const BUCKET: &str = "default";
 
-// ---- serializable mirror of the WIT `event` -----------------------------
-
 #[derive(Serialize, Deserialize)]
 struct Stored {
     id: String,

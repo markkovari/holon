@@ -23,10 +23,8 @@ fn rl_key(tenant: &str, email: &str) -> String {
     format!("login:{tenant}:{}", email.to_lowercase())
 }
 
-/// Map the (separate) rate-limiter component's error to our auth-error.
 fn rl_err(e: LimitError) -> AuthError {
     match e {
-        // carry the rate-limiter's retry-after (seconds) through to the caller.
         LimitError::Locked(retry_after) => AuthError::RateLimited(retry_after),
         LimitError::BackendUnavailable(m) => {
             AuthError::BackendUnavailable(format!("ratelimit: {m}"))
@@ -37,7 +35,6 @@ fn rl_err(e: LimitError) -> AuthError {
 #[derive(Serialize, Deserialize)]
 struct Account {
     subject: String,
-    /// Argon2 PHC hash string, e.g. "$argon2id$v=19$m=...$...".
     phc: String,
 }
 
@@ -55,7 +52,6 @@ fn load(tenant: &str, email: &str) -> Result<Option<Account>, AuthError> {
 }
 
 fn hash_password(password: &str) -> Result<String, AuthError> {
-    // 16 random bytes -> base64 salt for the PHC string.
     let raw = get_random_bytes(16);
     let salt_b64 = b64_salt(&raw);
     let salt = Salt::from_b64(&salt_b64).map_err(|e| AuthError::Internal(format!("salt: {e}")))?;
@@ -145,13 +141,11 @@ pub fn login(email: &str, password: &str, tenant: &str) -> Result<TokenPair, Aut
 
     match verify_password(email, password, tenant) {
         Ok(principal) => {
-            // success clears the failure counter
             let _ = limiter::reset(&key);
             emit("login", Outcome::Allow, tenant, &principal.subject, "");
             store::session_issue(principal)
         }
         Err(e) => {
-            // count this failure toward lockout, then surface the auth error
             let _ = limiter::record_failure(&key);
             emit("login", Outcome::Deny, tenant, email, "invalid_credentials");
             Err(e)

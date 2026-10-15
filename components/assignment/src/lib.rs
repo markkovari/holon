@@ -55,7 +55,6 @@ impl RouterGuest for Component {
 
 impl HttpGuest for Component {
     async fn handle(_request: Request) -> Result<Response, ErrorCode> {
-        // Poll for events from the bus
         let events = match eventbus::poll("helpdesk.events", "assignment_worker", 50) {
             Ok(evs) => evs,
             Err(_) => {
@@ -68,15 +67,12 @@ impl HttpGuest for Component {
         for ev in events {
             let payload: Value = serde_json::from_slice(&ev.payload).unwrap_or(Value::Null);
 
-            // Only handle TicketCreated events
             if payload["type"].as_str() == Some("ticket_created") {
                 if let Some(ticket_id) = payload["ticket"].as_str() {
-                    // 1. Fetch ticket to see if it needs assignment
                     if let Ok(entry) = records::get("tickets", ticket_id) {
                         let mut data: Value =
                             serde_json::from_str(&entry.data).unwrap_or(Value::Null);
 
-                        // 2. Perform mock routing
                         let mock_agents = vec![
                             AgentWorkload { agent_id: "agent-1".into(), open_tickets: 3 },
                             AgentWorkload { agent_id: "agent-2".into(), open_tickets: 1 },
@@ -84,7 +80,6 @@ impl HttpGuest for Component {
                         if let Some(assignee) =
                             Component::route(mock_agents, "load-balanced".into())
                         {
-                            // 3. Update the ticket record
                             data["assignee"] = json!(assignee);
                             let _ = records::update(
                                 "tickets",
@@ -93,7 +88,6 @@ impl HttpGuest for Component {
                                 entry.revision,
                             );
 
-                            // 4. Emit TicketAssigned event
                             let assign_payload = json!({
                                 "type": "ticket_assigned",
                                 "ticket": ticket_id,

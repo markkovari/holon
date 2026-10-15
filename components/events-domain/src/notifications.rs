@@ -1,20 +1,12 @@
 //! The person's own view of their notifications: the badge, the list, and the tail.
 //!
-//! ## The stream is served here, not by the capability
+//! The stream is served here, not by the capability: `notify:inbox` holds notes and hands them
+//! back by cursor but holds no socket, so the SSE endpoint is a loop over `since(after)`, like
+//! `flags-domain`'s.
 //!
-//! `notify:inbox` holds notes and hands them back by cursor; it does not hold an
-//! HTTP connection, because a capability that owned a socket would only work inside
-//! an app shaped the way the capability expected. So the SSE endpoint lives in the
-//! app, and it is a loop over `since(after)` — the same shape `flags-domain` uses.
-//!
-//! ## Why the stream needs a ticket
-//!
-//! `EventSource` cannot set an `Authorization` header. The bearer therefore cannot
-//! travel the way it does everywhere else, and putting it in the query string would
-//! write a live session token into every access log and `Referer`. Instead an
-//! authenticated POST mints a short-lived, single-subject ticket signed by
-//! `webhook:sign`, and the GET presents that. A leaked 60-second ticket for one
-//! person's notification feed is a much smaller thing than a leaked bearer.
+//! The stream needs a ticket because `EventSource` cannot set an `Authorization` header, and a
+//! bearer in the query string would land in every access log and `Referer`. An authenticated
+//! POST mints a short-lived, single-subject ticket signed by `webhook:sign`; the GET presents it.
 
 use serde_json::json;
 
@@ -44,11 +36,9 @@ fn channels(v: &serde_json::Value) -> Vec<prefs::Channel> {
         .unwrap_or_default()
 }
 
-/// The secret the stream ticket is signed with. Config, not a `comp:secrets`
-/// reference, and that is a deliberate line: this signs a 60-second read-only
-/// capability over one person's own notification list, not a payment. A secret by
-/// reference is for things whose leak is a breach; this one's leak is a minute of
-/// somebody else's notifications.
+/// The secret the stream ticket is signed with. Config, not a `comp:secrets` reference,
+/// deliberately: this signs a 60-second read-only capability over one person's own
+/// notifications, whose leak is a minute of somebody else's notifications, not a breach.
 fn ticket_secret() -> String {
     crate::bindings::wasi::config::store::get("stream-ticket-secret")
         .ok()
@@ -59,9 +49,8 @@ fn ticket_secret() -> String {
         .unwrap_or_else(|| "unset-stream-ticket-secret".to_string())
 }
 
-/// Sixty seconds. Long enough for a browser to open the connection it just asked
-/// for, short enough that a ticket in a log is worth nothing by the time anyone
-/// reads it.
+/// Sixty seconds: long enough for a browser to open the connection, short enough that a
+/// ticket in a log is worthless.
 const TICKET_TTL: u64 = 60;
 
 fn ticket_body(subject: &str, expires: u64) -> String {
@@ -84,7 +73,6 @@ fn mint_ticket(subject: &str) -> String {
     }
 }
 
-/// Whose stream is this, if the ticket is good?
 fn redeem_ticket(ticket: &str) -> Option<String> {
     let (rest, header) = ticket.rsplit_once('.')?;
 
@@ -116,7 +104,6 @@ fn stream_ticket(route: &Route) -> Reply {
     Reply::json(200, json!({ "ticket": t, "ttl_seconds": TICKET_TTL }))
 }
 
-/// Whose notifications a `?ticket=` names, or nobody.
 pub fn stream_subject(route: &Route) -> Option<String> {
     redeem_ticket(&route.param("ticket"))
 }
@@ -234,23 +221,16 @@ fn put_prefs(route: &Route, body: &str) -> Reply {
     }
 }
 
-// ---- the live tail ------------------------------------------------------------
-
 /// How long a stream lives before the browser is asked to reconnect. A component
 /// invocation that never returns is one the host can never reclaim, so the stream
 /// ends politely and `EventSource` reopens — which is what it does natively.
 const MAX_TICKS: u32 = 300;
 const POLL_MS: u64 = 1000;
 
-/// Hold the connection open and push each new note as an SSE frame.
-///
-/// This bypasses `Reply` entirely: everything else in this app builds a body and
-/// hands it back, and a stream cannot — the response has to be SET before the first
-/// frame is written, and then written to for as long as it lasts.
-///
-/// It reads `notify:inbox` by cursor. The capability holds no socket, so the
-/// realtime half is the app's; what makes it cheap is that `since(after)` is exactly
-/// "what is new", the same call a page uses to load.
+/// Hold the connection open and push each new note as an SSE frame. This bypasses `Reply`:
+/// the response has to be SET before the first frame and then written to for as long as it
+/// lasts. It reads `notify:inbox` by cursor; `since(after)` is exactly "what is new", the
+/// call a page uses to load.
 pub fn stream(route: &Route) -> Result<Response, ErrorCode> {
     let Some(subject) = stream_subject(route) else {
         // A bad or expired ticket gets a 401 and no stream. Not a 200 with an error

@@ -1,27 +1,18 @@
 //! `contract-registry` — what two parts of a decomposed goal build against.
 //!
-//! ## The three rules, and where each one lives
+//! Three rules:
+//! 1. **Nothing blocks.** `ask` records and returns; `pending` is read at a generation
+//!    boundary. Nothing waits on another part, since two parts waiting on each other is the
+//!    deadlock this design exists to prevent (ADR-0086). A needed change costs a generation.
+//! 2. **An amendment is a promotion.** `answer(granted)` produces a PROPOSED version;
+//!    `ratify` makes it canonical, only for the part that owns it and only on a passing score
+//!    (as `knowledge:memory`'s trusted pool, ADR-0084), else a part could poison every sibling.
+//! 3. **A version mismatch is a refusal**, not a warning: candidates built against different
+//!    versions compile, deploy, and fail on one field.
 //!
-//! 1. **Nothing blocks.** `ask` records and returns; `pending` is read at a
-//!    generation boundary. There is no call in this component that waits for
-//!    another part, because two parts waiting on each other is the deadlock the
-//!    design exists to make impossible (ADR-0086). The cost is honest: a needed
-//!    change costs a generation.
-//! 2. **An amendment is a promotion.** `answer(granted)` produces a PROPOSED
-//!    version; `ratify` makes it canonical, and only for the part that owns it and
-//!    only on a passing score. Same rule as `knowledge:memory`'s trusted pool
-//!    (ADR-0084), because a part that could amend the shared contract at will
-//!    could poison every sibling.
-//! 3. **A version mismatch is a refusal**, not a warning. Two candidates built
-//!    against different versions will compile, deploy, and fail on one field.
-//!
-//! ## Where the guards are
-//!
-//! In the statements, not after a read. `ratify` carries `WHERE owner = …`,
-//! `answer` carries `WHERE answered = false`, and the version counter is
-//! `n += 1 RETURN n` rather than a read-then-write — two parts resolving requests
-//! at the same boundary is the normal case, and the read-modify-write version of
-//! that was measured landing 7 of 60 concurrent writes (ADR-0084).
+//! The guards live in the statements, not after a read: `ratify` has `WHERE owner = …`,
+//! `answer` has `WHERE answered = false`, and the version counter is `n += 1 RETURN n` (a
+//! read-modify-write was measured landing 7 of 60 concurrent writes, ADR-0084).
 
 #[allow(warnings)]
 mod bindings;

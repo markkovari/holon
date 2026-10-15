@@ -6,10 +6,8 @@
 //! right up until anything else moved a ticket — a swap, a release — and then
 //! silently stop agreeing.
 //!
-//! The lifecycle is registered here rather than at startup because a component has
-//! no startup: it is a handler, and the first request is the first moment anything
-//! runs. `define` on a machine that already exists is not an error (see fsm.wit),
-//! which is what makes calling it per request the honest thing rather than a waste.
+//! The lifecycle is registered per request, because a component has no startup (`define` on
+//! an existing machine is not an error, see fsm.wit).
 
 use serde_json::json;
 
@@ -52,12 +50,10 @@ fn ensure_machine() {
 /// through two code paths is how the two stop agreeing.
 pub fn fire(ticket_id: &str, event: &str) -> Result<fsm::Status, String> {
     ensure_machine();
-    // Create it only if it is NOT there. `create-instance` says so in fsm.wit:
-    // "Re-creating an existing instance RESETS it to initial." Calling it
-    // unconditionally put a checked-in ticket back to `issued` on every scan, so
-    // the door admitted the same code twice and answered 200 both times — a
-    // turnstile that counts one person forever. `get-status` is the existence
-    // check, and its failure is the only thing that should lead to a create.
+    // Create it only if it is NOT there: `create-instance` RESETS an existing instance to
+    // initial, so calling it unconditionally put a checked-in ticket back to `issued` on every
+    // scan and the door admitted the same code twice. `get-status` failing is the only thing
+    // that should lead to a create.
     if fsm::get_status(MACHINE, ticket_id).is_err() {
         let _ = fsm::create_instance(MACHINE, ticket_id);
     }

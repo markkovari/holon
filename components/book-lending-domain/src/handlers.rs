@@ -210,7 +210,6 @@ fn return_loan(route: &Route, id: &str) -> Reply {
         return Reply::err(500, "store_error");
     }
 
-    // Also update book status to available
     let book_id = loan.get("book_id").and_then(Value::as_str).unwrap_or("");
     if let Ok(book_entry) = records::get("books", book_id) {
         let mut book: Value = serde_json::from_str(&book_entry.data).unwrap_or(json!({}));

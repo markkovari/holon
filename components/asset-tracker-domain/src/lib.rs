@@ -1,13 +1,9 @@
 //! `asset-tracker` — who has the projector, and who is allowed to say it's back.
 //!
-//! RBAC (`auth:identity`) answers "may this ROLE checkout/checkin AT ALL".
-//! It cannot answer "is this the person who actually has it" — that row-level
-//! fact lives in `policy:guard`, evaluated on top of the RBAC check, never
-//! instead of it: a staff member with the RBAC permission to check items in
-//! still gets a 403 checking in someone ELSE'S loan unless they're admin.
-//!
-//! Real login (`auth:identity/accounts`), not a fixture token — this is meant
-//! to be driven from the SPA in `examples/asset-tracker/dist`, not curl.
+//! RBAC (`auth:identity`) answers "may this ROLE checkout/checkin AT ALL"; the row-level
+//! "is this the person who has it" lives in `policy:guard`, on top of RBAC and never
+//! instead: staff with the RBAC permission still get a 403 on someone ELSE'S loan unless
+//! admin. Real login (`auth:identity/accounts`); driven from `examples/asset-tracker/dist`.
 
 #[allow(warnings)]
 mod bindings {
@@ -113,8 +109,6 @@ fn usage() -> Outcome {
     )
 }
 
-// ---- seeding ----------------------------------------------------------------
-
 /// Idempotent: role->permission mappings + the one row-level rule. Gated on a
 /// marker record so steady-state requests pay a single `count` read.
 fn ensure_seeded() {
@@ -166,8 +160,6 @@ fn ensure_seeded() {
     );
     let _ = records::create("meta", &json!({"seeded": true}).to_string(), &[]);
 }
-
-// ---- auth --------------------------------------------------------------------
 
 #[derive(Deserialize)]
 struct RegisterReq {
@@ -235,8 +227,6 @@ fn require(request: &Request, target: &str, action: &str) -> Result<Principal, O
     authorizer::authorize(&token, &Permission { target: target.into(), action: action.into() })
         .map_err(Outcome::Auth)
 }
-
-// ---- assets -------------------------------------------------------------------
 
 #[derive(Deserialize)]
 struct CreateAssetReq {
@@ -309,8 +299,6 @@ fn delete_asset(request: &Request, id: &str) -> Outcome {
     audit_log(&p, "asset:delete", id, "allow");
     Outcome::Json(204, Value::Null.to_string())
 }
-
-// ---- checkout / checkin --------------------------------------------------------
 
 fn checkout(request: &Request, asset_id: &str) -> Outcome {
     let p = match require(request, "checkouts", "write") {
@@ -395,8 +383,6 @@ fn checkin(request: &Request, asset_id: &str) -> Outcome {
     audit_log(&p, "asset:checkin", asset_id, "allow");
     Outcome::Json(200, json!({"asset_id": asset_id, "returned_by": p.subject}).to_string())
 }
-
-// ---- plumbing -----------------------------------------------------------------
 
 fn audit_log(p: &Principal, action: &str, target: &str, outcome: &str) {
     let e = Event {

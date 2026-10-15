@@ -26,8 +26,6 @@ struct Component;
 
 const BUCKET: &str = "default";
 
-// ---- storage ------------------------------------------------------------
-
 /// Sanitize a template name to NATS-legal kv chars (same scheme as the other
 /// components' key sanitizers), prefixed with `tmpl_`.
 fn tmpl_key(name: &str) -> String {
@@ -56,7 +54,6 @@ fn serialize(tmpl: &Template) -> String {
     )
 }
 
-/// Parse the stored form back into a `Template`.
 fn parse(s: &str) -> Result<Template, RenderError> {
     let mut parts = s.split('\n');
     let subject = decode_field(parts.next())?;
@@ -87,8 +84,6 @@ fn load(bucket: &kv::Bucket, key: &str) -> Result<Template, RenderError> {
     }
 }
 
-// ---- rendering ----------------------------------------------------------
-
 fn is_name_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-'
 }
@@ -110,7 +105,6 @@ fn html_escape(s: &str) -> String {
     out
 }
 
-/// Look up a var by name.
 fn lookup<'a>(vars: &'a [Var], name: &str) -> Option<&'a str> {
     vars.iter().find(|v| v.name == name).map(|v| v.value.as_str())
 }
@@ -125,7 +119,6 @@ fn render_field(field: &str, vars: &[Var], escape: bool) -> Result<String, Rende
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'{' {
-            // try to parse a token: `{` name `}`
             let mut j = i + 1;
             while j < bytes.len() && is_name_char(bytes[j] as char) {
                 j += 1;
@@ -145,7 +138,6 @@ fn render_field(field: &str, vars: &[Var], escape: bool) -> Result<String, Rende
                 i = j + 1;
                 continue;
             }
-            // not a valid token -> literal `{`
             out.push('{');
             i += 1;
         } else {
@@ -170,8 +162,6 @@ fn utf8_len(b: u8) -> usize {
         4
     }
 }
-
-// ---- guest --------------------------------------------------------------
 
 impl Guest for Component {
     fn put_template(name: String, tmpl: Template) -> Result<(), RenderError> {

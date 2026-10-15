@@ -161,8 +161,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- users -------------------------------------------------------------------
-
 async fn register(request: Request) -> Outcome {
     let body = match parse_body(request).await {
         Ok(v) => v,
@@ -313,8 +311,6 @@ async fn update_user(request: Request) -> Outcome {
     }
 }
 
-// ---- profiles + follows ------------------------------------------------------
-
 fn get_profile(request: &Request, username: &str) -> Outcome {
     let (_, target) = match find_user("username", username) {
         Some(u) => u,
@@ -354,8 +350,6 @@ fn set_follow(request: &Request, username: &str, follow: bool) -> Outcome {
     }
     Outcome::Json(200, profile_envelope(&target, follow))
 }
-
-// ---- articles ----------------------------------------------------------------
 
 async fn create_article(request: Request) -> Outcome {
     let (p, _) = match auth(&request) {
@@ -545,8 +539,6 @@ fn list_tags() -> Outcome {
     Outcome::Json(200, json!({ "tags": tags }).to_string())
 }
 
-// ---- favorites + comments ----------------------------------------------------
-
 fn set_favorite(request: &Request, slug: &str, favorite: bool) -> Outcome {
     let (p, _) = match auth(request) {
         Ok(v) => v,
@@ -662,8 +654,6 @@ fn comment_id(record_id: &str) -> i64 {
     (h & 0x001F_FFFF_FFFF_FFFF) as i64
 }
 
-// ---- record helpers ----------------------------------------------------------
-
 fn user_idx() -> Vec<String> {
     vec!["username".into(), "email".into(), "subject".into()]
 }
@@ -748,17 +738,10 @@ fn all_articles() -> Vec<(records::Entry, Value)> {
 
 /// Newest-first, offset/limit slice, `{articles, articlesCount}` envelope.
 /// `articlesCount` is the full match count (pre-pagination), per spec. The
-/// Per-request memo for the lookups a page repeats (ADR-0077).
-///
-/// Rendering a page of articles asked the store the same questions once per
-/// article: who the author is, and who the viewer follows. The follow query is
-/// the worst of them — `find_by(FOLLOWS, "follower", viewer)` is byte-identical
-/// for every row on the page, so a twenty-article page ran it twenty times for
-/// one answer.
-///
-/// A memo is safe here in a way it would not be anywhere else: a component
-/// instance is per-request (ADR-0037), so this cannot outlive the response it
-/// was built for and cannot go stale. It is not a cache; it is not asking twice.
+/// Per-request memo for the lookups a page repeats (ADR-0077): rendering a page asked the store
+/// the same questions once per article (the author, and the viewer's follows, byte-identical for
+/// every row). Safe because a component instance is per-request (ADR-0037), so it cannot go
+/// stale; it is not a cache.
 #[derive(Default)]
 struct View {
     authors: std::collections::HashMap<String, Option<Value>>,
@@ -907,8 +890,6 @@ fn favorite_entry(user: &str, article_id: &str) -> Option<String> {
         .map(|e| e.id)
 }
 
-// ---- JSON shape helpers ------------------------------------------------------
-
 fn user_envelope(data: &Value, token: &str) -> String {
     json!({"user": {
         "email": data["email"],
@@ -963,8 +944,6 @@ fn tag_list(v: Option<&Value>) -> Vec<String> {
     tags
 }
 
-// ---- auth + request parsing --------------------------------------------------
-
 /// Resolve the bearer token to a principal (RealWorld echoes the token back).
 fn auth(request: &Request) -> Result<(Principal, String), Outcome> {
     let Some(token) = bearer(request) else {
@@ -1000,18 +979,8 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(422, "body", format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
+/// guest traps and the caller just sees a closed connection.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
@@ -1071,8 +1040,6 @@ fn iso8601(secs: u64, millis: u32) -> String {
     }
     format!("{year:04}-{month:02}-{day:02}T{h:02}:{mi:02}:{s:02}.{millis:03}Z")
 }
-
-// ---- response ----------------------------------------------------------------
 
 fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {

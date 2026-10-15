@@ -135,8 +135,6 @@ fn a_zero_quantity_slot_is_refused() {
     );
 }
 
-// ---- what you still have to buy ----------------------------------------
-
 fn price(id: &str, unit: i64) -> Price {
     Price { card_id: id.into(), unit_minor: unit, currency: EUR.into() }
 }

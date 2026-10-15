@@ -1,37 +1,16 @@
 //! `agent-writer` — a goal and a tree in, a candidate out.
 //!
-//! ## The two halves, and only one of them is the model's
+//! The model answers with search/replace EDIT blocks (only the changed lines), applied
+//! against `goal.context` to rebuild whole files; whole files stay on the wire. That
+//! shrinks the model's expensive OUTPUT and avoids whole-file rewrites silently dropping
+//! a function. An edit whose SEARCH text is not in the file is a hard error, not a skip;
+//! a FILE block creates a file or replaces most of one.
 //!
-//! Everything a model returns is text. The half that matters here is what
-//! happens to that text: which paths are accepted, what an unparseable answer
-//! means, and whether a repair actually used the failure it was handed. All of
-//! that is pure and tested; the model is whatever the deployment linked.
+//! `previous` (failed checks and their output — the only feedback that is not a model's
+//! opinion of its own work) goes into the prompt verbatim and first.
 //!
-//! ## Edits, not whole files
-//!
-//! The model answers with search/replace EDIT blocks — only the lines that
-//! change — and the writer applies them against the files it already holds
-//! (`goal.context`) to reconstruct the whole file it ships. Whole files stay on
-//! the wire (the gate and the forge are unchanged); what shrinks is the model's
-//! OUTPUT, the expensive tokens, and with it the failure mode where a whole-file
-//! rewrite of a 300-line file silently drops a function nobody asked it to touch.
-//!
-//! An edit whose SEARCH text is not in the file is a hard error, not a skip: a
-//! diff that does not apply is exactly the case whole-file rewriting turned into
-//! silent corruption. Here it fails the candidate, and the driver repairs it.
-//! A FILE block still exists for creating a new file or replacing most of one.
-//!
-//! ## The repair loop
-//!
-//! `previous` carries the checks that failed last time, and their output. That is
-//! the only feedback in this system that is not a model's opinion of its own
-//! work — `graph:fitness` got it by running real commands — so it goes into the
-//! prompt verbatim and first, before the goal is restated.
-//!
-//! ## What is refused
-//!
-//! A path outside `writable`. The answer comes from a model, and an agent that
-//! can name any path is an agent that can rewrite the deployment that runs it.
+//! A path outside `writable` is refused: an agent that can name any path can rewrite the
+//! deployment that runs it.
 
 #[allow(warnings)]
 mod bindings;
@@ -54,33 +33,13 @@ const S_MARK: &str = "<<<<<<< SEARCH";
 const DIV: &str = "=======";
 const R_MARK: &str = ">>>>>>> REPLACE";
 
-/// What the model is told about the answer FORMAT.
-///
-/// A worked example, not a schematic — and that is a measured choice, not a
-/// stylistic one. The schematic this replaced (`the exact existing lines to
-/// replace`) was followed by Claude and NOT by Qwen3-Coder-30B, which answered a
-/// real goal with `=== EDIT: path` followed by a ```rust fence and no conflict
-/// markers at all. The parser found no `SEARCH` and discarded the whole answer,
-/// and the branch was recorded as "no edit or file blocks" — a format failure
-/// wearing the costume of a model that cannot code.
-///
-/// Three things fixed it, verified against that model on the same prompt: an
-/// example with real code in it, naming the four marker lines as mandatory, and
-/// saying explicitly that markdown fences are not allowed. A model that has spent
-/// its life emitting ```rust needs to be told this file is not a chat window.
-///
-/// The same costume, a second time, on Qwen3.8-27B: every attempt came back as
-/// eighty-three bytes of `I'll read the contract and existing files to understand
-/// what I need to implement`, and given a SMALLER prompt it invented a block of
-/// its own — `=== READ: CONTRACT.md`. Not a long-context failure and not the
-/// prompt cache, both ruled out by measurement: handed the same files in one shot
-/// it produced a correct `=== FILE:` block of 2,734 tokens. A model trained to
-/// work in a tool loop reaches for a tool, and nothing here had ever said there
-/// is not one.
-///
-/// So the fourth rule is that it CANNOT read, phrased as a cost rather than a
-/// prohibition — "asking costs the attempt" — because the failure mode is not
-/// disobedience, it is a reasonable move in the wrong environment.
+/// What the model is told about the answer FORMAT: a worked example, not a schematic,
+/// as a measured choice. The schematic was followed by Claude but not Qwen3-Coder-30B,
+/// which emitted a ```rust fence with no conflict markers, so the parser discarded the
+/// answer as a format failure. Fixed by an example with real code, naming the four
+/// marker lines as mandatory, and forbidding markdown fences. Qwen3.8-27B, trained in
+/// a tool loop, reached for a tool (`=== READ:`); the fourth rule says it CANNOT read,
+/// phrased as a cost ("asking costs the attempt") rather than a prohibition.
 fn system_prompt() -> String {
     format!(
         "You change code to satisfy a goal. You answer ONLY with blocks.\n\
@@ -129,10 +88,7 @@ fn system_prompt() -> String {
     )
 }
 
-/// Build what the model is asked.
-///
-/// Pure, so the interesting question — does a repair differ from a first attempt
-/// — is answerable without a model.
+/// Pure, so whether a repair differs from a first attempt is answerable without a model.
 fn build_prompt(g: &Goal, previous: &[Failure], blocked: &[Blocked]) -> String {
     let mut p = String::new();
 
@@ -147,12 +103,9 @@ fn build_prompt(g: &Goal, previous: &[Failure], blocked: &[Blocked]) -> String {
         p.push('\n');
     }
 
-    // AFTER the failures and before the goal, and phrased as "not attempted"
-    // rather than as a problem. A model shown fourteen unrun checks alongside one
-    // real failure will confidently repair a test that never ran — which is the
-    // exact behaviour `graph:fitness` became a graph to stop. This is context: it
-    // says why the list of failures is short, so a short list does not read as a
-    // nearly-passing candidate.
+    // AFTER the failures and before the goal, phrased as "not attempted": a model shown
+    // fourteen unrun checks next to one failure will "repair" a test that never ran.
+    // This is context; it explains why the failure list is short.
     if !blocked.is_empty() {
         p.push_str("These checks were NOT ATTEMPTED, because something they need failed first.\n");
         p.push_str("Do not try to fix them — fix what failed, and these will run.\n\n");
@@ -193,12 +146,9 @@ fn op_path(op: &Op) -> &str {
     }
 }
 
-/// Pull ops out of whatever came back, in document order.
-///
-/// Tolerant of prose around the blocks, because a model will add it however
-/// firmly it was asked not to, and refusing an otherwise good answer over a
-/// preamble would throw away work that cost real money. Order is preserved so
-/// that several edits to the same file apply as the model intended.
+/// Pull ops out of whatever came back, in document order. Tolerant of prose around the
+/// blocks (refusing a good answer over a preamble wastes paid work); order is preserved
+/// so several edits to one file apply as intended.
 fn parse_ops(answer: &str) -> Vec<Op> {
     let mut out = Vec::new();
     let mut rest = answer;
@@ -262,12 +212,9 @@ fn parse_ops(answer: &str) -> Vec<Op> {
     out
 }
 
-/// Replace the first occurrence of `search` in `cur` with `replace`.
-///
-/// Exact first, then a whitespace-tolerant retry that matches line-by-line
-/// ignoring trailing whitespace — the single most common way a model's copy of
-/// the SEARCH text drifts from the file. Returns `None` when the text is nowhere
-/// to be found, which the caller turns into a rejected candidate.
+/// Replace the first occurrence of `search` in `cur`. Exact first, then a retry matching
+/// line-by-line ignoring trailing whitespace (the commonest drift in a model's copy of
+/// SEARCH). `None` when not found; the caller rejects the candidate.
 fn find_replace(cur: &str, search: &str, replace: &str) -> Option<String> {
     if let Some(pos) = cur.find(search) {
         let mut s = String::with_capacity(cur.len() - search.len() + replace.len());
@@ -299,8 +246,7 @@ fn find_replace(cur: &str, search: &str, replace: &str) -> Option<String> {
     Some(s)
 }
 
-/// Fold the ops onto the base tree, producing the whole contents of every file
-/// that was touched, in first-touch order.
+/// Fold the ops onto the base tree: whole contents of every touched file, first-touch order.
 fn apply_ops(base: &[File], ops: Vec<Op>) -> Result<Vec<File>, String> {
     let mut work: HashMap<String, String> =
         base.iter().map(|f| (f.path.clone(), f.content.clone())).collect();
@@ -320,9 +266,7 @@ fn apply_ops(base: &[File], ops: Vec<Op>) -> Result<Vec<File>, String> {
             Op::Edit { path, search, replace } => {
                 touch(&mut order, &path);
                 if search.is_empty() {
-                    // An empty SEARCH is "create or overwrite" — same as a FILE
-                    // block, tolerated so a model that reaches for the edit shape
-                    // for a new file is not punished for it.
+                    // An empty SEARCH means create or overwrite, same as a FILE block.
                     work.insert(path, replace);
                     continue;
                 }
@@ -344,21 +288,15 @@ fn apply_ops(base: &[File], ops: Vec<Op>) -> Result<Vec<File>, String> {
         .collect())
 }
 
-/// The temperature to request at a given repair depth, in milli-units.
-///
-/// Low first (0.2): a first attempt should be the model's most likely answer,
-/// which a determinable gate rewards. Each repair raises it — a branch that
-/// failed and is re-trying wants to EXPLORE, not re-roll the same near-miss — up
-/// to a 1.0 ceiling. The provider only forwards this to models that accept a
-/// temperature; on the rest it is a no-op, so escalating is always safe to ask.
+/// The temperature at a given repair depth, in milli-units: low first (0.2) so a first
+/// attempt is the likeliest answer, rising to a 1.0 ceiling so a failed branch EXPLORES.
+/// The provider forwards it only to models that accept one, so escalating is always safe.
 fn temperature_for(repair_depth: u32) -> u32 {
     (200 + 300 * repair_depth).min(1000)
 }
 
-/// May this path be written?
-///
-/// Exact match against the allow-list. No prefix rule: `src/lib.rs` permitting
-/// `src/lib.rs.bak` is the kind of near-miss that reads as fine and is not.
+/// May this path be written? Exact match, no prefix rule: `src/lib.rs` permitting
+/// `src/lib.rs.bak` reads as fine and is not.
 fn writable(g: &Goal, path: &str) -> bool {
     g.writable.iter().any(|w| w == path)
 }
@@ -374,8 +312,7 @@ impl Guest for Component {
             return Err(AgentError::UnderSpecified("the goal says nothing".into()));
         }
         if g.writable.is_empty() {
-            // An agent with nothing it may write can only produce an answer that
-            // is entirely refused, so this is caught where it can be explained.
+            // Nothing writable means every answer is refused; caught where it can be explained.
             return Err(AgentError::UnderSpecified(
                 "the goal names no writable paths, so no candidate could be accepted".into(),
             ));
@@ -383,9 +320,8 @@ impl Guest for Component {
 
         let opts = llm::Options {
             model: String::new(),
-            // Low on the first try, higher on each repair — a stuck branch should
-            // explore, not re-roll. The provider withholds it from models that
-            // rejected it, so asking is always safe.
+            // Low first, higher on each repair; the provider withholds it from models
+            // that rejected it.
             temperature: temperature_for(previous.len() as u32),
             max_tokens: 0,
             stop: Vec::new(),
@@ -409,9 +345,8 @@ impl Guest for Component {
 
         let ops = parse_ops(&completion.text);
         if ops.is_empty() {
-            // Distinct from an inference failure: the model answered, and the
-            // answer was not a candidate. A caller retries those differently —
-            // one is worth another seed, the other is worth waiting.
+            // Distinct from an inference failure: one is worth another seed, the other
+            // is worth waiting.
             return Err(AgentError::UnusableAnswer(format!(
                 "no edit or file blocks in {} characters of answer; starts: {:?}",
                 completion.text.len(),
@@ -428,14 +363,11 @@ impl Guest for Component {
             )));
         }
 
-        // A diff that does not apply is the whole reason edits are safer than
-        // whole-file rewrites: it fails loudly here instead of shipping a file
-        // with a function silently missing.
+        // A diff that does not apply fails loudly here instead of shipping a file with a
+        // function missing.
         let files = apply_ops(&g.context, ops).map_err(AgentError::UnusableAnswer)?;
 
-        // The cost travels with the answer. A caller that has to ask a second
-        // question to find out what the first one cost will eventually forget
-        // to, and a budget nobody reports against is not a budget.
+        // The cost travels with the answer, so a caller need not ask a second question.
         Ok(Candidate {
             files,
             prompt_tokens: completion.usage.prompt_tokens,
@@ -462,7 +394,6 @@ mod tests {
         }
     }
 
-    /// Parse + apply, the path a candidate actually travels.
     fn run(answer: &str, base: &[(&str, &str)]) -> Result<Vec<File>, String> {
         let base: Vec<File> = base
             .iter()
@@ -483,8 +414,7 @@ mod tests {
         assert_eq!(files[0].content, "pub fn answer() -> u32 { 42 }");
     }
 
-    /// The point of #2: an edit touches only the lines it names, and the rest of
-    /// the file survives verbatim.
+    /// An edit touches only the lines it names.
     #[test]
     fn an_edit_changes_only_its_lines() {
         let base = [("src/lib.rs", "fn a() {}\nfn answer() -> u32 { 41 }\nfn b() {}\n")];
@@ -499,8 +429,7 @@ mod tests {
         assert_eq!(files[0].content, "fn a() {}\nfn answer() -> u32 { 42 }\nfn b() {}\n");
     }
 
-    /// A SEARCH that is not in the file is a hard error — the candidate is
-    /// rejected, not shipped with a botched edit.
+    /// A SEARCH not in the file is a hard error: the candidate is rejected.
     #[test]
     fn an_edit_that_does_not_match_is_an_error() {
         let base = [("a.rs", "hello\n")];
@@ -569,14 +498,11 @@ mod tests {
     #[test]
     fn an_answer_with_no_blocks_yields_nothing() {
         assert!(parse_ops("I would suggest refactoring the module.").is_empty());
-        // A block that never closes is not half a file.
         assert!(parse_ops(&format!("{FILE_OPEN} a.rs\nunterminated")).is_empty());
-        // An edit missing its REPLACE fence is not half an edit.
         assert!(parse_ops(&format!("{EDIT_OPEN} a.rs\n{S_MARK}\nx\n{DIV}\ny\n")).is_empty());
     }
 
-    /// THE REPAIR LOOP. The same goal and the same seed must produce a different
-    /// prompt once something is known to have failed.
+    /// THE REPAIR LOOP: same goal and seed, different prompt once something has failed.
     #[test]
     fn a_repair_prompt_differs_because_of_the_failure() {
         let g = goal("make it 42", &["src/lib.rs"], &[("src/lib.rs", "fn answer() { 41 }")]);
@@ -591,14 +517,8 @@ mod tests {
         assert!(repair.contains("the-fix"), "and so must which check it was");
     }
 
-    /// A blocked check is context, and is not offered as something to fix.
-    ///
-    /// The whole reason `graph:fitness` is a graph rather than a list: a candidate
-    /// that does not compile used to arrive as fifteen failures with fifteen walls
-    /// of output, and a model handed that will confidently repair a test it never
-    /// ran. It arrives as one failure and a list of things nobody tried — and until
-    /// `graph:agent@0.2.0` that list had nowhere to go, so the prompt could not say
-    /// it and a one-item failure list read as a nearly-passing candidate.
+    /// A blocked check is context, not something to fix: a candidate that does not
+    /// compile arrives as one failure plus a list of things nobody tried.
     #[test]
     fn a_blocked_check_is_named_but_not_asked_for() {
         let g = goal("make it 42", &["a.rs"], &[]);

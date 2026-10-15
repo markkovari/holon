@@ -26,7 +26,6 @@ fn cache_get(key: &str) -> Option<String> {
     }
 }
 
-/// Store a value with `jwks-cache-ttl` seconds of freshness.
 fn cache_put(key: &str, payload: &str) {
     let exp = wall_clock::now().seconds + config::jwks_cache_ttl();
     let _ = kv::set(key, &format!("{exp}:{payload}"));
@@ -52,19 +51,16 @@ struct Jwk {
     kty: String,
     #[serde(default)]
     kid: Option<String>,
-    // RSA
     #[serde(default)]
     n: Option<String>,
     #[serde(default)]
     e: Option<String>,
-    // EC
     #[serde(default)]
     x: Option<String>,
     #[serde(default)]
     y: Option<String>,
 }
 
-/// Fetch (and cache) the issuer's discovery document.
 pub fn discover(issuer: &str) -> Result<OidcConfig, AuthError> {
     let doc = discovery(issuer)?;
     Ok(OidcConfig {
@@ -113,7 +109,6 @@ fn select_key<'a>(jwks: &'a Jwks, kid: Option<&str>) -> Option<&'a Jwk> {
     }
 }
 
-/// Resolve the RSA modulus (n) and exponent (e) for the issuer/kid.
 pub fn jwks_rsa_key(issuer: &str, kid: Option<&str>) -> Result<(Vec<u8>, Vec<u8>), AuthError> {
     let jwks = fetch_jwks(issuer)?;
     let jwk =
@@ -126,7 +121,6 @@ pub fn jwks_rsa_key(issuer: &str, kid: Option<&str>) -> Result<(Vec<u8>, Vec<u8>
     Ok((n, e))
 }
 
-/// Resolve the EC public point coordinates (x, y) for the issuer/kid.
 pub fn jwks_ec_key(issuer: &str, kid: Option<&str>) -> Result<(Vec<u8>, Vec<u8>), AuthError> {
     let jwks = fetch_jwks(issuer)?;
     let jwk =
@@ -181,8 +175,6 @@ pub fn exchange_code(code: &str, redirect_uri: &str) -> Result<TokenPair, AuthEr
     })
 }
 
-// ---- minimal wasi:http client ------------------------------------------
-
 fn http_get(url: &str) -> Result<Vec<u8>, AuthError> {
     request(Method::Get, url, None)
 }
@@ -218,7 +210,6 @@ fn request(method: Method, url: &str, body: Option<&[u8]>) -> Result<Vec<u8>, Au
     req.set_authority(Some(&authority)).map_err(|_| net_err("set authority"))?;
     req.set_path_with_query(Some(&path)).map_err(|_| net_err("set path"))?;
 
-    // Write request body if present.
     if let Some(bytes) = body {
         let out = req.body().map_err(|_| net_err("body"))?;
         {
@@ -278,20 +269,12 @@ fn urlencode(s: &str) -> String {
     out
 }
 
-/// Write a whole body, however long it is.
-///
-/// `blocking-write-and-flush` accepts at most 4096 bytes and TRAPS above that
-/// rather than returning an error: the component dies mid-response and the caller
-/// sees `connection closed before message completed`, three layers from the cause.
-/// This bit a real run — a 4573-byte contract — and cost four failed starts to
-/// find, so it is written the same way everywhere now.
-///
-/// Not a flat 4096-byte loop: `check-write` is the stream saying how much it will
-/// take right now, usually far more, so this writes in whatever bites it offers,
-/// waits on the pollable when it offers none, and flushes ONCE at the end.
-///
-/// Returns false when the stream is gone. For an SSE loop that means the client
-/// hung up, which is ordinary and not an error.
+/// Write a whole body, however long. `blocking-write-and-flush` accepts at most 4096
+/// bytes and TRAPS above that rather than erroring: the component dies mid-response and
+/// the caller sees `connection closed before message completed`, far from the cause.
+/// Writes in whatever bites `check-write` offers, waits on the pollable when it offers
+/// none, and flushes ONCE at the end. Returns false when the stream is gone (for an SSE
+/// loop, the client hung up; not an error).
 fn write_all(stream: &crate::bindings::wasi::io::streams::OutputStream, mut bytes: &[u8]) -> bool {
     while !bytes.is_empty() {
         let ready = match stream.check_write() {

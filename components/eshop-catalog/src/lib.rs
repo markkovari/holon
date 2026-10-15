@@ -102,8 +102,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- seeding ---------------------------------------------------------------
-
 /// The eShopOnDapr demo catalog, verbatim (prices in integer cents).
 /// ponytail: seeded in code, no admin CRUD — the original has none either.
 const SEED_BRANDS: [&str; 5] = ["Azure", ".NET", "Visual Studio", "SQL Server", "Other"];
@@ -160,8 +158,6 @@ fn ensure_seeded() -> Result<(), Outcome> {
     }
     Ok(())
 }
-
-// ---- browse ----------------------------------------------------------------
 
 fn query_param(query: &str, key: &str) -> Option<String> {
     query.split('&').find_map(|kv| {
@@ -249,8 +245,6 @@ fn item_json(entry: &records::Entry) -> Value {
     data["id"] = json!(entry.id);
     data
 }
-
-// ---- stock choreography (the Dapr pub/sub side) ------------------------------
 
 #[derive(Deserialize)]
 struct StockItem {
@@ -363,8 +357,6 @@ fn adjust_stock(product_id: &str, units: u64) {
     }
 }
 
-// ---- helpers -----------------------------------------------------------------
-
 fn store_err(e: records::StoreError) -> Outcome {
     match e {
         records::StoreError::NotFound => Outcome::NotFound,
@@ -379,8 +371,6 @@ fn bus_err(e: bus::BusError) -> Outcome {
         bus::BusError::BackendUnavailable(m) => Outcome::Err(503, m),
     }
 }
-
-// ---- responses -----------------------------------------------------------------
 
 fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {

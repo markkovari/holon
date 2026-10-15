@@ -190,8 +190,6 @@ fn schema_json() -> Outcome {
     Outcome::Json(200, json!({"columns": COLUMNS, "rules": rs}).to_string())
 }
 
-// ---- import: parse -> validate -> store --------------------------------------
-
 async fn import(request: Request) -> Outcome {
     let text = match read_body(request).await {
         Ok(b) => String::from_utf8_lossy(&b).to_string(),
@@ -216,11 +214,8 @@ async fn import(request: Request) -> Outcome {
     let mut rejected: Vec<Value> = Vec::new();
 
     for (i, rec) in parsed.iter().enumerate() {
-        // build a JSON object from the record's name->value pairs, coercing each
-        // cell to the JSON type its rule expects. CSV is all strings on the
-        // wire; typed validation (integer ranges, booleans) only means anything
-        // once the cell is the JSON type it claims to be. A cell that won't
-        // coerce stays a string, so `validate` reports the type error itself.
+        // CSV is all strings on the wire, so each cell is coerced to the JSON type its rule
+        // expects; one that won't coerce stays a string and `validate` reports the type error.
         let mut obj = serde_json::Map::new();
         for (k, v) in &rec.pairs {
             obj.insert(k.clone(), coerce(k, v, &rule_set));
@@ -249,8 +244,6 @@ async fn import(request: Request) -> Outcome {
     )
 }
 
-// ---- paged report ------------------------------------------------------------
-
 fn rows(path: &str) -> Outcome {
     let requested: u32 = query_str(path, "limit").and_then(|s| s.parse().ok()).unwrap_or(20);
     let limit = match paginate::clamp_limit(requested) {
@@ -273,7 +266,6 @@ fn rows(path: &str) -> Outcome {
     let items: Vec<Value> =
         page.entries.iter().filter_map(|e| serde_json::from_str::<Value>(&e.data).ok()).collect();
 
-    // wrap the store's continuation in an opaque cursor for the next page.
     let next = if page.next.is_empty() {
         Value::Null
     } else {
@@ -286,8 +278,6 @@ fn rows(path: &str) -> Outcome {
     };
     Outcome::Json(200, json!({"rows": items, "next": next}).to_string())
 }
-
-// ---- CSV export --------------------------------------------------------------
 
 fn export() -> Outcome {
     let mut out_rows: Vec<csv::Row> =
@@ -326,8 +316,6 @@ fn stats() -> Outcome {
     Outcome::Json(200, json!({"rows": count}).to_string())
 }
 
-// ---- error mapping -----------------------------------------------------------
-
 fn store_msg(e: records::StoreError) -> String {
     match e {
         records::StoreError::NotFound => "not_found".into(),
@@ -348,20 +336,8 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-// ---- http plumbing -----------------------------------------------------------
-
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
+/// guest traps and the caller just sees a closed connection.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

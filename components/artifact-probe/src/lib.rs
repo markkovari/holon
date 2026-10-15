@@ -51,8 +51,7 @@ fn param(query: &str, key: &str) -> String {
         .unwrap_or_default()
 }
 
-/// `inputs` is comma-separated: enough for a probe, and it keeps the ordering
-/// visible in the URL, which is a property the cache cares about.
+/// `inputs` is comma-separated, which keeps the ordering visible in the URL.
 fn key_from(query: &str) -> cache::ArtifactKey {
     let raw = param(query, "inputs");
     cache::ArtifactKey {

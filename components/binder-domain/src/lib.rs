@@ -1,43 +1,28 @@
 //! `binder-domain` — keep a Pokémon card collection: scan a photo into fields, record what you paid, and see what it is worth
 //!
-//! The app is the composition. Every number here comes from a capability this
-//! component imports, and none of the arithmetic is in this file:
+//! The app is the composition: every number comes from an imported capability, none of
+//! the arithmetic is in this file.
 //!
-//! * `card:identify` reads a vision model's answer into typed fields and says which
-//!   of them a person should check;
+//! * `card:identify` reads a vision model's answer into typed fields and says which of
+//!   them a person should check;
 //! * `price:history` decides what a card was worth at an instant, carrying the last
 //!   quote across the days the market did not trade;
-//! * `portfolio:value` turns the buy/sell log into cost basis, realised and
-//!   unrealised gain, and the series a chart is drawn from.
+//! * `portfolio:value` turns the buy/sell log into cost basis, realised and unrealised
+//!   gain, and the series a chart is drawn from.
 //!
-//! The UI is a React SPA in `examples/binder/ui`, served by the host from
-//! `--static-dir` — this component answers `/api/*` and nothing else, so the two can
-//! be developed and deployed apart. `cargo xtask host binder` builds and serves both.
+//! The UI is a React SPA in `examples/binder/ui`, served by the host from `--static-dir`;
+//! this component answers `/api/*` only. `cargo xtask host binder` builds and serves both.
 //!
-//! What is genuinely this component's is the HTTP surface and the storage. That is
-//! the split ADR-0095 requires — the pieces meet through WIT, so each is testable on
-//! its own, and each of those three is tested by a held-out specification that was
-//! written before its implementation existed.
+//! Everything except the prices belongs to somebody: every key carries the subject from
+//! `auth:identity` (`u/<subject>/card:<id>`), so accounts on one deployment cannot see
+//! each other's cards. Quotes are deliberately NOT per-account: what a card traded for
+//! is a fact about the market, and per-account copies would let two holders disagree.
 //!
-//! ## Whose collection
-//!
-//! Everything except the prices belongs to somebody. `auth:identity` issues the
-//! session and says who a bearer token is, and every key this app writes carries that
-//! subject: `u/<subject>/card:<id>`. Two accounts on one deployment cannot see each
-//! other's cards, and that is what makes selling one to another person a thing that
-//! can exist later.
-//!
-//! Quotes are deliberately NOT per-account. What a card traded for is a fact about
-//! the market, not about the owner, and giving every account its own copy would mean
-//! two people holding the same card disagree about what it is worth.
-//!
-//! ## Storage
-//!
-//! Key spaces in one bucket, which the linker names after the app (ADR-0023):
-//! `u/<subject>/card:<id>` a card, `u/<subject>/event:<at>:<card>` an acquisition or
-//! disposal, `u/<subject>/deck:<name>` a deck list, and `quote:<card>:<at>` a price.
-//! Lists are rebuilt by prefix scan rather than kept as an index, because a
-//! collection is small and an index is a second thing to keep right.
+//! Storage, one bucket (named after the app by the linker, ADR-0023): card
+//! `u/<subject>/card:<id>`, acquisition/disposal `u/<subject>/event:<at>:<card>`, deck
+//! `u/<subject>/deck:<name>`, price `quote:<card>:<at>`. Lists are rebuilt by prefix scan
+//! rather than kept as an index: a collection is small and an index is a second thing to
+//! keep right.
 
 #[allow(warnings)]
 mod bindings {
@@ -102,10 +87,9 @@ use serde_json::{json, Value};
 
 struct Component;
 
-// `"default"` is what every other domain in this repository opens, and the host
-// names the bucket after the app regardless (ADR-0023) — the guest string does not
-// choose the isolation boundary, which is the whole point of ADR-0015. An empty name
-// is simply not a bucket the host has.
+// `"default"` is what every other domain opens; the host names the bucket after the app
+// regardless (ADR-0023), so the guest string does not choose the isolation boundary
+// (ADR-0015).
 const BUCKET: &str = "default";
 
 /// A card as the collection holds it: what the model guessed, plus whatever a person
@@ -137,20 +121,16 @@ struct Card {
     needs_review: Vec<String>,
 }
 
-/// A swap, offered by one collector and open until somebody takes it.
-///
-/// `value_minor` is what BOTH sides agree the trade is worth, and it is the number
-/// that makes a swap honest in both directions: the card that leaves is disposed at
-/// it and the card that arrives is acquired at it, so a trade where you got the
-/// better end shows up as a gain rather than as nothing at all. That rule is
-/// `portfolio:value`'s, written into its WIT long before this route existed.
+/// A swap, offered by one collector and open until somebody takes it. `value_minor` is
+/// what BOTH sides agree it is worth: the card that leaves is disposed at it and the one
+/// that arrives is acquired at it (`portfolio:value`'s rule), so the better end of a
+/// trade shows up as a gain.
 #[derive(Serialize, Deserialize, Clone)]
 struct Swap {
     id: String,
     /// The subject who offered it. Stored rather than derived, because the offer
     /// outlives the request that made it.
     from: String,
-    /// What the offerer gives.
     give: String,
     /// What they want back. Whoever accepts must own it.
     want: String,
@@ -174,13 +154,9 @@ struct StoredEvent {
     at: u64,
 }
 
-/// One correction to a card, kept.
-///
-/// A field edit overwrites the card, and that is right — the card is what it IS. But
-/// "who said Near Mint, and when did that change" is a different question, and the
-/// row alone cannot answer it. So every change is appended: what the field was, what
-/// it became, and when. `from` empty means it was never established, which is the
-/// ordinary case for a field the AI left flagged.
+/// One correction to a card, kept. A field edit overwrites the card, but "who said Near
+/// Mint, and when did that change" needs history, so every change is appended: what the
+/// field was, what it became, and when. `from` empty means it was never established.
 #[derive(Serialize, Deserialize, Clone)]
 struct Change {
     card_id: String,
@@ -190,7 +166,6 @@ struct Change {
     at: u64,
 }
 
-/// One observed price for a card.
 #[derive(Serialize, Deserialize, Clone)]
 struct StoredQuote {
     card_id: String,
@@ -199,8 +174,7 @@ struct StoredQuote {
     at: u64,
 }
 
-/// The contract's own word for a printing, not Rust's `Debug`. `VariantKind::Holo`
-/// on a screen is an implementation detail leaking into a collection.
+/// The contract's own word for a printing, not Rust's `Debug`.
 fn printing_name(p: ident::VariantKind) -> String {
     match p {
         ident::VariantKind::Normal => "normal",
@@ -213,7 +187,6 @@ fn printing_name(p: ident::VariantKind) -> String {
     .to_string()
 }
 
-/// The words the singles market uses, for the same reason.
 fn condition_name(c: ident::Condition) -> String {
     match c {
         ident::Condition::Mint => "mint",
@@ -265,11 +238,9 @@ fn store_guess(b: &store::Bucket, ns: &str, g: ident::Guess) -> Result<Card, Str
     Ok(card)
 }
 
-/// Decode base64, the half of it a `data:` URL from a browser produces.
-///
-/// Written out for the same reason the encoder in `anthropic-vision` is: this is the
-/// whole of what is needed, and a crate for one alphabet is another thing to keep in
-/// step. Whitespace is skipped because a data URL may arrive wrapped.
+/// Decode base64, the half a browser `data:` URL produces. Written out rather than
+/// pulling in a crate for one alphabet; whitespace is skipped because a data URL may
+/// arrive wrapped.
 fn decode_b64(s: &str) -> Option<Vec<u8>> {
     let val = |c: u8| -> Option<u32> {
         Some(match c {
@@ -301,17 +272,10 @@ fn decode_b64(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Percent-decode one path segment.
-///
-/// A deck called "some deck" is stored under that name and asked for as
-/// `some%20deck`, so without this the two never meet: creating it works, opening it
-/// is a 404, and the name looks right in both places. Written out rather than pulled
-/// in — this is the whole of what the app needs, and a URL crate is a dependency for
-/// six lines.
-/// One `key=value` out of a query string, decoded.
-///
-/// Six lines rather than a URL crate, for the same reason as `percent_decode`: this
-/// is the whole of what the app asks of a query string.
+/// Percent-decode one path segment: a deck called "some deck" is asked for as
+/// `some%20deck`, and without this creating it works but opening it is a 404.
+/// One `key=value` out of a query string, decoded. Hand-written, not a URL crate, like
+/// `percent_decode`.
 fn param(query: &str, key: &str) -> Option<String> {
     query
         .split('&')
@@ -341,15 +305,10 @@ fn put_json<T: Serialize>(b: &store::Bucket, key: &str, v: &T) -> Result<(), Str
 /// Everything under a prefix. A collection is small enough that scanning beats
 /// maintaining an index, and an index that drifts is a lie with a fast path.
 fn scan<T: for<'de> Deserialize<'de>>(b: &store::Bucket, prefix: &str) -> Vec<T> {
-    // Keys are collected into a SET before anything is read, and the walk stops when
-    // a page adds nothing new.
-    //
-    // Not defensive programming — a measured bug. `wasi:keyvalue`'s `list-keys` is a
-    // draft and a backend is free to hand back a cursor that does not advance; this
-    // host returns the whole key space with a cursor attached, so the obvious
-    // "loop until the cursor is none" read every key three times. The collection then
-    // reported forty commons as a hundred and twenty, and a €20.00 realised gain as
-    // €60.00 — every number tripled, and every one of them still plausible.
+    // Keys are collected into a SET and the walk stops when a page adds nothing new: a
+    // measured bug. `wasi:keyvalue`'s `list-keys` is a draft and this host returns the
+    // whole key space with a cursor attached, so "loop until the cursor is none" read
+    // every key three times and tripled every number (all still plausible).
     let mut keys = std::collections::BTreeSet::new();
     let mut cursor = None;
     while let Ok(page) = b.list_keys(cursor) {
@@ -363,18 +322,10 @@ fn scan<T: for<'de> Deserialize<'de>>(b: &store::Bucket, prefix: &str) -> Vec<T>
     keys.iter().filter_map(|k| get_json(b, k)).collect()
 }
 
-/// The key an event is stored under, which is its IDENTITY.
-///
-/// Everything that distinguishes one event from another is in it, and that is not
-/// fussiness — the key was `event:{at}:{card}`, so buying a card and selling it in
-/// the SAME SECOND wrote both to one key and the sale silently replaced the
-/// purchase. The collection then held nothing, had no cost basis, and realised
-/// nothing on a sale it still showed. Every number was wrong and none of them looked
-/// it.
-///
-/// Replaying an identical POST still lands on the same key, which is the idempotency
-/// the old scheme was reaching for; two DIFFERENT events at one instant no longer
-/// collide.
+/// The key an event is stored under, which is its IDENTITY: everything that
+/// distinguishes one event from another is in it. The old `event:{at}:{card}` key let a
+/// buy and a sell of one card in the SAME SECOND collide, the sale silently replacing
+/// the purchase. Replaying an identical POST still lands on the same key (idempotent).
 fn event_key(ns: &str, e: &StoredEvent) -> String {
     format!("{ns}event:{:020}:{}:{}:{}:{}", e.at, e.card_id, e.kind, e.quantity, e.unit_minor)
 }
@@ -424,7 +375,6 @@ fn quotes_for(b: &store::Bucket) -> Vec<pv::Quote> {
         .collect()
 }
 
-/// A deck list, as its owner saved it.
 #[derive(Serialize, Deserialize, Clone)]
 struct Deck {
     name: String,
@@ -449,10 +399,9 @@ fn kind_of(s: &str) -> deck::CardKind {
         "trainer" => deck::CardKind::Trainer,
         "basic-energy" => deck::CardKind::BasicEnergy,
         "special-energy" => deck::CardKind::SpecialEnergy,
-        // A card whose kind nobody set is a Basic Pokémon, which is the ONLY
-        // conservative default: it is the one kind that is capped at four AND
-        // satisfies the "needs a basic" rule, so a mislabelled card can never make an
-        // illegal deck look legal.
+        // A card whose kind nobody set is a Basic Pokémon, the ONLY conservative default:
+        // capped at four AND satisfies "needs a basic", so a mislabelled card can never
+        // make an illegal deck look legal.
         _ => deck::CardKind::BasicPokemon,
     }
 }
@@ -467,13 +416,9 @@ fn kind_name(k: deck::CardKind) -> &'static str {
     }
 }
 
-// ---- the photo stream ---------------------------------------------------
-
-/// Do the work and narrate it as Server-Sent Events.
-///
-/// One event per stage, each a JSON object with a `stage` — so a client renders
-/// progress without parsing prose, and a stage added later does not break one that
-/// only knows the old ones.
+/// Do the work and narrate it as Server-Sent Events: one JSON event per stage with a
+/// `stage` field, so a client renders progress without parsing prose and a stage added
+/// later does not break one that only knows the old ones.
 fn stream_photo(
     bucket: store::Bucket,
     ns: String,
@@ -486,9 +431,8 @@ fn stream_photo(
     let (trailers_tx, trailers_rx) = bindings::wit_future::new(|| Ok(None));
     drop(trailers_tx);
     let (mut tx, rx) = bindings::wit_stream::new();
-    // The work runs AFTER the response is returned, so the browser has the
-    // connection and the first event arrives while the model is still looking
-    // rather than after it.
+    // The work runs AFTER the response returns, so the first event arrives while the
+    // model is still looking.
     wit_bindgen::spawn_local(async move {
         let bucket = &bucket;
         let ns = ns.as_str();
@@ -520,9 +464,7 @@ fn stream_photo(
                             let _ = send(json!({ "stage": "failed", "error": e })).await;
                         }
                     },
-                    // Not a card, several cards, or no name. The model's own words go
-                    // with it: "that is a booster wrapper" is worth showing the person
-                    // who took the photograph.
+                    // Not a card, several cards, or no name; the model's own words go with it.
                     Err(e) => {
                         let _ = send(json!({
                             "stage": "refused",
@@ -533,8 +475,8 @@ fn stream_photo(
                     }
                 }
             }
-            // The provider's own words. A model that refused and a provider that is
-            // down are different problems for the person holding the phone.
+            // The provider's own words: a refusing model and a provider that is down are
+            // different problems for the person holding the phone.
             Err(e) => {
                 let _ = send(json!({ "stage": "failed", "error": format!("{e:?}") })).await;
             }
@@ -546,8 +488,6 @@ fn stream_photo(
         .map_err(|()| ErrorCode::InternalError(Some("bad status 200".into())))?;
     Ok(response)
 }
-
-// ---- HTTP ---------------------------------------------------------------
 
 fn json_out(status: u16, v: &Value) -> Result<Response, ErrorCode> {
     respond(status, "application/json", v.to_string())
@@ -574,16 +514,13 @@ fn ns(p: &Principal) -> String {
 }
 
 /// A ceiling on what is read into memory, not a policy: past this the read gives up
-/// rather than growing until the store's memory cap traps the component and the
-/// connection simply closes. A photograph arrives here base64-encoded, so it is
-/// generous — but bounded.
+/// instead of the store's memory cap trapping the component. A photograph arrives
+/// base64-encoded, so it is generous.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-// The whole request body, or nothing: `guest_p3_read_body!` never returns a
-// truncated body as if it were whole — for `/api/photo` that would be half a
-// picture described with confidence. Callers take a failed or over-long read as
-// EMPTY: a caller that gets nothing writes nothing, and a caller handed a
-// plausible prefix stores it.
+// The whole request body, or nothing: `guest_p3_read_body!` never returns a truncated
+// body as whole (half a picture described with confidence). Callers treat a failed or
+// over-long read as EMPTY and write nothing.
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
 impl Guest for Component {
@@ -607,10 +544,8 @@ impl Guest for Component {
             // that parses its output — so the two cannot drift.
             (Method::Get, "/api/prompt") => json_out(200, &json!({ "prompt": ident::prompt() })),
 
-            // --- accounts ------------------------------------------------
-            //
-            // Thin on purpose: `auth:identity` owns hashing, sessions and
-            // introspection, and this app owns none of it (ADR-0009).
+            // `auth:identity` owns hashing, sessions and introspection; this app owns none
+            // of it (ADR-0009).
             (Method::Post, "/api/register") => {
                 let body = read_body(req).await.unwrap_or_default();
                 let Ok(v) = serde_json::from_slice::<Value>(&body) else {
@@ -644,15 +579,10 @@ impl Guest for Component {
                 None => fail(401, "sign in"),
             },
 
-            // A PHOTOGRAPH in, a card row out. The whole point of the app: nobody
-            // types a card in.
-            //
-            // ASYNC, in two halves. A vision call takes seconds to a minute, and a
-            // POST that holds the connection open that long is a request the browser
-            // may give up on, a proxy may cut, and a person cannot be told anything
-            // about. So the upload only STORES the picture and answers immediately
-            // with a job; the work happens on the event stream below, which can say
-            // what it is doing while it does it.
+            // A PHOTOGRAPH in, a card row out. ASYNC in two halves: a vision call takes
+            // seconds to a minute, too long to hold a POST open, so the upload only STORES
+            // the picture and answers with a job; the work happens on the event stream
+            // below, which can say what it is doing while it does it.
             (Method::Post, "/api/photo") => {
                 let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
@@ -666,14 +596,11 @@ impl Guest for Component {
                     return fail(400, "no image");
                 };
                 if decode_b64(data).is_none() {
-                    // Checked HERE rather than on the stream: a picture that is not
-                    // base64 is the caller's mistake and should be a 400 on the
-                    // request that made it, not an error event a minute later.
+                    // Checked HERE: a non-base64 picture is the caller's mistake and
+                    // should be a 400 on the request, not an error event a minute later.
                     return fail(400, "the image is not base64");
                 }
-                // The instant, plus how long the payload is: unique per upload
-                // without a random source, and the job is read back by exactly one
-                // stream immediately afterwards.
+                // The instant plus payload length: unique per upload without a random source.
                 let id = format!("{}-{}", now(), data.len());
                 let job = json!({ "media_type": media_type, "data": data });
                 if let Err(e) = put_json(&bucket, &format!("{ns}job:{id}"), &job) {
@@ -682,13 +609,10 @@ impl Guest for Component {
                 json_out(202, &json!({ "job": id, "events": format!("/api/photo/{id}/events") }))
             }
 
-            // The work, reported as it happens.
-            //
-            // The vision call runs INSIDE this request rather than in a background
-            // worker, because a component instance is per-request (ADR-0037) and
-            // there is nothing to run a job on afterwards. What the stream buys is
-            // not parallelism — it is that the person watching is told `looking`,
-            // then `reading`, then the answer, instead of a spinner and a timeout.
+            // The vision call runs INSIDE this request, because a component instance is
+            // per-request (ADR-0037) and nothing could run a job afterwards. The stream's
+            // value is telling the person `looking`, `reading`, then the answer, instead
+            // of a spinner and a timeout.
             (Method::Get, p) if p.starts_with("/api/photo/") && p.ends_with("/events") => {
                 let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
@@ -753,10 +677,8 @@ impl Guest for Component {
                                 .map(|gr| format!("{} {}", gr.grader, gr.tenths as f64 / 10.0))
                                 .unwrap_or_default(),
                             confidence: g.confidence,
-                            // The capability calls the field `variant`; `variant` is a
-                            // WIT keyword, so the contract calls it `printing` and so
-                            // does this app. Renaming it here as well keeps the flag
-                            // matching the field a screen is showing.
+                            // The contract calls the field `printing` (`variant` is a WIT
+                            // keyword); renamed here too so the flag matches the screen.
                             needs_review: g
                                 .needs_review
                                 .into_iter()
@@ -768,16 +690,13 @@ impl Guest for Component {
                         }
                         json_out(201, &serde_json::to_value(card).unwrap_or(Value::Null))
                     }
-                    // A refusal is a 422 and says why: not a card, several cards, or
-                    // an answer with no name in it. None of them becomes a blank row.
+                    // A refusal is a 422 and says why; none of them becomes a blank row.
                     Err(e) => fail(422, &format!("{e:?}")),
                 }
             }
 
-            // A card typed in by hand. NOT a scan: a person who typed the fields is
-            // not guessing, so nothing is flagged for review and confidence is 100.
-            // The two paths produce the same row, which is why `needs_review` is a
-            // property of the row rather than of how it arrived.
+            // A card typed in by hand is not a guess: nothing is flagged and confidence is
+            // 100. `needs_review` is a property of the row, not of how it arrived.
             (Method::Post, "/api/cards") => {
                 let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
@@ -818,9 +737,8 @@ impl Guest for Component {
                 if let Err(e) = put_json(&bucket, &format!("{ns}card:{id}"), &card) {
                     return fail(500, &e);
                 }
-                // What you paid, if you said. Adding a card and recording its cost is
-                // one action to a person, and making it two is how a collection ends
-                // up with cards that have no basis and a chart that under-reports.
+                // What you paid, if you said: adding a card and recording its cost is one
+                // action to a person; two would leave cards with no basis.
                 if let Some(paid) = v.get("paid_minor").and_then(Value::as_i64) {
                     let at = v.get("at").and_then(Value::as_u64).unwrap_or_else(now);
                     let ev = StoredEvent {
@@ -840,21 +758,9 @@ impl Guest for Component {
                 json_out(201, &serde_json::to_value(card).unwrap_or(Value::Null))
             }
 
-            // --- swaps -------------------------------------------------------
-            //
-            // The thing `portfolio:value` has described since the day it was
-            // written and the app never did: "a swap is two events, not one — what
-            // left is a disposal at the agreed value and what arrived is an
-            // acquisition at that same value, so a trade where you got the better
-            // end shows up as a gain".
-            //
-            // Four events, because there are two collections. Both sides record
-            // both halves at the SAME agreed value, so neither portfolio silently
-            // gains or loses a card that appeared from nowhere.
-            //
-            // Nothing here knows how to draw a square or mint an id. `qr:encode`
-            // and `id:generate` both existed, import nothing, and know nothing
-            // about cards.
+            // A swap is four events, two per collection, all at the SAME agreed value so
+            // neither portfolio gains or loses a card that appeared from nowhere. Nothing
+            // here draws a square or mints an id: `qr:encode` and `id:generate` do.
             (Method::Post, "/api/swaps") => {
                 let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
@@ -869,17 +775,15 @@ impl Guest for Component {
                 if give.is_empty() || want.is_empty() {
                     return fail(400, "a swap needs a `give` and a `want`");
                 }
-                // You cannot offer what you do not have. Checked here rather than
-                // at accept time, because an offer nobody can honour wastes the
-                // other person's time and is visible to them as a valid one.
+                // You cannot offer what you do not have; checked here because an offer
+                // nobody can honour wastes the other person's time.
                 if get_json::<Card>(&bucket, &format!("{ns}card:{give}")).is_none() {
                     return fail(422, &format!("you do not have `{give}`"));
                 }
                 let value_minor = v.get("value_minor").and_then(Value::as_i64).unwrap_or(0);
                 if value_minor <= 0 {
-                    // Zero would make both sides record a swap that cost nothing
-                    // and was worth nothing, which is a chart that under-reports
-                    // rather than an error anybody would notice.
+                    // Zero would make both sides record a swap that cost nothing and
+                    // under-report on the chart.
                     return fail(422, "a swap needs an agreed `value_minor` above zero");
                 }
                 let swap = Swap {
@@ -896,9 +800,8 @@ impl Guest for Component {
                     taken_by: String::new(),
                     at: v.get("at").and_then(Value::as_u64).unwrap_or_else(now),
                 };
-                // Swaps live OUTSIDE any one collector's namespace: the other party
-                // has to be able to read one, and a key under `u/<subject>/` is by
-                // construction unreadable to them.
+                // Swaps live OUTSIDE any collector's namespace: the other party must be
+                // able to read one.
                 if let Err(e) = put_json(&bucket, &format!("swap:{}", swap.id), &swap) {
                     return fail(500, &e);
                 }
@@ -911,8 +814,8 @@ impl Guest for Component {
                         "want": swap.want,
                         "value_minor": swap.value_minor,
                         "currency": swap.currency,
-                        // The square IS the handover. Two people at a table, one
-                        // phone camera, no typing an id neither can read aloud.
+                        // The square IS the handover: two people, one phone camera, no id
+                        // to read aloud.
                         "qr_svg": square,
                     }),
                 )
@@ -947,9 +850,8 @@ impl Guest for Component {
                     return fail(404, "no such swap");
                 };
                 if !swap.taken_by.is_empty() {
-                    // Refused, not re-run. A second accept would move a card that
-                    // has already moved and write four more events for a trade
-                    // that happened once.
+                    // Refused, not re-run: a second accept would move a card that has
+                    // already moved and write four more events.
                     return fail(409, "that swap has already been taken");
                 }
                 if swap.from == who.subject {
@@ -957,9 +859,8 @@ impl Guest for Component {
                 }
                 let offerer_ns = format!("u/{}/", swap.from);
 
-                // Both cards have to exist, on the side that is supposed to have
-                // them, BEFORE anything moves. A swap that half-completes leaves
-                // one collector holding two cards and the other holding none.
+                // Both cards must exist, on the right side, BEFORE anything moves; a swap
+                // that half-completes leaves one collector with two cards.
                 let Some(given) =
                     get_json::<Card>(&bucket, &format!("{offerer_ns}card:{}", swap.give))
                 else {
@@ -981,7 +882,6 @@ impl Guest for Component {
                     at,
                 };
 
-                // Two events per collection, at the same agreed value.
                 for (namespace, card, arriving) in
                     [(&offerer_ns, &given, &wanted), (&taker_ns, &wanted, &given)]
                 {
@@ -1014,17 +914,13 @@ impl Guest for Component {
                 )
             }
 
-            // A collection that already exists somewhere else, arriving in one go.
+            // A collection arriving in one go. The body is the FILE, raw; `?name=` selects
+            // the reader, because guessing from the bytes is how a semicolon-delimited
+            // European export becomes one column.
             //
-            // The body is the FILE, raw, and `?name=` carries its name — the name is
-            // what selects the reader, because the bytes of a CSV are not reliably
-            // distinguishable from any other text and guessing is how a
-            // semicolon-delimited European export becomes one column.
-            //
-            // ALL OR NOTHING. Every row is validated before anything is written, and
-            // one bad row writes nothing. A half-applied import is worse than a
-            // refused one: the person cannot tell which half, and their second
-            // attempt duplicates whatever the first got through.
+            // ALL OR NOTHING: every row is validated first and one bad row writes nothing.
+            // A half-applied import is worse than a refused one: the person cannot tell
+            // which half, and the second attempt duplicates what the first got through.
             (Method::Post, "/api/cards/bulk") => {
                 let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
@@ -1096,9 +992,8 @@ impl Guest for Component {
                     let paid = if paid.is_empty() {
                         None
                     } else {
-                        // Minor units, integer. A price with a decimal point in it is
-                        // a person writing euros where the column says cents, and
-                        // silently rounding it is a wrong number on a chart.
+                        // Minor units, integer: a decimal point is euros written where the
+                        // column says cents, and rounding it silently is a wrong number.
                         match paid.parse::<i64>() {
                             Ok(v) => Some(v),
                             Err(_) => {
@@ -1132,8 +1027,8 @@ impl Guest for Component {
                         printing: at_col(row, "printing"),
                         condition: at_col(row, "condition"),
                         graded: at_col(row, "graded"),
-                        // Typed by a person from a file they already had, so there is
-                        // nothing for a model to be unsure about.
+                        // Typed by a person from a file they already had: nothing for a
+                        // model to be unsure about.
                         confidence: 100,
                         needs_review: vec![],
                     };
@@ -1171,7 +1066,6 @@ impl Guest for Component {
                     );
                 }
 
-                // Only now does anything change.
                 let mut added = 0u32;
                 let mut updated = 0u32;
                 let mut priced = 0u32;
@@ -1203,9 +1097,8 @@ impl Guest for Component {
                 )
             }
 
-            // Gone, with whatever it was worth. A card removed from the collection
-            // keeps its EVENTS: what you paid and what you sold it for is history, and
-            // deleting the row must not silently rewrite a realised gain.
+            // A removed card keeps its EVENTS: what you paid and sold it for is history,
+            // and deleting the row must not rewrite a realised gain.
             (Method::Delete, "/api/cards") => {
                 let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let body = read_body(req).await.unwrap_or_default();
@@ -1222,8 +1115,6 @@ impl Guest for Component {
                 }
             }
 
-            // One card, and how it got here: what it is, what is held, every
-            // correction anyone made, and what it has been worth.
             (Method::Get, p) if p.starts_with("/api/cards/") => {
                 let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
@@ -1262,12 +1153,10 @@ impl Guest for Component {
 
                 let until = now();
 
-                // The money comes from `portfolio:value`, over THIS card's events —
-                // not from arithmetic here. Summing the purchases would report what
-                // was ever spent rather than the basis of what is still held, so a
-                // card sold at a profit would show a cost basis it no longer has and
-                // disagree with the portfolio total that includes it. FIFO belongs to
-                // the capability; the app's job is to hand it one card's log.
+                // The money comes from `portfolio:value` over THIS card's events, not
+                // arithmetic here: summing purchases would report what was ever spent, not
+                // the basis of what is still held, and disagree with the portfolio total.
+                // FIFO belongs to the capability.
                 let one_card: Vec<pv::Event> = events
                     .iter()
                     .map(|e| pv::Event {
@@ -1305,7 +1194,6 @@ impl Guest for Component {
                     .into_iter()
                     .filter(|c| c.card_id == id)
                     .collect();
-                // Newest first: a history is read from what just happened backwards.
                 changes.sort_by_key(|a| std::cmp::Reverse(a.at));
 
                 let mut evs = events;
@@ -1345,14 +1233,12 @@ impl Guest for Component {
                 let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let ns = ns(&who);
                 let cards: Vec<Card> = scan(&bucket, &format!("{ns}card:"));
-                // Which decks each card is in. A card is not consumed by a deck, so
-                // this is a list and not a flag — and seeing "in 3 decks" on a card
-                // you are about to sell is the point.
+                // Which decks each card is in; a deck does not consume a card, so a list,
+                // not a flag.
                 let decks: Vec<Deck> = scan(&bucket, &format!("{ns}deck:"));
 
-                // How many are held, and what they cost. Both come from the SAME
-                // event log the portfolio is valued from, so a row can never
-                // disagree with the total above it.
+                // Held count and cost come from the SAME event log as the portfolio, so a
+                // row never disagrees with the total.
                 let mut held: std::collections::BTreeMap<String, (i64, i64)> = Default::default();
                 for e in scan::<StoredEvent>(&bucket, &format!("{ns}event:")) {
                     let n = e.quantity as i64;
@@ -1382,10 +1268,9 @@ impl Guest for Component {
                             v["held"] = json!(qty.max(0));
                             v["cost_basis_minor"] = json!(basis);
 
-                            // The price is `price:history`'s answer, not the newest
-                            // row: the same carry-forward rule the chart uses, so a
-                            // card priced last week reads as last week's price rather
-                            // than as unpriced.
+                            // The price is `price:history`'s answer (same carry-forward as
+                            // the chart), not the newest row, so a card priced last week
+                            // reads as that price rather than as unpriced.
                             let quotes: Vec<ph::Quote> = all_quotes
                                 .iter()
                                 .filter(|q| q.card_id == c.id)
@@ -1402,9 +1287,8 @@ impl Guest for Component {
                                     v["price_minor"] = json!(o.unit_minor);
                                     v["currency"] = json!(o.currency);
                                     v["priced_at"] = json!(o.observed_at);
-                                    // How stale, and whether this is a carried price.
-                                    // A four-month-old quote is the best information
-                                    // there is and also barely information.
+                                    // How stale, and whether carried; a four-month-old quote
+                                    // is the best information and barely information.
                                     v["price_age_days"] = json!(o.age_seconds / 86_400);
                                     v["value_minor"] = json!(qty.max(0) * o.unit_minor);
                                 }
@@ -1450,9 +1334,8 @@ impl Guest for Component {
                     ("graded", &mut card.graded),
                 ] {
                     if let Some(v) = patch.get(field).and_then(Value::as_str) {
-                        // Only an actual change. Saving a row without touching a
-                        // field would otherwise write a history entry saying it
-                        // became what it already was.
+                        // Only an actual change: an untouched field must not write a
+                        // history entry saying it became what it already was.
                         if slot.as_str() != v {
                             changes.push(Change {
                                 card_id: id.to_string(),
@@ -1467,11 +1350,9 @@ impl Guest for Component {
                     }
                 }
                 for c in &changes {
-                    // Keyed by FIELD, not by an index within this save: an index
-                    // restarts at zero on the next save, so correcting two fields and
-                    // then one more in the same second silently overwrote the first
-                    // one's history. A field can only meaningfully change once in a
-                    // second anyway.
+                    // Keyed by FIELD, not by an index within this save: an index restarts at
+                    // zero, so correcting two fields then one more in the same second
+                    // overwrote history. A field changes once per second at most.
                     let _ = put_json(&bucket, &format!("{ns}change:{at:020}:{id}:{}", c.field), c);
                 }
                 if let Err(e) = put_json(&bucket, &format!("{ns}card:{id}"), &card) {
@@ -1508,14 +1389,10 @@ impl Guest for Component {
                 if ev.card_id.is_empty() {
                     return fail(400, "which card");
                 }
-                // A disposal of more than is held is refused HERE, on the request that
-                // makes it, rather than by the valuation later.
-                //
-                // `portfolio:value` refuses an oversold log by design and is right to:
-                // guessing which sale was wrong is a bigger lie than refusing. But the
-                // refusal lands on `/api/portfolio`, which means one bad event takes
-                // out every screen at once and the person is left with a 422 and no
-                // way back. The place to catch it is the write.
+                // A disposal of more than is held is refused HERE, not by the valuation
+                // later: `portfolio:value` refuses an oversold log by design, but the
+                // refusal lands on `/api/portfolio`, so one bad event would take out every
+                // screen with no way back.
                 if ev.kind == "disposed" {
                     let held: i64 = scan::<StoredEvent>(&bucket, &format!("{ns}event:"))
                         .into_iter()
@@ -1558,11 +1435,9 @@ impl Guest for Component {
                 else {
                     return fail(400, "which event — card_id and at");
                 };
-                // The EXACT event when the caller names it fully, which the card page
-                // does because it is showing the thing being deleted. A prefix on
-                // (instant, card) alone removes a buy and a sell that share a second —
-                // exactly the pair that used to collide, so deleting the sale took the
-                // purchase with it.
+                // The EXACT event when the caller names it fully; a prefix on (instant,
+                // card) alone would remove a buy and a sell sharing a second, the pair
+                // that used to collide.
                 let ns = ns(&who);
                 let found: Vec<String> = match (
                     v.get("kind").and_then(Value::as_str),
@@ -1581,8 +1456,8 @@ impl Guest for Component {
                                 at,
                             },
                         );
-                        // Only if it is really there, so the count does not claim a
-                        // deletion that did not happen.
+                        // Only if really there, so the count does not claim a deletion
+                        // that did not happen.
                         if bucket.exists(&key).unwrap_or(false) {
                             vec![key]
                         } else {
@@ -1661,16 +1536,14 @@ impl Guest for Component {
                 }
             }
 
-            // What the whole collection is worth, and how it got there.
             (Method::Get, "/api/portfolio") => {
                 let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let events = events_for(&bucket, &ns(&who));
                 let quotes = quotes_for(&bucket);
                 let until = now();
-                // The window is the CALLER's, because a range selector that only
-                // slices what the server already sent cannot show anything older
-                // than the default — and "all" is a real answer that needs the
-                // earliest event to compute.
+                // The window is the CALLER's: a range selector that only slices what was
+                // sent cannot show anything older than the default, and "all" needs the
+                // earliest event.
                 let days = param(&query, "days").and_then(|d| d.parse::<u64>().ok());
                 let earliest = events.iter().map(|e| e.at).min().unwrap_or(until);
                 let window = match days {
@@ -1679,9 +1552,8 @@ impl Guest for Component {
                     Some(d) => d * 86_400,
                     None => 90 * 86_400,
                 };
-                // One sample per day up to a quarter, then coarser: a five-year
-                // series at daily resolution is 1800 points nobody can see, and the
-                // step is what the caller is really choosing.
+                // One sample per day up to a quarter, then coarser: five years daily is
+                // 1800 points nobody can see.
                 let step = param(&query, "step")
                     .and_then(|s| s.parse::<u64>().ok())
                     .filter(|s| *s > 0)
@@ -1706,10 +1578,8 @@ impl Guest for Component {
                                 // So a range selector can offer "all" without
                                 // guessing how far back there is anything to show.
                                 "earliest_event": earliest,
-                                // Every field the valuation computed for that
-                                // instant, not just the height of the line: a point
-                                // you can hover needs the numbers behind the pixel,
-                                // and so does anything else reading this route.
+                                // Every field the valuation computed for that instant, so a
+                                // hoverable point has the numbers behind the pixel.
                                 "series": points.iter().map(|p| json!({
                                     "at": p.at,
                                     "market_value_minor": p.market_value_minor,
@@ -1731,12 +1601,11 @@ impl Guest for Component {
                             "currency": "EUR", "unquoted": 0, "series": [], "empty": true
                         }),
                     ),
-                    // Every other one is a refusal the capability makes on purpose —
-                    // mixed currency, an oversold card. Reported, never absorbed into
-                    // a plausible number, and NOT as a 422 for the whole page:
-                    // a log with one bad event in it used to take out the portfolio,
-                    // the cards and the decks at once, leaving no screen from which to
-                    // fix the event. So: 200, zeroes, and the card to go and look at.
+                    // Every other error is a refusal the capability makes on purpose (mixed
+                    // currency, an oversold card). Reported, never absorbed into a plausible
+                    // number, and NOT a 422 for the whole page: one bad event used to take
+                    // out portfolio, cards and decks at once, leaving no screen to fix it.
+                    // So: 200, zeroes, and the card to go and look at.
                     Err(e) => {
                         let (problem, card) = match &e {
                             pv::ValueError::OversoldAt((card, at, held, disposed)) => (
@@ -1761,7 +1630,6 @@ impl Guest for Component {
                                 "cost_basis_minor": 0, "market_value_minor": 0,
                                 "unrealised_minor": 0, "realised_minor": 0,
                                 "currency": "EUR", "unquoted": 0, "series": [],
-                                // Named so a screen can say what to fix and where.
                                 "blocked": problem,
                                 "blocked_card": card,
                             }),
@@ -1770,19 +1638,16 @@ impl Guest for Component {
                 }
             }
 
-            // --- decks ---------------------------------------------------
-            //
-            // The legality verdict and the shopping list are `deck:build`'s; this
-            // route owns which deck, whose collection, and which prices.
+            // The legality verdict and shopping list are `deck:build`'s; this route owns
+            // which deck, whose collection, and which prices.
             (Method::Get, "/api/decks") => {
                 let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let decks: Vec<Deck> = scan(&bucket, &format!("{}deck:", ns(&who)));
                 json_out(200, &json!({ "decks": decks }))
             }
 
-            // Create an empty deck. A deck you are about to fill has to exist
-            // before you can put anything in it, and PUT-with-slots cannot express
-            // "new and empty" without pretending the list is already right.
+            // Create an empty deck: PUT-with-slots cannot express "new and empty" without
+            // pretending the list is already right.
             (Method::Post, "/api/decks") => {
                 let Some(who) = who(&req) else { return fail(401, "sign in") };
                 let body = read_body(req).await.unwrap_or_default();

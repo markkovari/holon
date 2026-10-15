@@ -6,17 +6,6 @@
 //! (outgoing, for OIDC discovery / JWKS), wasi:clocks (expiry), wasi:random
 //! (id generation), wasi:config/store (policy knobs).
 //!
-//! # Module map
-//! - [`config`]       — policy knobs read from wasi:config (session-ttl,
-//!   password-min-len, expected-issuer/audience, allowed-algs, …).
-//! - [`jwt_verify`]   — stateless JWS verification + claim validation (the
-//!   pure `validate_claims` is unit-tested).
-//! - [`oidc_client`]  — OIDC discovery + JWKS over wasi:http, TTL-cached.
-//! - [`accounts`]     — local accounts: argon2id register/login.
-//! - [`store`]        — sessions (with families + refresh-reuse detection) and RBAC.
-//! - [`kv`]           — wasi:keyvalue wrapper; sanitizes keys to NATS-legal chars.
-//! - [`tokens`]       — id generation and token prefixes.
-//!
 //! # Claim handling
 //! A verified token's claims become a `principal` per the table in the WIT
 //! (`interface types`): `sub`->subject; `scope`/`scp`->scopes; tenant from
@@ -59,15 +48,11 @@ use bindings::exports::auth::identity::types::{
 
 struct Component;
 
-// ---- jwt ----------------------------------------------------------------
-
 impl Jwt for Component {
     fn verify(token: String) -> Result<Claims, AuthError> {
         jwt_verify::verify(&token)
     }
 }
-
-// ---- oidc ---------------------------------------------------------------
 
 impl Oidc for Component {
     fn discover(issuer: String) -> Result<OidcConfig, AuthError> {
@@ -75,8 +60,6 @@ impl Oidc for Component {
     }
 
     fn verify_id_token(token: String) -> Result<Claims, AuthError> {
-        // An id_token is a JWT signed by the issuer; verification path is the
-        // same as `jwt::verify` (issuer JWKS is resolved from the `iss` claim).
         jwt_verify::verify(&token)
     }
 
@@ -84,8 +67,6 @@ impl Oidc for Component {
         oidc_client::exchange_code(&code, &redirect_uri)
     }
 }
-
-// ---- accounts -----------------------------------------------------------
 
 impl Accounts for Component {
     fn register(email: String, password: String, tenant: String) -> Result<Principal, AuthError> {
@@ -114,8 +95,6 @@ impl Accounts for Component {
     }
 }
 
-// ---- session ------------------------------------------------------------
-
 impl Session for Component {
     fn issue(p: Principal) -> Result<TokenPair, AuthError> {
         store::session_issue(p)
@@ -133,8 +112,6 @@ impl Session for Component {
         store::session_lookup(&session_id)
     }
 }
-
-// ---- rbac ---------------------------------------------------------------
 
 impl Rbac for Component {
     /// Pure check: does the principal hold a role that grants `required`,
@@ -167,8 +144,6 @@ impl Rbac for Component {
         store::rbac_set_role_permissions(&tenant, &role, &permissions)
     }
 }
-
-// ---- authorizer (the verify-token guard) --------------------------------
 
 impl Authorizer for Component {
     fn authorize(token: String, required: Permission) -> Result<Principal, AuthError> {
@@ -240,11 +215,8 @@ fn authorize_impl(
     }
 }
 
-/// Detect the token kind and verify it into a `Principal`.
-///
-/// - Opaque session tokens are issued with a `sess_` prefix and resolved via kv.
-/// - Anything else is treated as a JWS (JWT / OIDC id_token) and verified
-///   against the issuer's key material.
+/// Detect the token kind (opaque `sess_` session via kv, else a JWS) and verify it into
+/// a `Principal`.
 fn resolve_principal(token: &str) -> Result<Principal, AuthError> {
     resolve_principal_doc(token).map(|(p, _)| p)
 }
