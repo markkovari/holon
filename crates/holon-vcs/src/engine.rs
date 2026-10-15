@@ -284,7 +284,6 @@ where
         &self.log
     }
 
-
     /// Read a symbol pointer and the patch it names. If the op that last wrote
     /// the pointer may not be finished — the patch record is missing or still
     /// `pending`, or the pointer was last written by some other op than the one
@@ -402,7 +401,6 @@ where
         }
         Err(VcsError::Invalid(format!("more than {MAX_PROBE} symbols have been called {id}")))
     }
-
 
     /// Record one edit: it lands, commutes, duplicates, or becomes a conflict.
     pub async fn apply_patch(&self, req: PatchRequest) -> Result<CommitResult> {
@@ -928,7 +926,6 @@ where
         }))
     }
 
-
     /// Settle an open conflict: the tip moves from `left` to a resolution patch
     /// whose parents are `[left, right]`.
     pub async fn resolve_conflict(&self, req: ResolutionRequest) -> Result<CommitResult> {
@@ -1147,7 +1144,6 @@ where
         Ok(t.tip.filter(|r| !r.is_delete()).map(|r| r.hash))
     }
 
-
     /// Undo `op` by logging and carrying out its inverse (see the module notes).
     pub async fn revert_op(&self, ws: &str, op: OpId, by: Agent) -> Result<OpEntry> {
         let original = self
@@ -1250,7 +1246,6 @@ where
         }
         Err(self.exhausted(last).await)
     }
-
 
     pub async fn query_symbol(&self, ws: &str, query: SymbolQuery) -> Result<Vec<SymbolView>> {
         // BEFORE reading anything: every op at or below it is then reflected.
@@ -1408,7 +1403,6 @@ where
         Ok(Content::Blob(h.to_string()))
     }
 
-
     /// Flatten a component into files. Within a file, live symbols are laid out
     /// in order-key order (see the module notes on positions). Each symbol's
     /// content is emitted verbatim; a `\n` is inserted between two symbols only
@@ -1476,7 +1470,6 @@ where
             actual: None,
         }))
     }
-
 
     pub async fn list_conflicts(
         &self,

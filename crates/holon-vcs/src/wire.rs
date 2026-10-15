@@ -96,7 +96,6 @@ pub struct Workspace {
     pub workspace: WorkspaceId,
 }
 
-
 /// Bytes as a base64 string on the wire.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Bytes(pub Vec<u8>);
@@ -241,7 +240,6 @@ pub struct Materialized {
 pub struct ReadBlob {
     pub blob: Hash,
 }
-
 
 /// A refusal on the wire: `error` is the `vcs-error` case, kebab-case, and
 /// `detail` its payload as JSON (a string for `storage-error`, `not-found` and

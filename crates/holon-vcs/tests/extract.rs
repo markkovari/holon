@@ -110,7 +110,6 @@ fn assert_clean(reports: &[IngestReport]) {
     }
 }
 
-
 /// Every corpus file: extract → ingest → snapshot-export → identical bytes, and
 /// the snapshot's git tree is `git write-tree` of the originals. Re-ingesting
 /// the unchanged tree writes nothing.
@@ -170,7 +169,6 @@ fn ws_tag(ws: &str) -> &str {
     ws.rsplit('/').next().unwrap_or(ws)
 }
 
-
 pub async fn edge_cases<B, P, G, L>(e: &Engine<B, P, G, L>, ws: &str)
 where
     B: BlobStore,
@@ -215,7 +213,6 @@ where
         assert!(names.iter().any(|n| n == want), "{want} missing from {names:?}");
     }
 }
-
 
 /// The real file the agents edit.
 const REAL: &str = "components/record-store/src/idlist.rs";
@@ -663,7 +660,6 @@ where
     }
 }
 
-
 fn mem() -> Arc<holon_vcs::MemEngine> {
     Arc::new(holon_vcs::mem_engine())
 }
@@ -735,7 +731,6 @@ fn every_rust_file_in_the_repo_round_trips() {
     }
     eprintln!("repo: {} .rs files, {symbols} symbols, kept whole: {whole:?}", files.len());
 }
-
 
 #[cfg(feature = "native")]
 mod live {

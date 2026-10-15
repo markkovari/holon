@@ -310,7 +310,6 @@ pub struct CasFailure {
     pub actual: Option<Hash>,
 }
 
-
 /// A pointer, what it holds, and the op its value names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PointerState {
