@@ -1,15 +1,10 @@
 //! Projects: a named group of agents working on something together
 //! ("rowing", "nutrition"). Membership IS the grant.
 //!
-//! An agent that is a member of project `rowing` may, without its own spec
-//! saying so, use the shared store namespace `project.rowing` and publish to
-//! topics `rowing.*`, and its prompt says which project it is working in and who
-//! else is in it. Removing it from the project takes all of that away at its
-//! next run. So "add an agent to a project" is one action, wherever it is
-//! performed from (the admin API, the console, or inviting the agent's user to a
-//! Matrix space), and cannot drift from what the agent is actually allowed to do.
-//!
-//! The runtime's registry is the source of truth. A chat bridge is a view of it.
+//! A member of project `rowing` may, without its own spec saying so, use the shared store
+//! namespace `project.rowing` and publish to `rowing.*`; its prompt names the project and the
+//! other members. Removing it takes all that away at its next run, so membership cannot drift
+//! from what the agent may do. The runtime's registry is the truth; a chat bridge is a view.
 
 use serde::{Deserialize, Serialize};
 

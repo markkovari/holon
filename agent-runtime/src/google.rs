@@ -1,20 +1,16 @@
 //! Google Calendar for agents: list, add, change and delete events through Google's Calendar API,
 //! with the person's own login.
 //!
-//! The runtime is where the model call already is, and so is its key (a file, read when needed,
-//! never kept in a spec). The Google login is the same kind of thing: a refresh token in
-//! `~/.comp-secrets/google/token.json`, beside the OAuth client Google gave (`client.json`). Both
-//! files are read at the moment they are needed. Nothing about the login is in an agent's spec or
-//! in a tool's arguments.
+//! The login is a refresh token in `~/.comp-secrets/google/token.json`, beside the OAuth client
+//! (`client.json`), read when needed. Nothing about it is in an agent's spec or a tool's arguments.
 //!
-//! * `agent-runtime google-auth` does the one-time consent in a browser (a loopback redirect with
-//!   PKCE) and writes `token.json` (mode 0600).
-//! * An agent is granted the tools by name (`gcal_calendars`, `gcal_list`, `gcal_add`,
-//!   `gcal_update`, `gcal_delete`). The three that change anything wait for the owner's approval.
+//! * `agent-runtime google-auth` does the one-time consent (loopback redirect, PKCE) and writes
+//!   `token.json` (mode 0600).
+//! * Tools are granted by name (`gcal_calendars`, `gcal_list`, `gcal_add`, `gcal_update`,
+//!   `gcal_delete`); the three that change anything wait for the owner's approval.
 //!
-//! What comes back is plain text for a model, one event per line, with the event's id so a later
-//! call can change it. An event's description is left out on purpose: it is text anyone who invited
-//! you wrote, and handing it to a model is how a calendar invite becomes an instruction.
+//! An event's description is left out of results on purpose: anyone who invited you wrote it, and
+//! handing it to a model is how a calendar invite becomes an instruction.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -520,7 +516,6 @@ fn encode(s: &str) -> String {
         .collect()
 }
 
-// ------------------------------------------------------------------ the one-time consent
 
 fn random_bytes(n: usize) -> Result<Vec<u8>, String> {
     use std::io::Read;

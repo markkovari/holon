@@ -833,8 +833,6 @@ fn http_get(spec: &AgentSpec, url: &str) -> Result<String, String> {
 }
 
 /// Runs one tool. `Err` is returned to the model as the tool's result, so it
-/// can adapt, exactly like a denial is.
-/// Runs one tool. `Err` is returned to the model as the tool's result, so it
 /// can adapt, exactly like a denial is. `cause` is THIS run, so anything it
 /// wakes records it as the parent. `child_tokens` accumulates what delegated
 /// agents spent, which counts against this run's budget.
@@ -1640,7 +1638,6 @@ mod tests {
         assert_eq!(r.tokens_in + r.tokens_out, 45);
         assert_eq!(h.store.memories("bot").len(), 1);
         assert_eq!(h.store.runs("bot", 5).len(), 1);
-        // the tool result went back to the model
         let seen = h.seen.lock().unwrap();
         assert!(seen[2].last().unwrap().content.contains("user likes tea"));
     }
@@ -1674,7 +1671,6 @@ mod tests {
             "hi"
         );
 
-        // auto_approve skips the question entirely
         let mut s = spec();
         s.auto_approve.push("write_file".into());
         let h = Fake::new("auto", &[call, "done"], false);
@@ -2044,7 +2040,6 @@ mod tests {
         assert!(p.contains("notes (read only)"));
         assert!(!p.contains("rowing (read only)"), "write implies read; no duplicate");
         assert!(p.contains("Topics you may emit events to: new-workout"));
-        // and says nothing when nothing was granted
         let mut bare = spec();
         bare.topics_out.clear();
         assert!(!system_prompt(&h, &bare).contains("Shared stores"));
