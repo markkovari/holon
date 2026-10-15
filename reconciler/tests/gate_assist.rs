@@ -1,13 +1,10 @@
-//! The `triage:assist` gate, ported from
-//! `components/triage-assist-domain/e2e-assist.sh`.
+//! The `triage:assist` gate, ported from `components/triage-assist-domain/e2e-assist.sh`.
 //!
-//! The last of the thirty-one, and the only one that starts TWO hosts: the second has
-//! its provider pointed at a closed port, because "what happens when the model is
-//! unreachable" is a different deployment rather than a different request. Port 1
-//! refuses immediately, so it costs a connection attempt rather than a timeout.
+//! The only one that starts TWO hosts: the second has its provider pointed at a closed port, because
+//! "the model is unreachable" is a different deployment, not a different request (port 1 refuses
+//! immediately).
 //!
-//! Verified against `mlx-community/Qwen3.8-27B-4bit` on csatapaci through
-//! `tools/openai-shim.mjs`.
+//! Verified against `mlx-community/Qwen3.8-27B-4bit` on csatapaci through `tools/openai-shim.mjs`.
 
 mod gatelib;
 use gatelib::{field, Gate, Shim};
@@ -26,7 +23,6 @@ fn token(gate: &Gate) -> String {
     );
     t
 }
-/// The first seeded report id.
 fn seed_one(gate: &Gate) -> String {
     let id = gate.seed()["report_ids"]
         .as_array()
@@ -45,7 +41,6 @@ fn seed_one(gate: &Gate) -> String {
 fn an_assist_is_written_once_and_never_written_at_all_when_the_model_is_down() {
     let Some(shim) = Shim::probe("triage-assist/assist") else { return };
 
-    // --- with the model reachable --------------------------------------------------
     let config = shim.config();
     let cfg: Vec<&str> = config.iter().map(String::as_str).collect();
     let egress = shim.egress();
@@ -118,8 +113,7 @@ fn an_assist_is_written_once_and_never_written_at_all_when_the_model_is_down() {
         "GET /api/reports/{{id}}/assist did not answer the stored assist: {got}"
     );
 
-    // A second assist is a conflict, not a second model call — otherwise a refresh is a
-    // model call per request forever.
+    // A second assist is a conflict, not a second model call, or a refresh costs a model call per request forever.
     let (_, again) = gate.json("POST", &format!("/api/reports/{id}/assist"), Some(&t), None);
     let (code, _) = gate.json("POST", &format!("/api/reports/{id}/assist"), Some(&t), None);
     assert_eq!(code, 409, "assisting an already-assisted report must be 409");
@@ -130,16 +124,13 @@ fn an_assist_is_written_once_and_never_written_at_all_when_the_model_is_down() {
         "the 409 must carry the stored severity: {d}"
     );
 
-    // The refusals that cost nothing.
     let (c, _) = gate.json("POST", "/api/reports/nope/assist", Some(&t), None);
     assert_eq!(c, 404, "assisting an unknown report must be 404");
     let (c, _) = gate.json("POST", &format!("/api/reports/{id}/assist"), None, None);
     assert_eq!(c, 401, "assisting with no bearer must be 401");
 
-    // --- with the model unreachable ------------------------------------------------
-    //
-    // A second host, provider pointed at a closed port. Dropping the first is what makes
-    // this a different DEPLOYMENT rather than a different request.
+    // --- with the model unreachable ---
+    // A second host, provider pointed at a closed port; dropping the first makes it a different DEPLOYMENT.
     drop(gate);
     let Some(down) = Gate::compose_and_start_with_egress(
         "triage-assist",
@@ -162,32 +153,23 @@ fn an_assist_is_written_once_and_never_written_at_all_when_the_model_is_down() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// the composition — the gate no single part can pass
-// ---------------------------------------------------------------------------
+// the composition: the gate no single part can pass
 
-/// The whole triage-assist API: a report taken in, assisted by the model, and the
-/// audit trail proving what the other two parts did.
+/// The whole triage-assist API: a report taken in, assisted by the model, and the audit trail proving
+/// what the other two parts did. Ported from `components/triage-assist-domain/e2e.sh`. One model call,
+/// since the cost of this gate is what the loop pays per attempt.
 ///
-/// Ported from `components/triage-assist-domain/e2e.sh`. One model call, like the
-/// assist gate's own — the cost of this gate is what the loop pays per attempt, and
-/// two would double it for nothing.
+/// The trail IS the join: `intake` writes `reports.create`, `assist` writes `reports.assist`, and the
+/// ledger part reads both; a part inventing its own storage shape or event names fails here.
 ///
-/// The trail IS the join. `intake` writes `reports.create` and `assist` writes
-/// `reports.assist`, and the ledger part reads both. A part that invented its own
-/// storage shape or its own event names passes its own gate and fails here.
-///
-/// The subject check is the sharpest of them: every audit event must carry
-/// `principal.subject` — what `authorize` RETURNED — and not the bearer token. A token
-/// in an audit trail is both the wrong value and a credential written to a log, and
-/// the failure names which part wrote it, because a verdict addressed to nobody
-/// cannot be repaired.
+/// The subject check is the sharpest: every audit event must carry `principal.subject` (what
+/// `authorize` RETURNED), not the bearer token, which would be a credential written to a log. The
+/// failure names which part wrote it.
 #[test]
 fn the_whole_triage_assist_api_works() {
     let Some(shim) = Shim::probe("triage-assist/whole") else { return };
     let mut config = shim.config();
-    // Three accepted reports before the lockout, and the third is this gate's own —
-    // so the limit must be at least 4 for the happy path to survive it.
+    // Three accepted reports before the lockout, the third this gate's own, so the limit must be at least 4.
     config.push("max-attempts=4".into());
     config.push("lockout-window=60".into());
     let cfg: Vec<&str> = config.iter().map(String::as_str).collect();
@@ -224,7 +206,6 @@ fn the_whole_triage_assist_api_works() {
         gate.with_headers(method, path, Some(&t), &[("traceparent", tp.as_str())], body)
     };
 
-    // --- a report goes all the way through ---------------------------------
     let (_, resp) = traced(
         "POST",
         "/api/reports",
@@ -252,7 +233,6 @@ fn the_whole_triage_assist_api_works() {
         "no usable summary: {assist}"
     );
 
-    // --- the trail proves what the other two did ---------------------------
     let events = |gate: &Gate| -> Vec<Value> {
         let (_, e) = gate.get(&format!("/api/audit?trace={TRACE}"), Some(&t));
         parse(&e)["events"].as_array().cloned().unwrap_or_default()
@@ -279,7 +259,6 @@ fn the_whole_triage_assist_api_works() {
          Got {pairs:?}"
     );
 
-    // Named per part, because a verdict addressed to nobody cannot be repaired.
     fn owner(name: &str) -> &str {
         match name {
             "reports.create" => "intake (src/intake.rs)",
@@ -309,7 +288,6 @@ fn the_whole_triage_assist_api_works() {
         wrong.join("\n")
     );
 
-    // --- and the limit is still a limit once everything is wired together --
     for i in 1..=3 {
         traced(
             "POST",

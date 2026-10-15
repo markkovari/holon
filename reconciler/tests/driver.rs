@@ -1,15 +1,11 @@
-//! The loop, end to end: a goal is attempted, judged by real commands, repaired
-//! with what the commands actually said, and stopped for a reason.
+//! The loop, end to end: a goal is attempted, judged by real commands, repaired with what the commands
+//! actually said, and stopped for a reason.
 //!
-//! `agent.rs` proved a repair uses a failure it was HANDED. This proves the
-//! failure gets there on its own: nothing in this test writes one. The check ids
-//! are the only thing the scripted model matches on, and a check id only reaches
-//! the model if the driver took it off a verdict that `comp-checks` produced by
-//! running `grep`.
-//!
-//! Which is why the model is scripted and the checks are not. Feedback that was
-//! planted proves nothing about the loop; a model that answers at random makes
-//! "why did it stop after two attempts" a question with no reproducible answer.
+//! `agent.rs` proved a repair uses a failure it was HANDED; this proves the failure gets there on its
+//! own. The check ids are all the scripted model matches on, and an id reaches the model only if the
+//! driver took it off a verdict `comp-checks` produced by running `grep`. The model is scripted and
+//! the checks are not: planted feedback proves nothing, and a random model leaves "why did it stop
+//! after two attempts" unanswerable.
 
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -17,7 +13,6 @@ use std::time::{Duration, Instant};
 use comp_reconciler::fleet::{bin_path, free_port, repo_root, Fleet};
 use serde_json::{json, Value};
 
-/// A native check runner that dies with the test.
 struct Checks {
     child: Child,
     port: u16,
@@ -116,9 +111,8 @@ fn check(id: &str, command: &[&str]) -> Value {
     json!({ "id": id, "required": true, "weight": 1, "command": command })
 }
 
-/// A plan with everything but the parts each case varies. `max_tokens` and
-/// `patience` default off, so a case that does not name them is bounded only by
-/// `max_attempts` — which is what every case here relied on before they existed.
+/// A plan with everything but the parts each case varies. `max_tokens` and `patience` default off, so
+/// a case not naming them is bounded only by `max_attempts`.
 fn plan(text: &str, checks: Value, seed: u64, max_attempts: u32) -> Value {
     json!({
         "text": text,
@@ -132,10 +126,9 @@ fn plan(text: &str, checks: Value, seed: u64, max_attempts: u32) -> Value {
     })
 }
 
-/// The first real run, retried until it works — not a separate readiness probe
-/// (`Fleet::until`). Nothing shorter would do: a run that reaches the model but
-/// not the runner produces an error rather than a hang, so the only signal that
-/// the WHOLE chain is up is a run that came back with a scored attempt.
+/// The first real run, retried until it works, not a separate readiness probe (`Fleet::until`): a run
+/// reaching the model but not the runner errors rather than hangs, so only a run that came back with a
+/// scored attempt proves the WHOLE chain is up.
 fn wait_for_probe(fleet: &Fleet) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
@@ -176,11 +169,9 @@ fn the_loop_repairs_from_a_real_verdict_and_stops_for_a_reason() {
     let fleet = Fleet::start_with_secrets("driver", &[spec.to_str().unwrap()], &artifacts(), &[]);
     let probe = wait_for_probe(&fleet);
 
-    // --- THE LOOP ------------------------------------------------------------
-    // Attempt one writes 41 and `grep -q 42` fails. Nothing in this test tells
-    // the model that: the only thing the script matches on is the check's id, and
-    // that id reaches the model only if the driver lifted it off a verdict the
-    // runner produced by running the command. Attempt two writes 42.
+    // --- THE LOOP ---
+    // Attempt one writes 41 and `grep -q 42` fails. The script matches only on the check's id, which
+    // reaches the model only if the driver lifted it off a verdict the runner produced. Attempt two writes 42.
     let run = probe.run(plan(
         "make the answer 42",
         json!([
@@ -216,12 +207,10 @@ fn the_loop_repairs_from_a_real_verdict_and_stops_for_a_reason() {
         "an accepted run has nothing left failing: {run}"
     );
 
-    // --- THE REPAIR BUILDS ON THE CANDIDATE, NOT THE BASE -------------------
-    // Here the scripted model matches on the CONTENT of what it wrote last time,
-    // not on a check id. `step_one` can only be in the second prompt if the
-    // driver laid the best candidate over the goal's files — so a driver that
-    // showed the untouched tree every attempt falls off the script and comes back
-    // provider-down rather than quietly re-rolling.
+    // --- THE REPAIR BUILDS ON THE CANDIDATE, NOT THE BASE ---
+    // The scripted model matches on the CONTENT it wrote last time: `step_one` can only be in the
+    // second prompt if the driver laid the best candidate over the goal's files, otherwise it falls
+    // off the script and comes back provider-down.
     let built = probe.run(plan(
         "build on it",
         json!([check("needs-step-two", &["grep", "-q", "step_two", "src/lib.rs"])]),
@@ -239,10 +228,9 @@ fn the_loop_repairs_from_a_real_verdict_and_stops_for_a_reason() {
          with extra steps: {built}"
     );
 
-    // --- STOPPING WITHOUT WINNING: the ideas ran out -------------------------
-    // The model answers the same thing however many times it is asked. The
-    // budget says five; the run stops at two, because a third would pay full
-    // price for an answer already on record.
+    // --- STOPPING WITHOUT WINNING: the ideas ran out ---
+    // The model repeats itself. The budget says five; the run stops at two, since a third would pay
+    // full price for an answer already on record.
     let stuck = probe.run(plan(
         "go in circles",
         json!([check("never-passes", &["test", "-f", "never.txt"])]),
@@ -264,12 +252,9 @@ fn the_loop_repairs_from_a_real_verdict_and_stops_for_a_reason() {
          to act on: {stuck}"
     );
 
-    // --- STOPPING WITHOUT WINNING: the budget ran out ------------------------
-    // Three different candidates, none acceptable, two of them tied on score.
-    // The one that is KEPT is the first to reach that score, not the last —
-    // preferring the newer would make the answer depend on how many times it
-    // happened to tie, and a repair that is worse than what it repaired would
-    // walk the search backwards.
+    // --- STOPPING WITHOUT WINNING: the budget ran out ---
+    // Three candidates, none acceptable, two tied on score. The one KEPT is the first to reach that
+    // score: preferring the newer would make the answer depend on ties and could walk the search backwards.
     let spent = probe.run(plan(
         "wander",
         json!([
@@ -289,10 +274,9 @@ fn the_loop_repairs_from_a_real_verdict_and_stops_for_a_reason() {
          not the newest thing that tied it: {spent}"
     );
 
-    // --- THE BUDGET IS IN TOKENS, NOT TRIES ---------------------------------
-    // `max-attempts` bounds how many times, which is not what anything costs.
-    // The limit is calibrated from what the run above actually spent, so this
-    // asserts the rule rather than a guess about prompt length.
+    // --- THE BUDGET IS IN TOKENS, NOT TRIES ---
+    // `max-attempts` bounds how many times, not cost. The limit is calibrated from what the run above
+    // spent, so this asserts the rule rather than a guess about prompt length.
     let one_attempt = spent["attempts"][0]["prompt_tokens"].as_u64().unwrap()
         + spent["attempts"][0]["completion_tokens"].as_u64().unwrap();
     assert!(one_attempt > 0, "the cost never reached the driver: {spent}");
@@ -323,10 +307,9 @@ fn the_loop_repairs_from_a_real_verdict_and_stops_for_a_reason() {
         "a budget of one attempt's worth must stop after one, having overshot by none: {broke}"
     );
 
-    // --- PATIENCE: different candidates that are no better -------------------
-    // The commoner way a run wastes money. `plateau` needs the model to repeat
-    // itself EXACTLY; this needs only that it stop improving. Attempt three ties
-    // attempt two, and a budget of five stops at three.
+    // --- PATIENCE: different candidates that are no better ---
+    // `plateau` needs the model to repeat itself EXACTLY; this needs only that it stop improving.
+    // Attempt three ties attempt two, and a budget of five stops at three.
     let mut stubborn = plan(
         "wander",
         json!([
@@ -354,9 +337,8 @@ fn the_loop_repairs_from_a_real_verdict_and_stops_for_a_reason() {
     );
     assert_eq!(stubborn["score"], json!(500), "and the best is still kept: {stubborn}");
 
-    // --- a run with no gate is refused before anything is paid for -----------
-    // The evaluator refuses this too. Refused here as well so the caller learns
-    // before spending on inference rather than after.
+    // --- a run with no gate is refused before anything is paid for ---
+    // The evaluator refuses this too; refused here so the caller learns before spending on inference.
     let ungated = probe.run(plan("make the answer 42", json!([]), 1, 4));
     assert_eq!(ungated["error"], json!("invalid"), "an empty gate must be refused: {ungated}");
 

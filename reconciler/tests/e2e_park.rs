@@ -1,19 +1,14 @@
-//! A durable record of an outstanding call, end to end (ADR-0100): every
-//! request goes
+//! A durable record of an outstanding call, end to end (ADR-0100): every request goes
 //!
-//!   this test → comp-host (park-gateway ⊕ park-store) → comp-park → NATS JetStream
+//!   this test -> comp-host (park-gateway + park-store) -> comp-park -> NATS JetStream
 //!
-//! over real HTTP, through the component model, against a real NATS — never
-//! the library. `bash e2e/park.sh` brings NATS up (a private `nats-server -js`
-//! on a free port), builds what this needs, runs this file and tears it down.
+//! over real HTTP, through the component model, against a real NATS, never the library. `bash e2e/park.sh`
+//! brings NATS up, builds what is needed, runs this file and tears it down.
 //!
-//! Without `PARK_E2E_NATS_URL` every test here prints `SKIPPED` and returns:
-//! CI compiles this file (`--no-run`) and does not run it, because a skip that
-//! returns `ok` is a green tick for a test that did not run.
+//! Without `PARK_E2E_NATS_URL` every test prints `SKIPPED` and returns (CI compiles with `--no-run`, since a
+//! skip that returns `ok` is a green tick for a test that did not run).
 //!
-//! Each test owns its bucket and wake stream (`--bucket`/`--wake-stream`, named
-//! after the test), its `comp-park` port and its `comp-host`, so they run in
-//! parallel without seeing each other's tickets.
+//! Each test owns its bucket, wake stream, `comp-park` port and `comp-host`, so they run in parallel.
 
 mod gatelib;
 
@@ -43,8 +38,7 @@ fn nats_url(test: &str) -> Option<String> {
     }
 }
 
-/// A running `comp-park`, and the `park-gateway ⊕ park-store` component in
-/// front of it.
+/// A running `comp-park`, and the `park-gateway + park-store` component in front of it.
 struct Stack {
     name: String,
     park: Child,

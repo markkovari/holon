@@ -1,15 +1,12 @@
 //! `comp-checks` against a real tree, running real commands.
 //!
-//! The gate is the one part of the loop that cannot be a component — it has to
-//! run the project's own tests, and a component cannot spawn a process. So this
-//! is the test that the native half does what ADR-0081 says: report a CHECK
-//! VECTOR rather than a verdict, so the caller gets both halves.
+//! The gate cannot be a component (it must spawn the project's own tests). Per ADR-0081 it reports a
+//! CHECK VECTOR rather than a verdict:
 //!
-//!   * every `required` check passed  → the gate. May this be accepted?
-//!   * the weighted fraction passed   → the score. Which candidate to extend?
+//!   * every `required` check passed  -> the gate: may this be accepted?
+//!   * the weighted fraction passed   -> the score: which candidate to extend?
 //!
-//! A binary gate gives no gradient in the generation where nothing passes yet,
-//! which is the generation a search most needs to make progress in.
+//! A binary gate gives no gradient in the generation where nothing passes yet.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -19,7 +16,6 @@ use std::time::{Duration, Instant};
 use comp_reconciler::fleet::{bin_path, free_port};
 use serde_json::{json, Value};
 
-/// A runner that dies with the test.
 struct Runner {
     child: Child,
     port: u16,
@@ -39,8 +35,7 @@ impl Runner {
         let dir = tempfile::tempdir().unwrap();
         let base = dir.path().join("base");
         std::fs::create_dir_all(&base).unwrap();
-        // Something for a check to find, so "the candidate's files are there" is
-        // distinguishable from "the base was copied".
+        // Something for a check to find, so "the candidate's files are there" differs from "the base was copied".
         std::fs::write(base.join("VERSION"), "base\n").unwrap();
 
         let port = free_port();
@@ -65,8 +60,7 @@ impl Runner {
         panic!("comp-checks never listened on {port}");
     }
 
-    /// A runner with NO checkout — the shape that is not pinned to a machine
-    /// holding the repository.
+    /// A runner with NO checkout: not pinned to a machine holding the repository.
     fn without_checkout(allow: &[&str]) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let port = free_port();
@@ -90,11 +84,8 @@ impl Runner {
         panic!("comp-checks never listened on {port}");
     }
 
-    /// A runner that demands a bearer token, and the token it demands.
-    ///
-    /// Loopback still, because what is under test is the CHECK, not the bind
-    /// guard — those are two different refusals and a test that needed a routable
-    /// address to exercise one of them would not run in CI.
+    /// A runner that demands a bearer token, and the token it demands. Loopback still: the CHECK is
+    /// under test, not the bind guard.
     fn with_token(allow: &[&str], token: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let tok = dir.path().join("token");
@@ -122,8 +113,8 @@ impl Runner {
         panic!("comp-checks never listened on {port}");
     }
 
-    /// POST with whatever `authorization` header is given, and hand back the
-    /// STATUS as well — which is the whole answer when the question is auth.
+    /// POST with whatever `authorization` header is given, returning the STATUS too (the whole answer
+    /// when the question is auth).
     fn evaluate_as(&self, auth: Option<&str>, body: Value) -> (u16, Value) {
         let payload = body.to_string();
         let mut last = String::new();
@@ -167,21 +158,12 @@ impl Runner {
         Ok((status, v))
     }
 
-    /// POST a candidate and read the report. Hand-rolled because the runner is
-    /// deliberately a few hundred lines of std and does not deserve a client.
+    /// POST a candidate and read the report. Hand-rolled: the runner is a few hundred lines of std.
     fn evaluate(&self, body: Value) -> Value {
-        // A dropped CONNECTION is retried; a REPORT never is.
-        //
-        // The same rule as `staleness.rs`: what this file measures is what the
-        // runner said, and a refused or reset connection said nothing at all.
-        // Under a loaded machine one connection in a few hundred is reset, and a
-        // single one used to fail the whole file. Retrying an actual report
-        // would instead retry away the verdict under test.
-        // Budgeted by TIME, not by a count. Five attempts at 200ms is one second,
-        // which is fine on an idle machine and not fine while the rest of the suite
-        // is compiling 150 crates around it — `Connection refused, attempt 5/5`
-        // failed a full run that passed in isolation thirty seconds later. The same
-        // mistake as `--timeout 300`: a bound measured idle and spent under load.
+        // A dropped CONNECTION is retried; a REPORT never is (as in `staleness.rs`): a refused or
+        // reset connection said nothing, but retrying a report would retry away the verdict.
+        // Budgeted by TIME, not a count: five attempts at 200ms failed a full run that compiles 150
+        // crates around it, a bound measured idle and spent under load.
         let payload = body.to_string();
         let mut last = String::new();
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
@@ -228,13 +210,11 @@ fn check(id: &str, required: bool, weight: u32, command: &[&str]) -> Value {
 fn the_gate_and_the_score_come_back_from_a_real_run() {
     let runner = Runner::start(&["test", "cat", "false"]);
 
-    // --- a candidate that passes everything ----------------------------------
     let report = runner.evaluate(json!({
         "candidate": "branch-1",
         "changes": [{ "path": "answer.txt", "content": "42\n" }],
         "checks": [
-            // The candidate's own file has to be there, which is what makes this
-            // a check of the CANDIDATE rather than of the base tree.
+                        // The candidate's own file has to be there: a check of the CANDIDATE, not the base tree.
             check("the-change-landed", true, 1, &["test", "-f", "answer.txt"]),
             check("the-base-is-there", true, 1, &["test", "-f", "VERSION"]),
         ],
@@ -243,9 +223,8 @@ fn the_gate_and_the_score_come_back_from_a_real_run() {
     assert_eq!(report["score"], json!(1000), "a full pass is 1000 milli-units: {report}");
     assert_eq!(report["passed"], json!(2));
 
-    // --- a candidate that fails the gate but is not worthless ----------------
-    // This is the case a binary verdict cannot express, and the reason the runner
-    // reports a vector.
+    // --- a candidate that fails the gate but is not worthless ---
+    // The case a binary verdict cannot express, hence the vector.
     let report = runner.evaluate(json!({
         "candidate": "branch-2",
         "changes": [{ "path": "answer.txt", "content": "42\n" }],
@@ -263,7 +242,6 @@ fn the_gate_and_the_score_come_back_from_a_real_run() {
          acceptable has nothing to select on: {report}"
     );
 
-    // --- and a worse candidate scores lower ----------------------------------
     let worse = runner.evaluate(json!({
         "candidate": "branch-3",
         "changes": [],
@@ -279,9 +257,8 @@ fn the_gate_and_the_score_come_back_from_a_real_run() {
          that ordering IS the selection signal: {worse} vs {partial}"
     );
 
-    // --- candidates do not see each other ------------------------------------
-    // branch-3 wrote nothing, and branch-1's file must not have been visible to
-    // it. If the tree were reused, `the-change-landed` would have passed above.
+    // --- candidates do not see each other ---
+    // branch-3 wrote nothing and must not see branch-1's file; a reused tree would pass `the-change-landed`.
     assert_eq!(
         worse["results"][0]["passed"],
         json!(false),
@@ -299,7 +276,7 @@ fn a_command_nobody_allowed_is_refused_rather_than_run() {
         "changes": [],
         "checks": [
             check("ok", false, 1, &["test", "-f", "VERSION"]),
-            // The input is written by an agent. `rm` is not on the list.
+                        // The input is written by an agent. `rm` is not on the list.
             check("sneaky", true, 1, &["rm", "-rf", "."]),
         ],
     }));
@@ -311,16 +288,14 @@ fn a_command_nobody_allowed_is_refused_rather_than_run() {
         "the report must say WHY, or a refused check reads as a broken one: {sneaky}"
     );
     assert_eq!(report["accepted"], json!(false));
-    // The other check still ran: one bad entry must not discard the rest, or a
-    // single typo costs a whole evaluation.
+    // The other check still ran: one bad entry must not discard the rest.
     assert_eq!(report["results"][0]["passed"], json!(true), "the allowed check still ran");
 }
 
 #[test]
 fn a_check_that_hangs_is_killed_rather_than_holding_the_runner() {
-    // `sleep` is allowed on purpose: the point is that a check the operator DID
-    // permit can still run forever, which an infinite loop in generated code
-    // plausibly does.
+    // `sleep` is allowed on purpose: a check the operator DID permit can still run forever, as an
+    // infinite loop in generated code plausibly does.
     let runner = Runner::start(&["sleep", "test"]);
 
     let started = Instant::now();
@@ -353,24 +328,18 @@ fn a_check_that_hangs_is_killed_rather_than_holding_the_runner() {
 
 /// A runner with no checkout at all, fed from the object store by its caller.
 ///
-/// This is the shape that matters. `--base` pins a runner to a machine that
-/// already has the repository, which is the opposite of what putting the
-/// repository in blob storage was for. A caller that can read `vgit:store` reads
-/// the tree from NATS and posts it — and because a commit id is a content
-/// address, the runner caches it under that name and every later candidate on the
-/// same base sends only its diff.
-///
-/// Disk is still where compiling happens, because a compiler cannot read a KV
-/// bucket. It is a materialisation, not the authority.
+/// `--base` pins a runner to a machine that already has the repository, the opposite of what blob
+/// storage was for. A caller that can read `vgit:store` posts the tree; a commit id is a content
+/// address, so the runner caches it and later candidates on the same base send only a diff. Disk is
+/// a materialisation (a compiler cannot read a KV bucket), not the authority.
 #[test]
 fn a_runner_with_no_checkout_is_fed_its_tree_and_caches_it() {
     let runner = Runner::without_checkout(&["test"]);
 
     let commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
-    // Without the tree, the runner ASKS for it rather than guessing. A runner
-    // that fell back to something else here would score a candidate against the
-    // wrong tree and report it confidently.
+    // Without the tree, the runner ASKS for it: falling back to another tree would score a candidate
+    // against the wrong one, confidently.
     let asked = runner.evaluate(json!({
         "candidate": "first",
         "base_commit": commit,
@@ -382,7 +351,6 @@ fn a_runner_with_no_checkout_is_fed_its_tree_and_caches_it() {
         "an unknown base must be asked for, not assumed: {asked}"
     );
 
-    // Sent once.
     let first = runner.evaluate(json!({
         "candidate": "first",
         "base_commit": commit,
@@ -395,8 +363,7 @@ fn a_runner_with_no_checkout_is_fed_its_tree_and_caches_it() {
     }));
     assert_eq!(first["accepted"], json!(true), "the posted tree should be usable: {first}");
 
-    // And every candidate after it sends only its own diff — the base is cached
-    // under a content address, so there is nothing to invalidate.
+    // Every candidate after it sends only its own diff: the base is cached under a content address.
     let second = runner.evaluate(json!({
         "candidate": "second",
         "base_commit": commit,
@@ -404,8 +371,7 @@ fn a_runner_with_no_checkout_is_fed_its_tree_and_caches_it() {
         "checks": [
             check("base", true, 1, &["test", "-f", "VERSION"]),
             check("mine", true, 1, &["test", "-f", "other.txt"]),
-            // The FIRST candidate's file must not be here. A cached base that
-            // accumulated candidates would make every later score wrong.
+                        // The FIRST candidate's file must not be here, or an accumulating base would skew every later score.
             check("clean", true, 1, &["test", "!", "-f", "answer.txt"]),
         ],
     }));
@@ -418,12 +384,9 @@ fn a_runner_with_no_checkout_is_fed_its_tree_and_caches_it() {
     println!("    no checkout: tree posted once, cached by commit, reused clean");
 }
 
-/// A runner off the loopback with no token REFUSES TO START.
-///
-/// The property under test is that it is a refusal and not a warning. A runner
-/// that printed "this is insecure" and listened anyway would be found in that
-/// state months later by somebody who never saw the line — and what is on the
-/// other end of an allowed command is a tree an agent wrote.
+/// A runner off the loopback with no token REFUSES TO START: a refusal, not a warning, since one
+/// that printed "this is insecure" and listened anyway would be found months later, and the other end
+/// of an allowed command is a tree an agent wrote.
 #[test]
 fn listening_off_the_loopback_without_a_token_is_refused() {
     let out = Command::new(bin_path("comp-checks"))
@@ -443,9 +406,8 @@ fn listening_off_the_loopback_without_a_token_is_refused() {
         "and why, because 'refusing to listen' alone reads as a bug: {said}"
     );
 
-    // 127.0.0.1 is the same runner with a different address, and it must NOT be
-    // refused — otherwise this guard breaks every local gate to protect the
-    // remote case, which is how a safety check gets deleted.
+    // 127.0.0.1 is the same runner with a different address and must NOT be refused, or the guard
+    // breaks every local gate to protect the remote case.
     let mut child = Command::new(bin_path("comp-checks"))
         .args(["--addr", &format!("127.0.0.1:{}", free_port()), "--allow", "true"])
         .stdout(Stdio::null())
@@ -464,9 +426,8 @@ fn listening_off_the_loopback_without_a_token_is_refused() {
 fn a_runner_with_a_token_answers_401_and_runs_nothing() {
     let runner = Runner::with_token(&["test", "touch"], "s3cret-token");
 
-    // The check would create a file if it ran, which is how "refused" is told
-    // apart from "ran and failed" — a 401 that still executed the command would
-    // pass a test that only read the status.
+    // The check would create a file if it ran, telling "refused" from "ran and failed" (a 401 that
+    // still executed the command would pass a status-only test).
     let witness = runner._dir.path().join("ran");
     let body = json!({
         "candidate": "stranger",
@@ -487,9 +448,7 @@ fn a_runner_with_a_token_answers_401_and_runs_nothing() {
     }
     assert!(!witness.exists(), "a rejected request ran its command anyway");
 
-    // And the right token works — including with a lower-case scheme, which
-    // RFC 7235 §2.1 makes a valid credential. Rejecting it is a bug that reads
-    // from the outside as a wrong token.
+    // And the right token works, including with a lower-case scheme, which RFC 7235 §2.1 makes valid.
     for auth in ["Bearer s3cret-token", "bearer s3cret-token", "BEARER  s3cret-token  "] {
         let (status, v) = runner.evaluate_as(Some(auth), body.clone());
         assert_eq!(status, 200, "{auth:?} was rejected: {v}");

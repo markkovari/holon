@@ -1,23 +1,16 @@
-//! `comp-goald` must be able to tell "the gate refused to run" apart from a
-//! real search exhaustion or a real success — found live running the daemon
-//! against a real goal: a REFUSED gate (a check's command wasn't in the
-//! tree yet) exited 0, identical to success, and `comp-goald` reported a
-//! goal as `awaiting-human` — a PR to review — when no branch ever ran and
-//! nothing was opened (see the `ponytail:` note beside `gate_can_judge`'s
-//! call site in `reconciler/src/bin/goalrun.rs`).
+//! `comp-goald` must tell "the gate refused to run" apart from a real search exhaustion or success: a
+//! REFUSED gate (a check's command not in the tree yet) exited 0 like success, so `comp-goald` reported
+//! `awaiting-human` with no branch run and no PR opened (see the `ponytail:` note beside
+//! `gate_can_judge`'s call site in `reconciler/src/bin/goalrun.rs`).
 //!
-//! This is the held-out judge for that fix: `comp_reconciler::goalexit`
-//! must exist with these exact names and this exact behavior. It is
-//! deliberately a plain unit test of a pure module, not a subprocess/fleet
-//! test — the module is small and self-contained on purpose, so this stays
-//! fast and reliable.
+//! The held-out judge for that fix: `comp_reconciler::goalexit` must exist with these exact names and
+//! behavior. A plain unit test of a pure module, so it stays fast and reliable.
 
 use comp_reconciler::goalexit;
 
 #[test]
 fn success_is_the_reserved_zero() {
-    // `comp-goald`'s `status.success()` check depends on this staying 0 —
-    // it is the OS's own convention, not a value this module invented.
+    // `comp-goald`'s `status.success()` check depends on this staying 0 (the OS's own convention).
     assert_eq!(goalexit::SUCCESS, 0);
 }
 
@@ -52,9 +45,8 @@ fn an_unrecognised_code_still_names_the_number() {
 
 #[test]
 fn a_signal_kill_reports_something_rather_than_panicking() {
-    // `std::process::ExitStatus::code()` is `None` when a process died to a
-    // signal rather than exiting — this must not unwrap and crash the daemon
-    // reporting on ANOTHER goal's outcome.
+    // `ExitStatus::code()` is `None` when a process died to a signal; this must not unwrap and crash the
+    // daemon reporting on ANOTHER goal's outcome.
     let reason = goalexit::failure_reason(None);
     assert!(!reason.is_empty());
 }

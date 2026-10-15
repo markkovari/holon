@@ -1,26 +1,12 @@
-//! `knowledge:memory` composed through a real host: five components, four links,
-//! a real database, a real lexical index, and a provider that really is asked to
-//! embed.
+//! `knowledge:memory` composed through a real host: five components, four links, a real database, a
+//! real lexical index, and a provider that really is asked to embed.
 //!
-//! What the other two layers already cover, and why this exists anyway:
-//!
-//! - the component's unit tests cover the SurrealQL it builds and the JSON it
-//!   parses, against shapes captured live;
-//! - `knowledge-memory/src/scenarios.rs` runs those statements against a real
-//!   SurrealDB and asserts what nine graph shapes answer.
-//!
-//! Neither can see the part in between: whether the HOST links three non-`wasi`
-//! component interfaces into one caller (ADR-0079's `HOST_NAMESPACES` bug was
-//! exactly the shape of "wasi:* links, a component interface silently does not"),
-//! whether `llm:inference/embed` is reachable at all — nothing in this repo had
-//! ever called it — whether `search:index` writes and answers over the host's
-//! key-value store, and whether the two exported interfaces of one component can
-//! be linked separately, which is the entire anti-poisoning argument.
-//!
-//! So this test asserts ONLY those things. It deliberately does not re-assert
-//! similarity arithmetic, quoting or fusion order: those are cheaper and stricter
-//! to check where they already are, and a slow e2e that duplicates them buys
-//! nothing but a second place to update.
+//! Unit tests cover the SurrealQL and JSON; `knowledge-memory/src/scenarios.rs` covers nine graph
+//! shapes. Neither sees: whether the HOST links three non-`wasi` component interfaces into one
+//! caller (ADR-0079's `HOST_NAMESPACES` bug), whether `llm:inference/embed` is reachable, whether
+//! `search:index` works over the host's key-value store, and whether one component's two exported
+//! interfaces can be linked separately (the anti-poisoning argument). Only those are asserted here;
+//! similarity arithmetic, quoting and fusion order are cheaper to check where they live.
 //!
 //! Skipped, loudly, when Docker cannot start the database.
 
@@ -50,10 +36,9 @@ fn artifacts() -> Vec<String> {
     out
 }
 
-/// Both fixtures, with the database's real port in them, written outside the repo.
-///
-/// Two APPS in one fleet, sharing artifacts and differing only in their manifests:
-/// one whose provider embeds and one whose provider says it cannot.
+/// Both fixtures, with the database's real port in them, written outside the repo. Two APPS in one
+/// fleet sharing artifacts and differing only in manifests: one whose provider embeds, one whose
+/// provider says it cannot.
 fn specs_for(port: u16) -> Vec<std::path::PathBuf> {
     ["knowledge-memory.yaml", "knowledge-memory-sparse.yaml"]
         .iter()
@@ -91,13 +76,11 @@ impl Probe {
         let r = self
             .http
             .request(method, format!("http://127.0.0.1:{}{path}", self.port))
-            // The ingress routes on this, which is what makes two apps on one
-            // fleet reachable at one port.
+            // The ingress routes on this, which makes two apps on one fleet reachable at one port.
             .header("host", self.host)
             .body(body)
             .send();
-        // Reported, not panicked on: the readiness loop polls before anything is
-        // listening, and a panic there hides "not up yet" behind "broken".
+        // Reported, not panicked on: the readiness loop polls before anything listens.
         let r = match r {
             Ok(r) => r,
             Err(e) => return Value::String(format!("transport: {e}")),
@@ -108,13 +91,9 @@ impl Probe {
     }
 }
 
-/// The first real read, retried until it works — NOT a separate readiness route.
-///
-/// `already-done` on a goal nobody has evaluated can only answer `false` by
-/// reaching SurrealDB through `memory` and `graph`, so what is retried is what is
-/// measured (the mistake `Fleet::until` exists to prevent). It also warms the
-/// namespace creation, so the first asserted write is not also the first schema
-/// change.
+/// The first real read, retried until it works, NOT a separate readiness route: `already-done` can
+/// only answer `false` by reaching SurrealDB through `memory` and `graph`, so what is retried is what
+/// is measured. It also warms namespace creation.
 fn wait_for(fleet: &Fleet, host: &'static str) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
@@ -158,8 +137,8 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
         return;
     };
 
-    // Loopback is a private address, and the host refuses those unless told
-    // otherwise. Set before the fleet starts, since the hosts inherit it.
+    // Loopback is a private address and the host refuses those unless told otherwise. Set before the
+    // fleet starts, since the hosts inherit it.
     std::env::set_var("COMP_FLEET_ALLOW_PRIVATE_EGRESS", "1");
     let specs = specs_for(db.port);
     let spec_paths: Vec<&str> = specs.iter().map(|p| p.to_str().unwrap()).collect();
@@ -167,16 +146,14 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
         "memory",
         &spec_paths,
         &artifacts(),
-        // The password reaches `graph` from the vault. It is in neither manifest.
+        // The password reaches `graph` from the vault; it is in neither manifest.
         &[format!("vault://acme/surreal={SURREAL_PASSWORD}")],
     );
     let dense = wait_for(&fleet, "memory.acme.test");
 
-    // --- the link graph resolves, and a lesson survives a round trip -----------
-    //
-    // One POST proves four links at once: the probe reached `memory`, which wrote
-    // through `graph` to SurrealDB, embedded through `mllm`, and indexed through
-    // `search`. Any missing link is a trap, not a wrong answer.
+    // --- the link graph resolves, and a lesson survives a round trip ---
+    // One POST proves four links: `memory` wrote through `graph` to SurrealDB, embedded through
+    // `mllm`, and indexed through `search`. A missing link is a trap, not a wrong answer.
     let goal = "make a slug from a title string";
     let r = dense.post(
         &format!("/observe?ns=errors&goal={}&env=env-1&attempt=1", enc(goal)),
@@ -184,10 +161,8 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
     );
     let handle = r["handle"].as_str().unwrap_or_default().to_string();
     assert!(handle.starts_with("errors:"), "the write did not land: {r}");
-    // Re-observing the same goal must reinforce ONE row rather than grow the pool.
-    // The handle is asserted as a property, not as a constant: pinning the digest
-    // here would be pinning it in two places, and the derivation is already covered
-    // by a unit test.
+    // Re-observing the same goal must reinforce ONE row. The handle is asserted as a property, not a
+    // constant (the derivation is unit-tested).
     let again = dense.post(
         &format!(
             "/observe?ns=errors&goal={}&env=env-2&attempt=1",
@@ -201,11 +176,8 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
         "a differently-spelled goal derived a different key: {again}"
     );
 
-    // --- the provider really was asked to embed --------------------------------
-    //
-    // `dense: true` can only be true if `llm:inference/embed` was called and its
-    // vector reached SurrealDB, and the KNN found the row by it. This is the first
-    // time anything in this repo has called that function through a host.
+    // --- the provider really was asked to embed ---
+    // `dense: true` can only be true if `llm:inference/embed` was called and the KNN found the row by it.
     let r = dense.get(&format!("/recall?goal={}&k=3", enc(goal)));
     assert_eq!(keys(&r), vec![handle.clone()], "the lesson was not retrieved: {r}");
     assert_eq!(hits(&r)[0]["dense"], Value::Bool(true), "nothing embedded: {r}");
@@ -214,19 +186,14 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
         "a hit found by its own goal should be close to it: {r}"
     );
 
-    // --- the lexical half answers too, over the host's key-value store ---------
-    //
-    // A goal with no token in common with the lesson still finds it, because the
-    // dense retriever does not need one. And a query whose only overlap is lexical
-    // finds it too. One of the two would be enough for a hit; the point of asking
-    // both is that neither retriever is quietly missing.
+    // --- the lexical half answers too, over the host's key-value store ---
+    // A goal sharing no token with the lesson still finds it densely, and a lexical-only overlap finds
+    // it too; asking both shows neither retriever is quietly missing.
     let r = dense.get(&format!("/recall?goal={}&k=3", enc("slug title string")));
     assert_eq!(keys(&r), vec![handle.clone()], "the sparse index found nothing: {r}");
 
-    // --- the two exported interfaces are separately linked --------------------
-    //
-    // The security claim, through the real boundary: the agent-facing verb cannot
-    // write the trusted pool, and the gated verb can — and both are reachable from
+    // --- the two exported interfaces are separately linked ---
+    // The agent-facing verb cannot write the trusted pool and the gated verb can, both reachable from
     // one caller only because the manifest links them separately.
     let r = dense.post(
         &format!("/observe?ns=patterns&goal={}&env=env-1&attempt=1", enc(goal)),
@@ -247,8 +214,7 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
     let promoted = r["handle"].as_str().unwrap_or_default().to_string();
     assert!(promoted.starts_with("patterns:"), "the gate could not promote: {r}");
 
-    // Both pools now answer, and asking for one of them returns only that one —
-    // which is the diversity knob doing something rather than being decoration.
+    // Both pools answer, and asking for one returns only that one (the diversity knob).
     let r = dense.get(&format!("/recall?goal={}&k=5", enc(goal)));
     assert_eq!(keys(&r).len(), 2, "both pools should answer: {r}");
     let r = dense.get(&format!("/recall?goal={}&k=5&pools=patterns", enc(goal)));
@@ -256,7 +222,6 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
     let r = dense.get(&format!("/recall?goal={}&k=0", enc(goal)));
     assert!(hits(&r).is_empty(), "k=0 is the cold control arm: {r}");
 
-    // --- outcomes move standing, through the whole chain ----------------------
     let r = dense.post(&format!("/attribute?keys={promoted}&run=run-1&ok=true"), "");
     assert_eq!(r["ok"], Value::Bool(true), "attribute failed: {r}");
     let r = dense.post(&format!("/attribute?keys={handle}&run=run-2&ok=false"), "");
@@ -271,7 +236,6 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
     let r = dense.post("/attribute?keys=errors:deleted-by-a-human&run=run-3&ok=true", "");
     assert_eq!(r["ok"], Value::Bool(true), "an unknown handle should be a no-op: {r}");
 
-    // --- duplicated work, end to end -----------------------------------------
     let r = dense.post(
         &format!("/evaluated?goal={}&run=run-9&score=1000&passed=true&artifact=pr%2F41", enc(goal)),
         "",
@@ -290,12 +254,8 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
         dense.get(&format!("/already-done?goal={}", enc("parse a csv file into typed records")));
     assert_eq!(r["found"], Value::Bool(false), "an unrelated goal must not be skipped: {r}");
 
-    // --- the same five components with no embedding model ---------------------
-    //
-    // The second app. `mock-embeddings=false` makes the provider answer
-    // `describe()` with "no embeddings" and refuse `embed` — which is what
-    // `anthropic-provider` really does — so retrieval has to degrade to sparse
-    // rather than fail. Until this fixture existed, that was a doc comment.
+    // The second app: `mock-embeddings=false` makes the provider refuse `embed`, as `anthropic-provider`
+    // really does, so retrieval must degrade to sparse rather than fail.
     let sparse = wait_for(&fleet, "memorysparse.acme.test");
     let r = sparse.post(
         &format!("/observe?ns=errors&goal={}&env=env-1&attempt=1", enc(goal)),
@@ -317,8 +277,7 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
         Value::from(0.0),
         "there is no cosine to report when nothing embedded: {r}"
     );
-    // And `already-done` degrades to the exact-goal match rather than answering
-    // wrongly or erroring.
+    // And `already-done` degrades to the exact-goal match.
     sparse.post(
         &format!("/evaluated?goal={}&run=run-1&score=900&passed=true&artifact=pr%2F7", enc(goal)),
         "",
@@ -334,11 +293,8 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
          and it must be a miss rather than a wrong hit: {r}"
     );
 
-    // --- the goal runner's own client, over the same deployment ---------------
-    //
-    // Not raw HTTP: this is `comp_reconciler::memory::Memory`, the exact code
-    // `comp-goalrun` calls, so what is asserted below is the slice the runner
-    // uses rather than a re-spelling of it.
+    // --- the goal runner's own client, over the same deployment ---
+    // `comp_reconciler::memory::Memory`, the exact code `comp-goalrun` calls, not raw HTTP.
     let client = Memory {
         url: format!("http://127.0.0.1:{}", fleet.ingress_port),
         host: "memory.acme.test".to_string(),
@@ -350,9 +306,8 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
         "a goal nobody has evaluated is not done work"
     );
 
-    // A generation's worth of verdicts: four branches, one of which passed. Every
-    // branch reports, because the count of failures is what says whether another
-    // generation is worth buying.
+    // A generation's worth of verdicts: four branches, one passed. Every branch reports, since the
+    // failure count says whether another generation is worth buying.
     let seed = 4242;
     for (branch, score, accepted) in [
         ("risk-first", 300u64, false),
@@ -371,9 +326,8 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
     assert_eq!(prior.run, run_id(seed, 0, "user-first"));
     assert!(prior.artifact.is_empty(), "nothing has been opened yet");
 
-    // The landing path re-reports the winning run with the pull request. Keyed by
-    // (goal, run), so it attaches the artifact WITHOUT inventing a fifth verdict —
-    // the property that let the counters be derived from the edges at all.
+    // The landing path re-reports the winning run with the pull request. Keyed by (goal, run), so it
+    // attaches the artifact WITHOUT inventing a fifth verdict.
     client
         .evaluated(fresh, &run_id(seed, 0, "user-first"), 1000, true, "https://github.test/pr/7")
         .expect("the re-report was refused");
@@ -382,12 +336,9 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
     assert_eq!(prior.artifact, "https://github.test/pr/7", "the pull request is now the answer");
     assert!(prior.summary().contains("pr/7"), "and a human can read it: {}", prior.summary());
 
-    // --- a decomposition, through the deployed component ---------------------
-    //
-    // The scenario suite proves the statements against SurrealDB. This proves the
-    // path the RUNNER uses: the client, the probe's routes, the component, and
-    // the graph store, deployed. Those are four places the shape can be lost
-    // between, and the SQL being right says nothing about any of them.
+    // --- a decomposition, through the deployed component ---
+    // The scenario suite proves the statements; this proves the path the RUNNER uses (client, probe
+    // routes, component, graph store), where the shape can be lost.
     let parent = "serve invoices over http";
     let (back, front) = ("store invoices in postgres", "render the invoice list");
     assert!(
@@ -403,9 +354,8 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
     assert_eq!(parts[0].why, "the data half", "the reason rides on the edge");
     assert!(!parts[0].done, "nothing has been evaluated, so nothing is done");
 
-    // Naming a part is enough to make it an ordinary goal. This is the property
-    // the whole design rests on: a sub-goal can be asked about, skipped and
-    // evaluated exactly like any other.
+    // Naming a part is enough to make it an ordinary goal: it can be asked about, skipped and
+    // evaluated like any other.
     client.evaluated(back, &run_id(seed, 0, "backend"), 1000, true, "").expect("refused");
     let parts = client.parts_of(parent).expect("the pool answered");
     let done_for = |g: &str| parts.iter().find(|p| p.goal == g).map(|p| p.done);
@@ -431,15 +381,13 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
         "a second decomposition reinforces the edges rather than duplicating them"
     );
 
-    // And a goal cannot be a part of itself: a one-step loop, refused where it is
-    // cheap rather than left for a depth bound to find after it has cost a run.
+    // A goal cannot be a part of itself: refused where it is cheap, not left to a depth bound.
     assert!(
         client.decomposed_into(parent, "  Serve Invoices Over HTTP ", 0, "same thing").is_err(),
         "a goal that normalises to itself must be refused"
     );
 
-    // A goal that has ONLY failed stays available. This is the case that must not
-    // be skipped: four failures are a reason to think, not a finished piece of work.
+    // A goal that has ONLY failed stays available: four failures are a reason to think, not finished work.
     let hard = "make the flaky integration suite deterministic";
     for branch in ["risk-first", "mvp-first"] {
         client.evaluated(hard, &run_id(seed, 0, branch), 0, false, "").expect("refused");
@@ -449,9 +397,7 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
         "a goal that only ever failed is not done work"
     );
 
-    // And the failure mode the whole module is built around: an unreachable pool
-    // must be an ERROR, never `Ok(None)` dressed up as an answer — the runner
-    // turns an error into "do the work", and could not if this lied.
+    // An unreachable pool must be an ERROR, never `Ok(None)`: the runner turns an error into "do the work".
     let missing = Memory {
         url: format!("http://127.0.0.1:{}", fleet.ingress_port),
         host: "nosuchapp.acme.test".to_string(),
@@ -462,12 +408,9 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
         "an unreachable pool must report a failure rather than answer 'not done'"
     );
 
-    // --- and the pool forgets what nobody read --------------------------------
-    //
-    // Driven by the run, not by a daemon (ADR-0081 caught alpha-swarm2 exposing a
-    // `decay` nothing called). What matters here is what it SPARES: a `days` of 0
-    // is refused outright, and everything written a moment ago survives a sweep
-    // that only forgets what has gone unread for a month.
+    // --- and the pool forgets what nobody read ---
+    // Driven by the run, not a daemon (ADR-0081). It SPARES what was written a moment ago, and a
+    // `days` of 0 is refused outright.
     assert!(
         client.decay(0, 2).is_err(),
         "a max age of zero would forget everything nobody has read yet"
@@ -481,10 +424,8 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
         before.map(|p| p.summary())
     );
 
-    // --- the two apps are separate stores -------------------------------------
-    //
-    // Same component, same artifacts, different app: the dense app promoted a
-    // pattern and the sparse one must not be able to read it.
+    // --- the two apps are separate stores ---
+    // The dense app promoted a pattern and the sparse one must not be able to read it.
     let r = sparse.get(&format!("/recall?goal={}&k=5&pools=patterns", enc(goal)));
     assert!(
         hits(&r).is_empty(),
@@ -492,7 +433,6 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
     );
 }
 
-/// Percent-encode a goal for a query string. Goals are sentences.
 fn enc(s: &str) -> String {
     s.chars()
         .map(|c| match c {

@@ -1,22 +1,18 @@
 //! The loop's inference running on `claude -p` instead of the Anthropic API.
 //!
-//! `tools/claude-shim.mjs` answers `/v1/messages` out of the Claude Code CLI, so
-//! a run bills against a subscription rather than an API key. The claim is that
-//! this needs **no change to any component** — `anthropic-provider` already reads
-//! its endpoint from `wasi:config`, the same swap point `mockllm.rs` uses to put
-//! `mock-provider` behind the identical caller.
+//! `tools/claude-shim.mjs` answers `/v1/messages` out of the Claude Code CLI, billing a subscription. The
+//! claim is that this needs **no change to any component**: `anthropic-provider` reads its endpoint from
+//! `wasi:config`, the swap point `mockllm.rs` uses.
 //!
-//! Every other check on this path is a unit test: `codec.rs` pins the envelope
-//! the shim writes against the provider's real parser, and `goalrun.rs` pins the
-//! egress authority. Both mock out the thing that actually has to work — the
-//! guest reaching a local endpoint through the host's egress control. This test
-//! is the one that doesn't:
+//! Other checks are unit tests (`codec.rs` pins the envelope, `goalrun.rs` the egress authority) that mock
+//! out what has to work: the guest reaching a local endpoint through the host's egress control. This is
+//! the one that doesn't:
 //!
-//!   llm-probe (wasm) → llm:inference → anthropic-provider (wasm)
-//!     → wasi:http/outgoing-handler → egress allow-list → shim → `claude -p`
+//!   llm-probe (wasm) -> llm:inference -> anthropic-provider (wasm)
+//!     -> wasi:http/outgoing-handler -> egress allow-list -> shim -> `claude -p`
 //!
-//! **Live and `#[ignore]`d.** It spawns a real `claude -p`, so it needs the CLI
-//! on PATH and a logged-in session, takes ~10s, and consumes subscription quota.
+//! **Live and `#[ignore]`d**: it spawns a real `claude -p` (CLI on PATH, logged-in session, ~10s,
+//! subscription quota).
 //!
 //!   cargo test -p comp-reconciler --release --test claude_shim_live -- --ignored --nocapture
 
@@ -57,8 +53,7 @@ impl Shim {
             reqwest::blocking::Client::builder().timeout(Duration::from_secs(2)).build().unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
         while std::time::Instant::now() < deadline {
-            // Any answer means it is listening — a 404 on this route is a
-            // perfectly good readiness signal and costs no `claude -p` call.
+            // Any answer means it is listening; a 404 here is a good readiness signal and costs no `claude -p`.
             if http.post(format!("http://127.0.0.1:{port}/ready")).body("{}").send().is_ok() {
                 return Some(me);
             }
@@ -101,8 +96,8 @@ fn a_completion_comes_back_through_claude_code() {
         return;
     };
 
-    // The shim is on loopback, which the host refuses by default (ADR-0008).
-    // Naming it here rather than in the fixture keeps the widening explicit.
+    // The shim is on loopback, which the host refuses by default (ADR-0008). Named here, not in the
+    // fixture, so the widening is explicit.
     std::env::set_var("COMP_FLEET_ALLOW_PRIVATE_EGRESS", "1");
     let spec = spec_for(shim.port);
     let fleet = Fleet::start_with_secrets(
@@ -113,8 +108,7 @@ fn a_completion_comes_back_through_claude_code() {
         &["vault://acme/anthropic=sk-unused-by-the-shim".to_string()],
     );
 
-    // A question with exactly one sane answer, so a pass cannot come from the
-    // shim echoing the prompt or returning boilerplate.
+    // A question with exactly one sane answer, so a pass cannot come from echoing the prompt or boilerplate.
     let http =
         reqwest::blocking::Client::builder().timeout(Duration::from_secs(120)).build().unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(300);
@@ -147,8 +141,7 @@ fn a_completion_comes_back_through_claude_code() {
         text.to_ascii_uppercase().contains("PONG"),
         "the model's answer did not survive the trip through the shim: {answer}"
     );
-    // The provider parsed a real completion, not an error envelope that happened
-    // to carry text.
+    // The provider parsed a real completion, not an error envelope that happened to carry text.
     assert_eq!(
         answer["finish"], "end_turn",
         "the finish reason did not come from the shim's response: {answer}"

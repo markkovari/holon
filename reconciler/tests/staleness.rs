@@ -1,28 +1,13 @@
-//! What the read cache costs across nodes — the measurement ADR-0063 shipped
-//! without.
+//! What the read cache costs across nodes (the measurement ADR-0063 shipped without).
 //!
-//! `--kv-cache-ms` has no coherence protocol, so a write on one node is invisible
-//! on another until the entry expires. ADR-0063 says so and then proved only the
-//! single-node half: on one node the cache invalidates its own writes, so
-//! read-your-own-writes holds by construction and the conformance suite passing
-//! was never evidence about a fleet.
+//! `--kv-cache-ms` has no coherence protocol, so a write on one node is invisible on another until the
+//! entry expires. On one node the cache invalidates its own writes, so the conformance suite says
+//! nothing about a fleet.
 //!
-//! ## The probe, and the first one that did not work
-//!
-//! The obvious instrument was the rate limiter: two replicas must share one
-//! budget (ADR-0027), so a stale read would let more requests through than the
-//! limit allows. It let through exactly 50 of 50 with the cache on and off.
-//!
-//! That is not a broken test, it is the answer to a different question. The
-//! limiter is a read-modify-write: every request writes the key it just read, so
-//! each node invalidates its own entry on every request and never holds one long
-//! enough to serve it stale. **A workload that writes what it reads is safe from
-//! this cache by construction**, which is worth knowing and is not what ADR-0063
-//! warns about.
-//!
-//! The exposure needs a key that one node WRITES and another only READS. Batching
-//! is exactly that pair: `POST /api/batch/submit` grows a batch, `GET
-//! /api/batch/{id}` only reads it.
+//! The rate limiter was the wrong probe: it is a read-modify-write, so each node invalidates its own
+//! entry on every request (50 of 50 with the cache on and off). **A workload that writes what it reads
+//! is safe from this cache by construction.** The exposure needs a key one node WRITES and another only
+//! READS: `POST /api/batch/submit` grows a batch, `GET /api/batch/{id}` only reads it.
 
 use std::time::Duration;
 
@@ -32,8 +17,7 @@ fn client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder().timeout(Duration::from_secs(8)).build().unwrap()
 }
 
-/// Straight at one node, bypassing the ingress — which node handles what is the
-/// whole experiment, so it cannot be left to a balancer.
+/// Straight at one node, bypassing the ingress: which node handles what is the experiment.
 fn submit(fleet: &Fleet, node: u16, key: &str, item: &str) -> Option<String> {
     submit_full(fleet, node, key, item).0
 }
@@ -66,17 +50,9 @@ fn size_seen_by(fleet: &Fleet, node: u16, id: &str) -> Option<u64> {
 fn read_batch(fleet: &Fleet, node: u16, id: &str) -> (Option<u64>, String) {
     let Some(port) = fleet.host_port(node) else { return (None, "no such node".into()) };
 
-    // A dropped CONNECTION is retried; an ANSWER never is.
-    //
-    // The distinction is the whole point. What this file measures is whether a
-    // node serves a stale value, and a stale value arrives as a perfectly good
-    // 200 — retrying that would be retrying away the phenomenon under test until
-    // the cache happened to be fresh, which would make the file worthless while
-    // green.
-    //
-    // A refused or reset connection is not an answer about the cache at all. It
-    // said nothing, and under a loaded machine one connection in a few hundred
-    // says nothing; a single one used to fail the whole test.
+    // A dropped CONNECTION is retried; an ANSWER never is. A stale value arrives as a good 200, and
+    // retrying it would retry away the phenomenon under test. A refused or reset connection says
+    // nothing about the cache (one in a few hundred under load).
     let mut last = String::new();
     for attempt in 0..5 {
         match client()
@@ -102,12 +78,9 @@ fn read_batch(fleet: &Fleet, node: u16, id: &str) -> (Option<u64>, String) {
     (None, last)
 }
 
-/// Both nodes must actually hold a replica before any of this means anything.
-///
-/// `Fleet::serves` only asks the ingress, and one node satisfies that — so a probe
-/// that starts there can find node 2 answering "no application is served at this
-/// host" and read it as a cache result. It is not; it is a placement that has not
-/// landed yet.
+/// Both nodes must actually hold a replica first: `Fleet::serves` only asks the ingress, so a probe
+/// could see node 2 answering "no application is served" and misread an unlanded placement as a cache
+/// result.
 fn wait_for_both(fleet: &Fleet, within: Duration) {
     let deadline = std::time::Instant::now() + within;
     while std::time::Instant::now() < deadline {
@@ -126,10 +99,8 @@ fn wait_for_both(fleet: &Fleet, within: Duration) {
 /// Write on node 1, read on node 2, and report what node 2 saw.
 fn divergence(fleet: &Fleet, key: &str) -> (u64, u64) {
     let id = submit(fleet, 1, key, "first").expect("node 1 accepted the first item");
-    // Node 2 reads once BEFORE the second write. Without this the key is simply
-    // cold there and the next read is a miss — a cache cannot be stale about
-    // something it has never seen, and a probe that skipped this would report the
-    // cache innocent for the wrong reason.
+    // Node 2 reads once BEFORE the second write: a cache cannot be stale about something it has never
+    // seen, so otherwise the cache would be reported innocent for the wrong reason.
     let warm = size_seen_by(fleet, 2, &id).expect("node 2 could read the batch");
 
     submit(fleet, 1, key, "second").expect("node 1 accepted the second item");
@@ -148,7 +119,7 @@ fn a_node_serves_a_stale_read_of_another_nodes_write() {
     assert_eq!(after, 2, "without a cache node 2 must see node 1's second write");
     drop(plain);
 
-    // 1000ms, and the read lands 200ms after the write — comfortably inside it.
+    // 1000ms, and the read lands 200ms after the write, comfortably inside it.
     let cached = Fleet::start_with_cache("stale-on", &["fixtures/spread-stateful.yaml"], 2, 1000);
     assert!(cached.serves("shop.eve.test", Duration::from_secs(90)), "cached fleet never served");
     wait_for_both(&cached, Duration::from_secs(60));
@@ -161,13 +132,11 @@ fn a_node_serves_a_stale_read_of_another_nodes_write() {
          invalidates across nodes or this probe stopped reaching the cache: \
          expected the stale 1, got {after_c}"
     );
-    // That the staleness ENDS is the other half of the claim, and it is the next
-    // test's job — bounded divergence is only bounded if the bound holds.
+    // That the staleness ENDS is the next test's job: divergence is only bounded if the bound holds.
 }
 
 #[test]
 fn the_staleness_expires_with_the_ttl() {
-    // The other half of the claim. Bounded divergence is only bounded if it ends.
     let fleet = Fleet::start_with_cache("stale-ttl", &["fixtures/spread-stateful.yaml"], 2, 1000);
     assert!(fleet.serves("shop.eve.test", Duration::from_secs(90)), "fleet never served");
     wait_for_both(&fleet, Duration::from_secs(60));
@@ -186,20 +155,15 @@ fn the_staleness_expires_with_the_ttl() {
     assert_eq!(fresh, 2, "the staleness outlived the TTL, so the bound is not a bound");
 }
 
-/// Both nodes append to ONE batch, alternating, and every item must survive.
-///
-/// The shape ADR-0064 could not reach. `batch_submit` appends under a revision
-/// compare-and-set, so the guard is only as good as the read it compares against:
-/// a node holding a stale copy sees an old revision AND old contents, and if the
-/// store accepts that revision the append is written over whatever the other node
-/// added in between. That is a lost update, not a stale read, and no TTL bounds it
-/// — the item is simply gone.
+/// Both nodes append to ONE batch, alternating, and every item must survive. `batch_submit` appends
+/// under a revision compare-and-set, so a node with a stale copy sees an old revision AND old
+/// contents, and if the store accepts that revision the other node's append is overwritten: a lost
+/// update that no TTL bounds (ADR-0064).
 fn append_across_nodes(fleet: &Fleet, key: &str, rounds: usize) -> (usize, u64) {
     let mut sent = 0;
     let mut id = None;
     for i in 0..rounds {
-        // Alternate, with a pause well inside the TTL so each node has a cached
-        // copy of the batch it is about to modify.
+        // Alternate, with a pause well inside the TTL so each node holds a cached copy.
         let node = if i % 2 == 0 { 1 } else { 2 };
         let (got, _) = submit_full(fleet, node, key, &format!("item-{i}"));
         if let Some(g) = got {
@@ -208,8 +172,7 @@ fn append_across_nodes(fleet: &Fleet, key: &str, rounds: usize) -> (usize, u64) 
         }
         std::thread::sleep(Duration::from_millis(120));
     }
-    // Read after the TTL has certainly lapsed, so what comes back is the truth in
-    // the store rather than either node's copy of it.
+    // Read after the TTL has certainly lapsed, so this is the store's truth.
     std::thread::sleep(Duration::from_millis(1600));
     let id = id.expect("no submit succeeded");
     let held = size_seen_by(fleet, 1, &id).unwrap_or(0);
@@ -234,10 +197,9 @@ fn two_nodes_writing_one_key_do_not_lose_an_append() {
     let (sent_c, held_c) = append_across_nodes(&cached, "append-on", ROUNDS);
     println!("    --kv-cache-ms 1000:  {sent_c} accepted, {held_c} survived");
 
-    // Deliberately an assertion about the OUTCOME, not about which way it goes.
-    // Either result is publishable: appends surviving means the revision guard
-    // holds through a stale read, and appends vanishing is the lost update that
-    // decides whether this flag can ever default to on.
+    // An assertion about the OUTCOME, not its direction: appends surviving means the revision guard
+    // holds through a stale read; vanishing is the lost update that decides whether this flag can
+    // default to on.
     if (held_c as usize) < sent_c {
         println!(
             "    LOST {} of {} appends — the revision guard does not survive a stale read",
@@ -250,39 +212,24 @@ fn two_nodes_writing_one_key_do_not_lose_an_append() {
     assert!(held_c > 0, "the cached fleet lost everything, which is a broken probe, not a finding");
 }
 
-/// The one ordering the alternating test never produces: a writer that READS
-/// between its own writes.
+/// The one ordering the alternating test never produces: a writer that READS between its own writes.
 ///
-/// Self-invalidation is what makes a writing node safe — it drops its copy on
-/// every write, so its next read is a miss and the compare-and-set compares
-/// against truth. A read in between puts a copy back. If the other node then
-/// writes, this node holds a stale value AND a stale revision at the moment it
-/// tries to append.
+/// A writing node drops its copy on every write, so its compare-and-set sees truth; a read in between
+/// puts a copy back, and if the other node then writes, this node holds a stale value AND revision.
+/// ADR-0065 measured this losing an append (the guard was read-compare-write over `wasi:keyvalue`, so a
+/// cached read agreed with itself). ADR-0066 moved the comparison into the store (`comp:store/cas`,
+/// JetStream's own revision on NATS), so the losing writer is TOLD, re-reads and retries.
 ///
-/// It used to be the third outcome. ADR-0065 measured this losing an append:
-/// `record-store::update` enforced its revision guard as a read-compare-write over
-/// `wasi:keyvalue`, so a cached read made the guard agree with itself about state
-/// that was already gone, and the write clobbered it. Three appends, two survivors.
-///
-/// ADR-0066 moved the comparison into the store — `comp:store/cas`, backed by
-/// JetStream's own revision on NATS — so the losing writer is now TOLD it lost,
-/// re-reads, and retries. Three appends, three survivors.
-///
-/// Both halves matter and both are asserted below: node 2's append has to land
-/// (it is not enough to merely refuse it) and node 1's has to survive.
+/// Both are asserted: node 2's append has to land (not merely be refused) and node 1's has to survive.
 #[test]
 fn a_writer_that_reads_between_its_writes_cannot_eat_another_nodes_append() {
     let fleet = Fleet::start_with_cache("lost-mixed", &["fixtures/spread-stateful.yaml"], 2, 2000);
     assert!(fleet.serves("shop.eve.test", Duration::from_secs(90)), "fleet never served");
     wait_for_both(&fleet, Duration::from_secs(60));
 
-    // 1. node 2 opens the batch, so it is the writer under test.
     let id = submit(&fleet, 2, "mixed", "from-2-a").expect("node 2 opened the batch");
-    // 2. node 2 READS it — putting a copy back that its own write had dropped.
     assert_eq!(size_seen_by(&fleet, 2, &id), Some(1), "node 2 could not read its own batch");
-    // 3. node 1 appends. Node 2's cached copy is now stale, well inside the 2s TTL.
     submit(&fleet, 1, "mixed", "from-1").expect("node 1 appended");
-    // 4. node 2 appends from that stale copy.
     let (_, claimed) = submit_full(&fleet, 2, "mixed", "from-2-b");
 
     // Read the truth after the TTL has certainly lapsed.
@@ -292,10 +239,8 @@ fn a_writer_that_reads_between_its_writes_cannot_eat_another_nodes_append() {
         "    3 appends, 2 nodes, a read in between: node 2 claimed {claimed:?}, store holds {held}"
     );
 
-    // All three survive. Two lets this pass for the wrong reason — that was the
-    // measured defect — and node 2 claiming nothing would mean its append was
-    // refused rather than retried, which is the halfway state a store-native CAS
-    // alone leaves you in until the cache also refreshes on the guarded read.
+    // All three survive. Two would pass for the wrong reason (the measured defect), and node 2
+    // claiming nothing would mean its append was refused rather than retried.
     assert_eq!(
         held, 3,
         "three appends went in and {held} survived. 2 means an append was LOST \

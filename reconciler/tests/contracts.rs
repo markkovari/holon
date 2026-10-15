@@ -1,27 +1,17 @@
 //! Every contract in the repository, read from both sides.
 //!
-//! A WIT interface has two halves that are written in different crates, months
-//! apart, and nothing checks that they still agree. The compiler cannot: a
-//! component compiles perfectly while importing an interface no component on earth
-//! exports, and the failure shows up at composition — or later, at deployment, as
-//! an artifact that still carries the import.
+//! A WIT interface has two halves written in different crates, months apart, and the compiler cannot
+//! check they agree: a component compiles while importing an interface no component exports, and the
+//! failure shows at composition or deployment. This reads the whole catalogue and asks:
 //!
-//! So this reads the whole catalogue and asks two questions:
+//!   * **consumer side**: does every import have a provider?
+//!   * **provider side**: does every export have a consumer?
 //!
-//!   * **consumer side** — does every import have a provider? An import nothing
-//!     satisfies is a composition that can never be complete.
-//!   * **provider side** — does every export have a consumer? An export nobody
-//!     imports is not a bug, but it is worth being able to see: it is either a
-//!     capability waiting for its first user, or one whose users have moved on.
+//! The first is a failure. The second is a REPORT, never asserted: a capability library may be ahead
+//! of its callers (roughly half are unused in-tree), and asserting it would be a test of fashion.
 //!
-//! The first is a failure. The second is a REPORT, printed and never asserted,
-//! because a capability library is allowed to be ahead of its callers — this repo
-//! is largely a catalogue of capabilities and roughly half of them are unused by
-//! anything else in-tree. Turning that into a test would be a test of fashion.
-//!
-//! Both read the built artifacts, not the WIT sources: what a component actually
-//! imports is what survived compilation, and `components/*/wit/` can say things
-//! the binary does not (see `plug::Surface`).
+//! Both read the built artifacts, not the WIT sources: `components/*/wit/` can say things the binary
+//! does not (see `plug::Surface`).
 
 use std::collections::BTreeMap;
 
@@ -63,17 +53,11 @@ fn every_import_has_a_provider() {
     println!("  {} components, every import has a provider", cat.len());
 }
 
-/// And every one of them actually ENCODES.
-///
-/// A provider existing is not the same as a composition being expressible.
-/// `agent-driver` had a provider for every import and could not be composed at all:
-/// the interface it exports borrowed its types from the interfaces it imports, so
-/// satisfying one made the export reference an instance that had become internal,
-/// and the encoder refused with "instance not valid to be used as export".
-///
-/// `driver-probe` — the loop driver's entire HTTP surface — was unbuildable for as
-/// long as that was true, and nothing looked. `every_import_has_a_provider` was
-/// green the whole time, because it is: it asks a different question.
+/// And every one of them actually ENCODES. A provider existing is not the same as a composition being
+/// expressible: `agent-driver` had a provider for every import but exported an interface borrowing its
+/// types from its imports, so satisfying one made the export reference an internal instance ("instance
+/// not valid to be used as export"). `every_import_has_a_provider` was green throughout; it asks a
+/// different question.
 #[test]
 fn every_composition_encodes() {
     let Some(cat) = catalogue() else { return };
@@ -82,12 +66,10 @@ fn every_composition_encodes() {
     let mut broken: Vec<String> = Vec::new();
     let mut composed = 0usize;
     for name in cat.names().map(String::from).collect::<Vec<_>>() {
-        // Only what CAN be composed completely. An unmet import is the other
-        // test's subject, and reporting it here too would say one thing twice.
+        // Only what CAN be composed completely; an unmet import is the other test's subject.
         if !cat.unmet(&name).is_empty() {
             continue;
         }
-        // Nothing to join is not a composition.
         let Ok(wiring) = comp_reconciler::plug::wiring(&name, &cat) else { continue };
         if wiring.plugs.is_empty() {
             continue;
@@ -111,11 +93,8 @@ fn every_composition_encodes() {
     println!("  {composed} compositions encode");
 }
 
-/// The provider side: who is actually using what.
-///
-/// Printed rather than asserted. Its value is the shape of the list, not a pass:
-/// a capability with many consumers is load-bearing and its interface should be
-/// treated as frozen, while one with none can still be changed freely.
+/// The provider side: who is actually using what. Printed, not asserted: a capability with many
+/// consumers is load-bearing and its interface should be treated as frozen.
 #[test]
 fn report_who_consumes_each_capability() {
     let Some(cat) = catalogue() else { return };
@@ -157,11 +136,8 @@ fn report_who_consumes_each_capability() {
     );
 }
 
-/// A version of an interface that only one side moved to.
-///
-/// The failure mode `every_import_has_a_provider` reports as "nothing exports it",
-/// but the cause deserves its own name: somebody bumped a package and left the
-/// other half behind. Reported separately so the message says which.
+/// A version of an interface that only one side moved to. `every_import_has_a_provider` reports this
+/// as "nothing exports it"; it gets its own name so the message says which.
 #[test]
 fn report_interfaces_that_exist_at_two_versions() {
     let Some(cat) = catalogue() else { return };

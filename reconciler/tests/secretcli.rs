@@ -1,16 +1,9 @@
-//! `comp secret set` against a real control plane.
+//! `comp secret set` against a real control plane, to check it reaches a real vault rather than a
+//! plausible-looking endpoint.
 //!
-//! The platform has had `POST /api/secrets` since ADR-0051 and the CLI had no
-//! command for it, so the honest answer to "how do I store an API key" was
-//! "construct an HTTP request with your session token in it". That is a bad
-//! answer for a bearer token and a worse one for the person who has to do it, so
-//! there is a command now — and this is the test that it reaches a real vault
-//! rather than a plausible-looking endpoint.
-//!
-//! The VALUE never appears as an argument. That is not a style preference: an
-//! argument is in `~/.bash_history` and in `ps` output for every other user on
-//! the machine, and neither can be withdrawn. So the test pipes it on stdin,
-//! which is also the only way it can check that the tool accepts it that way.
+//! The VALUE never appears as an argument: an argument is in `~/.bash_history` and in `ps` output for
+//! every other user, and neither can be withdrawn. So the test pipes it on stdin, which also checks the
+//! tool accepts it that way.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -18,23 +11,16 @@ use std::time::Duration;
 
 use comp_reconciler::fleet::{repo_root, Fleet};
 
-/// The CLI lives in its own workspace, so `bin_path` — which looks beside the
-/// running test and then in the reconciler's target dir — never finds it.
-/// The CLI under test.
-///
-/// `cli/target/release/holon`, not `.../comp`: the binary was renamed and this
-/// path was not, so the suite asserted "missing … — cargo build --release in cli/"
-/// about a file that would never appear under that name however many times you
-/// built it. It went unnoticed because `just test` never reached this suite —
-/// cargo stops at the first failing test binary, and there were four ahead of it.
+/// The CLI under test: `cli/target/release/holon`. It lives in its own workspace, so `bin_path` (beside
+/// the running test, then the reconciler's target dir) never finds it. Keep the path in step with the
+/// binary name.
 fn comp_bin() -> std::path::PathBuf {
     std::env::var("COMP_COMP_BIN")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| repo_root().join("cli/target/release/holon"))
 }
 
-/// Stands in for an API key. Long enough that finding it in an unexpected place
-/// is unambiguous.
+/// Stands in for an API key. Long enough that finding it in an unexpected place is unambiguous.
 const KEY: &str = "sk-proj-the-value-that-must-not-appear-in-argv";
 
 struct Cli {
@@ -44,12 +30,12 @@ struct Cli {
 }
 
 impl Cli {
-    /// Run `comp …`, feeding `stdin` if given. Returns (ok, stdout+stderr).
+    /// Run `comp ...`, feeding `stdin` if given. Returns (ok, stdout+stderr).
     fn run(&self, args: &[&str], stdin: Option<&str>) -> (bool, String) {
         let mut c = Command::new(&self.bin);
         c.args(args)
-            // A per-test credentials file, so this never touches the developer's
-            // own session — and it is where the platform URL lives after login.
+            // A per-test credentials file, so this never touches the developer's own session; it is
+            // where the platform URL lives after login.
             .env("COMP_CREDENTIALS", &self.creds)
             .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
             .stdout(Stdio::piped())
@@ -105,15 +91,13 @@ fn a_key_goes_into_the_vault_from_stdin_and_never_from_argv() {
     );
     assert!(ok, "register/login failed: {out}");
 
-    // --- the thing this test is for -----------------------------------------
     let (ok, out) = cli.run(&["secret", "set", "openai"], Some(KEY));
     assert!(ok, "storing the secret failed: {out}");
     assert!(
         out.contains("vault://") && out.contains("/openai"),
         "the tool should print the reference a manifest carries: {out}"
     );
-    // The value is not echoed. A caller that just stored a secret has it already,
-    // and printing it puts it in one more scrollback.
+    // The value is not echoed: the caller has it already and printing it adds a scrollback copy.
     assert!(!out.contains(KEY), "the tool printed the secret back: {out}");
 
     let (ok, listed) = cli.run(&["secret", "ls"], None);
@@ -124,13 +108,13 @@ fn a_key_goes_into_the_vault_from_stdin_and_never_from_argv() {
         "listing must never return values — there is no endpoint that does: {listed}"
     );
 
-    // A trailing newline is what every editor and `echo` adds, and a bearer token
-    // carrying one fails auth with a message that says nothing about a newline.
+    // A trailing newline is what every editor and `echo` adds, and a bearer token carrying one fails
+    // auth with a message that says nothing about a newline.
     let (ok, _) = cli.run(&["secret", "set", "trimmed"], Some("value\n\n"));
     assert!(ok, "a value with a trailing newline should store");
 
-    // An empty value is a mistake, not a secret. Storing it would let a component
-    // start with a blank key and fail much later, somewhere less obvious.
+    // An empty value is a mistake, not a secret: storing it would let a component start with a blank
+    // key and fail later, less obviously.
     let (ok, out) = cli.run(&["secret", "set", "empty"], Some("\n"));
     assert!(!ok, "an empty value should be refused, not stored: {out}");
 

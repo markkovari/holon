@@ -1,19 +1,12 @@
-//! The three `treasury:ledger` gates, ported from
-//! `components/treasury-ledger-domain/e2e-*.sh`.
+//! The three `treasury:ledger` gates, ported from `components/treasury-ledger-domain/e2e-*.sh`.
 //!
-//! Assertions and failure sentences unchanged — ADR-0088 makes a gate's output the
-//! next prompt a repair reads, and these are among the most carefully written in the
-//! repository. Two of them record decisions that cost a run each:
+//! Assertions and failure sentences unchanged (ADR-0088). Two record decisions that cost a run each:
 //!
-//!   * the contention rounds run THREE times, and the script says why: a contention
-//!     assertion is probabilistic in one direction. Correct work is safe under every
-//!     interleaving, so this can never fail it — but a broken implementation only
-//!     loses money when requests actually overlap, and the same double-spending
-//!     candidate was caught directly and slipped through a single round in rehearsal.
-//!   * the losers of a contested transfer may answer 409 or 503, and demanding 409
-//!     from all fifteen made the gate fail CORRECT work under load.
-//!
-//! The storms were `xargs -P 16` and `seq 24 | xargs -P`; they are scoped threads.
+//!   * the contention rounds run THREE times: a contention assertion is probabilistic in one direction
+//!     (correct work is safe under every interleaving, but a broken implementation only loses money
+//!     when requests overlap, and a double-spender once slipped through a single round).
+//!   * the losers of a contested transfer may answer 409 or 503; demanding 409 from all fifteen made
+//!     the gate fail CORRECT work under load.
 
 mod gatelib;
 use gatelib::{field, requires_capability, Gate};
@@ -65,7 +58,7 @@ fn pair(gate: &Gate, start: &str) -> (String, String) {
     (ids[0].clone(), ids[1].clone())
 }
 
-/// Status codes, counted — `sort | uniq -c` in the shell version.
+/// Status codes, counted.
 fn tally(codes: &[u16]) -> BTreeMap<u16, usize> {
     let mut m = BTreeMap::new();
     for c in codes {
@@ -79,7 +72,6 @@ fn accounts_open_credit_and_survive_concurrent_credits() {
     let Some(gate) = start() else { return };
     let w = token(&gate, "treasurer", None);
 
-    // --- the refusals ---------------------------------------------------------------
     let (c, _) = gate.post("/api/accounts", None, json!({"name":"x","currency":"EUR"}));
     assert_eq!(c, 401, "opening an account with no bearer must be 401");
     let ro = token(&gate, "reader", Some(json!(["accounts:read"])));
@@ -100,7 +92,6 @@ fn accounts_open_credit_and_survive_concurrent_credits() {
         assert_eq!(c, 400, "{why}");
     }
 
-    // --- one account, one credit ----------------------------------------------------
     let (_, a) = gate.post(
         "/api/accounts",
         Some(&w),
@@ -128,11 +119,9 @@ fn accounts_open_credit_and_survive_concurrent_credits() {
         gate.post(&format!("/api/accounts/{id}/credit"), Some(&w), json!({"amount":"2.50"}));
     assert_eq!(parse(&r)["units"], 1250, "10.00 + 2.50 is 1250 minor units: {r}");
 
-    // --- and now all at once --------------------------------------------------------
-    //
-    // A fresh account at zero, twenty-four credits of 1.00 fired in parallel. Every one
-    // must be reflected: 2400. A part that surfaces a revision conflict instead of
-    // re-reading ends short, and by a different amount every run.
+    // --- and now all at once ---
+    // A fresh account at zero, 24 credits of 1.00 in parallel: every one must be reflected (2400). A
+    // part that surfaces a revision conflict instead of re-reading ends short.
     let (_, s) = gate.post(
         "/api/accounts",
         Some(&w),
@@ -203,7 +192,6 @@ fn transfers_are_idempotent_and_survive_contention() {
         )
     };
 
-    // --- the refusals ---------------------------------------------------------------
     let (c, _) = gate.with_headers(
         "POST",
         "/api/transfers",
@@ -220,7 +208,6 @@ fn transfers_are_idempotent_and_survive_contention() {
     let (c, _) = keyed("k-nope", &l, "nope", "1.00");
     assert_eq!(c, 404, "an unknown destination must be 404");
 
-    // --- one transfer, both sides, and a journal line -------------------------------
     let (_, ok) = keyed("k-one", &l, &r, "25.00");
     let d = parse(&ok);
     assert!(
@@ -238,9 +225,8 @@ fn transfers_are_idempotent_and_survive_contention() {
     assert_eq!(rec["state"], "settled", "a completed transfer is settled: {rec}");
     assert_eq!(rec["units"], 2500, "the recorded amount must be the amount moved: {rec}");
 
-    // Read through the ROUTER's fixture: `/api/journal` belongs to `reconcile`, a stub
-    // while this part is judged. Asking it made this check unsatisfiable by any
-    // implementation — and it did, for a whole run.
+    // Read through the ROUTER's fixture: `/api/journal` belongs to `reconcile`, a stub while this part is
+    // judged, which made the check unsatisfiable by any implementation.
     let j = parse(&gate.get("/test/journal", None).1);
     let lines = j["lines"].as_array().cloned().unwrap_or_default();
     assert!(!lines.is_empty(), "the journal is empty after a settled transfer: {j}");
@@ -249,7 +235,6 @@ fn transfers_are_idempotent_and_survive_contention() {
     assert!(!mine.is_empty(), "no journal line names this pair: {lines:?}");
     assert_eq!(mine.last().unwrap()["units"], 2500, "the journal line must carry the amount");
 
-    // --- the retry every client makes ----------------------------------------------
     let (_, again) = keyed("k-one", &l, &r, "25.00");
     assert_eq!(
         parse(&again), parse(&ok),
@@ -257,7 +242,6 @@ fn transfers_are_idempotent_and_survive_contention() {
     );
     assert_eq!(units_of(&gate, &l), 7500, "the retry moved money again");
 
-    // --- and now, many at once, each for everything, three times over ---------------
     for round in 1..=3 {
         let (a, z) = pair(&gate, "60.00");
         let before = units_of(&gate, &a) + units_of(&gate, &z);
@@ -293,10 +277,8 @@ fn transfers_are_idempotent_and_survive_contention() {
             "round {round}: after the one settlement the source is empty and the destination holds \
              both: from={fa} to={fz}"
         );
-        // The losers may answer either way: 409 for "there is no money", 503 for "I could
-        // not get a clean read in the attempts I allow myself". Demanding 409 from all
-        // fifteen made this gate fail CORRECT work under load, which is worse than
-        // missing something.
+        // The losers may answer 409 ("no money") or 503 ("no clean read in the attempts allowed");
+        // demanding 409 from all fifteen failed CORRECT work under load.
         let strange: BTreeMap<u16, usize> = counts
             .iter()
             .filter(|(c, _)| ![201u16, 409, 503].contains(c))
@@ -336,7 +318,6 @@ fn reconcile_reads_the_journal_and_is_idempotent() {
         .1
     };
 
-    // --- the refusals ---------------------------------------------------------------
     let (c, _) = gate.with_headers(
         "POST",
         "/api/reconcile",
@@ -348,7 +329,6 @@ fn reconcile_reads_the_journal_and_is_idempotent() {
     let (c, _) = gate.post("/api/reconcile", Some(&t), json!({"opened": opened}));
     assert_eq!(c, 400, "a reconciliation with no Idempotency-Key must be 400");
 
-    // --- an empty journal agrees with untouched balances ----------------------------
     let d = parse(&run("empty"));
     assert_eq!(d["checked"], 2, "two accounts were given and {} were checked: {d}", d["checked"]);
     assert_eq!(d["balanced"], true, "nothing has moved, so the books balance: {d}");
@@ -359,7 +339,6 @@ fn reconcile_reads_the_journal_and_is_idempotent() {
         d["journal_lines"]
     );
 
-    // --- a journal the balances do not match ----------------------------------------
     line(&l, &r, 1000);
     line(&l, &r, 1000);
     let d = parse(&run("drifted"));
@@ -405,7 +384,6 @@ fn reconcile_reads_the_journal_and_is_idempotent() {
         drift[&r]
     );
 
-    // --- the same report twice is the same report ----------------------------------
     let (one, two) = (run("twice"), run("twice"));
     assert_eq!(
         parse(&one), parse(&two),
@@ -421,7 +399,6 @@ fn reconcile_reads_the_journal_and_is_idempotent() {
         d["journal_lines"]
     );
 
-    // --- the journal read route ----------------------------------------------------
     let j = parse(&gate.get("/api/journal?limit=2", Some(&t)).1);
     let lines = j["lines"].as_array().cloned().unwrap_or_default();
     assert_eq!(lines.len(), 2, "?limit=2 answered {lines:?}");
@@ -431,11 +408,8 @@ fn reconcile_reads_the_journal_and_is_idempotent() {
     assert_eq!(ats, sorted, "oldest first, and these are not: {ats:?}");
 }
 
-/// `?limit=` is "the oldest `limit` lines", not "the first `limit` the store lists, sorted".
-///
-/// The two agree whenever a line's `at` matches the order it was written in, which is every
-/// line `transfers` writes — so the difference is only visible with lines whose `at` says
-/// otherwise. The fixture takes an explicit `at` for exactly that.
+/// `?limit=` is "the oldest `limit` lines", not "the first `limit` the store lists, sorted". The two
+/// agree whenever `at` matches write order, so the fixture takes an explicit `at` to tell them apart.
 #[test]
 fn journal_limit_answers_the_oldest_lines() {
     let Some(gate) = start() else { return };
@@ -460,27 +434,17 @@ fn journal_limit_answers_the_oldest_lines() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// the composition — the gate no single part can pass
-// ---------------------------------------------------------------------------
+// the composition: the gate no single part can pass
 
 /// The whole treasury, through the real routes, with the auditor checking the mover.
 ///
-/// Ported from `components/treasury-ledger-domain/e2e.sh`, the fourth and last of
-/// this app's gates to move. The three part gates came over in #180-#189; the
-/// composition gates did not, and CI never ran them — its loop globbed
-/// `components/*/e2e-*.sh`, with a hyphen, which matches the part gates and none of
-/// the `e2e.sh` files.
+/// Ported from `components/treasury-ledger-domain/e2e.sh`. Only the composition can prove that
+/// `reconcile` recomputes both balances from the journal ALONE: it was written against the same
+/// contract by an agent that never saw `transfers`, so a disagreement about the journal's shape (a
+/// field name, a direction, a unit) shows only here.
 ///
-/// What only the composition can prove: `reconcile` recomputes both balances from
-/// the journal ALONE. It was written against the same contract by an agent that
-/// never saw `transfers`, so if the two disagree about the journal's shape — a field
-/// name, a direction, a unit — this is where it shows and nowhere else.
-///
-/// The transfer storm here is the MIRROR of the one in
-/// `transfers_are_idempotent_and_survive_contention`: there ten transfers contend for
-/// a balance only one can have and the answer is "exactly one lands"; here all ten
-/// fit and the answer is "all of them land". Only a correct implementation gives both.
+/// The transfer storm MIRRORS `transfers_are_idempotent_and_survive_contention`: there ten transfers
+/// contend for a balance only one can have ("exactly one lands"); here all ten fit ("all land").
 #[test]
 fn the_whole_treasury_api_works() {
     let Some(gate) = start() else { return };
@@ -526,7 +490,6 @@ fn the_whole_treasury_api_works() {
         "the accounts part did not open an account, so nothing else can be judged"
     );
 
-    // --- fund one side with twenty concurrent credits ----------------------
     std::thread::scope(|sc| {
         let hs: Vec<_> = (0..20)
             .map(|_| {
@@ -551,10 +514,9 @@ fn the_whole_treasury_api_works() {
          it holds {funded}"
     );
 
-    // --- move it across in ten concurrent transfers ------------------------
-    // The same borrow-capturing closure the transfers gate uses: it holds only
-    // references, so it is `Copy` and a `move` thread body copies it rather than
-    // taking the `Gate` with it.
+    // --- move it across in ten concurrent transfers ---
+    // The same borrow-capturing closure the transfers gate uses: it holds only references, so it is
+    // `Copy` and a `move` thread body copies it rather than taking the `Gate`.
     let keyed = |key: &str| -> u16 {
         gate.with_headers(
             "POST",
@@ -588,7 +550,6 @@ fn the_whole_treasury_api_works() {
          destination full: from={from} to={to}. Codes: {counted:?}"
     );
 
-    // --- and the auditor agrees --------------------------------------------
     let (_, report) = gate.with_headers(
         "POST",
         "/api/reconcile",

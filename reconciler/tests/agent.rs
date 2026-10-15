@@ -1,14 +1,8 @@
-//! The agent, end to end: a goal becomes a candidate, and a repair uses the
-//! failure it was given.
+//! The agent, end to end: a goal becomes a candidate, and a repair uses the failure it was given.
 //!
-//! The second part is the whole test. A single call from a goal to a diff is a
-//! template; what makes this an agent is that the next attempt is driven by what
-//! the gate actually found. Proving that needs a provider whose answer DEPENDS on
-//! the failure reaching it — so the scripted provider matches on the failure
-//! text, and the repair rule can only fire if it did.
-//!
-//! Deterministic and free: `mock:provider` declares no egress and no secret, so
-//! this could not reach a real model if it tried.
+//! The second part is the whole test: what makes this an agent is that the next attempt is driven by what
+//! the gate found. The scripted provider matches on the failure text, so the repair rule can only fire if
+//! it reached the model. Deterministic and free: `mock:provider` declares no egress and no secret.
 
 use std::time::Duration;
 
@@ -52,8 +46,7 @@ impl Probe {
     }
 }
 
-/// The first real attempt, retried — not a separate readiness probe
-/// (`Fleet::until`).
+/// The first real attempt, retried, not a separate readiness probe (`Fleet::until`).
 fn wait_for_probe(fleet: &Fleet) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
@@ -93,14 +86,12 @@ fn a_goal_becomes_a_candidate_and_a_repair_uses_the_failure() {
         })
     };
 
-    // --- a first attempt, which is wrong -------------------------------------
     let first = probe.attempt(goal(1, json!([])));
     assert!(first["files"].is_array(), "the agent produced nothing: {first}");
     assert_eq!(body_of(&first), "pub fn answer() -> u32 { 41 }", "{first}");
 
-    // --- branches differ by seed ---------------------------------------------
-    // The same question, a different seed: how a generation explores while
-    // staying replayable.
+    // --- branches differ by seed ---
+    // The same question, a different seed: how a generation explores while staying replayable.
     let sibling = probe.attempt(goal(2, json!([])));
     assert_ne!(
         body_of(&sibling),
@@ -109,11 +100,9 @@ fn a_goal_becomes_a_candidate_and_a_repair_uses_the_failure() {
          would be one branch run twice: {sibling}"
     );
 
-    // --- THE REPAIR ----------------------------------------------------------
-    // The gate found the answer was 41. That failure goes back in, and the
-    // scripted provider only answers with 42 when it SEES that text — so a
-    // correct answer here is proof the failure reached the model rather than the
-    // agent re-rolling.
+    // --- THE REPAIR ---
+    // The gate found the answer was 41. The scripted provider answers 42 only when it SEES that text,
+    // so a correct answer proves the failure reached the model rather than the agent re-rolling.
     let repaired =
         probe.attempt(goal(1, json!([{ "id": "the-fix", "detail": "expected 42, found 41" }])));
     assert_eq!(
@@ -128,9 +117,8 @@ fn a_goal_becomes_a_candidate_and_a_repair_uses_the_failure() {
         "a repair identical to the attempt is a re-roll"
     );
 
-    // --- an answer that writes where it may not is REFUSED -------------------
-    // Not filtered. An answer that touched something it may not is not partially
-    // good; it is one nobody should act on.
+    // --- an answer that writes where it may not is REFUSED ---
+    // Not filtered: an answer that touched something it may not is one nobody should act on.
     let hostile = probe.attempt(json!({
         "text": "not writable here", "writable": ["src/lib.rs"], "seed": 0,
         "context": [],
@@ -138,14 +126,13 @@ fn a_goal_becomes_a_candidate_and_a_repair_uses_the_failure() {
     assert_eq!(hostile["error"], json!("unusable-answer"), "must refuse: {hostile}");
     assert!(hostile["detail"].as_str().unwrap_or_default().contains("writable"), "{hostile}");
 
-    // --- an answer with no files is its own failure --------------------------
+    // --- an answer with no files is its own failure ---
     // Distinct from the model being down: a caller retries those differently.
     let waffle = probe.attempt(json!({
         "text": "say nothing useful", "writable": ["src/lib.rs"], "seed": 0, "context": [],
     }));
     assert_eq!(waffle["error"], json!("unusable-answer"), "prose is not a candidate: {waffle}");
 
-    // --- a goal with nowhere to write is refused before the model is asked ---
     let nowhere = probe.attempt(json!({ "text": "do something", "writable": [], "seed": 0 }));
     assert_eq!(nowhere["error"], json!("under-specified"), "{nowhere}");
 

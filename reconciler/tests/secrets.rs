@@ -1,12 +1,6 @@
-//! One org stores a secret, reads what it may, updates it — and a second org cannot
-//! see it by any route.
-//!
-//! ADR-0049 proved org visibility for the CATALOGUE. Secrets are the case where being
-//! wrong is expensive, so the boundary is asserted directly rather than inferred from
-//! sharing a policy engine.
-//!
-//! The harness lives in this crate because this is where the process-spawning helpers
-//! already are; the thing under test is `platform-domain`.
+//! One org stores a secret, reads what it may, updates it, and a second org cannot see it by any route.
+//! ADR-0049 proved org visibility for the CATALOGUE; secrets are where being wrong is expensive, so the
+//! boundary is asserted directly. The thing under test is `platform-domain`.
 
 mod harness;
 use harness::Platform;
@@ -24,29 +18,24 @@ fn an_org_keeps_its_secrets_from_another_org() {
     assert_eq!(p.post(&ada, "/api/orgs", json!({ "name": "acme" })).0, 201);
     assert_eq!(p.post(&zed, "/api/orgs", json!({ "name": "globex" })).0, 201);
 
-    // --- store ---
     let (code, stored) =
         p.post(&ada, "/api/secrets?org=acme", json!({ "name": "stripe", "value": "sk_v1" }));
     assert_eq!(code, 201, "{stored}");
     assert_eq!(stored["ref"], json!("vault://acme/stripe"));
     assert_eq!(stored["version"], json!(1));
 
-    // --- read what an owner MAY read: the name, never the value ---
     let (_, listed) = p.get(&ada, "/api/secrets?org=acme");
     assert_eq!(listed["count"], json!(1));
     assert_eq!(listed["secrets"][0]["name"], json!("stripe"));
     let text = listed.to_string();
     assert!(!text.contains("sk_v1"), "a listing must never carry a value: {text}");
 
-    // --- update: the same name again is a new version, not a second secret ---
     let (code, updated) =
         p.post(&ada, "/api/secrets?org=acme", json!({ "name": "stripe", "value": "sk_v2" }));
     assert_eq!(code, 201);
     assert_eq!(updated["version"], json!(2), "an overwrite bumps the version");
     let (_, after) = p.get(&ada, "/api/secrets?org=acme");
     assert_eq!(after["count"], json!(1), "updating must not create a second entry");
-
-    // --- the other org, by every route it has ---
 
     // 1. it cannot list acme's secrets, because it is not in acme.
     let (code, denied) = p.get(&zed, "/api/secrets?org=acme");
@@ -87,12 +76,10 @@ fn an_org_keeps_its_secrets_from_another_org() {
     let body = stolen.text().unwrap_or_default();
     assert!(!body.contains("sk_v"), "a refusal must not leak the value: {body}");
 
-    // 6. `?probe=1` — the start-time existence check (ADR-0051). Same authorisation,
-    //    answered from `describe`, so a host can fail closed on a broken reference at
-    //    START without pulling a plaintext it may never need.
-    // Every fetch carries a fresh nonce and a timestamp, exactly as a host does
-    // (ADR-0071) — the platform refuses a request without them, and refuses the
-    // same one twice.
+    // 6. `?probe=1`, the start-time existence check (ADR-0051): same authorisation, answered from
+    // `describe`, so a host can fail closed on a broken reference at START without pulling a plaintext.
+    // Every fetch carries a fresh nonce and timestamp, as a host does (ADR-0071); the platform refuses
+    // a request without them, and refuses the same one twice.
     let nonce = std::cell::Cell::new(0u32);
     let probe = |token: &str, reference: &str| {
         nonce.set(nonce.get() + 1);
@@ -130,9 +117,8 @@ fn an_org_keeps_its_secrets_from_another_org() {
     let (code, _) = probe(&token, "vault%3A%2F%2Facme%2Fstripe");
     assert_eq!(code, 403, "a probe must be scoped by the same token as a fetch");
 
-    // 7. the same request twice is refused the second time (ADR-0071). Until this
-    //    existed, anyone who captured one fetch could repeat it for the rest of
-    //    the token's life.
+    // 7. the same request twice is refused the second time (ADR-0071); otherwise anyone who captured
+    //    one fetch could repeat it for the token's life.
     let replay = |nonce: &str| {
         p.http
             .get(p.url("/api/internal/secret?ref=vault%3A%2F%2Facme%2Fstripe"))
@@ -180,9 +166,8 @@ fn now_secs() -> u64 {
 
 #[test]
 fn there_is_no_route_that_returns_a_secret_value_to_a_user() {
-    // The property that makes "by reference" true rather than aspirational: a user
-    // with every permission still cannot read a value back through the API. Only a
-    // host holding an instance-scoped token can, and only for its own references.
+    // What makes "by reference" true: a user with every permission still cannot read a value back
+    // through the API. Only a host with an instance-scoped token can, and only for its own references.
     let p = Platform::start(PORT_NO_READBACK);
     let ada = p.user("ada");
     p.post(&ada, "/api/orgs", json!({ "name": "acme" }));

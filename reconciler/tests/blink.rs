@@ -1,19 +1,11 @@
 //! An ingress must not turn a momentary gap into an outage.
 //!
-//! This is the `ha.rs` failure made deterministic. That test only went wrong when
-//! the machine was busy enough for the timing to slip, which is a lottery rather
-//! than a test — it passed alone, failed under the full suite, and passed again
-//! on a re-run, which is exactly the pattern that lets a real bug be dismissed as
-//! flakiness. It was dismissed as flakiness twice, by me.
+//! The `ha.rs` failure made deterministic: that test only went wrong when the machine was busy enough
+//! for the timing to slip, and was dismissed as flakiness twice. So the gap is CAUSED here: the fleet
+//! stays healthy and only the inventory looks empty, by publishing each node's snapshot with no
+//! instances (what the ingress saw when it failed: nodes present, none contributing a route).
 //!
-//! So the gap is CAUSED here instead of waited for. The fleet stays healthy the
-//! whole time; only the inventory is made to look empty, by publishing each
-//! node's snapshot with no instances in it. That is precisely what the ingress
-//! saw when it failed: three nodes present, none of them contributing a route.
-//!
-//! What must hold: the ingress keeps serving from the table it already has. A
-//! blink in the control plane is not a reason to stop routing to backends that
-//! are plainly still running.
+//! What must hold: the ingress keeps serving from the table it already has.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -22,12 +14,9 @@ use std::time::{Duration, Instant};
 use comp_lattice::{nats::NatsLattice, Inventory};
 use comp_reconciler::fleet::Fleet;
 
-/// Publish every node's key with an EMPTY instance list, over and over, so the
-/// gap is held open for as long as the caller wants rather than for one refresh.
-///
-/// The hosts keep heartbeating their real snapshots underneath, so this is a
-/// race that has to be run continuously — which is also a fair imitation of the
-/// real thing, where whatever caused the gap did not stop after one tick.
+/// Publish every node's key with an EMPTY instance list, over and over, so the gap is held open as
+/// long as the caller wants. The hosts keep heartbeating real snapshots underneath, so this is a race
+/// run continuously.
 fn hold_inventory_empty(
     nats_url: String,
     lattice: String,
@@ -49,18 +38,15 @@ fn hold_inventory_empty(
                     ) else {
                         continue;
                     };
-                    // Everything else about the node stays true — it is present,
-                    // it has an address, it has capacity. Only its instances are
-                    // gone, which is the exact shape of the observed failure.
+                    // Everything else about the node stays true; only its instances are gone, the
+                    // exact shape of the observed failure.
                     v["instances"] = serde_json::json!([]);
                     let bytes = comp_lattice::snapshot::compress(v.to_string().into_bytes());
                     if inv.publish(&e.key, bytes, Duration::from_secs(15)).await.is_ok() {
                         blanked += 1;
                     }
                 }
-                // Fast enough to win against a host heartbeat reliably. Losing
-                // the race means the ingress never sees the gap, and a test that
-                // does not create the condition proves nothing.
+                // Fast enough to win against a host heartbeat; losing means the ingress never sees the gap.
                 tokio::time::sleep(Duration::from_millis(25)).await;
             }
             blanked
@@ -68,7 +54,6 @@ fn hold_inventory_empty(
     })
 }
 
-/// Hammer the ingress and count what came back.
 fn drive(port: u16, host: &str, until: Instant) -> (usize, usize, Option<String>) {
     let client =
         reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().unwrap();
@@ -102,20 +87,16 @@ fn an_ingress_keeps_serving_through_an_empty_inventory() {
     let fleet = Fleet::start("blink", &["fixtures/five-replicas.yaml"], 3, None);
     assert!(fleet.serves("shop.eve.test", Duration::from_secs(120)), "never served to begin with");
 
-    // A baseline, so a failure during the gap cannot be blamed on the fleet
-    // simply never having worked.
+    // A baseline, so a failure during the gap cannot be blamed on the fleet never having worked.
     let (ok, failed, why) =
         drive(fleet.ingress_port, "shop.eve.test", Instant::now() + Duration::from_secs(2));
     assert_eq!(failed, 0, "the fleet was already broken before the test began: {why:?}");
     assert!(ok > 0, "no requests were made");
 
-    // --- the gap ------------------------------------------------------------
     let stop = Arc::new(AtomicBool::new(false));
     let blanker = hold_inventory_empty(fleet.nats_url.clone(), fleet.lattice.clone(), stop.clone());
 
-    // Long enough to cover several refreshes: the whole question is whether the
-    // ingress adopts an empty table when it reads one, and it only reads every
-    // few seconds.
+    // Long enough to cover several refreshes: the ingress only reads every few seconds.
     let (ok, failed, why) =
         drive(fleet.ingress_port, "shop.eve.test", Instant::now() + Duration::from_secs(12));
     stop.store(true, Ordering::Relaxed);
@@ -123,13 +104,9 @@ fn an_ingress_keeps_serving_through_an_empty_inventory() {
 
     assert!(blanked > 0, "the test never managed to blank the inventory, so it proved nothing");
 
-    // THE CHECK THAT MAKES THIS TEST WORTH HAVING.
-    //
-    // Serving throughout only means something if the ingress actually READ an
-    // empty inventory. Without this the test passes against the very bug it
-    // exists to catch — because an ingress with no routes falls back to asking
-    // the reconciler to activate, and that path can serve a request all by
-    // itself. The first version of this test did exactly that, and was worthless.
+    // THE CHECK THAT MAKES THIS TEST WORTH HAVING: serving throughout only means something if the
+    // ingress actually READ an empty inventory. An ingress with no routes falls back to asking the
+    // reconciler to activate, which can serve a request by itself.
     let log = fleet.ingress_log("");
     let saw_the_gap = log.contains("keeping the table it had")   // rode it out
         || log.contains("0 route(s) over")                        // or adopted it
@@ -156,11 +133,9 @@ fn an_ingress_keeps_serving_through_an_empty_inventory() {
         fleet.ingress_log("")
     );
 
-    // --- and it recovers ----------------------------------------------------
-    // The hosts have been heartbeating real snapshots underneath the whole time,
-    // so once the blanking stops the table must come back on its own. An ingress
-    // that rode out the gap by latching would pass the assertion above and still
-    // be useless.
+    // --- and it recovers ---
+    // Once the blanking stops the table must come back on its own; an ingress that rode out the gap by
+    // latching would pass above and still be useless.
     std::thread::sleep(Duration::from_secs(8));
     let (ok, failed, why) =
         drive(fleet.ingress_port, "shop.eve.test", Instant::now() + Duration::from_secs(3));

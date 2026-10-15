@@ -1,9 +1,6 @@
-//! The control plane under test, spawned per test.
-//!
-//! Extracted from `secrets.rs` when a second suite needed it (ADR-0073). Each
-//! test gets its own process on its own port: nextest gives a test its own
-//! process but not its own network, and two sharing a port fail only when the
-//! suite runs in parallel — which is how it is normally run.
+//! The control plane under test, spawned per test (ADR-0073). Each test gets its own process on its
+//! own port: nextest isolates processes but not the network, and a shared port fails only when the
+//! suite runs in parallel.
 
 #![allow(dead_code)]
 
@@ -21,8 +18,8 @@ impl Drop for Kill {
     }
 }
 
-/// The last of a log file, for a panic message. Bounded, because a component that
-/// fails to instantiate can print a great deal and the useful part is the end.
+/// The last of a log file, for a panic message. Bounded: the useful part of a component's startup
+/// failure is the end.
 fn tail(path: &std::path::Path) -> String {
     match std::fs::read_to_string(path) {
         Ok(s) if s.trim().is_empty() => "  (it wrote nothing to stderr)".into(),
@@ -47,8 +44,7 @@ pub fn repo_root() -> std::path::PathBuf {
 pub struct Platform {
     _dir: tempfile::TempDir,
     _child: Kill,
-    /// Public so a suite can make a request the helpers do not cover — an odd
-    /// header, a raw status code — without growing a method per test.
+    /// Public so a suite can make a request the helpers do not cover (an odd header, a raw status).
     pub http: reqwest::blocking::Client,
     port: u16,
 }
@@ -58,10 +54,8 @@ impl Platform {
         let root = repo_root();
         let host = root.join("host/target/release/comp-host");
         assert!(host.exists(), "missing {} — cargo build --release in host/", host.display());
-        // Derived when the hand-composed artifact is not there, matching
-        // `Fleet::start`: `cargo xtask compose platform` is a second recipe a fresh
-        // checkout has no reason to have run, and the plug list is already implied
-        // by what platform-domain imports.
+        // Derived when the hand-composed artifact is not there, matching `Fleet::start`: a fresh
+        // checkout has not run `cargo xtask compose platform`.
         let legacy = root.join("components/target/platform_domain.composed.wasm");
         let component = if legacy.is_file() {
             legacy
@@ -79,9 +73,8 @@ impl Platform {
         };
 
         let dir = tempfile::tempdir().unwrap();
-        // A real 32-byte key, per run. The vault seals every value with
-        // ChaCha20-Poly1305 under it, so a wrong length is a startup failure rather
-        // than a silently weaker secret.
+        // A real 32-byte key per run: the vault seals with ChaCha20-Poly1305, so a wrong length is a
+        // startup failure rather than a silently weaker secret.
         let key = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -101,11 +94,8 @@ impl Platform {
             .args(["--config", "applier-secret=s3cret"])
             .args(["--config", "ingress-suffix=sec.test"])
             .args(["--config", &format!("master-key={key}")]);
-        // stderr to a FILE, not /dev/null. This used to be `Stdio::null()`, and the
-        // one thing the harness could then say about a failure was "the control
-        // plane never came up" — which is every cause at once: a crash on startup,
-        // a bad artifact, a port already taken, a key the vault refused. CI hit it
-        // and the log had nothing in it to act on.
+        // stderr to a FILE, not /dev/null: otherwise a failure could only say "the control plane
+        // never came up", which is every cause at once.
         let log_path = dir.path().join("control-plane.stderr");
         let log = std::fs::File::create(&log_path).unwrap();
         let child = Kill(cmd.stdout(Stdio::null()).stderr(log).spawn().unwrap());
@@ -114,18 +104,14 @@ impl Platform {
             reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().unwrap();
         let mut me = Self { _dir: dir, _child: child, http, port };
 
-        // Generous, because this is the cold path: a fresh checkout has no
-        // `platform_domain.composed.wasm`, so the first caller composes it AND
-        // wasmtime compiles 2.8 MB of component before the socket opens. Locally
-        // that is about a second; on a loaded CI runner it is not, and the old
-        // fifteen-second budget was being spent rather than wasted.
+        // Generous: a fresh checkout composes `platform_domain.composed.wasm` AND wasmtime compiles
+        // 2.8 MB of component before the socket opens, which a loaded CI runner can take long over.
         let deadline = std::time::Instant::now() + Duration::from_secs(90);
         while std::time::Instant::now() < deadline {
             if me.http.get(me.url("/")).send().is_ok() {
                 return me;
             }
-            // A process that has already exited is never going to answer, so say so
-            // now with its status rather than after the full budget.
+            // A process that has already exited will never answer; say so now with its status.
             if let Ok(Some(status)) = me._child.0.try_wait() {
                 panic!(
                     "the control plane exited with {status} before serving:\n{}",
@@ -141,11 +127,8 @@ impl Platform {
         format!("http://127.0.0.1:{}{path}", self.port)
     }
 
-    /// Register, then log in for a bearer token.
-    ///
-    /// Two calls because `/api/register` answers with the identity and not a
-    /// session — the CLI does the same thing. Registering twice is harmless, so the
-    /// result is ignored and the token always comes from the login.
+    /// Register, then log in for a bearer token. Two calls because `/api/register` answers with the
+    /// identity, not a session. Registering twice is harmless, so its result is ignored.
     pub fn user(&self, name: &str) -> String {
         let body = json!({
             "email": format!("{name}@sec.test"),
@@ -188,8 +171,7 @@ pub fn base64(raw: &[u8]) -> String {
 }
 
 impl Platform {
-    /// A call on the internal API, which takes the applier secret rather than a
-    /// session — the reconciler's door, not a user's.
+    /// A call on the internal API, which takes the applier secret: the reconciler's door.
     pub fn post_internal(&self, path: &str, body: serde_json::Value) -> (u16, Value) {
         let r = self
             .http
@@ -203,28 +185,17 @@ impl Platform {
     }
 }
 
-// ---------------------------------------------------------------------------
-// A real SurrealDB, for the suites that need one.
-//
-// Lived in `graph.rs` until `memory.rs` needed the same database (ADR-0084). Two
-// copies of a PINNED image is two places to forget to pin, so it moved here
-// rather than being duplicated — the same reason the control plane above did.
-// ---------------------------------------------------------------------------
-/// The database's password, which appears in no manifest. That is the point of
-/// ADR-0010 and it is checkable: a fixture holds a `vault://` reference, and this
-/// string is nowhere in it.
+// A real SurrealDB, for the suites that need one (shared between `graph.rs` and `memory.rs`,
+// ADR-0084, so the PINNED image is declared once).
+/// The database's password, which appears in no manifest (ADR-0010): a fixture holds a `vault://`
+/// reference.
 pub const SURREAL_PASSWORD: &str = "root-not-in-any-manifest";
 
-/// The image, PINNED. The three response shapes this component's tests encode —
-/// backtick-quoted ids, a missing namespace, a missing table reading as an error
-/// — were captured from this version. `latest` would let a server upgrade turn
-/// into a mystery failure in a test that never changed.
+/// The image, PINNED: the response shapes this component's tests encode (backtick-quoted ids, a
+/// missing namespace, a missing table reading as an error) were captured from this version.
 pub const SURREAL_IMAGE: &str = "surrealdb/surrealdb:v3.1.3";
 
-/// A SurrealDB container that dies with the test.
-///
-/// A container rather than a local binary so the version is the same everywhere
-/// this runs and nobody has to install a database to run the suite.
+/// A SurrealDB container that dies with the test. A container so the version is the same everywhere.
 pub struct Surreal {
     name: String,
     pub port: u16,
@@ -232,8 +203,7 @@ pub struct Surreal {
 
 impl Drop for Surreal {
     fn drop(&mut self) {
-        // `--rm` handles the ordinary exit; this covers a killed test run, which
-        // is exactly when a leaked container would otherwise sit holding a port.
+        // `--rm` handles the ordinary exit; this covers a killed test run.
         let _ = Command::new("docker")
             .args(["rm", "-f", &self.name])
             .stdout(Stdio::null())
@@ -244,14 +214,12 @@ impl Drop for Surreal {
 
 impl Surreal {
     pub fn start() -> Option<Self> {
-        // `free_port` is the harness's, so the database is bound the same way the
-        // rest of the fleet is and two concurrent runs do not collide.
+        // `free_port` is the harness's, so two concurrent runs do not collide.
         let port = comp_reconciler::fleet::free_port();
         let name = format!("comp-test-surreal-{port}");
         let status = Command::new("docker")
             .args(["run", "--rm", "-d", "--name", &name])
-            // Bound to loopback explicitly: the container must not be reachable
-            // from the network just because a test is running.
+            // Bound to loopback explicitly: the container must not be reachable from the network.
             .args(["-p", &format!("127.0.0.1:{port}:8000")])
             .arg(SURREAL_IMAGE)
             .args(["start", "--no-banner"])
@@ -269,8 +237,7 @@ impl Surreal {
         let me = Self { name, port };
         let client =
             reqwest::blocking::Client::builder().timeout(Duration::from_secs(2)).build().unwrap();
-        // A container has an image pull and a runtime start in front of it, so
-        // this waits longer than a local process would need.
+        // An image pull and a runtime start come first, so wait longer than a local process needs.
         let deadline = std::time::Instant::now() + Duration::from_secs(90);
         while std::time::Instant::now() < deadline {
             if client.get(format!("http://127.0.0.1:{port}/health")).send().is_ok() {
@@ -278,41 +245,27 @@ impl Surreal {
             }
             std::thread::sleep(Duration::from_millis(250));
         }
-        // `me` drops here, so the container goes with it.
         panic!("the {SURREAL_IMAGE} container never became healthy on {port}");
     }
 }
 
-/// A SurrealDB with a `holon` namespace and a reader for what it answered.
-///
-/// `Surreal` above gives a container; this gives a way to talk to it. Both
-/// capgraph database tests want the same four things — define the namespace,
-/// post SurrealQL, read the last statement's result, count a table — and each
-/// had its own copy until the second one was written.
-///
-/// The reason it belongs here rather than in one test that the other imports: a
-/// test file is not a library, and the one that happened to be written first is
-/// not more canonical than the second. `harness` is where this suite already
-/// puts what more than one test needs.
+/// A SurrealDB with a `holon` namespace and a reader for what it answered. `Surreal` gives a
+/// container; this gives a way to talk to it (define the namespace, post SurrealQL, read the last
+/// statement's result, count a table), shared here because a test file is not a library.
 pub struct Store {
     db: Surreal,
     http: reqwest::blocking::Client,
 }
 
-/// The coordinates PRODUCTION uses — `knowledge-graph`'s default namespace and
-/// the database `comp-goalrun` rewrites the memory app to.
-///
-/// Not arbitrary test coordinates. This harness used `holon`/`holon` and put both
-/// halves of ADR-0091's join there, which is precisely why it passed while the
-/// real deployment had the capability graph in one database and the lessons in
-/// another. A store fixture that agrees with itself but not with production tests
-/// the fixture.
+/// The coordinates PRODUCTION uses: `knowledge-graph`'s default namespace and the database
+/// `comp-goalrun` rewrites the memory app to. Arbitrary test coordinates once let ADR-0091's join
+/// pass while production had the two halves in different databases.
 const NS: &str = "comp";
 const DB: &str = "goalmemory";
 
 impl Store {
-    /// A container with the namespace defined, or `None` when Docker cannot
-    /// start one. The caller decides whether that is a skip or a failure.
+    /// A container with the namespace defined, or `None` when Docker cannot start one (the caller
+    /// decides skip or failure).
     pub fn start() -> Option<Self> {
         let db = Surreal::start()?;
         let http = reqwest::blocking::Client::builder()
@@ -326,13 +279,11 @@ impl Store {
         Some(me)
     }
 
-    /// The port the container is bound to, for a test that needs to reach it by
-    /// some route other than `raw`.
+    /// The port the container is bound to, for a test reaching it other than via `raw`.
     pub fn port(&self) -> u16 {
         self.db.port
     }
 
-    /// Post SurrealQL and return the per-statement array, unchecked.
     pub fn raw(&self, body: &str) -> Value {
         let text = self
             .http
@@ -348,11 +299,8 @@ impl Store {
         serde_json::from_str(&text).unwrap_or(Value::Null)
     }
 
-    /// The result of the LAST statement, with every statement checked.
-    ///
-    /// A rejected statement in the middle of a multi-statement body is the
-    /// failure mode that would otherwise surface much later as a mysteriously
-    /// empty query, pointing at the read rather than the write that failed.
+    /// The result of the LAST statement, with every statement checked, so a rejected middle statement
+    /// does not surface later as an empty query.
     pub fn last(&self, body: &str) -> Value {
         let answered = self.raw(body);
         let empty = Vec::new();
@@ -368,7 +316,6 @@ impl Store {
             .unwrap_or(0)
     }
 
-    /// `last`, plus how long the server took to answer.
     pub fn timed(&self, body: &str) -> (Duration, Value) {
         let at = std::time::Instant::now();
         let out = self.last(body);
@@ -376,12 +323,8 @@ impl Store {
     }
 }
 
-/// Read an HTTP chunked-transfer body off a raw socket.
-///
-/// Four suites had a byte-identical copy of this. It exists at all because the
-/// tests that need it are the ones talking HTTP by hand — a stand-in forge, a
-/// stand-in model provider — where a client library would hide the framing that
-/// is the thing under test.
+/// Read an HTTP chunked-transfer body off a raw socket, for tests talking HTTP by hand (a stand-in
+/// forge or model provider) where a client library would hide the framing under test.
 pub fn read_chunked(reader: &mut std::io::BufReader<std::net::TcpStream>) -> Vec<u8> {
     use std::io::BufRead;
     let mut out = Vec::new();
@@ -405,12 +348,8 @@ pub fn read_chunked(reader: &mut std::io::BufReader<std::net::TcpStream>) -> Vec
     out
 }
 
-/// The composed `gate-domain` artifact, however it was built.
-///
-/// Prefers a hand-composed `gate_domain.composed.wasm` when one is there, and
-/// otherwise derives the composition from the component's own imports — the same
-/// fallback `Fleet::start` uses, so a fresh checkout that ran `cargo xtask build --force` but not
-/// `cargo xtask compose gate` still works.
+/// The composed `gate-domain` artifact: a hand-composed `gate_domain.composed.wasm` when there, else
+/// derived from the component's imports (the same fallback as `Fleet::start`).
 pub fn composed_gate() -> Vec<u8> {
     let root = repo_root();
     let legacy = root.join("components/target/gate_domain.composed.wasm");
@@ -422,17 +361,13 @@ pub fn composed_gate() -> Vec<u8> {
         .expect("gate-domain composes with what it imports — `cargo xtask build --force` first")
 }
 
-// ---------------------------------------------------------------------------
-// A real S3-compatible store, for the suites that put bytes in one — the
-// host's `--blob s3` and `comp-backup`.
-// ---------------------------------------------------------------------------
+// A real S3-compatible store, for the host's `--blob s3` and `comp-backup`.
 
 /// Pinned, matching `infra/compose.yaml` and `host/src/objkv_test.rs`.
 pub const RUSTFS_IMAGE: &str = "rustfs/rustfs:1.0.0";
 pub const RUSTFS_KEY: &str = "testadmin";
 pub const RUSTFS_SECRET: &str = "testadmin-secret";
 
-/// A RustFS container that dies with the test, and a signed client for it.
 pub struct RustFs {
     name: String,
     pub port: u16,
@@ -450,7 +385,7 @@ impl Drop for RustFs {
 }
 
 impl RustFs {
-    /// `None` when Docker cannot start one — the caller prints SKIPPED.
+    /// `None` when Docker cannot start one; the caller prints SKIPPED.
     pub fn start() -> Option<Self> {
         let port = comp_reconciler::fleet::free_port();
         let name = format!("comp-test-rustfs-{port}");
@@ -476,8 +411,8 @@ impl RustFs {
                 .build()
                 .unwrap(),
         };
-        // `/health` answers before the S3 API stops returning 503, so readiness
-        // is a real S3 call: HEAD on a bucket that does not exist has to say 404.
+        // `/health` answers before the S3 API stops returning 503, so readiness is a real S3 call:
+        // HEAD on a missing bucket has to say 404.
         use rusty_s3::S3Action;
         let deadline = std::time::Instant::now() + Duration::from_secs(90);
         while std::time::Instant::now() < deadline {
@@ -511,7 +446,6 @@ impl RustFs {
         .unwrap()
     }
 
-    /// Every `(key, size)` in `bucket` under `prefix`, all pages.
     pub fn list(&self, bucket: &str, prefix: &str) -> Vec<(String, u64)> {
         use rusty_s3::S3Action;
         let (b, creds) = (self.bucket(bucket), self.creds());
@@ -539,7 +473,6 @@ impl RustFs {
         }
     }
 
-    /// One object's bytes, or `None` if it is not there.
     pub fn get(&self, bucket: &str, key: &str) -> Option<Vec<u8>> {
         use rusty_s3::S3Action;
         let url =
@@ -548,8 +481,7 @@ impl RustFs {
         r.status().is_success().then(|| r.bytes().unwrap().to_vec())
     }
 
-    /// Write files holding the credentials, the way a real deployment hands them
-    /// over: in files, never on a command line.
+    /// Write files holding the credentials, as a real deployment hands them over: never on a command line.
     pub fn credential_files(&self, dir: &std::path::Path) -> (String, String) {
         let (k, s) = (dir.join("s3-access-key"), dir.join("s3-secret-key"));
         std::fs::write(&k, RUSTFS_KEY).unwrap();
@@ -559,8 +491,7 @@ impl RustFs {
 }
 
 impl RustFs {
-    /// Overwrite one object — how a test plays the part of a bucket that
-    /// altered what it was given.
+    /// Overwrite one object, playing a bucket that altered what it was given.
     pub fn put(&self, bucket: &str, key: &str, body: Vec<u8>) {
         use rusty_s3::S3Action;
         let url =

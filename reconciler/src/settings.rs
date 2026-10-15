@@ -1,19 +1,11 @@
-//! Tunables from a file, so the numbers that were guesses stop being recompiles.
+//! Tunables from a file, so calibrating the platform's guessed constants needs no recompile.
 //!
-//! Every constant in this platform arrived as a guess with a comment admitting it —
-//! two settle passes, twenty commands a pass, sixty-four in flight, a two-timeout
-//! retry budget. They were flags where someone remembered and `const` where nobody
-//! did. A file makes the whole set visible in one place and calibratable without a
-//! rebuild.
+//! **Precedence: command line, then environment, then file, then default.** A flag typed while
+//! debugging must beat a stale file, and a supervisor's environment variable must beat the file it
+//! shipped with.
 //!
-//! **Precedence: command line, then environment, then file, then default.** The
-//! surprising order is the useful one — a flag typed by a human debugging at 3am must
-//! beat a file written months ago, and an environment variable set by whatever
-//! supervises the process must beat the file it shipped with.
-//!
-//! TOML rather than YAML, deliberately: the CLI already parses TOML specs, and the
-//! only maintained YAML crate for Rust is a fork of an abandoned one. Same shape
-//! either way — say so and it is a small change.
+//! TOML rather than YAML: the CLI already parses TOML specs and the only maintained Rust YAML crate
+//! is a fork of an abandoned one.
 
 use std::path::{Path, PathBuf};
 
@@ -25,8 +17,7 @@ pub const DEFAULT_PATH: &str = "comp.toml";
 pub const ENV_PATH: &str = "COMP_CONFIG";
 
 #[derive(Debug, Default, Deserialize, PartialEq)]
-// A typo in a config file that is silently ignored is worse than no config file at
-// all: the operator believes they changed something. Unknown keys are an error.
+// A silently ignored typo in a config file is worse than no file: unknown keys are an error.
 #[serde(deny_unknown_fields)]
 pub struct File {
     #[serde(default)]
@@ -35,15 +26,14 @@ pub struct File {
     pub ingress: Ingress,
 }
 
-/// Every field optional: absent means "whatever the flag default is", so a file may
-/// set one value without restating the rest.
+/// Every field optional: absent means the flag default, so a file may set one value alone.
 #[derive(Debug, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Reconciler {
     /// Seconds between reconcile passes.
     pub interval: Option<u64>,
-    /// Consecutive passes a surplus must persist before anything is stopped — the
-    /// cooldown. Deficits are acted on immediately; only shrinking waits.
+    /// Consecutive passes a surplus must persist before anything is stopped. Deficits are acted on
+    /// immediately.
     pub settle_passes: Option<u32>,
     /// Commands per pass, so a mass event drains instead of stampeding.
     pub max_commands: Option<usize>,
@@ -56,31 +46,25 @@ pub struct Reconciler {
 #[derive(Debug, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Ingress {
-    /// Seconds between inventory refreshes of the route table. Absent means a
-    /// third of `inventory_ttl`, which is the only value that is safe by
-    /// construction.
+    /// Seconds between inventory refreshes of the route table. Absent means a third of
+    /// `inventory_ttl`.
     pub refresh_secs: Option<u64>,
-    /// How long an inventory entry lives. Must match the hosts and the
-    /// reconciler: all three declare it on one shared bucket and the first to
-    /// create it wins, silently.
+    /// How long an inventory entry lives. Must match the hosts and the reconciler: all three declare
+    /// it on one shared bucket and the first to create it wins, silently.
     pub inventory_ttl: Option<u64>,
     /// Seconds to wait on a backend before giving up on it.
     pub backend_timeout: Option<u64>,
     /// Requests in flight to one node before shedding; 0 disables shedding.
     pub max_inflight: Option<usize>,
-    /// How many SLOW backends one request may spend before giving up. Refused
-    /// connections are skipped for free and are not counted against this.
+    /// How many SLOW backends one request may spend before giving up (refused connections are free).
     pub slow_budget: Option<usize>,
     /// Seconds to wait for a scaled-to-zero app to be activated.
     pub activation_timeout: Option<u64>,
 }
 
 impl File {
-    /// Load from `path`, or from `$COMP_CONFIG`, or from `./comp.toml` if it exists.
-    ///
-    /// An explicitly named file that cannot be read is an error — someone asked for
-    /// it. The implicit one simply may not exist, which is the normal case and not
-    /// worth a word.
+    /// Load from `path`, or from `$COMP_CONFIG`, or from `./comp.toml` if it exists. An explicitly
+    /// named file that cannot be read is an error; the implicit one may simply not exist.
     pub fn load(explicit: Option<&Path>) -> Result<Self> {
         let (path, required) = match explicit {
             Some(p) => (p.to_path_buf(), true),
@@ -104,11 +88,8 @@ impl File {
     }
 }
 
-/// Pick a value: what the caller typed, else the file, else the default.
-///
-/// `cli` is `None` when the flag was left at its default, which is how clap's own
-/// defaults are kept out of the way of the file. A pure function so precedence is
-/// tested once rather than reasoned about at every call site.
+/// Pick a value: what the caller typed, else the file, else the default. `cli` is `None` when the
+/// flag was left at its default. Pure so precedence is tested once.
 pub fn pick<T>(cli: Option<T>, file: Option<T>, default: T) -> T {
     cli.or(file).unwrap_or(default)
 }
@@ -126,8 +107,7 @@ mod tests {
 
     #[test]
     fn a_partial_file_leaves_everything_else_alone() {
-        // The common case: someone tunes the cooldown and nothing else. Every other
-        // field must stay None so the defaults still apply.
+        // Tuning one field must leave every other `None` so the defaults still apply.
         let f: File = toml::from_str("[reconciler]\nsettle_passes = 5\n").unwrap();
         assert_eq!(f.reconciler.settle_passes, Some(5));
         assert_eq!(f.reconciler.interval, None);
@@ -136,8 +116,7 @@ mod tests {
 
     #[test]
     fn a_misspelled_key_is_an_error_rather_than_silence() {
-        // THE property worth testing here. A config file whose typo is ignored is
-        // worse than no config file: the operator believes they changed something.
+        // A config file whose typo is ignored is worse than no config file.
         let err = toml::from_str::<File>("[ingress]\nmax_inflght = 10\n")
             .expect_err("a typo must not parse");
         assert!(err.to_string().contains("max_inflght"), "{err}");
@@ -156,8 +135,7 @@ mod tests {
     fn an_implicit_missing_file_is_fine_and_an_explicit_one_is_not() {
         let missing = Path::new("/nonexistent/comp.toml");
         assert!(File::load(Some(missing)).is_err(), "asked for a file that is not there");
-        // The implicit lookup must not fail when there is simply no file, which is
-        // how every existing deployment runs today.
+        // The implicit lookup must not fail when there is simply no file.
         let dir = std::env::temp_dir().join("comp-settings-test");
         std::fs::create_dir_all(&dir).unwrap();
         let prev = std::env::current_dir().unwrap();

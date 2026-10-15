@@ -1,18 +1,10 @@
 //! Recompile, upload, and watch the fleet stop running the old code.
 //!
-//! Everything else here tests DEPLOYING an artifact. This tests REPLACING one,
-//! which is the harder half and the one a graph loop needs: an agent that
-//! produces a change has to be able to ship it, and "shipped" means the node is
-//! running the new bytes rather than the record saying so.
-//!
-//! The component answers with a tag baked in at compile time, so what is actually
-//! running is readable from outside. A version field the platform sets is a claim;
-//! a string the running code emits is evidence.
-//!
-//! It really recompiles. `cargo build` runs inside the test with a different
-//! `COMP_VERSION_TAG`, and the test refuses to continue if the two builds produce
-//! the same bytes — because a cache hit would make everything below it pass while
-//! proving nothing.
+//! This tests REPLACING an artifact, not deploying one: "shipped" means the node runs the new bytes,
+//! not that the record says so. The component answers with a tag baked in at compile time, so what is
+//! running is readable from outside (a platform-set version field is a claim; emitted text is
+//! evidence). It really recompiles, with a different `COMP_VERSION_TAG`, and refuses to continue if
+//! the two builds produce the same bytes (a cache hit would make everything below pass vacuously).
 
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -20,13 +12,8 @@ use std::time::{Duration, Instant};
 use comp_reconciler::fleet::{repo_root, Fleet};
 use serde_json::{json, Value};
 
-/// Serialises builds.
-///
-/// Every test here compiles the same crate into the same target directory, and
-/// they run on parallel threads — so without this one test replaces the artifact
-/// while another is reading it, and the read fails with "No such file". The build
-/// AND the read have to be inside the lock: the bytes are only this tag's bytes
-/// until somebody else builds.
+/// Serialises builds. Tests compile the same crate into one target directory on parallel threads, so
+/// the build AND the read must be inside the lock.
 static BUILD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Build the probe with a tag, and hand back the bytes.
@@ -97,8 +84,7 @@ impl Api {
         }
     }
 
-    /// Upload an artifact under an id. The digest is the platform's business —
-    /// the caller sends bytes.
+    /// Upload an artifact under an id. The caller sends bytes; the digest is the platform's business.
     fn get(&self, path: &str) -> Value {
         self.http
             .get(format!("{}{path}", self.base))
@@ -109,16 +95,11 @@ impl Api {
             .unwrap_or(Value::Null)
     }
 
-    // A `digest_of` reading the CATALOGUE's `oci_ref` lived here, claiming to be
-    // "the whole question in a version test". Nothing ever called it, and the
-    // reason is in the next function's own doc: the manifest digest is what the
-    // fleet is actually told to run, and for a fused deployment it is the composed
-    // artifact rather than the uploaded component. The catalogue's answer can move
-    // without the fleet's doing so, which makes it the wrong number to assert on.
+    // The manifest digest, not the catalogue's `oci_ref`, is what the fleet is told to run (for a fused
+    // deployment, the composed artifact), and the catalogue's can move without the fleet's.
 
-    /// The digest in the CURRENT manifest — what the fleet is actually told to
-    /// run. For a fused deployment this is the composed artifact rather than the
-    /// uploaded component, which is why it is the number that matters.
+    /// The digest in the CURRENT manifest: what the fleet is actually told to run. For a fused
+    /// deployment this is the composed artifact, not the uploaded component.
     fn manifest_digest(&self, id: &str) -> String {
         self.get(&format!("/api/deployments/{id}/manifests"))["manifest"]["components"][0]["digest"]
             .as_str()
@@ -150,10 +131,8 @@ impl Api {
     }
 }
 
-/// What the app is serving right now, via the ingress. `None` until it answers.
-///
-/// The host is `{app}.{org}.{suffix}` — the platform derives it, nobody chooses
-/// it, and guessing it wrong reads exactly like the app never starting.
+/// What the app is serving right now, via the ingress. `None` until it answers. The host is
+/// `{app}.{org}.{suffix}`, derived by the platform; a wrong guess reads like the app never starting.
 fn tag_served(fleet: &Fleet) -> Option<String> {
     let http =
         reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().unwrap();
@@ -179,7 +158,6 @@ fn wait_for_tag(fleet: &Fleet, want: &str, within: Duration) -> bool {
 
 #[test]
 fn a_recompiled_artifact_replaces_the_running_one() {
-    // --- the premise, checked before anything depends on it ------------------
     let alpha = build("alpha");
     let beta = build("beta");
     assert_ne!(
@@ -193,7 +171,6 @@ fn a_recompiled_artifact_replaces_the_running_one() {
     let fleet = Fleet::start_with_platform("newversion", 1);
     let api = Api::new(fleet.platform_url());
 
-    // --- ship v1 -------------------------------------------------------------
     assert!(matches!(api.upload("ver", alpha.clone()), 200 | 201), "uploading alpha failed");
     let (code, dep) = api
         .post("/api/deployments", json!({ "name": "ver", "nodes": [{"id": "ver"}], "edges": [] }));
@@ -222,20 +199,16 @@ fn a_recompiled_artifact_replaces_the_running_one() {
     );
     println!("    v1 is serving `alpha`");
 
-    // --- ship v2 over the top ------------------------------------------------
-    // Same component id, different bytes. The platform mints a new digest, the
-    // revision points at it, and the reconciler has to notice the app it is
-    // running is not the app that is wanted.
+    // --- ship v2 over the top ---
+    // Same component id, different bytes: the platform mints a new digest and the reconciler must
+    // notice the running app is not the wanted one.
     let digest_v1 = api.manifest_digest(&id);
     println!("    v1 manifest digest: {digest_v1}");
     assert!(matches!(api.upload("ver", beta.clone()), 200 | 201), "uploading beta failed");
 
-    // Saving is RETRIED, because an upload clears the component's digest: the
-    // bytes are staged, and the reconciler's push pass has to put them in the
-    // object store and record the address before a revision can reference them
-    // (ADR-0006). A single save fired immediately after the upload renders the
-    // manifest against the digest that is still there — the old one — and
-    // succeeds, which is a revision that ships nothing.
+    // Saving is RETRIED: an upload clears the component's digest, and the push pass must record the
+    // address before a revision can reference the bytes (ADR-0006). An immediate save renders against
+    // the old digest and succeeds as a revision that ships nothing.
     let deadline = Instant::now() + Duration::from_secs(180);
     let mut served = false;
     while Instant::now() < deadline {
@@ -264,9 +237,8 @@ fn a_recompiled_artifact_replaces_the_running_one() {
     );
     println!("    v2 is serving `beta` — the recompiled artifact replaced the running one");
 
-    // --- and it STAYS replaced ------------------------------------------------
-    // A reconcile pass that flapped between digests would show up here: the old
-    // one would come back within an interval or two.
+    // --- and it STAYS replaced ---
+    // A reconcile pass that flapped between digests would bring the old one back within an interval.
     std::thread::sleep(Duration::from_secs(8));
     assert_eq!(
         tag_served(&fleet).as_deref(),
@@ -275,23 +247,16 @@ fn a_recompiled_artifact_replaces_the_running_one() {
          converging on the newest revision"
     );
 
-    // The node ran both, which is what "replaced" means: not that the old one was
-    // never there, but that it is not there now.
+    // The node ran both: "replaced" means the old one is not there now, not that it never was.
     let log = fleet.node_log("n1");
     assert!(log.contains("started ada/ver/"), "the node never reported starting anything:\n{log}");
     println!("    and it stayed replaced");
 
-    // --- an upgrade that removes an export is refused -------------------------
-    //
-    // The WIT surface is the WRONG question for "did this change" — two builds
-    // differing in a constant have identical surfaces and different bytes, and
-    // treating them as the same is the bug this file was written to catch. It is
-    // the RIGHT question for "does this break anything": an export that vanished
-    // is one something was linking to, or serving on.
-    //
-    // Uploading the wrong artifact under an existing id is the ordinary way this
-    // happens, so that is what is done here — a component that exports a domain
-    // interface rather than an HTTP handler.
+    // --- an upgrade that removes an export is refused ---
+    // The WIT surface is the WRONG question for "did this change" (builds differing in a constant have
+    // identical surfaces) but the RIGHT one for "does this break anything": a vanished export is
+    // something linked to or served on. Uploading the wrong artifact under an existing id is the
+    // ordinary way this happens, so a component exporting a domain interface is uploaded.
     let wrong =
         std::fs::read(repo_root().join("components/target/wasm32-wasip2/release/slug.wasm"))
             .expect("run `cargo xtask build --force`");
@@ -338,15 +303,10 @@ fn a_recompiled_artifact_replaces_the_running_one() {
 
 /// What content-addressed staging buys.
 ///
-/// The catalogue row is keyed by `tenant/id` — a NAME — and the bytes used to be
-/// staged under that same name. That made an upload destructive: a second build
-/// overwrote the first, so two workers pushing different builds of one component
-/// raced and the loser's bytes were gone. It also made every upload look like a
-/// change, clearing the digest and forcing the whole distribution round again for
-/// bytes the fleet already had.
-///
-/// Staging by content fixes both, and neither needed a lock: identical bytes
-/// write identical bytes to the same place, different bytes go somewhere else.
+/// Staging bytes under the catalogue name `tenant/id` made an upload destructive (two workers pushing
+/// different builds raced and the loser's bytes were gone) and made every upload look like a change,
+/// clearing the digest and forcing the distribution round again. Staging by content fixes both without
+/// a lock.
 #[test]
 fn re_uploading_the_same_bytes_changes_nothing_and_two_builds_do_not_collide() {
     let alpha = build("alpha");
@@ -356,14 +316,12 @@ fn re_uploading_the_same_bytes_changes_nothing_and_two_builds_do_not_collide() {
     let fleet = Fleet::start_with_platform("content", 1);
     let api = Api::new(fleet.platform_url());
 
-    // --- the same bytes twice ------------------------------------------------
     assert!(matches!(api.upload("c", alpha.clone()), 200 | 201), "first upload failed");
     let (code, dep) =
         api.post("/api/deployments", json!({ "name": "c", "nodes": [{"id": "c"}], "edges": [] }));
     assert_eq!(code, 201, "deploy failed: {dep}");
     let id = dep["id"].as_str().unwrap().to_string();
 
-    // Get it distributed, so there is a digest to preserve.
     let deadline = Instant::now() + Duration::from_secs(180);
     let mut saved = false;
     while Instant::now() < deadline && !saved {
@@ -377,9 +335,8 @@ fn re_uploading_the_same_bytes_changes_nothing_and_two_builds_do_not_collide() {
     let digest = api.manifest_digest(&id);
     assert!(digest.starts_with("sha256:"), "no digest after distribution: {digest}");
 
-    // Re-uploading identical bytes must be a no-op. Previously it cleared the
-    // digest and forced the whole distribution round again — for bytes the fleet
-    // already had, byte for byte.
+    // Re-uploading identical bytes must be a no-op (it used to clear the digest and force the whole
+    // distribution round again).
     let v = api.get("/api/components");
     let _ = v;
     assert!(matches!(api.upload("c", alpha.clone()), 200 | 201), "re-upload failed");
@@ -391,16 +348,13 @@ fn re_uploading_the_same_bytes_changes_nothing_and_two_builds_do_not_collide() {
          redistribution of bytes nothing has changed"
     );
 
-    // --- two different builds, no lost bytes ---------------------------------
-    // Under the old name-keyed staging the second upload overwrote the first's
-    // bytes. Under content keys both are staged and neither writer can destroy
-    // the other's — which is what lets parallel workers upload without agreeing
-    // on anything.
+    // --- two different builds, no lost bytes ---
+    // Content keys stage both, and neither writer can destroy the other's, so parallel workers upload
+    // without agreeing on anything.
     assert!(matches!(api.upload("c", beta.clone()), 200 | 201), "beta upload failed");
     assert!(matches!(api.upload("c", alpha.clone()), 200 | 201), "alpha re-upload failed");
 
-    // Whichever the pointer ends on, the deployment must still be able to compose
-    // — which it can only do if the bytes it names are still there.
+    // Whichever the pointer ends on, the deployment must still compose: the bytes it names must be there.
     let deadline = Instant::now() + Duration::from_secs(180);
     let mut ok = false;
     while Instant::now() < deadline && !ok {
@@ -420,12 +374,8 @@ fn re_uploading_the_same_bytes_changes_nothing_and_two_builds_do_not_collide() {
     println!("    identical bytes are a no-op, and two builds coexist under one name");
 }
 
-/// A deployment pinned to a digest does not move when the name does.
-///
-/// This is what the whole identity rework is FOR. A bare name is whatever was
-/// uploaded last, which is fine until somebody uploads while you are deploying —
-/// and then a deployment that looked reproducible quietly is not. Naming the
-/// bytes makes it a fact rather than a hope.
+/// A deployment pinned to a digest does not move when the name does. A bare name is whatever was
+/// uploaded last; naming the bytes makes reproducibility a fact rather than a hope.
 #[test]
 fn a_deployment_pinned_to_a_digest_ignores_a_later_upload() {
     let alpha = build("alpha");
@@ -460,12 +410,10 @@ fn a_deployment_pinned_to_a_digest_ignores_a_later_upload() {
     assert!(saved, "the pinned revision never saved\n{}", fleet.reconciler_log());
     let pinned_digest = api.manifest_digest(&id);
 
-    // Now move the name. Under a bare reference this is what would change what
-    // the deployment runs.
+    // Now move the name: under a bare reference this would change what the deployment runs.
     assert!(matches!(api.upload("p", beta.clone()), 200 | 201), "uploading beta failed");
 
-    // Saving again must render the SAME artifact: the deployment named bytes, and
-    // those bytes did not change just because the name did.
+    // Saving again must render the SAME artifact: the deployment named bytes, not the name.
     let deadline = Instant::now() + Duration::from_secs(180);
     let mut re_saved = false;
     while Instant::now() < deadline && !re_saved {
@@ -483,9 +431,8 @@ fn a_deployment_pinned_to_a_digest_ignores_a_later_upload() {
          not pin is worse than no pinning, because it looks reproducible"
     );
 
-    // And a digest nobody ever uploaded is refused at SAVE, which is where a
-    // deployment stops being a draft and becomes something a fleet is told to
-    // run. Creating it is not the moment — an author is still editing.
+    // A digest nobody uploaded is refused at SAVE, where a draft becomes something a fleet is told to
+    // run (creating is not the moment: an author is still editing).
     let (code, ghost) = api.post(
         "/api/deployments",
         json!({ "name": "ghost", "nodes": [{"id": "p@sha256:deadbeef"}], "edges": [] }),

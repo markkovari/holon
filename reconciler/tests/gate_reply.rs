@@ -1,14 +1,10 @@
-//! The `support:desk` reply gate, ported from
-//! `components/support-desk-domain/e2e-reply.sh`.
+//! The `support:desk` reply gate, ported from `components/support-desk-domain/e2e-reply.sh`.
 //!
-//! Needs BOTH a model and a sink, and the sink is there to prove a negative: the reply
-//! is drafted, stored and queued, and nothing must reach the far end. The courier is a
-//! stub in this run, so anything arriving at the sink means this part sent it inline —
-//! which is the failure the whole app exists to prevent, and which every other check
-//! here would pass while doing.
+//! Needs BOTH a model and a sink, the sink to prove a negative: the reply is drafted, stored and queued
+//! and nothing must reach the far end. The courier is a stub, so anything arriving at the sink was sent
+//! inline by this part, the failure the app exists to prevent and which every other check would pass.
 //!
-//! Verified against `mlx-community/Qwen3.8-27B-4bit` on csatapaci through
-//! `tools/openai-shim.mjs`.
+//! Verified against `mlx-community/Qwen3.8-27B-4bit` on csatapaci through `tools/openai-shim.mjs`.
 
 mod gatelib;
 use gatelib::{field, Gate, Shim, Sink};
@@ -73,7 +69,6 @@ fn a_reply_is_drafted_queued_and_not_sent_by_this_part() {
         )
     };
 
-    // --- CSRF comes first, and costs nothing ---------------------------------------
     let (c, _) = gate.json("POST", &format!("/api/tickets/{one}/reply"), Some(&t), None);
     assert_eq!(c, 403, "a reply with no session or csrf header must be 403 csrf_required");
     let (c, _) = gate.with_headers(
@@ -103,10 +98,8 @@ fn a_reply_is_drafted_queued_and_not_sent_by_this_part() {
     let (c, _) = reply("nope");
     assert_eq!(c, 404, "replying to an unknown ticket must be 404");
 
-    // --- the draft -----------------------------------------------------------------
-    //
-    // The status matters as much as the body: 200 tells a customer's agent the reply has
-    // been sent when nothing has left the building yet.
+    // --- the draft ---
+    // The status matters as much as the body: 200 would tell a customer's agent the reply was sent.
     let (code, r) = reply(&one);
     assert_eq!(code, 202, "a drafted reply is 202 Accepted — nothing has been delivered yet");
     assert!(
@@ -143,8 +136,8 @@ fn a_reply_is_drafted_queued_and_not_sent_by_this_part() {
         rep["drafted_at"].as_str().unwrap_or_default().ends_with('Z'),
         "drafted_at must be RFC3339 UTC: {rep}"
     );
-    // About THIS ticket, and not a slice of it: the seeded ticket is about being charged
-    // for the wrong plan, and a canned sentence mentions none of it.
+    // About THIS ticket, not a slice of it: the seeded ticket is about being charged for the wrong plan,
+    // which a canned sentence does not mention.
     let low = text.to_lowercase();
     assert!(
         ["plan", "invoice", "charg", "team", "pro", "billing"].iter().any(|w| low.contains(w)),
@@ -155,7 +148,6 @@ fn a_reply_is_drafted_queued_and_not_sent_by_this_part() {
         "the draft is a verbatim slice of the customer's message"
     );
 
-    // --- and nothing was sent ------------------------------------------------------
     assert_eq!(
         sink.deliveries(),
         0,
@@ -164,7 +156,6 @@ fn a_reply_is_drafted_queued_and_not_sent_by_this_part() {
          records that it existed. Enqueue it (outbox:dispatch) and let the courier deliver it."
     );
 
-    // --- and a second reply to the same ticket is a conflict -----------------------
     let (c, _) = reply(&one);
     assert_eq!(c, 409, "a second reply to an already-answered ticket must be 409");
 }

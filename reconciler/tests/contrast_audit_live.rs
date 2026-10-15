@@ -36,7 +36,6 @@ fn audit_a_palette_and_get_a_report_over_the_lattice() {
         reqwest::blocking::Client::builder().timeout(Duration::from_secs(90)).build().unwrap();
     let base = format!("http://127.0.0.1:{}", fleet.ingress_port);
 
-    // 1) the page serves over the lattice
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut served = false;
     while Instant::now() < deadline {
@@ -51,16 +50,13 @@ fn audit_a_palette_and_get_a_report_over_the_lattice() {
     assert!(served, "the page never served\n{}", fleet.node_log("n1"));
     println!("    page is live over the lattice");
 
-    // 2) one failing pair and one passing one, so the report has both to say.
-    //
-    // The failing pair carries a LIE: the page claims 21:1 for two greys that are
-    // nowhere near it. The component must recompute rather than pass it through,
-    // so a report calling that pair fine is a real failure of this test.
+    // 2) one failing pair and one passing one. The failing pair carries a LIE (the page claims 21:1
+    // for two greys nowhere near it): the component must recompute, so a report calling it fine fails.
     let body = serde_json::json!({
         "pairs": [
             { "fg": "#999999", "bg": "#aaaaaa", "share": 0.4, "ratio": 21.0 },
             { "fg": "#111111", "bg": "#ffffff", "share": 0.3 },
-            // Junk, to prove the parse is strict rather than creative.
+                        // Junk, to prove the parse is strict rather than creative.
             { "fg": "rebeccapurple", "bg": "#fff", "share": 0.1 }
         ]
     });
@@ -75,9 +71,8 @@ fn audit_a_palette_and_get_a_report_over_the_lattice() {
     assert!(status.is_success(), "audit failed: {status} {v}\n{}", fleet.node_log("n1"));
     let report = v["report"].as_str().unwrap_or("");
     assert!(report.contains("Verdict") || report.contains("Fix first"), "no report came back: {v}");
-    // The model was told the truth about the grey pair, so its report has to be
-    // about a failure. A report that only praises means the client's 21:1 reached
-    // the prompt.
+    // The model was told the truth about the grey pair, so its report must be about a failure; one that
+    // only praises means the client's 21:1 reached the prompt.
     let lower = report.to_lowercase();
     assert!(
         lower.contains("999999") || lower.contains("fail") || lower.contains("4.5"),
@@ -86,10 +81,8 @@ fn audit_a_palette_and_get_a_report_over_the_lattice() {
     println!("    report over the lattice:\n{report}");
 }
 
-/// A request with nothing auditable in it is an error, not an empty report.
-///
-/// Cheap and unignored: it never reaches the model, so it costs nothing and it
-/// guards the path that a real page hits the moment it samples a flat image.
+/// A request with nothing auditable in it is an error, not an empty report. Cheap and unignored: it
+/// never reaches the model, and guards the path a real page hits when it samples a flat image.
 #[test]
 fn a_request_with_no_usable_pairs_is_refused() {
     let dir = repo_root().join("components/target/wasm32-wasip2/release");
@@ -97,15 +90,9 @@ fn a_request_with_no_usable_pairs_is_refused() {
         eprintln!("contrast-audit not built; skipping");
         return;
     }
-    // A PLACEHOLDER key, never revealed.
-    //
-    // Not "no secret at all", which is what this test asked for first: the
-    // manifest declares the grant, so the host refuses to START the component
-    // without one — `cannot start: secret "anthropic-api-key" -> no such secret`,
-    // repeated until the deploy times out. The grant is a precondition of running,
-    // not something checked at the moment it is read. So the fleet gets a
-    // throwaway value, and the request is still refused long before anything would
-    // reveal it — which is what keeps this test free.
+    // A PLACEHOLDER key, never revealed. The manifest declares the grant, so the host refuses to START
+    // the component without one (`cannot start: secret "anthropic-api-key" -> no such secret`); the
+    // request is still refused long before anything reveals it, which keeps this test free.
     let fake = std::env::temp_dir().join("comp-contrast-audit-placeholder-key");
     std::fs::write(&fake, "not-a-real-key").expect("write placeholder key");
     let fleet = Fleet::start_with_secrets(
@@ -117,10 +104,8 @@ fn a_request_with_no_usable_pairs_is_refused() {
     let http =
         reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build().unwrap();
     let base = format!("http://127.0.0.1:{}", fleet.ingress_port);
-    // Wait for the PAGE, not merely for a reply. The ingress answers 503 while the
-    // app is still coming up, and `send().is_ok()` is true for that — so a loop
-    // that breaks on any response goes on to assert against the ingress's error
-    // instead of the component's, and fails somewhere that says nothing.
+    // Wait for the PAGE, not merely a reply: the ingress answers 503 while the app is coming up, and
+    // `send().is_ok()` is true for that.
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut served = false;
     while Instant::now() < deadline {

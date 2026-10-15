@@ -1,21 +1,15 @@
-//! `photoquest` — a photo is planned, completed, queued and evaluated, and only its
-//! owner ever sees it.
+//! `photoquest`: a photo is planned, completed, queued and evaluated, and only its owner ever sees it.
 //!
-//! ## A fake comp-media, on purpose
+//! A fake comp-media, on purpose: the real daemon needs S3, NATS and, for the interesting half of an
+//! evaluation, a Mac, and none of that is what this gate judges. The component decides who may upload
+//! what, turns that into the right calls to `comp-media`, and refuses a result it cannot verify
+//! (ADR-0098). So the gate runs its own recording `comp-media` (an HTTP server on an OS-picked port
+//! answering `components/media-pipeline/CONTRACT.md`'s routes with canned plans) and asserts on what
+//! ARRIVED there, since a component answering `processing` without calling `/jobs` passes every check
+//! reading its own replies.
 //!
-//! The real daemon needs an S3 store and a NATS server and, for the interesting half
-//! of an evaluation, a Mac. None of that is in CI and none of it is what this gate
-//! judges: the component's whole job is deciding who may upload what, turning that
-//! into the right calls to `comp-media`, and refusing a result it cannot verify
-//! (ADR-0098). So the gate runs its own `comp-media` — a recording HTTP server on a
-//! port the OS picks, answering `components/media-pipeline/CONTRACT.md`'s routes with
-//! canned plans — and asserts on what ARRIVED there, not only on what the component
-//! said back. A component that answered `processing` without ever calling `/jobs`
-//! passes every check that reads its own replies.
-//!
-//! The callback is sent by the gate itself, signed the way the contract says the
-//! worker signs it (GitHub-style HMAC-SHA256 over the raw body), which is the only
-//! way to also send one signed WRONGLY.
+//! The callback is sent by the gate, signed as the contract says the worker signs it (GitHub-style
+//! HMAC-SHA256 over the raw body), the only way to also send one signed WRONGLY.
 
 mod gatelib;
 mod photoquest_support;
@@ -63,7 +57,6 @@ fn a_photo_is_planned_completed_evaluated_and_only_its_owner_sees_it() {
         Some(json!({"filename": "a.arw", "size": 1, "content_type": "image/x-sony-arw"})),
     );
 
-    // --- two real accounts ---------------------------------------------------
     let run = std::process::id();
     let login = |who: &str| -> String {
         let email = format!("{who}-{run}@photoquest.test");
@@ -78,7 +71,6 @@ fn a_photo_is_planned_completed_evaluated_and_only_its_owner_sees_it() {
     let (ada, bob) = (login("ada"), login("bob"));
     assert!(!ada.is_empty() && !bob.is_empty(), "login did not hand back access tokens");
 
-    // --- planning an upload --------------------------------------------------
     let size: u64 = 40 * 1024 * 1024;
     let (code, out) = gate.post(
         "/api/photos",
@@ -114,8 +106,8 @@ fn a_photo_is_planned_completed_evaluated_and_only_its_owner_sees_it() {
     assert_eq!(u.body["filename"], "DSC01234.ARW", "the filename was not forwarded: {:?}", u.body);
     assert_eq!(u.auth, format!("Bearer {TOKEN}"), "media-token must reach the daemon as a bearer");
 
-    // A refusal is the daemon's decision, and the caller must be able to read it —
-    // and must not leave a photo behind that can never be uploaded.
+    // A refusal is the daemon's decision and the caller must be able to read it, and must not leave a
+    // photo behind that can never be uploaded.
     let (code, out) = gate.post(
         "/api/photos",
         Some(&ada),
@@ -130,7 +122,6 @@ fn a_photo_is_planned_completed_evaluated_and_only_its_owner_sees_it() {
         "a refused upload left a photo in the gallery: {list}"
     );
 
-    // --- somebody else's photo -----------------------------------------------
     let (code, _) = gate.get(&format!("/api/photos/{id}"), Some(&bob));
     assert_eq!(code, 403, "bob read ada's photo");
     let parts = json!({"parts": [
@@ -160,7 +151,6 @@ fn a_photo_is_planned_completed_evaluated_and_only_its_owner_sees_it() {
     );
     assert_eq!(code, 409, "a callback before the upload was completed must be refused: {out}");
 
-    // --- completing ----------------------------------------------------------
     let (code, out) = gate.post(&format!("/api/photos/{id}/complete"), Some(&ada), parts.clone());
     assert_eq!(code, 200, "complete must succeed for the owner: {out}");
     assert_eq!(field(&out, "state"), "processing", "a completed photo is processing: {out}");
@@ -200,8 +190,7 @@ fn a_photo_is_planned_completed_evaluated_and_only_its_owner_sees_it() {
         "the callback URL must be public-callback-base plus the photo's route"
     );
 
-    // A retried complete does not complete twice (the store would refuse it), and
-    // resubmits under the SAME job id.
+    // A retried complete does not complete twice (the store would refuse it) and resubmits under the SAME job id.
     let (code, out) = gate.post(&format!("/api/photos/{id}/complete"), Some(&ada), parts.clone());
     assert_eq!(code, 200, "a retried complete must still succeed: {out}");
     assert_eq!(
@@ -219,7 +208,6 @@ fn a_photo_is_planned_completed_evaluated_and_only_its_owner_sees_it() {
     assert_eq!(field(&got, "state"), "processing", "{got}");
     assert!(parse(&got)["urls"]["thumb"].is_null(), "no thumbnail URL before evaluation: {got}");
 
-    // --- the callback ----------------------------------------------------------
     let result = result_for(&id);
     let raw = result.to_string();
     let path = format!("/internal/photos/{id}/evaluated");
@@ -286,7 +274,6 @@ fn a_photo_is_planned_completed_evaluated_and_only_its_owner_sees_it() {
     let (code, _) = gate.get(&format!("/api/photos/{id}"), Some(&bob));
     assert_eq!(code, 403, "bob read ada's evaluated photo");
 
-    // --- the same callback again, and a late failure -----------------------------
     let evaluated_at = photo["evaluated_at"].clone();
     let (code, out) = gate.with_headers(
         "POST",
@@ -332,7 +319,6 @@ fn a_photo_is_planned_completed_evaluated_and_only_its_owner_sees_it() {
     );
     assert_eq!(code, 400, "a callback whose photo_id is not its path's must be refused");
 
-    // --- the gallery -------------------------------------------------------------
     let (code, list) = gate.get("/api/photos", Some(&ada));
     assert_eq!(code, 200, "{list}");
     let photos = parse(&list)["photos"].clone();
@@ -350,10 +336,9 @@ fn a_photo_is_planned_completed_evaluated_and_only_its_owner_sees_it() {
         "the gallery should not ship 256 tiles per photo: {list}"
     );
 
-    // --- a JPEG whose evaluation fails ---------------------------------------------
-    //
-    // Content type "" — what a browser reports for a file it does not recognise — is
-    // passed through as it arrived, not replaced with a guess.
+    // --- a JPEG whose evaluation fails ---
+    // Content type "" (what a browser reports for an unrecognised file) is passed through as it
+    // arrived, not replaced with a guess.
     let (code, out) = gate.post(
         "/api/photos",
         Some(&ada),

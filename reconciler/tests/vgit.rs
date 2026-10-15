@@ -1,20 +1,13 @@
 //! `vgit:store` on a real fleet: blob storage as the filesystem for git.
 //!
-//! virt-git's own tests check its serialisation against the `git` binary. They
-//! run natively, on pure functions, and cannot reach the half that matters
-//! operationally: whether objects actually land in `blob:store` when the thing is
-//! deployed, whether a guarded ref update behaves under a lost race, whether an
-//! untouched subtree is genuinely reused by id rather than rewritten to something
-//! equal-looking — and whether a commit produced by a component running on a node
-//! still has the id git would give it.
+//! virt-git's unit tests check serialisation against the `git` binary natively. They cannot reach
+//! whether objects actually land in `blob:store` when deployed, whether a guarded ref update behaves
+//! under a lost race, whether an untouched subtree is reused by id, and whether a commit produced by a
+//! component on a node still has the id git would give it (a component that hashes correctly in a unit
+//! test and stores wrongly on a fleet is how `comp:secrets/reader` shipped unlinked, ADR-0061).
 //!
-//! That last assertion is the one worth the whole file. A component that hashes
-//! correctly in a unit test and stores wrongly on a fleet looks right and is not,
-//! which is precisely how `comp:secrets/reader` shipped unlinked (ADR-0061).
-//!
-//! So the ground truth here is the real `git` binary, again — asked the same
-//! question, about bytes that made a full round trip through a deployed
-//! component, a linked capability and a replicated key-value store.
+//! So the ground truth is the real `git` binary, asked about bytes that made a full round trip through
+//! a deployed component, a linked capability and a replicated key-value store.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -66,9 +59,8 @@ impl Probe {
     }
 
     fn call(&self, method: reqwest::Method, path: &str, body: String) -> Value {
-        // A transport failure is REPORTED rather than panicked on: the readiness
-        // loop polls before anything is listening, and a panic there would make
-        // "not up yet" indistinguishable from "broken".
+        // A transport failure is REPORTED, not panicked on: the readiness loop polls before anything
+        // listens.
         let r = match self
             .http
             .request(method, format!("http://127.0.0.1:{}{path}", self.port))
@@ -84,7 +76,6 @@ impl Probe {
             .unwrap_or_else(|_| Value::String(format!("HTTP {status}: {text}")))
     }
 
-    /// Commit a set of whole files onto `base`.
     fn commit(&self, base: &str, message: &str, files: &[(&str, &str)]) -> Value {
         let changes: Vec<Value> = files
             .iter()
@@ -94,11 +85,9 @@ impl Probe {
     }
 }
 
-/// The first real read, retried until it works.
-///
-/// NOT a separate readiness probe — see `Fleet::until`. Reading an absent ref
-/// crosses the link, opens the app's bucket and does a CAS read, so `found:
-/// false` is both the answer wanted and the proof the path exists.
+/// The first real read, retried until it works, not a separate readiness probe (`Fleet::until`).
+/// Reading an absent ref crosses the link, opens the bucket and does a CAS read, so `found: false`
+/// is both the answer wanted and the proof the path exists.
 fn wait_for_probe(fleet: &Fleet) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
@@ -123,7 +112,6 @@ fn a_repository_lives_in_blob_storage_and_git_agrees_with_its_ids() {
     let fleet = Fleet::start_with_secrets("vgit", &["fixtures/virt-git.yaml"], &artifacts(), &[]);
     let probe = wait_for_probe(&fleet);
 
-    // --- a first commit, from nothing ---------------------------------------
     let first = probe.commit(
         "",
         "first",
@@ -143,9 +131,9 @@ fn a_repository_lives_in_blob_storage_and_git_agrees_with_its_ids() {
         "the tree does not list what was written: {r}"
     );
 
-    // --- the assertion this file exists for ---------------------------------
-    // A blob that travelled through a deployed component, a linked capability and
-    // the key-value store must still have the id git gives those bytes.
+    // --- the assertion this file exists for ---
+    // A blob that travelled through a component, a linked capability and the key-value store must still
+    // have the id git gives those bytes.
     let Some(theirs) = git(&["hash-object", "-t", "blob", "--stdin"], Some(b"fn main() {}\n"))
     else {
         eprintln!("SKIPPED: no usable `git` binary — the ground truth is unavailable");
@@ -158,8 +146,8 @@ fn a_repository_lives_in_blob_storage_and_git_agrees_with_its_ids() {
         "no subtree id: {tree_of_src}"
     );
 
-    // And the commit itself, against `git commit-tree` with the same tree,
-    // author and timestamp — which is why the probe pins both.
+    // And the commit itself, against `git commit-tree` with the same tree, author and timestamp (the
+    // probe pins both).
     let dir = std::env::temp_dir().join(format!("comp-vgit-fleet-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -178,14 +166,12 @@ fn a_repository_lives_in_blob_storage_and_git_agrees_with_its_ids() {
          from the same content — the ids are supposed to be REAL git ids"
     );
 
-    // --- a second commit touching one file ----------------------------------
     let second = probe.commit(&c1, "second", &[("src/lib.rs", "fn main() { /* v2 */ }\n")]);
     let c2 = second["commit"].as_str().unwrap_or_default().to_string();
     assert_ne!(c2, c1, "a different change must be a different commit");
 
-    // The untouched subtree is REUSED BY ID, not rewritten. This is the property
-    // that makes a branch cost its diff rather than the repository: if `docs`
-    // came back with a new id, every candidate would be rewriting the whole tree.
+    // The untouched subtree is REUSED BY ID, not rewritten: otherwise every candidate rewrites the
+    // whole tree.
     let docs1 = probe.get(&format!("/tree?commit={c1}&path=docs"));
     let docs2 = probe.get(&format!("/tree?commit={c2}&path=docs"));
     assert_eq!(
@@ -196,12 +182,10 @@ fn a_repository_lives_in_blob_storage_and_git_agrees_with_its_ids() {
     let src2 = probe.get(&format!("/tree?commit={c2}&path=src"));
     assert_ne!(src1["tree"], src2["tree"], "the touched subtree must change");
 
-    // The old commit still reads the old content: history is immutable because
-    // objects are, not because anything defends it.
+    // The old commit still reads the old content: history is immutable because objects are.
     let old = probe.get(&format!("/read?commit={c1}&path=src%2Flib.rs"));
     assert_eq!(old["content"], json!("fn main() {}\n"), "the first commit changed under us: {old}");
 
-    // --- diff ---------------------------------------------------------------
     let d1 = probe.commit(&c2, "third", &[("docs/b.md", "# b\n")]);
     let c3 = d1["commit"].as_str().unwrap_or_default().to_string();
     let r = probe.get(&format!("/diff?before={c1}&after={c3}"));
@@ -219,15 +203,14 @@ fn a_repository_lives_in_blob_storage_and_git_agrees_with_its_ids() {
         "diff should see exactly the two changes across three commits: {r}"
     );
 
-    // --- refs, which are the only mutable thing ------------------------------
+    // --- refs, the only mutable thing ---
     // Creating: `expect` absent means "and it must not exist yet".
     let r = probe.post(&format!("/ref?name=heads%2Fmain&to={c1}"), json!({}));
     assert_eq!(r["updated"], json!(true), "creating a ref failed: {r}");
     let r = probe.get("/ref?name=heads%2Fmain");
     assert_eq!(r["ref"], json!(c1), "the ref does not point where it was put: {r}");
 
-    // Creating it AGAIN must lose. This is the branch-collision case, and losing
-    // silently would mean one branch overwriting another's work.
+    // Creating it AGAIN must lose (the branch-collision case); losing silently would overwrite another's work.
     let r = probe.post(&format!("/ref?name=heads%2Fmain&to={c2}"), json!({}));
     assert_eq!(
         r["updated"],
@@ -241,8 +224,7 @@ fn a_repository_lives_in_blob_storage_and_git_agrees_with_its_ids() {
     let r = probe.post(&format!("/ref?name=heads%2Fmain&expect={c1}&to={c2}"), json!({}));
     assert_eq!(r["updated"], json!(true), "a correctly-guarded move should win: {r}");
 
-    // And one holding a stale expectation loses — the lost-update case (ADR-0065)
-    // with somebody's branch as the thing that would have been lost.
+    // And one holding a stale expectation loses: the lost-update case (ADR-0065).
     let r = probe.post(&format!("/ref?name=heads%2Fmain&expect={c1}&to={c3}"), json!({}));
     assert_eq!(r["updated"], json!(false), "a stale guarded move must lose: {r}");
     let r = probe.get("/ref?name=heads%2Fmain");

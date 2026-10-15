@@ -1,12 +1,10 @@
-//! `--blob s3` on a real fleet: a git repository whose objects live in an S3
-//! bucket while its refs stay on NATS.
+//! `--blob s3` on a real fleet: a git repository whose objects live in an S3 bucket while its refs stay on
+//! NATS.
 //!
-//! `host/src/objkv_test.rs` proves the backend is a correct `KvBackend`. What it
-//! cannot reach is the wiring: that a deployed `blob-store` asks for its `blobs`
-//! store, that the host routes exactly that store to S3, and that the bytes a
-//! guest wrote come back out through a linked capability. So the ground truth is
-//! the bucket itself, listed directly — not the component saying it stored
-//! something.
+//! `host/src/objkv_test.rs` proves the backend is a correct `KvBackend`; this reaches the wiring: that a
+//! deployed `blob-store` asks for its `blobs` store, the host routes exactly that store to S3, and the
+//! bytes a guest wrote come back through a linked capability. The ground truth is the bucket, listed
+//! directly, not the component saying it stored something.
 
 mod harness;
 
@@ -86,8 +84,8 @@ fn blob_bytes_land_in_s3_and_come_back_out() {
         }
     });
 
-    // Bigger than NATS's default 1 MB payload: on the KV path this is the object
-    // that needs a raised `max_payload`; on S3 it is nothing special.
+    // Bigger than NATS's default 1 MB payload (on the KV path this needs a raised `max_payload`; on S3
+    // it is nothing special).
     let big = "x".repeat(2 << 20);
     let first = call(
         port,
@@ -126,9 +124,8 @@ fn blob_bytes_land_in_s3_and_come_back_out() {
     let data: Vec<_> = objects.iter().filter(|(k, _)| !k.starts_with(".probe/")).collect();
     assert!(!data.is_empty(), "nothing reached S3: {objects:?}");
     for (k, _) in &data {
-        // `o-<env>/` is the host's object bucket and `bo_` is blob-store's data
-        // key. An index key (`bm_`) or any record here would mean keyed state
-        // leaked into the object store.
+        // `o-<env>/` is the host's object bucket and `bo_` is blob-store's data key; an index key (`bm_`)
+        // or any record here would mean keyed state leaked into the object store.
         let (bucket, key) = k.split_once('/').unwrap_or_else(|| panic!("unprefixed key {k}"));
         assert!(bucket.starts_with("o-"), "{k} is not in a host object bucket");
         assert!(key.starts_with("bo_"), "{k} is not a blob-store data key");

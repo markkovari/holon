@@ -1,21 +1,11 @@
-//! `notify` — one call, two channels, and a real email in a real mailbox.
+//! `notify`: one call, two channels, and a real email in a real mailbox.
 //!
-//! Ported from `components/notify-probe/e2e.sh`, the tenth and last composition gate
-//! to move. The assertion that matters is the last kind: the mailbox is ASKED what it
-//! actually holds, and the negative case is asserted too — a subject who opted out of
-//! email must produce no email at all. A notification system that cannot be turned
-//! off is a mailing list.
+//! Ported from `components/notify-probe/e2e.sh`. The mailbox is ASKED what it holds, and the negative
+//! case is asserted too: a subject who opted out of email must produce none.
 //!
-//! ## This one gains CI coverage the shell version can never have
-//!
-//! `e2e.sh` calls `notify_start_mail`, which wants MailHog on `$PATH`. MailHog is
-//! archived, predates Go modules, and does not `go install` on the CI runner — so the
-//! shell gate is skipped there and the whole notification fan-out was a local-only
-//! check. `gatelib::MailSink` is a pure-Rust SMTP server on a port the OS picks, so
-//! this port needs nothing installed and runs in CI like any other gate.
-//!
-//! `comp-mailrelay` is still the thing that speaks SMTP to it, and is the only piece
-//! of this picture that is not the component under test.
+//! This gains CI coverage the shell version cannot have: `e2e.sh` needs MailHog (archived, does not
+//! `go install` on the runner), so the fan-out was a local-only check. `gatelib::MailSink` is a pure-Rust
+//! SMTP server on an OS-picked port; `comp-mailrelay` still speaks SMTP to it.
 
 mod gatelib;
 use gatelib::{field, Gate, MailRelay, MailSink};
@@ -62,9 +52,8 @@ fn one_call_reaches_an_inbox_and_a_real_mailbox_and_opting_out_is_real() {
         return;
     };
 
-    // Both are capabilities this component CALLS. A fan-out that stored its own
-    // messages would be a second inbox nothing else can read, and email that did not
-    // leave through `mail:send` would be this component deciding a deploy-time choice.
+    // Both are capabilities this component CALLS: a fan-out storing its own messages would be an inbox
+    // nothing else can read, and email not leaving through `mail:send` would decide a deploy-time choice.
     gatelib::requires_capability(
         "notify-prefs",
         "notify:inbox/inbox",
@@ -82,15 +71,12 @@ fn one_call_reaches_an_inbox_and_a_real_mailbox_and_opting_out_is_real() {
     let run = format!("run{}", std::process::id());
     let (ada, bob) = (format!("ada-{run}"), format!("bob-{run}"));
 
-    // --- a subject nobody has configured -----------------------------------
-    //
-    // Not an error, and in-app only: the setting that cannot deliver anything anywhere
-    // it should not is the right default for one nobody chose.
+    // --- a subject nobody has configured ---
+    // Not an error, and in-app only: the safe default for one nobody chose.
     let (_, def) = gate.get(&format!("/prefs?subject={ada}"), None);
     assert!(def.contains("\"in-app\""), "an unconfigured subject must default to in-app: {def}");
     assert!(!def.contains("\"email\""), "an unconfigured subject must NOT default to email: {def}");
 
-    // --- opt in to both ----------------------------------------------------
     let put = |subject: &str, chans: Value, overrides: Value| {
         gate.send(
             "PUT",
@@ -124,7 +110,6 @@ fn one_call_reaches_an_inbox_and_a_real_mailbox_and_opting_out_is_real() {
     assert!(ok_on(&out, "in-app"), "the in-app channel did not deliver: {out}");
     assert!(ok_on(&out, "email"), "the email channel did not deliver: {out}");
 
-    // --- it is IN the inbox ------------------------------------------------
     let (_, box_) = gate.get(&format!("/inbox?subject={ada}&after=0&limit=10"), None);
     assert!(box_.contains(&marker), "the note is not in the inbox: {box_}");
     assert!(box_.contains("\"kind\":\"ticket-swapped\""), "the note lost its kind: {box_}");
@@ -136,10 +121,9 @@ fn one_call_reaches_an_inbox_and_a_real_mailbox_and_opting_out_is_real() {
         field(&unread, "unread")
     );
 
-    // --- and a REAL email is in a REAL mailbox -----------------------------
-    //
-    // Delivered over genuine SMTP by comp-mailrelay. Polled rather than slept: the
-    // shell version sleeps 0.5s, which is either too long or not long enough.
+    // --- and a REAL email is in a REAL mailbox ---
+    // Delivered over genuine SMTP by comp-mailrelay. Polled rather than slept (the shell's 0.5s sleep
+    // is either too long or too short).
     let mut found = 0usize;
     for _ in 0..40 {
         found = mail.count_containing(&marker);
@@ -164,7 +148,6 @@ fn one_call_reaches_an_inbox_and_a_real_mailbox_and_opting_out_is_real() {
         "the subject line did not survive: {msg:.400}"
     );
 
-    // --- reading it --------------------------------------------------------
     let seq = parse(&box_)["notes"][0]["seq"].as_i64().unwrap_or(-1);
     assert!(seq >= 0, "the inbox note has no seq to read: {box_}");
     let (_, marked) = gate.post("/read", None, json!({"subject": ada, "seqs": [seq]}));
@@ -177,13 +160,11 @@ fn one_call_reaches_an_inbox_and_a_real_mailbox_and_opting_out_is_real() {
     let (_, u) = gate.get(&format!("/unread?subject={ada}"), None);
     assert_eq!(field(&u, "unread"), "0", "after reading the only note the badge must be 0");
 
-    // Twice must not drive it negative — a client that retries is not a client that
-    // should make the badge wrong.
+    // Twice must not drive it negative: a retrying client should not make the badge wrong.
     gate.post("/read", None, json!({"subject": ada, "seqs": [seq]}));
     let (_, u) = gate.get(&format!("/unread?subject={ada}"), None);
     assert_eq!(field(&u, "unread"), "0", "marking the same note read twice moved the badge");
 
-    // --- the cursor is a cursor --------------------------------------------
     gate.post(
         "/notify",
         None,
@@ -199,7 +180,6 @@ fn one_call_reaches_an_inbox_and_a_real_mailbox_and_opting_out_is_real() {
     );
     assert!(!tail.contains(&marker), "after={seq} must NOT return what came before it: {tail}");
 
-    // --- opting out of email is REAL ---------------------------------------
     let quiet = format!("quiet-{run}");
     let before = mail.count_containing(&quiet);
     put(&bob, json!(["in-app"]), json!({}));
@@ -225,10 +205,9 @@ fn one_call_reaches_an_inbox_and_a_real_mailbox_and_opting_out_is_real() {
     let (_, bobbox) = gate.get(&format!("/inbox?subject={bob}&after=0&limit=5"), None);
     assert!(bobbox.contains(&quiet), "opting out of email must not cost the in-app copy: {bobbox}");
 
-    // --- muting ONE kind ---------------------------------------------------
-    //
-    // An empty override is a real answer and means "not this one". Falling back to the
-    // defaults on an empty list would make muting a single kind impossible.
+    // --- muting ONE kind ---
+    // An empty override means "not this one"; falling back to defaults on an empty list would make
+    // muting a single kind impossible.
     put(&ada, json!(["in-app", "email"]), json!({"noisy": []}));
     let muted = format!("muted-{run}");
     let (_, out) = gate.post(

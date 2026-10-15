@@ -1,23 +1,17 @@
 //! A branch gets its own environment, and its own store.
 //!
-//! Until now every branch of a generation was a concurrent call carrying its own
-//! base tree, which works only for as long as a run keeps nothing. The moment a
-//! branch wants to KEEP something — a compiled artifact, a partial index, a git
-//! object — it needs somewhere of its own, and that is what an environment is: a
-//! derived app, so the bucket name derives with it (ADR-0023, ADR-0078).
+//! A branch that wants to KEEP something (a compiled artifact, a partial index, a git object) needs
+//! somewhere of its own: an environment is a derived app, so the bucket name derives with it
+//! (ADR-0023, ADR-0078).
 //!
-//! What was missing was a DOOR. `spawn_environment` set the manifest's ingress to
-//! null, which is right about the hazard — the parent's hostname on two apps makes
-//! the ingress route to whichever it saw last — and leaves an environment with no
-//! address at all. A swarm branch is something that must be driven, and an app
-//! with no address cannot be. ADR-0083 derives the host instead.
-//!
-//! So this test asserts three things that are each other's preconditions:
+//! What was missing was a DOOR: `spawn_environment` nulled the manifest's ingress (right about the
+//! hazard, since the parent's hostname on two apps routes to whichever was seen last) and left no
+//! address, so ADR-0083 derives the host instead. Three assertions, each the other's precondition:
 //!
 //!   * an environment ANSWERS, on its own derived hostname
 //!   * what it writes goes to ITS store, not the parent's
-//!   * and not to any sibling's — asserted with all three writing the same KEY,
-//!     because different keys would pass against one shared bucket
+//!   * and not to any sibling's, asserted with all three writing the same KEY (different keys would
+//!     pass against one shared bucket)
 
 use std::time::Duration;
 
@@ -104,14 +98,9 @@ fn wait_for(fleet: &Fleet, needle: &str, within: Duration) -> bool {
     false
 }
 
-/// One call to a branch, by its own hostname.
-///
-/// Returns the PARSED answer, and `None` for anything that was not one. The first
-/// version of this returned the raw body and the assertions used `contains`,
-/// which passed against a null ingress: the ingress echoes the hostname it could
-/// not route — `no replica of "branch-0.swarm.ada.test" is currently placed` —
-/// and `contains("branch-0")` is perfectly true of that. An error that quotes
-/// what you asked for will satisfy any substring check for what you asked for.
+/// One call to a branch, by its own hostname. Returns the PARSED answer, `None` for anything else:
+/// raw-body `contains` checks passed against a null ingress, which echoes the hostname it could not
+/// route, and an error quoting what you asked for satisfies any substring check for it.
 fn call(port: u16, host: &str, path: &str) -> Option<Value> {
     let http =
         reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build().unwrap();
@@ -119,8 +108,7 @@ fn call(port: u16, host: &str, path: &str) -> Option<Value> {
     if !r.status().is_success() {
         return None;
     }
-    // `kv-probe` answers JSON and nothing else does; a body that will not parse
-    // came from something that is not the branch.
+    // `kv-probe` answers JSON and nothing else does; a body that will not parse is not the branch.
     serde_json::from_str(&r.text().ok()?).ok()
 }
 
@@ -131,10 +119,8 @@ fn every_branch_writes_its_own_store_and_none_writes_the_parents() {
     let fleet = Fleet::start_with_platform("branch", 1);
     let api = Api::new(fleet.platform_url());
 
-    // `kv-probe` because it is the only component in the catalogue that takes its
-    // bucket from the request rather than hardcoding `default`, and because its
-    // whole world is http + keyvalue — so a store that turned out to be shared
-    // could not be blamed on a link.
+    // `kv-probe` takes its bucket from the request rather than hardcoding `default`, and its whole
+    // world is http + keyvalue, so a shared store could not be blamed on a link.
     let wasm =
         std::fs::read(repo_root().join("components/target/wasm32-wasip2/release/kv_probe.wasm"))
             .expect("run `cargo xtask build --force`");
@@ -162,7 +148,6 @@ fn every_branch_writes_its_own_store_and_none_writes_the_parents() {
         fleet.node_log("n1")
     );
 
-    // --- one environment per branch -----------------------------------------
     let names: Vec<String> = (0..BRANCHES).map(|i| format!("branch-{i}")).collect();
     for n in &names {
         let (code, spawned) = api.post("/api/environments", json!({ "app": "swarm", "env": n }));
@@ -176,22 +161,19 @@ fn every_branch_writes_its_own_store_and_none_writes_the_parents() {
         );
     }
 
-    // The hostnames the strategies will use. Derived, so they cannot collide with
-    // the parent — which is the whole reason a null ingress was the wrong fix.
+    // The hostnames the strategies will use, derived so they cannot collide with the parent.
     let hosts: Vec<String> = names.iter().map(|n| format!("{n}.{parent_host}")).collect();
     let strategies = on_hosts(&default_strategies(BRANCHES as u16), &hosts);
     assert_eq!(strategies[1].host, hosts[1], "a branch must carry its own address");
 
-    // --- IT ANSWERS ON ITS OWN NAME -----------------------------------------
-    // Which an environment could not do at all before ADR-0083: the manifest's
-    // ingress was nulled, so the branch existed, ran, and had no door.
+    // --- IT ANSWERS ON ITS OWN NAME ---
+    // Impossible before ADR-0083: the ingress was nulled, so the branch ran with no door.
     let port = fleet.ingress_port;
     for (i, host) in hosts.iter().enumerate() {
         let deadline = std::time::Instant::now() + Duration::from_secs(120);
         let ok = loop {
-            // `open: ok` from the probe itself. Not "did not say 503": an ingress
-            // that cannot route still answers, and what it answers with quotes the
-            // host it failed on.
+            // `open: ok` from the probe itself, not "did not say 503": an ingress that cannot route
+            // still answers, quoting the host it failed on.
             if call(port, host, "/who?name=default").map(|v| v["open"] == json!("ok")) == Some(true)
             {
                 break true;
@@ -209,9 +191,8 @@ fn every_branch_writes_its_own_store_and_none_writes_the_parents() {
         );
     }
 
-    // --- THE SAME KEY, FROM EVERY BRANCH ------------------------------------
-    // The same key on purpose. Different keys would pass just as happily against
-    // one shared bucket, which is the bug this is looking for.
+    // --- THE SAME KEY, FROM EVERY BRANCH ---
+    // The same key on purpose: different keys would pass against one shared bucket.
     for (i, host) in hosts.iter().enumerate() {
         let r = call(port, host, &format!("/put?name=default&k=claim&v=branch-{i}"));
         assert_eq!(
@@ -231,14 +212,10 @@ fn every_branch_writes_its_own_store_and_none_writes_the_parents() {
         );
     }
 
-    // --- AND THE PARENT NEVER SAW ANY OF IT ---------------------------------
-    // An environment derives its app name so the bucket derives with it. If the
-    // derivation were cosmetic, the parent would be holding the last write.
-    // Retried until the parent ANSWERS, then asserted on what it said. `None` is
-    // "did not answer", and the first version of this treated that as "did not
-    // hold the write" — so a parent that was merely unreachable would have proved
-    // isolation. Under the full suite it WAS unreachable, and the test failed
-    // claiming the opposite of what had happened.
+    // --- AND THE PARENT NEVER SAW ANY OF IT ---
+    // If the derivation were cosmetic, the parent would hold the last write. Retried until the parent
+    // ANSWERS, then asserted on what it said: `None` is "did not answer", and treating it as "did not
+    // hold the write" would let an unreachable parent prove isolation.
     let deadline = std::time::Instant::now() + Duration::from_secs(60);
     let parent = loop {
         if let Some(v) = call(port, &parent_host, "/get?name=default&k=claim") {
@@ -263,7 +240,6 @@ fn every_branch_writes_its_own_store_and_none_writes_the_parents() {
          store wearing three names"
     );
 
-    // --- closing a branch closes it -----------------------------------------
     let (code, _) = api.delete("/api/environments?app=swarm&env=branch-0");
     assert_eq!(code, 200, "despawn failed");
 

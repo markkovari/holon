@@ -1,19 +1,12 @@
-//! The loop learns: a run writes what it failed on, and a later run can only
-//! succeed by having read it.
+//! The loop learns: a run writes what it failed on, and a later run can only succeed by having read it.
 //!
-//! This is the claim the knowledge layer exists to make, and it is arranged so
-//! that nothing else can produce the result. The scripted model has exactly two
-//! rules that matter: it writes the WRONG answer for the goal as written, and the
-//! right one when it sees `AVOID` — the tag a retrieved `errors` lesson is
-//! rendered under. `AVOID` cannot appear in the second prompt unless the first
-//! run's failure became a lesson, the lesson was retrieved, and the retrieval was
-//! rendered into the branch's goal.
+//! The scripted model has two rules that matter: it writes the WRONG answer for the goal as written
+//! and the right one when it sees `AVOID` (the tag a retrieved `errors` lesson is rendered under).
+//! `AVOID` cannot reach the second prompt unless the first run's failure became a lesson, was
+//! retrieved, and was rendered into the branch's goal.
 //!
-//! No AI calls: eight components, a real SurrealDB, the real native checks runner,
-//! and a deterministic provider — so a green run means the machinery works rather
-//! than that a model was in a good mood. `reconciler/tests/memory.rs` covers the
-//! pool itself; this covers the LOOP closing around it.
-//!
+//! No AI calls: eight components, a real SurrealDB, the real checks runner and a deterministic
+//! provider. `reconciler/tests/memory.rs` covers the pool; this covers the LOOP closing around it.
 //! Skipped, loudly, when Docker cannot start the database.
 
 use std::process::{Child, Command, Stdio};
@@ -121,9 +114,8 @@ fn plan(text: &str) -> Value {
             "id": "answer-is-42",
             "required": true,
             "weight": 1,
-            // The command must not NAME the answer, or a repair prompt hands it
-            // over and the model never needs the lesson (measured, the hard way,
-            // in the contract e2e).
+                        // The command must not NAME the answer, or a repair prompt hands it over and the model
+                        // never needs the lesson.
             "command": ["grep", "-q", "42", "src/lib.rs"],
         }],
         "base_commit": BASE,
@@ -161,8 +153,8 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
         host: "memory.acme.test".into(),
         timeout: Duration::from_secs(30),
     };
-    // The first real call is the readiness check: it can only answer by reaching
-    // SurrealDB through two components (the mistake `Fleet::until` exists for).
+    // The first real call is the readiness check: it can only answer by reaching SurrealDB through
+    // two components (`Fleet::until`).
     fleet.until("asking the pool about a goal nobody has run", Duration::from_secs(180), || {
         pool.already_done("nothing has ever asked this", 0.9).map(|_| ())
     });
@@ -170,7 +162,6 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
     let goal = "make the answer 42";
     let bounds = Bounds { branches: 1, max_rounds: 1, max_tokens: 0, patience: 0 };
 
-    // --- run one: it fails, and writes down why -------------------------------
     let first = search_with(
         &driver_url,
         "learndrive.acme.test",
@@ -191,7 +182,6 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
         .expect("the pool took the lesson");
     assert!(handle.starts_with("errors:"), "negative knowledge goes to errors: {handle}");
 
-    // --- the lesson comes back, and is rendered as advice ----------------------
     let lessons = pool
         .recall(
             goal,
@@ -203,11 +193,8 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
     assert!(rendered.contains("[AVOID]"), "an errors lesson is marked as one: {rendered}");
     assert!(rendered.contains("answer-is-42"), "{rendered}");
 
-    // --- run two: the SAME goal, one branch reading -----------------------------
-    //
-    // The script cannot produce 42 for this goal on its own — it writes 41 — so a
-    // pass here means the lesson reached the prompt. Nothing else in the fixture
-    // can produce that.
+    // --- run two: the SAME goal, one branch reading ---
+    // The script writes 41 for this goal on its own, so a pass here means the lesson reached the prompt.
     let mut strategies = default_strategies(1);
     strategies[0].knowledge = rendered.clone();
     let second = search_with(
@@ -231,10 +218,8 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
         second.stopped
     );
 
-    // --- and a branch that reads nothing still fails ---------------------------
-    //
-    // The control arm, and the only thing that makes the assertion above mean
-    // anything: same goal, same script, same everything except the reading.
+    // --- and a branch that reads nothing still fails ---
+    // The control arm: same goal, same script, everything the same except the reading.
     let cold = search_with(
         &driver_url,
         "learndrive.acme.test",
@@ -249,7 +234,6 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
         "the cold branch passed too, so the second run proves nothing about reading"
     );
 
-    // --- what was read is attributed to what happened --------------------------
     let keys: Vec<String> = lessons.iter().map(|l| l.key.clone()).collect();
     pool.attribute(&keys, &run_id(12_000, 0, "branch-0"), true).expect("attribution landed");
     pool.attribute(&keys, &run_id(13_000, 0, "branch-0"), false).expect("attribution landed");
@@ -265,13 +249,10 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
         "sinking is not deletion"
     );
 
-    // --- and what the gate proved can be promoted ------------------------------
-    //
-    // The trusted pool has one writer, and it is not the agent-facing interface:
-    // `promote` goes through `knowledge:memory/promotion`, which an agent's world
-    // does not contain (ADR-0084). The distiller's own model call is not exercised
-    // here — its prompt and its parser are unit-tested, and a scripted door would
-    // only be testing the script.
+    // --- and what the gate proved can be promoted ---
+    // The trusted pool has one writer, not the agent-facing interface: `promote` goes through
+    // `knowledge:memory/promotion`, absent from an agent's world (ADR-0084). The distiller's model call
+    // is not exercised (its prompt and parser are unit-tested).
     let lesson = "the gate greps the file rather than running it, so the answer has to be \
                   literal in the source";
     let promoted = pool
@@ -279,8 +260,7 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
         .expect("a passing score may promote");
     assert!(promoted.starts_with("patterns:"), "promotion writes the trusted pool: {promoted}");
 
-    // A score that did not pass may not, and the refusal comes from the component
-    // rather than from politeness here.
+    // A score that did not pass may not, and the refusal comes from the component.
     let refused = pool
         .promote(goal, "branch-0", "run-x", lesson, 0)
         .expect_err("a gate that did not pass must not promote");

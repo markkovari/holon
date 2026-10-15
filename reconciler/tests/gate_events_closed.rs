@@ -1,14 +1,9 @@
-//! The `events` closed-fixture gate, ported from
-//! `components/events-domain/e2e-closed.sh`.
+//! The `events` closed-fixture gate, ported from `components/events-domain/e2e-closed.sh`.
 //!
-//! Every other events gate runs with `allow-test-routes=1`, so every other events gate
-//! proves the app works WITH a fixture route the deployment must never have. This one
-//! runs the same artifact with the flag ABSENT and requires that the route is gone —
-//! and that the app still works through the front door.
-//!
-//! It also asks the other half of the same question: with no fixture, who opens the
-//! first event? `organizer-emails` is the answer, and it is CONFIG precisely so that a
-//! person asking for a role cannot put themselves on it.
+//! Every other events gate runs with `allow-test-routes=1`, proving the app works WITH a fixture route the
+//! deployment must never have. This runs the same artifact with the flag ABSENT and requires the route to
+//! be gone while the app works through the front door. With no fixture, `organizer-emails` opens the first
+//! event, and it is CONFIG so that a person asking for a role cannot put themselves on it.
 
 mod gatelib;
 use gatelib::{field, Gate};
@@ -16,21 +11,18 @@ use serde_json::json;
 
 #[test]
 fn the_fixture_is_closed_and_signing_up_does_not_make_you_an_organizer() {
-    // A per-run address, as the shell used `$$`: two runs against one store would
-    // collide on the 409 assertion below.
+    // A per-run address, as the shell used `$$`: two runs against one store would collide on the 409 below.
     let unique = std::process::id();
     let boss_email = format!("boss{unique}@example.test");
     let config = format!("organizer-emails={boss_email}");
     // NOT `allow-test-routes`. That absence is the subject of this gate.
     let Some(gate) = Gate::compose_and_start("events", "events-domain", &[&config]) else { return };
 
-    // --- the fixture is not reachable ---------------------------------------------
     let (c, _) = gate.post("/test/seed", None, json!({}));
     assert_eq!(c, 404, "the fixture must be 404 when allow-test-routes is not set");
     let (c, _) = gate.get("/test/events/anything", None);
     assert_eq!(c, 404, "every /test route goes with it");
 
-    // --- and the front door works --------------------------------------------------
     let email = format!("ada{unique}@example.test");
     let (_, reg) =
         gate.post("/api/register", None, json!({"email": email, "password":"correct-horse"}));
@@ -60,7 +52,6 @@ fn the_fixture_is_closed_and_signing_up_does_not_make_you_an_organizer() {
         gate.post("/api/login", None, json!({"email": email, "password":"wrong-password"}));
     assert_eq!(c, 401, "a bad password is 401");
 
-    // --- a registered attendee is an ATTENDEE, not an organizer ---------------------
     let (c, _) = gate.post(
         "/api/events",
         Some(&token),
@@ -73,10 +64,9 @@ fn the_fixture_is_closed_and_signing_up_does_not_make_you_an_organizer() {
     let (c, _) = gate.get("/api/tickets", Some(&token));
     assert_eq!(c, 200, "but they can see their own tickets");
 
-    // --- the deployment can name its first organizer ---------------------------------
-    //
-    // Without this a fresh box has nobody who may open an event and no organizer to
-    // grant the role — a deadlock, not a security property.
+    // --- the deployment can name its first organizer ---
+    // Without this a fresh box has nobody who may open an event and no organizer to grant the role
+    // (a deadlock, not a security property).
     let (_, r) =
         gate.post("/api/register", None, json!({"email": boss_email, "password":"correct-horse"}));
     let boss = field(&r, "token");
