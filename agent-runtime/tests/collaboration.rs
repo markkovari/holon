@@ -71,7 +71,6 @@ fn subscriber(name: &str, topic: &str, reply: &str) -> AgentSpec {
     s
 }
 
-// ---- durability ------------------------------------------------------------
 
 #[test]
 fn an_event_sent_while_an_agent_is_paused_is_delivered_when_it_resumes() {
@@ -143,7 +142,6 @@ fn an_event_filter_only_wakes_the_agent_for_matching_payloads() {
     assert_eq!(runs(&rt, "picky").len(), 1);
 }
 
-// ---- the shared store ------------------------------------------------------
 
 #[test]
 fn a_store_watcher_wakes_only_on_a_real_change_under_its_prefix() {
@@ -242,7 +240,6 @@ fn store_access_and_event_topics_are_granted_by_the_spec_not_assumed() {
     assert_eq!(rt.kv().get("private-nosy", "mine").unwrap().unwrap().value, "ok");
 }
 
-// ---- waking and calling agents, and the trace ------------------------------
 
 #[test]
 fn a_chain_across_agents_is_one_trace_with_parent_links_through_the_tool_call_that_woke_each() {
@@ -392,7 +389,6 @@ fn a_timer_set_by_the_agent_wakes_it_once_later_and_is_persisted_meanwhile() {
     );
 }
 
-// ---- guards ----------------------------------------------------------------
 
 #[test]
 fn a_cycle_between_agents_is_cut_and_the_refusal_is_logged() {
@@ -479,7 +475,6 @@ fn a_chain_longer_than_the_hop_limit_is_refused() {
     assert_eq!(d.trace_id, "0af7651916cd43dd8448eb211c80319c");
 }
 
-// ---- standard export -------------------------------------------------------
 
 #[test]
 fn finished_runs_are_exported_to_an_otlp_collector_as_json() {
@@ -520,7 +515,6 @@ fn finished_runs_are_exported_to_an_otlp_collector_as_json() {
     assert!(spans.iter().all(|s| s["traceId"] == rec.trace_id.as_str()));
 }
 
-// ---- projects ---------------------------------------------------------------
 
 use agent_runtime::projects::Project;
 

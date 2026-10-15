@@ -4,19 +4,15 @@
 //!
 //! ## How agents wake each other
 //!
-//! * **Call** (`agent:<name>`) — synchronous; the caller gets the answer and
-//!   the tokens it cost, charged to its own budget.
+//! * **Call** (`agent:<name>`) — synchronous; tokens are charged to the caller's budget.
 //! * **Task** (`spawn_task` / `task_result`) — the same, without waiting.
-//! * **Event** (`emit_event`) — durable, fan-out. Written to the bus log
-//!   first, then delivered to each subscriber from its own offset, so a paused
-//!   agent or a restart loses nothing.
-//! * **Store** (`store_put`) — a write that CHANGES a shared value publishes
-//!   `store.<ns>`; agents with a `StoreChange` trigger wake on it.
+//! * **Event** (`emit_event`) — durable fan-out: written to the bus log, then delivered to
+//!   each subscriber from its own offset, so a paused agent or a restart loses nothing.
+//! * **Store** (`store_put`) — a write that CHANGES a value publishes `store.<ns>`.
 //! * **Timer** (`schedule_self`) — a persisted one-shot wake-up.
 //!
-//! Every hop carries a [`Cause`](crate::agent::Cause): the W3C trace id, the
-//! parent span, hops, the `agent|topic` chain and the remaining token budget.
-//! That is what the guards below, and the trace export, are built on.
+//! Every hop carries a [`Cause`](crate::agent::Cause) (trace id, parent span, hops, chain,
+//! remaining budget): what the guards below and the trace export are built on.
 //!
 //! ## What stops a runaway
 //!
@@ -314,7 +310,6 @@ impl Runtime {
         crate::otlp::request(&self.store.trace(trace_id))
     }
 
-    // ---- lifecycle --------------------------------------------------------
 
     /// A new subscriber starts at the head of each topic it listens on: it
     /// hears what happens from now on, not the whole history of the topic.
@@ -480,7 +475,6 @@ impl Runtime {
         Ok(t)
     }
 
-    // ---- running ----------------------------------------------------------
 
     fn lock_for(&self, name: &str) -> Arc<Mutex<()>> {
         self.busy.lock().unwrap().entry(name.to_string()).or_default().clone()
@@ -666,7 +660,6 @@ impl Runtime {
         Ok(rec)
     }
 
-    // ---- bus --------------------------------------------------------------
 
     fn publish_draft(self: &Arc<Self>, topic: &str, draft: Draft) -> Result<usize, String> {
         validate_topic(topic)?;
@@ -807,7 +800,6 @@ impl Runtime {
         }
     }
 
-    // ---- schedule and timers ---------------------------------------------
 
     fn save_timers(&self) {
         let t = self.timers.lock().unwrap();
@@ -890,7 +882,6 @@ impl Runtime {
         self.stop.store(true, Ordering::Relaxed);
     }
 
-    // ---- shared store -----------------------------------------------------
 
     /// Writes from outside any agent (the admin API). Wakes watchers on change.
     pub fn put_store(
@@ -938,7 +929,6 @@ impl Runtime {
         Ok(put)
     }
 
-    // ---- tasks ------------------------------------------------------------
 
     fn set_task(&self, id: &str, state: TaskState) {
         let mut tasks = self.tasks.lock().unwrap();
@@ -953,7 +943,6 @@ impl Runtime {
         }
     }
 
-    // ---- approvals --------------------------------------------------------
 
     pub fn pending_approvals(&self) -> Vec<Pending> {
         self.approvals

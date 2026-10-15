@@ -166,7 +166,6 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
         .find(|h| h.field.equiv("authorization"))
         .is_some_and(|h| !token.is_empty() && h.value.as_str() == format!("Bearer {token}"));
 
-    // ---- open tier --------------------------------------------------------
     match (&method, segs.as_slice()) {
         (_, ["health"]) => return text(req, 200, "ok"),
         // Liveness for the gateway's callers: answers without spending a model call.
@@ -252,7 +251,6 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
         _ => {}
     }
 
-    // ---- admin tier -------------------------------------------------------
     if !authed {
         return text(req, 401, "admin token required");
     }
@@ -528,7 +526,6 @@ mod tests {
         assert_eq!(runs[0]["input"], "ping");
         assert_eq!(runs[0]["trigger"], "http");
 
-        // pausing refuses HTTP triggers too
         assert!(c
             .post(format!("{base}/agents/echo/pause"))
             .bearer_auth("tok")
@@ -1024,7 +1021,6 @@ mod tests {
                 .status(),
             422
         );
-        // the change was published, so it shows in the topic log
         let log: Value = c
             .get(format!("{base}/topics/store.rowing"))
             .bearer_auth("tok")

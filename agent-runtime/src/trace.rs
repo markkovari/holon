@@ -2,11 +2,8 @@
 //! the `traceparent` header that carries them across HTTP.
 //!
 //! <https://www.w3.org/TR/trace-context/> — `00-<trace-id 32 hex>-<parent-id 16
-//! hex>-<flags 2 hex>`, all lowercase, neither id all zeros. A caller that
-//! already has a trace (a web request, another service) passes it in and this
-//! runtime joins it; otherwise the first run starts one. Because the format is
-//! the standard one, anything that speaks it — and every OpenTelemetry
-//! collector — can follow a chain that crosses agents, the lattice and beyond.
+//! hex>-<flags 2 hex>`, all lowercase, neither id all zeros. A caller's trace is joined;
+//! otherwise the first run starts one.
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
@@ -37,12 +34,10 @@ fn nonzero64() -> u64 {
     }
 }
 
-/// A new 32-hex trace id.
 pub fn new_trace_id() -> String {
     format!("{:016x}{:016x}", nonzero64(), rand64())
 }
 
-/// A new 16-hex span id.
 pub fn new_span_id() -> String {
     format!("{:016x}", nonzero64())
 }

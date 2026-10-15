@@ -462,11 +462,9 @@ impl Matrix {
         Ok(())
     }
 
-    /// Accepts the owner's pending invite to `room`, using the owner's own session.
-    /// Every room the bridge makes invites the owner at creation; this is what turns
-    /// "the agent made you a room" into a room that is already in your list, with no
-    /// invite to find and accept. (Synapse's admin-join API was tried first and
-    /// refuses invite-only rooms it has no member to invite from.)
+    /// Accepts the owner's pending invite to `room`, using the owner's own session, so
+    /// the room is already in their list. (Synapse's admin-join API refuses invite-only
+    /// rooms it has no member to invite from.)
     pub fn join_as_owner(&self, room: &str) -> R<()> {
         self.call(
             reqwest::Method::POST,

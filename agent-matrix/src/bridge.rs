@@ -1,16 +1,14 @@
 //! The bridge: every agent is a Matrix user, every project a Space.
 //!
-//! * **Agent → user.** `@agent-<name>:<server>`, registered through the
-//!   appservice, with a direct room with the owner that the owner is placed in.
-//! * **Project → Space** with a `general` room (where you talk to its agents) and
-//!   a `feed` room (where agents report; read-only by convention).
+//! * **Agent → user.** `@agent-<name>:<server>`, with a direct room with the owner.
+//! * **Project → Space** with a `general` room (talk to its agents) and a `feed`
+//!   room (agents report; read-only by convention).
 //! * **Membership is mutual.** Inviting an agent's user to a project room adds it
-//!   to the project in the runtime (and so grants it the project's store and
-//!   topics); removing it takes that away. The runtime's registry is the source
-//!   of truth, and each reconcile pass makes Matrix match it.
-//! * **Who answers** in a project room: the agents you mention; if none, the
-//!   project's lead; if there is no lead, nobody (so five agents do not all
-//!   reply to every message).
+//!   to the project in the runtime (granting its store and topics); removing it
+//!   takes that away. The runtime's registry is the truth; each reconcile pass
+//!   makes Matrix match it.
+//! * **Who answers** in a project room: the agents you mention; else the lead;
+//!   else nobody (so five agents do not all reply to every message).
 //! * **Approvals** appear as a poll in the agent's room; your vote answers them.
 //!
 //! Only the owner can talk to the agents. Everyone else's messages are ignored.
@@ -413,7 +411,6 @@ impl Bridge {
         self.mx.set_displayname(&self.bridge_user(), "holon")
     }
 
-    // ---- reconcile: make Matrix match the runtime ---------------------------
 
     pub fn reconcile(&self) -> Result<(), String> {
         let _one = self.reconciling.lock().unwrap();
@@ -442,7 +439,6 @@ impl Bridge {
         Ok(())
     }
 
-    // ---- an agent that was deleted (ADR-0105, section 3) ----------------------
 
     /// Retires the rooms of agents the runtime no longer lists, brings back the room of one
     /// that was restored, and lets go of the room of one that left the trash.
@@ -840,7 +836,6 @@ impl Bridge {
         })
     }
 
-    // ---- events from Synapse ---------------------------------------------
 
     /// True the first time an event id is seen (Synapse can deliver one twice).
     fn first_time(&self, event_id: &str) -> bool {
@@ -1361,7 +1356,6 @@ impl Bridge {
         }
     }
 
-    // ---- approvals as polls ---------------------------------------------------
 
     /// Posts a poll for every pending approval that has none yet, and forgets the
     /// polls of approvals that are no longer pending (answered elsewhere, or timed out).
@@ -1445,7 +1439,6 @@ impl Bridge {
         }
     }
 
-    // ---- archived projects (ADR-0105, section 5) ------------------------------
 
     /// Every room of a project, its children first and its Space last, so leaving them in
     /// this order never leaves a room whose Space is gone.
@@ -1564,7 +1557,6 @@ impl Bridge {
         }
     }
 
-    // ---- results nobody asked for ---------------------------------------------
 
     /// Posts what the runtime ran on its own and the owner wants to read: see
     /// `scheduled::due`. An agent the bridge has not seen before is only marked as
@@ -1613,7 +1605,6 @@ impl Bridge {
         }
     }
 
-    // ---- background loops ---------------------------------------------------
 
     /// Starts the reconcile, approval and scheduled-result loops on their own threads.
     pub fn spawn_loops(self: &Arc<Self>) {
