@@ -82,7 +82,9 @@ impl Guest for Component {
         let ms = now_ms();
         let rand80 = unsafe {
             if ms == LAST_MS {
-                // Same millisecond: increment the random component so the new id sorts strictly after the previous one (80-bit overflow is astronomically unlikely).
+                // Same millisecond: increment the random component so the new
+                // id sorts strictly after the previous one. (80-bit overflow
+                // into the next ms is astronomically unlikely and harmless.)
                 LAST_RAND = LAST_RAND.wrapping_add(1) & ((1u128 << 80) - 1);
                 LAST_RAND
             } else {
