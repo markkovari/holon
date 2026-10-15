@@ -25,7 +25,6 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
         return Reply::err(400, "invalid_question");
     }
 
-    // 1. Step-up
     let entries =
         records::find_by("stepups", "subject", &json!(subject).to_string()).unwrap_or_default();
     let is_stepped_up = entries.first().is_some_and(|entry| {
@@ -39,7 +38,6 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
         return Reply::err(403, "step_up_required");
     }
 
-    // 2. Cache
     let cache_key = format!("answer:{}", question);
     if let Ok(Some(cached_bytes)) = cache::get(&cache_key) {
         if let Ok(cached_json) = serde_json::from_slice::<Value>(&cached_bytes) {
@@ -59,7 +57,6 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
         }
     }
 
-    // 3. Retrieval
     let hits = match search::query(question, search::Mode::Any, &[], 3) {
         Ok(h) => h,
         Err(_) => return Reply::err(500, "search_error"),
@@ -81,13 +78,11 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
         }
     }
 
-    // 4. Budget
     let budget = cfg_u64("answer-budget", 50);
     let period = cfg_u64("answer-period-secs", 86400);
 
     match meter::reserve(&subject, 1, budget, period) {
         Ok(balance) => {
-            // 5. The model
             let context = context_parts.join("\n\n");
             match ai::generate(question, &context) {
                 Ok(answer_text) => {

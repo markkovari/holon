@@ -1,9 +1,9 @@
 //! `concept2-logbook` — read a public Concept2 logbook profile over HTTP.
 //!
-//! Replaces the Python connector `agent-runtime/connectors/concept2.py`. ADR-0095: a thing is
-//! native (or a script outside the sandbox) only when WASI cannot express it, and this is an HTTPS
-//! GET and some string work, so it is a component. It exports `wasi:http/incoming-handler@0.2.0`
-//! and imports `wasi:http/outgoing-handler@0.2.0` and nothing else: no key, no state, no secrets.
+//! Replaces the Python connector `agent-runtime/connectors/concept2.py`. ADR-0095: native only
+//! when WASI cannot express it, and this is an HTTPS GET plus string work, so it is a component.
+//! Exports `wasi:http/incoming-handler@0.2.0`, imports `wasi:http/outgoing-handler@0.2.0` and
+//! nothing else: no key, no state, no secrets.
 //!
 //!   GET /list?profile=<digits>[&limit=1..30][&page=n]   newest workouts, one per line
 //!   GET /workout/<id>?profile=<digits>                  one session: totals and splits

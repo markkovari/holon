@@ -24,22 +24,18 @@ fn get_str(key: &str, default: &str) -> String {
     }
 }
 
-/// Session lifetime in seconds.
 pub fn session_ttl() -> u64 {
     get_u64("session-ttl", 3600)
 }
 
-/// Minimum acceptable password length.
 pub fn password_min_len() -> usize {
     get_u64("password-min-len", 8) as usize
 }
 
-/// Seconds to cache OIDC discovery + JWKS.
 pub fn jwks_cache_ttl() -> u64 {
     get_u64("jwks-cache-ttl", 3600)
 }
 
-/// Tenant to assume when a token/request carries none.
 pub fn default_tenant() -> String {
     get_str("default-tenant", "")
 }
@@ -69,7 +65,6 @@ pub fn allowed_algs() -> Vec<String> {
         .collect()
 }
 
-/// Clock-skew tolerance (seconds) applied to `exp` / `nbf` checks. Default 60.
 pub fn clock_skew() -> u64 {
     get_u64("clock-skew", 60)
 }

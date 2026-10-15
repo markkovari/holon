@@ -1,26 +1,17 @@
 //! `fs-watcher` — report what changed in a directory, since a cursor
 //!
-//! The watching happens in `comp-fswatch`, which is native because a watch
-//! syscall is not something a `wasm32-wasip2` guest has (ADR-0095). This is the
-//! component side: it holds the contract, and reaches the daemon over HTTP the
-//! same way `checks-runner` reaches `comp-checks`.
+//! The watching happens in `comp-fswatch`, native because a watch syscall is not something a
+//! `wasm32-wasip2` guest has (ADR-0095). This component holds the contract and reaches the
+//! daemon over HTTP, like `checks-runner` reaches `comp-checks`.
 //!
-//! Two things follow from that split, and both are the point rather than a cost:
-//!
-//!   * what this may dial is a MANIFEST decision (ADR-0008). The daemon's
-//!     address is `fswatch-url` in `wasi:config`, and the deployment's egress
-//!     allow-list decides whether the call leaves at all. A component that could
-//!     reach any address would make the allow-list decorative.
-//!   * the daemon has its own allow-list of directories. Neither side trusts the
-//!     path in the request, because it can come from a model.
+//!   * what this may dial is a MANIFEST decision (ADR-0008): the daemon's address is
+//!     `fswatch-url` in `wasi:config` and the egress allow-list decides whether the call
+//!     leaves at all;
+//!   * the daemon has its own allow-list of directories. Neither side trusts the path in the
+//!     request, because it can come from a model.
 //!
 //! Config (wasi:config/store):
 //!   fswatch-url    where `comp-fswatch` is listening, e.g. http://127.0.0.1:8000
-//!
-//! It used to return `format!("Watching {} for changes...", dir)` — a sentence
-//! shaped like an answer, which no caller could tell from a real one. That is
-//! what the old `-> string` contract permitted; the current one cannot express
-//! it.
 
 #[allow(warnings)]
 mod bindings;
@@ -35,9 +26,7 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Ten seconds. A poll stats a directory and returns; anything slower than this
-/// is a daemon in trouble rather than a big directory, and a caller waiting on
-/// an HTTP request would rather hear that than wait.
+/// Ten seconds: a poll stats a directory and returns, so anything slower is a daemon in trouble.
 const TIMEOUT_NS: u64 = 10_000_000_000;
 
 fn daemon_url() -> Result<String, WatchError> {
@@ -135,10 +124,8 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, WatchError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser.
-///
-/// The daemon's replies have four shapes and no nesting beyond a flat event
-/// list, so a full serde dependency would be more code than the thing it reads.
+/// Pull one JSON string field out without a parser: the daemon's replies are flat enough that
+/// serde would be more code than the thing it reads.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];

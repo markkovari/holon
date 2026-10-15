@@ -1,33 +1,13 @@
 //! `anthropic-vision` — show a model a picture and get back what it says, over Anthropic's Messages API
 //!
-//! The provider half of `vision:describe`. A guest hands over image bytes and a
-//! prompt and never learns which vendor looked — the same split `anthropic-provider`
-//! makes for text, and the reason `binder-domain` can scan a card without naming
-//! Anthropic anywhere in its own world.
+//! The provider half of `vision:describe`: a guest hands over image bytes and a prompt
+//! and never learns which vendor looked. Egress to exactly one authority, the key
+//! REVEALED from the vault (not read from config), model chosen at deploy time.
 //!
-//! The shape is the one `components/photo-critic` proved: egress to exactly one
-//! authority, the key REVEALED from the vault rather than read out of config, and the
-//! model chosen at deploy time.
-//!
-//! ## The base URL is config, and that is what makes a key optional
-//!
-//! `anthropic-provider` reads its base URL from `wasi:config` for the same reason,
-//! and `tools/claude-shim.mjs` speaks exactly the `/v1/messages` subset this sends —
-//! including image blocks. So a deployment can point this at the shim and the vision
-//! call runs on somebody's subscription with NO key anywhere in the tenant:
-//!
-//!     --config vision:base-url=http://127.0.0.1:8787
-//!
-//! The key is required only when talking to the real API. A tenant that has not been
-//! granted one is not asked for one, which is the point: the interface a guest sees
-//! is identical either way, and swapping the two is a deploy-time decision.
-//!
-//! ## What this deliberately does not do
-//!
-//! It does not know what a Pokémon card is. The prompt arrives from the caller,
-//! because the caller is the one that has to parse the answer — `card:identify` ships
-//! the prompt whose output it can read, so the two cannot drift apart. Swapping this
-//! provider for a local vision model changes nothing about either.
+//! The base URL is config (`vision:base-url`), so a deployment can point at
+//! `tools/claude-shim.mjs` (same `/v1/messages` subset, image blocks included) and run
+//! on a subscription with NO key in the tenant. The key is required only against the
+//! real API. The prompt comes from the caller because the caller must parse the answer.
 
 #[allow(warnings)]
 mod bindings;
@@ -51,9 +31,8 @@ const DEFAULT_BASE: &str = "https://api.anthropic.com";
 /// connection simply closes.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-/// What Anthropic's vision accepts. Checked here rather than passed through, because
-/// the far end's error for an unsupported type arrives as a 400 with a message about
-/// a field, which is a bad place to learn that a `.heic` was uploaded.
+/// What Anthropic's vision accepts, checked here: the far end's error for an unsupported
+/// type is a 400 about a field, a bad place to learn a `.heic` was uploaded.
 const MEDIA_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 fn model() -> String {
@@ -64,7 +43,6 @@ fn model() -> String {
         .unwrap_or_else(|| DEFAULT_MODEL.to_string())
 }
 
-/// Where to send it. `https://api.anthropic.com` unless a deployment says otherwise.
 fn base_url() -> String {
     config::get("vision:base-url")
         .ok()
@@ -73,10 +51,8 @@ fn base_url() -> String {
         .unwrap_or_else(|| DEFAULT_BASE.to_string())
 }
 
-/// Split a base URL into (https?, authority, path-prefix).
-///
-/// Deliberately small: this only has to handle what a deployment writes in config,
-/// which is a scheme, a host, a port and possibly a prefix.
+/// Split a base URL into (https?, authority, path-prefix); handles only what a
+/// deployment writes in config.
 fn split_base(base: &str) -> (bool, String, String) {
     let (tls, rest) = match base.split_once("://") {
         Some(("http", r)) => (false, r),
@@ -90,11 +66,8 @@ fn split_base(base: &str) -> (bool, String, String) {
     (tls, authority.to_string(), path.to_string())
 }
 
-/// Whether a key is REQUIRED, which is a property of where this is pointed.
-///
-/// The real API refuses without one; the shim ignores auth entirely and runs on a
-/// subscription. So a deployment that points at a shim needs no secret granted, and
-/// a tenant never holds a key.
+/// Whether a key is REQUIRED: the real API refuses without one, the shim ignores auth,
+/// so a deployment pointed at a shim needs no secret.
 fn key_required(authority: &str) -> bool {
     authority.ends_with("anthropic.com")
 }
@@ -126,8 +99,6 @@ fn b64(bytes: &[u8]) -> String {
     out
 }
 
-/// POST a JSON body to whatever `vision:base-url` names, and return
-/// (status, response-bytes).
 fn post(body: &[u8]) -> Result<(u16, Vec<u8>), String> {
     let (tls, authority, prefix) = split_base(&base_url());
     let headers = Fields::new();
@@ -157,8 +128,8 @@ fn post(body: &[u8]) -> Result<(u16, Vec<u8>), String> {
     }
     let opts = RequestOptions::new();
     let _ = opts.set_connect_timeout(Some(30_000_000_000));
-    // A vision call on a large photograph is slow, and a timeout shorter than the
-    // model is a provider that "fails" on exactly the pictures worth sending.
+    // A vision call on a large photograph is slow; a shorter timeout fails on exactly
+    // the pictures worth sending.
     let _ = opts.set_first_byte_timeout(Some(180_000_000_000));
     let _ = opts.set_between_bytes_timeout(Some(180_000_000_000));
 
@@ -212,13 +183,9 @@ impl Guest for Component {
                 MEDIA_TYPES.join(", ")
             )));
         }
-        // Refused HERE rather than by the far end: a request with no key comes back
-        // as a 401 about an `x-api-key` header, which reads as a bug in this
-        // component rather than as a deployment that never granted the secret.
-        //
-        // Only when a key is actually needed. Pointed at a shim there is nothing to
-        // grant, and demanding a secret that the far end ignores would make the
-        // keyless deployment — the one a tenant can actually run — impossible.
+        // Refused HERE, and only when a key is needed (not for a shim): the far end's
+        // 401 about `x-api-key` would read as a bug in this component rather than a
+        // secret that was never granted.
         let (_, authority, _) = split_base(&base_url());
         if key_required(&authority) && api_key().is_none() {
             return Err(DescribeError::ProviderDenied(format!(
@@ -246,9 +213,8 @@ impl Guest for Component {
 
         if status != 200 {
             let detail = parsed["error"]["message"].as_str().unwrap_or("no message").to_string();
-            // The status decides which error, because what a caller should DO differs:
-            // 401/403 is a deployment problem, 429 and 5xx are worth retrying, and a
-            // 400 is this request.
+            // 401/403 is a deployment problem, 429 and 5xx are worth retrying, a 400 is
+            // this request.
             return Err(match status {
                 400 => DescribeError::InvalidRequest(detail),
                 401 | 403 => DescribeError::ProviderDenied(detail),

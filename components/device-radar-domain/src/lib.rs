@@ -133,7 +133,8 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// Ceiling on a request body, matching the rest of the tree.
+/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
+/// guest traps and the caller just sees a closed connection.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
@@ -183,14 +184,6 @@ fn me(request: &Request) -> Outcome {
 }
 
 fn list_devices(_request: &Request) -> Outcome {
-    // Only authenticated users can scan
-    // let p = match introspect(request) { Ok(p) => p, Err(o) => return o, };
-    // actually, let's allow anyone for demo or require auth
-    // if !p.roles.contains(&"admin".to_string()) && !p.roles.contains(&"viewer".to_string()) {
-    //    return Outcome::Err(403, "forbidden".into());
-    // }
-
-    // call the capability!
     let devices = scan();
     let mut out = vec![];
     for d in devices {

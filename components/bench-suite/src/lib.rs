@@ -137,7 +137,6 @@ impl Guest for Component {
                     Ok(c) => {
                         let payload = vec![0x42u8; 1024];
                         let out = OutgoingValue::new_outgoing_value();
-                        // register the sink FIRST, then stream the body into it.
                         if c.write_data(BLOB_KEY, &out).is_err() {
                             return respond(response_out, 500, "text/plain", b"blob write");
                         }
@@ -212,18 +211,8 @@ fn sleep_ms(ms: u64) {
     bindings::wasi::clocks::monotonic_clock::subscribe_duration(ms * 1_000_000).block();
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
+/// guest traps and the caller just sees a closed connection.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_read_body!(MAX_BODY_BYTES);

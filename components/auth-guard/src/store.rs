@@ -10,9 +10,7 @@ use crate::config;
 use crate::kv;
 use crate::tokens;
 
-// ---- serde mirrors of the WIT records -----------------------------------
-// The generated WIT types don't derive serde, so we (de)serialize through
-// these plain structs.
+// The generated WIT types don't derive serde, so we (de)serialize through plain structs.
 
 #[derive(Serialize, Deserialize)]
 struct PrincipalDto {
@@ -60,8 +58,6 @@ fn now() -> u64 {
 fn json_err<E: core::fmt::Debug>(e: E) -> AuthError {
     AuthError::Internal(format!("json: {e:?}"))
 }
-
-// ---- sessions -----------------------------------------------------------
 
 /// A refresh token maps to its session AND its session family, so a stolen,
 /// already-rotated refresh token can be detected and the whole family killed.
@@ -147,13 +143,10 @@ pub fn session_revoke(session_id: &str) -> Result<(), AuthError> {
     kv::delete(&format!("sess:{session_id}"))
 }
 
-// ---- session families (for refresh-reuse breach response) ---------------
-
 fn family_key(family: &str) -> String {
     format!("family:{family}")
 }
 
-/// Append a session id to its family's member list.
 fn family_add(family: &str, session_id: &str) -> Result<(), AuthError> {
     let mut members: Vec<String> = match kv::get(&family_key(family))? {
         Some(b) => serde_json::from_str(&b).map_err(json_err)?,
@@ -189,16 +182,11 @@ pub fn session_lookup(session_id: &str) -> Result<Principal, AuthError> {
     Ok(dto.into())
 }
 
-// ---- rbac ---------------------------------------------------------------
-//
-// All RBAC state for a tenant lives in ONE kv value (`rbac:{tenant}`):
-// subject -> roles plus role -> permissions. Every kv op is a real backend
-// round-trip, so the old per-key layout (roles read + one read per role)
-// made every authorize 2+N trips; the single doc makes it one. Admin writes
-// are read-modify-write of the doc — cold path, same no-CAS caveat the
-// per-key layout already had.
-// ponytail: one doc per tenant; split back out per subject if a tenant's
-// subject count ever makes this value heavy.
+// All RBAC state for a tenant lives in ONE kv value (`rbac:{tenant}`): subject -> roles
+// plus role -> permissions. Every kv op is a backend round-trip, so one doc makes
+// authorize one trip instead of 2+N. Admin writes are read-modify-write of the doc
+// (cold path, no CAS).
+// ponytail: split per subject if a tenant's subject count ever makes the value heavy.
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct RbacDoc {
@@ -288,12 +276,10 @@ pub fn rbac_revoke_role(tenant: &str, subject: &str, role: &str) -> Result<(), A
 /// first, then role-derived permissions. A permission matches if target and
 /// action match, with "*" acting as a wildcard for either field.
 pub fn rbac_check_with(doc: &RbacDoc, p: &Principal, required: &Permission) -> bool {
-    // 1. Direct scope grant, formatted "target:action".
     let scope = format!("{}:{}", required.target, required.action);
     if p.scopes.iter().any(|s| s == &scope || s == "*") {
         return true;
     }
-    // 2. Role-derived permissions.
     p.roles.iter().any(|role| {
         doc.roles.get(role).is_some_and(|perms| {
             perms.iter().any(|d| matches_parts(&d.target, &d.action, required))
@@ -347,7 +333,6 @@ mod tests {
 
     #[test]
     fn wildcard_does_not_widen_the_other_field() {
-        // target wildcard but action still must match.
         assert!(!perm_matches(&perm("*", "read"), &perm("orders", "write")));
     }
 }

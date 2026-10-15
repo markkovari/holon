@@ -1,17 +1,12 @@
 //! WCAG 2.1 contrast, computed here rather than believed.
 //!
-//! No WASI, so it is host-testable — the same split `anthropic-provider`'s
-//! `codec` uses, and for the same reason: this is the part that can be wrong in a
-//! way no integration test would notice.
+//! No WASI, so it is host-testable (same split as `anthropic-provider`'s `codec`): this is
+//! the part that can be wrong in a way no integration test would notice.
 //!
-//! ## Why the component recomputes what the browser already sent
-//!
-//! The page measures pixels and computes ratios to draw its own swatches, and
-//! those numbers arrive in the request body. They are NOT what gets audited. A
-//! ratio is a claim from outside the trust boundary, and a model handed
-//! `"ratio": 21` for two greys would dutifully explain why that pair is fine.
-//! The hex pair is the only thing taken on trust here, and even that is parsed
-//! strictly; every number in the prompt is derived from it by this module.
+//! The component recomputes what the browser already sent: ratios in the request body are a
+//! claim from outside the trust boundary, and a model handed `"ratio": 21` for two greys
+//! would dutifully explain why that pair is fine. Only the hex pair is taken on trust
+//! (parsed strictly); every number in the prompt is derived here.
 
 /// One colour pair and what the maths says about it.
 #[derive(Debug, Clone, PartialEq)]
@@ -39,7 +34,6 @@ impl Pair {
     pub fn passes_aaa(&self) -> bool {
         self.ratio >= 7.0
     }
-    /// What a report should call it.
     pub fn verdict(&self) -> &'static str {
         if self.passes_aaa() {
             "AAA"
@@ -87,7 +81,6 @@ fn linearise(c: u8) -> f64 {
     }
 }
 
-/// Relative luminance, 0.0 (black) ..= 1.0 (white).
 pub fn luminance(rgb: (u8, u8, u8)) -> f64 {
     0.2126 * linearise(rgb.0) + 0.7152 * linearise(rgb.1) + 0.0722 * linearise(rgb.2)
 }

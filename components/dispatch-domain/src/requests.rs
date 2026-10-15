@@ -37,8 +37,6 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     out.unwrap_or_else(|e| e)
 }
 
-// ---------------------------------------------------------------- POST
-
 fn create(body: &str) -> Result<Reply, Reply> {
     let input: Value = serde_json::from_str(body).map_err(|_| invalid())?;
 
@@ -132,8 +130,6 @@ fn close(v: Option<&Value>, want: f64) -> bool {
     v.and_then(Value::as_f64).is_some_and(|got| (got - want).abs() < 1e-9)
 }
 
-// ---------------------------------------------------------------- GET list / one
-
 fn list(route: &Route) -> Result<Reply, Reply> {
     let mut filters = Vec::new();
     for key in ["state", "engineer"] {
@@ -187,8 +183,6 @@ fn every() -> Result<Vec<records::Entry>, Reply> {
     }
     Ok(out)
 }
-
-// ---------------------------------------------------------------- plumbing
 
 fn parse(data: &str) -> Value {
     serde_json::from_str(data).unwrap_or_else(|_| json!({}))

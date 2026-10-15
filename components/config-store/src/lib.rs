@@ -1,16 +1,10 @@
 //! `config-store` — runtime application config — timeouts, limits, URLs and tunables ops can change without a redeploy
 //!
-//! The *writable, versioned* sibling of the two config-shaped capabilities:
-//!   * `wasi:config` is host-injected, read-only, fixed at deploy time — the
-//!     operator hands the app a static bag of strings it cannot change.
-//!   * `config:store` (this) is a store the *app itself* manages at runtime:
-//!     typed values (string / int / bool / float / json) that ops can retune
-//!     without a redeploy, every write bumping a monotonic version for
-//!     optimistic concurrency and cache invalidation.
-//!   * `feature-flags` answers "is behaviour X on for this context" — it is
-//!     about *behaviour decisions*; `config:store` is about *raw values* a
-//!     caller reads and uses directly (timeouts, limits, URLs, tunables).
-//!
+//! The *writable, versioned* sibling of `wasi:config` (host-injected, read-only, fixed at
+//! deploy time): typed values (string / int / bool / float / json) the *app itself* manages
+//! at runtime, every write bumping a monotonic version for optimistic concurrency and cache
+//! invalidation. `feature-flags` is for *behaviour decisions*; this is for *raw values*
+//! (timeouts, limits, URLs, tunables).
 //! Backed purely by `wasi:keyvalue` + `wasi:clocks`. State per key lives at
 //! `cfg_{namespace}_{key}` as one serialized line:
 //!   `{tag}\t{version}\t{updated}\t{payload}`
@@ -37,8 +31,6 @@ fn now() -> u64 {
     wall_clock::now().seconds
 }
 
-// ---- key naming ---------------------------------------------------------
-
 /// Sanitize one opaque segment to NATS-legal kv chars (same byte scheme as
 /// idempotency-guard's `id_key` / the rate-limiter's `rl_key`).
 fn sanitize(seg: &str) -> String {
@@ -63,8 +55,6 @@ fn idx_key(namespace: &str) -> String {
     format!("cfgidx_{}", sanitize(namespace))
 }
 
-// ---- serialization ------------------------------------------------------
-
 /// Render a `value` to its `{tag}\t{payload}` parts.
 fn encode_value(value: &Value) -> (char, String) {
     match value {
@@ -76,13 +66,11 @@ fn encode_value(value: &Value) -> (char, String) {
     }
 }
 
-/// Serialize a full entry to one line: `{tag}\t{version}\t{updated}\t{payload}`.
 fn encode_entry(value: &Value, version: u32, updated: u64) -> String {
     let (tag, payload) = encode_value(value);
     format!("{tag}\t{version}\t{updated}\t{payload}")
 }
 
-/// Decode a base64 payload back into a UTF-8 string, or a type-mismatch.
 fn decode_b64_str(payload: &str, what: &str) -> Result<String, ConfigError> {
     let bytes = B64
         .decode(payload)
@@ -130,13 +118,10 @@ fn parse_entry(s: &str) -> Result<Entry, ConfigError> {
     Ok(Entry { value, version, updated })
 }
 
-// ---- kv plumbing --------------------------------------------------------
-
 fn open() -> Result<kv::Bucket, ConfigError> {
     kv::open(BUCKET).map_err(|e| ConfigError::BackendUnavailable(format!("open: {e:?}")))
 }
 
-/// Load + parse the entry at `k`, returning `None` if the key is absent.
 fn load_entry(bucket: &kv::Bucket, k: &str) -> Result<Option<Entry>, ConfigError> {
     match bucket.get(k) {
         Ok(Some(bytes)) => {
@@ -155,15 +140,10 @@ fn put_raw(bucket: &kv::Bucket, k: &str, body: &str) -> Result<(), ConfigError> 
         .map_err(|e| ConfigError::BackendUnavailable(format!("set: {e:?}")))
 }
 
-// ---- namespace key index ------------------------------------------------
-//
-// The index is a newline-joined list of (already-sanitized) key names. It is
-// maintained best-effort with read-modify-write on a key's first appearance
-// (`set` of a new key) and on `delete`. As with idempotency-guard's pending
-// reservation, this is single-writer best-effort: a tight concurrent
-// add/add or add/delete interleaving can drop or duplicate an index entry,
-// since wasi:keyvalue@0.2.0-draft exposes no compare-and-swap. The entries
-// themselves remain authoritative; the index is only a listing convenience.
+// The index is a newline-joined list of sanitized key names, maintained best-effort by
+// read-modify-write on a key's first `set` and on `delete`. Single-writer: concurrent
+// add/add or add/delete can drop or duplicate an entry, since wasi:keyvalue@0.2.0-draft has
+// no compare-and-swap. The entries stay authoritative; the index is a listing convenience.
 
 fn read_index(bucket: &kv::Bucket, namespace: &str) -> Result<Vec<String>, ConfigError> {
     match bucket.get(&idx_key(namespace)) {
@@ -201,8 +181,6 @@ fn index_remove(bucket: &kv::Bucket, namespace: &str, key: &str) -> Result<(), C
     }
     Ok(())
 }
-
-// ---- guest --------------------------------------------------------------
 
 impl Guest for Component {
     fn get(namespace: String, key: String) -> Result<Entry, ConfigError> {

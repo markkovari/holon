@@ -58,11 +58,9 @@ fn parse_rows(text: &str, opts: &Dialect) -> Result<Vec<Vec<String>>, CsvError> 
         if in_quotes {
             if c == '"' {
                 if chars.peek() == Some(&'"') {
-                    // Escaped doubled quote -> literal '"'.
                     chars.next();
                     field.push('"');
                 } else {
-                    // Closing quote.
                     in_quotes = false;
                 }
             } else {
@@ -73,7 +71,6 @@ fn parse_rows(text: &str, opts: &Dialect) -> Result<Vec<Vec<String>>, CsvError> 
 
         match c {
             '"' => {
-                // Opening quote of a quoted field.
                 in_quotes = true;
                 quoted = true;
                 pending = true;
@@ -171,7 +168,6 @@ impl Guest for Component {
         let mut out = String::new();
         for (i, row) in rows.iter().enumerate() {
             if i > 0 {
-                // RFC 4180 record terminator.
                 out.push_str("\r\n");
             }
             for (j, field) in row.fields.iter().enumerate() {
@@ -181,7 +177,6 @@ impl Guest for Component {
                 out.push_str(&format_field(field, delimiter));
             }
         }
-        // No trailing terminator after the last row.
         out
     }
 }

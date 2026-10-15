@@ -43,7 +43,6 @@ fn the_two_alphabets_are_not_interchangeable() {
     assert_eq!(decode(&std, STD).expect("std"), bytes);
     assert_eq!(decode(&url, URL).expect("url"), bytes);
 
-    // And the wrong table REFUSES rather than quietly returning other bytes.
     assert!(
         matches!(decode(&std, URL), Err(DecodeError::NotInAlphabet { .. })),
         "+ and / are not URL-safe"
@@ -93,7 +92,6 @@ fn the_encoded_length_follows_the_input() {
         let std = encode(&bytes, STD);
         assert_eq!(std.len() % 4, 0, "standard pads to a multiple of four: {n} -> {std:?}");
         assert_eq!(std.len(), n.div_ceil(3) * 4, "{n}");
-        // Unpadded is exactly the characters the bits need.
         assert_eq!(encode(&bytes, URL).len(), (n * 8).div_ceil(6), "{n}");
     }
 }
@@ -115,10 +113,8 @@ fn a_character_in_neither_alphabet_is_refused() {
     );
 }
 
-/// A length that cannot be a whole number of bytes.
 #[test]
 fn an_orphan_character_is_refused() {
-    // Five characters: one full group and one lone character, which encodes no byte.
     match decode("Zm9vYmFyZ", STD) {
         Err(DecodeError::TruncatedGroup { length }) => assert_eq!(length, 9),
         other => panic!("expected TruncatedGroup, got {other:?}"),
@@ -144,8 +140,6 @@ fn empty_round_trips() {
     }
 }
 
-// ---- hex ----------------------------------------------------------------
-
 #[test]
 fn hex_is_lowercase_out_and_either_case_in() {
     assert_eq!(to_hex(&[0xDE, 0xAD, 0xBE, 0xEF]), "deadbeef");
@@ -166,7 +160,6 @@ fn hex_refuses_what_is_not_hex() {
         }
         other => panic!("expected NotInAlphabet, got {other:?}"),
     }
-    // An odd number of digits is half a byte.
     match from_hex("abc") {
         Err(DecodeError::TruncatedGroup { length }) => assert_eq!(length, 3),
         other => panic!("expected TruncatedGroup, got {other:?}"),

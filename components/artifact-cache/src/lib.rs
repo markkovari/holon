@@ -1,31 +1,14 @@
 //! `artifact-cache` — derived work, computed once and handed over.
 //!
-//! ## The hole in the obvious version
+//! `lookup` answers three ways, not two: **hit**, **claimed** (absent, and you compute
+//! it), **pending** (absent, someone else is). Otherwise twenty branches starting
+//! together all miss at once and compute the same thing twenty times.
 //!
-//! A cache with `get` and `put` helps a swarm not at all in the generation where
-//! it matters. Twenty branches start together, twenty look up the same chunk
-//! index, twenty miss at the same instant, and twenty compute it. The cache
-//! begins helping in generation two — after the expensive thing has been done
-//! twenty times.
-//!
-//! So `lookup` answers three ways, not two: **hit**, **claimed** (it is absent and
-//! you are the one computing it), **pending** (it is absent and somebody else
-//! already is). One producer works; the rest either wait or go and do something
-//! more useful. That is the whole point of the component.
-//!
-//! ## Claims are leases, not locks
-//!
-//! A producer that dies holding a lock wedges the key forever, and in a system
-//! whose branches are *expected* to fail that is not an edge case. A claim
-//! carries a deadline; once it passes, the next caller may take it. Nothing has
-//! to notice the death or clean up after it — the same reasoning as
-//! `lattice/src/lease.rs`, where the TTL *is* the liveness check.
-//!
-//! ## Why a lost claim is not a correctness problem
-//!
-//! Two producers racing on the same key both compute the same function of the
-//! same inputs, so a duplicated effort costs money and never correctness. That is
-//! what allows the claim to be advisory and the deadline to be short.
+//! Claims are leases, not locks: a producer that dies holding a lock wedges the key, and
+//! branches are expected to fail. A claim carries a deadline; once past, the next caller
+//! may take it (same reasoning as `lattice/src/lease.rs`). A lost race costs duplicated
+//! work, never correctness (same function of the same inputs), which is why the claim is
+//! advisory and the deadline short.
 
 #[allow(warnings)]
 mod bindings;
@@ -43,11 +26,8 @@ use sha2::{Digest, Sha256};
 
 struct Component;
 
-/// How long a producer gets before its claim is up for grabs.
-///
-/// Short on purpose. Losing a race duplicates work and never breaks anything, so
-/// the cost of expiring too eagerly is small and bounded, while the cost of
-/// expiring too late is every other branch blocked on a producer that died.
+/// How long a producer gets before its claim is up for grabs. Short on purpose: losing a
+/// race only duplicates work, while expiring too late blocks every branch on a dead producer.
 const DEFAULT_CLAIM_SECS: u64 = 120;
 
 fn cfg(key: &str, default: &str) -> String {
@@ -80,9 +60,8 @@ fn store_err(e: blobstore::BlobError) -> CacheError {
     }
 }
 
-/// The derivation. Length-prefixed, so no two different keys can serialise the
-/// same way — `producer="ab", version="c"` and `producer="a", version="bc"` must
-/// not collide, and a plain concatenation would let them.
+/// Length-prefixed so `producer="ab", version="c"` and `producer="a", version="bc"`
+/// cannot collide.
 fn derive(key: &ArtifactKey) -> String {
     fn field(h: &mut Sha256, s: &str) {
         h.update((s.len() as u64).to_le_bytes());
@@ -98,9 +77,7 @@ fn derive(key: &ArtifactKey) -> String {
     field(&mut h, &key.params);
     let d = h.finalize();
     let mut s = String::with_capacity(40);
-    // 20 bytes is plenty to name derived data that can always be recomputed, and
-    // it keeps an id the same length as a git object id, which reads better when
-    // the two sit beside each other in a log.
+    // 20 bytes names recomputable data, and matches a git object id's length in logs.
     for b in d.iter().take(20) {
         s.push(char::from_digit((b >> 4) as u32, 16).unwrap());
         s.push(char::from_digit((b & 0xf) as u32, 16).unwrap());
@@ -127,11 +104,8 @@ fn parse_claim(raw: &[u8]) -> Option<(u64, String)> {
     Some((deadline.parse().ok()?, token.to_string()))
 }
 
-/// A token nobody else will guess or accidentally reuse.
-///
-/// Derived rather than random: this component has no randomness of its own, and
-/// the id plus the deadline plus the current second is unique enough for a token
-/// whose only job is to stop a stale producer overwriting a fresh claim.
+/// A token nobody else will guess or reuse. Derived, not random (this component has no
+/// randomness): its only job is to stop a stale producer overwriting a fresh claim.
 fn mint_token(id: &str, deadline: u64) -> String {
     let mut h = Sha256::new();
     h.update(id.as_bytes());
@@ -164,8 +138,7 @@ impl Guest for Component {
             return Ok(Outcome::Hit(a));
         }
 
-        // Absent. Try to become the producer — guarded, because two branches
-        // claiming the same key at the same instant is the normal case here.
+        // Absent. Try to become the producer, guarded: simultaneous claims are the normal case.
         let b = bucket()?;
         let ck = claim_key(&id);
         let current = cas::get(&b, &ck).map_err(|e| CacheError::Unavailable(format!("{e:?}")))?;
@@ -177,13 +150,11 @@ impl Guest for Component {
         };
         if let Some((deadline, _)) = &held {
             if *deadline > now {
-                // Somebody is on it. Suggest waiting the remainder rather than a
-                // fixed interval — a caller that polls faster than the work can
-                // finish is just load.
+                // Somebody is on it. Suggest waiting the remainder; polling faster than
+                // the work finishes is just load.
                 return Ok(Outcome::Pending((deadline - now) * 1000));
             }
-            // Expired: the previous producer died or gave up. Taking it is the
-            // recovery, and it needs no separate sweeper.
+            // Expired: the previous producer died or gave up; taking it is the recovery.
         }
 
         let deadline = now + claim_secs();
@@ -191,8 +162,7 @@ impl Guest for Component {
         let value = format!("{deadline}:{token}");
         match cas::set(&b, &ck, value.as_bytes(), revision) {
             Ok(cas::Outcome::Committed(_)) => Ok(Outcome::Claimed(token)),
-            // Lost the race by a hair. The winner is computing it; say so rather
-            // than inventing a claim that would let both produce.
+            // Lost the race by a hair; the winner is computing it.
             Ok(cas::Outcome::Conflict(_)) => Ok(Outcome::Pending(claim_secs() * 1000 / 4)),
             Err(e) => Err(CacheError::Unavailable(format!("{e:?}"))),
         }
@@ -205,9 +175,7 @@ impl Guest for Component {
         let c = container();
         match blobstore::get(&c, &blob_key(&id)) {
             Ok(bytes) => {
-                // Metadata is a second object rather than a header on the first,
-                // because `blob:store` has no metadata a caller can set beyond a
-                // content type, and provenance is worth more than one field.
+                // A second object: `blob:store` has no settable metadata beyond content type.
                 let (producer, content_type, stored_at) = match blobstore::get(&c, &meta_key(&id)) {
                     Ok(m) => {
                         let s = String::from_utf8_lossy(&m).to_string();
@@ -247,24 +215,20 @@ impl Guest for Component {
             )));
         }
         if deadline <= now() {
-            // Refused rather than written. A producer this late may have been
-            // superseded, and letting it write would overwrite whatever the
-            // producer that replaced it stored.
+            // Refused: a producer this late may have been superseded, and writing would
+            // overwrite its replacement's artifact.
             return Err(CacheError::NotYourClaim(format!(
                 "the claim on {id} expired while you held it"
             )));
         }
 
         let c = container();
-        // Bytes first, then metadata, then release. A reader that arrives between
-        // the two writes gets the artifact with empty provenance, which is
-        // survivable; the reverse order would advertise an artifact that is not
-        // there yet.
+        // Bytes first, then metadata, then release: a reader between the writes gets
+        // empty provenance (survivable); the reverse would advertise a missing artifact.
         blobstore::put(&c, &blob_key(&id), &bytes, &content_type).map_err(store_err)?;
         let meta = format!("{}\n{content_type}\n{}", claim, now());
         let _ = blobstore::put(&c, &meta_key(&id), meta.as_bytes(), "text/plain");
-        // The claim is dropped, not expired: the artifact is there, so the next
-        // caller should get a hit rather than be told to wait.
+        // Dropped, not expired, so the next caller gets a hit instead of waiting.
         let _ = cas::set(&b, &ck, b"", v.revision);
         Ok(id)
     }
@@ -276,8 +240,7 @@ impl Guest for Component {
         let current = cas::get(&b, &ck).map_err(|e| CacheError::Unavailable(format!("{e:?}")))?;
         let Some(v) = &current else { return Ok(()) };
         match parse_claim(&v.value) {
-            // Only the holder may release it. Otherwise a straggler abandoning
-            // late would free the claim of the producer that replaced it.
+            // Only the holder may release; a straggler would free its replacement's claim.
             Some((_, held)) if held == claim => cas::set(&b, &ck, b"", v.revision)
                 .map(|_| ())
                 .map_err(|e| CacheError::Unavailable(format!("{e:?}"))),
@@ -309,9 +272,8 @@ mod tests {
         assert_eq!(a.len(), 40);
     }
 
-    /// The reason the version is IN the key. A producer that changed its rules
-    /// makes artifacts that are not interchangeable with its old ones, and
-    /// serving those would be worse than a miss.
+    /// The version is IN the key: a producer that changed its rules makes artifacts that
+    /// are not interchangeable.
     #[test]
     fn a_new_producer_version_is_a_different_artifact() {
         let old = derive(&key("chunker", "1", &["tree-abc"], ""));
@@ -332,7 +294,6 @@ mod tests {
         }
     }
 
-    /// Input ORDER matters for most producers, so it must matter here.
     #[test]
     fn reordering_the_inputs_is_a_different_artifact() {
         let ab = derive(&key("link", "1", &["a", "b"], ""));
@@ -341,7 +302,6 @@ mod tests {
     }
 
     /// Fields are length-prefixed so no two distinct keys serialise identically.
-    /// Concatenation would make these two the same artifact.
     #[test]
     fn fields_cannot_bleed_into_each_other() {
         let a = derive(&key("ab", "c", &[], ""));
@@ -355,8 +315,7 @@ mod tests {
         let token = mint_token(&id, 1_700_000_000);
         assert_eq!(id_of_token(&token).unwrap(), id);
         assert!(id_of_token("no-dot-here").is_err());
-        // Two deadlines on one id are two different claims, so a stale producer
-        // cannot present an old token against a fresh claim.
+        // Two deadlines on one id are two claims, so a stale token fails on a fresh claim.
         assert_ne!(token, mint_token(&id, 1_700_000_001));
     }
 
@@ -366,8 +325,7 @@ mod tests {
         assert_eq!(deadline, 1_700_000_000);
         assert_eq!(token, "abc.def");
         assert!(parse_claim(b"nonsense").is_none());
-        // An empty value is how a released claim is recorded, and must not parse
-        // as a held one.
+        // An empty value records a released claim and must not parse as held.
         assert!(parse_claim(b"").is_none());
     }
 }

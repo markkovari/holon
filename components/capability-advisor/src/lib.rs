@@ -1,15 +1,11 @@
 //! `capability-advisor` — confirms capsearch's lexical hits before a goal
 //! trusts them, over HTTP so native code (`goalrun`) can call it.
 //!
-//! ADR-0089's own admission: term-overlap retrieval over-matches, since many
-//! component descriptions are tautological ("`x` — reference implementation
-//! of `x:y`") and match nothing a caller would type. This does not replace
-//! that retrieval (`capsearch` stays cheap, deterministic, first) — it asks
-//! ONE narrow, atomic question per candidate, batched into a SINGLE
-//! `jev:decision::evaluate` call: "does this specific capability plausibly
-//! satisfy what this goal needs?" A Jev failure never blocks a run — it
-//! degrades to `"unavailable": true`, and the caller falls back to trusting
-//! capsearch's own ranking unfiltered, exactly as it does today.
+//! ADR-0089: term-overlap retrieval over-matches (many component descriptions are
+//! tautological). This does not replace `capsearch` (cheap, deterministic, first); it asks
+//! ONE atomic question per candidate, batched into a SINGLE `jev:decision::evaluate` call.
+//! A Jev failure never blocks a run: it degrades to `"unavailable": true` and the caller
+//! trusts capsearch's own ranking unfiltered.
 //!
 //!   POST /evaluate
 //!     {"goal": "...", "candidates": [{"id": "...", "name": "...", "description": "..."}]}
@@ -148,8 +144,6 @@ async fn evaluate_route(request: Request) -> Outcome {
         }
     }
 }
-
-// ---- helpers ---------------------------------------------------------------------
 
 async fn parse<T: for<'a> Deserialize<'a>>(request: Request) -> Result<T, String> {
     let body = read_body(request).await.map_err(|_| "could not read body".to_string())?;

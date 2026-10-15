@@ -101,7 +101,6 @@ impl Guest for Component {
 
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
 
-        // Static UI Serving
         if seg.is_empty() || seg.as_slice() == ["index.html"] {
             return respond(200, "text/html", include_str!("../ui/index.html"));
         }

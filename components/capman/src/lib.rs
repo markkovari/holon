@@ -29,7 +29,6 @@ pub fn as_caps(s: &str) -> String {
     parse(s).into_iter().map(|(n, v)| format!("{n}:{v}")).collect::<Vec<_>>().join(",")
 }
 
-/// A `major.minor.patch` as a comparable tuple (missing parts are 0).
 fn triple(v: &str) -> (u64, u64, u64) {
     let p: Vec<u64> = v.split('.').map(|x| x.parse().unwrap_or(0)).collect();
     (

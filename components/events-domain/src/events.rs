@@ -80,10 +80,8 @@ fn create(route: &Route, body: &str) -> Reply {
         &["state".to_string(), "organizer".to_string()],
     ) {
         Ok(e) => {
-            // The reminder goes on the clock the moment the event exists, not when
-            // the first ticket is claimed: an event with no takers still has a
-            // notice to send, and scheduling per-ticket would be one job per person
-            // for one thing that happens once.
+            // The reminder goes on the clock when the event exists, not at the first claim: an
+            // event with no takers still has a notice to send.
             let at = crate::remind::schedule(&e.id, &starts_at);
             let mut out = with_id(&e);
             out["reminder_at"] = match at {
@@ -211,9 +209,8 @@ fn cancel(route: &Route, id: &str) -> Reply {
     }
     // A cancelled event must not still remind people to come to it.
     crate::remind::cancel(id);
-    // ...and everyone holding a ticket is told, on the channels they chose. This is
-    // the one notification nobody would opt out of and the one an app is most
-    // tempted to send itself.
+    // ...and everyone holding a ticket is told, on the channels they chose: the one
+    // notification nobody would opt out of.
     for subject in crate::remind::holders_of(id) {
         crate::remind::tell(
             &subject,
@@ -230,12 +227,9 @@ fn cancel(route: &Route, id: &str) -> Reply {
 /// deleting an event's image needs no index and cannot reach another event's.
 const IMAGES: &str = "event-images";
 
-/// `POST|PUT /api/events/{id}/image` and `GET /api/events/{id}/image`.
-///
-/// The bytes go to `blob-store` and the record keeps only the content type. A JSON
-/// document is the wrong place for a JPEG: base64 is a third larger than what it
-/// encodes, every read of the event pays for it, and `record-store` would be
-/// indexing it.
+/// `POST|PUT /api/events/{id}/image` and `GET /api/events/{id}/image`. The bytes go to
+/// `blob-store` and the record keeps only the content type: base64 is a third larger than what
+/// it encodes and every read of the event would pay for it.
 pub fn image(
     method: &Method,
     route: &Route,
@@ -271,10 +265,8 @@ pub fn image(
             if bytes.is_empty() {
                 return Reply::err(400, "empty_body");
             }
-            // What counts as an image, and how big, is `upload-policy`'s answer from
-            // `allowed-types` and `max-size` — not a match arm here. A content-type
-            // allowlist written out in this file would be the fourth copy of one in
-            // this repository, and the first that nothing tests.
+            // What counts as an image, and how big, is `upload-policy`'s answer
+            // (`allowed-types`, `max-size`), not a match arm here.
             let ct = content_type.split(';').next().unwrap_or("").trim();
             if let Err(e) = policy::check(ct, bytes.len() as u64) {
                 let code = match e {

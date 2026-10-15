@@ -153,8 +153,6 @@ fn build(expr: &str) -> Result<Schedule, CronError> {
     Ok(Schedule { min, hour, dom, month, dow: dow8, dom_star, dow_star })
 }
 
-// ---- civil date math (UTC, days since 1970-01-01) -----------------------
-
 /// (year, month 1-12, day 1-31) from days since the Unix epoch.
 /// Howard Hinnant's `civil_from_days`.
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
@@ -197,8 +195,6 @@ fn matches_at(s: &Schedule, unix: u64) -> bool {
     let wd = weekday(days);
     s.min[minute] && s.hour[hour] && s.month[(m - 1) as usize] && day_matches(s, d, wd)
 }
-
-// ---- normalize (for `parse`) --------------------------------------------
 
 fn field_str(bits: &[bool], lo: u32) -> String {
     if bits.iter().all(|&b| b) {

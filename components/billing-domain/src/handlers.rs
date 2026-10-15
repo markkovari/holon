@@ -145,9 +145,8 @@ fn send_invoice(route: &Route, id: &str) -> Reply {
     }
 }
 
-/// Admin-only, checked directly against the role — unlike `send`, this isn't
-/// about who OWNS the invoice, it's about who is trusted to confirm money
-/// arrived.
+/// Admin-only, checked directly against the role: unlike `send`, this is about who is
+/// trusted to confirm money arrived, not who OWNS the invoice.
 fn pay_invoice(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "invoice.pay", id);

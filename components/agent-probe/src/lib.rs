@@ -85,10 +85,7 @@ impl Guest for Component {
                     detail: f["detail"].as_str().unwrap_or_default().to_string(),
                 })
                 .collect();
-            // Optional in the request, so every existing caller of this probe keeps
-            // working — a probe is a door onto an interface, and a door that broke
-            // every knock because the interface grew a parameter would be its own
-            // kind of debt.
+            // Optional in the request so existing callers of this probe keep working.
             let blocked: Vec<agent::Blocked> = v["blocked"]
                 .as_array()
                 .cloned()

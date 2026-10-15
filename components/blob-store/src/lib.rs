@@ -4,12 +4,10 @@
 //!   `bo_{container}/{name}`  -> the raw bytes, in the `blobs` store
 //!   `bm_{container}/{name}`  -> metadata line `{size}:{content-type}`, in `default`
 //!
-//! Two stores so a host can put the bytes somewhere else — `comp-host --blob s3`
-//! routes `blobs` to an S3/R2 bucket and leaves the index on the KV backend
-//! (ADR-0101).
-//! Both `container` and `name` are sanitized (so the `/` separator and `_`
-//! escape char can't appear literally inside either part), letting `list` scan
-//! by the `bm_{container}/{prefix}` key prefix.
+//! Two stores so a host can put the bytes elsewhere (`comp-host --blob s3` routes `blobs`
+//! to S3/R2 and leaves the index on KV, ADR-0101). `container` and `name` are sanitized
+//! so the `/` separator and `_` escape can't appear literally, letting `list` scan by the
+//! `bm_{container}/{prefix}` key prefix.
 //!
 //! Whole-body `list<u8>` in/out — wasip2-stable.
 
@@ -23,8 +21,6 @@ struct Component;
 
 const BUCKET: &str = "default";
 const BLOBS: &str = "blobs";
-
-// ---- key scheme ---------------------------------------------------------
 
 fn sanitize(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -78,14 +74,11 @@ fn open() -> Result<kv::Bucket, BlobError> {
     kv::open(BUCKET).map_err(|e| BlobError::BackendUnavailable(format!("open: {e:?}")))
 }
 
-/// Where the bytes go: the host's `blobs` store, which a host started with
-/// `--blob s3` puts in an object store (R2, S3) while the index stays on the
-/// KV backend. The metadata key in `default` is the commit point — written
-/// after the bytes, deleted before them — so a crash between the two leaves
-/// unreferenced bytes, never an index entry pointing at nothing.
-///
-/// `None` on a host that grants no `blobs` store (one older than the split):
-/// everything then lives in `default`, exactly as before.
+/// Where the bytes go: the host's `blobs` store (an object store under `--blob s3`)
+/// while the index stays on KV. The metadata key in `default` is the commit point,
+/// written after the bytes and deleted before them, so a crash leaves unreferenced bytes,
+/// never an index entry pointing at nothing. `None` on a host without a `blobs` store:
+/// everything then lives in `default`.
 fn open_blobs() -> Result<Option<kv::Bucket>, BlobError> {
     match kv::open(BLOBS) {
         Ok(b) => Ok(Some(b)),
