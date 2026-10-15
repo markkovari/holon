@@ -190,7 +190,6 @@ pub async fn file_text<B: BlobStore, P: PointerStore, G: Graph, L: OpLog>(
     String::from_utf8(e.blobs().get(&entry.blob).await.unwrap().unwrap()).unwrap()
 }
 
-// ---- Scenario A --------------------------------------------------------------
 
 /// Two agents, two functions in one file, both from the same state, writing at
 /// the same moment: both land, nothing conflicts, the later one reports it
@@ -258,7 +257,6 @@ where
     crash::assert_consistent(&setup, ws).await;
 }
 
-// ---- Scenario B --------------------------------------------------------------
 
 /// Two agents, one function, one parent: one lands, the other is a conflict
 /// holding both sides verbatim; export is refused until a resolution lands.
@@ -473,7 +471,6 @@ where
     crash::assert_consistent(&setup, ws).await;
 }
 
-// ---- duplicate ---------------------------------------------------------------
 
 pub async fn duplicate<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str)
 where
@@ -556,7 +553,6 @@ where
     crash::assert_consistent(&e, ws).await;
 }
 
-// ---- revert ------------------------------------------------------------------
 
 pub async fn revert<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str)
 where
@@ -674,7 +670,6 @@ where
     crash::assert_consistent(&e, ws).await;
 }
 
-// ---- oplog paging ------------------------------------------------------------
 
 pub async fn oplog_paging<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str)
 where
@@ -739,7 +734,6 @@ where
     assert_eq!(ids, (11..=18).collect::<Vec<_>>());
 }
 
-// ---- delete / rename / validation ---------------------------------------------
 
 pub async fn delete_rename<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str)
 where
@@ -909,7 +903,6 @@ where
     crash::assert_consistent(&e, ws).await;
 }
 
-// ---- git tree ids --------------------------------------------------------------
 
 /// The snapshot's `git-tree` is what `git write-tree` says for the same files.
 pub async fn git_tree<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str)
@@ -971,7 +964,6 @@ where
     assert_eq!(snap.entries.len(), files.len() - 1);
 }
 
-// ---- CAS retry correctness -----------------------------------------------------
 
 /// A pointer store that can stop a CAS just before it happens, let the test do
 /// something to the real store, and then let it go — the interleaving a real
@@ -1147,7 +1139,6 @@ where
     crash::assert_consistent(&other, ws).await;
 }
 
-// ---- commuted, exactly ----------------------------------------------------------
 
 /// `commuted-with` is exactly the other-symbol edits of the component that
 /// landed after `read-at`; without `read-at`, everything after the parent's op.
@@ -1217,7 +1208,6 @@ where
     crash::assert_consistent(&e, ws).await;
 }
 
-// ---- names -------------------------------------------------------------------
 
 /// N symbols renamed to one name at once: exactly one wins; the rest are
 /// `name-taken` and keep their names.
@@ -1410,7 +1400,6 @@ where
     crash::assert_consistent(&e, ws).await;
 }
 
-// ---- positions -----------------------------------------------------------------
 
 pub async fn create_at<B: BlobStore, P: PointerStore, G: Graph, L: OpLog>(
     e: &E<B, P, G, L>,
@@ -1603,7 +1592,6 @@ where
     crash::assert_consistent(&e, ws).await;
 }
 
-// ---- losing the graph ---------------------------------------------------------
 
 /// Build some history, then point an engine at an EMPTY graph over the same
 /// pointers, log and blobs: repair rebuilds it, and every read is as before.

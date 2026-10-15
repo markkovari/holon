@@ -32,7 +32,6 @@ fn a_photographed_collection_prices_itself() {
         .expect("after 1970")
         .as_secs();
 
-    // --- the collection belongs to somebody ------------------------------
     //
     // Checked FIRST, because a route that forgets to introspect reads whichever
     // collection it finds and every assertion below would still pass.
@@ -45,7 +44,6 @@ fn a_photographed_collection_prices_itself() {
     assert_eq!(s, 200, "login: {session}");
     let token = session["access_token"].as_str().expect("a token").to_string();
 
-    // --- the scan path: card:identify, through the composition -----------
     //
     // Fenced JSON with prose either side, which is how a model actually answers.
     let answer = "Looking at the photo:\n```json\n{\"name\":\"Charizard ex\",\
@@ -89,7 +87,6 @@ fn a_photographed_collection_prices_itself() {
     let (_, listed) = auth_req("GET", "/api/cards", None, &token);
     assert_eq!(listed["cards"].as_array().expect("array").len(), 2, "neither refusal was stored");
 
-    // --- a correction clears the flag ------------------------------------
     let (s, fixed) = auth_req("PATCH", "/api/cards", Some(json!({ "id": commons, "condition": "lightly played" })), &token);
     assert_eq!(s, 200, "{fixed}");
     assert_eq!(fixed["condition"], "lightly played");
@@ -98,7 +95,6 @@ fn a_photographed_collection_prices_itself() {
     assert!(!still.contains(&"condition"), "a checked field stops being flagged: {still:?}");
     assert!(still.contains(&"number"), "and the others do not: {still:?}");
 
-    // --- the money: portfolio:value, through the composition -------------
     for (kind, qty, unit, days_ago) in [
         ("acquired", 2u32, 1000i64, 60u64),
         ("acquired", 1, 4000, 40),
@@ -140,7 +136,6 @@ fn a_photographed_collection_prices_itself() {
     assert_eq!(p["currency"], "EUR");
     assert!(p["series"].as_array().expect("array").len() > 80, "90 days of samples: {p}");
 
-    // --- the price series: price:history, through the composition --------
     let (s, pr) = auth_req("GET", &format!("/api/price/{charizard}"), None, &token);
     assert_eq!(s, 200, "{pr}");
     let points = pr["points"].as_array().expect("array");
@@ -157,7 +152,6 @@ fn a_photographed_collection_prices_itself() {
         "a zero would be a price nobody ever saw"
     );
 
-    // --- another account sees none of it ---------------------------------
     //
     // The assertion that makes "belongs to somebody" mean something. Every route
     // above could introspect correctly and still read one shared key space.
@@ -173,7 +167,6 @@ fn a_photographed_collection_prices_itself() {
     let (_, their_p) = auth_req("GET", "/api/portfolio", None, &other_token);
     assert_eq!(their_p["cost_basis_minor"], 0, "and owns nothing: {their_p}");
 
-    // --- a card typed in by hand -----------------------------------------
     //
     // Not a scan, so nothing is flagged and confidence is full — and the money is
     // recorded in the same action, because adding a card and saying what it cost is
@@ -206,7 +199,6 @@ fn a_photographed_collection_prices_itself() {
         "deleting the row must not silently rewrite what was paid"
     );
 
-    // --- decks ------------------------------------------------------------
     //
     // Eight Charmander across TWO printings. Counting by the id the collection is
     // keyed on says four and four and passes; the rule counts names.
@@ -257,7 +249,6 @@ fn a_photographed_collection_prices_itself() {
         missing.iter().find(|m| m["card_id"] == json!(charizard)).expect("a line");
     assert_eq!(charizard_line["quantity"], 2, "the shortfall is what is NOT owned: {charizard_line}");
 
-    // --- the series carries its numbers, not just a shape ------------------
     let point = &after["series"].as_array().expect("array")[0];
     for field in
         ["at", "market_value_minor", "cost_basis_minor", "realised_minor", "unrealised_minor", "unquoted"]
@@ -265,7 +256,6 @@ fn a_photographed_collection_prices_itself() {
         assert!(point.get(field).is_some(), "a hoverable point needs {field}: {point}");
     }
 
-    // --- deck CRUD, and a name with a space in it -------------------------
     //
     // "some deck" is stored decoded and asked for as `some%20deck`. Without a decode
     // on the path the two never meet: creating it works and opening it is a 404,
@@ -333,7 +323,6 @@ fn a_photographed_collection_prices_itself() {
     assert!(!names.contains(&"second"), "the deleted one is gone: {names:?}");
     assert!(names.contains(&"some deck"), "and the others are not: {names:?}");
 
-    // --- the photo path is async ------------------------------------------
     //
     // The upload STORES and answers; the vision call happens on the event stream.
     // Asserted without a model: the upload must be immediate and must validate what
@@ -374,7 +363,6 @@ fn a_photographed_collection_prices_itself() {
     let (s, gone) = auth_req("GET", &stream, None, &token);
     assert_eq!(s, 404, "the job was claimed and is not there twice: {gone}");
 
-    // --- a card carries its own price -------------------------------------
     //
     // The row and the total above it come from ONE event log and one set of quotes,
     // so they cannot disagree — which is the failure this asserts against: a card
@@ -416,7 +404,6 @@ fn a_photographed_collection_prices_itself() {
     assert_eq!(bulk["price_minor"], 25, "priced now: {bulk}");
     assert_eq!(bulk["value_minor"], 40 * 25, "and worth what forty of them come to: {bulk}");
 
-    // --- one card, and how it got here ------------------------------------
     let (s, detail) = auth_req("GET", &format!("/api/cards/{charizard}"), None, &token);
     assert_eq!(s, 200, "{detail}");
     assert_eq!(detail["held"], 2);
@@ -441,7 +428,6 @@ fn a_photographed_collection_prices_itself() {
     let series = detail["series"].as_array().expect("array");
     assert!(series.iter().any(|p| p["carried"] == json!(true)), "gaps are carried: {}", series.len());
 
-    // --- a correction is kept, and one save keeps every field it touched ---
     //
     // The bug this pins: the history was keyed by an index within a save, so a second
     // save in the same second restarted at zero and silently overwrote the first
@@ -478,7 +464,6 @@ fn a_photographed_collection_prices_itself() {
     let (s, _) = auth_req("GET", "/api/cards/nope", None, &token);
     assert_eq!(s, 404, "a card that does not exist");
 
-    // --- a buy and a sell in ONE second are two events --------------------
     //
     // The key was `event:{at}:{card}`, so both landed on it and the sale silently
     // REPLACED the purchase: the collection then held nothing, had no cost basis,
@@ -523,7 +508,6 @@ fn a_photographed_collection_prices_itself() {
     let (_, replayed) = auth_req("GET", &format!("/api/cards/{same}"), None, &token);
     assert_eq!(replayed["events"].as_array().expect("array").len(), 2, "not three: {replayed}");
 
-    // --- selling more than is held is refused ON THE WRITE ----------------
     //
     // `portfolio:value` refuses an oversold log by design, but that refusal lands on
     // the valuation — so one bad event took out every screen at once and left no
@@ -543,7 +527,6 @@ fn a_photographed_collection_prices_itself() {
     assert_eq!(s, 200, "{still}");
     assert!(still["blocked"].is_null(), "nothing blocking it: {still}");
 
-    // --- deleting an event takes exactly the one named --------------------
     let (s, gone) = auth_req(
         "DELETE",
         "/api/events",
@@ -574,7 +557,6 @@ fn a_collection_arrives_as_a_spreadsheet() {
     assert_eq!(s, 200, "login: {session}");
     let token = session["access_token"].as_str().expect("a token").to_string();
 
-    // --- a real .xlsx, deflated, written by a tool that is not this one -----
     let xlsx = include_bytes!("cards.xlsx");
     let (s, r) = upload("/api/cards/bulk?name=cards.xlsx", xlsx, &token);
     assert_eq!(s, 201, "xlsx import: {r}");
@@ -599,7 +581,6 @@ fn a_collection_arrives_as_a_spreadsheet() {
         "the basis is the spreadsheet's own arithmetic: {p}"
     );
 
-    // --- the same collection as CSV, which goes through csv:codec ----------
     let csv = "name,set_code,number,quantity,paid_minor,currency\n               Gengar,fossil,5/62,1,32000,EUR\n               \"Mr. Mime, holo\",jungle,6/64,2,15000,EUR\n";
     let (s, r) = upload("/api/cards/bulk?name=more.csv", csv.as_bytes(), &token);
     assert_eq!(s, 201, "csv import: {r}");
@@ -612,7 +593,6 @@ fn a_collection_arrives_as_a_spreadsheet() {
         cards["cards"].as_array().unwrap().iter().filter_map(|c| c["name"].as_str()).collect();
     assert!(names.contains(&"Mr. Mime, holo"), "the comma inside the quotes: {names:?}");
 
-    // --- one bad row writes NOTHING ----------------------------------------
     let before = cards["cards"].as_array().unwrap().len();
     let bad = "name,quantity\nPidgey,2\nRattata,not-a-number\n";
     let (s, r) = upload("/api/cards/bulk?name=bad.csv", bad.as_bytes(), &token);
@@ -626,11 +606,9 @@ fn a_collection_arrives_as_a_spreadsheet() {
          one a person cannot safely retry"
     );
 
-    // --- a format nobody can read is refused by name, not by sniffing ------
     let (s, r) = upload("/api/cards/bulk?name=cards.numbers", xlsx, &token);
     assert_eq!(s, 400, "{r}");
 
-    // --- re-importing the same sheet updates rather than duplicates --------
     let (s, r) = upload("/api/cards/bulk?name=cards.xlsx", xlsx, &token);
     assert_eq!(s, 201, "{r}");
     assert_eq!(r["added"], 0, "nothing new the second time: {r}");

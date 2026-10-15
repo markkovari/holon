@@ -90,7 +90,6 @@ fn state_of(saga: &Value, leg: &str) -> String {
 fn saga_commit_and_compensate() {
     let _host = start_host();
 
-    // ===== rung 1: happy path — all three legs book, saga commits ============
     let (status, saga) = req("POST", "/trips", Some(json!({"traveler": "Ada Lovelace"})));
     assert_eq!(status, 201, "create: {saga}");
     let id = saga["id"].as_str().expect("id").to_string();
@@ -107,14 +106,12 @@ fn saga_commit_and_compensate() {
     let flight_ref = steps(&saga).into_iter().find(|(l, _, _)| l == "flight").unwrap().2;
     assert!(flight_ref.starts_with("FL-"), "flight ref: {flight_ref}");
 
-    // fsm history records the commit
     let (_, saga) = req("GET", &format!("/trips/{id}"), None);
     assert!(
         saga["history"].as_array().unwrap().iter().any(|h| h["event"] == "commit"),
         "history should contain commit: {saga}"
     );
 
-    // idempotent: re-running a committed saga changes nothing (no double-book)
     let (_, saga) = req("POST", &format!("/trips/{id}/run"), None);
     assert_eq!(saga["status"], "committed");
     assert_eq!(
@@ -123,8 +120,6 @@ fn saga_commit_and_compensate() {
         "booking ref must be stable across re-runs"
     );
 
-    // ===== rung 2: compensation — a mid-saga failure rolls back ==============
-    // car fails: flight + hotel book, then compensate in reverse → compensated.
     let (_, saga) = req("POST", "/trips", Some(json!({"traveler": "Grace", "failLeg": "car"})));
     let id = saga["id"].as_str().unwrap().to_string();
     let (status, saga) = req("POST", &format!("/trips/{id}/run"), None);
@@ -146,11 +141,9 @@ fn saga_commit_and_compensate() {
     assert_eq!(state_of(&saga, "hotel"), "pending", "never reached");
     assert_eq!(state_of(&saga, "car"), "pending", "never reached");
 
-    // idempotent re-run of a terminal (compensated) saga is a no-op
     let (_, saga2) = req("POST", &format!("/trips/{id}/run"), None);
     assert_eq!(saga2["status"], "compensated");
 
-    // ===== rung 3: retries + resumable advance ===============================
 
     // a flaky leg that fails transiently then recovers → still commits.
     let (_, saga) = req("POST", "/trips", Some(json!({"traveler": "Katherine", "flakyLeg": "hotel", "flakyFails": 2})));

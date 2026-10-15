@@ -1,12 +1,9 @@
-//! golem-workflow — the type-mapping core of the wRPC→Golem provider.
-//!
-//! The provider's job at each call is a translation: the consumer's typed
-//! `run-request` becomes the arguments of a Golem worker invocation
-//! (`golem_wasm_rpc::Value`), and the worker's `result<string, string>` return
-//! becomes back the contract's `result<string, run-error>`. That translation is
-//! this module — the part with the real bugs — kept free of the lattice, the
-//! provider SDK, and even wasmtime, so it is exhaustively unit-testable on its
-//! own. The binary (src/main.rs, rung 2) wires it to wRPC + golem-client.
+//! golem-workflow — the type-mapping core of the wRPC→Golem provider: the typed
+//! `run-request` becomes the arguments of a Golem worker invocation, and the
+//! worker's `result<string, string>` becomes the contract's
+//! `result<string, run-error>`. Kept free of the lattice, provider SDK and
+//! wasmtime so it is exhaustively unit-testable; `src/main.rs` wires it to
+//! wRPC + golem-client.
 
 use golem_wasm_rpc::Value;
 
@@ -29,10 +26,8 @@ pub fn to_worker_args(req: &RunRequest) -> Vec<Value> {
 
 /// Interpret the worker's return `Value` as the contract's `result<string, _>`.
 ///
-/// Golem worker functions declared `-> result<string, string>` return a
-/// `Value::Result`; we also tolerate a bare `Value::String` (some invoke paths
-/// unwrap a single non-result return) so the mapping is forgiving of the worker
-/// author's exact signature.
+/// Accepts `Value::Result`, and also a bare `Value::String` (some invoke paths
+/// unwrap a single non-result return).
 pub fn from_worker_result(v: &Value) -> Result<String, String> {
     match v {
         Value::Result(Ok(Some(inner))) => expect_string(inner),
@@ -51,7 +46,6 @@ fn expect_string(v: &Value) -> Result<String, String> {
     }
 }
 
-// ---- the Golem call ----------------------------------------------------------
 
 /// How to reach a Golem worker/agent's invoke endpoint. Golem 1.5 agents expose
 /// HTTP endpoints through the API gateway (e.g. `POST /counters/{name}/increment`
@@ -67,9 +61,9 @@ pub struct GolemConfig {
     pub path_template: String,
 }
 
-/// Invoke a Golem agent endpoint and return its result body as a string. This is
-/// the provider's actual bridge call — kept here (not in the binary) so it can be
-/// exercised against a live Golem in an integration test without the wasmCloud host.
+/// Invoke a Golem agent endpoint and return its result body as a string. Kept
+/// here (not in the binary) so an integration test can run it against a live
+/// Golem without the wasmCloud host.
 pub async fn invoke_golem(
     http: &reqwest::Client,
     cfg: &GolemConfig,

@@ -1,34 +1,23 @@
-//! NATS JetStream adapter (`native` feature): ticket records and their two
-//! indexes in one KV bucket, and `PARK_WAKE` — a work-queue stream a resumer
-//! pulls from to learn a ticket is `ready`, the same shape as `comp-media`'s
-//! `MEDIA_JOBS` (`RetentionPolicy::WorkQueue`, a durable pull consumer;
-//! ADR-0100).
+//! NATS JetStream adapter (`native` feature): ticket records and two indexes in
+//! one KV bucket, plus `PARK_WAKE` — a work-queue stream a resumer pulls from
+//! (same shape as `comp-media`'s `MEDIA_JOBS`; ADR-0100).
 //!
 //! # Keys
 //!
-//! One bucket, three key shapes. Unlike `holon_vcs::nats`, a caller-supplied
-//! string is always hashed rather than escaped — none of these three is ever
-//! read back out of the key itself, so there is nothing to preserve:
+//! Caller-supplied strings are always hashed, never escaped: none is read back
+//! out of the key.
 //!
-//! * `ticket.<ticket>` — the [`Record`], JSON. `ticket` is already a
-//!   lower-case hex SHA-256 ([`crate::ticket::ticket_id`]).
-//! * `correlation.<sha256 of the correlation>` — the ticket it was claimed
-//!   for, as UTF-8 bytes.
-//! * `session.<sha256 of the session>` — the session's ticket list, JSON,
-//!   grown by compare-and-set. There is no bucket-wide `keys()` scan here the
-//!   way `holon-vcs` needs one for startup repair: a session's own list IS
-//!   the index, so [`NatsParkStore::list_session`] costs one read, never a
-//!   scan of every ticket ever parked.
+//! * `ticket.<ticket>` — the [`Record`], JSON (`ticket` is already hex SHA-256).
+//! * `correlation.<sha256>` — the ticket it was claimed for, UTF-8 bytes.
+//! * `session.<sha256>` — the session's ticket list, JSON, grown by CAS. It is
+//!   the index itself, so [`NatsParkStore::list_session`] is one read, no scan.
 //!
 //! # The notification is not the durability boundary
 //!
-//! `PARK_WAKE` tells a resumer pool "look at this ticket, don't poll" — it is
-//! an optimization. The ticket record in the KV bucket is the actual answer;
-//! `pending`/`oplog` still find a `ready` ticket even if a publish to
-//! `PARK_WAKE` fails or nobody is pulling from it yet. `comp-park` (the
-//! daemon, not this module) is what decides to publish, and only once per
-//! real transition (`Engine::wake`'s `WakeOutcome::freshly_woken`) — never on
-//! a redelivered webhook's idempotent no-op.
+//! `PARK_WAKE` is an optimization ("look at this ticket, don't poll"); the KV
+//! record is the answer. `pending`/`oplog` still find a `ready` ticket if a
+//! publish fails. `comp-park` publishes once per real transition
+//! (`WakeOutcome::freshly_woken`), never on a redelivered webhook.
 
 use async_nats::jetstream::{self, kv, stream};
 use serde::{Deserialize, Serialize};
@@ -38,10 +27,8 @@ use crate::error::{ParkError, Result};
 use crate::model::{SessionId, TicketId};
 use crate::store::{ParkStore, Record, Revision};
 
-/// How many times a session's ticket-list compare-and-set is retried before
-/// giving up. Contention here is one session's own concurrent `park` calls —
-/// the same small, bounded contention `crate::engine`'s own retry loop
-/// assumes, never a hot loop.
+/// Retry bound for a session's ticket-list CAS; contention is one session's own
+/// concurrent `park` calls.
 const MAX_INDEX_RETRIES: u32 = 8;
 
 fn sha256_hex(s: &str) -> String {
@@ -63,16 +50,10 @@ fn session_key(session: &str) -> String {
 /// Connect and open (creating if needed) the KV bucket and the `PARK_WAKE`
 /// stream.
 ///
-/// A caller of this crate over its `native` feature (`comp-park`) is meant to
-/// go through THIS function and never import `async-nats` itself — the same
-/// shape `holon_vcs::nats::connect` gives `comp-vcs`. Two crates each pinning
-/// their own `async-nats` version (this workspace's `reconciler` binary crate
-/// pins 0.49 for its own NATS use; this crate's workspace deps pin 0.50) makes
-/// `async_nats::jetstream::Context` two DIFFERENT nominal types even though
-/// they are structurally identical — a value of one cannot be handed to a
-/// function expecting the other. Keeping every `async_nats` type inside this
-/// module (and `holon_vcs::nats`'s, independently) is what lets both engines
-/// live in one binary without their two `async-nats`es ever having to agree.
+/// Callers go through this and never import `async-nats` themselves: two crates
+/// pinning different `async-nats` versions make `jetstream::Context` two
+/// different nominal types, so every `async_nats` type stays inside this module
+/// (and `holon_vcs::nats`) so both engines can live in one binary.
 pub async fn connect(
     url: &str,
     bucket: &str,
@@ -90,8 +71,8 @@ pub struct NatsParkStore {
 }
 
 impl NatsParkStore {
-    /// Open `bucket`, creating it (history 1 — a ticket's past is the oplog
-    /// read, not this bucket's) if it does not exist yet.
+    /// Open `bucket`, creating it (history 1: a ticket's past is the oplog) if
+    /// missing.
     pub async fn open(js: &jetstream::Context, bucket: &str) -> Result<Self> {
         let kv = match js.get_key_value(bucket).await {
             Ok(store) => store,
@@ -100,7 +81,6 @@ impl NatsParkStore {
                     kv::Config { bucket: bucket.to_string(), history: 1, ..Default::default() };
                 match js.create_key_value(cfg).await {
                     Ok(store) => store,
-                    // Somebody else created it in between.
                     Err(e) => js.get_key_value(bucket).await.map_err(|_| ParkError::storage(e))?,
                 }
             }
@@ -157,9 +137,8 @@ impl ParkStore for NatsParkStore {
         }
     }
 
-    /// A read-modify-CAS-write loop over the session's own ticket list — the
-    /// same shape as `crate::engine`'s retries, just one layer lower, since
-    /// there is no `Engine` above this call to retry it.
+    /// Read-modify-CAS-write loop over the session's ticket list; no `Engine`
+    /// sits above to retry it.
     async fn index_session(&self, session: &str, ticket: &str) -> Result<()> {
         let key = session_key(session);
         for _ in 0..MAX_INDEX_RETRIES {
@@ -205,9 +184,8 @@ impl ParkStore for NatsParkStore {
     }
 }
 
-/// What lands on `PARK_WAKE`: enough for a resumer to act without another
-/// round trip for the session id, and nothing else — the ticket record
-/// itself, not this message, is the answer's source of truth.
+/// What lands on `PARK_WAKE`: enough for a resumer to act; the ticket record,
+/// not this message, is the source of truth.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WakeMessage {
     pub session: SessionId,
@@ -220,10 +198,9 @@ pub struct WakeStream {
 }
 
 impl WakeStream {
-    /// Open `name` as a `WorkQueue` stream, creating it if missing — the same
-    /// `get_or_create_stream` call `comp-media` opens `MEDIA_JOBS` with. Its
-    /// one subject is `<name>.ticket`; a resumer's durable pull consumer names
-    /// that same subject as its `filter_subject`.
+    /// Open `name` as a `WorkQueue` stream, creating it if missing. Its one
+    /// subject is `<name>.ticket`, the `filter_subject` of a resumer's durable
+    /// pull consumer.
     pub async fn open(js: &jetstream::Context, name: &str) -> Result<Self> {
         let subject = format!("{name}.ticket");
         js.get_or_create_stream(stream::Config {
@@ -237,9 +214,8 @@ impl WakeStream {
         Ok(WakeStream { js: js.clone(), subject })
     }
 
-    /// Tell a resumer a ticket is `ready`. Waits for the JetStream ack, so a
-    /// caller that gets `Ok` knows the message is durably queued — not just
-    /// sent.
+    /// Tell a resumer a ticket is `ready`. Waits for the JetStream ack, so `Ok`
+    /// means durably queued.
     pub async fn publish(&self, msg: &WakeMessage) -> Result<()> {
         let payload = serde_json::to_vec(msg).map_err(ParkError::storage)?;
         let ack = self

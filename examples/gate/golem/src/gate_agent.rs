@@ -1,12 +1,10 @@
-//! The `gate` rate limiter as a REAL Golem agent — the exact-serialization
+//! The `gate` rate limiter as a REAL Golem agent: the exact-serialization
 //! counterpart to the shared-store approximation in `gate-domain`.
 //!
-//! `#[agent_definition(mount = "/gate/{key}")]` makes **one durable worker per
-//! key**. A Golem worker is single-threaded and its state is durable, so the
-//! read-decide-write of `take` is inherently serialized — no compare-and-swap,
-//! no revision retry, and it survives restarts. Fire N concurrent `take`s at one
-//! key and EXACTLY `capacity` succeed (the shared-store CAS over-admits under the
-//! same load — that's the whole point of docs/apps/GATE.md).
+//! `#[agent_definition(mount = "/gate/{key}")]` makes one durable, single-threaded
+//! worker per key, so `take`'s read-decide-write is serialized with no CAS:
+//! N concurrent `take`s admit EXACTLY `capacity` (the shared-store CAS
+//! over-admits; see docs/apps/GATE.md).
 
 use golem_rust::{agent_definition, agent_implementation, endpoint};
 

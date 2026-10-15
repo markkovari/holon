@@ -2,18 +2,16 @@
 //!
 //! # The write path
 //!
-//! Every mutation is: **read** the pointers it depends on (value, revision, and
-//! the op each value names) and the graph state that matters → [`decide`] →
-//! **log the intent** (the op, `pending`, with the revision every pointer write
-//! expects and every record it introduces) → **write the graph ahead** (patch
-//! records, index entries, conflict records, uncommitted) → **claim** names →
-//! **compare-and-set the symbol's tip** — the commit point — → **finish**
-//! (mirrors, conflict states, name releases) → mark the op `committed`. A lost
-//! CAS undoes the claims, abandons the op's uncommitted conflicts and marks it
-//! `aborted`; the call re-reads and re-decides, bounded by
-//! [`Engine::with_cas_tries`] (default [`CAS_TRIES`]), and a caller that
-//! exhausts it gets `concurrent-modification`. Why each crash point in that
-//! sequence is recoverable is [`crate::recovery`]'s module doc.
+//! Every mutation is: **read** the pointers it depends on (value, revision, the
+//! op each value names) and the graph state → [`decide`] → **log the intent**
+//! (the op, `pending`, with the revision every pointer write expects and every
+//! record it introduces) → **write the graph ahead** → **claim** names →
+//! **CAS the symbol's tip** (the commit point) → **finish** (mirrors, conflict
+//! states, name releases) → mark the op `committed`. A lost CAS undoes the
+//! claims, abandons the op's uncommitted conflicts and marks it `aborted`; the
+//! call re-reads and re-decides, bounded by [`Engine::with_cas_tries`] (default
+//! [`CAS_TRIES`]), then gives `concurrent-modification`. Why each crash point is
+//! recoverable: [`crate::recovery`]'s module doc.
 //!
 //! **A conflict also CASes the tip — to the value it already has.** That bumps
 //! the revision, and it is what makes "is there an open conflict?" safe to ask:
@@ -29,20 +27,15 @@
 //!
 //! * `applied` — the tip moved from `parent` to the new patch, and nothing
 //!   below counts as commuted.
-//! * `commuted` — the tip moved from `parent` (so `parent` WAS the tip), AND at
-//!   least one other op after the request's `read-at` that had landed when this
-//!   one did moved the tip of ANOTHER symbol in the same component;
-//!   `commuted-with` lists those patches, in log order. Ops that only opened a
-//!   conflict, and reverts, do not count. `read-at` is the position the agent's
-//!   view reflects (a view's `as-of`), so this is exactly "what landed that the
-//!   agent had not seen". Without `read-at` it is measured from the op that
-//!   landed `parent` instead — an over-approximation: it also lists edits the
-//!   agent may have read after fetching `parent` — and a `create` never
-//!   commutes. "Had landed" is checked just after this patch's commit point,
-//!   over the whole log after `read-at` (an op logged after this one may have
-//!   landed first), so of two racing edits to two symbols from one view, the
-//!   one that lands second always lists the other, and both may list each
-//!   other.
+//! * `commuted` — like `applied`, but at least one other op after the request's
+//!   `read-at` (a view's `as-of`) that had landed when this one did moved the tip
+//!   of ANOTHER symbol in the same component; `commuted-with` lists those
+//!   patches in log order. Conflict-only ops and reverts do not count. Without
+//!   `read-at` it is measured from the op that landed `parent` (an
+//!   over-approximation), and a `create` never commutes. "Had landed" is
+//!   checked after this patch's commit point over the whole log after `read-at`,
+//!   so of two racing edits from one view the second always lists the first, and
+//!   both may list each other.
 //! * `conflicted` — see [`crate::patch`]. The tip does not move. In an N-way race
 //!   from one parent, one edit is `applied` and each of the other N-1 opens its
 //!   own conflict `(winner, loser)`: every patch is kept.
@@ -291,7 +284,6 @@ where
         &self.log
     }
 
-    // ---- reading pointers ------------------------------------------------------
 
     /// Read a symbol pointer and the patch it names. If the op that last wrote
     /// the pointer may not be finished — the patch record is missing or still
@@ -411,7 +403,6 @@ where
         Err(VcsError::Invalid(format!("more than {MAX_PROBE} symbols have been called {id}")))
     }
 
-    // ---- apply-patch ---------------------------------------------------------
 
     /// Record one edit: it lands, commutes, duplicates, or becomes a conflict.
     pub async fn apply_patch(&self, req: PatchRequest) -> Result<CommitResult> {
@@ -937,7 +928,6 @@ where
         }))
     }
 
-    // ---- resolve-conflict ----------------------------------------------------
 
     /// Settle an open conflict: the tip moves from `left` to a resolution patch
     /// whose parents are `[left, right]`.
@@ -1157,7 +1147,6 @@ where
         Ok(t.tip.filter(|r| !r.is_delete()).map(|r| r.hash))
     }
 
-    // ---- revert-op -----------------------------------------------------------
 
     /// Undo `op` by logging and carrying out its inverse (see the module notes).
     pub async fn revert_op(&self, ws: &str, op: OpId, by: Agent) -> Result<OpEntry> {
@@ -1262,7 +1251,6 @@ where
         Err(self.exhausted(last).await)
     }
 
-    // ---- query-symbol --------------------------------------------------------
 
     pub async fn query_symbol(&self, ws: &str, query: SymbolQuery) -> Result<Vec<SymbolView>> {
         // BEFORE reading anything: every op at or below it is then reflected.
@@ -1420,7 +1408,6 @@ where
         Ok(Content::Blob(h.to_string()))
     }
 
-    // ---- snapshot-export -----------------------------------------------------
 
     /// Flatten a component into files. Within a file, live symbols are laid out
     /// in order-key order (see the module notes on positions). Each symbol's
@@ -1490,7 +1477,6 @@ where
         }))
     }
 
-    // ---- list-conflicts / oplog ----------------------------------------------
 
     pub async fn list_conflicts(
         &self,

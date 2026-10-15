@@ -348,7 +348,6 @@ where
         Ok(OpState::Pending)
     }
 
-    // ---- verify / repair ------------------------------------------------------
 
     async fn all_ops(&self, ws: &str) -> Result<Vec<StoredOp>> {
         let mut out = Vec::new();

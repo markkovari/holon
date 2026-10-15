@@ -1,13 +1,9 @@
-//! Content-addressed ticket ids: the same reasoning as a vcs patch hash
-//! (`holon_vcs::patch::patch_hash`) — a ticket names itself, so re-parking the
-//! identical call for a session is detectable without a lookup, and a caller
-//! that crashed right after `park` and retried on restart cannot double-park.
+//! Content-addressed ticket ids (like `holon_vcs::patch::patch_hash`): re-parking
+//! the identical call is detectable without a lookup, so a caller that crashed
+//! after `park` and retried cannot double-park.
 //!
-//! Only `session` and `correlation` are hashed. `description` and `deadline`
-//! are metadata a retry might legitimately word differently (a clearer
-//! message, a tighter deadline) without that being a DIFFERENT call — the
-//! `correlation` is what makes two calls the same call, same as a vcs patch's
-//! content deciding its hash rather than its message.
+//! Only `session` and `correlation` are hashed; `description` and `deadline`
+//! may be reworded on retry without being a different call.
 
 use sha2::{Digest, Sha256};
 

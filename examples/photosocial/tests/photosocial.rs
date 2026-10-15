@@ -77,12 +77,10 @@ fn start_host() -> HostGuard {
 fn full_photosocial_lifecycle_and_rbac_e2e() {
     let _host = start_host();
 
-    // 1. Service discovery info
     let (status, info) = req("GET", "/api/info", None, None);
     assert_eq!(status, 200);
     assert_eq!(info["service"], "photosocial");
 
-    // 2. Admin account registration & login
     let (s, _) = req(
         "POST",
         "/api/register",
@@ -100,12 +98,10 @@ fn full_photosocial_lifecycle_and_rbac_e2e() {
     assert_eq!(s, 200, "login admin: {admin_login}");
     let admin_token = admin_login["access_token"].as_str().expect("admin token");
 
-    // Verify /api/me as admin
     let (s, admin_me) = req("GET", "/api/me", Some(admin_token), None);
     assert_eq!(s, 200);
     assert_eq!(admin_me["is_admin"], true);
 
-    // 3. Admin creates custom evaluation attribute
     let (s, new_attr) = req(
         "POST",
         "/api/admin/attributes",
@@ -118,7 +114,6 @@ fn full_photosocial_lifecycle_and_rbac_e2e() {
     );
     assert_eq!(s, 201, "admin attribute creation: {new_attr}");
 
-    // 4. Regular User registration & login
     let (s, _) = req(
         "POST",
         "/api/register",
@@ -145,7 +140,6 @@ fn full_photosocial_lifecycle_and_rbac_e2e() {
     );
     assert_eq!(s, 403, "non-admin must be forbidden from creating attributes: {blocked}");
 
-    // 6. User uploads photo -> triggers automated AI critique
     let (s, photo) = req(
         "POST",
         "/api/photos",
@@ -162,13 +156,11 @@ fn full_photosocial_lifecycle_and_rbac_e2e() {
     assert!(photo["ai_critique"].as_str().unwrap().len() > 10, "ai critique generated");
     assert!(!photo["ai_tags"].as_array().unwrap().is_empty(), "ai tags generated");
 
-    // 7. Voting (Upvote / Downvote)
     let (s, vote_res) = req("POST", &format!("/api/photos/{photo_id}/vote"), Some(user_token), Some(json!({ "value": 1 })));
     assert_eq!(s, 200);
     assert_eq!(vote_res["score"], 1);
     assert_eq!(vote_res["upvotes"], 1);
 
-    // 8. Attribute Ratings
     let (s, rating_res) = req(
         "POST",
         &format!("/api/photos/{photo_id}/rate"),
@@ -197,7 +189,6 @@ fn full_photosocial_lifecycle_and_rbac_e2e() {
     );
     assert_eq!(s, 200, "user rate: {user_rate_res}");
 
-    // 9. Inspect photo detail with computed averages
     let (s, photo_detail) = req("GET", &format!("/api/photos/{photo_id}"), None, None);
     assert_eq!(s, 200);
     let attr_scores = &photo_detail["attribute_scores"];
@@ -206,7 +197,6 @@ fn full_photosocial_lifecycle_and_rbac_e2e() {
     assert_eq!(attr_scores["creativity"]["avg"], 9.0);  // (8.5 + 9.5) / 2
     assert_eq!(attr_scores["perspective"]["count"], 2);
 
-    // 10. Check caller's personal rating view
     let (s, my_ratings) = req("GET", &format!("/api/photos/{photo_id}/my-ratings"), Some(user_token), None);
     assert_eq!(s, 200);
     assert_eq!(my_ratings["ratings"]["perspective"], 8.0);

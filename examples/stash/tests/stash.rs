@@ -92,7 +92,6 @@ fn notes_crud_and_zip_export() {
     let _host = start_host();
     let tok = signup("keep@acme.io");
 
-    // ===== seeded notes + CRUD ============================================
     let (_, r) = req("GET", "/api/notes", Some(&tok), None);
     assert_eq!(r["items"].as_array().unwrap().len(), 3, "seeded notes");
 
@@ -105,7 +104,6 @@ fn notes_crud_and_zip_export() {
     let other = signup("nope@acme.io");
     assert_eq!(req("PATCH", &format!("/api/notes/{id}"), Some(&other), Some(json!({ "body": "x" }))).0, 403);
 
-    // ===== the export is a VALID ZIP ======================================
     let resp = ureq::get(&format!("{}/api/export.zip", base()))
         .set("authorization", &format!("Bearer {tok}"))
         .call()
@@ -115,9 +113,7 @@ fn notes_crud_and_zip_export() {
     let mut zip = Vec::new();
     resp.into_reader().read_to_end(&mut zip).unwrap();
 
-    // PK local-file-header at the very start, and the EOCD record present.
     assert!(zip.starts_with(&[0x50, 0x4b, 0x03, 0x04]), "ZIP local header");
-    // 4 notes + index.csv + manifest.json = 6 entries.
     assert_eq!(zip_entry_count(&zip), 6, "one .md per note + index + manifest");
     assert!(contains(&zip, b"index.csv"), "index.csv entry");
     assert!(contains(&zip, b"manifest.json"), "manifest.json entry");
@@ -125,7 +121,6 @@ fn notes_crud_and_zip_export() {
     // the manifest is real JSON with the right count (it's stored, so readable in-place).
     assert!(contains(&zip, br#""count":4"#) && contains(&zip, br#""app":"stash""#), "manifest contents");
 
-    // deleting a note shrinks the next export by one entry.
     assert_eq!(req("DELETE", &format!("/api/notes/{id}"), Some(&tok), None).0, 200);
     let resp = ureq::get(&format!("{}/api/export.zip", base())).set("authorization", &format!("Bearer {tok}")).call().unwrap();
     let mut zip2 = Vec::new();

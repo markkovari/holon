@@ -85,38 +85,31 @@ fn multi_role_grades_reconcile() {
     let prof = signup("prof@acme.io", "instructor"); // registering as instructor seeds a demo course
     let student = signup("stu@acme.io", "student");
 
-    // ===== the instructor's seeded course; an instructor-only action =======
     let (_, courses) = req("GET", "/api/courses", Some(&prof), None);
     let course = courses["items"][0]["id"].as_str().unwrap().to_string();
     // a student cannot create a course.
     assert_eq!(req("POST", "/api/courses", Some(&student), Some(json!({ "code": "X", "title": "X" }))).0, 403);
 
-    // ===== the answer key is hidden from students ==========================
     let (_, detail_i) = req("GET", &format!("/api/courses/{course}"), Some(&prof), None);
     let quiz = detail_i["quizzes"][0]["id"].as_str().unwrap().to_string();
     assert!(detail_i["quizzes"][0]["questions"][0].get("answer").is_some(), "instructor sees the key");
     let (_, detail_s) = req("GET", &format!("/api/courses/{course}"), Some(&student), None);
     assert!(detail_s["quizzes"][0]["questions"][0].get("answer").is_none(), "student does NOT see the key");
 
-    // ===== enroll gate, then submit -> auto-graded (quiz:grade) ============
     assert_eq!(req("POST", &format!("/api/quizzes/{quiz}/submit"), Some(&student), Some(json!({ "answers": [1, 0, 1] }))).0, 403, "must enroll first");
     assert!(req("POST", &format!("/api/courses/{course}/enroll"), Some(&student), None).0 == 201);
 
-    // a wrong attempt, then a perfect one.
     let (_, wrong) = req("POST", &format!("/api/quizzes/{quiz}/submit"), Some(&student), Some(json!({ "answers": [0, 1, 0] })));
     assert_eq!(wrong["passed"], false);
     let (_, right) = req("POST", &format!("/api/quizzes/{quiz}/submit"), Some(&student), Some(json!({ "answers": [1, 0, 1] })));
     assert_eq!(right["score_pct"], 100);
     assert_eq!(right["passed"], true);
 
-    // ===== the numbers reconcile across the three views ====================
-    // student progress: best kept, passed all, certificate eligible.
     let (_, prog) = req("GET", &format!("/api/courses/{course}/progress"), Some(&student), None);
     assert_eq!(prog["passed_all"], true);
     assert_eq!(prog["completion_pct"], 100);
     assert_eq!(prog["quizzes"][0]["best_score"], 100, "best score kept, not the last");
 
-    // instructor gradebook: same student, same average.
     let (_, gb) = req("GET", &format!("/api/courses/{course}/gradebook"), Some(&prof), None);
     assert_eq!(gb["enrolled"], 1);
     assert_eq!(gb["students"][0]["email"], "stu@acme.io");
@@ -128,7 +121,6 @@ fn multi_role_grades_reconcile() {
     // a student cannot read the gradebook.
     assert_eq!(req("GET", &format!("/api/courses/{course}/gradebook"), Some(&student), None).0, 403);
 
-    // ===== the certificate issues only after passing all quizzes ===========
     let resp = ureq::get(&format!("{}/api/courses/{course}/certificate.pdf", base()))
         .set("authorization", &format!("Bearer {student}"))
         .call()
@@ -139,7 +131,6 @@ fn multi_role_grades_reconcile() {
     resp.into_reader().read_to_end(&mut pdf).unwrap();
     assert!(pdf.starts_with(b"%PDF-1.4"), "a real certificate PDF");
 
-    // a not-yet-passing student is refused the certificate.
     let latecomer = signup("late@acme.io", "student");
     req("POST", &format!("/api/courses/{course}/enroll"), Some(&latecomer), None);
     assert_eq!(

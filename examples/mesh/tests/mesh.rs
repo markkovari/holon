@@ -94,7 +94,6 @@ fn start_host() -> Kill {
         .args(["--config", "default-tenant=mesh"])
         // the proxy:route table — /upstream is the flaky server, /dead is nothing.
         .arg("--config").arg(format!("routes=/upstream=http://{UPSTREAM}/,/dead=http://{DEAD}/"))
-        // outbound HTTP is default-deny, and both upstreams are on loopback.
         .args(["--egress", UPSTREAM, "--egress", DEAD, "--allow-private-egress"])
         .spawn()
         .expect("spawn comp-host");
@@ -115,14 +114,12 @@ fn resilience_patterns() {
     let _up = start_upstream();
     let _host = start_host();
 
-    // ===== healthy: one attempt, circuit stays closed =======================
     let (code, r) = post("/api/call", json!({ "key": "ok", "path": "/upstream/hit?id=ok" }));
     assert_eq!(code, 200, "healthy call: {r}");
     assert_eq!(r["state"], "closed");
     assert_eq!(r["attempts"].as_array().unwrap().len(), 1, "no retries needed: {r}");
     assert_eq!(upstream_hits("ok"), 1, "exactly one upstream request");
 
-    // ===== a blip is ridden out by retries ==================================
     // fail_n=2 -> the first two requests 500, the third succeeds. attempts=4 is
     // enough; base 40ms doubling means the whole thing still finishes fast.
     let (code, r) = post(
@@ -141,7 +138,6 @@ fn resilience_patterns() {
     assert!(r["total_ms"].as_u64().unwrap() >= 120, "backoff waited: {r}");
     assert_eq!(r["state"], "closed", "a success clears the streak");
 
-    // ===== the breaker trips, then sheds without touching the upstream ======
     let trip = |n: u64| {
         post(
             "/api/call",
@@ -178,11 +174,9 @@ fn resilience_patterns() {
     assert_eq!(cv["stats"]["shed"], 1);
     assert_eq!(cv["stats"]["trips"], 1);
 
-    // ===== half-open: after the cooldown, a probe closes it ================
     std::thread::sleep(Duration::from_millis(1600));
     let (_, cv) = get(HOST, "/api/circuit/down");
     assert_eq!(cv["would_admit"], true, "cooldown elapsed: {cv}");
-    // Probe a HEALTHY path this time (the upstream "recovered").
     let (code, r) = post(
         "/api/call",
         json!({ "key": "down", "path": "/upstream/hit?id=probe",
@@ -192,7 +186,6 @@ fn resilience_patterns() {
     assert_eq!(r["state"], "closed", "one good probe closes it (success_threshold 1)");
     assert_eq!(upstream_hits("probe"), 1);
 
-    // ===== slow is failed: an SLO breach despite a 200 ======================
     let (code, r) = post(
         "/api/call",
         json!({ "key": "slow", "path": "/upstream/hit?id=slow&delay=300",
@@ -205,7 +198,6 @@ fn resilience_patterns() {
     assert!(t["error"].as_str().unwrap().contains("slo"), "{t}");
     assert_eq!(r["state"], "open", "threshold 1 -> tripped by the SLO breach");
 
-    // ===== unreachable is a failure; a missing route is NOT ================
     let (code, r) = post(
         "/api/call",
         json!({ "key": "dead", "path": "/dead/anything", "attempts": 1, "failure_threshold": 1 }),
@@ -224,13 +216,11 @@ fn resilience_patterns() {
     assert_eq!(cv["circuit"]["state"], "closed", "OUR config bug must not trip a breaker: {cv}");
     assert_eq!(cv["stats"]["attempts"], 0);
 
-    // ===== reset forgets a circuit =========================================
     post("/api/reset", json!({ "key": "slow" }));
     let (_, cv) = get(HOST, "/api/circuit/slow");
     assert_eq!(cv["circuit"]["state"], "closed");
     assert_eq!(cv["stats"]["failed"], 0);
 
-    // The dashboard lists what is left.
     let (_, all) = get(HOST, "/api/circuits");
     let keys: Vec<&str> = all["circuits"].as_array().unwrap().iter().map(|c| c["key"].as_str().unwrap()).collect();
     assert!(keys.contains(&"down") && keys.contains(&"dead") && !keys.contains(&"slow"), "{keys:?}");

@@ -12,11 +12,8 @@
 //! that makes `park` idempotent, [`store`] is the one storage trait
 //! [`engine::Engine`] needs, and [`mem`] is its in-memory implementation.
 //!
-//! What is here now is the engine, not the service: there is no `comp-park`
-//! daemon, no `PARK_WAKE` JetStream stream, and no NATS-backed `ParkStore`
-//! yet. Those are next, the same order holon-vcs was built in — ADR, WIT,
-//! workspace, engine (tested in memory), THEN wired to real storage and
-//! served over HTTP (ADR-0100).
+//! Engine only, not the service: no `comp-park` daemon, `PARK_WAKE` stream or
+//! NATS-backed `ParkStore` yet (ADR-0100).
 
 pub mod engine;
 pub mod error;
@@ -32,10 +29,8 @@ pub mod nats;
 pub use engine::Engine;
 pub use error::ParkError;
 
-/// An engine entirely in memory.
 pub type MemEngine = Engine<mem::MemParkStore>;
 
-/// A fresh in-memory engine.
 pub fn mem_engine() -> MemEngine {
     Engine::new(mem::MemParkStore::new())
 }
