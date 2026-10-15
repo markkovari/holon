@@ -16,9 +16,7 @@ pub mod cost;
 pub mod daemon_auth;
 /// Starting a fleet, driving it, reading it.
 ///
-/// A library module rather than test-only code because the benchmark matrix needs
-/// exactly what the tests need — and two harnesses that start fleets slightly
-/// differently would produce numbers that cannot be compared with the assertions.
+/// Library, not test-only: the benchmark matrix needs the same fleet start as the tests, so its numbers stay comparable.
 pub mod fleet;
 pub mod gate;
 pub mod generation;

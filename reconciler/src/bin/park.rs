@@ -3,18 +3,13 @@
 //! `components/park-store` (which, composed with `components/park-gateway`,
 //! is what `apps/park.toml` puts on the tailnet).
 //!
-//! ## ADR-0095's three questions
+//! ## Why this is native (ADR-0095)
 //!
-//! 1. **Something WASI does not give a guest?** Yes: a held NATS JetStream KV
-//!    connection and, for `wake`, a JetStream publish to `PARK_WAKE`. Same
-//!    reason `comp-vcs` is native.
-//! 2. **The smallest it could be?** Every decision — idempotency, the state
-//!    machine, expiry — is `holon-park`'s engine, which also builds for
-//!    `wasm32-wasip2`; this file is the engine's one native adapter, a JSON
-//!    mapping one route per WIT function, and the `PARK_WAKE` publish.
-//! 3. **A contract a component could have answered?** Yes, and it stays WIT:
-//!    `wit/park/park.wit`. A `park-store` component would export it and make
-//!    each call one request here, the same shape as `vcs-store`/`comp-vcs`.
+//! It needs a held NATS JetStream KV connection and, for `wake`, a JetStream publish to `PARK_WAKE`,
+//! which a guest cannot do (same reason `comp-vcs` is native). Every decision (idempotency, state
+//! machine, expiry) is `holon-park`'s engine, which also builds for `wasm32-wasip2`; this file is its
+//! one native adapter, a JSON mapping, and the `PARK_WAKE` publish. The contract stays WIT
+//! (`wit/park/park.wit`), the same shape as `vcs-store`/`comp-vcs`.
 //!
 //! ## Routes
 //!
@@ -132,7 +127,6 @@ fn now_ms() -> u64 {
     holon_park::engine::now_ms()
 }
 
-/// Run `$body` with `$e` bound to the engine, whichever backend it is.
 macro_rules! on {
     ($d:expr, |$e:ident| $body:expr) => {
         match &$d.backend {
@@ -167,10 +161,8 @@ impl Daemon {
                                     ticket: outcome.ticket.clone(),
                                 };
                                 if let Err(e) = wake.publish(&msg).await {
-                                    // The record is already durable; a failed
-                                    // nudge is not a failed `wake`. A resumer
-                                    // that never sees this message still finds
-                                    // the ticket via `pending`, just later.
+                                    // The record is already durable; a failed nudge is not a failed `wake`: a resumer that misses it
+                                    // still finds the ticket via `pending`, later.
                                     eprintln!(
                                         "comp-park: PARK_WAKE publish for {}: {e:#}",
                                         outcome.ticket
@@ -209,8 +201,7 @@ impl Daemon {
     }
 
     async fn healthy(&self) -> bool {
-        // A cheap, harmless read: a session that (almost certainly) has never
-        // been parked, so this never returns a real ticket list to log.
+        // A cheap, harmless read: a session that has almost certainly never been parked.
         on!(self, |e| e.pending(&"comp-park/health-probe".to_string(), now_ms()).await).is_ok()
     }
 }

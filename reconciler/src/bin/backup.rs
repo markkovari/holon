@@ -273,8 +273,8 @@ impl<W: Write> Write for Hashing<W> {
     }
 }
 
-/// Turn a gzip'd file into the bytes that are uploaded — sealed under `name`
-/// if there is a key — and return (path, size, sha256).
+/// Turn a gzip'd file into the bytes that are uploaded (sealed under `name` if there is a key) and
+/// return (path, size, sha256).
 fn finalize(raw: &Path, key: Option<&Key>, name: &str) -> Result<(PathBuf, u64, String)> {
     let out = raw.with_extension("part");
     let mut w =
@@ -384,7 +384,6 @@ async fn run(a: &RunArgs, key: Option<&Key>) -> Result<Manifest> {
     Ok(manifest)
 }
 
-/// Every backup id under the prefix, oldest first, with whether it completed.
 async fn ids(store: &Store, prefix: &str) -> Result<Vec<(String, bool)>> {
     let root = format!("{}/", prefix.trim_end_matches('/'));
     let mut seen: std::collections::BTreeMap<String, bool> = Default::default();

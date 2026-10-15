@@ -1,13 +1,9 @@
 //! The benchmark matrix: every dimension crossed, and load held rather than spiked.
 //!
-//! Every number this project has published so far moved one axis for fifteen or
-//! twenty seconds. That is enough to catch a throughput difference and exactly wrong
-//! for the questions now being asked — what an idle app costs, whether sharing helps
-//! at scale, whether anything leaks. A 20-second spike cannot see drift, and a
-//! one-axis run cannot see an interaction.
-//!
-//! So: a cell per combination, load held for `--seconds`, and memory sampled
-//! throughout rather than read once at the end.
+//! Every number published so far moved one axis for fifteen or twenty seconds: enough for a throughput
+//! difference, wrong for what an idle app costs, whether sharing helps at scale, or whether anything
+//! leaks (a spike cannot see drift, a one-axis run cannot see an interaction). So: a cell per
+//! combination, load held for `--seconds`, memory sampled throughout.
 //!
 //! ```
 //! comp-matrix --apps 1,8,32 --seconds 120
@@ -109,8 +105,7 @@ struct Cell {
 fn main() -> Result<()> {
     let args = Args::parse();
     let root = comp_reconciler::fleet::repo_root();
-    // Honour the hand-composed artifact, derive it otherwise — the same rule the
-    // fleet and the suites follow, so no caller needs `cargo xtask compose gate` first.
+    // Honour the hand-composed artifact, derive it otherwise, as the fleet and suites do.
     let legacy = root.join("components/target/gate_domain.composed.wasm");
     let wasm = match std::fs::read(&legacy) {
         Ok(bytes) => bytes,
@@ -153,10 +148,9 @@ fn main() -> Result<()> {
 
 /// N specs, and N artifacts when each app should have its own digest.
 ///
-/// A distinct digest is the SAME component with a custom section appended — a wasm
-/// custom section is inert, so behaviour is identical and only the content address
-/// differs. Using genuinely different components instead would confound the memory
-/// question with "these do different work".
+/// A distinct digest is the SAME component with a custom section appended: inert, so behaviour is
+/// identical and only the content address differs (different components would confound the memory
+/// question with different work).
 fn write_inputs(
     dir: &std::path::Path,
     wasm: &[u8],
@@ -189,8 +183,8 @@ fn write_inputs(
     Ok(artifacts)
 }
 
-/// A wasm custom section: id 0, then a LEB128 length, then a named payload. Ignored
-/// by every runtime, which is the point — it changes the digest and nothing else.
+/// A wasm custom section: id 0, then a LEB128 length, then a named payload. Ignored by every runtime;
+/// it changes the digest and nothing else.
 fn custom_section(name: &str) -> Vec<u8> {
     let mut body = Vec::new();
     leb128(name.len() as u64, &mut body);
@@ -247,8 +241,7 @@ fn run_cell(
         args.kv.as_deref(),
     );
 
-    // Placed, then settled: an RSS read while instances are still arriving measures
-    // the arrival, not the resting cost.
+    // Placed, then settled: an RSS read while instances are still arriving measures the arrival.
     let deadline = Instant::now() + Duration::from_secs(120);
     while Instant::now() < deadline && fleet.started_count() < apps {
         std::thread::sleep(Duration::from_millis(500));
@@ -257,17 +250,11 @@ fn run_cell(
     let pid = fleet.host_pid(1).context("the host is not running")?;
     let idle_mib = rss_mib(pid);
 
-    // --- sustained load, memory sampled throughout ---
-    //
-    // Spread across every app, not just the first: one hot app and thirty-one idle
-    // ones is a different measurement from thirty-two in use.
+    // Spread across every app: one hot app and thirty-one idle ones is a different measurement.
     let hosts: Vec<String> = (0..apps).map(|a| format!("app{a}.matrix.test")).collect();
-    // Wait for the DOOR, not just the host. The host reporting an instance
-    // started says nothing about the ingress having refreshed its route table,
-    // and it refreshes on a timer — so load beginning a moment too early meets an
-    // ingress that correctly answers "no replica of that is placed". Measured:
-    // 12 851 spurious 503s in one run and none in the next, from the same binary.
-    // That is the harness racing the platform, and it read as shedding.
+    // Wait for the DOOR, not just the host: the ingress refreshes its route table on a timer, so load
+    // starting too early meets "no replica of that is placed" (12 851 spurious 503s in one run, none in
+    // the next). The harness racing the platform reads as shedding.
     if !args.direct {
         for h in &hosts {
             anyhow::ensure!(
@@ -283,15 +270,13 @@ fn run_cell(
     };
     let load = fleet.open_load(&hosts, door, args.rate, args.conns);
 
-    // Let it reach steady state before the drift window opens, or the ramp counts as
-    // a leak.
+    // Let it reach steady state before the drift window opens, or the ramp counts as a leak.
     std::thread::sleep(Duration::from_secs(10));
     let settled = rss_mib(pid);
     let started = Instant::now();
     let mut peak = settled;
-    // The SHAPE, not just the delta. Growth that flattens is an allocator settling;
-    // growth that keeps climbing is a leak, and a single before/after reading cannot
-    // tell them apart — which is the whole reason this run exists.
+    // The SHAPE, not just the delta: growth that flattens is an allocator settling, growth that keeps
+    // climbing is a leak, and a before/after reading cannot tell them apart.
     let mut trace: Vec<(u64, f64)> = vec![(0, settled)];
     while started.elapsed() < Duration::from_secs(args.seconds.saturating_sub(10)) {
         std::thread::sleep(Duration::from_secs(5));
@@ -305,8 +290,7 @@ fn run_cell(
             let bar = "#".repeat(((mib - settled).max(0.0) * 2.0) as usize);
             println!("    {t:>4}s  {mib:>7.1} MiB  {bar}");
         }
-        // Second half against first: if the growth is front-loaded the curve is
-        // settling, if it is even the process is still accumulating.
+        // Second half against first: front-loaded growth is settling, even growth is still accumulating.
         let mid = trace.len() / 2;
         let first = trace[mid].1 - trace[0].1;
         let second = trace[trace.len() - 1].1 - trace[mid].1;
@@ -323,9 +307,8 @@ fn run_cell(
     }
     let loaded_mib = rss_mib(pid);
     let report = load.stop();
-    // When something refused, say what the FLEET was doing at the time. A refusal
-    // count plus a status code still cannot distinguish "the platform declined
-    // load" from "the platform briefly lost track of a healthy node".
+    // When something refused, say what the FLEET was doing: a refusal count plus a status cannot tell "the
+    // platform declined load" from "briefly lost track of a healthy node".
     if !report.statuses.is_empty() {
         let log = fleet.node_log("n1");
         let beats = log.lines().filter(|l| l.contains("heartbeat")).count();
@@ -349,8 +332,8 @@ fn run_cell(
         pool,
         idle_mib,
         loaded_mib,
-        // Growth AFTER steady state. Under a constant arrival rate this should be
-        // flat; anything else is the thing a 20-second spike cannot see.
+        // Growth AFTER steady state: flat under a constant arrival rate; anything else is what a 20-second
+        // spike cannot see.
         drift_mib: loaded_mib - settled,
         per_app_mib: (idle_mib - 12.0) / apps as f64,
         rps: report.rps(elapsed),
@@ -369,7 +352,6 @@ fn run_cell(
     })
 }
 
-/// Which door the load went through, for the header.
 fn door(args: &Args) -> &'static str {
     if args.direct {
         "a host directly"
@@ -385,8 +367,7 @@ fn report(cells: &[Cell], args: &Args) {
         args.conns,
         match args.rate {
             Some(r) => format!("OPEN loop at {r} rps offered, through {}", door(args)),
-            // Said out loud, because the latency columns below are then
-            // `conns / rps` by construction and mean nothing on their own.
+            // Said out loud, because the latency columns are then `conns / rps` by construction.
             None => format!(
                 "CLOSED loop (latency == conns/rps by Little's law), through {}",
                 door(args)
@@ -454,8 +435,7 @@ fn report(cells: &[Cell], args: &Args) {
         }
     }
 
-    // The comparison the matrix exists for: same-digest against distinct at equal
-    // app counts. One number per pair, rather than two runs to eyeball.
+    // The comparison the matrix exists for: same-digest against distinct at equal app counts.
     println!("\n  what sharing a digest saves, at equal app count:");
     for c in cells.iter().filter(|c| c.digests == "same") {
         if let Some(d) =

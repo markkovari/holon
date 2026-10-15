@@ -5,11 +5,6 @@
 //! long-sleeping foreground process that busy-waits for the clock:
 //!
 //!     * * * * * comp-offpeak --holidays cn-holidays.txt && comp-goalrun ...
-//!
-//! The actual off-peak rule lives in `comp_reconciler::offpeak` — this binary
-//! is a thin CLI shell around it: read an optional holiday file, read an
-//! optional timestamp to check instead of "now", print the verdict, set the
-//! exit code.
 
 use clap::Parser;
 use comp_reconciler::offpeak::{deepseek_off_peak, parse_holidays};

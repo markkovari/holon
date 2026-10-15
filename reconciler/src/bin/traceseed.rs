@@ -1,18 +1,14 @@
 //! `comp-trace-seed` — write one run's history, for a console the browser can drive.
 //!
-//! The console's Playwright suite needs a run to look at. This writes one through
-//! `trace::Trace` — the SAME code path `comp-goalrun` uses (ADR-0092) — rather
-//! than inserting rows that happen to match what the UI renders.
-//!
-//! That distinction is the whole point. A hand-written fixture keeps passing
-//! after the writer's schema drifts, so the e2e would go green while the real run
-//! view showed nothing. Seeding through the writer means the browser test is
-//! also a test of what the driver records.
+//! Written through `trace::Trace`, the SAME code path `comp-goalrun` uses (ADR-0092), rather than
+//! inserting rows that happen to match what the UI renders: a hand-written fixture keeps passing
+//! after the writer's schema drifts, so seeding through the writer makes the browser test also a
+//! test of what the driver records.
 //!
 //!   comp-trace-seed --surreal-url http://127.0.0.1:8000 [--db goalmemory] [--password root]
 //!
-//! Deliberately not `#[cfg(test)]` machinery: the Playwright harness is a Node
-//! process and cannot call into a Rust test, so this is a real binary.
+//! Not `#[cfg(test)]` machinery: the Playwright harness is a Node process and cannot call into a Rust
+//! test, so this is a real binary.
 
 use clap::Parser;
 use comp_reconciler::trace::Trace;
@@ -45,9 +41,7 @@ fn main() {
     let args = Args::parse();
     let trace = Trace::new(&args.surreal_url, &args.db, args.password.as_deref());
 
-    // One generation, two branches, one winner — the smallest run that still has
-    // something to explain. A single-branch run would render fine and prove
-    // nothing about "why did this one beat that one".
+    // One generation, two branches, one winner: the smallest run that still has something to explain.
     let run = "77/g1";
     trace.run_started(
         run,
@@ -58,8 +52,8 @@ fn main() {
         2,
     );
 
-    // A hit and a MISS. The miss is the row the run view calls out, because it
-    // is the graph naming a capability the pool lacks (ADR-0089).
+    // A hit and a MISS: the miss is the row the run view calls out, the graph naming a capability the
+    // pool lacks (ADR-0089).
     trace.capsearch(run, "paginate a result set", 1);
     trace.capsearch(run, "render a swimlane chart", 0);
 
@@ -68,11 +62,9 @@ fn main() {
         trace.lesson_read(run, attempt, &["mem:paginate".to_string()]);
     }
 
-    // The two branches took DIFFERENT approaches, which is the whole reason to
-    // run more than one: risk-first edited the app in place and failed its tests;
-    // mvp extracted a reusable component and passed. A seeded run where both
-    // branches wrote the same files would render correctly and demonstrate
-    // nothing about why a swarm is worth its cost.
+    // The two branches took DIFFERENT approaches (risk-first edited the app in place and failed;
+    // mvp extracted a reusable component and passed); otherwise the run would demonstrate nothing about
+    // why a swarm is worth its cost.
     let risk_files = json!([
         { "path": "apps/search/src/handler.rs", "content": "" },
         { "path": "apps/search/src/query.rs", "content": "" },
@@ -84,24 +76,20 @@ fn main() {
         { "path": "apps/search/src/handler.rs", "content": "" },
     ]);
 
-    // The loser is kept, with its verdict. Dropping failed branches is what makes
-    // a run unexplainable a day later.
+    // The loser is kept, with its verdict: dropping failed branches makes a run unexplainable later.
     trace.gate_verdict(run, "77/g1/risk-first", 40, false, &json!({ "failing": ["test_pages"] }));
-    // The last argument is `tries`: this branch needed a repair, the one below did
-    // not, and the seeded run is the console's fixture for showing that difference.
+    // The last argument is `tries`: this branch needed a repair, the one below did not.
     trace.attempt_finished(run, "77/g1/risk-first", "failed", 40, &risk_files, 18_400, 94_000, 2);
 
     trace.gate_verdict(run, "77/g1/mvp", 100, true, &json!({ "failing": [] }));
     trace.attempt_finished(run, "77/g1/mvp", "passed", 100, &mvp_files, 31_200, 156_000, 1);
 
-    // What the pool gained. The point of ADR-0089: the app change lands and is
-    // done, the component is there for every run after this one.
+    // What the pool gained (ADR-0089): the app change lands and the component is there for every later run.
     trace.capability_added(run, "paginate", "components/paginate");
 
     trace.run_resolved(run, "merged", Some("mvp"), "https://example.test/pull/1");
 
-    // A seeder that half-wrote is worse than one that failed: the browser test
-    // would then assert against an incomplete run and report a UI bug.
+    // A seeder that half-wrote is worse than one that failed: the browser test would report a UI bug.
     if let Some(why) = trace.report() {
         eprintln!("comp-trace-seed: {why}");
         std::process::exit(1);

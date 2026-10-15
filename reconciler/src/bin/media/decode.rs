@@ -266,7 +266,6 @@ mod tests {
     /// bottom-left pixel becomes the top-left.
     #[test]
     fn orienting_a_plane_moves_pixels_the_way_exif_says() {
-        // 3 wide, 2 high:  a b c / d e f
         let p = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
         assert_eq!(orient_plane(&p, 3, 2, 6), (vec![4.0, 1.0, 5.0, 2.0, 6.0, 3.0], 2, 3));
         assert_eq!(orient_plane(&p, 3, 2, 8), (vec![3.0, 6.0, 2.0, 5.0, 1.0, 4.0], 2, 3));
@@ -293,14 +292,12 @@ mod tests {
         assert_eq!(exif_datetime(""), None);
     }
 
-    /// A TIFF value for the test EXIF writer.
     enum V {
         A(&'static str),
         R(u32, u32),
         S(u16),
     }
 
-    /// (type, count, bytes) as TIFF stores them, little-endian.
     fn tiff_value(v: &V) -> (u16, u32, Vec<u8>) {
         match v {
             V::A(s) => (2, s.len() as u32 + 1, [s.as_bytes(), &[0]].concat()),
@@ -342,7 +339,6 @@ mod tests {
         out.extend(8u32.to_le_bytes());
         let mut data = Vec::new();
         tiff_ifd(&mut out, &mut data, data_at, &ifd0);
-        // The pointer is a LONG holding the Exif IFD's offset.
         let ptr = 8 + 2 + 12 * (ifd0.len() - 1);
         out[ptr + 2..ptr + 4].copy_from_slice(&4u16.to_le_bytes());
         out[ptr + 8..ptr + 12].copy_from_slice(&(exif_at as u32).to_le_bytes());
@@ -416,7 +412,6 @@ mod tests {
             json!({
                 "camera": "Acme Box 1", "lens": null, "captured_at": null, "exposure_s": null,
                 "fnumber": 8.0, "focal_mm": null, "iso": null,
-                // Orientation 6: the upright picture is 8 wide.
                 "width": 8, "height": 16,
             })
         );

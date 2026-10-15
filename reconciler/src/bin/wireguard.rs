@@ -2,25 +2,18 @@
 //!
 //! ## Why this is a process and not a component
 //!
-//! Reading a WireGuard interface means running the `wg` binary and reading a
-//! kernel module's state, neither of which a `wasm32-wasip2` guest can do.
-//! That is the sandbox working rather than a gap to route around (ADR-0095),
-//! so the part that needs an operating system is native and is reached over
-//! HTTP exactly like the gate, the database and the model provider are.
+//! Reading a WireGuard interface means running the `wg` binary and reading kernel module state, which
+//! a `wasm32-wasip2` guest cannot do (ADR-0095). So the part that needs an operating system is native
+//! and reached over HTTP like the gate, the database and the model provider.
 //!
-//! `components/vpn-wireguard` is the component side: it holds the WIT
-//! contract and dials this. Nothing here knows what a goal is.
+//! `components/vpn-wireguard` is the component side: it holds the WIT contract and dials this.
 //!
 //! ## An allow-list, for the same reason `comp-fswatch` has one
 //!
-//! `--allow-interface wg0` permits reading that interface, repeatable;
-//! nothing is permitted by default. Unlike `comp-fswatch`, `status` takes no
-//! argument — there is no caller-supplied interface name to refuse — so this
-//! daemon just iterates every allowed interface itself and concatenates their
-//! peers. `wg-error::not-permitted` therefore exists in the WIT for symmetry
-//! with the other capabilities' allow-list shape, but this daemon never
-//! constructs it: there is nothing for a caller to name that could be
-//! refused.
+//! `--allow-interface wg0` permits reading that interface, repeatable; nothing is permitted by default.
+//! `status` takes no argument (no caller-supplied interface name to refuse), so this daemon iterates
+//! every allowed interface and concatenates their peers. `wg-error::not-permitted` exists in the WIT
+//! only for symmetry with the other allow-list capabilities and is never constructed here.
 //!
 //! ## Parsing `wg show <iface> dump`
 //!
@@ -76,9 +69,8 @@ struct Peer {
     tx_bytes: u64,
 }
 
-/// Parse `wg show <iface> dump` output into its peer lines, skipping the
-/// first line (the interface's own private-key/public-key/listen-port/fwmark
-/// row, which is not a peer).
+/// Parse `wg show <iface> dump` output into its peer lines, skipping the first line (the interface's
+/// own row, not a peer).
 fn parse_dump(output: &str) -> Vec<Peer> {
     output
         .lines()
@@ -105,8 +97,7 @@ struct Daemon {
 
 async fn status(State(d): State<std::sync::Arc<Daemon>>) -> Json<Value> {
     if d.allowed.is_empty() {
-        // No interface configured is a valid state meaning zero peers, not a
-        // failure — the same reasoning as no crontab configured.
+        // No interface configured is a valid state meaning zero peers, not a failure.
         return Json(json!({ "peers": [] }));
     }
 
@@ -177,8 +168,7 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
 
-    /// The first line is the interface itself and must not be read as a peer;
-    /// the rest parse into their five fields.
+    /// The first line is the interface itself and must not be read as a peer.
     #[test]
     fn a_dump_parses_its_peer_lines_and_skips_the_interface_line() {
         let dump = "privkey\tpubkey\t51820\t0\n\
@@ -195,15 +185,13 @@ mod tests {
         assert_eq!(peers[1].latest_handshake, 0);
     }
 
-    /// An interface with no peers dumps just its own line.
     #[test]
     fn an_interface_with_no_peers_parses_to_an_empty_list() {
         let dump = "privkey\tpubkey\t51820\t0\n";
         assert!(parse_dump(dump).is_empty());
     }
 
-    /// No `--allow-interface` at all means zero peers, not an error — a valid
-    /// state rather than a scan that failed.
+    /// No `--allow-interface` at all means zero peers, not an error.
     #[test]
     fn no_allowed_interfaces_means_no_peers_not_an_error() {
         let d = Daemon { allowed: vec![] };

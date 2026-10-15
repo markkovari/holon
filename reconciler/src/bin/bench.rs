@@ -1,13 +1,9 @@
 //! The reading half of the benchmarks: parse a result, print one honest line.
 //!
-//! These were eight small Python scripts that each grew their own idea of what
-//! "failed" means. Two of them silently reported nothing for the exact interval being
-//! measured, and one counted every 5xx as a shed when most were the ingress saying it
-//! had no route at all — mistakes that survived because each script was the only
-//! reader of its own output.
-//!
-//! One binary, one set of definitions. The scripts still orchestrate processes and
-//! ssh, which is what shell is good at; nothing interprets a number in bash.
+//! These replace eight Python scripts that each grew their own idea of "failed": two silently reported
+//! nothing for the interval being measured and one counted every 5xx as a shed when most were the
+//! ingress saying it had no route. One binary, one set of definitions; scripts still orchestrate
+//! processes and ssh, and nothing interprets a number in bash.
 
 use std::collections::BTreeMap;
 
@@ -96,10 +92,9 @@ fn main() -> Result<()> {
 
 /// The fleet as the reconciler sees it.
 ///
-/// Read through the lattice crate rather than by shelling out to `nats kv get`, which
-/// also retires a footgun that cost two runs: `--raw` writes no trailing newline, so
-/// several nodes concatenated into one invalid line and the sampler reported nothing
-/// for exactly the window being measured.
+/// Read through the lattice crate rather than shelling out to `nats kv get`: `--raw` writes no
+/// trailing newline, so several nodes concatenated into one invalid line and the sampler reported
+/// nothing for exactly the window being measured.
 fn inventory(nats_url: &str, lattice: &str) -> Result<()> {
     use comp_lattice::nats::NatsLattice;
     use comp_lattice::Inventory as _;
@@ -151,9 +146,8 @@ fn summarise(path: &std::path::Path, label: &str) -> Result<()> {
 
     let ok: u64 = codes.iter().filter(|(k, _)| k.starts_with('2')).map(|(_, v)| v).sum();
     let non2xx: u64 = codes.iter().filter(|(k, _)| !k.starts_with('2')).map(|(_, v)| v).sum();
-    // oha counts requests still in flight when the clock stops as errors. With 200
-    // connections that is 200 every run, and calling it "failed" overstates every
-    // result by exactly the connection count.
+    // oha counts requests still in flight when the clock stops as errors: with 200 connections that is
+    // 200 every run, overstating every result by exactly the connection count.
     let aborted: u64 = errs.iter().filter(|(k, _)| k.contains("deadline")).map(|(_, v)| v).sum();
     let transport: u64 = errs.values().sum::<u64>() - aborted;
 
@@ -164,8 +158,8 @@ fn summarise(path: &std::path::Path, label: &str) -> Result<()> {
         1000.0 * p["p99"].as_f64().unwrap_or(0.0),
     );
     if non2xx > 0 && ok == 0 {
-        // The failure that produced ADR-0036's correction: 102k rps that were all
-        // ingress 503s, reported as "100% success" because oha counts completions.
+        // The failure behind ADR-0036's correction: 102k rps that were all ingress 503s, reported as "100%
+        // success" because oha counts completions.
         println!("  {:14} NO 2xx AT ALL — this measured an error path: {codes:?}", "");
     }
     Ok(())
@@ -241,11 +235,9 @@ fn coldstart(log: &std::path::Path) -> Result<()> {
 }
 
 fn replicas() -> Result<()> {
-    // One JSON inventory entry per line, as `nats kv get … --raw` produces once each
-    // is newline-terminated. `--raw` writes NO trailing newline, which silently
-    // concatenated several nodes into one invalid line and reported zero for exactly
-    // the interval being measured — hence reading line by line and skipping junk
-    // rather than parsing the whole stream as one document.
+    // One JSON inventory entry per line, as `nats kv get … --raw` produces once newline-terminated;
+    // `--raw` writes NO trailing newline and once concatenated nodes into one invalid line. Hence line by
+    // line, skipping junk, rather than one document.
     let mut total = 0u64;
     for line in std::io::stdin().lines().map_while(Result::ok) {
         let line = line.trim();
@@ -262,7 +254,6 @@ fn replicas() -> Result<()> {
     Ok(())
 }
 
-/// `<unix-seconds> <label>` per line: what happened, and when.
 fn read_events(path: Option<&std::path::Path>) -> Vec<(u64, String)> {
     let Some(path) = path else { return Vec::new() };
     let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
@@ -283,13 +274,10 @@ fn now() -> u64 {
 
 /// Open-loop load, bucketed per second.
 ///
-/// Open-loop matters: a closed-loop generator waits for replies, so when nodes die
-/// the offered load falls by itself and the survivors never get the dead nodes'
-/// share. ADR-0036 measured the difference — the same fleet answered a p99 of 46
-/// SECONDS with zero errors, which a closed loop cannot produce.
-///
-/// A request that outlives the timeout counts as a failure: from a caller's side an
-/// eight second wait IS an outage, whatever it eventually returns.
+/// A closed-loop generator waits for replies, so when nodes die the offered load falls by itself and
+/// the survivors never get the dead nodes' share. ADR-0036 measured it: p99 of 46 SECONDS with zero
+/// errors, which a closed loop cannot produce. A request that outlives the timeout counts as a
+/// failure: an eight second wait IS an outage.
 fn load(
     url: &str,
     host: &str,
@@ -356,7 +344,6 @@ fn load(
         total_ok += ok;
         total_bad += bad;
         let mark = marks.get(&(i as u64)).map(|m| format!("   <- {m}")).unwrap_or_default();
-        // Only the interesting seconds: any failure, any event, or the edges.
         if bad > 0 || !mark.is_empty() || i < 2 || i as u64 == secs {
             println!("    {i:4} {ok:5} {bad:6}{mark}");
         }
@@ -364,9 +351,8 @@ fn load(
     let pct = 100.0 * total_bad as f64 / (total_ok + total_bad).max(1) as f64;
     println!("\n    {total_ok} ok, {total_bad} failed ({pct:.2}%)");
 
-    // Each window is bounded by the NEXT event, or one kill gets blamed for the
-    // other's errors — which it was, and it read as a 59s recovery that never
-    // happened.
+    // Each window is bounded by the NEXT event, or one kill is blamed for the other's errors (it read as
+    // a 59s recovery that never happened).
     let ev: Vec<(u64, String)> = marks.into_iter().collect();
     for (i, (at, what)) in ev.iter().enumerate() {
         let end = ev.get(i + 1).map(|(t, _)| *t).unwrap_or(secs);
@@ -383,7 +369,6 @@ fn load(
     Ok(())
 }
 
-/// How long the fleet ran under-replicated, per event.
 fn converge(samples: &std::path::Path, events: Option<&std::path::Path>, want: u64) -> Result<()> {
     let text = std::fs::read_to_string(samples)
         .with_context(|| format!("reading {}", samples.display()))?;
@@ -403,10 +388,9 @@ fn converge(samples: &std::path::Path, events: Option<&std::path::Path>, want: u
         let end = ev.get(i + 1).map(|(t, _)| *t).unwrap_or(u64::MAX);
         let after: Vec<(u64, u64)> =
             rows.iter().copied().filter(|(t, _)| *t >= *at && *t < end).collect();
-        // The total does NOT drop the moment a node is killed — its inventory entry
-        // lives out the TTL first (ADR-0022). So find the DIP, then the recovery;
-        // latching onto the pre-dip value reported a 1s recovery that was really the
-        // reading taken before anything had been noticed.
+        // The total does NOT drop the moment a node is killed: its inventory entry lives out the TTL
+        // (ADR-0022). So find the DIP, then the recovery; latching onto the pre-dip value reported a 1s
+        // recovery that was really a reading taken before anything was noticed.
         let Some((dip_at, _)) = after.iter().copied().find(|(_, n)| *n < want) else {
             println!("    {what}: never observed below {want}");
             continue;
@@ -430,11 +414,9 @@ fn converge(samples: &std::path::Path, events: Option<&std::path::Path>, want: u
 
 /// Organisations per node, and how many nodes hold more than one.
 ///
-/// Read from inventory rather than by scraping every host's log — which is what this
-/// replaced, and which needed an ssh to each remote machine to collect logs that the
-/// lattice was already publishing. The bar is not "it runs on several machines": giving
-/// each org its own box would pass that while quietly turning a multi-tenant platform
-/// into two single-tenant ones with a shared login page (ADR-0034).
+/// Read from inventory rather than scraping every host's log. The bar is not "it runs on several
+/// machines": giving each org its own box would pass that while turning a multi-tenant platform into
+/// two single-tenant ones with a shared login page (ADR-0034).
 fn tenants(nats_url: &str, lattice: &str) -> Result<()> {
     use comp_lattice::nats::NatsLattice;
     use comp_lattice::Inventory as _;
@@ -454,8 +436,8 @@ fn tenants(nats_url: &str, lattice: &str) -> Result<()> {
                 }
             }
         }
-        // A node holding nothing is not evidence either way, so it is shown but not
-        // counted — otherwise an idle node drags the ratio down and reads as a failure.
+        // A node holding nothing is not evidence either way: shown, not counted, or an idle node drags the
+        // ratio down.
         let holding: Vec<_> = by_node.iter().filter(|(_, t)| !t.is_empty()).collect();
         let mixed = holding.iter().filter(|(_, t)| t.len() > 1).count();
         for (node, orgs) in &by_node {

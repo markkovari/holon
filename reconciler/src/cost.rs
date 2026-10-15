@@ -1,29 +1,22 @@
 //! What a run costs, in cents.
 //!
-//! `spent-tokens` counts tokens; a project budget is money; and the two are in
-//! different units nothing converts between (goal 01 — fuel is money). This is
-//! that conversion, and it is deliberately a pure function: the prices are the
-//! only thing that will ever be wrong, and a wrong price is a one-line fix with a
-//! test beside it.
+//! `spent-tokens` counts tokens and a project budget is money (goal 01). This is the conversion, a pure
+//! function: the prices are the only thing that will ever be wrong, and a wrong price is a one-line
+//! fix with a test beside it.
 //!
-//! Holon filled `cost_cents` in against the tests below, which are its spec.
-//! `cost_usd_micros` is the same table at the resolution one model call needs:
-//! a single haiku call is a fraction of a cent, and a session budget summed
-//! from per-call cents would overcharge every call by up to a cent.
+//! `cost_usd_micros` is the same table at the resolution one model call needs: a single haiku call is
+//! a fraction of a cent, and a session budget summed from per-call cents would overcharge each call
+//! by up to a cent.
 
-/// The cost, in whole cents, of a completion that used `prompt_tokens` of input
-/// and `completion_tokens` of output on `model`.
+/// The cost, in whole cents, of a completion that used `prompt_tokens` of input and
+/// `completion_tokens` of output on `model`.
 ///
-/// Prices are cents per MILLION tokens, input and output priced separately as
-/// every provider prices them. A model the table does not know is charged at the
-/// MOST EXPENSIVE tier, never free — a budget that treats an unknown model as
-/// free is not a budget. The result rounds UP: underspending a cap is fine,
-/// overspending it because of a floor is the failure this exists to prevent.
+/// Prices are cents per MILLION tokens, input and output separately. A model the table does not know
+/// is charged at the MOST EXPENSIVE tier, never free. The result rounds UP: overspending a cap
+/// because of a floor is the failure this exists to prevent.
 ///
-/// `off_peak` only changes the price of a DeepSeek model — see
-/// [`offpeak::deepseek_off_peak`](crate::offpeak::deepseek_off_peak) for what
-/// counts as off-peak. Every other model ignores it; DeepSeek is the only
-/// provider in this table whose price is a function of the clock.
+/// `off_peak` only changes the price of a DeepSeek model, the only provider here whose price depends on
+/// the clock; see [`offpeak::deepseek_off_peak`](crate::offpeak::deepseek_off_peak).
 pub fn cost_cents(prompt_tokens: u32, completion_tokens: u32, model: &str, off_peak: bool) -> u64 {
     let (input_price, output_price) = prices(model, off_peak);
     let prompt_cost = (prompt_tokens as u64 * input_price).div_ceil(1_000_000);
@@ -33,10 +26,9 @@ pub fn cost_cents(prompt_tokens: u32, completion_tokens: u32, model: &str, off_p
 
 /// The cost, in micro-USD (1 USD = 1_000_000), of one call's tokens.
 ///
-/// Same table and the same rules as [`cost_cents`] — unknown is the dearest
-/// tier, rounding is UP — plus prompt caching, which every provider here
-/// prices off the input rate: a cache read is 10% of it, a cache write 125%.
-/// Rounded once over the sum, so four small counts do not round up four times.
+/// Same table and rules as [`cost_cents`], plus prompt caching, priced off the input rate: a cache
+/// read is 10% of it, a cache write 125%. Rounded once over the sum, so four small counts do not
+/// round up four times.
 pub fn cost_usd_micros(
     input: u64,
     output: u64,
@@ -127,13 +119,11 @@ mod tests {
 
     #[test]
     fn an_unknown_model_is_charged_the_most_expensive_tier_not_free() {
-        // Unknown -> opus input price, never 0.
         assert_eq!(cost_cents(1_000_000, 0, "some-other-vendor/model", false), 1500);
     }
 
     #[test]
     fn a_tiny_usage_rounds_up_to_a_whole_cent_rather_than_down_to_zero() {
-        // One haiku input token is 100/1_000_000 of a cent — rounds UP to 1.
         assert_eq!(cost_cents(1, 0, "claude-haiku-4-5-20251001", false), 1);
     }
 
@@ -156,8 +146,7 @@ mod tests {
 
     #[test]
     fn deepseek_flash_is_cheaper_than_haiku_even_at_peak() {
-        // The whole point of the low-budget path: flash beats haiku even
-        // without the off-peak discount.
+        // The point of the low-budget path: flash beats haiku even without the off-peak discount.
         assert!(
             cost_cents(1_000_000, 0, "deepseek-flash", false)
                 < cost_cents(1_000_000, 0, "claude-haiku-4-5-20251001", false)
@@ -166,7 +155,6 @@ mod tests {
 
     #[test]
     fn micros_agree_with_cents_on_whole_cents() {
-        // 1M sonnet in + 1M out = 1800 cents = $18.
         assert_eq!(
             cost_usd_micros(1_000_000, 1_000_000, 0, 0, "claude-sonnet-5", false),
             18_000_000
@@ -175,22 +163,20 @@ mod tests {
 
     #[test]
     fn one_haiku_input_token_is_one_micro_not_a_whole_cent() {
-        // 100 cents/M = $1/M = 1 micro-USD per token.
         assert_eq!(cost_usd_micros(1, 0, 0, 0, "claude-haiku-4-5-20251001", false), 1);
         assert_eq!(cost_usd_micros(0, 0, 0, 0, "claude-haiku-4-5-20251001", false), 0);
     }
 
     #[test]
     fn cache_reads_are_a_tenth_of_input_and_writes_a_quarter_more() {
-        // sonnet input $3/M: 1M cache reads = $0.30, 1M cache writes = $3.75.
         assert_eq!(cost_usd_micros(0, 0, 1_000_000, 0, "claude-sonnet-5", false), 300_000);
         assert_eq!(cost_usd_micros(0, 0, 0, 1_000_000, "claude-sonnet-5", false), 3_750_000);
     }
 
     #[test]
     fn micros_round_up_once_over_the_sum() {
-        // Each count alone is 0.1 micro (sonnet cache read of one token is
-        // 0.03, input 3): one read + one input = 3.03 -> 4, not 3 + 1 + ...
+        // Each count alone is 0.1 micro (sonnet cache read of one token is 0.03, input 3): one read + one
+        // input = 3.03 -> 4, not 3 + 1 + ...
         assert_eq!(cost_usd_micros(1, 0, 1, 0, "claude-sonnet-5", false), 4);
     }
 

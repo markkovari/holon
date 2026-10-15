@@ -2,21 +2,15 @@
 //! HTTP to the `vcs-store` component, which gives every other component
 //! `holon:vcs/code-store` and `holon:vcs/files`.
 //!
-//! ## ADR-0095's three questions
+//! ## Why this is native (ADR-0095)
 //!
-//! 1. **Something WASI does not give a guest?** Yes: a held NATS connection
-//!    (JetStream ObjectStore + KV, compare-and-set) and a SurrealDB WebSocket.
-//!    `async-nats` and `surrealdb` need sockets and a runtime; the host wires no
-//!    `wasi:sockets`. `materialize` also writes a directory, which a component
-//!    cannot (ADR-0023).
-//! 2. **The smallest it could be?** Every decision — commutation, conflicts,
-//!    names, positions, the write order and its recovery — is `holon-vcs`'s
-//!    engine, the same code that builds for `wasm32-wasip2`; this file is the
-//!    engine's two native adapters, a JSON mapping one route per WIT function,
-//!    an allow-list for `materialize`, and startup repair. No policy.
-//! 3. **A contract a component could have answered?** Yes, and it stays WIT:
-//!    `wit/vcs/vcs.wit`. `components/vcs-store` exports it and makes each call
-//!    one request here; `CONTRACT.md` beside this file's component is the wire.
+//! It needs a held NATS connection (JetStream ObjectStore + KV, compare-and-set) and a SurrealDB
+//! WebSocket, which `async-nats` and `surrealdb` need sockets and a runtime for (the host wires no
+//! `wasi:sockets`); `materialize` also writes a directory, which a component cannot (ADR-0023). Every
+//! decision (commutation, conflicts, names, positions, write order and recovery) is `holon-vcs`'s
+//! engine, the same code that builds for `wasm32-wasip2`; this file is its two native adapters, a
+//! JSON mapping, an allow-list for `materialize`, and startup repair. The contract stays WIT
+//! (`wit/vcs/vcs.wit`); `components/vcs-store` exports it and `CONTRACT.md` is the wire.
 //!
 //! ## Routes
 //!
@@ -87,7 +81,6 @@ use holon_vcs::{extract, git, wire, Engine};
 
 type VResult<T> = std::result::Result<T, VcsError>;
 
-/// Request bodies up to this size: an `ingest-tree` of a component's sources.
 const MAX_BODY: usize = 64 * 1024 * 1024;
 
 #[derive(Parser, Debug)]
@@ -96,8 +89,8 @@ const MAX_BODY: usize = 64 * 1024 * 1024;
     about = "The agent-native code store (ADR-0099), for components over loopback HTTP."
 )]
 struct Args {
-    /// Shared secret a caller must send as `Authorization: Bearer <token>`.
-    /// See `comp_reconciler::daemon_auth`. No token means no check, said loudly.
+    /// Shared secret a caller must send as `Authorization: Bearer <token>`. See
+    /// `comp_reconciler::daemon_auth`. No token means no check, said loudly.
     #[arg(long)]
     token: Option<String>,
     /// Same, read from a file (a systemd `LoadCredential` path). Wins over `--token`.
@@ -157,8 +150,6 @@ struct Args {
     #[arg(long)]
     i_know_this_is_a_test: bool,
 }
-
-// ---- fault injection ------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Step {
@@ -234,9 +225,8 @@ impl Plan {
     }
 }
 
-/// Counts writes by step and, when a plan is armed, aborts at its point. With
-/// `trace`, records the steps it saw (for the unit tests that pin the write
-/// order this daemon relies on).
+/// Counts writes by step and, when a plan is armed, aborts at its point. With `trace`, records the
+/// steps it saw (for the unit tests that pin the write order).
 #[derive(Default)]
 struct Fuse {
     plan: Option<Plan>,
@@ -393,8 +383,6 @@ impl<T: Graph> Graph for Fault<T> {
     }
 }
 
-// ---- backends -------------------------------------------------------------------
-
 type LiveEngine = Engine<
     Fault<holon_vcs::nats::NatsBlobs>,
     Fault<holon_vcs::store::KvPointers<holon_vcs::nats::NatsKv>>,
@@ -463,19 +451,15 @@ async fn live_backend(args: &Args, fuse: &Arc<Fuse>, lease_ms: u64) -> Result<Ba
     Ok(Backend::Live(Box::new(e)))
 }
 
-// ---- the daemon -----------------------------------------------------------------
-
 struct Daemon {
     backend: Backend,
     allowed: Vec<PathBuf>,
     fuse: Arc<Fuse>,
     lease_ms: u64,
-    /// Workspaces this process repaired at startup or has served since.
     seen: Mutex<BTreeSet<String>>,
     startup: Mutex<Vec<Value>>,
 }
 
-/// A route's answer: the status and the JSON body.
 type Answer = (u16, Value);
 
 fn bad_request(e: impl std::fmt::Display) -> Answer {
@@ -523,7 +507,6 @@ impl Daemon {
         permitted.then(|| real_parent.join(name))
     }
 
-    /// One WIT function, by name, over a JSON body.
     async fn dispatch(&self, func: &str, body: &[u8]) -> Answer {
         match self.dispatch_inner(func, body).await {
             Ok(a) | Err(a) => a,
@@ -712,7 +695,6 @@ impl Daemon {
         (kv, graph)
     }
 
-    /// `repair` on every workspace the log knows, before listening.
     async fn startup_repair(&self) -> Result<()> {
         let workspaces = match &self.backend {
             Backend::Live(e) => holon_vcs::nats::workspaces(&e.log().inner)
@@ -914,8 +896,8 @@ mod tests {
         Content::Inline(s.into())
     }
 
-    /// The request mapping, route by route, through a conflict and its
-    /// resolution: every status and body is the contract's.
+    /// The request mapping, route by route, through a conflict and its resolution: every status and body
+    /// is the contract's.
     #[tokio::test]
     async fn routes_map_one_to_one_onto_the_contract() {
         let d = daemon(vec![], false);
@@ -1001,12 +983,10 @@ mod tests {
         assert_eq!((s, e["error"].as_str()), (400, Some("bad-request")));
         let (s, e) = post(&d, "frobnicate", json!({})).await;
         assert_eq!((s, e["error"].as_str()), (404, Some("not-found")));
-        // replace without a parent: invalid
         let (s, e) =
             post(&d, "apply-patch", patch("f", None, Transformation::Replace(inline("x")), None))
                 .await;
         assert_eq!((s, e["error"].as_str()), (400, Some("invalid")), "{e}");
-        // name-taken: rename g onto f
         post(
             &d,
             "apply-patch",
@@ -1092,8 +1072,8 @@ mod tests {
         json(&wire::Bytes(b.to_vec()))
     }
 
-    /// The step names the crash flags take are the write order the engine
-    /// documents (`recovery`), as this daemon's wrapper classifies it.
+    /// The step names the crash flags take are the write order the engine documents (`recovery`), as this
+    /// daemon's wrapper classifies it.
     #[tokio::test]
     async fn the_fuse_sees_the_documented_write_order() {
         let d = daemon(vec![], true);

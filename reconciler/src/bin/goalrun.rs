@@ -1,31 +1,20 @@
 //! `comp-goalrun` — take a goal to a pull request, for real.
 //!
-//! This is the binary behind `holon goal run`: the one command that turns a goal
-//! and a repository into an opened PR, with a real model and a real gate. It
-//! assembles the pieces that are each already tested in isolation —
-//! `generation::search` (the fan-out and the loop), `anthropic-provider` (the
-//! model), `checks-runner` + `comp-checks` (the gate), `github-forge` (the PR) —
-//! onto one fleet and drives them.
+//! Binary behind `holon goal run`: assembles the separately tested pieces (search loop, model provider,
+//! checks gate, forge) onto one fleet and drives them from a goal to an opened PR.
 //!
-//! ## Why a native binary and not the `comp` CLI
-//!
-//! `comp` is a thin HTTP client to the control plane. A real run needs the whole
-//! substrate up — NATS, hosts, the gate's native runner — which is exactly what
-//! `fleet::Fleet` stands up for the tests. So the orchestration lives here, in
-//! the crate that owns the fleet, and `holon goal run` shells to it.
+//! `comp` is a thin HTTP client; a real run needs the whole substrate (NATS, hosts, the gate's native
+//! runner), which `fleet::Fleet` stands up, so orchestration lives in the crate that owns the fleet.
 //!
 //! ## Secrets never touch argv
 //!
-//! The Anthropic key and the GitHub token arrive as FILE PATHS (`--anthropic-key
-//! file`, `--github-token file`); the values are read from those files and handed
-//! to the vault as `vault://…=@path`. A path is not a secret; a key on a command
-//! line is one in every `ps` and shell history there is.
+//! The Anthropic key and GitHub token arrive as FILE PATHS and reach the vault as `vault://…=@path`;
+//! a key on a command line is in every `ps` and shell history.
 //!
 //! ## What is real and what is not
 //!
-//! All of it is real. The only thing this does NOT do is pick the goal off a
-//! queue — a person still runs the command. That is the last wire, and it is
-//! deliberately a person until the interruption rate is understood (ADR-0082).
+//! All of it is real except picking the goal off a queue: a person still runs the command, deliberately,
+//! until the interruption rate is understood (ADR-0082).
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
@@ -289,11 +278,9 @@ pub struct GoalSpec {
     /// crate it touches and its path-dependencies, and the subtree fits.
     #[serde(default)]
     base_paths: Vec<String>,
-    /// A workspace manifest in the base tree whose `members` list should be
-    /// trimmed to `keep_members` before the gate sees it. This is how a single
-    /// crate of a shared workspace (one of 130 components) builds standalone: the
-    /// gate gets the workspace root with only the target member, so cargo has one
-    /// package to build and its `.workspace = true` inheritance still resolves.
+    /// A workspace manifest in the base tree whose `members` is trimmed to `keep_members` before the gate
+    /// sees it, so one crate of a shared workspace builds standalone while its `.workspace = true`
+    /// inheritance still resolves.
     #[serde(default)]
     workspace_manifest: Option<String>,
     #[serde(default)]
@@ -306,14 +293,8 @@ pub struct GoalSpec {
     component: Option<String>,
     /// Files a branch is SHOWN but may not write — its held-out tests, most
     /// usefully.
-    ///
-    /// `PartSpec` has had this since the first decomposed run wrote blind; an
-    /// ordinary goal never did, so a branch was told "a held-out spec judges you"
-    /// and handed the spec's filename. The winning run of `card-identify` proves
-    /// what that costs: attempt-0 failed on every branch, and the one that passed
-    /// did so on attempt-1, after the GATE told it what the tests actually assert.
-    /// Showing the file up front buys the same information for one prompt instead
-    /// of one whole generation.
+    /// Without it a branch is told "a held-out spec judges you" and handed only the filename; showing the
+    /// file up front costs one prompt instead of one generation.
     ///
     /// Not writable, and not enforced here — `writable` is the allow-list the
     /// applier checks, so naming a file here grants no write.
@@ -348,9 +329,7 @@ struct PartSpec {
     /// writing one path is a decomposition bug, not something to resolve.
     writable: Vec<String>,
     /// Files this part is SHOWN but may not write — its held-out tests, most
-    /// usefully. Without them a part is told "your tests judge you" and handed no
-    /// tests, which is how the first real run of a decomposed goal spent its whole
-    /// budget writing blind.
+    /// usefully. Without them a part is told "your tests judge you" and handed none, so it writes blind.
     #[serde(default)]
     context: Vec<String>,
     /// This half's own gate. It runs against the contract alone — the frontend
@@ -376,12 +355,8 @@ struct CheckSpec {
     weight: u32,
     command: Vec<String>,
     /// Check ids that must PASS before this one runs.
-    ///
-    /// Absent means "no edges", which is a graph with one level and exactly the
-    /// behaviour every goal spec written before this had. What it buys is a report
-    /// a repair prompt can use: a candidate that does not compile comes back as one
-    /// failure and a list of things nobody tried, rather than as every check
-    /// failing at once (ADR-0088).
+    /// Absent means no edges: a one-level graph. A candidate that does not compile comes back as one
+    /// failure plus a list of checks nobody tried, not every check failing at once (ADR-0088).
     #[serde(default)]
     needs: Vec<String>,
 }
@@ -392,15 +367,9 @@ fn one() -> u32 {
     1
 }
 
-/// Does the real work and returns the exit code as a VALUE rather than
-/// calling `std::process::exit` — `main` below is the only place that calls
-/// it, and only after this has already returned, so `Checks`/`Fleet` (both
-/// already `Drop`-cleaned in `gate.rs`/`fleet.rs`) always tear down normally.
-/// `std::process::exit` skips destructors; it used to be called from here
-/// directly, twice, on the two failure paths — which is exactly why a
-/// EXHAUSTED or GATE_REFUSED run leaked its whole internal fleet
-/// (`comp-checks`, the lattice `comp-host` nodes, `nats-server`) while a
-/// successful run, which only ever returned normally, did not.
+/// Returns the exit code as a VALUE rather than calling `std::process::exit`: `main` is the only
+/// caller, after this returns, so `Checks`/`Fleet` drop-clean. `exit` skips destructors and used to
+/// leak the whole internal fleet on EXHAUSTED or GATE_REFUSED runs.
 fn run() -> Result<i32> {
     let args = Args::parse();
 
@@ -429,7 +398,6 @@ fn run() -> Result<i32> {
         }
     }
 
-    // The base tree and the files the agent starts from.
     let mut tree = base_tree(&args.checkout, &goal.base_paths)?;
     // Trim a shared workspace manifest to the goal's target member, so one crate
     // of a big workspace builds standalone in the gate.
@@ -454,10 +422,8 @@ fn run() -> Result<i32> {
     // The commands the gate is allowed to run: the first word of each check.
     // Deduped, so `--allow uv` appears once however many checks use it.
     //
-    // EVERY check, including the parts'. A decomposed goal's top-level list is the
-    // composition gate alone, so deriving the allow-list from it left every part's
-    // own command refused by the runner — a whole run scoring zero for a reason
-    // that had nothing to do with the code.
+    // EVERY check, including the parts': a decomposed goal's top-level list is only the composition gate,
+    // and deriving from it refused every part's own command.
     let mut allow: Vec<&str> = goal
         .checks
         .iter()
@@ -472,15 +438,8 @@ fn run() -> Result<i32> {
         "repo: {}  base: {}  branches: {}  rounds: {}  model: {}",
         args.repo, args.base, args.branches, args.rounds, args.model
     );
-    // Said differently when the runner is not ours to configure. `allow` is
-    // derived from the goal's own checks and handed to a runner THIS process
-    // starts; a runner already listening somewhere else has its own `--allow`,
-    // set by whoever started it, and this list has no effect on it at all.
-    //
-    // Printing it unqualified was a lie the first real remote run told: the
-    // header said `gate allows: ["python3"]` while the binding list on the other
-    // machine was `test, grep, sh, python3` — and had it been narrower, every
-    // check would have failed for a reason this line said was handled.
+    // Said differently when the runner is not ours: `allow` only reaches a runner THIS process starts; one
+    // already listening has its own `--allow`, which this list does not affect.
     match &args.checks_url {
         None => println!("gate allows: {allow:?}"),
         Some(u) => println!(
@@ -488,15 +447,10 @@ fn run() -> Result<i32> {
              somebody else, with its own --allow"
         ),
     }
-    // A branch makes up to `attempts` model calls IN SEQUENCE, so the per-branch
-    // timeout has to hold all of them. When it cannot, the branch dies with
-    // `error sending request` and zero attempts — which reads as a fleet fault, and
-    // did, for two of six branch-runs on the run that prompted this line. Said out
-    // loud rather than corrected: how slow a call is depends on the provider, and a
-    // silently-raised timeout is its own surprise.
-    //
-    // 150s per call is the slow tail of the Claude CLI shim, which is the slowest
-    // provider here. A faster one simply never trips this.
+    // A branch makes up to `attempts` model calls IN SEQUENCE, so the per-branch timeout must hold all of
+    // them, or it dies with `error sending request` and zero attempts, which reads as a fleet fault.
+    // Said out loud rather than corrected: call speed depends on the provider and a silently raised
+    // timeout is its own surprise. 150s per call is the slow tail of the Claude CLI shim.
     let needed = args.attempts as u64 * 150 + 30;
     if args.timeout < needed {
         println!(
@@ -504,9 +458,7 @@ fn run() -> Result<i32> {
             args.timeout, args.attempts, needed
         );
     }
-    // Said out loud, because a gate that cannot find the host reports the same
-    // thing as a candidate that does not work — and this run spent 280k tokens
-    // learning that once.
+    // Said out loud: a gate that cannot find the host reports the same as a candidate that does not work.
     let hb = host_bin();
     println!(
         "gate host:   {} ({})",
@@ -550,9 +502,8 @@ fn run() -> Result<i32> {
         Some(url) => match wait_serving(port, "goalmemory.acme.test", Duration::from_secs(180)) {
             Ok(()) => {
                 println!("knowledge pool serving, backed by {url}");
-                // Read here rather than reusing the binding below, which is
-                // declared after this block: the password is a file path in
-                // argv and reading it twice costs nothing.
+                // Read here rather than reusing the binding below (declared after this block); reading the file twice
+                // costs nothing.
                 let pw = args
                     .surreal_password
                     .as_ref()
@@ -572,12 +523,9 @@ fn run() -> Result<i32> {
         },
     };
 
-    // --- seed the runner, so nothing downstream carries the tree ------------
-    //
-    // Once the runner has it keyed by commit, the plan a branch runs from names
-    // the commit and nothing else. That is what keeps 500 KB of repository off
-    // the lattice once per generation, and it has to happen BEFORE the critic —
-    // which is allowed to fail, and used to be the only thing that seeded.
+    // Seed the runner so nothing downstream carries the tree: once it is keyed by commit, a branch's plan
+    // names the commit only, keeping 500 KB of repository off the lattice per generation. Must happen
+    // BEFORE the critic, which may fail.
     if let Err(e) = compose::seed_base(
         &gate.url(),
         gate.token().as_deref(),
@@ -597,16 +545,11 @@ fn run() -> Result<i32> {
         tree.len()
     );
 
-    // --- criticise the gate, before the money -------------------------------
+    // Criticise the gate before the money.
     if !gate_can_judge(&goal, &checks, &gate, &base_commit, &tree, args.timeout) {
-        // EXIT 4, not 0. A gate that could not judge spent NOTHING, and returning
-        // success here made that indistinguishable from a candidate passing — the
-        // daemon read a refused goal as `awaiting-human`, a pull request waiting
-        // for review, when no branch ran and nothing was opened.
-        //
-        // Distinct from `goalexit::EXHAUSTED` (3): that one says every branch ran
-        // and none passed, which is a real result from a healthy search. This says
-        // there was no search to have a result from.
+        // EXIT 4, not 0: a gate that could not judge spent NOTHING, and success made that look like a
+        // candidate passing (the daemon read it as `awaiting-human`). Distinct from `goalexit::EXHAUSTED`
+        // (3), where every branch ran and none passed.
         return Ok(goalexit::GATE_REFUSED);
     }
 
@@ -615,40 +558,24 @@ fn run() -> Result<i32> {
             .map(|()| goalexit::SUCCESS);
     }
 
-    // --- has this already been done? ----------------------------------------
+    // Has this already been done?
     if !pool::worth_running(memory.as_ref(), &goal, args.skip_above) {
         return Ok(goalexit::SUCCESS);
     }
 
-    // --- what this run leaves behind (ADR-0092) -----------------------------
-    //
-    // BEFORE the decomposed dispatch below, and that is the whole point of where
-    // it sits. This block used to live after it, so `decomposed` returned before a
-    // `Trace` was ever constructed and a two-part run recorded NOTHING — no run
-    // row, no attempts, no events. Silently: `report()` counts writes that were
-    // dropped, and a trace that does not exist drops nothing, so the run ended
-    // clean and the history was simply absent. An absent record reading as a fine
-    // one is the same shape as the listing failure in #80.
-    //
-    // The seed IS the run id: one `holon goal run` is one run, and
-    // `run_id(seed, round, branch)` is one attempt inside it. Both paths take it
-    // from here so a run has ONE identity rather than a timestamp per code path.
+    // What this run leaves behind (ADR-0092). BEFORE the decomposed dispatch: a two-part run once returned
+    // before any `Trace` existed and recorded nothing, silently. The seed IS the run id;
+    // `run_id(seed, round, branch)` is one attempt inside it, so a run has ONE identity.
     let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
     let run = seed.to_string();
-    // The password by VALUE. `--surreal-password` is a path because a real
-    // password does not belong in argv (the fixture grants it to the graph
-    // component as a vault reference); the trace talks to the database directly,
-    // so it needs the contents. Absent means unauthenticated — the same thing it
-    // means to the fixture above, and to `knowledge-graph`.
+    // The password by VALUE: `--surreal-password` is a path so it stays out of argv, but the trace talks
+    // to the database directly. Absent means unauthenticated.
     let surreal_password = args
         .surreal_password
         .as_ref()
         .and_then(|p| std::fs::read_to_string(p).ok())
         .map(|s| s.trim().to_string());
-    // `None` without `--surreal-url`, exactly like the pool: a run with no
-    // database is supported (ADR-0080 keeps the database out of the platform),
-    // and a driver that required one would trade a loop that works for a loop
-    // that needs a database to be up.
+    // `None` without `--surreal-url`, like the pool: a run with no database is supported (ADR-0080).
     let trace = args.surreal_url.as_deref().map(|url| {
         // The same database the graph component was pointed at, so a run and the
         // lessons it produced land in one place and can be joined (ADR-0091).
@@ -665,15 +592,9 @@ fn run() -> Result<i32> {
         );
     }
 
-    // --- what the pool already has (ADR-0094) --------------------------------
-    //
-    // ABOVE the decomposed dispatch, for the same reason the `Trace` is. This sat
-    // below it, so a two-part run asked the catalogue nothing: no `capsearch-hit`
-    // or `capsearch-miss` row, and — worse than the missing row — every part wrote
-    // without being told what the catalogue already contains. The ADR calls the
-    // question mandatory in both directions, and the path that decomposes a goal
-    // into parts is the one where "does this already exist" is asked per PART and
-    // therefore most likely to be answered yes.
+    // What the pool already has (ADR-0094), ABOVE the decomposed dispatch like the `Trace`: below it, a
+    // two-part run asked the catalogue nothing, and the per-PART question is where "does this already
+    // exist" is most likely yes.
     let (reuse, capability_confirmed) = pool::search_the_pool(
         &goal.text,
         &run,
@@ -681,12 +602,9 @@ fn run() -> Result<i32> {
         args.capability_advisor_url.as_deref(),
     );
 
-    // --- a DECOMPOSED goal ---------------------------------------------------
-    //
-    // Parts that compose rather than branches that compete: each half runs its own
-    // generations against a shared contract, asks the other for changes it needs,
-    // and the winners are merged into one tree judged by the goal's own checks
-    // (ADR-0086). One pull request at the end.
+    // A DECOMPOSED goal: parts that compose rather than compete. Each half runs its own generations
+    // against a shared contract and the winners merge into one tree judged by the goal's checks
+    // (ADR-0086).
     if !goal.parts.is_empty() {
         return decomposed(
             &args,
@@ -715,19 +633,15 @@ fn run() -> Result<i32> {
         "previous": [],
         "checks": checks,
         "base_commit": base_commit,
-        // NOT the tree. The runner was seeded with it above and keys its cache by
-        // this commit, so a plan that carried the bytes would send 500 KB across
-        // two wrpc hops per branch per generation to say something the runner
-        // already knows. `agent-driver` starts from `base_known` and the
-        // `need-base` path stays as the error it always was — reached now only
-        // when something else cleared that cache, which is a real fault and reads
-        // as one.
+        // NOT the tree: the runner was seeded above and keys its cache by this commit, so carrying bytes
+        // would cost 500 KB over two wrpc hops per branch per generation. `agent-driver` starts from
+        // `base_known`; `need-base` remains an error, reached only if something cleared that cache.
         "base_tree": [],
         "max_attempts": args.attempts,
         "seed": 1,
     });
 
-    // --- what each branch is allowed to read --------------------------------
+    // What each branch is allowed to read.
     let (strategies, read_by_branch) = reading_per_branch(&args, &goal, memory.as_ref());
 
     let driver_url = format!("http://127.0.0.1:{port}/run");
@@ -755,28 +669,21 @@ fn run() -> Result<i32> {
     // Every attempt of every branch, so the run is legible even when it fails.
     let mut entries: Vec<Entry> = Vec::new();
     let mut recorded = 0usize;
-    // The accepted branch with the highest score, as (run id, score) — the run the
-    // pull request will be attributed to. `search` already picks the winning
-    // ENTRY; what is needed here is the run id it was recorded under, which only
-    // this walk knows.
+    // The accepted branch with the highest score as (run id, score), the run the PR is attributed to;
+    // `search` picks the winning ENTRY but only this walk knows the run id.
     let mut winner: Option<(String, u64)> = None;
     for (r, round) in found.rounds.iter().enumerate() {
         for e in &round.entries {
-            // One verdict per BRANCH, not one per generation: the count of failed
-            // attempts on a goal is what says whether another generation is worth
-            // buying, and a generation-level record cannot say it. The artifact is
-            // empty here — nothing has been opened yet — and the landing path
-            // re-reports the winner with it, which is free because a verdict edge
-            // is keyed by (goal, run).
+            // One verdict per BRANCH, not per generation: the count of failed attempts on a goal says whether
+            // another generation is worth buying. The artifact is empty here; the landing path re-reports the
+            // winner with it (a verdict edge is keyed by (goal, run)).
             let attempt = run_id(seed, r, &e.branch);
             if e.accepted && winner.as_ref().is_none_or(|(_, best)| e.score > *best) {
                 winner = Some((attempt.clone(), e.score));
             }
             if let Some(t) = &trace {
-                // Spawned and finished are recorded together because this walk
-                // happens after the search: the driver sees each branch's whole
-                // life at once, not as it happens. Live progress is the socket's
-                // job (slice three), not something to fake by writing here twice.
+                // Spawned and finished are recorded together because this walk runs after the search; live progress
+                // is the socket's job.
                 t.branch_spawned(&run, &attempt, &e.branch, r);
                 t.gate_verdict(&run, &attempt, e.score, e.accepted, &e.failures);
                 t.attempt_finished(
@@ -787,10 +694,7 @@ fn run() -> Result<i32> {
                     &e.files,
                     e.spent_tokens,
                     e.elapsed_ms,
-                    // How many tries this branch took. A branch that got it right
-                    // first and one that needed a repair were indistinguishable
-                    // here, which is the one number that says whether repair earns
-                    // its budget.
+                    // How many tries this branch took: the one number that says whether repair earns its budget.
                     e.attempts,
                 );
             }
@@ -799,11 +703,9 @@ fn run() -> Result<i32> {
                     Ok(()) => recorded += 1,
                     Err(err) => println!("  (verdict for {attempt} not recorded: {err})"),
                 }
-                // What this branch LEARNED by failing, in the gate's own words. No
-                // model in the path, so negative knowledge cannot be a
-                // hallucination — and it is visible to a sibling immediately,
-                // because its worst case is avoiding something that would have
-                // worked (ADR-0081's asymmetry).
+                // What this branch LEARNED by failing, in the gate's own words. No model in the path, so it cannot be
+                // a hallucination, and its worst case is avoiding something that would have worked (ADR-0081's
+                // asymmetry).
                 if !e.accepted {
                     if let Some(text) = memory::failure_text(&e.failures, e.score) {
                         match m.observe_failure(&goal.text, &e.branch, &attempt, &text) {
@@ -812,9 +714,7 @@ fn run() -> Result<i32> {
                         }
                     }
                 }
-                // What happened to what this branch READ. The only thing that moves
-                // a lesson's standing, and the reason retrieval gets better rather
-                // than merely existing: a lesson present when runs fail sinks.
+                // What happened to what this branch READ: the only thing that moves a lesson's standing.
                 let idx = e.branch.rsplit('-').next().and_then(|n| n.parse::<usize>().ok());
                 if let Some(keys) = idx.and_then(|i| read_by_branch.get(i)) {
                     if let Err(err) = m.attribute(keys, &run, e.accepted) {
@@ -862,7 +762,7 @@ fn run() -> Result<i32> {
         eprintln!("\n===== ingress (last 25 lines) =====\n{}", tail(&fleet.ingress_log(""), 25));
     }
 
-    // --- promote what the gate proved ----------------------------------------
+    // Promote what the gate proved.
     pool::promote_and_sweep(
         memory.as_ref(),
         &args,
@@ -888,37 +788,26 @@ fn run() -> Result<i32> {
         if let Some(b) = &found.best {
             println!("closest failing checks: {}", b.failures);
         }
-        // `exhausted`, not `failed`: every branch ran and none passed, which is a
-        // different thing from a run that broke. The count of these on a goal is
-        // what says whether another generation is worth buying.
+        // `exhausted`, not `failed`: every branch ran and none passed; the count on a goal says whether
+        // another generation is worth buying.
         if let Some(t) = &trace {
             t.run_resolved(&run, "exhausted", None, "");
             if let Some(why) = t.report() {
                 println!("trace: {why}");
             }
         }
-        // EXIT 3, not 0. A run where every branch was gated and none passed is a
-        // legitimate outcome of a search, not a success — and the caller cannot
-        // tell the two apart from a zero. `comp-goald` marked an exhausted run
-        // `awaiting-human`, which put a goal nobody had written code for in the
-        // queue of goals waiting to be landed.
-        //
-        // 3 rather than 1 so it stays distinguishable from a run that BROKE: one
-        // says the model could not do it, the other says the harness fell over,
-        // and a caller that wants to retry cares which.
+        // EXIT 3, not 0: an exhausted search is a legitimate outcome, not a success, and `comp-goald` once
+        // marked it `awaiting-human`. 3 rather than 1 so it stays distinguishable from a run that BROKE;
+        // a caller that wants to retry cares which.
         return Ok(goalexit::EXHAUSTED);
     }
 
     if args.dry_run {
         let best = found.best.as_ref().unwrap();
         println!("\n[dry run] a candidate passed (score {}); not opening a PR.", best.score);
-        // And it is WRITTEN OUT, because a dry run that discards the winner is a
-        // search you paid for and kept nothing from. This is not hypothetical: a
-        // `card-identify` run spent 42 model calls, passed all 19 held-out tests,
-        // printed this line, returned, and left the stub exactly as it was.
-        //
-        // Into a directory rather than the checkout: a dry run must not mutate the
-        // tree it was pointed at, and diffing a directory is one command.
+        // And it is WRITTEN OUT: a dry run that discards the winner is a search paid for and kept nothing
+        // from (a `card-identify` run once spent 42 calls and left the stub as it was). Into a directory,
+        // not the checkout: a dry run must not mutate its tree.
         match write_candidate(&args.checkout, &best.files) {
             Ok(dir) => {
                 println!("  the winning files are in {}", dir.display());
@@ -962,9 +851,7 @@ fn run() -> Result<i32> {
             let url = v["url"].as_str().unwrap();
             println!("\n  PR opened: {url}");
             println!("  branch: {}  commit: {}", v["branch"], v["commit"]);
-            // Re-report the winning run, now that there is something addressable
-            // to point the next run at. Idempotent per (goal, run), so this
-            // attaches the pull request without inventing a second evaluation.
+            // Re-report the winning run now that there is something addressable; idempotent per (goal, run).
             if let (Some(m), Some(w)) = (&memory, &winner) {
                 if let Err(e) = m.evaluated(&goal.text, &w.0, w.1, true, url) {
                     println!("  (the pull request was not recorded against the goal: {e})");
@@ -976,10 +863,8 @@ fn run() -> Result<i32> {
         }
         Ok(v) => {
             println!("\n  the forge answered but opened no PR: {v}");
-            // A branch passed the gate and the forge still produced nothing. That
-            // is a FAILED run, not an exhausted one: the difference is whether
-            // the work was good, and a trace that conflated them would hide the
-            // forge as a cause.
+            // A branch passed the gate and the forge produced nothing: a FAILED run, not exhausted; conflating
+            // them would hide the forge as a cause.
             if let Some(t) = &trace {
                 t.run_resolved(&run, "failed", winner.as_ref().map(|(w, _)| w.as_str()), "");
             }
@@ -999,11 +884,8 @@ fn run() -> Result<i32> {
     Ok(goalexit::SUCCESS)
 }
 
-/// The thin wrapper `run()` exists for: by the time this calls
-/// `std::process::exit`, `run()` has already returned and everything it
-/// owned — `Checks`, `Fleet`, every child process they wrap — has already
-/// dropped normally. Calling `std::process::exit` from inside `run()` itself
-/// is exactly the bug this fixes; nothing after this point may do that.
+/// Calls `std::process::exit` only after `run()` has returned and dropped its `Checks`, `Fleet` and
+/// child processes; `exit` skips destructors, so never call it inside `run()`.
 fn main() {
     match run() {
         Ok(code) => std::process::exit(code),
@@ -1015,10 +897,8 @@ fn main() {
 }
 
 /// One goal, K parts, one pull request.
-///
-/// The shape differs from the ordinary path in exactly one way that matters: a
-/// generation that produces a brilliant backend and no frontend has produced
-/// nothing, so there is no "best" to land until every part is green.
+/// A generation with a brilliant backend and no frontend produced nothing: there is no "best" to land
+/// until every part is green.
 #[allow(clippy::too_many_arguments)]
 fn decomposed(
     args: &Args,
@@ -1061,16 +941,9 @@ fn decomposed(
     let contract_path = goal.contract.clone().unwrap_or_default();
     let body = std::fs::read_to_string(args.checkout.join(&contract_path))
         .with_context(|| format!("reading the contract at {contract_path}"))?;
-    // `publish` refuses a second contract on purpose: one appearing mid-run would
-    // silently move what every part builds against. But a repeat run of the same
-    // goal — smoke then real, or a second attempt after a failure — finds its own
-    // contract already there, and dying at the door would make `--smoke` something
-    // you can only afford to run once.
-    //
-    // So: continue on what is stored, and refuse only when it DIFFERS from the
-    // file. A stored contract that no longer matches the goal is the one case
-    // where carrying on would have every part building against a version the
-    // person editing the file cannot see.
+    // `publish` refuses a second contract so one cannot move what the parts build against mid-run; but a
+    // repeat run (smoke then real) finds its own contract stored, and dying would make `--smoke`
+    // once-only. So continue on what is stored and refuse only when it DIFFERS from the file.
     let version = match registry.publish(&body) {
         Ok(v) => {
             println!("contract v{v} published from {contract_path}");
@@ -1129,12 +1002,9 @@ fn decomposed(
             plan: json!({
                 "text": p.text,
                 "writable": p.writable,
-                // Its OWN files — what it may write, as it stands — plus whatever
-                // it is shown and may not write. Not the goal's top-level context:
-                // for a decomposed goal that is usually empty, and a part handed
-                // nothing writes blind.
-                // Writable files (the part's own stub) keep every comment — there the comments
-                // are the brief. Read-only `.wit` context is trimmed by `lean_context`.
+                // Its OWN files plus whatever it is shown and may not write, not the goal's top-level context
+                // (usually empty for a decomposed goal, so a part would write blind). Writable files keep every
+                // comment (the brief); read-only `.wit` context is trimmed by `lean_context`.
                 "context": context,
                 "previous": [],
                 "checks": p.checks.iter().map(|c| json!({
@@ -1142,10 +1012,8 @@ fn decomposed(
                     "needs": c.needs,
                 })).collect::<Vec<_>>(),
                 "base_commit": base_commit,
-                // Empty for the same reason as the ordinary path, and it matters
-                // more here: a decomposed goal runs K parts, so the tree used to
-                // cross the lattice K times to say one thing the runner already
-                // knew. `main` seeds once, before this is reached.
+                // Empty as on the ordinary path, and it matters more here: the tree would cross the lattice K times.
+                // `main` seeds once, before this is reached.
                 "base_tree": [],
                 "max_attempts": args.attempts,
                 "seed": 1,
@@ -1155,23 +1023,11 @@ fn decomposed(
         .collect();
     println!("parts: {}", parts.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", "));
 
-    // --- the decomposition, into the pool ------------------------------------
-    //
-    // The pool has always given each part its own `task` row — its own goal, its
-    // own lessons, its own verdicts — and nothing that said whose part it was. So
-    // it could answer "has this been done" about a part and could not answer
-    // "what did this goal break into", which is the question a decomposition is
-    // reviewed by, or "whose part is this", which is what puts a sub-goal found
-    // later by similarity back in context.
-    //
-    // Written BEFORE the search, not after it. A decomposition that is recorded
-    // only when it succeeds is a pool that has never seen a bad one, and the bad
-    // ones are what a reviewer needs. `done` is derived from each part's own
-    // verdict edges, so this write says nothing about outcomes and cannot go
-    // stale.
-    //
-    // Reported and never fatal: losing the edge costs the pool its memory of the
-    // decomposition, not the run its result (ADR-0084's asymmetry).
+    // The decomposition, into the pool: each part gets its own `task` row, and this edge records whose
+    // part it is, so "what did this goal break into" is answerable and a sub-goal found later by
+    // similarity is back in context. Written BEFORE the search, because a pool that only sees
+    // successful decompositions has never seen a bad one. `done` derives from each part's verdict edges,
+    // so this says nothing about outcomes. Reported, never fatal (ADR-0084's asymmetry).
     if let Some(m) = memory_for_parts.as_ref() {
         let mut written = 0usize;
         for (i, p) in goal.parts.iter().enumerate() {
@@ -1194,15 +1050,12 @@ fn decomposed(
         Bounds { branches: args.branches, max_rounds: args.rounds, max_tokens: 0, patience: 0 };
     // `seed` is the caller's — one run, one identity, and the trace keys on it.
     let run_key = seed.to_string();
-    // How the run ended, said once. Every `return` below this point goes through
-    // it, so an early exit cannot leave a run row that started and never resolved
-    // — which is indistinguishable from a crash when someone reads it later.
+    // How the run ended, said once: every `return` below goes through it, so an early exit cannot leave
+    // a run row that started and never resolved (indistinguishable from a crash).
     let resolve = |outcome: &str, url: &str| {
         if let Some(t) = trace {
-            // "composition", not a branch name: a decomposed run has no single
-            // winning branch — each part picked one and the JOIN is what passed a
-            // gate neither half could pass alone. Naming one part's branch here
-            // would credit half the work.
+            // "composition", not a branch name: the JOIN passed a gate neither half could pass alone; naming one
+            // part's branch would credit half the work.
             let winner = (outcome == "merged").then_some("composition");
             t.run_resolved(&run_key, outcome, winner, url);
             if let Some(why) = t.report() {
@@ -1237,12 +1090,9 @@ fn decomposed(
         &json!(composition_checks),
     );
 
-    // --- the record, before anything below can fail -------------------------
-    //
-    // Every branch of every generation of every part, keyed the same way the
-    // ordinary path keys them. The part name is IN the attempt id: two parts each
-    // run a `branch-0` in round 0, and `run_id(seed, round, branch)` alone would
-    // give them one id and silently overwrite one half's history with the other's.
+    // The record, before anything below can fail: every branch of every generation of every part. The
+    // part name is IN the attempt id, since two parts each run `branch-0` in round 0 and
+    // `run_id(seed, round, branch)` alone would overwrite one half's history.
     if let Some(t) = trace {
         for p in &run.composition.parts {
             for (r, round) in p.rounds.iter().enumerate() {
@@ -1250,10 +1100,8 @@ fn decomposed(
                     let attempt = run_id(seed, r, &format!("{}/{}", p.part, e.branch));
                     t.branch_spawned(&run_key, &attempt, &e.branch, r);
                     t.gate_verdict(&run_key, &attempt, e.score, e.accepted, &e.failures);
-                    // `errored` when the branch produced nothing at all — a note
-                    // and no files is how a provider failure or an answer with no
-                    // file block reaches here, and calling that "failed" would put
-                    // it in with candidates the gate actually judged.
+                    // `errored` when the branch produced nothing (a provider failure or an answer with no file block);
+                    // "failed" is for candidates the gate judged.
                     let outcome = if e.accepted {
                         "passed"
                     } else if e.files.as_array().map(|a| a.is_empty()).unwrap_or(true) {
@@ -1288,11 +1136,8 @@ fn decomposed(
             p.rounds.len(),
             p.built_against
         );
-        // Why a branch produced NOTHING, which is a different question from why a
-        // candidate failed and lands in a different field. A run that reports
-        // "produced nothing in 3 rounds" and stops has told the reader nothing
-        // they can act on — the note is the only place a transport failure, a
-        // refused plan or a dead provider says so.
+        // Why a branch produced NOTHING, a different question from why a candidate failed: the note is the
+        // only place a transport failure, refused plan or dead provider says so.
         for (r, round) in p.rounds.iter().enumerate() {
             for e in round.entries.iter().filter(|e| !e.note.is_empty()) {
                 println!("      gen {r} {}: {}", e.branch, e.note);
@@ -1311,9 +1156,8 @@ fn decomposed(
         for b in &run.blocked {
             println!("  · {b}");
         }
-        // Which check, and what it said. "component never passed its gate" without
-        // this is the least actionable sentence a run can end with — the ordinary
-        // path has printed its closest failing checks since it existed.
+        // Which check, and what it said: without it "component never passed its gate" is the least
+        // actionable way to end.
         for p in &run.composition.parts {
             if let Some(best) = p.best.as_ref().filter(|_| !p.accepted) {
                 if !best.failures.as_array().map(|a| a.is_empty()).unwrap_or(true) {
@@ -1332,9 +1176,8 @@ fn decomposed(
                 }
             }
         }
-        // WHO a join failure is about. The halves each passed and the whole did not,
-        // so no part's own gate has anything to say — and the run used to end with
-        // "the halves pass alone and not together" and no further address.
+        // WHO a join failure is about: the halves each passed and the whole did not, so no part's own gate
+        // says anything.
         if run.report.is_some() || run.changes.is_some() {
             for b in &run.blocked {
                 let owners = join_failure_owners(b, &goal.parts);
@@ -1346,11 +1189,8 @@ fn decomposed(
             }
         }
 
-        // And the merged tree is WRITTEN OUT, because a join failure discards the
-        // work of every part otherwise. `changes` is already carried on this path —
-        // three parts' worth of accepted code — and nothing ever read it. Losing a
-        // whole decomposed run to a verdict about the join is the most expensive
-        // discard in the loop.
+        // And the merged tree is WRITTEN OUT: a join failure otherwise discards every part's accepted code,
+        // the most expensive discard in the loop.
         if let Some(changes) = &run.changes {
             match write_candidate(&args.checkout, changes) {
                 Ok(dir) => println!(
@@ -1368,14 +1208,11 @@ fn decomposed(
     let changes = run.changes.clone().expect("landable means there is a tree");
     println!("  composition PASSED at score {}", report.score);
 
-    // The gate accepted, so this is where the graph is allowed to learn from success — the one
-    // thing the decomposed path never did. Before the PR, because promotion is earned by the
+    // The gate accepted, so the graph may learn from success, before the PR: promotion is earned by the
     // verdict, not by the forge accepting the branch.
     pool::promote_parts(memory_for_parts.as_ref(), goal, port, &run.composition.parts);
-    // And what the pool GAINED, from the merged tree rather than any one part's —
-    // the join is what passed, so the composition is what added the capability
-    // (ADR-0089). Same derivation as the ordinary path, which had it and this
-    // did not, so a decomposed run could add a component the graph never recorded.
+    // And what the pool GAINED, from the merged tree: the join is what passed (ADR-0089). Same derivation
+    // as the ordinary path.
     if let Some(t) = trace {
         for (name, path) in new_capabilities(&changes) {
             t.capability_added(&run_key, &name, &path);
@@ -1469,13 +1306,6 @@ mod tests {
     use comp_reconciler::gate::egress_authority;
 
     /// The goal spec for a decomposed run, as a person writes it.
-    ///
-    /// Three things are being asserted at once, and each is a decision: the parts
-    /// carry their OWN checks (each half gates alone, against the contract), the
-    /// top-level `[[check]]` list becomes the COMPOSITION gate (the checks that
-    /// belong to the whole and can only run over the joined tree), and `contract`
-    /// names a file in the checkout rather than being written inline — a person
-    /// edits an interface in an editor that understands it.
     #[test]
     fn a_goal_can_be_two_parts_and_a_contract() {
         let spec: GoalSpec = toml::from_str(
@@ -1560,12 +1390,8 @@ command = ["cargo", "test"]
     }
 
     /// Two parts running the same branch of the same round are two attempts.
-    ///
-    /// `run_id(seed, round, branch)` is the ordinary path's key, where a branch
-    /// name is unique within a run. A decomposed run breaks that: both halves
-    /// spawn `branch-0` in round 0, so keying on it alone gives them ONE attempt
-    /// row and the second half silently overwrites the first half's history —
-    /// visible only as a run whose branch count is half what it should be.
+    /// A decomposed run breaks the per-run uniqueness of `run_id(seed, round, branch)`: both halves spawn
+    /// `branch-0` in round 0, so the second would silently overwrite the first's attempt row.
     #[test]
     fn two_parts_do_not_share_one_attempt_id() {
         use comp_reconciler::memory::run_id;

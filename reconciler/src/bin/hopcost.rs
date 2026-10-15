@@ -1,31 +1,24 @@
 //! What one cross-node call costs, measured rather than remembered.
 //!
-//! ADR-0032 put the hop at ~4% and nothing has re-measured it since. ADR-0074
-//! restored a test that the split graph still WORKS; this is the other half —
-//! the price.
+//! ADR-0032 put the hop at ~4% and nothing has re-measured it; ADR-0074 restored a test that the split
+//! graph WORKS, this is the price.
 //!
 //! ## Why this is a benchmark and not a test
 //!
-//! The number is machine-dependent and noisy. An assertion on it either fails on
-//! a busy laptop or is so loose it asserts nothing, and the repo has enough
-//! tests that pass for the wrong reason. So it prints, and a human decides
-//! whether the number is still true.
+//! The number is machine-dependent and noisy: an assertion either fails on a busy laptop or is so
+//! loose it asserts nothing. So it prints, and a human decides whether it is still true.
 //!
 //! ## What makes the comparison fair
 //!
-//! Two arms, identical in every respect except placement:
+//! Two arms, identical except placement:
 //!
-//! * the same three components, the same links, the same request;
-//! * two host processes in BOTH arms — the baseline pins all three components to
-//!   the web node and leaves the data node idle, rather than running one host,
-//!   so the difference is not "one process versus two";
-//! * `--kv memory`, because ADR-0057 measured JetStream round trips dominating
-//!   the request path. A hop hidden under two of those is a hop nobody can see;
-//! * `/api/ratelimit` with a DISTINCT KEY per request. Since ADR-0070 that is
-//!   exactly one call into `shaper` plus local storage — but only when the key is
-//!   uncontended. The rate limit is a compare-and-set retry loop and every retry
-//!   calls `shaper` again, so hammering one key would price contention
-//!   amplification instead of one hop.
+//! * the same three components, links and request;
+//! * two host processes in BOTH arms (the baseline pins all three components to the web node and
+//!   leaves the data node idle), so the difference is not "one process versus two";
+//! * `--kv memory`, because JetStream round trips dominate the request path (ADR-0057) and hide a hop;
+//! * `/api/ratelimit` with a DISTINCT KEY per request: one call into `shaper` plus local storage (ADR-0070),
+//!   but only when uncontended, since the rate limit is a compare-and-set retry loop that calls
+//!   `shaper` per retry, and one hot key would price contention amplification instead.
 //!
 //! ```
 //! cargo run --release --bin comp-hopcost -- --secs 10 --threads 20
@@ -67,7 +60,6 @@ fn artifacts() -> Vec<String> {
     .collect()
 }
 
-/// One arm: bring a fleet up on `fixture`, load it, and return requests/second.
 fn measure(name: &str, lattice: &str, fixture: &str, args: &Args) -> f64 {
     let fleet = Fleet::start_labelled_kv(
         lattice,
@@ -77,20 +69,11 @@ fn measure(name: &str, lattice: &str, fixture: &str, args: &Args) -> f64 {
         Some("memory"),
     );
     assert!(fleet.serves("split.alice.test", Duration::from_secs(120)), "{name}: never served");
-    // Load with a DISTINCT key per request, which the shared `Fleet::load` helper
-    // cannot do — it drives one key, and one key is the wrong instrument here.
-    //
-    // `gate`'s rate limit is a compare-and-set retry loop, and every retry calls
-    // `shaper` again. On a contended key the split arm therefore pays SEVERAL
-    // hops per request while the baseline pays several local calls, and the ratio
-    // measures contention amplification rather than one hop. Distinct keys make
-    // it exactly one call each, which is the thing being priced.
-    // Verify the arm is the arm it claims to be, BEFORE trusting a number from it.
-    //
-    // `shaper` used to be unconstrained in split-graph.yaml, so the planner could
-    // put it beside `gate` — and since ADR-0070 `/api/ratelimit` calls only
-    // `shaper`. A "split" arm with a local shaper has no hop in it, and this
-    // printed -0.1% before anyone noticed.
+    // Load with a DISTINCT key per request, which `Fleet::load` (one key) cannot do. On a contended key
+    // the split arm pays SEVERAL hops per request and the ratio measures contention, not one hop.
+    // Verify the arm is the arm it claims to be BEFORE trusting a number: `shaper` was once unconstrained
+    // in split-graph.yaml, so the planner could put it beside `gate`, and a "split" arm with a local
+    // shaper has no hop (it printed -0.1%).
     let (n1, n2) = (fleet.node_log("n1"), fleet.node_log("n2"));
     let shaper_remote = n2.contains("started alice/split/shaper");
     let wants_split = fixture.contains("split-graph");
@@ -116,9 +99,8 @@ fn measure(name: &str, lattice: &str, fixture: &str, args: &Args) -> f64 {
         for w in 0..args.threads {
             let (stop, ok) = (stop.clone(), ok.clone());
             hs.push(std::thread::spawn(move || {
-                // One client per worker, reused. A client per REQUEST opens a new
-                // TCP connection every time, which costs both arms the same and
-                // buries the thing being measured underneath it.
+                // One client per worker, reused: a client per REQUEST opens a new TCP connection each time, burying
+                // the thing being measured.
                 let c = reqwest::blocking::Client::builder()
                     .timeout(Duration::from_secs(10))
                     .build()
@@ -152,8 +134,7 @@ fn measure(name: &str, lattice: &str, fixture: &str, args: &Args) -> f64 {
         ok.load(std::sync::atomic::Ordering::Relaxed)
     };
 
-    // A warm pass first: the first request through an instance pays its cold
-    // start, and ADR-0040 measured that at 35 ms — enough to swamp the window.
+    // A warm pass first: the first request through an instance pays its cold start (35 ms, ADR-0040).
     let _ = run(2);
     let ok = run(args.secs);
     let rps = ok as f64 / args.secs as f64;
@@ -186,8 +167,8 @@ fn main() {
     }
 
     let cost = 100.0 * (best_local - best_split) / best_local;
-    // Closed loop at fixed concurrency, so mean service time is concurrency/rps.
-    // The DIFFERENCE between the two is what one hop adds to a request.
+    // Closed loop at fixed concurrency, so mean service time is concurrency/rps; the DIFFERENCE between
+    // the two is what one hop adds.
     let t = |rps: f64| args.threads as f64 / rps * 1e6;
     let micros = t(best_split) - t(best_local);
     println!("\n  co-located {best_local:>7.0} rps   {:>7.0} us per request", t(best_local));

@@ -36,8 +36,6 @@ fn status(f: Fail) -> Status {
     }
 }
 
-// ---- wire -> proto ----
-
 fn ts(rfc3339: &str) -> Option<Timestamp> {
     let t: jiff::Timestamp = rfc3339.parse().ok()?;
     Some(Timestamp { seconds: t.as_second(), nanos: t.subsec_nanosecond() })

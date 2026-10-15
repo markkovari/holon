@@ -1,14 +1,10 @@
 //! `comp-clipboard` — native daemon for desktop-clipboard
 //!
-//! Reading the clipboard needs the desktop session's pasteboard, and a
-//! `wasm32-wasip2` guest has none of those (ADR-0095). `components/desktop-clipboard`
-//! is the component side: it holds the WIT contract and dials this over HTTP.
+//! Reading the clipboard needs the desktop session's pasteboard, which a `wasm32-wasip2` guest lacks
+//! (ADR-0095). `components/desktop-clipboard` is the component side and dials this over HTTP.
 //!
-//! This must run with access to a real desktop session — X11/Wayland on
-//! Linux, the pasteboard on macOS, the clipboard API on Windows. In a
-//! headless environment (a CI runner, a container with no display) it will
-//! answer `unavailable` rather than crash: that is the honest answer for an
-//! environment with no clipboard to read.
+//! This must run with access to a real desktop session. In a headless environment it answers
+//! `unavailable` rather than crash: the honest answer with no clipboard to read.
 
 use anyhow::Result;
 use axum::{routing::post, Json, Router};

@@ -1,9 +1,7 @@
 //! Everything a run sets up before it spends anything.
 //!
-//! Extracted from `main`, which was 779 lines and is mostly this: the caches a
-//! gate will read, the environment that points every check at them, and the
-//! fixtures the fleet is started from. None of it decides anything — it is the
-//! part of the run that would be identical if the goal were different.
+//! The caches a gate will read, the environment that points every check at them, and the fixtures the
+//! fleet is started from. None of it decides anything: it would be identical for any goal.
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -15,24 +13,19 @@ use comp_reconciler::gate::{egress_authority, Gate};
 
 use crate::{Args, GoalSpec};
 
-/// A warm, shared tool cache for the gate, and the environment that points every
-/// check at it.
+/// A warm, shared tool cache for the gate, and the environment that points every check at it.
 ///
-/// Returns what a check runs WITH: `--check-env` pairs, which `comp-checks`
-/// applies over a cleared environment. Nothing else escapes — the paths are built
-/// here, used here, and never referred to again.
+/// Returns what a check runs WITH: `--check-env` pairs, which `comp-checks` applies over a cleared
+/// environment. Nothing else escapes.
 pub fn warm_caches(goal: &GoalSpec, args: &Args) -> Vec<String> {
-    // A warm, SHARED tool cache for the gate. Without it comp-checks gives each
-    // candidate a fresh HOME, so `uv` re-downloads its toolchain from a cold
-    // cache every time and the run times out. These dirs persist between runs, so
-    // the cost is paid once, ever.
+    // A warm, SHARED tool cache for the gate. Without it comp-checks gives each candidate a fresh HOME, so
+    // `uv` re-downloads its toolchain from a cold cache every time and the run times out.
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let uv_cache = format!("{home}/.cache/comp-goalrun/uv");
     let uv_python = format!("{home}/.cache/comp-goalrun/uv-python");
-    // A shared, persistent cargo cache. The registry (CARGO_HOME) is downloaded
-    // once ever; the target dir keeps compiled dependencies so a candidate only
-    // recompiles the crate it changed — seconds, not the cold minutes a fresh
-    // HOME would force. This is what makes a cargo gate viable at all.
+    // A shared, persistent cargo cache: the registry is downloaded once ever and the target dir keeps
+    // compiled dependencies, so a candidate only recompiles the crate it changed. This is what makes a
+    // cargo gate viable at all.
     let cargo_home = format!("{home}/.cache/comp-goalrun/cargo-home");
     let cargo_target = format!("{home}/.cache/comp-goalrun/cargo-target");
     for d in [&uv_cache, &uv_python, &cargo_home, &cargo_target] {
@@ -45,39 +38,24 @@ pub fn warm_caches(goal: &GoalSpec, args: &Args) -> Vec<String> {
         format!("CARGO_TARGET_DIR={cargo_target}"),
         // cargo wants a real registry index and network on a cold cache.
         "CARGO_NET_OFFLINE=false".into(),
-        // Where the host binary is, for a gate that wants to RUN what the
-        // candidate built rather than only compile it. The sandbox holds the base
-        // tree and nothing else, so a check that needs the host cannot find it by
-        // path — and a gate that only compiles is not a gate (measured: `cargo
-        // component check` passes on a crate implementing none of its world).
-        // NOT `bin_path`: that resolves against the RECONCILER's target directory,
-        // and the host is built in its own workspace. Pointing the gate at a
-        // binary that does not exist made every check fail with "no comp-host at
-        // …" — sixteen gate runs judging a broken harness rather than the code,
-        // and a model that read the message and wrote an essay about the build
-        // instead of the file it was asked for.
+        // Where the host binary is, for a gate that RUNS what the candidate built (a gate that only compiles
+        // is not a gate: `cargo component check` passes on a crate implementing none of its world). NOT
+        // `bin_path`: that resolves against the RECONCILER's target directory and the host is built in its
+        // own workspace; a missing binary made sixteen gate runs judge a broken harness.
         format!("COMP_HOST={}", host_bin().display()),
-        // Composition, for the same reason: a gate has to assemble what the
-        // candidate built before it can run it, and the plug chain is derived
-        // from the component's own imports rather than written down anywhere.
-        // `bin_path` is right here — unlike the host, this one IS built in the
-        // reconciler's workspace.
+        // Composition, for the same reason: a gate must assemble what the candidate built, and the plug chain
+        // is derived from the component's own imports. `bin_path` is right here, since this one IS built in
+        // the reconciler's workspace.
         format!("COMP_PLUG={}", plug_bin().display()),
-        // The gate crate, for the same reason as the two above: the composition
-        // gates are `reconciler/tests/gate_*.rs` now, and `reconciler/` is not in
-        // any goal's `base_paths` — it is the judge, not the subject. A check that
-        // ran `cd ../reconciler` found no such directory, and every branch of goal
-        // 10 failed on it, which reads as twelve branches writing bad code.
-        //
-        // A check runs `cargo test --manifest-path "$COMP_GATES/Cargo.toml"`, so
-        // the gate compiles from THIS checkout while the crate under test comes
-        // from the candidate's tree.
+        // The gate crate: the composition gates are `reconciler/tests/gate_*.rs`, and `reconciler/` is not in
+        // any goal's `base_paths` (it is the judge, not the subject), so `cd ../reconciler` found nothing.
+        // A check runs `cargo test --manifest-path "$COMP_GATES/Cargo.toml"`: the gate compiles from THIS
+        // checkout while the crate under test comes from the candidate's tree.
         format!("COMP_GATES={}", comp_reconciler::fleet::repo_root().join("reconciler").display()),
     ];
-    // `cargo` is usually a rustup shim, and under the gate's cleared environment
-    // it cannot choose a toolchain — no RUSTUP_HOME, no default. Pass both, so the
-    // shim resolves the same toolchain the pre-warm used. Read from the ambient
-    // environment (the operator's), never the agent's.
+    // `cargo` is usually a rustup shim and under the gate's cleared environment cannot choose a toolchain
+    // (no RUSTUP_HOME, no default). Pass both so it resolves the toolchain the pre-warm used; read from
+    // the operator's ambient environment, never the agent's.
     let rustup_home = std::env::var("RUSTUP_HOME").unwrap_or_else(|_| format!("{home}/.rustup"));
     let toolchain = Command::new("rustup")
         .args(["show", "active-toolchain"])
@@ -104,23 +82,19 @@ pub fn warm_caches(goal: &GoalSpec, args: &Args) -> Vec<String> {
     check_env
 }
 
-/// The fixtures a run's fleet is started from, the secrets granted to them, and
-/// the artifacts they name.
+/// The fixtures a run's fleet is started from, the secrets granted to them, and the artifacts they name.
 ///
-/// Three things because they are decided together and used together: a spec that
-/// references a secret nobody granted fails to START, which is the failure
-/// `select.rs` saw, so keeping the three apart would mean keeping three lists in
-/// step by hand.
+/// Decided together: a spec that references a secret nobody granted fails to START (as `select.rs`
+/// saw), so three separate lists would have to be kept in step by hand.
 pub struct Deployment {
     pub specs: Vec<String>,
     pub secrets: Vec<String>,
     pub artifacts: Vec<String>,
 }
 
-/// Render every fixture this run needs, with its placeholders filled in.
 pub fn render_specs(args: &Args, goal: &GoalSpec, gate: &Gate) -> Result<Deployment> {
-    // The provider's own default when nobody named a base URL, so `--provider
-    // openai` does not silently dial api.anthropic.com.
+    // The provider's own default when nobody named a base URL, so `--provider openai` does not silently
+    // dial api.anthropic.com.
     let base_url = if !args.llm_base_url.is_empty() {
         args.llm_base_url.clone()
     } else if args.provider == "openai" {
@@ -154,8 +128,8 @@ pub fn render_specs(args: &Args, goal: &GoalSpec, gate: &Gate) -> Result<Deploym
     let mut specs =
         vec![driver_spec.to_str().unwrap().to_string(), forge_spec.to_str().unwrap().to_string()];
 
-    // A decomposed goal needs somewhere to keep the contract, and that is a
-    // database nothing here deploys. Refused up front rather than half-run.
+    // A decomposed goal needs a database to keep the contract and nothing here deploys one: refused up
+    // front rather than half-run.
     if !goal.parts.is_empty() {
         if args.surreal_url.is_none() {
             bail!(
@@ -174,8 +148,7 @@ pub fn render_specs(args: &Args, goal: &GoalSpec, gate: &Gate) -> Result<Deploym
 
     // The knowledge pool, only if a database was named.
     if let Some(url) = &args.surreal_url {
-        // The graph's egress allow-list is a socket, not a URL — and it is the
-        // one address it may dial (ADR-0008).
+        // The graph's egress allow-list is a socket, not a URL: the one address it may dial (ADR-0008).
         let egress = url
             .split("://")
             .nth(1)
@@ -186,16 +159,14 @@ pub fn render_specs(args: &Args, goal: &GoalSpec, gate: &Gate) -> Result<Deploym
             &[("SURREAL_URL", url), ("SURREAL_DB", "goalmemory"), ("SURREAL_EGRESS", &egress)],
         )?;
         specs.push(memory_spec.to_str().unwrap().to_string());
-        // A database with no auth is a legitimate local setup, so the secret is
-        // only granted when a password file was given. The vault reference in the
-        // fixture resolves to empty otherwise, which `knowledge-graph` treats as
-        // "no password" rather than as a failure.
+        // A database with no auth is a legitimate local setup, so the secret is only granted when a password
+        // file was given; otherwise the vault reference resolves to empty, which `knowledge-graph` reads as
+        // "no password".
         if let Some(path) = &args.surreal_password {
             secrets.push(format!("vault://acme/surreal=@{}", path.display()));
         }
-        // The answer door serves two callers now: a part answering a request, and
-        // the distiller turning a verified diff into a lesson. Deployed whenever
-        // there is a pool to write to.
+        // The answer door serves a part answering a request and the distiller turning a verified diff into a
+        // lesson; deployed whenever there is a pool to write to.
         specs.push(
             render(
                 "goalrun-answer.yaml",
@@ -212,32 +183,22 @@ pub fn render_specs(args: &Args, goal: &GoalSpec, gate: &Gate) -> Result<Deploym
             .to_string(),
         );
         if !goal.parts.is_empty() {
-            // A database PER GOAL. One shared `goalcontract` meant the second goal
-            // this machine ever ran was handed the first goal's contract —
-            // silently, because "a contract is already published" reads as a
-            // repeat run rather than as a different goal.
+            // A database PER GOAL: one shared `goalcontract` handed the second goal this machine ran the first
+            // goal's contract, silently, since "a contract is already published" reads as a repeat run.
             //
-            // Named from the contract file's path AND the goal's title, because
-            // the path alone is not the goal's identity: a second phase over the
-            // same CONTRACT.md — new parts, new sections appended by the human who
-            // owns the file — collided with the first phase's v1 and refused to
-            // start. The title is what distinguishes them, and a rerun of one goal
-            // keeps its title and so keeps its negotiation history.
+            // Named from the contract file's path AND the goal's title: a second phase over the same CONTRACT.md
+            // collided with the first phase's v1; a rerun of one goal keeps its title and so its negotiation
+            // history.
             let slug = |s: &str| -> String {
                 s.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect()
             };
-            // The title goes in as a short digest rather than as text. A title is
-            // free-form and this name travels through a spec, a config value and a
-            // database identifier — a 95-character one made the registry
-            // unreachable rather than saying anything about a name being too long.
+            // The title goes in as a short digest: it travels through a spec, a config value and a database
+            // identifier, and a 95-character one made the registry unreachable ("n1 refused").
             use sha2::Digest;
             let mut hash = sha2::Sha256::new();
             hash.update(goal.title.as_deref().unwrap_or_default().as_bytes());
             let title_id: String =
                 hash.finalize()[..4].iter().map(|b| format!("{b:02x}")).collect();
-            // Kept SHORT deliberately. This name travels into a spec, a wasi:config
-            // value and a database identifier, and a long one made the registry
-            // unreachable — "n1 refused" — rather than complaining about a name.
             let path_slug: String =
                 slug(&goal.contract.clone().unwrap_or_default()).chars().take(24).collect();
             let db = format!("goalcontract_{path_slug}_{title_id}");
@@ -258,22 +219,15 @@ pub fn render_specs(args: &Args, goal: &GoalSpec, gate: &Gate) -> Result<Deploym
 
 /// The egress allow-list entry for a base URL: its authority, port and all.
 ///
-/// The allow-list is an AUTHORITY, not a URL — the scheme and path come off,
-/// everything else stays. `https://api.anthropic.com` allows
-/// `api.anthropic.com`; the shim's `http://127.0.0.1:8787` allows
-/// `127.0.0.1:8787`.
+/// The allow-list is an AUTHORITY, not a URL: `https://api.anthropic.com` allows `api.anthropic.com`,
+/// `http://127.0.0.1:8787` allows `127.0.0.1:8787`.
 ///
-/// **The port is kept on purpose.** `Egress::permits_authority` will match a
-/// bare `127.0.0.1` entry against an authority of `127.0.0.1:8787`, so dropping
-/// the port would still work — and would quietly widen the allow-list to every
-/// port on loopback. `fixtures/llm-secret.yaml` pins `127.0.0.1:OPENAI_PORT` for
-/// the same reason. Egress is a security control; the narrower entry is the
-/// correct one even when the wider one happens to function.
+/// **The port is kept on purpose.** `Egress::permits_authority` matches a bare `127.0.0.1` entry
+/// against `127.0.0.1:8787`, so dropping the port would work but quietly widen the allow-list to
+/// every port on loopback (`fixtures/llm-secret.yaml` pins `127.0.0.1:OPENAI_PORT` too).
 ///
-/// Deriving this from the base URL rather than taking a second flag means the
-/// two cannot disagree — an allow-list naming a different authority than the
-/// base URL fails at the first call, with an egress error about a host nobody
-/// typed rather than about the URL somebody actually mistyped.
+/// Deriving it from the base URL rather than a second flag means the two cannot disagree: a mismatched
+/// allow-list fails at the first call with an egress error about a host nobody typed.
 pub(crate) fn render(fixture: &str, subs: &[(&str, &str)]) -> Result<PathBuf> {
     let mut yaml = std::fs::read_to_string(repo_root().join("fixtures").join(fixture))
         .with_context(|| format!("reading fixture {fixture}"))?;
@@ -285,7 +239,6 @@ pub(crate) fn render(fixture: &str, subs: &[(&str, &str)]) -> Result<PathBuf> {
     Ok(out)
 }
 
-/// Where `comp-host` is: its own workspace, or wherever the operator says.
 pub(crate) fn host_bin() -> PathBuf {
     if let Ok(p) = std::env::var("COMP_HOST") {
         return PathBuf::from(p);
@@ -293,7 +246,6 @@ pub(crate) fn host_bin() -> PathBuf {
     repo_root().join("host/target/release/comp-host")
 }
 
-/// The composer a gate uses to assemble what a candidate built.
 pub(crate) fn plug_bin() -> PathBuf {
     if let Ok(p) = std::env::var("COMP_PLUG") {
         return PathBuf::from(p);
@@ -306,9 +258,8 @@ pub(crate) fn artifacts(provider: &str) -> Result<Vec<String>> {
         if provider == "openai" { "openai_provider.wasm" } else { "anthropic_provider.wasm" };
     let dir = repo_root().join("components/target/wasm32-wasip2/release");
     let mut out = Vec::new();
-    // The memory app's five are here unconditionally: an artifact nothing places
-    // costs nothing, and making the list conditional would mean two ways to be
-    // missing a file.
+    // The memory app's five are here unconditionally: an artifact nothing places costs nothing, and a
+    // conditional list would be two ways to be missing a file.
     for (id, file) in [
         ("cprobe", "contract_probe.wasm"),
         ("registry", "contract_registry.wasm"),
@@ -327,10 +278,8 @@ pub(crate) fn artifacts(provider: &str) -> Result<Vec<String>> {
         ("gate", "checks_runner.wasm"),
         ("sprobe", "select_probe.wasm"),
         ("selector", "graph_selector.wasm"),
-        // `graph-selector::land`'s Jev advisory (see its module doc) — mocked
-        // here for the same reason `mllm` is: the demo path stays free and
-        // deterministic. A real `typesafe_provider.wasm` + a secret is a
-        // deployment choice, not this demo's default.
+        // `graph-selector::land`'s Jev advisory (see its module doc), mocked as `mllm` is so the demo path
+        // stays free and deterministic.
         ("jev", "mock_jev_provider.wasm"),
         ("forge", "github_forge.wasm"),
     ] {
@@ -345,21 +294,14 @@ pub(crate) fn artifacts(provider: &str) -> Result<Vec<String>> {
 
 /// Seed the capability graph into the pool, so the loop can ask what exists.
 ///
-/// ADR-0089 wants a run to ask "do we already have this?" before generating an
-/// implementation, and `capsearch` answers that from the components plus the
-/// artifacts. The GRAPH — who imports what from whom, and how many applications
-/// carry a capability — lived only in `docs/CAPABILITY-GRAPH.md` and in a
-/// projection that nothing outside a test ever ran. `comp-capgraph --format surql`
-/// piped to the store's `/sql` could write it by hand; nothing did it on the path a real run takes.
+/// ADR-0089 wants a run to ask "do we already have this?"; `capsearch` answers from components and
+/// artifacts, but the GRAPH (who imports what, how many applications carry a capability) was never
+/// written on the path a real run takes. So a run with a pool seeds it at startup from the BUILT
+/// artifacts, keeping `comp-capgraph`'s rule "derived, never maintained by hand": the pool is a
+/// cache that can be thrown away and rebuilt.
 ///
-/// So a run with a pool seeds it, at startup, from the BUILT artifacts. That
-/// keeps `comp-capgraph`'s own rule — "derived from the built artifacts every
-/// time, never maintained by hand" — and makes the pool a cache that can always
-/// be thrown away and rebuilt rather than a second source of truth.
-///
-/// Failure is reported and ignored, like every other thing the pool does. A run
-/// without a graph is the run that has always happened; a run that stopped
-/// because a projection failed would trade a working loop for a nicety.
+/// Failure is reported and ignored, like everything else the pool does: a run without a graph is the
+/// run that has always happened.
 pub(crate) fn seed_capability_graph(url: &str, password: Option<&str>) {
     let gen = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -403,8 +345,8 @@ pub(crate) fn seed_capability_graph(url: &str, password: Option<&str>) {
         req.body(body).send()
     };
 
-    // The namespace and database may not exist on a fresh store, and a
-    // projection into nothing is a wall of errors that reads like a broken tool.
+    // The namespace and database may not exist on a fresh store, and a projection into nothing is a wall
+    // of errors that reads like a broken tool.
     let _ = send(
         "DEFINE NAMESPACE IF NOT EXISTS comp; USE NS comp; \
          DEFINE DATABASE IF NOT EXISTS goalmemory;"
@@ -414,8 +356,8 @@ pub(crate) fn seed_capability_graph(url: &str, password: Option<&str>) {
     match send(String::from_utf8_lossy(&out).into_owned()) {
         Ok(resp) => {
             let text = resp.text().unwrap_or_default();
-            // SurrealDB answers 200 with per-statement status, so the HTTP code
-            // says nothing about whether the projection landed.
+            // SurrealDB answers 200 with per-statement status, so the HTTP code says nothing about whether the
+            // projection landed.
             let errs = text.matches("\"status\":\"ERR\"").count();
             if errs == 0 {
                 println!("capability graph seeded into the pool at generation {gen}");
@@ -427,8 +369,7 @@ pub(crate) fn seed_capability_graph(url: &str, password: Option<&str>) {
     }
 }
 
-/// Poll an app's root route until it answers — cheap readiness that never calls
-/// the model (the probe's `/` returns a static service line).
+/// Poll an app's root route until it answers: cheap readiness that never calls the model.
 pub(crate) fn wait_serving(port: u16, host: &str, within: Duration) -> Result<()> {
     let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build()?;
     let deadline = Instant::now() + within;
@@ -446,9 +387,8 @@ pub(crate) fn wait_serving(port: u16, host: &str, within: Duration) -> Result<()
 
 /// Run each check once in the checkout, with the caches the gate will use.
 ///
-/// The toolchain download and the dependency compile happen once, outside any
-/// request deadline, before a candidate is ever judged. The RESULT does not matter
-/// — only the cache it leaves behind, which is why nothing here is checked.
+/// The toolchain download and dependency compile happen once, outside any request deadline; only the
+/// cache they leave matters, so nothing here is checked.
 pub(crate) fn warm_the_gate_cache(goal: &GoalSpec, args: &Args, caches: &GateCaches) {
     for c in &goal.checks {
         let tool = c.command.first().map(String::as_str);
@@ -469,8 +409,7 @@ pub(crate) fn warm_the_gate_cache(goal: &GoalSpec, args: &Args, caches: &GateCac
     }
 }
 
-/// Where the gate's toolchains live, so a warm-up and a judged candidate share
-/// them. Four paths that always travel together.
+/// Where the gate's toolchains live, so a warm-up and a judged candidate share them.
 pub(crate) struct GateCaches {
     uv_cache: String,
     uv_python: String,
@@ -480,22 +419,17 @@ pub(crate) struct GateCaches {
 
 /// The timeouts a real agentic run needs, set on the environment the fleet reads.
 ///
-/// One guest request does a model call AND a test suite. The ingress's 30s default
-/// backend timeout kills that as "n1 timed out", and the host's 30s wrpc budget
-/// kills the nested call as "data receipt timed out" — both of which read as fleet
-/// problems and are not.
-///
-/// 240s was not enough either: a thinking model takes minutes on a real task, and
-/// branches died mid-answer. So the floor is 600s and the rest is scaled from the
-/// caller's own per-branch timeout, because that is the number they already chose.
+/// One guest request does a model call AND a test suite: the ingress's 30s default backend timeout
+/// kills that as "n1 timed out" and the host's 30s wrpc budget as "data receipt timed out", both
+/// reading as fleet problems. 240s was not enough for a thinking model, so the floor is 600s and the
+/// rest scales from the caller's own per-branch timeout.
 pub(crate) fn set_fleet_timeouts(args: &Args) {
     std::env::set_var("COMP_FLEET_ALLOW_PRIVATE_EGRESS", "1");
     let backend_timeout = args.timeout.max(600).to_string();
     std::env::set_var("COMP_FLEET_BACKEND_TIMEOUT", &backend_timeout);
     // Inherited by the hosts the fleet spawns.
     std::env::set_var("COMP_RPC_TIMEOUT_SECS", &backend_timeout);
-    // Trace outbound dials, so a stalled model call shows whether the host got a
-    // response back at all.
+    // Trace outbound dials, so a stalled model call shows whether the host got a response at all.
     std::env::set_var("COMP_TRACE_EGRESS", "1");
 }
 
@@ -505,17 +439,10 @@ mod tests {
 
     /// Both manifests that hold a provider must carry the read timeout.
     ///
-    /// A fixture that names no `LLM_TIMEOUT` renders to a manifest without the
-    /// key, the provider falls back to its default, and every call slower than
-    /// that dies as `error sending request` — the provider reading as DOWN while
-    /// the thing behind the base URL is still working. That is what killed a
-    /// whole part of a two-part run, and it is silent: nothing in the run log
-    /// mentions a timeout.
-    ///
-    /// It cost a second run to relearn against a self-hosted model, where DECODE
-    /// is the slow half: benchmarked at 34 tok/s on a 16k prompt (72 at 1k), so a
-    /// 12000-token answer is minutes, not seconds, and every budget shorter than
-    /// that kills a working server.
+    /// A fixture with no `LLM_TIMEOUT` renders a manifest without the key, the provider uses its default,
+    /// and every slower call dies as `error sending request`, reading as the provider DOWN. It is
+    /// silent, and it killed a whole part of a two-part run. Self-hosted DECODE is the slow half (34 tok/s
+    /// on a 16k prompt), so a 12000-token answer is minutes.
     #[test]
     fn every_manifest_with_a_provider_carries_the_read_timeout() {
         for f in ["goalrun-driver.yaml", "goalrun-answer.yaml"] {
@@ -527,8 +454,7 @@ mod tests {
                     yaml.contains(&format!("{provider}:timeout: \"3600\"")),
                     "{f} must carry {provider}:timeout, substituted"
                 );
-                // And the SECRET has to follow the provider, or the manifest grants
-                // a key the component never asks for and the call goes out bare.
+                // The SECRET has to follow the provider, or the manifest grants a key the component never asks for.
                 assert!(
                     yaml.contains(&format!("key: {provider}-api-key")),
                     "{f} must name {provider}-api-key"
@@ -539,13 +465,12 @@ mod tests {
 
     /// `--provider` picks an artifact, and the two must not be confusable.
     ///
-    /// Both components export the same WIT interface, so shipping the wrong one
-    /// links and serves and then fails at the first call with a 404 from a path
-    /// the other provider does not have — which reads as the model being down.
+    /// Both components export the same WIT interface, so the wrong one links, serves, then fails at the
+    /// first call with a 404 that reads as the model being down.
     #[test]
     fn the_provider_selects_its_own_wasm() {
-        // The mapping is a one-liner in `artifacts`; this pins it so a rename of
-        // either file cannot silently fall through to the other.
+        // The mapping is a one-liner in `artifacts`; this pins it so a rename cannot silently fall through to
+        // the other.
         for (provider, want) in
             [("openai", "openai_provider.wasm"), ("anthropic", "anthropic_provider.wasm")]
         {

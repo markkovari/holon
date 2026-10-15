@@ -2,19 +2,15 @@
 //!
 //! ## Why this is a process and not a component
 //!
-//! Running a model needs a runtime and weights on disk, and a `wasm32-wasip2`
-//! guest has neither (ADR-0095). `components/llm-local` is the component
-//! side: it holds the WIT contract and dials this over HTTP exactly like the
-//! gate, the database and the model provider are reached.
+//! Running a model needs a runtime and weights on disk, which a `wasm32-wasip2` guest lacks
+//! (ADR-0095). `components/llm-local` is the component side and dials this over HTTP.
 //!
 //! ## What "native" buys here, honestly
 //!
-//! This daemon does not run a model either. It proxies to a locally-running
-//! **Ollama** server — the simplest real local-LLM backend to integrate
-//! without a heavy native inference dependency of our own. That is the
-//! boundary: no bundled model weights, no llama.cpp binding, no GPU code.
-//! `--ollama-url` must point at an Ollama (or API-compatible) server already
-//! running on the machine, or every request answers `unavailable`.
+//! This daemon does not run a model either: it proxies to a locally-running **Ollama** server, the
+//! simplest real local-LLM backend without a heavy inference dependency (no bundled weights, no
+//! llama.cpp binding, no GPU code). `--ollama-url` must point at an Ollama (or API-compatible)
+//! server already running, or every request answers `unavailable`.
 //!
 //!   comp-llmlocal --addr 127.0.0.1:8006 --ollama-url http://127.0.0.1:11434 --model llama3.2
 
@@ -65,17 +61,14 @@ struct InferReq {
     prompt: String,
 }
 
-/// The body Ollama's `/api/generate` wants, with `stream: false` so the reply
-/// is one JSON object rather than a stream of partial ones — this daemon has
-/// no caller that could consume a stream.
+/// The body Ollama's `/api/generate` wants, with `stream: false` so the reply is one JSON object; this
+/// daemon has no caller that could consume a stream.
 fn ollama_request_body(model: &str, prompt: &str) -> Value {
     json!({ "model": model, "prompt": prompt, "stream": false })
 }
 
-/// Ollama's non-streaming `/api/generate` reply is a JSON object with a
-/// `response` field carrying the whole completion. Anything else — a
-/// different shape, a missing field — is treated as no answer rather than
-/// guessed at.
+/// Ollama's non-streaming reply is a JSON object with a `response` field carrying the whole
+/// completion. Any other shape is treated as no answer rather than guessed at.
 fn ollama_response_text(body: &str) -> Option<String> {
     let v: Value = serde_json::from_str(body).ok()?;
     v.get("response")?.as_str().map(str::to_string)
