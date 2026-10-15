@@ -163,8 +163,6 @@ pub fn extract_str(component: &str, path: &str, text: &str) -> Vec<ExtractedSymb
     finish(component, path, text, pieces)
 }
 
-// ---- the language-neutral layout ------------------------------------------------
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Role {
     /// Shebang, inner attribute, WIT `package x;` — only ever part of `(header)`.
@@ -516,8 +514,6 @@ fn compact(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-// ---- Rust -------------------------------------------------------------------------
-
 mod rust {
     use std::collections::BTreeSet;
 
@@ -711,8 +707,6 @@ mod rust {
     }
 }
 
-// ---- WIT --------------------------------------------------------------------------
-
 mod wit {
     use super::{skip_block_comment, Meta, Role, Unit};
     use crate::model::SymbolKind;
@@ -848,8 +842,6 @@ mod wit {
         Some(units)
     }
 }
-
-// ---- ingest -----------------------------------------------------------------------
 
 /// What one patch of an ingest did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

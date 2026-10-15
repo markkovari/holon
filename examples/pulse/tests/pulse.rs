@@ -72,7 +72,6 @@ fn start_host() -> HostGuard {
 fn post_history_and_live_sse() {
     let _host = start_host();
 
-    // ===== rung 1: post + history ===========================================
     let (status, m) = req("POST", "/api/rooms/lobby/messages", Some(json!({"user": "ada", "text": "first!"})));
     assert_eq!(status, 201, "post: {m}");
     assert_eq!(m["user"], "ada");
@@ -92,11 +91,9 @@ fn post_history_and_live_sse() {
     assert_eq!(msgs.len(), 1, "only messages after the cursor: {page}");
     assert_eq!(msgs[0]["text"], "second");
 
-    // rooms are isolated
     let (_, page) = req("GET", "/api/rooms/other/messages?after=-1", None);
     assert_eq!(page["messages"].as_array().unwrap().len(), 0, "other room is empty");
 
-    // ===== rung 2: LIVE SSE — the headline ==================================
     // A reader holds a GET /events connection open; a separate POST must reach it.
     let found = Arc::new(AtomicBool::new(false));
     let f = found.clone();

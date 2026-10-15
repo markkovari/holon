@@ -91,7 +91,6 @@ fn start_host() -> HostGuard {
 fn five_axes() {
     let _host = start_host();
 
-    // --- auth + RBAC ---------------------------------------------------------
     register("admin@track.io", Some("admin"));
     register("carol@track.io", None); // a plain member account
     register("mallory@track.io", None); // never added to the project
@@ -103,7 +102,6 @@ fn five_axes() {
     let (s, _) = req("POST", "/api/projects", &carol, Some(json!({"key": "X", "name": "nope"})));
     assert_eq!(s, 403, "non-admin must not create a project");
 
-    // admin creates a project (and is its lead).
     let (s, proj) = req("POST", "/api/projects", &admin, Some(json!({"key": "ENG", "name": "Engineering"})));
     assert_eq!(s, 201, "create project: {proj}");
     let pid = proj["id"].as_str().unwrap().to_string();
@@ -112,29 +110,24 @@ fn five_axes() {
     let (s, _) = req("POST", &format!("/api/projects/{pid}/members"), &admin, Some(json!({"subject": subject(&carol), "role": "member"})));
     assert_eq!(s, 201, "add member");
 
-    // --- write axis + membership ABAC ---------------------------------------
     // mallory (not a member) is forbidden from filing an issue.
     let (s, _) = req("POST", "/api/issues", &mallory, Some(json!({"project": pid, "title": "sneaky"})));
     assert_eq!(s, 403, "non-member must not write issues");
 
-    // carol (a member) can file one.
     let (s, iss) = req("POST", "/api/issues", &carol, Some(json!({"project": pid, "title": "Fix the login bug", "body": "Token expiry uses < not <=", "label": "bug"})));
     assert_eq!(s, 201, "member creates issue: {iss}");
     let iid = iss["id"].as_str().unwrap().to_string();
     assert_eq!(iss["ref"], "ENG-1", "per-project issue number");
     assert_eq!(iss["status"], "backlog");
 
-    // --- lifecycle (fsm) -----------------------------------------------------
     for (event, expect) in [("start", "todo"), ("begin", "in_progress"), ("finish", "done")] {
         let (s, m) = req("POST", &format!("/api/issues/{iid}/move"), &carol, Some(json!({"event": event})));
         assert_eq!(s, 200, "move {event}: {m}");
         assert_eq!(m["status"], expect, "after {event}");
     }
-    // an illegal transition is a 409.
     let (s, _) = req("POST", &format!("/api/issues/{iid}/move"), &carol, Some(json!({"event": "begin"})));
     assert_eq!(s, 409, "illegal transition from done");
 
-    // --- comment + AI summary ------------------------------------------------
     let (s, _) = req("POST", &format!("/api/issues/{iid}/comments"), &carol, Some(json!({"body": "Off-by-one in the comparison; patch incoming."})));
     assert_eq!(s, 201, "add comment");
     let (s, sum) = req("POST", &format!("/api/issues/{iid}/summarize"), &carol, None);
@@ -142,20 +135,16 @@ fn five_axes() {
     assert!(!sum["summary"].as_str().unwrap_or("").is_empty(), "AI returns a non-empty summary");
     assert_eq!(sum["comments"].as_u64().unwrap(), 1);
 
-    // --- read axis (search) --------------------------------------------------
     let (s, res) = req("GET", "/api/search?q=login+bug", &carol, None);
     assert_eq!(s, 200, "search: {res}");
     let hits = res["hits"].as_array().unwrap();
     assert!(hits.iter().any(|h| h["ref"] == "ENG-1"), "search finds ENG-1: {res}");
 
-    // --- background sweep (tick) --------------------------------------------
     // a fresh in_progress issue is NOT stale, so the sweep flags nothing.
     let (s, sweep) = req("POST", "/api/tick", &admin, None);
     assert_eq!(s, 200, "tick: {sweep}");
     assert_eq!(sweep["flagged"].as_u64().unwrap(), 0, "nothing stale yet");
 
-    // --- stream axis (SSE) ---------------------------------------------------
-    // connect an SSE reader, then create an issue and assert the frame arrives.
     let stream_url = format!("{}/api/stream", base());
     let handle = std::thread::spawn(move || {
         let resp = ureq::get(&stream_url).timeout(Duration::from_secs(6)).call().expect("sse connect");

@@ -131,7 +131,6 @@ async fn graph_lookups_stay_bounded() {
     let g = Arc::new(SurrealGraph::connect(&cfg).await.expect("surreal"));
     let ws = "bench";
 
-    // ---- inserts, timed per tenth of the data --------------------------------
     eprintln!(
         "inserting {SYMBOLS} symbols, {} patches, {CONFLICTS} conflicts",
         SYMBOLS * PATCHES_PER_SYMBOL
@@ -184,7 +183,6 @@ async fn graph_lookups_stay_bounded() {
     }
     eprintln!("inserted in {:.1?}", started.elapsed());
 
-    // ---- lookups --------------------------------------------------------------
     let mut named = Stats::new("symbols_named");
     let mut component = Stats::new("symbols_in_component");
     let mut by_hash = Stats::new("patch");

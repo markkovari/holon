@@ -1,12 +1,7 @@
 //! `SubmitAgent` — submits one item to a `BatchAgent` and blocks until the batch
 //! flushes, via a Golem promise. It is a **durable** agent keyed by `(key,
-//! item)`, so each request is its own worker (concurrent) and can *durably
-//! suspend* on the promise — an ephemeral agent can't (it has no oplog to resume
-//! from).
-//!
-//! `POST /submit/{key}/{item}/go` durably suspends until the item's batch runs,
-//! then returns the item's result — real backpressure, consuming nothing while
-//! suspended, surviving restarts.
+//! item)` so each request is its own worker and can durably suspend on the
+//! promise — an ephemeral agent can't (no oplog to resume from).
 
 use golem_rust::{agent_definition, agent_implementation, blocking_await_promise, create_promise, endpoint};
 

@@ -113,10 +113,8 @@ fn probe_transitions_up_degraded_down() {
     let upstream = start_upstream();
     let host = start_host(&upstream);
 
-    // a monitor that probes a healthy upstream (always 200 -> up) ...
     let (s, _) = req("POST", "/api/monitors", Some(json!({"name": "self", "url": format!("http://{upstream}/"), "period": 10})));
     assert_eq!(s, 201, "create self monitor");
-    // ... and one pointing at a dead port (connection refused -> failing).
     let (s, _) = req("POST", "/api/monitors", Some(json!({"name": "dead", "url": "http://127.0.0.1:59999/", "period": 10})));
     assert_eq!(s, 201, "create dead monitor");
 
@@ -137,13 +135,11 @@ fn probe_transitions_up_degraded_down() {
     let dead_r = t2["results"].as_array().unwrap().iter().find(|r| r["ok"] == false).expect("dead still failing");
     assert_eq!(dead_r["transition"], "degraded->down", "second failure takes it down: {dead_r}");
 
-    // status reflects self=up, dead=down.
     let (_, st) = req("GET", "/api/status", None);
     let mons = st["monitors"].as_array().unwrap();
     assert_eq!(mons.iter().find(|m| m["name"] == "self").unwrap()["state"], "up");
     assert_eq!(mons.iter().find(|m| m["name"] == "dead").unwrap()["state"], "down");
 
-    // the fsm transition log records both hops for the dead monitor.
     let dead_id = id_of(&st, "dead");
     let (_, hist) = req("GET", &format!("/api/monitors/{dead_id}/history"), None);
     let h = hist["history"].as_array().unwrap();

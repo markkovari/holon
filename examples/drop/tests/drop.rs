@@ -83,18 +83,15 @@ fn ticket_upload_and_signed_download() {
     let (status, _) = json_req("POST", "/api/tickets", Some(json!({"content-type": "application/x-evil", "size": 10})));
     assert_eq!(status, 415, "disallowed type must be rejected at ticket time");
 
-    // an oversized request is refused at ticket time too.
     let (status, _) = json_req("POST", "/api/tickets", Some(json!({"content-type": "text/plain", "size": 99_000_000u64})));
     assert_eq!(status, 413, "oversize must be rejected at ticket time");
 
-    // an allowed type mints a ticket.
     let payload = b"hello, presigned world";
     let (status, t) = json_req("POST", "/api/tickets", Some(json!({"content-type": "text/plain", "size": payload.len()})));
     assert_eq!(status, 201, "ticket: {t}");
     let token = t["token"].as_str().expect("token").to_string();
     assert!(!token.is_empty());
 
-    // redeem the ticket by PUTting the bytes straight to storage.
     let put_url = format!("{}/api/blob/{token}", base());
     let put = ureq::put(&put_url).set("content-type", "text/plain").send_bytes(payload);
     let put = match put {
@@ -106,23 +103,19 @@ fn ticket_upload_and_signed_download() {
     let up: Value = serde_json::from_str(&put.into_string().unwrap()).unwrap();
     let id = up["id"].as_str().expect("id").to_string();
 
-    // the object shows up in the listing.
     let (_, list) = json_req("GET", "/api/objects", None);
     assert!(list["objects"].as_array().unwrap().iter().any(|o| o["id"] == id), "object must be listed");
 
-    // get a signed download link.
     let (status, meta) = json_req("GET", &format!("/api/object/{id}"), None);
     assert_eq!(status, 200, "object meta: {meta}");
     let link = meta["download"].as_str().expect("download link").to_string();
 
-    // the signed link round-trips the exact bytes.
     let dl = ureq::get(&format!("{}{link}", base())).call().expect("download");
     assert_eq!(dl.status(), 200);
     let mut got = Vec::new();
     dl.into_reader().read_to_end(&mut got).unwrap();
     assert_eq!(got, payload, "downloaded bytes must match uploaded");
 
-    // a tampered signature is refused.
     let tampered = link.replace("sig=", "sig=x");
     let bad = ureq::get(&format!("{}{tampered}", base())).call();
     let code = match bad {
@@ -132,7 +125,6 @@ fn ticket_upload_and_signed_download() {
     };
     assert_eq!(code, 403, "tampered signature must be refused");
 
-    // stats reflect the one stored object.
     let (_, st) = json_req("GET", "/api/stats", None);
     assert_eq!(st["objects"].as_u64().unwrap(), 1, "one object stored: {st}");
     assert_eq!(st["total_bytes"].as_u64().unwrap(), payload.len() as u64, "bytes tallied: {st}");

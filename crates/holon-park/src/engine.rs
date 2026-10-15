@@ -10,40 +10,25 @@
 //!   └──(cancel)──▶ cancelled                            [terminal]
 //! ```
 //!
-//! `expired` is not a stored state — it is `to_entry`'s READING of a
-//! `parked` record once `now` has passed its `call.deadline`. A late `wake`
-//! against one still lands (the record is still `parked` until it does); only
-//! [`Engine::pending`] stops surfacing it, per ADR-0100. Nothing here sweeps
-//! expired tickets on a timer — there is no background task in this crate,
-//! same reason `holon-vcs`'s core has none (ADR-0095: that belongs to whatever
-//! native daemon serves this contract).
+//! `expired` is not a stored state — it is `to_entry`'s reading of a `parked`
+//! record once `now` passed its `call.deadline`. A late `wake` still lands;
+//! only [`Engine::pending`] stops surfacing it (ADR-0100). Nothing sweeps
+//! expired tickets: there is no background task in this crate (ADR-0095).
 //!
-//! # Why every read-shaping method takes `now_ms` explicitly
+//! `now_ms` is passed in rather than read inside the engine so that `expired`,
+//! the one time-dependent classification, is deterministic under test. Writes
+//! still stamp a real timestamp ([`now_ms`]).
+//! # Idempotency
 //!
-//! `expired` is the one piece of business logic in this crate that depends on
-//! wall-clock time, so it is the one piece of business logic that must be
-//! deterministic under test: passing `now_ms` in, rather than reading
-//! `SystemTime::now()` inside the engine, is what lets a test park a ticket
-//! with a deadline in the past and assert it reads `expired` without a sleep.
-//! Every WRITE still stamps a real timestamp ([`now_ms`]) — only classifying
-//! what is already stored needs to be pure.
-//!
-//! # Idempotency, one case at a time
-//!
-//! * **`park` on an existing ticket** never writes a second record — the
-//!   ticket id already names `(session, correlation)`. It reports which
-//!   `park-outcome` applies to whatever is there now (`ready` reports
-//!   `already-woken`; anything else reports `already-parked`), so a caller
-//!   retrying after its own crash learns whether it's still waiting or can
-//!   `take-ready` immediately.
-//! * **`wake` on a `ready` or `resumed` or `cancelled` ticket** is accepted
-//!   without rewriting anything — a redelivered webhook, or one that arrived
-//!   after the ticket was cancelled or already taken, is not an error to the
-//!   sender (ADR-0100). Only a `parked` ticket is actually moved to `ready`.
-//! * **`take-ready`** is the one call that is NOT idempotent on purpose: a
-//!   second call against an already-`resumed` ticket is `already-closed`,
-//!   because handing the same result to two resumers is the bug this
-//!   contract exists to prevent.
+//! * `park` on an existing ticket never writes a second record; it reports
+//!   `already-woken` (if `ready`) or `already-parked`, so a retrying caller
+//!   learns whether it can `take-ready`.
+//! * `wake` on a `ready`, `resumed` or `cancelled` ticket is accepted without
+//!   rewriting (a redelivered webhook is not an error, ADR-0100); only a
+//!   `parked` ticket moves to `ready`.
+//! * `take-ready` is deliberately NOT idempotent: a second call on a `resumed`
+//!   ticket is `already-closed`, since handing one result to two resumers is
+//!   the bug this contract prevents.
 
 use std::future::Future;
 
@@ -55,14 +40,11 @@ use crate::model::{
 use crate::store::{ParkStore, Record, StoredStatus};
 use crate::ticket::ticket_id;
 
-/// How many times a CAS is retried before giving up. Contention on one
-/// ticket comes from at most a couple of racing writers (a duplicate `park`,
-/// a `wake` racing a `cancel`) — never a hot loop, so a small bound is a
-/// correctness net, not a throttle.
+/// CAS retry bound. Contention is at most a couple of racing writers (duplicate
+/// `park`, `wake` vs `cancel`), so this is a correctness net, not a throttle.
 const MAX_CAS_RETRIES: u32 = 8;
 
-/// What [`Engine::wake`] tells its caller beyond the WIT contract's bare
-/// ticket id — see that method's doc.
+/// What [`Engine::wake`] tells its caller beyond the bare ticket id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WakeOutcome {
     pub ticket: TicketId,
@@ -79,7 +61,6 @@ impl<S: ParkStore> Engine<S> {
         Engine { store }
     }
 
-    /// Register an outstanding call before dispatching it.
     pub async fn park(
         &self,
         session: &SessionId,
@@ -145,16 +126,10 @@ impl<S: ParkStore> Engine<S> {
         Ok(ParkResult { ticket, outcome: ParkOutcome::Parked })
     }
 
-    /// The answer arrived. See the module doc for which prior states this
-    /// silently accepts rather than errors on.
-    ///
-    /// Returns [`WakeOutcome`] rather than the WIT contract's bare
-    /// `ticket-id`, because whoever serves the contract over HTTP (`comp-park`)
-    /// needs one more thing the wire does not: whether this call actually
-    /// moved a `parked` ticket to `ready`, or found one already past that. A
-    /// redelivered webhook must not tell a resumer pool about the same ticket
-    /// twice — [`WakeOutcome::freshly_woken`] is how the daemon knows to
-    /// publish to `PARK_WAKE` only once per real answer.
+    /// The answer arrived. Returns [`WakeOutcome`] rather than the bare
+    /// `ticket-id` so the daemon (`comp-park`) knows whether this call actually
+    /// moved `parked` to `ready` ([`WakeOutcome::freshly_woken`]) and publishes
+    /// to `PARK_WAKE` once per real answer.
     pub async fn wake(
         &self,
         correlation: &str,
@@ -206,7 +181,6 @@ impl<S: ParkStore> Engine<S> {
         Ok(entries)
     }
 
-    /// Consume a `ready` ticket's result exactly once.
     pub async fn take_ready(&self, ticket: &TicketId, now_ms: u64) -> Result<CallResult> {
         retry(|| async {
             let (record, rev) =
@@ -235,7 +209,6 @@ impl<S: ParkStore> Engine<S> {
         .await
     }
 
-    /// Give up on a `parked` or `ready` ticket.
     pub async fn cancel(&self, ticket: &TicketId, by: Agent, now_ms: u64) -> Result<()> {
         let by = &by;
         retry(|| async {
@@ -292,7 +265,6 @@ impl<S: ParkStore> Engine<S> {
     }
 }
 
-/// What `park` reports when a ticket already existed.
 fn outcome_of(record: &Record) -> ParkOutcome {
     match record.status {
         StoredStatus::Ready => ParkOutcome::AlreadyWoken,

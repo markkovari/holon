@@ -44,7 +44,6 @@ pub fn route(func: &str) -> String {
     format!("/v1/{func}")
 }
 
-// ---- request envelopes ---------------------------------------------------------
 //
 // `apply-patch` takes a `PatchRequest` and `resolve-conflict` a
 // `ResolutionRequest` as the body directly; the rest are named after their WIT
@@ -96,8 +95,6 @@ pub struct Oplog {
 pub struct Workspace {
     pub workspace: WorkspaceId,
 }
-
-// ---- files ----------------------------------------------------------------------
 
 /// Bytes as a base64 string on the wire.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -243,8 +240,6 @@ pub struct Materialized {
 pub struct ReadBlob {
     pub blob: Hash,
 }
-
-// ---- errors ---------------------------------------------------------------------
 
 /// A refusal on the wire: `error` is the `vcs-error` case, kebab-case, and
 /// `detail` its payload as JSON (a string for `storage-error`, `not-found` and

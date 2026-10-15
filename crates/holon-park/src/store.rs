@@ -1,16 +1,9 @@
 //! The one storage primitive [`Engine`](crate::engine::Engine) is written
 //! against, and the record it persists.
 //!
-//! Unlike holon-vcs, there is no graph here and nothing to rebuild from an
-//! oplog: one ticket is one mutable record, moved through its states by
-//! compare-and-set, plus two small indexes (`by session`, `by correlation`) a
-//! lookup needs. That is the whole reason this crate does not reuse
-//! `holon-vcs::store`'s `Kv`/`PointerStore`/`Graph` split — this domain does
-//! not have the multi-pointer graph that split exists to keep consistent.
-//!
-//! [`MemParkStore`](crate::mem::MemParkStore) is the one implementation so
-//! far; a NATS JetStream KV adapter is the next step this crate does not have
-//! yet (ADR-0100).
+//! One ticket is one mutable record moved by compare-and-set, plus two small
+//! indexes (`by session`, `by correlation`); no graph or oplog rebuild, so no
+//! `holon-vcs::store`-style split (ADR-0100).
 
 use std::future::Future;
 
@@ -19,11 +12,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::Result;
 use crate::model::{Agent, CallResult, OutboundCall, SessionId, TicketId, TurnStatus};
 
-/// [`TurnStatus`] without `expired` — which is never stored, only computed at
-/// read time from a `parked` record's `call.deadline` (`crate::engine`'s
-/// module doc). Keeping it out of this type means a match on a [`Record`]'s
-/// status cannot forget that: the compiler has nothing to accept in its
-/// place.
+/// [`TurnStatus`] without `expired`, which is only computed at read time from a
+/// `parked` record's `call.deadline`; keeping it out of this type means a match
+/// cannot forget that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StoredStatus {
@@ -44,8 +35,7 @@ impl From<StoredStatus> for TurnStatus {
     }
 }
 
-/// A record's revision. Opaque: compared for equality only, never assumed to
-/// increment by one (a JetStream KV adapter would use its own revision).
+/// A record's revision. Opaque: compared for equality only.
 pub type Revision = u64;
 
 /// A compare-and-set that did not land: the record is not at the expected
@@ -67,21 +57,19 @@ pub struct Record {
     pub call: OutboundCall,
     pub by: Agent,
     pub status: StoredStatus,
-    /// Unix milliseconds.
     pub parked_at: u64,
     pub woken_at: Option<u64>,
     pub resumed_at: Option<u64>,
     pub cancelled_by: Option<Agent>,
     pub cancelled_at: Option<u64>,
-    /// Present once `status` is `ready` or `resumed`.
     pub result: Option<CallResult>,
 }
 
 /// What the engine needs from storage: one CAS'd record per ticket, and two
 /// indexes a lookup needs — `park` and `wake` never scan.
 pub trait ParkStore: Send + Sync {
-    /// The record and its revision, or `None` if no ticket by this id exists.
-    /// Never served from a cache: this is the read a CAS is computed from.
+    /// The record and its revision, or `None`. Never cached: a CAS is computed
+    /// from this read.
     fn get(&self, ticket: &str) -> impl Future<Output = Result<Option<(Record, Revision)>>> + Send;
 
     /// Write a BRAND NEW record. `Ok(true)`: this call created it. `Ok(false)`:

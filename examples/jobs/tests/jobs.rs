@@ -97,15 +97,12 @@ fn start_host() -> HostGuard {
 fn durable_job_lifecycle() {
     let _host = start_host();
 
-    // ===== a plain job runs to done ==========================================
     let ok = enqueue(json!({"type": "email"}));
     let ok_id = ok["id"].as_str().unwrap().to_string();
     assert_eq!(ok["state"], "queued");
     tick();
     assert_eq!(state(&ok_id), "done", "email job completed");
 
-    // ===== a flaky job fails, retries with backoff, then succeeds ============
-    // fail_until=3 -> fails attempts 1 & 2, succeeds on attempt 3.
     let flaky = enqueue(json!({"type": "flaky", "payload": {"fail_until": 3}}));
     let flaky_id = flaky["id"].as_str().unwrap().to_string();
     tick(); // attempt 1 -> fail, backoff 1s
@@ -119,7 +116,6 @@ fn durable_job_lifecycle() {
     assert_eq!(f["state"], "done", "flaky eventually succeeds: {f}");
     assert!(f["attempts"].as_u64().unwrap() >= 3, "attempts counted: {f}");
 
-    // ===== a boom job dead-letters after the attempt cap, then replays =======
     let boom = enqueue(json!({"type": "boom"}));
     let boom_id = boom["id"].as_str().unwrap().to_string();
     tick(); // fail 1
@@ -131,12 +127,10 @@ fn durable_job_lifecycle() {
     assert_eq!(b["state"], "dead", "boom dead-lettered: {b}");
     assert!(b["error"].as_str().unwrap().contains("permanent"), "carries the failure: {b}");
 
-    // replay moves it back to queued
     let (s, _) = req("POST", &format!("/api/jobs/{boom_id}/replay"), None);
     assert_eq!(s, 200);
     assert_eq!(state(&boom_id), "queued", "replayed dead job is queued again");
 
-    // ===== exactly-once enqueue: a repeated key does not add a second job =====
     let a = enqueue(json!({"type": "email", "key": "welcome-42"}));
     let b = enqueue(json!({"type": "email", "key": "welcome-42"})); // duplicate
     assert_eq!(a["id"], b["id"], "same key replays the first job, no duplicate");
