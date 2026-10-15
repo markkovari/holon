@@ -1,42 +1,20 @@
 //! One reconciler at a time, decided by the store rather than by configuration.
 //!
-//! ## Why a lease and not sharding
+//! A lease rather than sharding: a steady pass over 1000 nodes and 10 000 apps is
+//! 46 ms and the expensive pass after a fleet change is 1.23 s (ADR-0056), so
+//! throughput is not the problem. The gap is that the reconciler has no standby: if
+//! it dies, nothing converges. Running two is not safe either: scale-DOWN waits for
+//! `settle_passes` consecutive passes counted in each process's `Hysteresis`, so two
+//! loops disagree about when the cooldown elapsed and both issue stops.
 //!
-//! The open item this closes was written as "the loop does not shard". The
-//! measurements argue against building that: a steady pass over 1000 nodes and
-//! 10 000 apps is 46 ms, and the pass after a fleet change — the expensive one,
-//! `apps × nodes` — is 1.23 s (ADR-0056). Against a 10 s interval that is 12% of
-//! one tick. Sharding would buy throughput nobody is short of.
-//!
-//! What is actually missing is that the reconciler is the only control component
-//! with no standby at all. The ingress has had one since ADR-0029. If the
-//! reconciler process dies, nothing converges: no scale-up, no failover
-//! re-placement, no distribution. The fleet keeps serving whatever it already
-//! runs and silently stops adapting.
-//!
-//! ## Why running two today is not safe
-//!
-//! Start commands are absolute counts and idempotent, so two loops issuing the
-//! same starts would be merely wasteful. Scale-DOWN is not: it waits for an app
-//! to look over-replicated for `settle_passes` consecutive passes, and that
-//! counter lives in each process's `Hysteresis`. Two loops count separately, so
-//! they disagree about when the cooldown has elapsed and both then issue stops.
-//! The distribution pass would double-push as well.
-//!
-//! So: exactly one loop runs, and the others wait.
-//!
-//! ## The mechanism
-//!
-//! A JetStream KV bucket whose `max_age` IS the lease — a holder that stops
-//! renewing has its key expire, with no lease-breaking protocol to get wrong and
-//! nothing to clean up after a process that died badly.
+//! The mechanism is a JetStream KV bucket whose `max_age` IS the lease: a holder that
+//! stops renewing has its key expire, with no lease-breaking protocol.
 //!
 //! * acquire — `create`, which lands only if the key is absent
-//! * renew — `update` guarded by the revision we hold, which lands only if we
-//!   are still the same holder nobody replaced
+//! * renew — `update` guarded by the revision we hold
 //!
-//! Losing the race and losing the lease are the same code path: stop being the
-//! leader, keep asking.
+//! Losing the race and losing the lease are the same path: stop being the leader,
+//! keep asking.
 
 use std::time::Duration;
 

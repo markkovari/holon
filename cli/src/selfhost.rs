@@ -1,18 +1,10 @@
 //! `selfhost` — renders one app spec into the three files a box needs to serve it:
-//! a systemd unit, an environment file, and a reverse-proxy site so the app gets its
-//! own URL with automatic TLS.
+//! a systemd unit, an environment file, and a reverse-proxy site with automatic TLS.
 //!
-//! This is tier 1 of `docs/SELFHOST.md`: `comp-host` + systemd + Caddy (or Traefik),
-//! no Kubernetes, no operator, no NATS. The design is deliberately the same shape as
-//! the platform's `render.rs` — **a pure function from an app definition to the
-//! artifacts a substrate needs** — because that is what makes the tiers progressive
-//! rather than three separate products. Tier 3 renders the same spec into
-//! `WorkloadDeployment` + `Service`; only the backend differs.
-//!
-//! Everything here is pure and tested. That is not ceremony: the k8s renderer's tests
-//! caught three real bugs that manifest review had missed, and the failure modes here
-//! are the same kind — a port collision, an unescaped value, a route pointing at the
-//! wrong process.
+//! Tier 1 of `docs/SELFHOST.md`: `comp-host` + systemd + Caddy (or Traefik). Like the
+//! platform's `render.rs`, a pure function from an app definition to the artifacts a
+//! substrate needs, so port collisions, unescaped values and misrouted proxies are
+//! caught by tests rather than on a box.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -201,7 +193,6 @@ pub enum GoaldFormat {
     Launchd,
 }
 
-// ---- pure rendering ---------------------------------------------------------
 
 /// Where an app's files live on the box. One prefix, so removing an app is
 /// removing four paths rather than remembering four conventions.
@@ -341,33 +332,9 @@ pub fn check(spec: &Spec) -> Result<()> {
 
 /// The app's `wasi:config`, as `comp-host --config-file` reads it.
 ///
-/// This rendered `CFG_GRACE_PERIOD_SECS=5` and systemd loaded it as an environment
-/// variable, which is how `comp-host` used to read config. It does not any more,
-/// and the reason is in `host/src/main.rs`: in a process shared by every tenant on
-/// a node, process environment as config is a cross-tenant read by construction —
-/// one `getenv` and every app sees every other app's knobs, secrets included. So
-/// the scrape was removed and config moved to the start command.
-///
-/// The renderer was not moved with it. Every `[config]` block in every spec has
-/// been written to a file nothing reads since: `paste`'s `ticket-ttl`,
-/// `eshop-ordering`'s `grace-period-secs`, and the key that found this — an app
-/// deployed with `organizer-emails` set, where nobody could open an event because
-/// the component saw no config at all. Silent, because a missing key looks exactly
-/// like a key whose value is the default.
-///
 /// `key = value` and `--config-file`, not repeated `--config` flags: config holds
-/// things like an admin's address, and argv is world-readable in `ps`. This file is
-/// 0600 and owned by root.
-/// Writes a file `LoadCredential` is meant to read as root and hand to a
-/// service under 0600, and gives it that permission itself rather than
-/// leaving it to the deploy step's `LoadCredential` doc comment to be true by
-/// assertion — `render_unit`'s own comment claimed "the config file is 0600
-/// and owned by root" while nothing in this codebase ever set that
-/// permission; a rendered file inherited whatever the umask of whoever ran
-/// `render` happened to be, typically world-readable. Owner-root still
-/// depends on where a deploy step copies this file to, which is genuinely
-/// outside what a local `render` can promise — 0600 on the file `render`
-/// itself writes is not.
+/// things like an admin's address, and argv is world-readable in `ps`. The file is
+/// written 0600; root ownership depends on where the deploy step copies it.
 pub fn write_secret_file(path: &Path, content: &[u8]) -> Result<()> {
     std::fs::write(path, content)?;
     #[cfg(unix)]
@@ -409,10 +376,8 @@ pub fn render_unit(spec: &Spec, layout: &Layout) -> String {
     if spec.static_dir.is_some() {
         args.push_str(&format!(" --static-dir {}/{}/static", layout.app_dir.display(), app));
     }
-    // The polarity flipped under this: pooling became the default and the flag
-    // became `--no-pool` (ADR-0057), so emitting `--pool` wrote a unit `comp-host`
-    // exits on. The test below catches exactly this, and only on a box that has the
-    // host built — which is why it went unnoticed.
+    // Pooling is the default, so only `--no-pool` is emitted (ADR-0057). The test
+    // below catches a renamed flag, but only on a box that has the host built.
     if !spec.pooling {
         args.push_str(" --no-pool");
     }
@@ -626,7 +591,6 @@ pub fn render_daemon_unit(spec: &Spec, d: &Daemon, l: &Layout) -> String {
     s
 }
 
-// ---- comp-goald: a background job for the agentic loop's own daemon --------
 
 /// One `comp-goald` deployment: a process that continuously drains ONE
 /// project's goal queue (ADR-0082 + ADR-0096's "no cron was ever written").
@@ -829,10 +793,8 @@ fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
-/// A macOS `launchd` LaunchAgent for `comp-goald` — the background-job
-/// mechanism on a box with no systemd, which every `comp-goald` run this
-/// project has ever made has actually been: a person's own Mac, in a
-/// foreground terminal tab, because nothing supervised it.
+/// A macOS `launchd` LaunchAgent for `comp-goald` — the background-job mechanism on
+/// a box with no systemd.
 ///
 /// Runs at the signed-in user's own uid — no `DynamicUser`, no
 /// `LoadCredential`: a personal LaunchAgent already has exactly the access
@@ -1024,13 +986,8 @@ artifact = "components/target/gate_domain.composed.wasm"
         }
     }
 
-    /// A spec with config gets a unit that READS it.
-    ///
-    /// The unit carried `EnvironmentFile` and no `--config-file`, and comp-host had
-    /// stopped reading `CFG_*` from the environment — so every `[config]` block in
-    /// every spec was written to a file nothing opened. Nothing failed: a key that
-    /// is never read looks exactly like a key left at its default, which is why it
-    /// survived until an app needed one to decide who may open an event.
+    /// A spec with config gets a unit that READS it: a key that is never read looks
+    /// exactly like a key left at its default.
     #[test]
     fn config_reaches_the_host_through_the_start_command() {
         let with = spec(
@@ -1058,9 +1015,6 @@ routes = "upstream=http://127.0.0.1:9000"
 "#,
         );
         let out = render_env(&s);
-        // `comp-host --config-file` reads `key = value`. It used to be
-        // `CFG_GRACE_PERIOD_SECS=5` in the process environment, and this test
-        // asserted that faithfully for as long as the host had stopped reading it.
         assert!(out.contains("grace-period-secs = 5"), "{out}");
         assert!(out.contains("routes = upstream=http://127.0.0.1:9000"), "{out}");
     }
@@ -1371,17 +1325,9 @@ routes = "upstream=http://127.0.0.1:9000"
         assert!(check(&s).is_err());
     }
 
-    /// The renderer's flags must exist on the binary it is writing a unit for.
-    ///
-    /// No pure test can know this, and getting it wrong produces a unit that fails
-    /// only on the box: the first draft emitted `--static` and `--pooling`, where
-    /// `comp-host` wants `--static-dir` and `--no-pool`. So ask the binary.
-    ///
-    /// It caught the same class a second time when pooling became the default and
-    /// `--pool` stopped existing — a unit that systemd would have refused to start.
-    ///
-    /// Skipped when the host has not been built, because a renderer test should not
-    /// require a 30 MB compile — but it runs on any machine that has one.
+    /// The renderer's flags must exist on the binary it is writing a unit for; a wrong
+    /// flag fails only on the box. So ask the binary. Skipped when the host has not
+    /// been built.
     #[test]
     fn every_flag_we_emit_exists_on_comp_host() {
         let bin = std::path::Path::new("../host/target/release/comp-host");
@@ -1432,10 +1378,8 @@ static_dir = "ui/dist"
 
     #[test]
     fn every_flag_we_emit_for_a_daemon_exists_on_its_own_binary() {
-        // The fourteen (ADR-0095's twelve, ADR-0098's comp-media, ADR-0099's comp-vcs), and the allow-list flag (if any) each one actually takes —
-        // read from `reconciler/src/bin/<name>.rs`'s own `Args`, not invented
-        // here. A daemon renamed or a flag renamed on its own binary would
-        // otherwise only be caught by a unit that fails to start on a real box.
+        // Each daemon and its allow-list flag (if any), read from
+        // `reconciler/src/bin/<name>.rs`'s own `Args`.
         let daemons = [
             ("fswatch", Some("allow-path")),
             ("browser", Some("allow-host")),
@@ -1644,9 +1588,8 @@ repo = "me/holon"
         assert!(!out.contains("<string>a<b&c</string>"), "{out}");
     }
 
-    /// Same reasoning as `every_flag_we_emit_exists_on_comp_host`: a renamed
-    /// `comp-goald` flag should fail a test, not a unit systemd refuses to
-    /// start on a real box. Skipped when the binary has not been built.
+    /// Same reasoning as `every_flag_we_emit_exists_on_comp_host`. Skipped when the
+    /// binary has not been built.
     #[test]
     fn every_flag_we_emit_exists_on_comp_goald() {
         let bin = std::path::Path::new("../reconciler/target/release/comp-goald");

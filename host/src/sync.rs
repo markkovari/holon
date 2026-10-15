@@ -1,27 +1,13 @@
 //! Locks that survive a panic somewhere else.
 //!
-//! `std`'s `Mutex` poisons itself when a thread panics while holding it, and every
-//! later `lock().unwrap()` panics too. In a host that serves requests, that turns
-//! ONE transient panic into a permanently dead node: the KV store, the route table
-//! and the instance map are all behind locks on the request path, so the second
-//! request after the first panic fails, and so does every request after that. The
-//! process stays up, answering nothing, which is the worst of the available
-//! failure modes.
+//! `std`'s `Mutex` poisons itself when a thread panics while holding it, so one
+//! transient panic would permanently kill a host whose KV store, route table and
+//! instance map are all behind locks on the request path. In safe Rust a panic
+//! cannot leave a `HashMap` half-updated, so the guarded data is intact: take the
+//! guard anyway and let the original panic be what gets reported.
 //!
-//! Poisoning is a conservative signal, not a corruption detector. In safe Rust a
-//! panic cannot leave a `HashMap` half-updated — there is no exception unwinding
-//! through a partially-written node — so the guarded data is intact, and refusing
-//! to look at it buys nothing. The panic that poisoned the lock is the bug worth
-//! fixing; the poisoning is just how it spreads.
-//!
-//! So: take the guard anyway, and let the original panic be the thing that gets
-//! reported.
-//!
-//! `parking_lot` would remove poisoning entirely and is the usual answer to this,
-//! but it is a dependency added to change three lines of behaviour, and this host
-//! deliberately runs on very little. ponytail: revisit if lock contention ever
-//! shows up in a profile, since that is the argument for parking_lot that is not
-//! about poisoning.
+//! ponytail: `parking_lot` would remove poisoning but is a dependency for three
+//! lines of behaviour; revisit if lock contention ever shows up in a profile.
 
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 

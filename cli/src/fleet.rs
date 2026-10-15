@@ -1,31 +1,14 @@
 //! The lattice lane: three control processes on real boxes, rendered from one spec.
 //!
-//! Tier 1 (`Spec` in `main.rs`) puts one app in one `comp-host` behind a proxy, and
-//! that is the whole of it — no control plane, no bus. This is the tier above: a
-//! `comp-host` per NODE holding every app, a `comp-reconciler` converging them
-//! against desired state, and a `comp-ingress` routing by `Host` header. All three
-//! already exist and are measured; what did not exist is a way to INSTALL them.
+//! A `comp-host` per node holding every app, a `comp-reconciler` converging them
+//! against desired state, and a `comp-ingress` routing by `Host` header. These units
+//! are `cargo xtask host platform` with the trap replaced by `Restart=always` and the
+//! temp dir by `StateDirectory`. Pure spec-to-text so it can be read and tested
+//! before touching a server.
 //!
-//! `cargo xtask host platform` is the localhost version of exactly this topology — NATS,
-//! the control plane, the reconciler and one node, started in a `mktemp -d` under a
-//! `trap kill`. These units are that recipe with the trap replaced by
-//! `Restart=always` and the temp directory replaced by `StateDirectory`.
-//!
-//! ## Why this is a renderer and not a script
-//!
-//! The same reason the tier-1 renderer is: a pure function from a spec to text can
-//! be read before it is trusted to a server, and tested without one. `holon fleet
-//! render` prints what `holon fleet deploy` would install, and the tests below
-//! assert the properties that actually matter — that the reconciler keeps its lease,
-//! that the ingress is the only process facing the network, and that every flag
-//! emitted exists on the binary that will receive it.
-//!
-//! ## What is deliberately NOT here
-//!
-//! No supervisor and no second scheduler. `comp-reconciler` already elects a leader
-//! through a JetStream KV lease whose expiry IS the lease (`lattice/src/lease.rs`),
-//! so a standby is a second unit on a second box and nothing else — which is the
-//! gap ADR-0072 names, and it closes without code.
+//! No supervisor: the reconciler elects a leader through a JetStream KV lease
+//! (`lattice/src/lease.rs`), so a standby is just a second unit on a second box
+//! (ADR-0072).
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -255,8 +238,6 @@ pub fn render_node_unit(f: &Fleet, n: &Node, l: &FleetLayout) -> String {
     s.push('\n');
     s.push_str(&format!("StateDirectory=comp/node-{}\n", n.name));
     s.push_str(hardening());
-    // wasmtime JITs. Same exemption as tier 1, spelled out where a reader will find
-    // it rather than left as an absence.
     s.push_str("# wasmtime JITs, so it needs W^X — this one cannot be tightened.\nMemoryDenyWriteExecute=no\n");
     s.push_str("\n[Install]\nWantedBy=multi-user.target\n");
     s
@@ -474,9 +455,6 @@ host = "edge"
         assert!(iu.contains("--inventory-ttl 15"), "{iu}");
     }
 
-    /// The tier-1 renderer has a test asserting every flag it emits exists on
-    /// `comp-host`, because a unit systemd would refuse to start is the failure this
-    /// lane is most likely to produce. Same argument, three binaries.
     #[test]
     fn every_flag_we_emit_exists_on_its_binary() {
         let f = fleet(&tuned());

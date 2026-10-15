@@ -9,8 +9,8 @@
 //! Agents persist across launches. Each also gets an HTTP front door on the
 //! lattice: one shared gateway component deployed under its name.
 //!
-//! "+ new agent" opens a separate setup window rather than repurposing the
-//! conversation pane as a compose box.
+//! "+ new agent" opens a separate setup window rather than reusing the conversation
+//! pane.
 //!
 //! The text fields are deliberately minimal hand-rolled inputs (append-on-
 //! type, backspace-on-delete, whole-window key capture) — GPUI ships no
@@ -27,10 +27,7 @@ use gpui::{
 
 use lattice::{spec_from_form, AgentRow, FormInput, Kind, Lattice, Message, View};
 
-/// Any printable ASCII character, plus space — covers punctuation like `?`
-/// that an earlier, narrower whitelist (letters/digits plus a fixed handful
-/// of punctuation marks) missed. A real message needs whatever punctuation
-/// a sentence needs; guessing the full set in advance is the wrong approach.
+/// Any printable ASCII character, plus space.
 fn is_typable(c: char) -> bool {
     c == ' ' || c.is_ascii_graphic()
 }
@@ -82,10 +79,8 @@ impl Console {
         self.lattice.update(cx, |l, cx| l.select(name, cx));
     }
 
-    /// Opens a separate, small "new agent" window — a setup dialog, not the
-    /// same conversation pane repurposed as a compose box. Shares the same
-    /// `Lattice` entity, so the moment it spawns an agent, this window's
-    /// sidebar (reactive via `cx.observe`) picks it up on its own.
+    /// Opens the separate "new agent" setup window. It shares the same `Lattice`
+    /// entity, so this window's sidebar (via `cx.observe`) picks up a spawned agent.
     fn open_new_agent_window(&mut self, cx: &mut Context<Self>) {
         let lattice = self.lattice.clone();
         let bounds = Bounds::centered(None, size(px(560.0), px(720.0)), cx);
@@ -163,11 +158,7 @@ impl Render for Console {
                     .flex_1()
                     .min_h(px(0.0))
                     .child(
-                        // Left: every existing agent, newest first, plus
-                        // "+ new agent" — which opens a separate setup
-                        // window rather than turning this list/panel into a
-                        // compose box. Click an agent to view (and continue)
-                        // its conversation in the main panel.
+                        // Left: every existing agent, newest first, plus "+ new agent".
                         div()
                             .id("sidebar")
                             .flex()
@@ -209,9 +200,7 @@ impl Render for Console {
                             ),
                     )
                     .child(
-                        // Main: the selected agent's conversation. With
-                        // nothing selected, just a prompt — no compose box
-                        // here; creating an agent is its own window.
+                        // Main: the selected agent's conversation, or a prompt.
                         div()
                             .id("main")
                             .flex()
@@ -519,12 +508,9 @@ const FIELDS: [(&str, &str); 11] = [
     ("auto-approve", "sensitive tools it may use without asking (http_get, write_file)"),
 ];
 
-/// The "+ new agent" setup window: a small, separate dialog rather than the
-/// main window's conversation pane repurposed as a compose box. Submitting
-/// builds an `AgentSpec` (`lattice::spec_from_form` — the same checks the
-/// runtime applies, so a bad cron expression is refused here, not discovered
-/// as an agent that never fires), spawns it on the shared `Lattice` entity and
-/// closes itself; the main window's sidebar picks the new agent up on its own.
+/// The "+ new agent" setup window. Submitting builds an `AgentSpec`
+/// (`lattice::spec_from_form`, the same checks the runtime applies, so a bad cron
+/// expression is refused here), spawns it on the shared `Lattice` and closes.
 struct NewAgentForm {
     lattice: Entity<Lattice>,
     focus_handle: FocusHandle,

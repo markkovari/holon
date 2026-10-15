@@ -1,22 +1,11 @@
-//! Local AI inference via Apple's on-device Foundation Models CLI (`fm`,
-//! `/usr/bin/fm` on this machine) — an OpenAI-compatible Chat Completions
-//! HTTP server running entirely on-device: no network call, no API key, no
-//! other inference provider involved. `fm serve` is spawned once as a child
-//! process (killed on drop, same shape as `reconciler::fleet::Kill`) and
-//! talked to over its real `/v1/chat/completions` endpoint.
+//! Local AI inference via Apple's on-device Foundation Models CLI (`fm`): an
+//! OpenAI-compatible HTTP server, spawned once as a child process (killed on drop)
+//! and talked to over `/v1/chat/completions`.
 //!
-//! macOS/Apple Silicon only — this is Apple's on-device Foundation Model,
-//! not something the Raspberry Pi this project's lattice otherwise targets
-//! can run. That makes the AI-calling capability a host-specific optional
-//! one, the same way this project's own native daemons (ffmpeg, Docker, a
-//! filesystem watcher) already are — not something every node is assumed to
-//! have, wired in only where it's actually available.
-//!
-//! `lattice.rs`'s `boot()` starts exactly one of these (if `is_available()`)
-//! and shares its URL with every agent this session spawns, via each
-//! deployment's `fm-url` config — a generated agent dials THAT URL directly
-//! over its own `wasi:http/outgoing-handler`, not through this crate (a
-//! wasm32 guest can't call back into the host process that's running it).
+//! macOS/Apple Silicon only, so this is an optional host-specific capability.
+//! `lattice.rs`'s `boot()` starts one (if `is_available()`) and shares its URL with
+//! every agent via the deployment's `fm-url` config; a wasm guest dials that URL
+//! itself and cannot call back into the host process.
 
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -25,9 +14,7 @@ use comp_reconciler::fleet::free_port;
 use serde_json::{json, Value};
 
 /// A running `fm serve` process, killed on drop — same shape as
-/// `reconciler::fleet::Kill`, so a dropped `FmServer` cannot leave an
-/// orphaned process behind the way this console's own lattice once did
-/// before its app-quit hook was added.
+/// `reconciler::fleet::Kill`, so it cannot leave an orphan behind.
 pub struct FmServer {
     child: Child,
     base_url: String,
@@ -40,22 +27,16 @@ impl Drop for FmServer {
     }
 }
 
-/// True only on macOS, and only if `fm` actually runs there — `fm` is
-/// Apple's on-device Foundation Models CLI and doesn't exist anywhere else
-/// (the Raspberry Pi this project's lattice otherwise targets included).
-/// Callers check this and skip rather than attempting to exec a binary that
-/// was never going to be there — not a platform someone forgot to guard,
-/// a platform this capability is simply not for.
+/// True only on macOS, and only if `fm` actually runs there. Callers check this
+/// and skip rather than exec a binary that cannot exist.
 pub fn is_available() -> bool {
     cfg!(target_os = "macos")
         && Command::new("fm").arg("available").output().is_ok_and(|o| o.status.success())
 }
 
 impl FmServer {
-    /// Spawns `fm serve --port <port>` on a freshly-picked free port and
-    /// blocks until `/health` answers (or `timeout` elapses). Refuses up
-    /// front on anything but macOS (see `is_available`) rather than
-    /// attempting to exec a binary that was never going to be there.
+    /// Spawns `fm serve --port <port>` on a freshly-picked free port and blocks until
+    /// `/health` answers (or `timeout` elapses). Refuses on anything but macOS.
     pub fn start(timeout: Duration) -> Result<Self, String> {
         if !is_available() {
             return Err("fm (Apple on-device Foundation Models) is not available on this platform"
@@ -87,13 +68,9 @@ impl FmServer {
         &self.base_url
     }
 
-    /// One-shot, non-streaming chat completion: an optional system
-    /// instruction plus the user's prompt in, the assistant's reply text
-    /// out. Not called from `lattice.rs` — only a generated AGENT calls
-    /// `fm serve`, via its own `wasi:http/outgoing-handler`, never this
-    /// Rust API — but kept as real, working, tested surface rather than
-    /// deleted: a direct "ask fm from the console itself" feature (a
-    /// debug/test panel, say) would want exactly this.
+    /// One-shot, non-streaming chat completion: an optional system instruction plus
+    /// the user's prompt in, the reply text out. Not called from `lattice.rs`; kept
+    /// as tested surface for a direct console feature.
     #[allow(dead_code)]
     pub fn ask(&self, instructions: Option<&str>, prompt: &str) -> Result<String, String> {
         ask(&self.base_url, instructions, prompt)
@@ -154,11 +131,8 @@ mod tests {
         }
     }
 
-    /// A real end-to-end test against the actual on-device model — slow
-    /// (model load + inference) and skipped if `fm` isn't on this machine,
-    /// but this is exactly the thing worth verifying for real rather than
-    /// mocking: that spawning `fm serve` and calling it actually produces a
-    /// real answer, and that dropping it actually stops the process.
+    /// End-to-end against the real on-device model; slow, and skipped if `fm` isn't
+    /// on this machine.
     #[test]
     fn fm_serve_spawns_answers_and_is_killed_on_drop() {
         if !is_available() {
@@ -176,9 +150,7 @@ mod tests {
 
         drop(server);
         std::thread::sleep(Duration::from_millis(300));
-        // Signal 0: does not kill, only checks whether the pid is still
-        // alive — the simplest "is it really dead" check available without
-        // pulling in a process-inspection crate for one test.
+        // Signal 0 only checks whether the pid is still alive.
         let still_alive = Command::new("kill")
             .args(["-0", &pid.to_string()])
             .status()

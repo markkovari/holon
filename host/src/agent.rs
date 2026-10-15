@@ -27,18 +27,11 @@ use serde::{Deserialize, Serialize};
 use crate::tenant::{instance_id, Limits, StartCommand};
 use crate::{Instance, Instances, Routes};
 
-/// The capabilities this host can actually grant.
-///
-/// The successor to the renderer's `OPERATOR_BOUND`, and still the
-/// highest-consequence list in the platform — except that it is now enforced by
-/// the linker rather than by a renderer's omission. A component importing anything
-/// not on it does not start.
-/// VERSIONLESS on purpose, and this must stay in step with `manifest.rs`'s
-/// `HostIface::family`. A node advertises a concrete version and a component
-/// imports one; requiring the two strings to be equal made every deployment
-/// permanently unschedulable the first time it was tried live, because the host
-/// said `wasi:keyvalue/store@0.2.0-draft` and the manifest asked for
-/// `wasi:keyvalue/store`.
+/// The capabilities this host can actually grant, enforced by the linker: a
+/// component importing anything not on it does not start.
+/// VERSIONLESS on purpose, in step with `manifest.rs`'s `HostIface::family`: a node
+/// advertises a concrete version and a component imports one, and requiring the
+/// strings to be equal made every deployment unschedulable.
 // ponytail: family match; tighten to semver when two incompatible versions of one
 // interface actually have to coexist on a node.
 pub const HOST_IFACES: &[&str] = &[
@@ -95,14 +88,9 @@ pub struct Agent {
     /// the wRPC-served path and the HTTP path build identical stores.
     pub platform_url: String,
     pub instances: Instances,
-    /// Compiled artifacts, by digest.
-    ///
-    /// A `Component` is immutable machine code and is internally reference-counted,
-    /// so every app running the same digest can share ONE copy — per-instance state
-    /// lives in the Store, not here. Without this the host loaded the module once
-    /// per instance: 16 apps sharing one component cost 16 copies and 3.17 MiB each,
-    /// which is the marketplace case (many tenants, one popular component) paying
-    /// for itself N times.
+    /// Compiled artifacts, by digest. A `Component` is immutable machine code and
+    /// reference-counted, so every app running the same digest shares ONE copy;
+    /// per-instance state lives in the Store.
     pub compiled:
         Arc<std::sync::RwLock<std::collections::HashMap<String, wasmtime::component::Component>>>,
     pub routes: Routes,
@@ -165,17 +153,9 @@ impl Agent {
     /// the fleet's desired state. Atomic rename: a half-written ledger read on the
     /// next boot would start a subset and look like a partial outage.
     fn persist(&self, commands: &BTreeMap<String, StartCommand>) {
-        // Every failure here used to be discarded — a `let ... else { return }` and
-        // an `if .is_ok()` with no else — in the one function whose doc comment
-        // promises that a reboot is not a data-loss event. A full disk or a
-        // read-only directory made every persist a silent no-op, and the fleet
-        // found out one reboot later, as the partial outage described above.
-        //
-        // It still does not propagate: the caller is a heartbeat with nothing
-        // useful to do about it, and failing the heartbeat would turn "the ledger
-        // did not save" into "the node is down". But it SAYS SO, once per failure,
-        // which is the difference between a degraded node and a silently degraded
-        // one.
+        // Failures are logged, not propagated: the caller is a heartbeat, and failing
+        // it would turn "the ledger did not save" into "the node is down". A silent
+        // no-op would only surface one reboot later as a partial outage.
         let tmp = self.ledger().with_extension("json.tmp");
         let bytes = match serde_json::to_vec_pretty(commands) {
             Ok(b) => b,
@@ -206,12 +186,9 @@ impl Agent {
         }
     }
 
-    /// The other half of the same promise.
-    ///
-    /// An unreadable or corrupt ledger is not the same thing as an empty one, and
-    /// both used to become `BTreeMap::new()`. "No instances were running" is a
-    /// perfectly plausible answer, so a boot that lost the file looked exactly like
-    /// a boot that had nothing to restore.
+    /// The other half of the same promise. An unreadable or corrupt ledger is not
+    /// the same as an empty one, so it is reported rather than treated as "nothing
+    /// to restore".
     fn load_ledger(&self) -> BTreeMap<String, StartCommand> {
         let bytes = match std::fs::read(self.ledger()) {
             Ok(b) => b,
@@ -423,17 +400,12 @@ async fn start(
 ) -> Result<()> {
     let id = instance_id(&cmd.tenant, &cmd.app, &cmd.component);
     let ingress_host = cmd.ingress_host.clone();
-    // A start command says how many this node should hold — an absolute count, not
-    // a delta. Re-sending it is therefore a no-op, which matters because the
-    // reconciler re-derives faster than this node heartbeats and will legitimately
-    // repeat itself. (A delta here put six replicas of a two-replica app across two
-    // machines on the first cross-machine run.)
+    // A start command carries an absolute count, not a delta, so re-sending it is a
+    // no-op; the reconciler re-derives faster than this node heartbeats.
     //
-    // The clone-then-drop dance is not ceremony either. `if let Some(x) =
-    // lock.read()…` holds the read guard for the whole block, so taking the write
-    // lock inside it deadlocks — and because the heartbeat also reads this table,
-    // the node then stops publishing inventory and gets its work rescheduled out
-    // from under it. Also measured, not theorised.
+    // The clone-then-drop is load-bearing: `if let Some(x) = lock.read()…` holds the
+    // read guard for the whole block, so taking the write lock inside deadlocks, and
+    // the heartbeat (which also reads this table) stops publishing inventory.
     let resized = {
         let table = crate::sync::reading(&agent.instances);
         table.get(&id).filter(|e| e.scope.digest == cmd.digest && e.count != cmd.count.max(1)).map(
@@ -471,10 +443,8 @@ async fn start(
         }
     }
 
-    // Phase timings, because "cold start" is three different costs and only one of
-    // them is worth optimising. Reported on the start line so the number comes from
-    // the node doing the work rather than from a stopwatch on the other side of a
-    // NATS round trip.
+    // Phase timings, because "cold start" is three different costs; reported on the
+    // start line so the number comes from the node doing the work.
     let t0 = std::time::Instant::now();
     let path = fetch_artifact(agent, &cmd.digest, artifacts).await?;
     let t_fetch = t0.elapsed();
@@ -485,19 +455,13 @@ async fn start(
     let cache_backing: crate::CacheBacking =
         Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
 
-    // Every granted reference must resolve before this instance serves anything.
+    // Every granted reference must resolve before this instance serves anything
+    // (ADR-0013, ADR-0051): a deleted or renamed secret should fail the deploy, not
+    // the first request that takes that code path. This is a `describe`, not a
+    // fetch; the plaintext stays put.
     //
-    // ADR-0013's rule is that omission fails closed AT START, and ADR-0051 said the
-    // same for secrets and then did not do it — so a reference to a secret that had
-    // been deleted, or renamed, or never created, surfaced on the first request that
-    // happened to take that code path, in front of a user, rather than on the deploy
-    // that introduced it. This is a `describe`, not a fetch: existence is checked,
-    // the plaintext stays where it is until something reveals it.
-    //
-    // Skipped on a ledger restore (`artifacts` is `None`), which is the one path
-    // required to work with no network at all — those references were checked when
-    // the instance first started, and refusing here would turn a reboot into an
-    // outage.
+    // Skipped on a ledger restore (`artifacts` is `None`), which must work with no
+    // network; those references were checked when the instance first started.
     if artifacts.is_some() && scope.secret_refs().next().is_some() {
         if agent.platform_url.is_empty() {
             bail!("{id} was granted secrets, and this host has no platform to resolve them");
@@ -521,9 +485,7 @@ async fn start(
     }
 
     // Compile once per artifact per node, not once per start. ADR-0037 measured a
-    // 33ms cold start of which 31ms was `Component::from_file` recompiling bytes
-    // this node had already compiled — on every start, every re-placement after a
-    // node dies, and every reboot.
+    // 33ms cold start of which 31ms was recompiling already-compiled bytes.
     let cache = agent.cache_dir();
     let _ = std::fs::create_dir_all(&cache);
     let cwasm = cache.join(format!("{}.cwasm", scope.digest.trim_start_matches("sha256:")));
@@ -574,22 +536,12 @@ async fn start(
     };
     let t_compile = t0.elapsed() - t_fetch;
 
-    // EVERY link becomes a wRPC client, including one whose target is running in
-    // this very process.
-    //
-    // That reads wrong and is not. There is no in-process path between two
-    // SEPARATELY STARTED components: the host satisfies an import from a host
-    // capability or from wRPC, and nothing else. Skipping a local target leaves its
-    // import unbound and the instance fails to start with "a matching
-    // implementation was not found in the linker" — measured, by trying it.
-    //
-    // Components that link in-process do so because `wac` fused them at build time,
-    // which is a different mechanism entirely (ADR-0005's two strategies).
-    //
-    // It also costs almost nothing: co-located over the loopback bus measured 2,795
-    // rps against 2,788 for the same graph, i.e. inside noise. A local short-circuit
-    // would be an optimisation worth roughly 0.3%, and would first require building
-    // instance-to-instance linking that does not exist.
+    // EVERY link becomes a wRPC client, including one whose target is in this very
+    // process. There is no in-process path between SEPARATELY STARTED components;
+    // skipping a local target leaves its import unbound ("a matching implementation
+    // was not found in the linker"). In-process linking only exists via `wac` fusing
+    // at build time (ADR-0005). Loopback wRPC measured within noise of fused (2,795
+    // vs 2,788 rps).
     let remotes = match (&agent.nats, scope.links.is_empty()) {
         (Some(nats), false) => {
             crate::rpc::remote_clients(nats.clone(), &agent.lattice, &scope.links).await?
@@ -618,8 +570,7 @@ async fn start(
     let ipre = linker.instantiate_pre(&component)?;
     let t_link = t0.elapsed() - t_fetch - t_compile;
     // A component that exports `wasi:http/incoming-handler` gets a door; one that
-    // does not is a plug, reachable over the bus only. Both are legal instances —
-    // before the serve side existed, the second could not start at all.
+    // does not is a plug, reachable over the bus only. Both are legal instances.
     let pre = crate::HttpPre::new(ipre.clone());
 
     // Serve this instance's exports so a remote import has something to call. On the
@@ -748,17 +699,14 @@ mod tests {
 
     #[test]
     fn the_host_interface_list_is_what_the_linker_actually_provides() {
-        // This list is the successor to the renderer's OPERATOR_BOUND and it is
-        // still the highest-consequence list in the platform: anything on it is
-        // something a tenant's component may import. Adding a line here without
-        // adding it to `build_linker` promises something that then fails at start.
+        // The highest-consequence list in the platform: anything on it is something a
+        // tenant's component may import. Adding a line here without adding it to
+        // `build_linker` promises something that then fails at start.
         assert!(HOST_IFACES.iter().all(|i| i.contains(':') && i.contains('/')));
-        // Versionless, matching what a manifest stamps into `host_needs`. If these
-        // ever carry a version again, every deployment becomes unschedulable.
+        // Versionless, matching what a manifest stamps into `host_needs`.
         assert!(!HOST_IFACES.iter().any(|i| i.contains('@')));
-        // wasmcloud:messaging stays off it. Raw subject publish is the one
-        // capability that reaches around the host's naming, which would break the
-        // boundary for every NATS-backed thing at once.
+        // wasmcloud:messaging stays off it: raw subject publish reaches around the
+        // host's naming and would break the boundary for every NATS-backed thing.
         assert!(!HOST_IFACES.iter().any(|i| i.starts_with("wasmcloud:messaging")));
     }
 

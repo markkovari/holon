@@ -28,14 +28,9 @@ use crate::tenant::BucketId;
 pub trait KvBackend: Send + Sync {
     /// Can every replica of an app see this store, wherever the replica runs?
     ///
-    /// Deliberately a method on the implementation and NOT a match on a backend
-    /// name somewhere central. "Shared" is a property of what a backend *is*, so a
-    /// new one declares it here and nothing else has to be edited to know.
-    ///
-    /// There is no default. A backend that forgot to answer would be guessed at,
-    /// and both guesses are wrong in expensive ways: `true` places an app somewhere
-    /// it silently diverges, `false` refuses a deployment that would have been fine.
-    /// The compiler asking is cheaper than either.
+    /// A method on the implementation, not a match on a backend name. No default: a
+    /// guess is wrong either way (`true` places an app where it silently diverges,
+    /// `false` refuses a deployment that would have been fine).
     fn shared(&self) -> bool;
 
     fn get(&self, bucket: &BucketId, key: &str) -> Result<Option<Vec<u8>>>;
@@ -57,16 +52,9 @@ pub trait KvBackend: Send + Sync {
     /// Write only if the key is still at `expected`. `expected == 0` means "must not
     /// exist yet", so a create and an update are the same call.
     ///
-    /// This exists because ADR-0065 measured a lost update:
-    /// `record-store::update` enforced its revision guard by reading, comparing and
-    /// writing over three separate calls, which is not a guard at all once anything
-    /// — another node, or a cache — changes the value in between. The comparison has
-    /// to happen where the data is, and this is the smallest primitive that puts it
-    /// there.
-    ///
-    /// No default implementation, for the same reason `shared` has none: a backend
-    /// that quietly emulated this with get-then-set would compile, pass, and lose
-    /// writes.
+    /// ADR-0065 measured a lost update when the guard was a read, compare and write
+    /// over three calls; the comparison has to happen where the data is. No default
+    /// implementation: get-then-set would compile, pass, and lose writes.
     fn set_if_revision(
         &self,
         bucket: &BucketId,
@@ -87,7 +75,6 @@ pub enum Cas {
     Conflict(u64),
 }
 
-// ---- in-memory (default) -------------------------------------------------
 
 /// A value and the revision it is at. Every write bumps it, including a plain
 /// `set` — see `get_revision` on the trait for why that matters.
@@ -160,9 +147,7 @@ impl KvBackend for MemoryKv {
         Ok(crate::sync::held(&self.buckets).get(bucket).and_then(|b| b.get(key)).cloned())
     }
 
-    /// Atomic because the compare and the write happen under one lock. That is the
-    /// whole difference from the three-call version this replaces: nothing can land
-    /// between the two halves, because nothing else can hold this mutex.
+    /// Atomic because the compare and the write happen under one lock.
     fn set_if_revision(
         &self,
         bucket: &BucketId,
@@ -183,7 +168,6 @@ impl KvBackend for MemoryKv {
     }
 }
 
-// ---- redis ----------------------------------------------------------------
 // Flat keyspace; bucket+key joined with a unit separator. list_keys uses SCAN
 // over the `{bucket}\x1f*` prefix. A single shared blocking connection guarded
 // by a mutex (the per-request handler is brief).
@@ -341,21 +325,15 @@ const CAS_BACKOFF_MS: u64 = 5;
 /// that survives losing a server, because quorum needs a majority (ADR-0067).
 pub const DEFAULT_REPLICAS: usize = 3;
 
-// ---- nats (JetStream KV) --------------------------------------------------
-//
 // The only backend on this list where TWO REPLICAS OF ONE APP SEE ONE STORE.
+// `memory` and `sqlite` are node-local: spread an app over two nodes and each
+// replica gets its own store under the same bucket name, so counters count wrong
+// and a failover moves the placement without moving the data.
 //
-// That is not a nicety, it is the difference between a rate limiter that rate-limits
-// and one that does not. `memory` and `sqlite` are node-local: spread an app over two
-// nodes and each replica gets its own store under the same bucket name, so a counter
-// counts wrong, a session vanishes on every other request, and a failover moves the
-// placement without moving the data. Measured, and it is why this came back.
-//
-// It runs on `async-nats` — the same client the lattice agent uses, because the sync
-// one cannot unify `rand` with it. `KvBackend` is a sync trait called from sync
-// bindgen imports, so each method bridges with `block_in_place` + `Handle::block_on`.
-// That is legal on the multi-threaded runtime (`#[tokio::main]`'s default): it tells
-// tokio this worker is about to block so the others are not starved.
+// It runs on `async-nats`, the same client the lattice agent uses. `KvBackend` is a
+// sync trait called from sync bindgen imports, so each method bridges with
+// `block_in_place` + `Handle::block_on` (legal on the multi-threaded runtime: it
+// tells tokio this worker is about to block).
 //
 // ponytail: block_in_place per call; the principled fix is async bindgen imports and
 // an async KvBackend, which is a refactor touching every impl in main.rs. Do it when
@@ -366,31 +344,22 @@ use async_nats::jetstream::kv::Store as JsStore;
 pub struct NatsKv {
     handle: tokio::runtime::Handle,
     js: async_nats::jetstream::Context,
-    /// How many copies of each bucket JetStream keeps.
-    ///
-    /// One is the default and one is a single disk holding every tenant's data.
-    /// ADR-0035 measured this fleet surviving the loss of a HOST; nothing has ever
-    /// measured it surviving the loss of the STORE, and with one replica it does
-    /// not. Three is the smallest number that tolerates losing a server, because
-    /// quorum needs a majority.
+    /// How many copies of each bucket JetStream keeps. One is a single disk holding
+    /// every tenant's data; three is the smallest number that survives losing a
+    /// server, because quorum needs a majority (ADR-0035).
     replicas: usize,
-    /// Keyed by the bucket id the caller passes, NOT by the derived JetStream
-    /// bucket name — so the hot path is a borrowed lookup with no allocation.
-    /// `RwLock` because after the first request per bucket this is read-only, and
-    /// a `Mutex` here serialised every keyvalue operation on the node: it was a
-    /// third of guest-call time under load (ADR-0057).
+    /// Keyed by the bucket id the caller passes, NOT the derived JetStream bucket
+    /// name, so the hot path is an allocation-free borrowed lookup. `RwLock` because
+    /// a `Mutex` here serialised every keyvalue operation (a third of guest-call time
+    /// under load, ADR-0057).
     stores: std::sync::RwLock<HashMap<String, JsStore>>,
 }
 
 impl NatsKv {
-    /// `url` may be a comma-separated LIST, and in a replicated deployment it
-    /// should be.
-    ///
-    /// A client given one address does discover the rest of the cluster — NATS
-    /// servers advertise their peers in the INFO they send — and it will fail over
-    /// to them. But that only works once it has connected to something. A host
-    /// starting while its single listed server is the one that is down cannot
-    /// bootstrap at all, and that is precisely the moment it matters.
+    /// `url` may be a comma-separated LIST, and in a replicated deployment it should
+    /// be: a client discovers the rest of the cluster only once it has connected to
+    /// something, so a host starting while its single listed server is down cannot
+    /// bootstrap at all.
     pub async fn connect(url: &str, replicas: usize) -> Result<Self> {
         let urls = servers(url);
         let client = async_nats::connect(urls.clone())
@@ -452,13 +421,10 @@ impl NatsKv {
                     };
                     match self.js.create_key_value(cfg(want)).await {
                         Ok(s) => Ok(s),
-                        // Asking for more copies than the cluster can hold is the
-                        // one failure worth surviving: it is what a single-server
-                        // NATS says, and refusing to start there would break every
-                        // single-node deployment. Only the AUTOMATIC choice falls
-                        // back — an operator who typed a number gets the error,
-                        // because they asked for something specific and did not
-                        // get it.
+                        // Asking for more copies than the cluster can hold is what a
+                        // single-server NATS says; refusing to start would break every
+                        // single-node deployment. Only the AUTOMATIC choice falls back;
+                        // an operator who typed a number gets the error.
                         Err(e) if self.replicas == 0 && want > 1 => {
                             eprintln!(
                                 "comp-host: WARNING this NATS cannot hold {want} copies of \
@@ -515,36 +481,24 @@ impl KvBackend for NatsKv {
     fn list_keys(&self, bucket: &BucketId) -> Result<Vec<String>> {
         use futures::StreamExt;
         let s = self.store_for(bucket.as_str())?;
-        // The listing's failure is REPORTED, not turned into an empty list.
-        //
-        // This was `Err(_) => {}` returning `Ok(vec![])`, so a bucket that could not
-        // be listed and a bucket with nothing in it were the same answer. Nine
-        // components list keys, and every one of them would have read "empty" and
-        // acted on it — the same silent-truncation shape `guestio.rs` lints for on
-        // the guest side of the wire, on the host side of it.
+        // The listing's failure is REPORTED, not turned into an empty list: a bucket
+        // that cannot be listed must not read as a bucket with nothing in it.
         let keys = self.block(async move {
             let mut out = Vec::new();
             match s.keys().await {
                 Ok(mut stream) => {
                     while let Some(k) = stream.next().await {
                         if let Ok(k) = k {
-                            // Returned exactly as stored, NOT decoded. `safe_key`
-                            // leaves `_` literal and also uses it to introduce an
-                            // escape, so the encoding is not reversible: decoding
-                            // turned `rec_orgs_01KZS…` into `rec_orgs\x01KZS…`,
-                            // and every record key is that shape because a ULID
-                            // starts with digits. Nine components list keys, and
-                            // all of them were being handed corrupted names on this
-                            // backend (ADR-0068).
+                            // Returned exactly as stored, NOT decoded. `safe_key` leaves
+                            // `_` literal and also uses it to introduce an escape, so
+                            // the encoding is not reversible: decoding turned
+                            // `rec_orgs_01KZS…` into `rec_orgs\x01KZS…` (ADR-0068).
                             //
-                            // A key made only of the characters `safe_key` passes
-                            // through — which is every key the components in this
-                            // repo build, since they sanitize their own segments —
-                            // is byte-identical here. One containing bytes that had
-                            // to be escaped comes back in escaped form, which is a
-                            // wart and is not corruption. Making it truly reversible
-                            // means changing `safe_key`, and that renames every key
-                            // already written.
+                            // A key made only of characters `safe_key` passes through is
+                            // byte-identical here; one that had to be escaped comes back
+                            // escaped, which is a wart and not corruption. Making it
+                            // reversible means changing `safe_key` and renaming every
+                            // key already written.
                             out.push(k);
                         }
                     }
@@ -571,11 +525,9 @@ impl KvBackend for NatsKv {
         let k = Self::safe_key(key);
         self.block(async move {
             for attempt in 0..32u32 {
-                // Exponential backoff between attempts, which wasmCloud's own NATS
-                // KV provider does and this did not: an immediate retry loop turns
-                // contention on one key into a thundering herd, where every loser
-                // re-reads and re-collides at full speed. First attempt is
-                // immediate; the rest wait 5ms, 10ms, 20ms… (ADR-0069).
+                // Exponential backoff, as wasmCloud's NATS KV provider does: an
+                // immediate retry loop turns contention on one key into a thundering
+                // herd. First attempt is immediate; then 5ms, 10ms, 20ms… (ADR-0069).
                 if attempt > 0 {
                     let backoff = CAS_BACKOFF_MS.saturating_mul(1 << attempt.min(6));
                     tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
@@ -616,13 +568,10 @@ impl KvBackend for NatsKv {
         Ok(entry.filter(|e| !e.value.is_empty()).map(|e| (e.revision, e.value.to_vec())))
     }
 
-    /// The only implementation here that is atomic ACROSS MACHINES, which is the
-    /// reason this whole primitive exists (ADR-0065).
-    ///
-    /// The comparison happens inside JetStream, against the sequence it assigned —
-    /// so it holds no matter how many nodes are writing, what any of them cached, or
-    /// how stale the caller's copy is. A caller with an old revision gets a
-    /// `Conflict` and re-reads; it can never overwrite what it did not see.
+    /// The only implementation here that is atomic ACROSS MACHINES (ADR-0065): the
+    /// comparison happens inside JetStream, against the sequence it assigned, so a
+    /// caller with an old revision gets a `Conflict` and can never overwrite what it
+    /// did not see.
     fn set_if_revision(
         &self,
         bucket: &BucketId,
@@ -670,12 +619,10 @@ impl KvBackend for NatsKv {
     }
 }
 
-// There is deliberately no `unescape` here any more. `safe_key` is not injective
-// — `_` is both a literal and the escape introducer — so no decoder can be right,
-// and the one that used to live here silently corrupted every key it was given
-// (ADR-0068). The tests below pin the ambiguity so nobody adds it back.
+// No `unescape` on purpose: `safe_key` is not injective (`_` is both a literal and
+// the escape introducer), so no decoder can be right (ADR-0068). The tests below
+// pin the ambiguity.
 
-// ---- sqlite ---------------------------------------------------------------
 // One file, one table, `(bucket, key)` as the primary key. The point of it is the
 // thing `memory` can never do: survive a restart — and `Restart=always` in a
 // systemd unit means restarts are routine, not exceptional (docs/SELFHOST.md).
@@ -1374,13 +1321,9 @@ impl KvBackend for TursoKv {
 }
 
 /// Build the backend named by `--kv`.
-/// The backend a lattice node picks when nobody says otherwise.
-///
-/// A lattice node needs a store every replica can see (ADR-0027), and this is the
-/// only implementation of one that ships today. It is a DEFAULT, not a
-/// requirement: `KvBackend::shared` is the interface, `--kv` selects an
-/// implementation, and nothing above this line knows the word "nats". A second
-/// shared backend needs a `shared() -> true` and a line in `build`.
+/// The backend a lattice node picks when nobody says otherwise: a store every
+/// replica can see (ADR-0027). It is a DEFAULT, not a requirement; a second shared
+/// backend needs a `shared() -> true` and a line in `build`.
 pub const DEFAULT_SHARED: &str = "nats";
 
 pub async fn build(
@@ -1412,11 +1355,8 @@ pub async fn build(
 mod tests {
     use super::*;
 
-    /// The reason `list_keys` hands back stored names rather than decoded ones.
-    ///
-    /// Two DIFFERENT keys encode to the same NATS key, so a decoder cannot know
-    /// which one it is looking at. It used to guess, and it guessed wrong on the
-    /// shape every record key has.
+    /// The reason `list_keys` hands back stored names rather than decoded ones: two
+    /// DIFFERENT keys encode to the same NATS key, so a decoder cannot know which.
     #[test]
     fn the_nats_key_encoding_cannot_be_reversed() {
         let literal = "rec_orgs_01KZS84N77";
@@ -1653,12 +1593,8 @@ mod tests {
         assert!(err.contains("memory|redis|nats|sqlite"), "{err}");
     }
 
-    /// Which backends every replica of an app can see.
-    ///
-    /// Getting this wrong in either direction is expensive: `true` for a
-    /// node-local store places an app somewhere it silently diverges (the bug
-    /// ADR-0027 is about), and `false` for a shared one refuses a deployment that
-    /// would have been fine.
+    /// Which backends every replica of an app can see. Wrong in either direction is
+    /// expensive: see `KvBackend::shared`.
     #[test]
     fn a_backend_declares_whether_it_is_shared() {
         // Asked of the implementation, not of a name. A new backend answers here
@@ -1668,15 +1604,10 @@ mod tests {
         assert!(!SqliteKv::open(&s.0).unwrap().shared(), "one file per node is not one store");
     }
 
-    /// This test used to assert that escaping round-trips, and it passed — because
-    /// every example it chose dodged the one shape that breaks. `a_b` has a single
-    /// character after the underscore, so the decoder left it alone; `rec_orgs_01K`
-    /// has two hex digits, and the decoder ate them. That is the shape of every
-    /// record key in the platform (ADR-0068).
-    ///
-    /// So the property is narrower than it looked: a key built from characters NATS
-    /// already accepts is stored verbatim, which is what makes `list_keys` handing
-    /// back stored names correct for every component in this repo.
+    /// Escaping is verbatim for characters NATS accepts, which is what makes
+    /// `list_keys` handing back stored names correct for every component here. The
+    /// examples include `rec_orgs_01K` (two hex digits after the underscore), the
+    /// shape of every record key that the old decoder corrupted (ADR-0068).
     #[test]
     fn a_key_of_legal_characters_is_stored_verbatim() {
         for key in ["plain", "a_b", "rec_orgs_01KZS84N77", "idx_orgs", "sess-abc.123", "="] {
@@ -1696,23 +1627,13 @@ mod tests {
 
 #[cfg(test)]
 mod redis_tests {
-    //! The redis backend, against a REAL redis.
-    //!
-    //! Written because `docs/CURRENT.md` named the absence of exactly this as the
-    //! reason the `redis 0.27` future-incompatibility warning was "named rather than
-    //! attempted": a major-version API migration of a backend nothing exercises is a
-    //! change nobody can review. So this comes first, and it is deliberately written
-    //! and made to pass against 0.27 BEFORE the bump — a test authored against the
-    //! new API would only prove the new API compiles.
-    //!
-    //! It SKIPS when nothing answers on the URL, the same shape as every other gate
-    //! here: a machine without redis has broken nothing. To run it for real:
+    //! The redis backend, against a REAL redis. It SKIPS when nothing answers on the
+    //! URL. To run it for real:
     //!
     //!     docker run --rm -d -p 6379:6379 --name comp-redis-test redis:7-alpine
     //!     cargo test --manifest-path host/Cargo.toml --bin comp-host redis_
     //!
-    //! CI does not run these yet — that wants a service container, and adding one is
-    //! a separate change from proving the backend works.
+    //! CI does not run these yet (that wants a service container).
 
     use super::*;
 

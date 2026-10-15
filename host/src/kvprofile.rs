@@ -1,30 +1,17 @@
 //! `--kv-profile` — what a real application actually asks the store for.
 //!
-//! Every caching decision this platform has taken was measured on `gate-domain`,
-//! a rate limiter that writes on every single request. That is the least
-//! representative workload there is for a read cache, and it is why ADR-0059
-//! rejected the read mirror: the mirror's upkeep scales with the fleet's WRITE
-//! rate, so a write-per-request benchmark was always going to lose.
+//! Wraps whatever backend `--kv` chose and counts, per operation: how many, how long,
+//! and how many reads a perfect cache would have served. Earlier caching decisions
+//! (ADR-0059) were measured on `gate-domain`, which writes on every request — the
+//! least representative workload for a read cache.
 //!
-//! What was never measured is what a real app does. This wraps whatever backend
-//! `--kv` chose and counts, per operation: how many, how long, and — the number
-//! that actually decides whether a read cache is worth building — how many reads
-//! a perfect cache would have served.
+//! The hit-rate model: a key is "warm" once read and cold again after any write. A
+//! read of a warm key is one a cache with infinite capacity and perfect invalidation
+//! would have served. That is an UPPER BOUND (it ignores size limits and cross-node
+//! staleness), so a low number is conclusive and a high one only permission to try.
 //!
-//! ## The hit-rate model, and what it is worth
-//!
-//! A key is "warm" once read, and any write to it makes it cold again. A read of a
-//! warm key is one a cache with **infinite capacity and perfect invalidation**
-//! would have served without touching the backend.
-//!
-//! That is an UPPER BOUND, deliberately. A real cache has a size limit, and across
-//! several nodes it also has a coherence problem this single-process model ignores
-//! entirely — a write on another node makes this node's entry stale, and nothing
-//! here accounts for that. So a low number here is conclusive (do not build it) and
-//! a high number is permission to try, not proof it will work.
-//!
-//! Off by default and not on the request path when off: without the flag the real
-//! backend is handed out directly and this file allocates nothing.
+//! Off by default and off the request path when off: the real backend is handed out
+//! directly.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -74,12 +61,9 @@ struct Stats {
     warm: HashSet<String>,
     peak_warm: usize,
     /// Reads per key, and writes per key.
-    ///
-    /// A hit rate says a cache would work; it does not say WHAT to cache. A key
-    /// read a million times and written once is a different proposition from a
-    /// million keys read once each — the first is a small targeted cache with an
-    /// easy invalidation story, the second needs the general mirror ADR-0059
-    /// rejected. Only per-key counts tell them apart.
+    /// Reads per key, and writes per key: a hit rate says a cache would work, not
+    /// WHAT to cache. One hot key is a small targeted cache; a million keys read once
+    /// each needs the general mirror ADR-0059 rejected.
     reads_by_key: HashMap<String, u64>,
     writes_by_key: HashMap<String, u64>,
 }
@@ -114,10 +98,8 @@ impl ProfileKv {
     }
 
     /// One line per operation, then the two numbers this exists for.
-    ///
-    /// Printed on the way out rather than periodically: a benchmark's warm-up and
-    /// its steady state have different mixes, and a running total is the honest
-    /// summary of the whole run either way.
+    /// Printed on the way out rather than periodically: a running total is the honest
+    /// summary of a run whose warm-up and steady state differ.
     pub fn report(&self) -> String {
         let s = crate::sync::held(&self.stats);
         let reads = s.get.calls + s.exists.calls + s.list_keys.calls + s.get_revision.calls;

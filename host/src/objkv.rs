@@ -420,7 +420,6 @@ fn unescape(enc: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-// ---- routing ----------------------------------------------------------------
 
 /// Object buckets to one backend, keyed state to another.
 ///

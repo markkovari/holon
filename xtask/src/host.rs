@@ -82,7 +82,6 @@ pub(crate) fn host_app(
     // The same path `compose` writes, so `compose X && host X` finds it.
     let artifact_path = resolve_app(app).artifact;
 
-    // Check spec for port/kv/static_dir
     let specs = comp_metadata::app::registered_apps(Path::new("."));
     let app_spec = specs.iter().find(|s| s.name == app);
     let default_port = app_spec.and_then(|s| s.port).unwrap_or(3055);
@@ -99,10 +98,8 @@ pub(crate) fn host_app(
 
     comp_host()?;
 
-    // Start every daemon this app declares — `cargo xtask host` used to leave
-    // this to a second terminal, silently unusable for any of the twelve
-    // ADR-0095 capabilities until someone remembered to run the daemon by
-    // hand.
+    // Start every daemon this app declares; the twelve ADR-0095 capabilities are
+    // silently unusable without them.
     let daemons = app_spec.map(|s| s.daemons.as_slice()).unwrap_or_default();
     let mut running = Vec::new();
     for d in daemons {
@@ -171,9 +168,8 @@ pub(crate) fn host_app(
         host_cmd.args(["--config", kv]);
     }
 
-    // The store the spec (or `--kv`) asked for. This used to be printed above and
-    // never passed, so comp-host fell back to `memory` and every account was gone
-    // on the next restart while the banner said "kv: sqlite".
+    // The store the spec (or `--kv`) asked for; without it comp-host falls back to
+    // `memory` while the banner says otherwise.
     host_cmd.args(["--kv", &kv_mode]);
     // A local sqlite file belongs under target/, not in the repo root where
     // comp-host's own fallback (./comp-kv.db) would put it. `STATE_DIRECTORY`,
@@ -196,8 +192,7 @@ pub(crate) fn host_app(
     let mut host = host_cmd.spawn().context("Failed to run comp-host")?;
 
     // The studio reflects components it is FED — a component cannot read the
-    // filesystem (the host preopens no directories), so without this its palette
-    // is empty. The old `host-studio` recipe seeded it once the host answered.
+    // filesystem (the host preopens no directories), so its palette is empty otherwise.
     if app == "studio" {
         let port = bind_addr.rsplit(':').next().unwrap_or("3054");
         let local = format!("127.0.0.1:{port}");

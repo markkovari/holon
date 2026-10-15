@@ -1,10 +1,6 @@
-//! The NATS implementation of all three traits.
-//!
-//! It is one struct rather than three because one connection serves all of them
-//! and splitting it would only move the plumbing. Nothing outside this file knows
-//! that: a caller holds `Arc<dyn Inventory>` and friends, so a second
-//! implementation of any ONE of them can be dropped in without touching the other
-//! two — which is the point of three traits rather than one.
+//! The NATS implementation of all three traits. One struct because one connection
+//! serves all of them; callers hold `Arc<dyn Inventory>` and friends, so any ONE
+//! trait can get a second implementation without touching the others.
 
 use std::time::Duration;
 
@@ -36,14 +32,9 @@ pub fn servers(url: &str) -> Vec<String> {
 }
 
 impl NatsLattice {
-    /// `inventory_ttl` becomes the bucket's `max_age`.
-    ///
-    /// NATS applies it per BUCKET, not per entry, so `Inventory::publish`'s `ttl`
-    /// argument is honoured at connect time rather than per call. Two callers
-    /// asking for different TTLs would silently get whichever connected first —
-    /// which is fine while the only two are a host and a reconciler configured to
-    /// agree, and is exactly the kind of thing a second implementation would do
-    /// differently. Said out loud here rather than discovered later.
+    /// `inventory_ttl` becomes the bucket's `max_age`. NATS applies it per BUCKET, not
+    /// per entry, so `Inventory::publish`'s `ttl` is honoured at connect time and two
+    /// callers asking for different TTLs get whichever connected first.
     pub async fn connect(url: &str, lattice: &str, inventory_ttl: Duration) -> Result<Self> {
         Self::connect_bucket(url, lattice, inventory_ttl, wire::INVENTORY).await
     }
@@ -64,26 +55,14 @@ impl NatsLattice {
 
         // Created rather than assumed, so a fresh lattice needs no setup step.
         //
-        // AND OPENED rather than insisted upon when it already exists with a
-        // different config. Three processes call this on the same bucket with their
-        // own `max_age` — a host asks for `heartbeat_secs * 3`, the reconciler for
-        // `--inventory-ttl`, the ingress for its own — and they agree today only
-        // because three defaults coincide at 15s.
-        //
-        // `docs/CURRENT.md` recorded the consequence as "whoever creates the bucket
-        // first wins and the others silently get a TTL they did not ask for". That is
-        // not what nats-server 2.14.6 does, and a test against a real one is how we
-        // know: `create_key_value` REFUSES with `stream name already in use with a
-        // different configuration` (10058). So the second process does not degrade
-        // quietly, it fails to start — with a message that names a stream and a
-        // configuration and neither the TTL nor which process wanted what.
-        //
-        // Neither behaviour is acceptable, and refusing is the worse of the two: the
-        // three TTLs are legitimately different, so a fleet has to interoperate
-        // across them. Change `--heartbeat-secs` on one host and, unfixed, that host
-        // simply never joins. So: fall back to the bucket that is there, and say what
-        // the difference is. The TTL comes back out on `effective_ttl` so a caller
-        // sizes its refresh off reality.
+        // AND OPENED rather than insisted upon when it already exists with a different
+        // config: host, reconciler and ingress each ask for their own `max_age`.
+        // nats-server 2.14.6 REFUSES `create_key_value` there (`stream name already in
+        // use with a different configuration`, 10058), so the second process would fail
+        // to start with a message naming neither the TTL nor who wanted what, and a
+        // changed `--heartbeat-secs` would keep a host from ever joining. So: fall back
+        // to the existing bucket and say what differs. The TTL comes back out on
+        // `effective_ttl` so a caller sizes its refresh off reality.
         let wanted = async_nats::jetstream::kv::Config {
             bucket: bucket.into(),
             max_age: inventory_ttl,
@@ -103,18 +82,11 @@ impl NatsLattice {
             .await
             .context("opening the artifact store")?;
 
-        // WHAT THE BUCKET ACTUALLY SAYS, not what we asked for.
-        //
-        // The harm is not the disagreement itself, it is what each process then
-        // computes FROM its own number: entries that live `T` seconds must be
-        // re-read well inside `T`, and a refresh sized against a TTL three times the
-        // real one is a poll that mostly sees an empty bucket. From the outside that
-        // is `no app answers`, which is where the four wrong diagnoses in this file's
-        // history came from.
-        //
-        // So it is read back, reported once when it differs, and carried on the
-        // handle. Not fatal: a bucket that outlives a config change is an operator's
-        // to fix, and refusing to start turns a degraded fleet into a dead one.
+        // WHAT THE BUCKET ACTUALLY SAYS, not what we asked for: a refresh sized against
+        // a TTL three times the real one is a poll that mostly sees an empty bucket,
+        // which looks like `no app answers`. Read back, reported once when it differs,
+        // and carried on the handle. Not fatal: refusing to start would turn a degraded
+        // fleet into a dead one.
         let effective_ttl = match kv.status().await {
             Ok(status) => {
                 let actual = status.max_age();
@@ -265,19 +237,11 @@ impl Artifacts for NatsLattice {
 
 /// Watch a KV bucket's keys for changes, as a stream of notifications.
 ///
-/// Added for `comp-relay`, which needs to know that SOMETHING was published without
-/// caring what: `event-bus` bumps a dotted sequence key per topic on every publish
-/// (`eb.seq.<topic>`), so a watch on `eb.seq.>` is a change feed of bus activity.
-/// `components/event-pusher` does the same thing from the other side, on hosts that
-/// have a `wasmcloud:messaging` plugin to invoke it.
-///
-/// It lives here rather than in the caller for the reason the module header gives:
-/// everything that dials NATS in this workspace goes through this file, so a second
-/// place that knows how to connect is a second place to get failover wrong.
-///
-/// The item type is deliberately `()`. A caller that reacted to WHICH key changed
-/// would be reimplementing the consumer-group offsets that `event:bus` already owns;
-/// all a poller needs is "go look now".
+/// For `comp-relay`, which needs to know that SOMETHING was published without caring
+/// what: `event-bus` bumps `eb.seq.<topic>` per publish, so a watch on `eb.seq.>` is
+/// a change feed of bus activity. It lives here because everything that dials NATS
+/// goes through this file. The item type is `()` on purpose: a caller reacting to
+/// WHICH key changed would be reimplementing `event:bus`'s consumer-group offsets.
 pub async fn watch_bucket(
     url: &str,
     bucket: &str,
