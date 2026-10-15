@@ -104,7 +104,6 @@ fn import_validate_page_and_export() {
     assert!(fields.contains(&"age"), "age range error: {old}");
     assert!(fields.contains(&"role"), "role one-of error: {old}");
 
-    // page the clean set: limit 2 -> a cursor -> the rest.
     let (_, p1) = get_json("/api/rows?limit=2");
     assert_eq!(p1["rows"].as_array().unwrap().len(), 2, "first page has 2: {p1}");
     let cursor = p1["next"].as_str().expect("a next cursor").to_string();

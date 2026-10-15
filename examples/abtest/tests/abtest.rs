@@ -100,7 +100,6 @@ fn subjects_in(arm: &str, n: u32) -> std::collections::HashSet<String> {
 fn assign_sticky_split_attribute_and_live_sse() {
     let _host = start_host();
 
-    // ===== define a 50/25/25 experiment ======================================
     let (status, _) = req(
         "POST",
         "/api/experiments/checkout",
@@ -112,7 +111,6 @@ fn assign_sticky_split_attribute_and_live_sse() {
     );
     assert_eq!(status, 200);
 
-    // (1) sticky: the same subject assigns to the same arm across calls.
     let (_, a1) = req("GET", "/api/assign?exp=checkout&subject=user-42", None);
     let (_, a2) = req("GET", "/api/assign?exp=checkout&subject=user-42", None);
     assert_eq!(a1["arm"], a2["arm"], "a subject must not switch arms between calls");
@@ -194,7 +192,6 @@ fn assign_sticky_split_attribute_and_live_sse() {
     assert_eq!(a_arm["converted"].as_u64().unwrap(), 0, "variant-a got no conversion");
     assert!((control_arm["rate"].as_f64().unwrap() - 1.0).abs() < 1e-9, "control rate 1/1 = 1.0");
 
-    // ===== (6) LIVE SSE — the headline ======================================
     let found = Arc::new(AtomicBool::new(false));
     let f = found.clone();
     let url = format!("{}/api/stream", base());

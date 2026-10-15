@@ -90,7 +90,6 @@ fn membership_capability_model() {
     let bo = signup("bo@acme.io", "member");
     let boss = signup("boss@acme.io", "member"); // becomes a LEAD via membership
 
-    // ===== admin creates projects + categories ==============================
     let (s, apollo) = req("POST", "/api/projects", Some(&admin), Some(json!({ "key": "APOLLO", "name": "Apollo" })));
     assert_eq!(s, 201, "{apollo}");
     let apollo = apollo["id"].as_str().unwrap().to_string();
@@ -103,21 +102,18 @@ fn membership_capability_model() {
     let (s, _) = req("POST", "/api/projects", Some(&ada), Some(json!({ "key": "X", "name": "X" })));
     assert_eq!(s, 403);
 
-    // ===== membership: ada+bo members of Apollo, boss its lead ==============
     for (email, role) in [("ada@acme.io", "member"), ("bo@acme.io", "member"), ("boss@acme.io", "lead")] {
         let (s, _) = req("POST", &format!("/api/projects/{apollo}/members"), Some(&admin), Some(json!({ "email": email, "role": role })));
         assert_eq!(s, 200, "add {email}");
     }
     // ada is NOT a member of Orion.
 
-    // list_projects reflects membership
     let (_, mine) = req("GET", "/api/projects", Some(&ada), None);
     let ids: Vec<&str> = mine["items"].as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap()).collect();
     assert_eq!(ids, vec![apollo.as_str()], "ada only sees Apollo");
     let (_, all) = req("GET", "/api/projects", Some(&admin), None);
     assert_eq!(all["items"].as_array().unwrap().len(), 2, "admin sees all projects");
 
-    // ===== logging is gated by membership ===================================
     let log = |tok: &str, proj: &str, mins: u64, day: &str| {
         req("POST", "/api/entries", Some(tok), Some(json!({ "project": proj, "category": eng, "minutes": mins, "day": day })))
     };
@@ -130,7 +126,6 @@ fn membership_capability_model() {
     let (s, _) = log(&ada, &orion, 60, "2026-07-20");
     assert_eq!(s, 403, "non-member cannot log against the project");
 
-    // ===== owner edit/delete ================================================
     let (s, _) = req("PATCH", &format!("/api/entries/{entry_id}"), Some(&ada), Some(json!({ "minutes": 150 })));
     assert_eq!(s, 200, "owner edits own entry");
     let (s, _) = req("PATCH", &format!("/api/entries/{entry_id}"), Some(&bo), Some(json!({ "minutes": 5 })));
@@ -141,10 +136,8 @@ fn membership_capability_model() {
     assert_eq!(s, 200, "owner deletes own entry");
     let (_, r) = req("GET", "/api/report?from=2026-07-01&to=2026-07-31", Some(&ada), None);
     assert_eq!(total(&r), 0, "gone after delete");
-    // re-log for the lead-view check
     log(&ada, &apollo, 120, "2026-07-20");
 
-    // ===== a project LEAD sees the project's whole distribution =============
     let (s, r) = req("GET", "/api/report?from=2026-07-01&to=2026-07-31&scope=all", Some(&boss), None);
     assert_eq!(s, 200, "{r}");
     assert_eq!(r["scope"], "all");
@@ -158,7 +151,6 @@ fn membership_capability_model() {
     assert_eq!(r["scope"], "me");
     assert_eq!(r["can_see_all"], false);
 
-    // ===== calendar: a scheduled entry carries its time-of-day =============
     let (s, sched) = req("POST", "/api/entries", Some(&ada),
         Some(json!({ "project": apollo, "category": eng, "minutes": 45, "day": "2026-07-23", "start": 9 * 60 })));
     assert_eq!(s, 201, "{sched}");
@@ -166,14 +158,12 @@ fn membership_capability_model() {
     let (_, list) = req("GET", "/api/entries?from=2026-07-23&to=2026-07-23", Some(&ada), None);
     assert_eq!(list["entries"].as_array().unwrap()[0]["start"], 540);
 
-    // ===== the pomodoro timer ===============================================
     let (s, _) = req("POST", "/api/timer/start", Some(&ada), Some(json!({ "project": apollo, "category": eng, "day": "2026-07-22" })));
     assert_eq!(s, 200);
     let (s, entry) = req("POST", "/api/timer/stop", Some(&ada), None);
     assert_eq!(s, 201, "{entry}");
     assert!(entry["minutes"].as_u64().unwrap() >= 1);
 
-    // ===== the report exports as a real PDF (pdf:codec) =====================
     let resp = ureq::get(&format!("{}/api/report.pdf?from=2026-07-01&to=2026-07-31&scope=all", base()))
         .set("authorization", &format!("Bearer {boss}"))
         .call()

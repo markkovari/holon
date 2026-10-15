@@ -80,16 +80,13 @@ fn start_host() -> HostGuard {
 fn validate_redact_render_and_slug() {
     let _host = start_host();
 
-    // validate: an empty body is rejected (pure-compute validate:schema).
     let (s, v) = json_req("POST", "/api/paste", Some(json!({"body": ""})));
     assert_eq!(s, 422, "empty body must fail validation: {v}");
     assert_eq!(v["error"], "validation_failed");
 
-    // create a paste containing PII + Markdown + a raw <script>.
     let raw = "# Title\n\nReach me at alice@example.com or card 4111 1111 1111 1111.\n\n<script>alert('xss')</script>\n\n**bold** and _em_";
     let (s, p) = json_req("POST", "/api/paste", Some(json!({"title": "My Notes", "body": raw})));
     assert_eq!(s, 201, "create: {p}");
-    // two PII findings masked at ingest (email + card).
     assert_eq!(p["redacted"].as_u64().unwrap(), 2, "email + card detected: {p}");
     let id = p["id"].as_str().unwrap().to_string();
     assert_eq!(p["slug"], "my-notes");
@@ -108,11 +105,9 @@ fn validate_redact_render_and_slug() {
     assert!(!html.contains("<script>"), "no executable <script> in output");
     assert!(html.contains("<h1>"), "markdown heading rendered: {html}");
 
-    // duplicate titles get distinct slugs (slug::uniquify).
     let (_, p2) = json_req("POST", "/api/paste", Some(json!({"title": "My Notes", "body": "second"})));
     assert_eq!(p2["slug"], "my-notes-2", "duplicate title must get a unique slug: {p2}");
 
-    // listing shows both, most-recent visible.
     let (_, list) = json_req("GET", "/api/pastes", None);
     assert!(list["pastes"].as_array().unwrap().len() >= 2, "both pastes listed: {list}");
 }

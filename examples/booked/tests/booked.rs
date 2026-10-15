@@ -102,24 +102,20 @@ fn booking_capability_and_no_double_book() {
     let owner = signup("owner@acme.io", "owner");
     let member = signup("mem@acme.io", "member");
 
-    // ===== owner creates a resource; a non-owner cannot ====================
     let (s, r) = req("POST", "/api/resources", Some(&owner), Some(json!({ "key": "room-a", "name": "Room A", "slot": 30 })));
     assert_eq!(s, 201, "{r}");
     let rid = r["id"].as_str().unwrap().to_string();
     let (s, _) = req("POST", "/api/resources", Some(&member), Some(json!({ "key": "x", "name": "X" })));
     assert_eq!(s, 403, "member cannot create resources");
 
-    // weekly availability: Tuesday (1) 09:00–12:00.
     let (s, _) = req("POST", &format!("/api/resources/{rid}/availability"), Some(&owner),
         Some(json!({ "windows": [{ "weekday": 1, "start": 540, "end": 720 }] })));
     assert_eq!(s, 200);
 
-    // ===== free slots on a Tuesday: six 30-min slots in 09:00–12:00 ========
     let (s, r) = req("GET", &format!("/api/resources/{rid}/slots?day=2026-07-21"), Some(&member), None);
     assert_eq!(s, 200);
     assert_eq!(r["slots"].as_array().unwrap().len(), 6, "09:00–12:00 / 30 = 6 slots");
 
-    // ===== book one; then NO double-book ===================================
     let (s, r) = book(&member, &rid, "2026-07-21", 540, 570);
     assert_eq!(s, 201, "{r}");
     assert_eq!(r["booked"].as_array().unwrap().len(), 1);
@@ -130,18 +126,15 @@ fn booking_capability_and_no_double_book() {
     assert_eq!(book(&owner, &rid, "2026-07-21", 555, 585).0, 409, "overlapping booking rejected");
     assert_eq!(book(&member, &rid, "2026-07-22", 540, 570).0, 409, "Wednesday is outside availability");
 
-    // one slot gone from the free list.
     let (_, r) = req("GET", &format!("/api/resources/{rid}/slots?day=2026-07-21"), Some(&member), None);
     assert_eq!(r["slots"].as_array().unwrap().len(), 5, "one slot now taken");
 
-    // ===== a weekly recurrence expands to N instances (rrule:recur) ========
     let (s, r) = req("POST", "/api/bookings", Some(&member),
         Some(json!({ "resource": rid, "day": "2026-07-21", "start": 600, "end": 630, "repeat": { "freq": "weekly", "count": 4 } })));
     assert_eq!(s, 201, "{r}");
     let days: Vec<&str> = r["booked"].as_array().unwrap().iter().map(|b| b["day"].as_str().unwrap()).collect();
     assert_eq!(days, ["2026-07-21", "2026-07-28", "2026-08-04", "2026-08-11"], "four consecutive Tuesdays");
 
-    // ===== a booking exports to a valid .ics (ical:codec) ==================
     let (s, ct, ics) = get_text(&format!("/api/bookings/{bid}.ics"), &member);
     assert_eq!(s, 200);
     assert!(ct.starts_with("text/calendar"), "content-type: {ct}");
@@ -153,7 +146,6 @@ fn booking_capability_and_no_double_book() {
     let (_, _, feed) = get_text(&format!("/api/resources/{rid}/calendar.ics"), &owner);
     assert_eq!(feed.matches("BEGIN:VEVENT").count(), 5, "feed has all 5 events");
 
-    // ===== CONCURRENCY: many racers, one slot, exactly one wins ===========
     // Thursday is outside availability, so use a fresh Tuesday slot (11:30).
     let day = "2026-07-28";
     let (start, end) = (690, 720);
@@ -169,7 +161,6 @@ fn booking_capability_and_no_double_book() {
     let losses = codes.iter().filter(|&&c| c == 409).count();
     assert_eq!(wins, 1, "exactly one concurrent booking succeeds: {codes:?}");
     assert_eq!(wins + losses, 8, "the rest are conflicts: {codes:?}");
-    // ground truth: exactly one booking exists in the store for that slot.
     let (_, r) = req("GET", "/api/bookings?from=2026-07-28&to=2026-07-28", Some(&owner), None);
     let at_slot = r["items"].as_array().unwrap().iter()
         .filter(|b| b["resource"].as_str() == Some(&rid) && b["start"].as_i64() == Some(start))

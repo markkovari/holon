@@ -46,7 +46,6 @@ impl Drop for Kill {
     }
 }
 
-// ---- http -------------------------------------------------------------------
 
 fn post(path: &str, body: Value) -> (u16, Value) {
     send(ureq::post(&format!("http://{ADDR}{path}")), body)
@@ -105,7 +104,6 @@ fn start_host() -> Kill {
     panic!("passkey host did not start");
 }
 
-// ---- the virtual authenticator ----------------------------------------------
 
 fn b64u(b: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(b)
@@ -187,7 +185,6 @@ fn key(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32].into()).unwrap()
 }
 
-// ---- ceremonies as the SPA performs them ------------------------------------
 
 fn register(username: &str, sk: &SigningKey, cred_id: &[u8], token: Option<&str>) -> (u16, Value) {
     let (code, opts) = match token {
@@ -233,7 +230,6 @@ fn passkey_ceremonies() {
     assert_eq!(cfg["rp_id"], RP);
     assert_eq!(cfg["origin"], ORIGIN);
 
-    // ===== registration: no password anywhere in this flow =================
     let ada = key(11);
     let ada_id = b"ada-touchid";
     let (code, reg) = register("ada", &ada, ada_id, None);
@@ -247,7 +243,6 @@ fn passkey_ceremonies() {
     assert_eq!(me["username"], "ada");
     assert_eq!(me["credentials"].as_array().unwrap().len(), 1);
 
-    // ===== login ==========================================================
     let opts = login_begin(Some("ada"));
     let allow = opts["allowCredentials"].as_array().unwrap();
     assert_eq!(allow[0]["id"], b64u(ada_id), "the server tells the browser which passkey");
@@ -258,13 +253,10 @@ fn passkey_ceremonies() {
     let session = login["token"].as_str().unwrap().to_string();
     assert_eq!(login["credential"]["sign_count"], 1, "the counter was persisted");
 
-    // ===== a challenge is single-use ======================================
     let (code, replay) = login_finish(ada_id, &cd, &ad, &sig);
     assert_eq!(code, 400, "the very same ceremony, replayed: {replay}");
     assert!(replay["error"].as_str().unwrap().contains("challenge"), "{replay}");
 
-    // ===== every check bites ==============================================
-    // a phishing origin
     let c = login_begin(Some("ada"))["challenge"].as_str().unwrap().to_string();
     let (cd, ad, sig) = get_response(&ada, &c, RP, "http://evil.example", 2);
     let (code, r) = login_finish(ada_id, &cd, &ad, &sig);
@@ -272,13 +264,11 @@ fn passkey_ceremonies() {
     assert_eq!(r["error"], "origin_mismatch", "{r}");
     assert_eq!(r["detail"], "http://evil.example");
 
-    // a credential minted for another relying party
     let c = login_begin(Some("ada"))["challenge"].as_str().unwrap().to_string();
     let (cd, ad, sig) = get_response(&ada, &c, "evil.example", ORIGIN, 2);
     let (code, r) = login_finish(ada_id, &cd, &ad, &sig);
     assert_eq!((code, r["error"].as_str().unwrap()), (401, "rp_id_mismatch"));
 
-    // somebody else's key
     let c = login_begin(Some("ada"))["challenge"].as_str().unwrap().to_string();
     let (cd, ad, sig) = get_response(&key(99), &c, RP, ORIGIN, 2);
     let (code, r) = login_finish(ada_id, &cd, &ad, &sig);
@@ -297,19 +287,16 @@ fn passkey_ceremonies() {
     let (code, r) = login_finish(ada_id, &cd, &ad, &sig);
     assert_eq!((code, r["error"].as_str().unwrap()), (401, "counter_regressed"), "{r}");
 
-    // ===== you cannot enrol your authenticator on someone else's account ===
     let attacker = key(66);
     let (code, r) = register("ada", &attacker, b"attacker-key", None);
     assert_eq!(code, 401, "adding a passkey to an existing account needs a session: {r}");
 
-    // ...but the account owner can add a second device.
     let phone = key(22);
     let (code, r) = register("ada", &phone, b"ada-phone", Some(&session));
     assert_eq!(code, 201, "second passkey: {r}");
     let (_, me) = get_as("/api/me", &session);
     assert_eq!(me["credentials"].as_array().unwrap().len(), 2);
 
-    // ===== a discoverable ("usernameless") login ===========================
     let opts = login_begin(None);
     assert!(opts["allowCredentials"].as_array().unwrap().is_empty(), "the authenticator chooses");
     let c = opts["challenge"].as_str().unwrap().to_string();
@@ -318,19 +305,16 @@ fn passkey_ceremonies() {
     assert_eq!(code, 200, "usernameless login: {r}");
     assert_eq!(r["username"], "ada", "the credential id identified the account");
 
-    // ===== managing passkeys ==============================================
     let (code, _) = post_as("/api/credentials/delete", json!({ "id": b64u(b"ada-phone") }), &session);
     assert_eq!(code, 200);
     let (code, r) = post_as("/api/credentials/delete", json!({ "id": b64u(ada_id) }), &session);
     assert_eq!(code, 409, "never delete the last passkey — there is no password to fall back on: {r}");
 
-    // ===== logout ends the session ========================================
     let (code, _) = post_as("/api/logout", json!({}), &session);
     assert_eq!(code, 200);
     let (code, _) = get_as("/api/me", &session);
     assert_eq!(code, 401, "the session is gone");
 
-    // ===== an unknown username does not leak whether it exists ============
     let opts = login_begin(Some("nobody"));
     assert!(opts["allowCredentials"].as_array().unwrap().is_empty());
     assert!(opts["challenge"].as_str().is_some(), "same shape as a real account");

@@ -101,7 +101,6 @@ fn wait_state(id: &str, state: &str, deadline: Instant) -> bool {
 fn enqueue_dispatch_deadletter_replay() {
     let _host = start_host();
 
-    // ===== rung 1: enqueue + snapshot =======================================
     let (status, e) = req("POST", "/api/events", Some(json!({"topic": "invoice.paid", "payload": {"amount": 100}})));
     assert_eq!(status, 201, "enqueue: {e}");
     assert_eq!(e["state"], "pending");
@@ -111,7 +110,6 @@ fn enqueue_dispatch_deadletter_replay() {
     let acked = wait_state(&id, "acked", Instant::now() + Duration::from_secs(6));
     assert!(acked, "event should dispatch and be acked with the sink up");
 
-    // ===== rung 2: LIVE SSE — the headline ==================================
     // A reader holds GET /api/stream open; an event enqueued by a separate
     // request must reach it as a data: frame (marching to acked).
     let found = Arc::new(AtomicBool::new(false));
@@ -143,7 +141,6 @@ fn enqueue_dispatch_deadletter_replay() {
     reader.join().unwrap();
     assert!(found.load(Ordering::SeqCst), "the live SSE stream should carry the acked transition");
 
-    // ===== rung 3: sink down → retry → dead-letter → replay =================
     let (status, s) = req("POST", "/api/sink", Some(json!({"up": false})));
     assert_eq!(status, 200, "sink down: {s}");
     assert_eq!(s["sink_up"], false);
@@ -157,12 +154,10 @@ fn enqueue_dispatch_deadletter_replay() {
     let dead = wait_state(&dead_id, "dead", Instant::now() + Duration::from_secs(12));
     assert!(dead, "an event should dead-letter when the sink stays down");
 
-    // the dead-letter tray lists it.
     let (_, dl) = req("GET", "/api/dead-letters", None);
     let listed = dl["dead"].as_array().unwrap().iter().any(|d| d["id"] == json!(dead_id));
     assert!(listed, "dead event should appear in the dead-letter tray: {dl}");
 
-    // bring the sink back up, then Replay: it requeues and now delivers.
     req("POST", "/api/sink", Some(json!({"up": true})));
     let (status, r) = req("POST", &format!("/api/dead-letters/{dead_id}/replay"), None);
     assert_eq!(status, 200, "replay: {r}");

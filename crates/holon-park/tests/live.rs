@@ -150,13 +150,11 @@ async fn wake_stream_round_trips_through_a_durable_pull_consumer() {
     let got: WakeMessage = serde_json::from_slice(&delivered.payload).unwrap();
     assert_eq!(got.ticket, "t1");
     assert_eq!(got.session, "s1");
-    // `ack()` alone is a fire-and-forget publish of the ack reply — this test
-    // needs to know the server actually processed it before asserting the
-    // message is gone, so it waits for the round trip `double_ack` gives.
+    // `ack()` alone is fire-and-forget; wait for the server to process it
+    // before asserting the message is gone.
     delivered.double_ack().await.expect("ack");
 
-    // WorkQueue retention: an acked message is gone. A second fetch on a
-    // fresh ephemeral consumer over the same subject sees nothing.
+    // WorkQueue retention: an acked message is gone.
     let info = stream.get_info().await.expect("stream info");
     assert_eq!(
         info.state.messages, 0,

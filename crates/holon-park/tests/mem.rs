@@ -37,7 +37,6 @@ async fn park_then_wake_then_take_ready() {
     let p = e.park(&"s1".into(), call("req-1"), agent("a1"), 1000).await.unwrap();
     assert_eq!(p.outcome, ParkOutcome::Parked);
 
-    // Not ready yet.
     let err = e.take_ready(&p.ticket, 1500).await.unwrap_err();
     assert!(matches!(err, ParkError::NotFound(_)), "{err:?}");
 
@@ -49,7 +48,6 @@ async fn park_then_wake_then_take_ready() {
     assert!(r.ok);
     assert_eq!(r.body, b"42");
 
-    // Exactly once.
     let err = e.take_ready(&p.ticket, 1600).await.unwrap_err();
     assert!(matches!(err, ParkError::AlreadyClosed(_)), "{err:?}");
 }
@@ -65,7 +63,6 @@ async fn reparking_the_identical_call_is_idempotent() {
     assert_eq!(second.ticket, first.ticket);
     assert_eq!(second.outcome, ParkOutcome::AlreadyParked);
 
-    // Only one entry exists — the retry did not create a second record.
     let pending = e.pending(&"s1".into(), 1002).await.unwrap();
     assert_eq!(pending.len(), 1);
 }
@@ -80,7 +77,6 @@ async fn reparking_after_the_answer_beat_it_reports_already_woken() {
     assert_eq!(retry.ticket, p.ticket);
     assert_eq!(retry.outcome, ParkOutcome::AlreadyWoken);
 
-    // The caller can take it immediately without ever seeing a wake message.
     let r = e.take_ready(&retry.ticket, 1300).await.unwrap();
     assert!(r.ok);
 }
@@ -97,7 +93,6 @@ async fn a_redelivered_wake_is_accepted_not_an_error() {
     let e = mem_engine();
     let p = e.park(&"s1".into(), call("req-1"), agent("a1"), 1000).await.unwrap();
     e.wake("req-1", result(true, "42"), 1100).await.unwrap();
-    // The webhook fires again with the same payload.
     let again = e.wake("req-1", result(true, "42"), 1150).await.unwrap();
     assert_eq!(again.ticket, p.ticket);
     assert!(!again.freshly_woken, "a redelivery must not report a fresh wake");
@@ -141,7 +136,6 @@ async fn a_ticket_past_its_deadline_reads_expired_and_stops_showing_as_pending()
     let p =
         e.park(&"s1".into(), call_with_deadline("req-1", 2000), agent("a1"), 1000).await.unwrap();
 
-    // Before the deadline: still pending.
     let pending = e.pending(&"s1".into(), 1500).await.unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].status, TurnStatus::Parked);

@@ -93,7 +93,6 @@ fn live_game_speed_weighted_scoring() {
     let _host = start_host();
     let host = signup("host@acme.io"); // registering seeds a demo quiz ("WIT Warm-up")
 
-    // ===== host starts a game -> a PIN ====================================
     let (_, q) = req("GET", "/api/quizzes", Some(&host), None);
     let quiz = q["items"][0]["id"].as_str().unwrap().to_string();
     let (s, g) = req("POST", "/api/games", Some(&host), Some(json!({ "quiz": quiz })));
@@ -101,20 +100,16 @@ fn live_game_speed_weighted_scoring() {
     let pin = g["pin"].as_str().unwrap().to_string();
     assert_eq!(pin.len(), 6, "6-digit PIN");
 
-    // three players join the lobby.
     let ada = join(&pin, "Ada");
     let bo = join(&pin, "Bo");
     let cy = join(&pin, "Cy");
     let (_, hv) = req("GET", &format!("/api/games/{pin}/host"), Some(&host), None);
     assert_eq!(hv["players"].as_array().unwrap().len(), 3);
 
-    // ===== gates: only the host drives; players answer only in a question ==
     assert_eq!(req("POST", &format!("/api/games/{pin}/start"), None, None).0, 401, "player can't start (no token)");
     assert_eq!(req("POST", &format!("/api/games/{pin}/answer"), None, Some(json!({ "player": ada, "option": 1 }))).0, 409, "no answers before start");
 
-    // ===== start Q1: answer key is option index 1 ==========================
     assert_eq!(req("POST", &format!("/api/games/{pin}/start"), Some(&host), None).0, 200);
-    // no more joining once started.
     assert_eq!(req("POST", &format!("/api/games/{pin}/join"), None, Some(json!({ "nickname": "Late" }))).0, 409);
 
     // Ada answers correctly, immediately; Bo answers correctly but ~1.2s later;
@@ -123,14 +118,12 @@ fn live_game_speed_weighted_scoring() {
     std::thread::sleep(Duration::from_millis(1200));
     answer(&pin, &bo, 1);
     answer(&pin, &cy, 0);
-    // one answer per question is enforced.
     answer(&pin, &ada, 2); // ignored (already answered)
 
     let (_, hv) = req("GET", &format!("/api/games/{pin}/host"), Some(&host), None);
     assert_eq!(hv["answered"], 3);
     assert_eq!(hv["counts"], json!([1, 2, 0, 0]), "one wrong, two correct");
 
-    // ===== reveal grades speed-weighted ===================================
     assert_eq!(req("POST", &format!("/api/games/{pin}/reveal"), Some(&host), None).0, 200);
     let score = |pid: &str| -> i64 {
         let (_, pv) = req("GET", &format!("/api/games/{pin}/play?player={pid}"), None, None);
@@ -142,18 +135,14 @@ fn live_game_speed_weighted_scoring() {
     assert_eq!(sc, 0, "wrong answer scores zero");
     assert!(sa <= 1000, "capped at the base ({sa})");
 
-    // leaderboard ranks by score.
     let (_, hv) = req("GET", &format!("/api/games/{pin}/host"), Some(&host), None);
     let board: Vec<&str> = hv["leaderboard"].as_array().unwrap().iter().map(|p| p["nickname"].as_str().unwrap()).collect();
     assert_eq!(board[0], "Ada", "Ada leads: {board:?}");
-    // a student's own rank matches.
     let (_, pv) = req("GET", &format!("/api/games/{pin}/play?player={ada}"), None, None);
     assert_eq!(pv["my_rank"], 1);
 
-    // ===== play out the rest, then a final podium =========================
     for _ in 0..2 {
         req("POST", &format!("/api/games/{pin}/next"), Some(&host), None);
-        // everyone answers correctly this time.
         for p in [&ada, &bo, &cy] {
             answer(&pin, p, 0); // Q2 answer key = 0
         }

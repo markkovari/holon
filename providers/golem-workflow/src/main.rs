@@ -1,12 +1,7 @@
 //! golem-workflow — a native wasmCloud v2 capability provider that satisfies
-//! `durable:workflow/orchestrator` over wRPC by invoking durable Golem workers.
-//!
-//! A consumer component calls `orchestrator.trigger(req)`; this provider bridges
-//! the call to a Golem agent's HTTP endpoint (Golem 1.5 exposes agent methods
-//! through its API gateway) and returns the worker's result. The bridge call
-//! itself lives in the lib (`invoke_golem`) so it can be exercised against a
-//! live Golem in an integration test without a wasmCloud host — see
-//! `tests/golem_live.rs`.
+//! `durable:workflow/orchestrator` over wRPC by bridging `trigger(req)` to a
+//! Golem agent's HTTP endpoint (the bridge call is `invoke_golem` in the lib;
+//! see `tests/golem_live.rs`).
 
 use golem_workflow_provider::{invoke_golem, GolemConfig};
 use wasmcloud_provider_sdk::{

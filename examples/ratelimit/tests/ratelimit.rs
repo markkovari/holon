@@ -77,7 +77,6 @@ fn start_host() -> HostGuard {
 fn ceiling_quota_lockout_and_live_sse() {
     let _host = start_host();
 
-    // ===== ceiling: with max-attempts=6, the 7th hit on a key is throttled ===
     let key = "kA";
     let mut allowed = 0;
     let mut first_429_at = None;
@@ -92,7 +91,6 @@ fn ceiling_quota_lockout_and_live_sse() {
     assert!(allowed >= 1 && allowed <= 6, "should allow up to the ceiling (6), allowed {allowed}");
     assert!(first_429_at.is_some(), "a burst past the ceiling must produce a 429");
 
-    // ===== quota decrements ==================================================
     let key2 = "kQ";
     let (_, s1) = req("GET", &format!("/api/state?key={key2}&subject={key2}"), None);
     let start_remaining = s1["quota_remaining"].as_u64().unwrap();
@@ -101,7 +99,6 @@ fn ceiling_quota_lockout_and_live_sse() {
     let after_remaining = s2["quota_remaining"].as_u64().unwrap();
     assert!(after_remaining < start_remaining, "quota remaining should drop: {start_remaining} -> {after_remaining}");
 
-    // ===== lockout via explicit failures + recovery ==========================
     // record-failure only strikes (it never returns Locked); lockout is OBSERVED
     // by check/state once the count reaches the ceiling. Strike past max=6.
     let key3 = "kL";
@@ -117,7 +114,6 @@ fn ceiling_quota_lockout_and_live_sse() {
     let (_, st2) = req("GET", &format!("/api/state?key={key3}"), None);
     assert_eq!(st2["locked"], false, "the key should recover after the window: {st2}");
 
-    // ===== LIVE SSE — a verdict reaches a separate held-open connection ======
     let found = Arc::new(AtomicBool::new(false));
     let f = found.clone();
     let url = format!("{}/api/stream", base());

@@ -113,41 +113,33 @@ fn enroll_activate_login_and_recovery() {
     let recovery: Vec<String> = act["recovery_codes"].as_array().unwrap().iter().map(|c| c.as_str().unwrap().to_string()).collect();
     assert_eq!(recovery.len(), 5, "five recovery codes issued");
 
-    // re-activating is refused.
     let (s, _) = req("POST", "/api/activate", Some(json!({"account": account, "code": code_for(&secret)})));
     assert_eq!(s, 409, "already active");
 
-    // 3. login with a live TOTP code -> a session.
     let (s, login) = req("POST", "/api/login", Some(json!({"account": account, "code": code_for(&secret)})));
     assert_eq!(s, 200, "login: {login}");
     assert_eq!(login["via"], "totp");
     let session = login["session"].as_str().expect("session id").to_string();
     assert!(!login["csrf"].as_str().unwrap().is_empty(), "csrf token issued");
 
-    // the session looks up and carries the account.
     let (s, sess) = req("GET", &format!("/api/session/{session}"), None);
     assert_eq!(s, 200);
     assert_eq!(sess["data"]["account"], account);
     assert_eq!(sess["data"]["mfa"], true);
 
-    // a wrong login code is rejected.
     let (s, _) = req("POST", "/api/login", Some(json!({"account": account, "code": "111111"})));
     assert_eq!(s, 401, "wrong login code rejected");
 
-    // a recovery code logs in (via=recovery) ...
     let (s, rlogin) = req("POST", "/api/login", Some(json!({"account": account, "code": recovery[0]})));
     assert_eq!(s, 200, "recovery login: {rlogin}");
     assert_eq!(rlogin["via"], "recovery");
 
-    // ... and is single-use: reusing the same recovery code fails.
     let (s, _) = req("POST", "/api/login", Some(json!({"account": account, "code": recovery[0]})));
     assert_eq!(s, 401, "recovery code is single-use");
 
-    // status now shows one recovery code burned (4 remaining).
     let (_, st) = req("GET", &format!("/api/status/{account}"), None);
     assert_eq!(st["recovery_remaining"].as_u64().unwrap(), 4, "one recovery code burned: {st}");
 
-    // logout revokes the session.
     let (s, _) = req("POST", "/api/logout", Some(json!({"session": session})));
     assert_eq!(s, 200);
     let (s, _) = req("GET", &format!("/api/session/{session}"), None);

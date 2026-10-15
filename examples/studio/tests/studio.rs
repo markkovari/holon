@@ -49,7 +49,6 @@ fn tmp() -> PathBuf {
     d
 }
 
-// ---- http -------------------------------------------------------------------
 
 fn post(path: &str, body: Value) -> (u16, Value) {
     let r = ureq::post(&format!("http://{ADDR}{path}"))
@@ -145,7 +144,6 @@ fn mesh_edges() -> Value {
 fn studio_reflects_plans_emits_and_composes() {
     let _studio = start_studio();
 
-    // ===== reflection: the surface comes from the binary =====================
     let mesh = upload("mesh_domain");
     for stem in ["record_store", "resilience", "proxy_route", "zip"] {
         upload(stem);
@@ -200,13 +198,11 @@ fn studio_reflects_plans_emits_and_composes() {
     let (_, palette) = get("/api/components");
     assert_eq!(palette["components"].as_array().unwrap().len(), 5);
 
-    // ===== the connection guard is wac's own subtype check ==================
     let (_, fits) = post("/api/satisfies", json!({ "socket": "mesh-domain", "plug": "record-store" }));
     assert_eq!(fits["interfaces"], json!(["records:store/store@0.1.0"]));
     let (_, nope) = post("/api/satisfies", json!({ "socket": "mesh-domain", "plug": "zip" }));
     assert_eq!(nope["interfaces"], json!([]), "zip exports nothing mesh imports");
 
-    // ===== planning ========================================================
     let (code, plan) = post("/api/plan", json!({ "nodes": mesh_nodes(), "edges": mesh_edges() }));
     assert_eq!(code, 200, "{plan}");
     assert_eq!(plan["buildable"], true);
@@ -255,7 +251,6 @@ fn studio_reflects_plans_emits_and_composes() {
         "{cyclic}"
     );
 
-    // ===== the three emitted forms =========================================
     let emit = |form: &str| {
         post_text(
             "/api/emit",
@@ -290,7 +285,6 @@ fn studio_reflects_plans_emits_and_composes() {
         assert!(workload.contains(&format!("- name: {node}")), "{node} missing from components");
     }
 
-    // ===== compose for real =================================================
     let resp = ureq::post(&format!("http://{ADDR}/api/compose"))
         .set("content-type", "application/json")
         .send_string(&json!({ "nodes": mesh_nodes(), "edges": mesh_edges(), "root": "mesh-domain" }).to_string())
@@ -350,7 +344,6 @@ fn studio_reflects_plans_emits_and_composes() {
     let (ok, out) = tool("wasm-tools", &["validate", wac_out.to_str().unwrap()]);
     assert!(ok, "and validate: {out}");
 
-    // ===== the composed component actually RUNS =============================
     // The whole point: a graph wired in a browser produced a working app.
     let bin = root().join("host/target/release/comp-host");
     let child = Command::new(&bin)
@@ -394,7 +387,6 @@ fn studio_reflects_plans_emits_and_composes() {
     let circuit = json_of(circuit);
     assert_eq!(circuit["stats"]["failed"], 1, "state persisted via the plugged-in records:store");
 
-    // ===== saved canvases ===================================================
     let (code, saved) = post(
         "/api/graphs",
         json!({ "name": "mesh", "nodes": mesh_nodes(), "edges": mesh_edges() }),
@@ -407,7 +399,6 @@ fn studio_reflects_plans_emits_and_composes() {
     let (_, list) = get("/api/graphs");
     assert_eq!(list["graphs"][0]["nodes"], 4, "the list view summarises: {list}");
 
-    // ===== refusals =========================================================
     let (code, e) = post("/api/plan", json!({ "nodes": ["ghost"] }));
     assert_eq!(code, 422);
     assert!(e["error"].as_str().unwrap().contains("unknown component"), "{e}");

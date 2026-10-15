@@ -77,7 +77,6 @@ fn start_host() -> HostGuard {
 fn shaping_patterns() {
     let _host = start_host();
 
-    // ===== token bucket: capacity 3, refill 2/s ===========================
     let rl = |key: &str| post("/api/ratelimit", json!({ "key": key, "capacity": 3, "refill": 2 }));
     let codes: Vec<u16> = (0..5).map(|_| rl("a").0).collect();
     assert_eq!(codes, [200, 200, 200, 429, 429], "3 allowed then 429");
@@ -88,15 +87,12 @@ fn shaping_patterns() {
     let refilled: Vec<u16> = (0..4).map(|_| rl("a").0).collect();
     assert_eq!(refilled.iter().filter(|&&c| c == 200).count(), 2, "2 refilled after ~1s at 2/s: {refilled:?}");
 
-    // ===== GCRA throttle: rate 5/s (200ms), burst 1 =======================
     let th = |key: &str| post("/api/throttle", json!({ "key": key, "rate": 5, "burst": 1 }));
-    // burst budget 1 + the steady cell => 2 admitted at once, then spacing.
     let g: Vec<(u16, u64)> = (0..4).map(|_| { let (s, v) = th("b"); (s, v["retry_after_ms"].as_u64().unwrap_or(0)) }).collect();
     assert_eq!(g.iter().filter(|(s, _)| *s == 200).count(), 2, "burst then throttle: {g:?}");
     let last_retry = g.last().unwrap().1;
     assert!(last_retry > 0 && last_retry <= 200, "exact spacing retry-after <= period: {last_retry}");
 
-    // ===== batch: coalesce 3 submits (max_size 3), atomic flush ============
     let sub = |item: &str| post("/api/batch/submit", json!({ "key": "c", "item": item, "max_size": 3, "max_age_ms": 60000 }));
     let (_, s1) = sub("alpha");
     assert_eq!(s1["flushed"], false);
@@ -107,12 +103,10 @@ fn shaping_patterns() {
     let (_, s3) = sub("gamma");
     assert_eq!(s3["flushed"], true, "the 3rd submit trips the flush");
     assert_eq!(s3["result"], "GAMMA", "the tripping submit gets its result inline");
-    // the whole batch is flushed with per-item results (processed together).
     let (_, b) = get(&format!("/api/batch/{bid}"));
     assert_eq!(b["flushed"], true);
     assert_eq!(b["results"], json!(["ALPHA", "BETA", "GAMMA"]));
 
-    // ===== concurrency: why you'd want a Golem worker =====================
     // Sequentially the limiter is exact (above). But per-key state in a SHARED
     // store needs a compare-and-swap to serialize concurrent writers, and
     // wasi:keyvalue@0.2.0-draft has none — so records:store's revision check is

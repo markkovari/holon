@@ -188,8 +188,6 @@ impl ConflictEffect {
 
 /// The graph store.
 pub trait Graph: Send + Sync {
-    // ---- symbols -------------------------------------------------------------
-
     /// Create the symbol's index entry if absent (tip `none`, deleted, no
     /// position), and add `name` to its aliases either way.
     fn ensure_symbol(
@@ -225,8 +223,6 @@ pub trait Graph: Send + Sync {
         component: &str,
     ) -> impl Future<Output = Result<Vec<SymbolRecord>>> + Send;
 
-    // ---- patches -------------------------------------------------------------
-
     /// Insert a patch record; if one with this hash exists it is replaced only
     /// while it is still `Pending`. Replaces its `depends_on`/`implements` edges.
     fn put_patch(&self, ws: &str, patch: &PatchRecord) -> impl Future<Output = Result<()>> + Send;
@@ -251,8 +247,6 @@ pub trait Graph: Send + Sync {
         ws: &str,
         target: &SymbolId,
     ) -> impl Future<Output = Result<Vec<Hash>>> + Send;
-
-    // ---- conflicts -----------------------------------------------------------
 
     /// Write a conflict ahead of `op`'s pointer write, uncommitted
     /// (`opened_at: 0`, `open`). If it exists uncommitted and open, `op` joins

@@ -1,5 +1,5 @@
-//! The JSON `comp-park` speaks over HTTP — one definition, the same shape as
-//! `holon-vcs::wire` (ADR-0099's *The service*, applied here per ADR-0100).
+//! The JSON `comp-park` speaks over HTTP, same shape as `holon-vcs::wire`
+//! (ADR-0100).
 //!
 //! Every route is `POST /v1/<the WIT function's name>` with one JSON object as
 //! the body, and answers with the function's `ok` value (`200`) or an

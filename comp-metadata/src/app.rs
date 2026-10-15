@@ -135,10 +135,8 @@ pub fn discover_apps(root_dir: &Path) -> Vec<App> {
     let mut out = Vec::new();
     let mut roots_seen = BTreeSet::new();
 
-    // Collect all built or source component directory names under components/
     let component_names = crate::component::registered_components(root_dir);
 
-    // 1. Read registered applications from apps/*.toml
     let specs = registered_apps(root_dir);
     for spec in specs {
         if let Some(art) = spec.artifact.as_ref() {

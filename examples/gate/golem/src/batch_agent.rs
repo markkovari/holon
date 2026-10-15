@@ -1,16 +1,11 @@
-//! The `gate` request batcher as REAL Golem agents — exact coalescing AND true
-//! promise backpressure, the two things the shared-store `gate-domain` can't do.
+//! The `gate` request batcher as REAL Golem agents: exact coalescing and true
+//! promise backpressure, which the shared-store `gate-domain` can't do.
 //!
 //! `BatchAgent` (`mount = "/batch/{key}"`) is one durable aggregator worker per
-//! key. Submits are serialized by the worker, so the buffer never loses or
-//! double-counts an item and the flush is inherently atomic — no CAS, no
-//! re-bucketing under a race.
-//!
-//! Backpressure: `register` creates a **Golem promise** per item and returns it;
-//! the caller (an ephemeral `SubmitAgent`, below) awaits it and is *durably
-//! suspended* — consuming nothing — until the batch flushes and the aggregator
-//! completes every pending promise with its result. Real "block until my batch
-//! runs", not polling.
+//! key; submits are serialized by the worker, so the flush is atomic with no CAS.
+//! `register` creates a **Golem promise** per item; the caller (`SubmitAgent`)
+//! awaits it, durably suspended, until the batch flushes and the aggregator
+//! completes every pending promise.
 
 use golem_rust::{agent_definition, agent_implementation, complete_promise, endpoint, PromiseId};
 
@@ -34,7 +29,6 @@ pub trait BatchAgent {
     #[endpoint(post = "/flush")]
     fn flush(&mut self) -> String;
 
-    /// Current accounting: `{total, flushed_total, pending}`.
     #[endpoint(get = "/stats")]
     fn stats(&self) -> String;
 }
@@ -49,7 +43,6 @@ struct BatchImpl {
     flushed_total: u32,
 }
 
-/// The "downstream work" per item — an uppercase makes coalescing visible.
 fn process(item: &str) -> String {
     item.to_uppercase()
 }

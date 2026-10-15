@@ -89,7 +89,6 @@ fn on_set(flag: &str, n: u32) -> std::collections::HashSet<String> {
 fn set_evaluate_sticky_and_live_sse() {
     let _host = start_host();
 
-    // ===== rung 1: set + sticky cohorts =====================================
     let (status, _) = req("POST", "/api/flags/new-checkout", Some(json!({"tenant": "", "rule": 30})));
     assert_eq!(status, 200);
 
@@ -97,13 +96,11 @@ fn set_evaluate_sticky_and_live_sse() {
     let at30 = on_set("new-checkout", 100);
     assert!((15..=45).contains(&at30.len()), "≈30% expected, got {}", at30.len());
 
-    // (a) sticky: the same subject lands the same way across repeated evals.
     let sample = "subject-7";
     let (_, e1) = req("GET", &format!("/api/eval?flag=new-checkout&subject={sample}"), None);
     let (_, e2) = req("GET", &format!("/api/eval?flag=new-checkout&subject={sample}"), None);
     assert_eq!(e1["enabled"], e2["enabled"], "a subject must not flicker between evals");
 
-    // (b) monotone: raising to 60% keeps every already-on subject on.
     req("POST", "/api/flags/new-checkout", Some(json!({"tenant": "", "rule": 60})));
     let at60 = on_set("new-checkout", 100);
     assert!(at60.len() > at30.len(), "raising the % should add subjects: {} -> {}", at30.len(), at60.len());
@@ -113,7 +110,6 @@ fn set_evaluate_sticky_and_live_sse() {
     req("POST", "/api/flags/new-checkout", Some(json!({"tenant": "", "rule": "off"})));
     assert_eq!(on_set("new-checkout", 100).len(), 0, "kill-switch must darken every subject");
 
-    // ===== rung 2: LIVE SSE — the headline ==================================
     // A reader holds GET /api/stream open; a rule flip by a separate request
     // must reach it as a data: frame.
     let found = Arc::new(AtomicBool::new(false));

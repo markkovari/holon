@@ -116,7 +116,6 @@ fn start_host() -> HostGuard {
 fn concurrent_edits_merge_and_stream_live() {
     let _host = start_host();
 
-    // ===== title (LWW register) + body (RGA sequence) both live on one doc ====
     let (s, _) = op("readme", "title", "Design spec", 100, "alice");
     assert_eq!(s, 200);
     let (s, d) = body_insert("readme", "", "Hello world", 100, "bob", 0);
@@ -125,7 +124,6 @@ fn concurrent_edits_merge_and_stream_live() {
     assert_eq!(doc["fields"]["title"], "Design spec", "title survived: {doc}");
     assert_eq!(doc["fields"]["body"], "Hello world", "body survived: {doc}");
 
-    // ===== title: higher (ts, replica) wins, even arriving LATER ==============
     op("readme", "title", "Design proposal", 200, "bob"); // newer
     op("readme", "title", "Stale rename", 150, "carol"); // older ts, sent AFTER
     let (_, doc) = req("GET", "/api/docs/readme", None);
@@ -134,7 +132,6 @@ fn concurrent_edits_merge_and_stream_live() {
         "the newer edit must win regardless of arrival order: {doc}"
     );
 
-    // ===== the headline: concurrent typing in the SAME field INTERLEAVES ======
     // Build "AC", then two replicas insert AFTER 'A' concurrently (id-anchored,
     // so a concurrent insert can't shift where the other lands). Both survive,
     // deterministic order (higher ts sorts first): A Y X C.
@@ -145,18 +142,15 @@ fn concurrent_edits_merge_and_stream_live() {
     let (_, doc) = req("GET", "/api/docs/doc1", None);
     assert_eq!(doc["fields"]["body"], "AYXC", "concurrent inserts interleave: {doc}");
 
-    // id-anchored delete removes exactly that character
     let c = id_of_char("doc1", "C");
     body_delete("doc1", vec![c]);
     let (_, doc) = req("GET", "/api/docs/doc1", None);
     assert_eq!(doc["fields"]["body"], "AYX", "delete by id: {doc}");
 
-    // a brand-new doc is empty (no title, empty body)
     let (_, doc) = req("GET", "/api/docs/empty", None);
     assert_eq!(doc["fields"]["body"], "", "unedited body is empty: {doc}");
     assert!(doc["fields"].get("title").is_none(), "no title yet: {doc}");
 
-    // ===== history: per-revision unified diffs (composes diff:text) ===========
     let (s, h) = req("GET", "/api/docs/readme/history", None);
     assert_eq!(s, 200, "{h}");
     let hist = h["history"].as_array().unwrap();
@@ -173,7 +167,6 @@ fn concurrent_edits_merge_and_stream_live() {
         "the LWW-losing edit must not appear in history: {titles:?}"
     );
 
-    // ===== live SSE: a held-open connection sees a merged edit ===============
     let found = Arc::new(AtomicBool::new(false));
     let f = found.clone();
     let url = format!("{}/api/docs/live/events", base());

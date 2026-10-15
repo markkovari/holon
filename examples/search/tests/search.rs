@@ -73,7 +73,6 @@ fn titles(hits: &Value) -> Vec<String> {
 fn seed_rank_facet_and_cache() {
     let _host = start_host();
 
-    // seed the demo corpus.
     let (status, s) = req("POST", "/api/seed", None);
     assert_eq!(status, 200, "seed: {s}");
     assert!(s["seeded"].as_u64().unwrap() >= 10);
@@ -85,7 +84,6 @@ fn seed_rank_facet_and_cache() {
     assert!(!t.is_empty(), "saga should match something");
     assert!(t[0].to_lowercase().contains("saga"), "top hit for 'saga' should be the saga doc, got {t:?}");
 
-    // all-mode intersection shrinks the set vs any-mode.
     let (_, any) = req("GET", "/api/search?q=distributed+index&mode=any&limit=20", None);
     let (_, all) = req("GET", "/api/search?q=distributed+index&mode=all&limit=20", None);
     let any_n = any["total"].as_u64().unwrap();
@@ -105,7 +103,6 @@ fn seed_rank_facet_and_cache() {
     let (_, second) = req("GET", "/api/search?q=encryption&mode=any&limit=5", None);
     assert_eq!(second["cached"], true, "identical repeat query should be served from cache");
 
-    // stats reflect at least one hit + some misses, and the seeded doc count.
     let (_, st) = req("GET", "/api/stats", None);
     assert!(st["docs"].as_u64().unwrap() >= 10, "doc count: {st}");
     assert!(st["cache_hits"].as_u64().unwrap() >= 1, "at least one cache hit: {st}");

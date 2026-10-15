@@ -82,11 +82,9 @@ fn iban_validation_and_payee_book() {
     let _host = start_host();
     let tok = signup("pay@acme.io");
 
-    // ===== seeded payees ==================================================
     let (_, r) = req("GET", "/api/payees", Some(&tok), None);
     assert_eq!(r["items"].as_array().unwrap().len(), 3, "seeded payees");
 
-    // ===== /verify parses a valid IBAN and flags a bad one ================
     let (_, v) = req("POST", "/api/verify", Some(&tok), Some(json!({ "iban": "NL91 ABNA 0417 1643 00" })));
     assert_eq!(v["valid"], true);
     assert_eq!(v["country"], "NL");
@@ -96,18 +94,15 @@ fn iban_validation_and_payee_book() {
     assert_eq!(v["valid"], false);
     assert!(v["error"].as_str().unwrap().contains("checksum"), "{v}");
 
-    // ===== adding a payee stores a valid IBAN; rejects bad ones ===========
     let (s, p) = req("POST", "/api/payees", Some(&tok), Some(json!({ "name": "Dutch Vendor", "iban": "nl91 abna 0417 1643 00" })));
     assert_eq!(s, 201, "{p}");
     assert_eq!(p["iban"], "NL91ABNA0417164300", "stored normalized");
     assert_eq!(p["country"], "NL");
     let id = p["id"].as_str().unwrap().to_string();
 
-    // bad checksum
     let (s, e) = req("POST", "/api/payees", Some(&tok), Some(json!({ "name": "Typo", "iban": "DE89370400440532013001" })));
     assert_eq!(s, 422);
     assert!(e["error"].as_str().unwrap().contains("checksum"), "{e}");
-    // wrong length for the country
     let (s, e) = req("POST", "/api/payees", Some(&tok), Some(json!({ "name": "Short", "iban": "DE8937040044" })));
     assert_eq!(s, 422);
     assert!(e["error"].as_str().unwrap().contains("length"), "{e}");
@@ -115,7 +110,6 @@ fn iban_validation_and_payee_book() {
     let (s, _) = req("POST", "/api/payees", Some(&tok), Some(json!({ "name": "Nope", "iban": "12 3456 7890" })));
     assert_eq!(s, 422);
 
-    // ===== ownership ======================================================
     let other = signup("other@acme.io");
     assert_eq!(req("DELETE", &format!("/api/payees/{id}"), Some(&other), None).0, 403, "not your payee");
     assert_eq!(req("DELETE", &format!("/api/payees/{id}"), Some(&tok), None).0, 200, "owner deletes");
