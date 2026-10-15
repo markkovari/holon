@@ -562,7 +562,6 @@ fn list_pet_entries(owner: Option<&str>) -> Vec<(String, String)> {
     }
 }
 
-///
 fn paginate_pets(owner: Option<&str>, limit: u32, cursor: Option<&str>, viewer: &str) -> Outcome {
     let clamped = paginate::clamp_limit(if limit > 0 { limit } else { 10 }).unwrap_or(10) as usize;
     let mut all = list_pet_entries(owner);
@@ -1026,7 +1025,6 @@ async fn add_note(request: Request, appt_id: &str) -> Outcome {
     }
 }
 
-///
 fn list_notes(request: &Request, appt_id: &str) -> Outcome {
     let principal = match require(request, "appointments", "read") {
         Ok(p) => p,
@@ -1043,7 +1041,6 @@ fn list_notes(request: &Request, appt_id: &str) -> Outcome {
     Outcome::Json(200, format!("{{\"notes\":[{}]}}", notes_for(appt_id).join(",")))
 }
 
-///
 fn notes_for(appt_id: &str) -> Vec<String> {
     records::find_by("notes", "appointment", &js(appt_id))
         .unwrap_or_default()
@@ -1222,7 +1219,6 @@ fn admin_run_reminders(request: &Request, query: &str) -> Outcome {
     Outcome::Json(200, format!("{{\"now\":{},\"fired\":[{}]}}", now, fired.join(",")))
 }
 
-///
 fn admin_run_projection(request: &Request) -> Outcome {
     let _principal = match require(request, "audit", "read") {
         Ok(p) => p,

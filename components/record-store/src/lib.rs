@@ -767,7 +767,6 @@ mod tests {
         assert_ne!(ix_key("c", "f_g", "v"), ix_key("c", "f", "g_v"));
     }
 
-    ///
     #[test]
     fn distinct_segments_give_distinct_keys() {
         let segs = ["", "a", "a_", "_a", "a/b", "a=b", "a.b", "a b", "é", "a_5Fb", "A", "0"];

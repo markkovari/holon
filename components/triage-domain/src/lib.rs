@@ -1,6 +1,5 @@
 //! `triage-domain` — defect intake, lifecycle and digest, as one component.
 //!
-//!
 //! This file is the ROUTER and no part may write it: it dispatches to `intake`, `workflow` and
 //! `digest`, answers `/health` (so the harness can tell 'not up' from 'wrong'), and seeds a
 //! fixture. `src/intake.rs`, `src/workflow.rs` and `src/digest.rs` are the goal; `CONTRACT.md` is

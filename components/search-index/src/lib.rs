@@ -39,7 +39,6 @@ struct Component;
 
 const BUCKET: &str = "default";
 
-///
 fn safe_key(prefix: &str, raw: &str) -> String {
     let mut out = String::with_capacity(prefix.len() + raw.len() + 4);
     out.push_str(prefix);

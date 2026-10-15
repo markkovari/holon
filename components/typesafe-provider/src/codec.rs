@@ -3,7 +3,6 @@
 //! impl in `lib.rs` converts the WIT records to/from these plain types at the
 //! edges.
 //!
-//!
 //! ## Wire shape (from docs.typesafe.ai/api, docs.typesafe.ai/primitives/*)
 //!
 //! One endpoint, `POST /v1/systemone`, takes a `state` and a `questions` map (id -> Question) and
@@ -95,14 +94,12 @@ fn systemone_body(model: &str, state: &str, questions: Map<String, Value>) -> St
     json!({ "state": state, "model": model, "questions": questions }).to_string()
 }
 
-///
 pub fn choose_body(model: &str, state: &str, instructions: &str, options: &[String]) -> String {
     let mut questions = Map::new();
     questions.insert(QUESTION_ID.to_string(), choice_question(instructions, options));
     systemone_body(model, state, questions)
 }
 
-///
 pub fn score_body(model: &str, state: &str, instructions: &str, levels: &[String]) -> String {
     let mut questions = Map::new();
     questions.insert(QUESTION_ID.to_string(), score_question(instructions, levels));

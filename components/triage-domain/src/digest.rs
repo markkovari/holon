@@ -26,7 +26,6 @@ fn valid_day(d: &str) -> bool {
         && (1..=31).contains(&d[8..10].parse::<u8>().unwrap_or(0))
 }
 
-///
 /// ponytail: whole-collection walk. `reported_at` is not an index field in the
 /// contract, so `query` would scan anyway; index it and switch to `find-by` if a
 /// day ever costs more than a page or two.

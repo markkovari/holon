@@ -16,7 +16,6 @@
 //!
 //! Config (wasi:config/store):
 //!   ffmpeg-url    where `comp-ffmpeg` is listening, e.g. http://127.0.0.1:8010
-//!
 
 #[allow(warnings)]
 mod bindings;

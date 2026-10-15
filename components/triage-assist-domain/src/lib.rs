@@ -1,7 +1,6 @@
 //! `triage-assist-domain` — authenticated, rate-limited defect intake with an AI
 //! severity assist and an audit ledger, as one component.
 //!
-//!
 //! This file is the ROUTER and no part may write it: it dispatches to `intake`, `assist` and
 //! `ledger`, answers `/health`, mints a test token, and seeds a fixture. `src/intake.rs`,
 //! `src/assist.rs` and `src/ledger.rs` are the goal; `CONTRACT.md` is what they must agree on.

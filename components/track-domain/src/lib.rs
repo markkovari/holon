@@ -144,7 +144,6 @@ enum Outcome {
     NotFound,
 }
 
-///
 fn serve_static(route: &str) -> Outcome {
     let want = if route == "/" { "/index.html" } else { route };
     match statics::get(want).or_else(|| statics::get("/index.html")) {
@@ -175,7 +174,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-///
 fn ensure_seeded() {
     if records::count("meta").map(|n| n > 0).unwrap_or(false) {
         return;
@@ -291,7 +289,6 @@ fn is_admin(p: &Principal) -> bool {
     p.roles.iter().any(|r| r == "admin")
 }
 
-///
 fn may_write_project(p: &Principal, project: &str) -> bool {
     if is_admin(p) {
         return true;

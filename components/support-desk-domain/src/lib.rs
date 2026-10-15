@@ -1,6 +1,5 @@
 //! `support-desk-domain` — a model writes the reply, and the reply gets there.
 //!
-//!
 //! This file is the ROUTER and no part may write it: it dispatches to `tickets`, `reply` and
 //! `courier`, answers `/health`, mints a token, opens a session with its CSRF token, seeds
 //! tickets, and can put a reply straight into the outbox. `src/tickets.rs`, `src/reply.rs` and

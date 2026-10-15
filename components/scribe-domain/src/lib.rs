@@ -191,7 +191,6 @@ fn get_doc(doc: &str) -> Outcome {
     Outcome::Json(200, doc_json(doc, &load(doc)).to_string())
 }
 
-///
 async fn apply_op(request: Request, doc: &str) -> Outcome {
     let body = match parse_body(request).await {
         Ok(v) => v,
