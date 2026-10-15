@@ -30,7 +30,6 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-
 /// The real name of a store, as chosen by the host.
 ///
 /// The inner field is deliberately private. Nothing outside this module can build
@@ -112,7 +111,6 @@ pub fn instance_id(tenant: &str, app: &str, component: &str) -> InstanceId {
     format!("{tenant}/{app}/{component}")
 }
 
-
 pub fn dns_label(s: &str) -> String {
     let out: String = s
         .chars()
@@ -146,7 +144,6 @@ pub fn env_for(tenant: &str, app: &str) -> String {
     let head: String = full.chars().take(CAP - SUFFIX).collect();
     format!("{}-{tag}", head.trim_end_matches('-'))
 }
-
 
 /// What one app may dial.
 ///
@@ -277,7 +274,6 @@ fn expand_egress(egress: &[String]) -> Vec<String> {
     }
     out.into_iter().collect()
 }
-
 
 /// Everything one instance is allowed to see, built once from a start command and
 /// immutable thereafter.

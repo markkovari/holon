@@ -88,7 +88,6 @@ use bindings::wasi::keyvalue::atomics;
 use bindings::wasi::keyvalue::batch;
 use bindings::wasi::keyvalue::store;
 
-
 pub type Kv = Arc<dyn KvBackend>;
 /// The `cache:store` component's backing map (flat guest key -> bytes).
 ///
@@ -98,7 +97,6 @@ pub type Kv = Arc<dyn KvBackend>;
 /// choosing the same key. A process-global map here would let that collide;
 /// each `Instance` getting its own means there is nothing to collide with.
 pub type CacheBacking = Arc<Mutex<HashMap<String, Vec<u8>>>>;
-
 
 /// One running component: its scope, and the pre-instantiated world it serves.
 ///
@@ -229,7 +227,6 @@ pub struct HostBucket {
     id: BucketId,
 }
 
-
 struct Host {
     table: ResourceTable,
     wasi: WasiCtx,
@@ -291,7 +288,6 @@ impl wasmtime_wasi_http::p3::WasiHttpView for Host {
         }
     }
 }
-
 
 impl store::Host for Host {
     /// The one function ADR-0012 was about.
@@ -373,7 +369,6 @@ impl store::HostBucket for Host {
     }
 }
 
-
 impl atomics::Host for Host {
     fn increment(
         &mut self,
@@ -437,7 +432,6 @@ impl batch::Host for Host {
     }
 }
 
-
 impl cache_source::Host for Host {
     fn load(&mut self, key: String) -> wasmtime::Result<Result<Option<Vec<u8>>, String>> {
         Ok(Ok(crate::sync::held(&self.cache_backing).get(&key).cloned()))
@@ -453,7 +447,6 @@ impl cache_sink::Host for Host {
         Ok(Ok(()))
     }
 }
-
 
 impl config::Host for Host {
     fn get(&mut self, key: String) -> wasmtime::Result<Result<Option<String>, config::Error>> {
@@ -621,7 +614,6 @@ impl reader::Host for Host {
         }
     }
 }
-
 
 /// Outbound HTTP policy for one instance.
 ///
@@ -1193,7 +1185,6 @@ pub(crate) fn build_linker(engine: &Engine) -> Result<Linker<Host>> {
     cas::add_to_linker::<_, HasSelf<Host>>(&mut linker, |h| h)?;
     Ok(linker)
 }
-
 
 /// `--blob s3`'s settings, with the secrets read from their files (or the
 /// environment) and never from a flag.

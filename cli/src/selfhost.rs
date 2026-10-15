@@ -193,7 +193,6 @@ pub enum GoaldFormat {
     Launchd,
 }
 
-
 /// Where an app's files live on the box. One prefix, so removing an app is
 /// removing four paths rather than remembering four conventions.
 pub struct Layout {
@@ -590,7 +589,6 @@ pub fn render_daemon_unit(spec: &Spec, d: &Daemon, l: &Layout) -> String {
     s.push_str("\n[Install]\nWantedBy=multi-user.target\n");
     s
 }
-
 
 /// One `comp-goald` deployment: a process that continuously drains ONE
 /// project's goal queue (ADR-0082 + ADR-0096's "no cron was ever written").

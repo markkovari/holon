@@ -75,7 +75,6 @@ pub enum Cas {
     Conflict(u64),
 }
 
-
 /// A value and the revision it is at. Every write bumps it, including a plain
 /// `set` — see `get_revision` on the trait for why that matters.
 type Versioned = (u64, Vec<u8>);

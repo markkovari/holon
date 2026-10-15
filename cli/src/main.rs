@@ -19,7 +19,6 @@ use selfhost::{
     write_secret_file, GoaldFormat, GoaldSpec, Layout, Router, Spec,
 };
 
-
 #[derive(Parser)]
 #[command(
     name = "holon",

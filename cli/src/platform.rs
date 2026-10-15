@@ -302,7 +302,6 @@ pub fn app_rm(id: &str, confirm: &str) -> Result<()> {
     Ok(())
 }
 
-
 pub fn org_create(name: &str) -> Result<()> {
     let s = load()?;
     let v = call(
@@ -391,7 +390,6 @@ pub fn org_remove(org: &str, subject: &str) -> Result<()> {
     println!("removed {subject} from {org}");
     Ok(())
 }
-
 
 /// Store a secret, reading the VALUE from a file or stdin — never from argv, where it
 /// would land in shell history and `ps` output. The printed reference is what a
@@ -506,7 +504,6 @@ extern "C" {
     #[link_name = "isatty"]
     fn libc_isatty(fd: i32) -> i32;
 }
-
 
 pub fn project_add(name: &str, repo: &str, base: &str, org: Option<&str>) -> Result<()> {
     let s = load()?;
