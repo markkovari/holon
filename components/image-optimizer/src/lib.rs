@@ -1,15 +1,10 @@
 //! `image-optimizer` — shrink a picture by re-encoding it at lower cost
 //!
-//! The re-encoding happens in `comp-imageopt`, which is native (ADR-0095).
-//! This is the component side: it holds the contract and reaches the daemon
-//! over HTTP the same way `fs-watcher` reaches `comp-fswatch`.
+//! The re-encoding happens in `comp-imageopt`, which is native (ADR-0095). This is the component side: it holds
+//! the contract and reaches the daemon over HTTP, as `fs-watcher` reaches `comp-fswatch`.
 //!
 //! Config (wasi:config/store):
 //!   imageopt-url    where `comp-imageopt` is listening, e.g. http://127.0.0.1:8004
-//!
-//! It used to return `format!("UNIMPLEMENTED: ...")` — a string shaped like an
-//! answer, which no caller could tell from a real one. That is what the old
-//! `-> string` contract permitted; the current one cannot express it.
 
 #[allow(warnings)]
 mod bindings;
@@ -24,15 +19,13 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Thirty seconds. Re-encoding a large image is slower than a directory poll
-/// but should not hang a caller indefinitely.
+/// Thirty seconds. Re-encoding a large image is slower than a directory poll but must not hang a caller.
 const TIMEOUT_NS: u64 = 30_000_000_000;
 
 fn daemon_url() -> Result<String, ImageError> {
     match config::get("imageopt-url") {
         Ok(Some(u)) if !u.is_empty() => Ok(u),
-        // Unavailable rather than not-permitted: nobody refused anything, the
-        // deployment simply never said where the daemon is.
+        // Unavailable rather than not-permitted: nobody refused anything, the deployment never said where the daemon is.
         _ => Err(ImageError::Unavailable(
             "imageopt-url is not set — this component has nowhere to ask".into(),
         )),
@@ -54,9 +47,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), ImageError> {
     Ok((scheme, authority, path))
 }
 
-/// POST the request and return the body. Every failure is `unavailable`: the
-/// daemon's own refusals arrive as JSON with a 200, so anything at this level
-/// is the transport rather than an answer.
+/// POST the request and return the body. Every failure is `unavailable`: the daemon's own refusals arrive as JSON with a 200, so anything at this level is the transport.
 fn post(body: Vec<u8>) -> Result<Vec<u8>, ImageError> {
     let url = daemon_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
@@ -64,10 +55,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, ImageError> {
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // A shared secret, if the deployment set one — see
-    // `comp_reconciler::daemon_auth`'s own doc for why loopback
-    // binding alone is not a boundary. Absent means the daemon was
-    // started with no --token, so there is nothing to send.
+    // A shared secret, if the deployment set one (see `comp_reconciler::daemon_auth` for why loopback binding alone is not a boundary). Absent means the daemon runs with no --token.
     if let Ok(Some(token)) = config::get("imageopt-token") {
         if !token.is_empty() {
             let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
@@ -82,8 +70,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, ImageError> {
     let out = req.body().map_err(|_| net("body"))?;
     {
         let stream = out.write().map_err(|_| net("write"))?;
-        // Chunked: `blocking-write-and-flush` traps above 4096 bytes, and a
-        // path is small but not bounded.
+        // Chunked: `blocking-write-and-flush` traps above 4096 bytes and a path is not bounded.
         for chunk in body.chunks(4096) {
             stream
                 .blocking_write_and_flush(chunk)
@@ -113,9 +100,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, ImageError> {
         match stream.blocking_read(8192) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went
-            // wrong, and returning what arrived would be a truncated answer
-            // presented as a whole one.
+            // `Closed` is end-of-body; anything else is a read that went wrong, and returning what arrived would present a truncated answer as whole.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -123,10 +108,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, ImageError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser.
-///
-/// The daemon's replies have three shapes and no nesting, so a full serde
-/// dependency would be more code than the thing it reads.
+/// Pull one JSON string field out without a parser: the daemon's replies have three flat shapes, so serde would be more code than the thing it reads.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];
@@ -141,9 +123,7 @@ impl Guest for Component {
         let raw = post(body.into_bytes())?;
         let text = String::from_utf8_lossy(&raw).into_owned();
 
-        // The daemon reports its refusals in the body. Mapping them back to
-        // the variant matters: a caller that cannot tell "you may not touch
-        // that" from "the daemon is down" will retry the first one forever.
+        // The daemon reports refusals in the body; map them back to the variant, or a caller that cannot tell "you may not touch that" from "daemon down" retries forever.
         if let Some(err) = field(&text, "error") {
             let detail = field(&text, "detail").unwrap_or_default().to_string();
             return Err(match err {
@@ -159,8 +139,7 @@ impl Guest for Component {
     }
 }
 
-/// A JSON string literal. A path can contain a quote or a backslash, and this
-/// is building a request out of one.
+/// A JSON string literal: a path can contain a quote or a backslash, and this builds a request out of one.
 fn json_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -185,8 +164,7 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::*;
 
-    /// A path is caller-supplied and goes into a JSON request. A quote in it
-    /// would end the string early and the rest would be read as structure.
+    /// A path is caller-supplied and goes into a JSON request; an unescaped quote would end the string early.
     #[test]
     fn a_path_cannot_break_out_of_the_request_it_is_put_in() {
         assert_eq!(json_str(r#"/a/b"#), r#""/a/b""#);

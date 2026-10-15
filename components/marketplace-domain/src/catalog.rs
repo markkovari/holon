@@ -1,15 +1,11 @@
 //! Part 1 — `catalog.rs`: listings and order placement (CONTRACT.md).
 //!
-//! Two things this file deliberately never does itself, because the composed
-//! components own them:
+//! Two things this file never does itself, because composed components own them:
 //!
-//!   * the order lifecycle is `fsm:workflow/engine` — the stored `orders`
-//!     document carries no status field at all, and every read merges in
-//!     `get-status("order", <order id>)`;
-//!   * the category is *drafted* by `jev:decision/decision` and is advisory
-//!     only: a `decision-error` still creates the listing, with the
-//!     `other`/0 fallback. An advisory call must never block the write it
-//!     advises on.
+//!   * the order lifecycle is `fsm:workflow/engine`: the stored `orders` document carries no status field
+//!     and every read merges in `get-status("order", <order id>)`;
+//!   * the category is *drafted* by `jev:decision/decision` and is advisory only: a `decision-error` still
+//!     creates the listing with the `other`/0 fallback.
 
 use crate::bindings::fsm::workflow::engine as fsm;
 use crate::bindings::jev::decision::decision as jev;
@@ -18,22 +14,16 @@ use crate::bindings::records::store::store as records;
 use crate::{audit, introspect, is_admin, Reply, Route};
 use serde_json::{json, Value};
 
-// The two routes in this part whose authorization is a ROLE rather than an
-// ownership check. CONTRACT.md's route table marks `POST /api/listings`
-// `(vendor)` and `POST /api/orders` `(buyer)`, and spells out "or admin"
-// explicitly wherever an admin is allowed too — so a role that is not
-// listed is refused, an admin included: `PATCH .../category` and `delist`
-// are the routes that say "or admin", and they are not these. Idempotent
-// predicate setup, the same discipline `is_admin` is defined with.
+// The two routes whose authorization is a ROLE rather than an ownership check. CONTRACT.md marks
+// `POST /api/listings` `(vendor)` and `POST /api/orders` `(buyer)` and spells out "or admin" where an
+// admin is allowed, so an unlisted role (an admin included) is refused here.
 guestauth::guest_role_check!(is_vendor, "vendor");
 guestauth::guest_role_check!(is_buyer, "buyer");
 
-/// CONTRACT.md's fixed taxonomy — the only category a listing ever carries,
-/// and the exact option list handed to Jev on creation.
+/// CONTRACT.md's fixed taxonomy: the only category a listing carries, and the option list handed to Jev.
 const CATEGORIES: [&str; 6] = ["electronics", "clothing", "home", "books", "toys", "other"];
 
-/// Jev is asked a question here, never given an order: whatever comes back
-/// only annotates the record a vendor may afterwards overwrite.
+/// Jev is asked a question here, never given an order: the answer only annotates a record the vendor may overwrite.
 const LABEL_INSTRUCTIONS: &str =
     "Which single category best fits this item? Answer with exactly one of the options.";
 
@@ -42,10 +32,8 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     match (method, seg.as_slice()) {
         (Method::Post, ["api", "listings"]) => create_listing(route, body),
         (Method::Patch, ["api", "listings", id, "category"]) => override_category(route, id, body),
-        // NOTE: CONTRACT.md's `GET /api/listings?category=` cannot be read
-        // here — `Route` carries only `segments` and `bearer`, and the
-        // router in `lib.rs` strips the query string before dispatching.
-        // Everything else about the route is honoured.
+        // NOTE: CONTRACT.md's `GET /api/listings?category=` cannot be read here: `Route` carries only `segments`
+        // and `bearer`, and the router strips the query string.
         (Method::Get, ["api", "listings"]) => list_listings(route),
         (Method::Get, ["api", "listings", id]) => get_listing(route, id),
         (Method::Post, ["api", "listings", id, "delist"]) => delist_listing(route, id),
@@ -56,16 +44,9 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The five machines
-// ---------------------------------------------------------------------------
-
-/// CONTRACT.md's machine table, typed into Rust exactly as `lib.rs`'s seed
-/// already types it. `define` on an already-defined name replaces it with
-/// the same definition, which CONTRACT.md itself calls harmless — so every
-/// request that needs a machine re-asserts it, rather than keeping a
-/// "defined yet?" flag that would be wrong whenever a DIFFERENT part's code
-/// path runs first.
+/// CONTRACT.md's machine table, typed into Rust as `lib.rs`'s seed does. `define` on an already-defined
+/// name replaces it with the same definition, so every request that needs a machine re-asserts it rather
+/// than keeping a "defined yet?" flag that would be wrong when a DIFFERENT part runs first.
 fn ensure_machines() {
     let def =
         |states: &[&str], initial: &str, transitions: &[(&str, &str, &str)], terminal: &[&str]| {
@@ -131,22 +112,13 @@ fn ensure_machines() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Jev — the advisory auto-label
-// ---------------------------------------------------------------------------
-
-/// `choice-result.confidence` is a `u32` milli-probability (decision.wit),
-/// and that is what every provider emits — jev-decision's baseline answers
-/// 800 or 100. It is already in `category_confidence`'s units, so it is taken
-/// as-is: a `1` is 1/1000, not certainty. Clamped to 1000, the ceiling both
-/// the WIT and CONTRACT.md put on it, so a misbehaving provider cannot store
-/// more than certain.
+/// `choice-result.confidence` is a `u32` milli-probability (decision.wit), already in `category_confidence`'s
+/// units, so taken as-is (`1` is 1/1000, not certainty). Clamped to 1000 so a misbehaving provider cannot store more than certain.
 fn confidence_milli(raw: u32) -> u32 {
     raw.min(1000)
 }
 
-/// Asks Jev which of the six categories fits, and never fails: on any
-/// `decision-error` the caller still gets a usable `(category, confidence)`.
+/// Asks Jev which of the six categories fits, and never fails: on any `decision-error` the caller gets a usable `(category, confidence)`.
 fn label_category(title: &str, description: &str) -> (String, u32) {
     let request = jev::ChoiceRequest {
         state: format!("{title} {description}"),
@@ -158,8 +130,7 @@ fn label_category(title: &str, description: &str) -> (String, u32) {
             let category = if CATEGORIES.contains(&chosen.selected.as_str()) {
                 chosen.selected
             } else {
-                // A model may advise, never decide: an answer outside the
-                // taxonomy is not a category.
+                // A model may advise, never decide: an answer outside the taxonomy is not a category.
                 "other".to_string()
             };
             (category, confidence_milli(chosen.confidence))
@@ -168,11 +139,6 @@ fn label_category(title: &str, description: &str) -> (String, u32) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Wire shapes
-// ---------------------------------------------------------------------------
-
-/// A stored document plus its own id.
 fn document_json(id: &str, data: &str) -> Value {
     let mut document: Value = serde_json::from_str(data).unwrap_or(json!({}));
     if let Value::Object(ref mut fields) = document {
@@ -181,8 +147,7 @@ fn document_json(id: &str, data: &str) -> Value {
     document
 }
 
-/// An `orders` document as CONTRACT.md wants it on the wire: the stored
-/// fields, the id, and `status` merged in from the `order` machine.
+/// An `orders` document as CONTRACT.md wants it on the wire: stored fields, the id, and `status` merged in from the `order` machine.
 fn order_json(id: &str, data: &str) -> Value {
     let mut document = document_json(id, data);
     if let Value::Object(ref mut fields) = document {
@@ -197,12 +162,7 @@ fn parse_json(body: &str) -> Option<Value> {
     serde_json::from_str(body).ok()
 }
 
-// ---------------------------------------------------------------------------
-// Listings
-// ---------------------------------------------------------------------------
-
-/// `POST /api/listings` — vendor creates a listing. `400` if `title` is
-/// empty, `price` is not a positive integer, or `stock` is negative.
+/// `POST /api/listings` — vendor creates a listing. `400` if `title` is empty, `price` is not a positive integer, or `stock` is negative.
 fn create_listing(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     if !is_vendor(&principal) {
@@ -305,8 +265,7 @@ fn list_listings(route: &Route) -> Reply {
         Ok(entries) => entries,
         Err(_) => return Reply::err(500, "store_error"),
     };
-    // "Newest first" is a property of the store's own creation stamp, not of
-    // whatever order `list_records` happened to hand the pages back in.
+    // "Newest first" is the store's own creation stamp, not the order `list_records` returned pages in.
     entries.sort_by_key(|a| std::cmp::Reverse(a.created));
 
     let mut listings = Vec::new();
@@ -361,15 +320,8 @@ fn delist_listing(route: &Route, id: &str) -> Reply {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Orders
-// ---------------------------------------------------------------------------
-
-/// `POST /api/orders` — a multi-item order with an atomic stock check.
-///
-/// Phase 1 resolves and checks EVERY line and writes nothing; phase 2 only
-/// runs once every line has passed, so an oversell on item 2 of 3 leaves
-/// item 1's stock untouched.
+/// `POST /api/orders` — a multi-item order with an atomic stock check. Phase 1 checks EVERY line and
+/// writes nothing; phase 2 runs only once all pass, so an oversell on item 2 of 3 leaves item 1's stock untouched.
 fn place_order(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     if !is_buyer(&principal) {
@@ -481,8 +433,7 @@ fn place_order(route: &Route, body: &str) -> Reply {
         Ok(entry) => entry,
         Err(_) => return Reply::err(500, "store_error"),
     };
-    // The machine's own initial state IS `placed`; the new instance is the
-    // order's lifecycle from here on, never a field on the document.
+    // The machine's own initial state IS `placed`; the instance is the lifecycle from here on, never a document field.
     if fsm::create_instance("order", &entry.id).is_err() {
         return Reply::err(500, "fsm_error");
     }
@@ -565,11 +516,9 @@ mod tests {
 
     #[test]
     fn confidence_is_already_milli_units() {
-        // jev-decision's baseline: 800 on a substring match, 100 on none.
         assert_eq!(confidence_milli(800), 800);
         assert_eq!(confidence_milli(100), 100);
         assert_eq!(confidence_milli(0), 0);
-        // A 1 is one thousandth, not certainty.
         assert_eq!(confidence_milli(1), 1);
         assert_eq!(confidence_milli(1000), 1000);
     }

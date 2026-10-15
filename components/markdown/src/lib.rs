@@ -1,31 +1,20 @@
 //! `markdown` — render user-supplied Markdown to HTML safely, escaping raw HTML instead of trusting it
 //!
-//! Safe Markdown -> HTML for a practical CommonMark *subset*. Pure compute:
-//! Markdown in, sanitized HTML out. No state, no host imports.
+//! Safe Markdown -> HTML for a practical CommonMark *subset*. Pure compute, no state, no host imports.
 //!
 //! # Safety guarantee (the reason this component exists)
 //!
-//! Rendering user-supplied Markdown to HTML is a classic XSS vector. This
-//! renderer is built so that **no input can inject executable HTML**:
+//! Rendering user Markdown is a classic XSS vector; **no input can inject executable HTML**:
 //!
-//! * **Raw HTML is escaped, never passed through.** Every block's text content
-//!   is HTML-escaped *first* (`&`,`<`,`>`,`"`,`'` -> entities), and only *then*
-//!   is inline Markdown formatting applied to that already-escaped text. So a
-//!   source `<script>alert(1)</script>` renders as the literal, inert text
-//!   `&lt;script&gt;alert(1)&lt;/script&gt;`. There is no code path that copies
-//!   source bytes into the output without escaping them.
-//!
-//! * **Link/URL schemes are sanitized.** `[text](url)` only emits an `href`
-//!   when `url` is `http://`, `https://`, `mailto:`, or a relative reference
-//!   (`/...` or `#...`). Anything else — `javascript:`, `data:`, `vbscript:`,
-//!   etc. — is dropped: the link text is still rendered (escaped) but with no
-//!   `href`, so there is nothing to click and nothing to execute. With
-//!   `safe-links`, surviving links additionally get
+//! * **Raw HTML is escaped, never passed through.** Every block's text is HTML-escaped *first*, and only
+//!   then is inline formatting applied to the already-escaped text, so `<script>` renders as inert text.
+//!   No code path copies source bytes into the output unescaped.
+//! * **Link/URL schemes are sanitized.** `[text](url)` emits an `href` only for `http://`, `https://`,
+//!   `mailto:` or a relative reference (`/...`, `#...`); `javascript:`, `data:`, `vbscript:` etc. are
+//!   dropped (the text still renders, escaped). With `safe-links`, surviving links also get
 //!   `rel="nofollow noopener" target="_blank"`.
 //!
-//! The parser itself is deliberately pragmatic — it is a subset, not a
-//! spec-perfect CommonMark implementation. Correctness of *formatting* is
-//! best-effort; correctness of *escaping and scheme sanitization* is not.
+//! The parser is a pragmatic subset: formatting is best-effort, escaping and scheme sanitization are not.
 
 #[allow(warnings)]
 mod bindings;
@@ -33,8 +22,6 @@ mod bindings;
 use bindings::exports::md::render::renderer::{Guest, Options};
 
 struct Component;
-
-// ---- HTML escaping ------------------------------------------------------
 
 /// Escape text so it can never be interpreted as HTML markup.
 fn escape(s: &str) -> String {
@@ -52,20 +39,13 @@ fn escape(s: &str) -> String {
     out
 }
 
-// ---- URL sanitization ---------------------------------------------------
-
-/// Return `Some(url)` if the scheme is allowed, else `None`.
-///
-/// Allowed: `http://`, `https://`, `mailto:`, and relative references that
-/// start with `/` or `#`. Everything else (notably `javascript:`, `data:`,
-/// `vbscript:`) is rejected so it can never become an `href`.
+/// Return `Some(url)` if the scheme is allowed (`http://`, `https://`, `mailto:`, or a relative reference
+/// starting with `/` or `#`), else `None`, so `javascript:`, `data:` and `vbscript:` never become an `href`.
 fn sanitize_url(url: &str) -> Option<String> {
     let trimmed = url.trim();
-    // Strip control/whitespace chars that could obscure a scheme
-    // (e.g. `java\tscript:`); if any are present, treat conservatively.
+    // Strip control/whitespace chars that could obscure a scheme (e.g. `java\tscript:`); if any are present, treat conservatively.
     let cleaned: String = trimmed.chars().filter(|c| !c.is_control() && *c != '\u{0}').collect();
     if cleaned != trimmed {
-        // Hidden control characters -> reject outright.
         return None;
     }
     let lower = cleaned.to_ascii_lowercase();
@@ -81,15 +61,9 @@ fn sanitize_url(url: &str) -> Option<String> {
     }
 }
 
-// ---- inline formatting --------------------------------------------------
-//
-// All inline functions operate on text that is ALREADY HTML-escaped. They
-// only ever insert known-safe tags and entity-encoded content.
-
 /// Apply inline Markdown to already-escaped text.
 fn inline(escaped: &str, opts: &Options) -> String {
-    // Order matters: code spans first (their content is opaque), then links,
-    // then bold, then italic.
+    // Order matters: code spans first (their content is opaque), then links, then bold, then italic.
     let with_code = inline_code(escaped);
     let with_links = inline_links(&with_code, opts);
     let with_strong = inline_emphasis(&with_links, "**", "strong");
@@ -98,8 +72,7 @@ fn inline(escaped: &str, opts: &Options) -> String {
     inline_emphasis(&with_em, "_", "em")
 }
 
-/// `code` -> <code>code</code>. The inner text is already escaped; no further
-/// inline formatting is applied inside a code span.
+/// `code` -> <code>code</code>. The inner text is already escaped; no further inline formatting inside.
 fn inline_code(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let bytes = s.as_bytes();
@@ -121,17 +94,14 @@ fn inline_code(s: &str) -> String {
     out
 }
 
-/// `[text](url)` -> sanitized anchor. `text` keeps its inline formatting
-/// (already escaped + code applied); the url is scheme-checked.
+/// `[text](url)` -> sanitized anchor. `text` keeps its inline formatting; the url is scheme-checked.
 fn inline_links(s: &str, opts: &Options) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
     while let Some(open) = rest.find('[') {
-        // Don't descend into <code>…</code> regions for link syntax: emit any
-        // text before the bracket verbatim.
+        // Don't descend into <code>…</code> regions for link syntax.
         out.push_str(&rest[..open]);
         let after = &rest[open + 1..];
-        // find matching `]`
         let close = match after.find(']') {
             Some(c) => c,
             None => {
@@ -158,14 +128,12 @@ fn inline_links(s: &str, opts: &Options) -> String {
                         out.push_str(text);
                         out.push_str("</a>");
                     }
-                    // Unsafe / unknown scheme -> drop href, keep text.
                     None => out.push_str(text),
                 }
                 rest = remainder;
                 continue;
             }
         }
-        // Not a real link: emit `[text]` literally and continue after it.
         out.push('[');
         out.push_str(text);
         out.push(']');
@@ -196,7 +164,6 @@ fn inline_emphasis(s: &str, marker: &str, tag: &str) -> String {
                         rest = &after[close + marker.len()..];
                     }
                     _ => {
-                        // No closing marker (or empty span) -> emit verbatim.
                         out.push_str(&rest[..open + marker.len()]);
                         rest = after;
                     }
@@ -210,8 +177,6 @@ fn inline_emphasis(s: &str, marker: &str, tag: &str) -> String {
     }
     out
 }
-
-// ---- block-level parsing ------------------------------------------------
 
 fn is_hr(line: &str) -> bool {
     let t = line.trim();
@@ -239,7 +204,6 @@ fn heading_level(line: &str) -> Option<(usize, &str)> {
     None
 }
 
-/// ordered-list marker: "1. " etc. Returns the item content.
 fn ordered_item(line: &str) -> Option<&str> {
     let mut digits = 0;
     for c in line.chars() {
@@ -280,13 +244,11 @@ fn render_html(markdown: &str, opts: &Options) -> String {
     while i < lines.len() {
         let line = lines[i];
 
-        // blank line -> block separator
         if line.trim().is_empty() {
             i += 1;
             continue;
         }
 
-        // fenced code block
         if let Some(info) = line.trim_start().strip_prefix("```") {
             let info = info.trim();
             let mut body: Vec<&str> = Vec::new();
@@ -300,7 +262,6 @@ fn render_html(markdown: &str, opts: &Options) -> String {
             }
             out.push_str("<pre><code");
             if !info.is_empty() {
-                // info string may contain more than a language; take first word.
                 let lang = info.split_whitespace().next().unwrap_or("");
                 out.push_str(" class=\"language-");
                 out.push_str(&escape(lang));
@@ -315,14 +276,12 @@ fn render_html(markdown: &str, opts: &Options) -> String {
             continue;
         }
 
-        // horizontal rule
         if is_hr(line) {
             out.push_str("<hr>\n");
             i += 1;
             continue;
         }
 
-        // ATX heading
         if let Some((level, content)) = heading_level(line) {
             let inner = inline(&escape(content.trim()), opts);
             out.push_str(&format!("<h{level}>{inner}</h{level}>\n"));
@@ -330,7 +289,6 @@ fn render_html(markdown: &str, opts: &Options) -> String {
             continue;
         }
 
-        // blockquote (consecutive "> " lines)
         if line.starts_with('>') {
             let mut quoted: Vec<String> = Vec::new();
             while i < lines.len() && lines[i].starts_with('>') {
@@ -348,7 +306,6 @@ fn render_html(markdown: &str, opts: &Options) -> String {
             continue;
         }
 
-        // unordered list
         if unordered_item(line).is_some() {
             out.push_str("<ul>\n");
             while i < lines.len() {
@@ -365,7 +322,6 @@ fn render_html(markdown: &str, opts: &Options) -> String {
             continue;
         }
 
-        // ordered list
         if ordered_item(line).is_some() {
             out.push_str("<ol>\n");
             while i < lines.len() {
@@ -382,7 +338,6 @@ fn render_html(markdown: &str, opts: &Options) -> String {
             continue;
         }
 
-        // paragraph: gather consecutive non-blank lines that aren't another block
         let mut para: Vec<String> = Vec::new();
         while i < lines.len() {
             let l = lines[i];
@@ -409,8 +364,6 @@ fn render_html(markdown: &str, opts: &Options) -> String {
     out
 }
 
-// ---- plain-text extraction ----------------------------------------------
-
 /// Strip inline Markdown markers from a single line, returning plain text.
 /// Links become their visible text; code spans become their content.
 fn strip_inline(s: &str) -> String {
@@ -418,10 +371,8 @@ fn strip_inline(s: &str) -> String {
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            // emphasis / code markers -> drop
             '*' | '_' | '`' => {}
             '[' => {
-                // [text](url) -> text ; collect until ']'
                 let mut text = String::new();
                 for tc in chars.by_ref() {
                     if tc == ']' {
@@ -430,7 +381,6 @@ fn strip_inline(s: &str) -> String {
                     text.push(tc);
                 }
                 out.push_str(&strip_inline(&text));
-                // skip a following (url) group if present
                 if matches!(chars.peek(), Some('(')) {
                     chars.next();
                     for uc in chars.by_ref() {
@@ -456,7 +406,6 @@ fn render_text(markdown: &str) -> String {
             i += 1;
             continue;
         }
-        // fenced code: keep content lines verbatim, drop fences.
         if line.trim_start().starts_with("```") {
             i += 1;
             while i < lines.len() && !lines[i].trim_start().starts_with("```") {
@@ -499,8 +448,6 @@ fn render_text(markdown: &str) -> String {
     out.join("\n")
 }
 
-// ---- Guest impl ---------------------------------------------------------
-
 impl Guest for Component {
     fn to_html(markdown: String) -> String {
         let opts = Options { hard_breaks: false, safe_links: true };
@@ -522,11 +469,8 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::*;
 
-    /// Everything that can start a tag or break an attribute must not survive.
-    ///
-    /// Both quote forms matter: this output goes into `href="..."` and a bare
-    /// `'` is enough to escape a single-quoted attribute on the day someone
-    /// changes the emitter to use them.
+    /// Everything that can start a tag or break an attribute must not survive. Both quote forms matter: a
+    /// bare `'` escapes a single-quoted attribute the day the emitter uses them.
     #[test]
     fn escape_covers_every_character_that_can_start_markup() {
         assert_eq!(escape("<script>"), "&lt;script&gt;");
@@ -538,8 +482,7 @@ mod tests {
         assert_eq!(escape("plain text 123"), "plain text 123");
     }
 
-    /// The allow-list is the point: anything not named is rejected, so a scheme
-    /// nobody thought of cannot become an `href`.
+    /// The allow-list is the point: anything not named is rejected, so an unforeseen scheme cannot become an `href`.
     #[test]
     fn only_allow_listed_schemes_can_become_an_href() {
         assert!(sanitize_url("https://example.com").is_some());
@@ -556,12 +499,8 @@ mod tests {
         assert!(sanitize_url("ftp://example.com").is_none());
     }
 
-    /// The evasions this function exists for.
-    ///
-    /// Case folding and hidden control characters are how `javascript:` gets
-    /// past a naive prefix check: `JaVaScRiPt:` reads differently to a string
-    /// compare, and `java\tscript:` and `java\nscript:` are both parsed as the
-    /// scheme by browsers while failing a literal match.
+    /// The evasions this function exists for: case folding (`JaVaScRiPt:`) and hidden control characters
+    /// (`java\tscript:` is parsed as the scheme by browsers while failing a literal match).
     #[test]
     fn scheme_checks_survive_case_and_control_character_evasion() {
         assert!(sanitize_url("JaVaScRiPt:alert(1)").is_none());
@@ -569,15 +508,13 @@ mod tests {
         assert!(sanitize_url("java\tscript:alert(1)").is_none());
         assert!(sanitize_url("java\nscript:alert(1)").is_none());
         assert!(sanitize_url("java\u{0}script:alert(1)").is_none());
-        // A control character ANYWHERE is a rejection, not a strip-and-continue:
-        // stripping would hand back a URL the caller never wrote.
+        // A control character ANYWHERE is a rejection, not a strip: stripping would hand back a URL the caller never wrote.
         assert!(sanitize_url("https://exa\tmple.com").is_none());
         // Case folding must not break the legitimate side.
         assert!(sanitize_url("HTTPS://EXAMPLE.COM").is_some());
     }
 
-    /// Leading and trailing whitespace is trimmed, and trimming happens BEFORE
-    /// the scheme check — otherwise a leading space defeats it.
+    /// Leading and trailing whitespace is trimmed BEFORE the scheme check, or a leading space defeats it.
     #[test]
     fn surrounding_whitespace_does_not_defeat_the_scheme_check() {
         assert_eq!(sanitize_url("  https://example.com  ").as_deref(), Some("https://example.com"));

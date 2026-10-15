@@ -1,18 +1,12 @@
 //! `jsonpatch` — apply a partial change to a JSON document — RFC 6902 JSON Patch and RFC 7386 merge patch
 //!
-//! Pure-compute JSON document patching over three IETF standards:
-//!   - RFC 6902 (JSON Patch): an ordered list of ops — add/remove/replace/
-//!     move/copy/test — applied to a document. Application is atomic: every op
-//!     runs against a working clone, and the result is returned only if all ops
-//!     succeed, so the caller's original document is never partially mutated.
-//!   - RFC 7386 (JSON Merge Patch): a sparse object overlay where a `null`
-//!     value deletes a key and any other value is merged/replaced recursively.
-//!   - RFC 6901 (JSON Pointer): the `/foo/0/~1bar` path syntax used to address
-//!     locations within a document for RFC 6902 ops, including the `~1` -> `/`
-//!     and `~0` -> `~` escapes and the array-append `-` token.
+//! Pure-compute JSON patching over three IETF standards:
+//!   - RFC 6902 (JSON Patch): an ordered list of add/remove/replace/move/copy/test ops. Atomic: every op runs
+//!     against a working clone and the result is returned only if all succeed, so the original is never partially mutated.
+//!   - RFC 7386 (JSON Merge Patch): a sparse overlay where `null` deletes a key and any other value merges/replaces recursively.
+//!   - RFC 6901 (JSON Pointer): the `/foo/0/~1bar` path syntax, with the `~1` -> `/` and `~0` -> `~` escapes and the array-append `-` token.
 //!
-//! `diff` produces an RFC 7386 merge-patch that transforms one document into
-//! another. No state, no host imports.
+//! `diff` produces an RFC 7386 merge-patch between two documents. No state, no host imports.
 
 #[allow(warnings)]
 mod bindings;
@@ -21,8 +15,6 @@ use bindings::exports::json::patch::patcher::{Guest, PatchError};
 use serde_json::Value;
 
 struct Component;
-
-// ---- JSON Pointer (RFC 6901) -------------------------------------------
 
 /// Decode a single reference token: `~1` -> `/`, `~0` -> `~`.
 fn unescape_token(tok: &str) -> String {
@@ -40,7 +32,6 @@ fn parse_pointer(path: &str) -> Result<Vec<String>, PatchError> {
             "invalid JSON Pointer (must be empty or start with '/'): {path}"
         )));
     }
-    // skip the leading '/' then split; "/" -> one empty token, etc.
     Ok(path[1..].split('/').map(unescape_token).collect())
 }
 
@@ -110,8 +101,6 @@ fn resolve_parent_mut<'a>(
     Ok((cur, last))
 }
 
-// ---- RFC 6902 ops -------------------------------------------------------
-
 /// Insert/replace `value` at `tokens`. For an array, an in-range index inserts
 /// (shifting), "-" appends; for an object, the key is set. Root ("") replaces
 /// the whole document.
@@ -169,7 +158,6 @@ fn op_remove(root: &mut Value, tokens: &[String]) -> Result<Value, PatchError> {
 
 /// Replace an existing value at `tokens`; the location must already exist.
 fn op_replace(root: &mut Value, tokens: &[String], value: Value) -> Result<(), PatchError> {
-    // location must exist
     resolve(root, tokens)?;
     op_remove(root, tokens)?;
     op_add(root, tokens, value)
@@ -234,8 +222,6 @@ fn apply_op(root: &mut Value, op: &Value) -> Result<(), PatchError> {
     }
 }
 
-// ---- RFC 7386 merge -----------------------------------------------------
-
 /// Merge `patch` into `target` per RFC 7386 §2.
 fn merge(target: &mut Value, patch: &Value) {
     match patch {
@@ -259,14 +245,11 @@ fn merge(target: &mut Value, patch: &Value) {
     }
 }
 
-// ---- diff (produces an RFC 7386 merge-patch) ----------------------------
-
 /// Produce a merge-patch that turns `from` into `to`.
 fn diff_value(from: &Value, to: &Value) -> Value {
     match (from, to) {
         (Value::Object(from_map), Value::Object(to_map)) => {
             let mut out = serde_json::Map::new();
-            // keys present in `to`: add/update where missing or changed.
             for (k, to_v) in to_map {
                 match from_map.get(k) {
                     Some(from_v) if from_v == to_v => {} // unchanged, omit
@@ -278,7 +261,6 @@ fn diff_value(from: &Value, to: &Value) -> Value {
                     }
                 }
             }
-            // keys removed in `to`: delete via null.
             for k in from_map.keys() {
                 if !to_map.contains_key(k) {
                     out.insert(k.clone(), Value::Null);
@@ -286,12 +268,9 @@ fn diff_value(from: &Value, to: &Value) -> Value {
             }
             Value::Object(out)
         }
-        // not both objects (type change or scalar): the patch is `to` itself.
         _ => to.clone(),
     }
 }
-
-// ---- helpers ------------------------------------------------------------
 
 fn parse_json(s: &str, what: &str) -> Result<Value, PatchError> {
     serde_json::from_str(s).map_err(|e| PatchError::InvalidJson(format!("{what}: {e}")))
@@ -308,9 +287,7 @@ impl Guest for Component {
         let ops = patch_val
             .as_array()
             .ok_or_else(|| PatchError::InvalidPatch("patch must be a JSON array of ops".into()))?;
-        // Atomic: every op runs on the working clone; we only serialize and
-        // return it after all ops succeed, so on failure the caller's original
-        // document is untouched.
+        // Atomic: every op runs on the working clone; it is serialized and returned only after all succeed.
         for op in ops {
             apply_op(&mut working, op)?;
         }
@@ -337,13 +314,8 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::*;
 
-    /// RFC 6901 §4: `~1` is unescaped BEFORE `~0`, and the order is the whole
-    /// rule.
-    ///
-    /// Reversed, `~01` decodes to `/` instead of the literal `~1`: the `~0`
-    /// pass turns it into `~1`, and the `~1` pass then eats what it just
-    /// produced. That points an edit at a different member of the document,
-    /// which for a patch is a silently wrong write rather than an error.
+    /// RFC 6901 §4: `~1` is unescaped BEFORE `~0`, and the order is the whole rule. Reversed, `~01` decodes to `/`
+    /// instead of the literal `~1`, silently pointing an edit at a different member.
     #[test]
     fn pointer_tokens_unescape_in_the_order_the_rfc_specifies() {
         assert_eq!(unescape_token("~1"), "/");
@@ -354,9 +326,7 @@ mod tests {
         assert_eq!(unescape_token("plain"), "plain");
     }
 
-    /// The empty pointer is the whole document, and `/` is a one-element path
-    /// to the member named by the empty string — which is a legal JSON key and
-    /// the case people delete by accident.
+    /// The empty pointer is the whole document; `/` is a one-element path to the member named by the empty string (a legal key people delete by accident).
     #[test]
     fn the_empty_pointer_and_the_empty_key_are_different_things() {
         assert_eq!(parse_pointer("").unwrap(), Vec::<String>::new(), "the whole document");
@@ -365,8 +335,7 @@ mod tests {
         assert_eq!(parse_pointer("/a//b").unwrap(), vec!["a", "", "b"]);
     }
 
-    /// A pointer that does not start with `/` is rejected rather than guessed
-    /// at. Treating `a/b` as `/a/b` would let a typo address a real member.
+    /// A pointer not starting with `/` is rejected rather than guessed at: treating `a/b` as `/a/b` would let a typo address a real member.
     #[test]
     fn a_pointer_must_be_empty_or_absolute() {
         assert!(parse_pointer("a/b").is_err());

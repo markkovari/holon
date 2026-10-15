@@ -1,20 +1,12 @@
 //! `notify-inbox` — the in-app channel: durable, per subject, with unread state.
 //!
-//! ## Two counters, because `kv:atomics` can only add
+//! Two counters, because `kv:atomics` can only add: `increment(bucket, key, delta: u64)` has no negative delta, so
+//! an unread count cannot be decremented. Instead two monotonic counters, `d:` delivered and `r:` read, and the badge
+//! is `delivered - read`: both atomic, no read-modify-write racing a delivery.
 //!
-//! `increment(bucket, key, delta: u64)` has no negative delta, so an unread count
-//! kept as one number cannot be decremented when something is read. Instead there
-//! are two monotonic counters, `d:` delivered and `r:` read, and the badge is
-//! `delivered - read`. Both only ever go up, both are atomic, and no read-modify-write
-//! races with a concurrent delivery.
-//!
-//! ## The cursor is the delivered counter
-//!
-//! A note's `seq` is its ordinal within one subject's inbox, which makes `since(after:
-//! n)` both "the next page" and "everything since I last looked" — the same number
-//! serves paging and a live SSE tail. There is no scan and no `list-keys`: the
-//! highest seq is the delivered counter, so listing is a bounded walk of keys that
-//! are known to exist.
+//! The cursor is the delivered counter: a note's `seq` is its ordinal within one subject's inbox, so `since(after: n)`
+//! is both "the next page" and "everything since I last looked" (and a live SSE tail). No scan or `list-keys`: the
+//! highest seq is the delivered counter, so listing is a bounded walk of keys known to exist.
 
 #[allow(warnings)]
 mod bindings;
@@ -25,16 +17,9 @@ use bindings::wasi::keyvalue::atomics;
 use bindings::wasi::keyvalue::store as kv;
 use serde_json::json;
 
-/// The bucket the platform assigned. Not a name of this component's choosing:
-/// `comp-host` only opens buckets the scope granted, and a miss is `no-such-store`
-/// rather than a fallback — "a guest naming its neighbour's bucket gets A bucket
-/// rather than an error, which is the same class of bug wearing an apology". So
-/// every kv component here opens `default` and separates itself by key prefix,
-/// which is what `n:`/`d:`/`r:` below are for.
-///
-/// Separating TENANTS is the caller's job, inside the subject string — the same
-/// choice `quota:meter` and `records:store` make, and the reason none of them
-/// import an identity.
+/// The bucket the platform assigned: `comp-host` only opens buckets the scope granted and a miss is `no-such-store`.
+/// So every kv component opens `default` and separates itself by key prefix (`n:`/`d:`/`r:` below). Separating
+/// TENANTS is the caller's job, inside the subject string (as `quota:meter` and `records:store` do).
 const BUCKET: &str = "default";
 
 struct Component;
@@ -47,8 +32,7 @@ fn back(ctx: &str) -> impl Fn(kv::Error) -> InboxError + '_ {
     move |e| InboxError::BackendUnavailable(format!("{ctx}: {e:?}"))
 }
 
-/// Zero-padded so the keys sort lexically in the order they were written, which is
-/// what makes a `list-keys` scan unnecessary but also keeps a store dump readable.
+/// Zero-padded so keys sort lexically in write order, which avoids a `list-keys` scan and keeps a store dump readable.
 fn note_key(subject: &str, seq: u64) -> String {
     format!("n:{subject}:{seq:020}")
 }
@@ -59,8 +43,7 @@ fn read_key(subject: &str) -> String {
     format!("r:{subject}")
 }
 
-/// `increment(0)` reads a counter without changing it — there is no plain `get` for
-/// an atomic, and reading the raw key would see whatever encoding the host chose.
+/// `increment(0)` reads a counter without changing it: there is no plain `get` for an atomic, and the raw key's encoding is the host's choice.
 fn counter(bucket: &kv::Bucket, key: &str) -> Result<u64, InboxError> {
     atomics::increment(bucket, key, 0).map_err(back("counter"))
 }
@@ -81,9 +64,7 @@ impl Guest for Component {
             return Err(InboxError::Invalid("subject is empty".into()));
         }
         let bucket = open()?;
-        // The seq is claimed atomically FIRST. Two concurrent deliveries to one
-        // subject get different numbers; writing the note then claiming a number
-        // would let them collide on a key.
+        // The seq is claimed atomically FIRST: two concurrent deliveries get different numbers, whereas writing then claiming would let them collide on a key.
         let seq = atomics::increment(&bucket, &delivered_key(&subject), 1).map_err(back("seq"))?;
         let doc = json!({
             "seq": seq, "kind": kind, "title": title, "body": body,
@@ -104,9 +85,7 @@ impl Guest for Component {
         let bucket = open()?;
         let highest = counter(&bucket, &delivered_key(&subject))?;
         let mut out = Vec::new();
-        // Oldest first from `after`, so a tail appends and a page continues. A gap
-        // (a note deleted, or a seq claimed by a delivery that then failed to write)
-        // is skipped rather than ending the walk.
+        // Oldest first from `after`, so a tail appends and a page continues. A gap (deleted note, or a seq claimed by a failed delivery) is skipped, not the end of the walk.
         for seq in (after + 1)..=highest {
             if out.len() >= limit as usize {
                 break;
@@ -132,8 +111,7 @@ impl Guest for Component {
         let bucket = open()?;
         let delivered = counter(&bucket, &delivered_key(&subject))?;
         let read = counter(&bucket, &read_key(&subject))?;
-        // Saturating, not subtracting: if the two ever disagreed the badge should
-        // read zero rather than four billion.
+        // Saturating, not subtracting: if the two ever disagreed the badge should read zero, not four billion.
         Ok(delivered.saturating_sub(read))
     }
 
@@ -144,8 +122,7 @@ impl Guest for Component {
             let key = note_key(&subject, seq);
             let Ok(Some(raw)) = kv::Bucket::get(&bucket, &key) else { continue };
             let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(&raw) else { continue };
-            // Already read is not an error and not a second decrement: a client that
-            // retries must not drive the badge below what is actually unread.
+            // Already read is not an error and not a second decrement: a retrying client must not drive the badge below what is unread.
             if v["read"].as_bool().unwrap_or(false) {
                 continue;
             }

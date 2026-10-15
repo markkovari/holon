@@ -1,20 +1,16 @@
-//! `passkey-domain` — passwordless sign-in (docs/apps/PASSKEY.md) as ONE composed wasm HTTP
-//! component. Exports `wasi:http`; imports only WIT contracts: `webauthn:verify`
-//! (the ceremony verification), `records:store` (accounts + credentials),
-//! `cache:store` (single-use challenges with a TTL), `session:store` (the session
-//! a completed ceremony mints).
+//! `passkey-domain` — passwordless sign-in (docs/apps/PASSKEY.md) as ONE composed wasm HTTP component.
+//! Exports `wasi:http`; imports only WIT contracts: `webauthn:verify`, `records:store` (accounts +
+//! credentials), `cache:store` (single-use challenges with a TTL), `session:store`.
 //!
-//! The app's whole job is the bookkeeping around two ceremonies:
+//! The app's job is the bookkeeping around two ceremonies: `begin` mints a random challenge and remembers
+//! what it was issued FOR; `finish` spends it (single use), verifies, then persists.
 //!
-//!   begin  -> mint a random challenge, remember what it was issued FOR
-//!   finish -> spend the challenge (single use), verify, then persist
+//! Two rules easy to get wrong:
 //!
-//! Two rules that are easy to get wrong and are enforced here:
-//!
-//!   * the RP ID and origin come from `wasi:config`, never from the request — a
-//!     client-supplied origin would make the anti-phishing check meaningless;
-//!   * adding a passkey to an account that already has one requires a SESSION for
-//!     that account, or anyone could enrol their own authenticator on your name.
+//!   * the RP ID and origin come from `wasi:config`, never the request: a client-supplied origin would
+//!     make the anti-phishing check meaningless;
+//!   * adding a passkey to an account that already has one requires a SESSION for that account, or anyone
+//!     could enrol their own authenticator on your name.
 //!
 //! Config (wasi:config/store):
 //!   rp-id        the RP ID credentials are scoped to (default `localhost`)
@@ -118,8 +114,6 @@ fn usage() -> Outcome {
     )
 }
 
-// ---- the relying party's identity (config, never the request) ---------------
-
 fn cfg(key: &str, default: &str) -> String {
     config::get(key).ok().flatten().unwrap_or_else(|| default.to_string())
 }
@@ -150,8 +144,6 @@ fn rp_config() -> Outcome {
     )
 }
 
-// ---- challenges (unguessable, single-use, self-expiring) --------------------
-
 fn b64u(bytes: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
@@ -160,9 +152,7 @@ fn random_b64u(n: u64) -> String {
     b64u(&random::get_random_bytes(n))
 }
 
-/// Mint a challenge and remember what it was issued for. Keyed BY the challenge,
-/// so spending it is a delete — no way to use one twice even for a login where we
-/// don't yet know the user.
+/// Mint a challenge and remember what it was issued for. Keyed BY the challenge, so spending it is a delete: no way to use one twice.
 fn issue_challenge(purpose: &str, username: &str, user_handle: &str) -> String {
     let challenge = random_b64u(32);
     let meta =
@@ -171,8 +161,7 @@ fn issue_challenge(purpose: &str, username: &str, user_handle: &str) -> String {
     challenge
 }
 
-/// Spend a challenge: read it, delete it, and require it to have been issued for
-/// this purpose. A second attempt with the same challenge finds nothing.
+/// Spend a challenge: read it, delete it, and require it to have been issued for this purpose.
 fn spend_challenge(challenge: &str, purpose: &str) -> Result<Value, Outcome> {
     let key = format!("chal:{challenge}");
     let raw = cache::get(&key)
@@ -186,8 +175,6 @@ fn spend_challenge(challenge: &str, purpose: &str) -> Result<Value, Outcome> {
     }
     Ok(meta)
 }
-
-// ---- accounts + credentials -------------------------------------------------
 
 fn now_secs() -> u64 {
     system_clock::now().seconds as u64
@@ -239,8 +226,6 @@ fn credential_view(v: &Value) -> Value {
     })
 }
 
-// ---- sessions ---------------------------------------------------------------
-
 guestio::guest_p3_bearer!();
 guestio::guest_p3_respond!();
 
@@ -256,8 +241,6 @@ fn mint_session(username: &str) -> Result<Value, Outcome> {
         .map(|s| json!({ "token": s.id, "expires": s.expires, "username": username }))
         .map_err(|e| Outcome::Err(500, format!("session: {e:?}")))
 }
-
-// ---- registration ----------------------------------------------------------
 
 fn username_of(b: &Value) -> Result<String, Outcome> {
     let name = b["username"].as_str().unwrap_or_default().trim().to_lowercase();
@@ -279,8 +262,7 @@ async fn register_begin(request: Request) -> Outcome {
         Err(o) => return o,
     };
 
-    // Enrolling a passkey on an EXISTING account requires being signed in to it —
-    // otherwise adding a credential is a complete account takeover.
+    // Enrolling on an EXISTING account requires being signed in to it, or adding a credential is an account takeover.
     let existing = account_of(&username);
     if existing.is_some() && signed_in.as_deref() != Some(username.as_str()) {
         return Outcome::Err(
@@ -293,20 +275,17 @@ async fn register_begin(request: Request) -> Outcome {
         .as_ref()
         .and_then(|a| a["user_handle"].as_str().map(|s| s.to_string()))
         .unwrap_or_else(|| random_b64u(16));
-    // The handle rides along with the challenge, so the account we create on
-    // finish stores exactly the handle the authenticator was told to remember.
+    // The handle rides with the challenge, so the account created on finish stores the handle the authenticator remembers.
     let challenge = issue_challenge("register", &username, &user_handle);
 
-    // Exactly the `publicKey` options the browser needs, ready to pass to
-    // navigator.credentials.create() once the SPA decodes the base64url fields.
+    // The `publicKey` options the browser needs, for navigator.credentials.create() once the SPA decodes the base64url fields.
     Outcome::Json(
         200,
         json!({
             "challenge": challenge,
             "rp": { "id": rp_id(), "name": "passkey" },
             "user": { "id": user_handle, "name": username, "displayName": username },
-            // ES256 first (what nearly every authenticator picks), RS256 as a
-            // fallback — the two `webauthn:verify` verifies.
+            // ES256 first (what nearly every authenticator picks), RS256 as fallback: the two `webauthn:verify` verifies.
             "pubKeyCredParams": [
                 { "type": "public-key", "alg": -7 },
                 { "type": "public-key", "alg": -257 }
@@ -343,8 +322,7 @@ async fn register_finish(request: Request) -> Outcome {
         };
     let challenge = match b["challenge"].as_str() {
         Some(c) => c.to_string(),
-        // The challenge is inside clientDataJSON too; requiring it explicitly
-        // keeps `spend_challenge` in charge of single use.
+        // The challenge is inside clientDataJSON too; requiring it explicitly keeps `spend_challenge` in charge of single use.
         None => match challenge_from_client_data(&client_data) {
             Some(c) => c,
             None => return Outcome::Err(400, "no challenge in clientDataJSON".into()),
@@ -398,15 +376,12 @@ async fn register_finish(request: Request) -> Outcome {
     }
 }
 
-// ---- login -----------------------------------------------------------------
-
 async fn login_begin(request: Request) -> Outcome {
     let b = match body(request).await {
         Ok(v) => v,
         Err(o) => return o,
     };
-    // No username -> a DISCOVERABLE ceremony: the authenticator offers whichever
-    // passkey it holds for this RP, and we learn who it is from the credential id.
+    // No username -> a DISCOVERABLE ceremony: the authenticator offers its passkey for this RP and the credential id says who.
     let username = b["username"].as_str().unwrap_or_default().trim().to_lowercase();
     let allow: Vec<Value> = if username.is_empty() {
         Vec::new()
@@ -417,8 +392,7 @@ async fn login_begin(request: Request) -> Outcome {
             .collect()
     };
     if !username.is_empty() && allow.is_empty() {
-        // Don't leak whether the account exists: answer with an empty list and
-        // let the ceremony fail in the browser like any other unknown passkey.
+        // Don't leak whether the account exists: answer with an empty list and let the ceremony fail like any unknown passkey.
         return Outcome::Json(
             200,
             json!({ "challenge": issue_challenge("login", "", ""), "rpId": rp_id(),
@@ -471,8 +445,7 @@ async fn login_finish(request: Request) -> Outcome {
         None => return Outcome::Err(401, "unknown credential".into()),
     };
     let username = doc["username"].as_str().unwrap_or_default().to_string();
-    // A challenge issued for a named account must not be used with someone
-    // else's passkey. (A discoverable ceremony has no name to bind to.)
+    // A challenge issued for a named account must not be used with someone else's passkey (discoverable ceremonies have no name to bind).
     if !issued_for.is_empty() && issued_for != username {
         return Outcome::Err(401, "credential does not belong to that account".into());
     }
@@ -492,8 +465,7 @@ async fn login_finish(request: Request) -> Outcome {
         Err(e) => return ceremony_error(e),
     };
 
-    // Persist the new counter (and the backup state, which can change when a
-    // passkey syncs to a second device).
+    // Persist the new counter (and the backup state, which can change when a passkey syncs to a second device).
     let mut next = doc.clone();
     next["sign_count"] = json!(assertion.sign_count);
     next["backed_up"] = json!(assertion.backed_up);
@@ -510,9 +482,7 @@ async fn login_finish(request: Request) -> Outcome {
     }
 }
 
-/// Map a verification failure onto HTTP. Everything is a 401 — a failed ceremony
-/// is a failed authentication — but the reason is reported, because "wrong
-/// origin" and "bad signature" mean very different things to an operator.
+/// Map a verification failure onto HTTP. Everything is a 401, but the reason is reported: "wrong origin" and "bad signature" mean different things to an operator.
 fn ceremony_error(e: wa::VerifyError) -> Outcome {
     let (reason, detail) = match e {
         wa::VerifyError::BadEncoding(m) => ("bad_encoding", m),
@@ -529,8 +499,6 @@ fn ceremony_error(e: wa::VerifyError) -> Outcome {
     };
     Outcome::Json(401, json!({ "error": reason, "detail": detail }).to_string())
 }
-
-// ---- session-scoped reads --------------------------------------------------
 
 fn me(request: &Request) -> Outcome {
     let username = match session_user(request) {
@@ -552,8 +520,7 @@ async fn credential_delete(request: Request) -> Outcome {
     };
     let id = b["id"].as_str().unwrap_or_default();
     match find_one(CREDENTIALS, "id", id) {
-        // Only your own passkeys, and never your last one (that would lock the
-        // account out — there is no password to fall back to).
+        // Only your own passkeys, and never your last one: there is no password to fall back to.
         Some((rec_id, _, doc)) if doc["username"].as_str() == Some(username.as_str()) => {
             if credentials_of(&username).len() <= 1 {
                 return Outcome::Err(409, "that is your only passkey — enrol another first".into());
@@ -571,8 +538,6 @@ fn logout(request: &Request) -> Outcome {
     }
     Outcome::Json(200, json!({ "ok": true }).to_string())
 }
-
-// ---- http plumbing ---------------------------------------------------------
 
 /// A base64url (or base64) field the browser sent as an ArrayBuffer.
 fn field_bytes(b: &Value, key: &str) -> Result<Vec<u8>, Outcome> {
@@ -597,18 +562,9 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be, before the component stops reading it. Without a ceiling a guest
+/// accumulated until wasmtime's 64 MiB per-store cap TRAPPED, reaching the caller as a bare closed
+/// connection. Generous: a backstop, not a content policy; uploads police themselves with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

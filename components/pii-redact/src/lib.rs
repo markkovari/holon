@@ -1,30 +1,17 @@
-//! `pii-redact` — find and mask personal data in free text before it reaches a log, an LLM prompt or an analytics sink
+//! `pii-redact` — find and mask personal data in free text before it reaches a log, an LLM prompt or an analytics sink.
 //!
-//! Detect and mask personally-identifiable information in free text before it
-//! lands in a log line, an audit trail, an LLM prompt, or an analytics sink.
-//! Five hand-rolled, regex-free scanners cover the common high-risk patterns:
-//! email, credit-card (Luhn-checked), US SSN, phone (NANP / international-ish),
-//! and IPv4. Each match is reported as a `finding` with **byte** offsets
-//! (`start` + `length`), so callers can splice spans out of the original
-//! `String` without re-decoding. All scanning operates over the UTF-8 bytes of
-//! the input — every pattern we match is pure ASCII, so a byte index always
-//! falls on a char boundary and slicing is safe.
+//! Five hand-rolled, regex-free scanners: email, credit-card (Luhn-checked), US SSN, phone (NANP /
+//! international-ish) and IPv4. Each match is a `finding` with **byte** offsets (`start` + `length`).
+//! Every pattern matched is pure ASCII, so a byte index always falls on a char boundary and slicing is safe.
 //!
-//! Three entry points share one scanner:
-//!   * `detect` — report spans only (no modification).
-//!   * `redact` — replace each span with a typed placeholder (`[EMAIL]`, …).
-//!   * `mask`   — partially mask, keeping a little context (`j***@e***.com`,
-//!     card last-4, etc.).
+//! Three entry points share one scanner: `detect` (spans only), `redact` (typed placeholders such as
+//! `[EMAIL]`) and `mask` (partial, keeping context such as `j***@e***.com` or a card's last 4).
 //!
-//! Overlap handling: scanners run in a fixed priority order — credit-card and
-//! SSN (the most specific) first, then email and IPv4, then phone last. A
-//! match is dropped if any of its bytes are already covered by an
-//! earlier-priority finding, so a card or SSN always wins over a phone match
-//! that would otherwise swallow the same digits. The returned list is
-//! non-overlapping and sorted by `start`.
+//! Overlap handling: scanners run in priority order (credit-card and SSN, then email and IPv4, then phone)
+//! and a match is dropped if any byte is already covered, so a card or SSN wins over a phone match on the
+//! same digits. The returned list is non-overlapping and sorted by `start`.
 //!
-//! Pairs with audit:log and any logging path. Pure compute: text in, redacted
-//! text + findings out. No state, no host imports.
+//! Pure compute: text in, redacted text + findings out. No state, no host imports.
 
 #[allow(warnings)]
 mod bindings;
@@ -32,8 +19,6 @@ mod bindings;
 use bindings::exports::pii::redact::redactor::{Finding, Guest, Kind, Options};
 
 struct Component;
-
-// ---- scanning -----------------------------------------------------------
 
 /// Priority order for overlap resolution: most specific first. Phone is last
 /// so a card/SSN digit run claims its bytes before phone can.
@@ -93,8 +78,6 @@ fn overlaps(found: &[Finding], start: usize, length: usize) -> bool {
     })
 }
 
-// ---- byte-class helpers -------------------------------------------------
-
 fn is_digit(b: u8) -> bool {
     b.is_ascii_digit()
 }
@@ -110,7 +93,6 @@ fn is_domain(b: u8) -> bool {
     is_alpha(b) || is_digit(b) || matches!(b, b'.' | b'-')
 }
 
-// ---- email --------------------------------------------------------------
 // local@domain.tld : run of local chars, '@', run of domain chars containing
 // at least one '.', last label 2+ letters.
 fn scan_email(b: &[u8]) -> Vec<(usize, usize)> {
@@ -122,18 +104,15 @@ fn scan_email(b: &[u8]) -> Vec<(usize, usize)> {
             i += 1;
             continue;
         }
-        // walk left over the local part.
         let mut ls = i;
         while ls > 0 && is_local(b[ls - 1]) {
             ls -= 1;
         }
-        // walk right over the domain.
         let mut de = i + 1;
         while de < n && is_domain(b[de]) {
             de += 1;
         }
         let local_ok = ls < i;
-        // require a dot in the domain with a 2+ letter final label.
         let domain = &b[i + 1..de];
         let valid_domain = domain_has_tld(domain);
         if local_ok && valid_domain {
@@ -153,7 +132,6 @@ fn scan_email(b: &[u8]) -> Vec<(usize, usize)> {
 
 /// Domain must contain a '.' and end in a 2+ letter label.
 fn domain_has_tld(domain: &[u8]) -> bool {
-    // strip trailing dots/dashes for the tld check.
     let mut end = domain.len();
     while end > 0 && matches!(domain[end - 1], b'.' | b'-') {
         end -= 1;
@@ -167,7 +145,6 @@ fn domain_has_tld(domain: &[u8]) -> bool {
     tld.len() >= 2 && tld.iter().all(|&c| is_alpha(c)) && dot > 0
 }
 
-// ---- credit card --------------------------------------------------------
 // A run of 13..=19 digits, optionally separated by single spaces or hyphens.
 // Strip separators; must be all digits and pass Luhn.
 fn scan_credit_card(b: &[u8]) -> Vec<(usize, usize)> {
@@ -246,7 +223,6 @@ fn luhn(digits: &[u8]) -> bool {
     sum.is_multiple_of(10)
 }
 
-// ---- ssn ----------------------------------------------------------------
 // Exactly NNN-NN-NNNN with hyphens.
 fn scan_ssn(b: &[u8]) -> Vec<(usize, usize)> {
     let n = b.len();
@@ -282,7 +258,6 @@ fn scan_ssn(b: &[u8]) -> Vec<(usize, usize)> {
     out
 }
 
-// ---- phone --------------------------------------------------------------
 // Conservative: a run of digits/space/hyphen/parens/'+' totaling 10..=15
 // digits, accepted only if it leads with '+' OR matches the NANP shape
 // (NNN-NNN-NNNN or (NNN) NNN-NNNN).
@@ -315,7 +290,6 @@ fn scan_phone(b: &[u8]) -> Vec<(usize, usize)> {
                 _ => break,
             }
         }
-        // trim trailing non-digits.
         let mut end = j;
         while end > start && !is_digit(b[end - 1]) {
             end -= 1;
@@ -346,7 +320,6 @@ fn matches_pat(s: &[u8], pat: &[u8]) -> bool {
     s.iter().zip(pat).all(|(&c, &p)| if p == b'N' { is_digit(c) } else { c == p })
 }
 
-// ---- ipv4 ---------------------------------------------------------------
 // Dotted quad, each octet 0..=255.
 fn scan_ip(b: &[u8]) -> Vec<(usize, usize)> {
     let n = b.len();
@@ -406,8 +379,6 @@ fn parse_ipv4(b: &[u8], i: usize) -> Option<usize> {
     Some(pos)
 }
 
-// ---- redact / mask ------------------------------------------------------
-
 fn placeholder(kind: Kind) -> &'static str {
     match kind {
         Kind::Email => "[EMAIL]",
@@ -453,7 +424,6 @@ fn mask_email(s: &str) -> String {
         None => return s.to_string(),
     };
     let first_local = local.chars().next().unwrap_or('x');
-    // tld = text after the last '.'
     let (dom_head, tld) = match rest.rsplit_once('.') {
         Some((_, tld)) => (rest.chars().next().unwrap_or('x'), tld),
         None => (rest.chars().next().unwrap_or('x'), ""),
@@ -515,8 +485,6 @@ fn mask_ip(s: &str) -> String {
     }
 }
 
-// ---- guest --------------------------------------------------------------
-
 impl Guest for Component {
     fn detect(text: String, opts: Options) -> Vec<Finding> {
         scan(&text, &opts)
@@ -549,18 +517,13 @@ mod tests {
         }
     }
 
-    /// Luhn is the whole difference between a card number and sixteen digits.
-    ///
-    /// Both directions are pinned. A false NEGATIVE leaks a card; a false
-    /// POSITIVE redacts an order number and destroys data the caller needed,
-    /// and only one of those is usually tested.
+    /// Luhn is the whole difference between a card number and sixteen digits. Both directions are pinned: a
+    /// false NEGATIVE leaks a card, a false POSITIVE redacts an order number and destroys needed data.
     #[test]
     fn luhn_accepts_real_check_digits_and_rejects_near_misses() {
         assert!(luhn(&[4, 5, 3, 9, 1, 4, 8, 8, 0, 3, 4, 3, 6, 4, 6, 7]));
         assert!(luhn(&[7, 9, 9, 2, 7, 3, 9, 8, 7, 1, 3]));
-        // One digit off is not a card.
         assert!(!luhn(&[4, 5, 3, 9, 1, 4, 8, 8, 0, 3, 4, 3, 6, 4, 6, 8]));
-        // Two digits transposed is the error Luhn exists to catch.
         assert!(!luhn(&[7, 9, 9, 2, 7, 3, 9, 8, 7, 3, 1]));
     }
 
@@ -569,13 +532,10 @@ mod tests {
         assert_eq!(spans("pay 4539148803436467 now", Kind::CreditCard).len(), 1);
         assert_eq!(spans("4539-1488-0343-6467", Kind::CreditCard).len(), 1);
         assert_eq!(spans("4539 1488 0343 6467", Kind::CreditCard).len(), 1);
-        // Sixteen digits that fail the check digit are left alone.
         assert!(spans("4539148803436468", Kind::CreditCard).is_empty());
     }
 
-    /// An SSN is exactly `NNN-NN-NNNN`, and the guards on both ends are the
-    /// interesting part: without them the middle of a longer number matches and
-    /// the redaction lands in the wrong place.
+    /// An SSN is exactly `NNN-NN-NNNN`; the guards on both ends stop the middle of a longer number matching.
     #[test]
     fn an_ssn_does_not_match_inside_a_longer_number() {
         assert_eq!(spans("ssn 123-45-6789 ok", Kind::Ssn), vec![(4, 11)]);
@@ -584,11 +544,8 @@ mod tests {
         assert!(spans("123456789", Kind::Ssn).is_empty(), "hyphens are required");
     }
 
-    /// Priority is what stops a card being reported as a phone number.
-    ///
-    /// Both scanners match a long run of digits, and the placeholder a caller
-    /// sees decides how the value is handled downstream — `[CARD]` and `[PHONE]`
-    /// are not interchangeable to anything that reads the output.
+    /// Priority is what stops a card being reported as a phone number: both match long digit runs, and
+    /// `[CARD]` and `[PHONE]` are not interchangeable to whatever reads the output.
     #[test]
     fn a_higher_priority_kind_claims_an_overlapping_span() {
         let opts = Options { kinds: vec![] };
@@ -597,8 +554,7 @@ mod tests {
         assert!(matches!(found[0].kind, Kind::CreditCard), "the card wins over the phone shape");
     }
 
-    /// Findings come back sorted by start, because a caller replaces spans in
-    /// order and unsorted spans corrupt every offset after the first swap.
+    /// Findings come back sorted by start, because a caller replaces spans in order and unsorted spans corrupt later offsets.
     #[test]
     fn findings_are_sorted_by_start() {
         let opts = Options { kinds: vec![] };

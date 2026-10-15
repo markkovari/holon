@@ -1,28 +1,24 @@
 //! Timed competitions (CONTRACT.md "Timed competitions", "Game routes").
 //!
-//! Curators create, edit, publish, archive and judge; photographers list, read,
-//! enter, vote, and read the leaderboard and the results.
+//! Curators create, edit, publish, archive and judge; photographers list, read, enter, vote, and read the
+//! leaderboard and results.
 //!
-//! Collections this module writes:
+//! Collections written here:
 //!
-//! * `competitions` — the contract's record, indexed by `state`. Once results are
-//!   frozen the record also carries `results` (below).
-//! * `competition_entries` — `{competition, photo, owner, sha256, entered_at,
-//!   display_name, auto, auto_version, auto_flags, verdict}`, indexed by
-//!   `competition`, `photo`, `owner`, `sha256`. `moderation.rs` reads it by `photo`
-//!   to decide a photo is on a shared surface (reportable).
+//! * `competitions` — the contract's record, indexed by `state`; once frozen it also carries `results`.
+//! * `competition_entries` — `{competition, photo, owner, sha256, entered_at, display_name, auto,
+//!   auto_version, auto_flags, verdict}`, indexed by `competition`, `photo`, `owner`, `sha256`.
+//!   `moderation.rs` reads it by `photo` to decide a photo is on a shared surface (reportable).
 //! * `competition_votes` — `{competition, entry, voter, stars, at}`.
 //! * `competition_judgements` — `{competition, entry, curator, score, note, at}`.
 //!
-//! **auto-v1 is computed once, at entry**, and stored with `auto_version`, so a
-//! later change to the formula in `rules.rs` never re-ranks a competition.
+//! **auto-v1 is computed once, at entry**, and stored with `auto_version`, so a later formula change in
+//! `rules.rs` never re-ranks a competition.
 //!
-//! **Results are frozen once.** The first read after `judging_closes_at` computes
-//! the ranking and writes it into the competition record under a revision check;
-//! a concurrent reader that loses that race re-reads and serves the winner's
-//! ranking. Prize XP goes through the same guard: every prize is *claimed* by a
-//! revision-checked write before `progress::credit` is called for it, so however
-//! many reads race, one of them credits a given place, once.
+//! **Results are frozen once.** The first read after `judging_closes_at` computes the ranking and writes it
+//! under a revision check; a concurrent reader that loses re-reads and serves the winner's ranking. Prize
+//! XP uses the same guard: every prize is *claimed* by a revision-checked write before `progress::credit`
+//! runs, so however many reads race, one credits a given place, once.
 
 use crate::bindings::auth::identity::types::Principal;
 use crate::bindings::media::pipeline::jobs as media;
@@ -78,9 +74,6 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
         _ => Reply::err(404, "not_found"),
     }
 }
-
-// ---------------------------------------------------------------------------
-// record helpers
 
 fn valid_id(id: &str) -> bool {
     !id.is_empty()
@@ -157,10 +150,8 @@ fn public_competition(id: &str) -> Result<(records::Entry, Map<String, Value>), 
     }
 }
 
-/// The public shape of an entrant: never the account subject or the full email,
-/// only a display name — the local part of the email moderation.rs keeps in
-/// `accounts` (`{subject, email}`), or, for an account registered before that
-/// book existed, a name derived from the subject.
+/// The public shape of an entrant: never the account subject or full email, only a display name (the local
+/// part of the email `moderation.rs` keeps in `accounts`, or a name derived from the subject for older accounts).
 fn display_name(subject: &str) -> String {
     let email = find(ACCOUNTS, "subject", subject)
         .ok()
@@ -192,9 +183,6 @@ fn thumb_url(photo: &Map<String, Value>) -> Value {
     }
     media::sign_get(key, SIGN_TTL_SECS).map(Value::String).unwrap_or(Value::Null)
 }
-
-// ---------------------------------------------------------------------------
-// validation (pure)
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Weights {
@@ -237,9 +225,8 @@ fn weights_of(c: &Map<String, Value>) -> Weights {
     })
 }
 
-/// `opens_at < closes_at ≤ voting_closes_at ≤ judging_closes_at`. Judging must
-/// outlast voting because results freeze at `judging_closes_at`: a vote after
-/// that would change a ranking that has already paid out.
+/// `opens_at < closes_at ≤ voting_closes_at ≤ judging_closes_at`. Judging must outlast voting because
+/// results freeze at `judging_closes_at`: a later vote would change a ranking that has already paid out.
 fn check_windows(opens: u64, closes: u64, voting: u64, judging: u64) -> Result<(), String> {
     if opens >= closes {
         return Err("opens_at must be before closes_at".into());
@@ -316,9 +303,6 @@ const EDITABLE: &[&str] = &[
 /// Fields that may still change once published: wording only. Everything else is
 /// the rules entrants agreed to.
 const EDITABLE_PUBLISHED: &[&str] = &["title", "brief"];
-
-// ---------------------------------------------------------------------------
-// curator routes
 
 fn curator(principal: &Principal) -> Result<(), Reply> {
     require_role(principal, "curator")
@@ -538,9 +522,6 @@ fn entry_of(
     }
 }
 
-// ---------------------------------------------------------------------------
-// photographer routes
-
 fn phase(c: &Map<String, Value>, now: u64) -> &'static str {
     if str_of(c, "state") == "archived" {
         return "archived";
@@ -697,9 +678,6 @@ fn vote(principal: &Principal, id: &str, entry_id: &str, body: &str) -> Reply {
     Reply::json(200, json!({"entry": entry_id, "stars": stars}))
 }
 
-// ---------------------------------------------------------------------------
-// scoring
-
 /// One entry's inputs, gathered from the store.
 struct Scored {
     entry: Map<String, Value>,
@@ -826,15 +804,10 @@ fn leaderboard(principal: &Principal, id: &str) -> Reply {
     )
 }
 
-// ---------------------------------------------------------------------------
-// results
-
 /// Freeze the ranking into the competition record once, then credit every
 /// unclaimed prize. Returns the stored `results`.
 fn freeze_and_credit(id: &str, viewer: &str) -> Result<Map<String, Value>, Reply> {
-    // 1. freeze
     let results = loop_freeze(id, viewer)?;
-    // 2. claim unclaimed prizes, credit them, record the outcome
     let pending: Vec<usize> = prizes_of(&results)
         .iter()
         .enumerate()
@@ -1035,8 +1008,7 @@ fn results(principal: &Principal, id: &str) -> Reply {
         return Reply::json(409, json!({"error": "results_pending", "available_at": at}));
     }
     let r = tri!(freeze_and_credit(id, &principal.subject));
-    // The frozen ranking is history; a photo hidden since is still invisible on
-    // this shared surface, but places are not renumbered and prizes stand.
+    // The frozen ranking is history: a photo hidden since stays invisible, but places are not renumbered and prizes stand.
     let visible = |row: &Value| -> bool {
         let pid = row.get("photo").and_then(Value::as_str).unwrap_or_default();
         !matches!(load(PHOTOS, pid), Ok(Some((_, p))) if is_hidden(&p))
@@ -1077,9 +1049,7 @@ fn results(principal: &Principal, id: &str) -> Reply {
     )
 }
 
-// ---------------------------------------------------------------------------
-// Prize XP goes through `progress::credit` (the ledger, the idempotency on
-// (user, source, source_id) and level-ups live there).
+// Prize XP goes through `progress::credit` (ledger, idempotency and level-ups live there).
 fn credit(
     user: &str,
     journey: Option<&str>,

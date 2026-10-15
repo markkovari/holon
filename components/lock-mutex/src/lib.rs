@@ -1,31 +1,20 @@
 //! `lock-mutex` — stop two workers doing the same job — a distributed mutex / advisory lease with an expiry
 //!
-//! Lease-based advisory mutual exclusion, backed by `wasi:keyvalue`. A holder
-//! claims `key` for a TTL and gets a secret `token` + a monotonic `fence`;
-//! holders renew before expiry, and a crashed holder's lease simply lapses
-//! (TTL is the dead-man's switch). Advisory: the component answers "may I
-//! proceed?" and gates release/renew by token — it does not police the resource.
+//! Lease-based advisory mutual exclusion on `wasi:keyvalue`. A holder claims `key` for a TTL and gets a secret
+//! `token` + a monotonic `fence`; holders renew before expiry and a crashed holder's lease lapses (TTL is the
+//! dead-man's switch). Advisory: it answers "may I proceed?" and gates release/renew by token; it does not police the resource.
 //!
 //! Storage layout (BUCKET = "default"):
 //!   lk_{key}    the current lease: `owner\ttoken\texpires\tfence` (or absent).
-//!   tt_{token}  reverse pointer token -> key, so `renew(token)` finds the lock
-//!               without a key-scan API. Removed on release / takeover.
+//!   tt_{token}  reverse pointer token -> key, so `renew(token)` finds the lock without a key-scan API. Removed on release / takeover.
 //!
-//! Acquire takes over an EXPIRED lease (fence bumped, old token pointer left to
-//! rot — it no longer matches the lock's token, so it's inert). A live lease
-//! held by another owner yields `err(held)`.
+//! Acquire takes over an EXPIRED lease (fence bumped; the old token pointer no longer matches, so it is inert). A
+//! live lease held by another owner yields `err(held)`. Re-acquire by the SAME owner on a live lease REPLACES it
+//! (new token, fence bumped; the prior token stops being holder); keep-alive is `renew`.
 //!
-//! Re-entrant acquire by the SAME owner+still-live lease: treated as a fresh
-//! acquire that REPLACES the lease (new token, fence bumped) — the prior token
-//! becomes not-holder. (A caller wanting keep-alive should `renew`, not
-//! re-acquire.)
-//!
-//! RACE CAVEAT (best-effort, NOT a correctness guarantee): acquire is
-//! read-then-write. `wasi:keyvalue@0.2.0-draft` exposes no compare-and-swap, so
-//! two simultaneous acquires of a free key can both win. This reference impl
-//! assumes the store provides effective serialization (the single-writer relay
-//! topology, or a backend with external CAS). A true distributed mutex needs
-//! CAS on `lk_{key}`.
+//! RACE CAVEAT (best-effort, NOT a correctness guarantee): acquire is read-then-write and `wasi:keyvalue@0.2.0-draft`
+//! has no compare-and-swap, so two simultaneous acquires of a free key can both win. Assumes effective serialization
+//! (single-writer relay topology or a backend with external CAS); a true mutex needs CAS on `lk_{key}`.
 
 #[allow(warnings)]
 mod bindings;
@@ -38,8 +27,6 @@ use bindings::wasi::random::random::get_random_bytes;
 struct Component;
 
 const BUCKET: &str = "default";
-
-// ---- helpers ------------------------------------------------------------
 
 fn now() -> u64 {
     wall_clock::now().seconds
@@ -74,11 +61,7 @@ fn open() -> Result<kv::Bucket, LockError> {
     kv::open(BUCKET).map_err(|e| LockError::BackendUnavailable(format!("open: {e:?}")))
 }
 
-// ---- lease (de)serialization --------------------------------------------
-//
-// One tab-delimited line: `owner\ttoken\texpires\tfence`. owner is base64-free
-// here (it's an app id); a tab in an owner would corrupt the line, so we reject
-// tabs by replacing them — owners are opaque ids, not arbitrary bytes.
+// One tab-delimited line: `owner\ttoken\texpires\tfence`. A tab in an owner would corrupt the line, so tabs are replaced (owners are opaque ids).
 
 fn serialize(l: &Lease) -> String {
     format!("{}\t{}\t{}\t{}", l.owner.replace('\t', " "), l.token, l.expires, l.fence,)
@@ -115,7 +98,6 @@ fn store(bucket: &kv::Bucket, l: &Lease) -> Result<(), LockError> {
     bucket
         .set(&lk_key(&l.key), serialize(l).as_bytes())
         .map_err(|e| LockError::BackendUnavailable(format!("set: {e:?}")))?;
-    // reverse pointer token -> key, for renew().
     bucket
         .set(&tt_key(&l.token), l.key.as_bytes())
         .map_err(|e| LockError::BackendUnavailable(format!("set tt: {e:?}")))
@@ -142,8 +124,7 @@ impl Guest for Component {
         let bucket = open()?;
         let now = now();
         let prior = load(&bucket, &key)?;
-        // A live lease held by ANYONE blocks (incl. the same owner — keep-alive
-        // is `renew`, not re-acquire). An expired lease is taken over.
+        // A live lease held by ANYONE blocks (the same owner too: keep-alive is `renew`). An expired lease is taken over.
         let prior_fence = match &prior {
             Some(l) if l.expires > now => return Err(LockError::Held(l.clone())),
             Some(l) => l.fence, // expired -> take over, bump fence
@@ -164,11 +145,7 @@ impl Guest for Component {
         let bucket = open()?;
         match load(&bucket, &key)? {
             Some(mut l) if l.token == token => {
-                // Tombstone: keep the record (so `fence` survives for the next
-                // holder) but mark it free by zeroing the expiry and blanking
-                // the token. Drop the token->key pointer so the old token is
-                // inert. `holder` reads expires<=now as free; `acquire` takes
-                // it over and bumps the retained fence.
+                // Tombstone: keep the record (so `fence` survives for the next holder) but mark it free by zeroing the expiry and blanking the token; drop the token->key pointer so the old token is inert.
                 let old_token = l.token.clone();
                 l.expires = 0;
                 l.token = String::new();
@@ -191,8 +168,7 @@ impl Guest for Component {
         let key = key_for_token(&bucket, &token)?.ok_or(LockError::NotHolder)?;
         match load(&bucket, &key)? {
             Some(mut l) if l.token == token => {
-                // A lapsed lease cannot be renewed — it may already be held by
-                // another acquirer.
+                // A lapsed lease cannot be renewed: it may already be held by another acquirer.
                 if l.expires <= now() {
                     return Err(LockError::NotHolder);
                 }
@@ -207,7 +183,6 @@ impl Guest for Component {
     fn holder(key: String) -> Result<Option<Lease>, LockError> {
         let bucket = open()?;
         match load(&bucket, &key)? {
-            // a lapsed lease reads as free.
             Some(l) if l.expires > now() => Ok(Some(Lease {
                 token: String::new(), // never reveal the secret on peek
                 ..l

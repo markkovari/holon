@@ -2,44 +2,17 @@
 //!
 //! `tests/validate.rs` is the specification and is not writable from here.
 //!
-//! Gherkin is executable specification, and the ways it breaks are quiet. An
-//! `Examples` row one cell short, a `<placeholder>` with a typo in it, an `And`
-//! with nothing above it — none of these announce themselves. The typo is the
-//! worst: nothing fails, the step just receives the literal text `<usrename>`.
+//! Gherkin breaks quietly (an `Examples` row one cell short, a typo'd `<placeholder>` that the step
+//! receives literally), so this reports EVERY problem with a line and a column.
+//! It checks syntax and structure only, not that a step has a step definition.
 //!
-//! So this reports EVERY problem with a line and a column. A validator that
-//! surfaces one problem per run is a validator people run once.
+//! Severity follows `cucumber/gherkin`'s own `testdata/`: a scenario with no steps and an outline with
+//! no `Examples` appear in files the corpus calls GOOD, so they are `warning`s, never a refusal.
+//! Also from that corpus: `*` is a step keyword, not a continuation; a `Scenario:` with an `Examples:`
+//! under it IS an outline; a table row has to close with `|`.
 //!
-//! ## What it does not do
-//!
-//! It does not check that a step has a matching step definition. That needs the
-//! step registry of whatever runs the suite — a different input and a different
-//! capability. This is syntax and structure only.
-//!
-//! ## Severity, because the reference implementation disagreed with me
-//!
-//! The first version of this treated a scenario with no steps and an outline with
-//! no `Examples` as errors. Running `cucumber/gherkin`'s own `testdata/` said
-//! otherwise: both appear in files that corpus calls GOOD. A validator that refuses
-//! them disagrees with cucumber about whether a file is valid, which makes it
-//! useless as a gate. They are `warning` now — still worth saying, never a refusal.
-//!
-//! The same run corrected three outright bugs, all of them mine:
-//!
-//!   - `*` is a step keyword, not a continuation. `good/star-keywords.feature` is a
-//!     whole file of bullets and it is idiomatic Gherkin.
-//!   - A plain `Scenario:` with an `Examples:` under it IS an outline. Gherkin
-//!     treats the keywords as interchangeable; `good/scenario_outline.feature`
-//!     depends on it.
-//!   - A table row has to close with `|`. Not checking that missed two of the
-//!     twelve files the corpus calls bad.
-//!
-//! ## A language it cannot read is declined, not failed
-//!
-//! Gherkin has keywords in seventy-odd languages. This one knows English. A file
-//! declaring `# language: de` therefore gets ONE problem saying so, rather than a
-//! page of complaints about missing English keywords — a confident wrong answer
-//! being worse than an honest refusal.
+//! A language it cannot read (`# language: de`) is declined with ONE problem rather than a page of
+//! complaints about missing English keywords.
 
 use std::collections::BTreeSet;
 
@@ -79,10 +52,8 @@ pub enum Severity {
 }
 
 impl Kind {
-    /// Errors are what cucumber refuses; warnings are what it accepts and nobody
-    /// meant. Every classification here was checked against `testdata/`: each of
-    /// the twelve bad files yields at least one `Error`, and none of the fifty good
-    /// ones does.
+    /// Errors are what cucumber refuses; warnings are what it accepts and nobody meant. Checked against
+    /// `testdata/`: each of the twelve bad files yields an `Error`, none of the fifty good ones does.
     pub fn severity(&self) -> Severity {
         match self {
             Kind::UnsupportedLanguage(_) => Severity::Declined,
@@ -100,8 +71,6 @@ impl Kind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Step {
     /// `Given`, `When`, `Then`, `And`, `But` or `*` — as written, not resolved.
-    /// A runner that wants the resolved sense can walk the list; one that wants to
-    /// print the scenario back needs what the author typed.
     pub keyword: String,
     pub text: String,
     pub line: u32,
@@ -159,19 +128,13 @@ impl Problem {
 const STEPS: &[&str] = &["Given", "When", "Then", "And", "But", "*"];
 /// The two that only make sense after another step.
 ///
-/// `*` is NOT one. A bullet is a step keyword in its own right, a whole file of them
-/// is idiomatic, and treating it as a continuation flagged four files cucumber calls
-/// good — including `star-keywords.feature`, which exists to demonstrate exactly
-/// this.
+/// `*` is NOT one: a bullet is a step keyword in its own right, and treating it as a continuation
+/// flagged files cucumber calls good (`star-keywords.feature`).
 const CONTINUATIONS: &[&str] = &["And", "But"];
 const FENCES: &[&str] = &["\"\"\"", "```"];
 
-/// Every language Gherkin has keywords for, from `gherkin-languages.json`.
-///
-/// The list is here to tell two different things apart. `# language: fr` names a
-/// real dialect this component cannot read — a file to DECLINE. `#language:no-such`
-/// names nothing, and is a broken header: an error, and one of the twelve files in
-/// `testdata/bad/`. Without the list both look identical.
+/// Every language Gherkin has keywords for, from `gherkin-languages.json`. Tells a real dialect this
+/// component cannot read (DECLINE) from `#language:no-such`, a broken header (error).
 const DIALECTS: &[&str] = &[
     "af",
     "am",
@@ -271,10 +234,8 @@ struct Block {
     steps: usize,
     /// Outline only: how many `Examples` blocks it has.
     examples: usize,
-    /// Outline only: the union of every `Examples` header's columns. Union, not
-    /// intersection: a placeholder provided by any one block is substituted there,
-    /// and flagging it because a *sibling* block omits it would refuse a legitimate
-    /// two-table outline.
+    /// Outline only: the union of every `Examples` header's columns. Union, not intersection: a placeholder
+    /// provided by any one block is substituted there, and a sibling omitting it must not flag it.
     headers: BTreeSet<String>,
     /// Every `<placeholder>` seen, with where it was. Checked only for outlines.
     placeholders: Vec<(String, u32, u32)>,
@@ -313,9 +274,7 @@ fn step_keyword(t: &str) -> Option<&'static str> {
 
 /// The structural keyword a line starts with, and whatever followed the colon.
 fn block_keyword(t: &str) -> Option<(&'static str, String)> {
-    // `Scenario Outline:` cannot be confused with `Scenario:` — the character after
-    // `Scenario` is a space rather than a colon — so this list is ordered for
-    // reading rather than for correctness.
+    // `Scenario Outline:` cannot be confused with `Scenario:`; the list is ordered for reading.
     const KEYWORDS: &[(&str, &str)] = &[
         ("Feature:", "feature"),
         ("Rule:", "rule"),
@@ -337,17 +296,9 @@ fn block_keyword(t: &str) -> Option<(&'static str, String)> {
 
 /// The cells of a table row: only what is BETWEEN pipes.
 ///
-/// Anything after the last `|` is not part of the table. That is not a liberty —
-/// `testdata/good/extra_table_content.feature` says so in its own description, and
-/// is a file cucumber calls good whose rows carry trailing junk.
-///
-/// It also removes the need for a rule about unclosed rows: a row that got cut, or
-/// one ending in a `\` that eats the closing pipe, simply yields fewer cells and is
-/// caught by the width check. Both of those are files in `testdata/bad/`, and both
-/// were missed when this counted a trailing fragment as a cell.
-///
-/// `\|` is an escaped pipe and does not split a cell — which is how a Gherkin table
-/// carries a value with a pipe in it.
+/// Anything after the last `|` is not part of the table (`testdata/good/extra_table_content.feature`).
+/// A cut row, or one ending in a `\` that eats the closing pipe, yields fewer cells and is caught by
+/// the width check. `\|` is an escaped pipe and does not split a cell.
 fn cells(row: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
@@ -417,13 +368,8 @@ pub fn validate(source: &str) -> Vec<Problem> {
 
 /// The parsed feature, when nothing is an `error`.
 ///
-/// Warnings do NOT stop it: a scenario with no steps and an outline with no
-/// examples both parse, cucumber says so, and a runner that refused them would
-/// disagree with the reference about what a feature file IS. They come back from
-/// `validate` and a caller decides.
-///
-/// One walk produces both, because a parser and a validator that disagree about a
-/// file is the bug neither of them can report.
+/// Warnings do NOT stop it (cucumber accepts those files); `validate` returns them and a caller
+/// decides. One walk produces both, so parser and validator cannot disagree about a file.
 pub fn parse(source: &str) -> Result<Document, Vec<Problem>> {
     let (doc, problems) = walk(source);
     if problems.iter().any(|p| p.severity() == Severity::Error) {
@@ -463,9 +409,7 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
                     }],
                 );
             }
-            // A real dialect this component cannot read. Decline the whole file:
-            // judging French keywords against an English table would bury the one
-            // useful sentence under a page of noise.
+            // A real dialect this component cannot read: decline the whole file rather than bury one useful sentence in noise.
             return (
                 doc,
                 vec![Problem {
@@ -498,9 +442,7 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
         let t = raw.trim_start();
         let trimmed = raw.trim();
 
-        // Inside a docstring everything is text, including things that look like
-        // Gherkin. Getting this wrong turns every example in the documentation of a
-        // testing tool into a parse error.
+        // Inside a docstring everything is text, including things that look like Gherkin.
         if let Some((fence, _)) = docstring {
             if trimmed.starts_with(fence) {
                 docstring = None;
@@ -530,14 +472,11 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
             tag_names.extend(
                 t.split_whitespace().take_while(|w| !w.starts_with('#')).map(str::to_string),
             );
-            // A tag cannot contain whitespace, so every token on the line has to be
-            // one. `testdata/bad/whitespace_in_tags.feature` is `@a tag containing
-            // whitespace`, which reads as a sentence and is four broken tags.
+            // A tag cannot contain whitespace, so every token on the line has to be one
+            // (`testdata/bad/whitespace_in_tags.feature`).
             for word in t.split_whitespace() {
-                // A trailing comment is legal on a tag line, and it ends the tags:
-                // `good/tags.feature` has `@comment_tag1 #a comment`. Note that the
-                // same file has `@comment_tag#2`, so a `#` only starts a comment
-                // when it starts a token.
+                // A trailing comment is legal on a tag line and ends the tags, but `@comment_tag#2` shows a `#`
+                // only starts a comment when it starts a token.
                 if word.starts_with('#') {
                     break;
                 }
@@ -606,9 +545,7 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
                                     t.rows.push(row.clone());
                                 }
                             }
-                            // A data table belongs to the step above it, raw, so a
-                            // runner can decide whether it is a table of rows or a
-                            // table of key/value pairs.
+                            // A data table belongs to the step above it, raw, so a runner can read it as rows or key/value pairs.
                             _ => {
                                 if let Some(step) = b.parsed.steps.last_mut() {
                                     step.argument.push(raw.trim().to_string());
@@ -692,10 +629,8 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
                     b.parsed.tags = std::mem::take(&mut tag_names);
                     block = Some(b);
                 }
-                // `Examples:` under a plain `Scenario:` PROMOTES it to an outline.
-                // Gherkin treats the two keywords as interchangeable, and
-                // `testdata/good/scenario_outline.feature` is a `Scenario:` with an
-                // `Examples:` under it. Refusing that flagged three good files.
+                // `Examples:` under a plain `Scenario:` PROMOTES it to an outline (Gherkin treats the keywords
+                // as interchangeable; `testdata/good/scenario_outline.feature`).
                 "examples" => match block.as_mut() {
                     Some(b) => {
                         b.kind = BlockKind::Outline;
@@ -743,9 +678,7 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
                         line,
                         argument: Vec::new(),
                     });
-                    // Collected for a plain `Scenario:` too, because an `Examples:`
-                    // further down promotes it to an outline and by then these lines
-                    // are read. Only CHECKED if it ends up an outline.
+                    // Collected for a plain `Scenario:` too, since a later `Examples:` promotes it; only CHECKED for outlines.
                     for (name, at) in placeholders(raw) {
                         b.placeholders.push((name, line, at as u32 + 1));
                     }
@@ -844,15 +777,11 @@ fn close_block(problems: &mut Vec<Problem>, doc: &mut Document, block: Option<Bl
     }
 }
 
-// ---- the component -----------------------------------------------------
+// ---- the component: a mapping between the WIT types and the ones above, nothing else. The logic is judged
+// by `tests/validate.rs` against the plain functions.
 //
-// A mapping between the WIT types and the ones above, and nothing else. The logic is
-// judged by `tests/validate.rs` against the plain functions, and a component that
-// re-derived any of it would be untested by its own specification.
-//
-// Gated on the target like `components/demo`: a `cdylib` carrying wit-bindgen's
-// exports does not link natively, and `cargo test` builds every crate-type before it
-// runs a test — so without this the held-out specification cannot run at all.
+// Gated on the target like `components/demo`: a `cdylib` carrying wit-bindgen's exports does not link
+// natively, and `cargo test` builds every crate-type first.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]

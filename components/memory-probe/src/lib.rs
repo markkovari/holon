@@ -8,11 +8,9 @@
 //!   POST /decay?days=&min-uses=
 //!   GET  /already-done?goal=&min=
 //!
-//! Every route answers JSON, and reports an error as `{"error":"…"}` with a **200**
-//! — the same choice `graph-probe` made and for the same reason: the thing under
-//! test is what the component said, and a status code would flatten "the policy
-//! refused this" into the same shape as "the host refused the link", which are
-//! exactly the two failures this exists to tell apart.
+//! Every route answers JSON, and reports an error as `{"error":"…"}` with a **200**, as `graph-probe` does: the thing
+//! under test is what the component said, and a status code would flatten "the policy refused this" into the same shape
+//! as "the host refused the link", the two failures this exists to tell apart.
 
 #[allow(warnings)]
 mod bindings {
@@ -96,8 +94,7 @@ fn ns_of(name: &str) -> Namespace {
     match name {
         "patterns" => Namespace::Patterns,
         "solutions" => Namespace::Solutions,
-        // Anything unspelled is the pool an agent writes by default, never the
-        // trusted one — the same rule the component itself applies.
+        // Anything unspelled is the pool an agent writes by default, never the trusted one (the component's own rule).
         _ => Namespace::Errors,
     }
 }
@@ -110,8 +107,7 @@ fn ns_name(ns: Namespace) -> &'static str {
     }
 }
 
-/// `pools=errors,patterns` → the list. Empty means "all", which is the
-/// component's own default and must stay distinguishable from "one pool".
+/// `pools=errors,patterns` → the list. Empty means "all" (the component's default) and must stay distinguishable from "one pool".
 fn pools_of(spec: &str) -> Vec<Namespace> {
     spec.split(',').filter(|s| !s.is_empty()).map(ns_of).collect()
 }
@@ -125,9 +121,7 @@ fn err(e: mem::MemoryError) -> String {
     format!("{{\"error\":\"{kind}\",\"detail\":\"{}\"}}", esc(&msg))
 }
 
-/// A ceiling on a request body, not a policy: past this the read gives up and
-/// the body reads as empty, rather than growing until the store's memory cap
-/// traps the component and the connection simply closes.
+/// A ceiling on a request body, not a policy: past this the read gives up and the body reads as empty.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
@@ -151,8 +145,7 @@ fn entry_from(query: &str, text: String) -> Entry {
         env: param(query, "env"),
         attempt: param(query, "attempt"),
         score: signed(query, "score", -1),
-        // Comma-separated, so a test can write against the structural half of
-        // retrieval the same way it writes against everything else here.
+        // Comma-separated, so a test can exercise the structural half of retrieval like everything else here.
         tags: csv_param(query, "tags"),
     }
 }
@@ -176,9 +169,7 @@ impl Guest for Component {
             }
 
             (Method::Post, "/promote") => {
-                // The namespace is not a parameter: `promote` decides it. Passing
-                // one would let this probe claim a promotion into `errors`, which
-                // is exactly what the component refuses to allow.
+                // The namespace is not a parameter: `promote` decides it, and passing one would let this probe claim a promotion into `errors`, which the component refuses.
                 let e = entry_from(&query, read_body(request).await);
                 match promotion::promote(&e, signed(&query, "score", 0)) {
                     Ok(h) => format!("{{\"handle\":\"{}\"}}", esc(&h)),
@@ -246,9 +237,7 @@ impl Guest for Component {
                 Err(e) => err(e),
             },
 
-            // One route, two directions. The rows are the same shape from either
-            // end — a sub-goal is a sub-goal — so a second route would be a second
-            // encoder that could disagree with this one.
+            // One route, two directions: the rows have the same shape from either end, so a second route would be a second encoder that could disagree.
             (Method::Get, "/parts-of") | (Method::Get, "/parents-of") => {
                 let goal = param(&query, "goal");
                 let up = route == "/parents-of";
@@ -289,8 +278,7 @@ impl Guest for Component {
                         esc(&p.artifact),
                         p.evaluations
                     ),
-                    // Absence is an answer, and it is the answer this test's
-                    // readiness check waits for.
+                    // Absence is an answer, and the one this test's readiness check waits for.
                     Ok(None) => "{\"found\":false}".to_string(),
                     Err(e) => err(e),
                 }

@@ -85,8 +85,6 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     }
 }
 
-// ---- helpers ------------------------------------------------------------------
-
 fn bad(code: &str, detail: impl Into<String>) -> Reply {
     Reply::json(400, json!({"error": code, "detail": detail.into()}))
 }
@@ -185,8 +183,6 @@ fn badge_of(v: Option<&Value>) -> Result<Value, Reply> {
     }
 }
 
-// ---- journeys -----------------------------------------------------------------
-
 fn create_journey(principal: &Principal, body: &str) -> Reply {
     let req = tri!(parse_object(body));
     let title = tri!(title_of(&req));
@@ -283,8 +279,7 @@ fn set_journey_state(principal: &Principal, id: &str, state: &str) -> Reply {
         return forbidden(principal, &format!("journey.{state}"), id);
     }
     if state == "published" {
-        // Keep the order; append any quest of this journey the list is missing,
-        // and drop ids that no longer name one of its quests.
+        // Keep the order; append any quest of this journey the list is missing, and drop ids that no longer name one.
         let mine = tri!(find(QUESTS, "journey", id));
         let mut order: Vec<String> = j
             .get("quests")
@@ -309,8 +304,6 @@ fn set_journey_state(principal: &Principal, id: &str, state: &str) -> Reply {
     audit(&format!("journey.{state}"), "allow", &principal.subject, id);
     Reply::json(200, Value::Object(saved))
 }
-
-// ---- quests -------------------------------------------------------------------
 
 /// The time window from `req` over `current`: `(starts_at, ends_at)`.
 fn window_of(
@@ -389,8 +382,7 @@ fn create_quest(principal: &Principal, body: &str) -> Reply {
         match records::update(JOURNEYS, &je.id, &data_of(&j), je.revision) {
             Ok(_) => break,
             Err(records::StoreError::RevisionConflict(_)) if attempt < 2 => continue,
-            // Publishing the journey appends any quest its list is missing, so a
-            // quest left out here is not lost.
+            // Publishing the journey appends any quest its list is missing, so a quest left out here is not lost.
             Err(_) => break,
         }
     }

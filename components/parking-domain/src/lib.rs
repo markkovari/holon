@@ -1,7 +1,5 @@
-//! `parking-domain` — router: auth (register/login/logout/me) and dispatch
-//! into `handlers.rs` for the parking routes. The whole router is
-//! `guestauth`/`guestio` macro expansions; nothing domain-specific lives
-//! here — see `handlers.rs` for spots, reservations and the overlap rule.
+//! `parking-domain` — router: auth (register/login/logout/me) and dispatch into `handlers.rs`. The whole router is
+//! `guestauth`/`guestio` macro expansions; spots, reservations and the overlap rule live in `handlers.rs`.
 
 #[allow(warnings)]
 mod bindings {
@@ -40,8 +38,7 @@ mod handlers;
 pub use guestauth::Route;
 
 pub const TENANT: &str = "parking";
-/// The only roles this app grants. Anything else in a register request falls
-/// back to `member` — a role is a privilege, not a free-text field.
+/// The only roles this app grants. Anything else in a register request falls back to `member`: a role is a privilege, not free text.
 const ROLES: &[&str] = &["admin", "member"];
 
 guestio::guest_p3_respond!();

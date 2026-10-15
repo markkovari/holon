@@ -1,77 +1,31 @@
-//! `knowledge-memory` — the policy layer over the stores that already exist.
+//! `knowledge-memory` — the policy layer over the stores that already exist (ADR-0081, ADR-0084).
 //!
-//! ## What this adds that the stores do not have
+//! `knowledge:graph` remembers, `search:index` ranks lexically, `llm:inference/embed` makes vectors.
+//! Four policy decisions are missing from storage:
 //!
-//! `knowledge:graph` remembers, traverses and owns the database connection.
-//! `search:index` ranks lexically. `llm:inference/embed` turns text into a vector.
-//! Put together they are a write-only log with a search box. Four decisions are
-//! missing, and all four are policy rather than storage (ADR-0081, ADR-0084):
+//! 1. **Who may write what the swarm believes.** An agent may record observations; only a passing
+//!    gate may promote. Two exported interfaces: an agent's world has `memory` and not `promotion`,
+//!    so the trusted namespace is a function it does not have, not a check it can get round.
+//! 2. **How a lesson earns its place in a prompt.** By what happened to the runs that read it, never
+//!    a self-reported confidence. `attribute` is the only thing that moves standing.
+//! 3. **How much may be read.** `recall-opts` is the diversity budget; `k = 0` is a control arm.
+//! 4. **Whether the work has already been done.** Every evaluation is recorded; `already-done` answers.
 //!
-//! 1. **Who may write what the swarm believes.** An agent may record what it
-//!    observed; only a passing gate may promote. Enforced by there being two
-//!    exported interfaces: an agent's world contains `memory` and not
-//!    `promotion`, so the trusted namespace is not a check it can get round — it
-//!    is a function it does not have.
-//! 2. **How a lesson earns its place in a prompt.** Not by asserting a
-//!    confidence — a self-reported score is a number an agent optimises against
-//!    — but by what happened to the runs that read it. `attribute` is the only
-//!    thing that moves standing.
-//! 3. **How much may be read at all.** `recall-opts` is the diversity budget: a
-//!    generation whose branches all read the same top-k is an expensive way to
-//!    run one branch, and `k = 0` is a control arm.
-//! 4. **Whether the work has already been done.** Every evaluation of a goal is
-//!    recorded — passing or not — and `already-done` answers the question a
-//!    generation should ask before spending anything.
+//! Retrieval is hybrid: dense (one `WHERE vec <|k,COSINE|> [q]` statement, done in SurrealDB, rows
+//! come back hydrated) plus sparse (`search:index` TF-IDF, keeps working without the embedding
+//! provider). Orderings are fused with reciprocal rank fusion, then multiplied by earned outcomes.
 //!
-//! ## Where the vector search happens: in the database
+//! Model-drift guard: an HNSW index carries its `DIMENSION` and SurrealDB refuses other widths, so a
+//! model change gets a loud rejection. The write is then retried WITHOUT its vector and flagged
+//! `dim_conflict` (a flag is queryable, a dropped write is not).
 //!
-//! Retrieval is hybrid and both halves are ANN-cheap:
+//! ponytail: a same-width model change still slips through (`embed` returns a bare `list<f32>`,
+//! ADR-0084). A canary set is the real detector; add it when a deployment changes model.
 //!
-//! - **dense** — one `WHERE vec <|k,COSINE|> [q]` statement. SurrealDB does the
-//!   nearest-neighbour search and returns the full rows, so candidates arrive
-//!   hydrated and the pool is never dragged through this component to be compared
-//!   here.
-//! - **sparse** — `search:index`, TF-IDF over the KV store, no network. The half
-//!   that keeps working when the embedding provider is down or has moved.
-//!
-//! The two orderings are fused with reciprocal rank fusion, then multiplied by
-//! what the outcomes have earned each entry. Fusing matters because the halves
-//! fail differently: dense finds a lesson that shares no words with the goal, and
-//! sparse finds one whose vector came from a model that has since changed.
-//!
-//! ## The model-drift guard is a database constraint
-//!
-//! An HNSW index carries its `DIMENSION`, and SurrealDB refuses a vector of any
-//! other width — measured: *"Incorrect vector dimension (2). Expected a vector of
-//! 4 dimension."* So the index is defined (idempotently) beside the first write,
-//! and a deployment that changes embedding model to one of a different width gets
-//! a loud rejection instead of an index quietly holding two incompatible spaces.
-//!
-//! The write is then retried WITHOUT its vector and flagged `dim_conflict`: losing
-//! a lesson because an embedding model moved is worse than losing dense retrieval
-//! of it, and a flag is queryable where a dropped write is not.
-//!
-//! ponytail: a same-width model change still slips through, because
-//! `llm:inference/embed` returns a bare `list<f32>` and cannot say which model
-//! answered (ADR-0084). A canary set is the real detector; add it when a
-//! deployment actually changes model.
-//!
-//! ## Contention: `+=` in the database, and a bounded retry
-//!
-//! Nothing here holds a lock, and nothing here reads a counter in order to write
-//! it back. Both are deliberate, and both were measured against SurrealDB v3.1.3
-//! at 20-way concurrency on one hot key:
-//!
-//! | strategy | 60 concurrent increments land |
-//! |---|---|
-//! | read-modify-write from the component | **7** |
-//! | `SET uses += 1`, no retry | 53 (7 rejected as conflicts) |
-//! | `SET uses += 1` + resend on conflict | **60**, exactly |
-//!
-//! The resend lives in `knowledge:graph` so every caller gets it. It is safe for
-//! an increment because a conflicted transaction did not commit — SurrealDB says
-//! so in the rejection — and it needs no backoff because the winner has already
-//! committed by the time the loser hears about it.
+//! Contention: no locks, and no read-then-write of counters. Measured on SurrealDB v3.1.3, 20-way on
+//! one hot key, 60 increments land: read-modify-write 7; `SET uses += 1` 53; `+= 1` plus resend on
+//! conflict 60. The resend lives in `knowledge:graph`; it is safe because a conflicted transaction
+//! did not commit, and needs no backoff because the winner has already committed.
 
 #[allow(warnings)]
 mod bindings;
@@ -90,8 +44,7 @@ use serde_json::Value;
 
 struct Component;
 
-/// A lesson longer than this is a transcript. Truncated rather than refused: a
-/// caller should not fail because the distilling model was chatty.
+/// A lesson longer than this is a transcript. Truncated rather than refused.
 const MAX_TEXT: usize = 900;
 
 /// Characters of retrieved text allowed into one prompt when the caller does not
@@ -110,8 +63,6 @@ const RRF_K: f64 = 60.0;
 /// alpha-swarm2's, and it is high on purpose: skipping work that was not actually
 /// done is a silent wrong answer, where redoing work is only money.
 const DEFAULT_SKIP_SIMILARITY: f64 = 0.9;
-
-// ---------------------------------------------------------------- the policy
 
 /// The load-bearing rule, as a predicate so it is testable without a runtime.
 ///
@@ -137,10 +88,7 @@ fn weight(uses: u64, wins: u64) -> f64 {
     0.5 + 0.5 * success
 }
 
-// ------------------------------------------------------------- pure helpers
-
-/// Collapse the incidental differences between two spellings of one goal, so
-/// re-learning the same thing reinforces one row instead of growing the pool.
+/// Collapse incidental differences between two spellings of one goal, so re-learning reinforces one row.
 fn normalise(goal: &str) -> String {
     goal.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
@@ -156,11 +104,8 @@ fn digest(s: &str) -> String {
     format!("{h:016x}")
 }
 
-/// Read a decomposition edge's rows.
-///
-/// `parents_of` selects the same field names as `parts_of` deliberately, so one
-/// reader serves both directions and the two cannot drift into disagreeing about
-/// what a sub-goal looks like from either end.
+/// Read a decomposition edge's rows. `parents_of` selects the same field names as `parts_of` so one
+/// reader serves both directions.
 ///
 /// A row missing `done` reads as NOT done. The safe side of an unknown here is
 /// the one that does the work again: skipping a part that was never finished is a
@@ -189,9 +134,7 @@ fn ns_of(name: &str) -> Namespace {
     match name {
         "patterns" => Namespace::Patterns,
         "errors" => Namespace::Errors,
-        // A row written by an older version, or one whose property was lost, is
-        // read as the untrusted-positive pool. Never as `patterns`: a decoding
-        // gap must not promote anything.
+        // A row from an older version, or with a lost property, reads as the untrusted-positive pool, never `patterns`.
         _ => Namespace::Solutions,
     }
 }
@@ -210,9 +153,8 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
-/// Reciprocal rank fusion over the ranks an entry achieved in each list it
-/// appeared in. An entry placed respectably by both retrievers beats one placed
-/// first by a single retriever, which is the whole point of fusing.
+/// Reciprocal rank fusion over the ranks an entry achieved in each list. An entry placed respectably by
+/// both retrievers beats one placed first by a single retriever.
 fn rrf(ranks: &[usize]) -> f64 {
     ranks.iter().map(|r| 1.0 / (RRF_K + *r as f64 + 1.0)).sum()
 }
@@ -222,8 +164,7 @@ fn trim(mut hits: Vec<Hit>, k: u32, budget: usize) -> Vec<Hit> {
     hits.truncate(k as usize);
     let mut spent = 0usize;
     hits.retain(|h| {
-        // A lesson that does not fit is skipped, not cut in half: half a lesson
-        // in a prompt is worse than one fewer lesson.
+        // A lesson that does not fit is skipped, not cut in half.
         if spent + h.text.chars().count() > budget {
             return false;
         }
@@ -233,7 +174,6 @@ fn trim(mut hits: Vec<Hit>, k: u32, budget: usize) -> Vec<Hit> {
     hits
 }
 
-/// A hydrated candidate: what was stored, plus what it has earned.
 struct Stored {
     handle: String,
     ns: Namespace,
@@ -246,17 +186,13 @@ struct Stored {
 
 fn stored_of(row: &Value) -> Option<Stored> {
     let full = row["id"].as_str()?;
-    // The id comes back re-quoted in whatever form the server preferred —
-    // backticks, angle brackets, or bare — so the quoting is stripped rather than
-    // assumed (ADR-0080).
+    // The id comes back re-quoted in whatever form the server preferred, so quoting is stripped (ADR-0080).
     let h = full
         .split_once(':')
         .map(|(_, id)| id.trim_matches(|c| c == '`' || c == '⟨' || c == '⟩'))?
         .to_string();
     let text = row["text"].as_str().unwrap_or("").to_string();
-    // A row with no text is not a lesson, whatever left it there — a write
-    // interrupted between the graph and the lexical index, a row someone edited by
-    // hand. It must never reach a prompt.
+    // A row with no text is not a lesson (interrupted write, hand edit); it must never reach a prompt.
     if text.is_empty() {
         return None;
     }
@@ -269,8 +205,6 @@ fn stored_of(row: &Value) -> Option<Stored> {
         similarity: row["dist"].as_f64().map(surql::similarity_of),
     })
 }
-
-// ------------------------------------------------------------ the store edge
 
 fn graph_err(e: graph::GraphError) -> MemoryError {
     match e {
@@ -287,9 +221,8 @@ fn search_err(e: search::SearchError) -> MemoryError {
     }
 }
 
-/// Send SurrealQL through the graph component, which owns the connection, the
-/// credentials, the namespace bootstrap and the conflict retry. Nothing here
-/// opens a socket.
+/// Send SurrealQL through the graph component, which owns the connection, credentials, namespace
+/// bootstrap and conflict retry.
 fn ask(statement: &str) -> Result<Vec<Value>, MemoryError> {
     let body = graph::query(statement).map_err(graph_err)?;
     surql::rows(&body).map_err(MemoryError::Rejected)
@@ -304,12 +237,8 @@ fn embed_opts() -> llm::Options {
     llm::Options { model: String::new(), temperature: 0, max_tokens: 0, stop: Vec::new(), seed: 0 }
 }
 
-/// Embed, or answer `none` and let retrieval stay lexical.
-///
-/// Three ways this legitimately returns nothing: no embedding provider is linked,
-/// the linked provider has no embeddings endpoint (`anthropic-provider` refuses
-/// rather than faking one), or the provider is having a bad day. None of them is a
-/// reason to fail a write or a read.
+/// Embed, or answer `none` and let retrieval stay lexical (no provider linked, no embeddings
+/// endpoint, or a bad day). None of these should fail a write or read.
 fn embed(text: &str) -> Option<Vec<f32>> {
     let (_model, embeddings_available) = llm::describe();
     if !embeddings_available {
@@ -318,18 +247,15 @@ fn embed(text: &str) -> Option<Vec<f32>> {
     llm::embed(text, &embed_opts()).ok().filter(|v| !v.is_empty())
 }
 
-/// What goes to the embedding model: the goal, then the lesson. The header is most
-/// of the retrieval quality (ADR-0081) and costs nothing.
+/// What goes to the embedding model: the goal, then the lesson. The header is most of the retrieval quality (ADR-0081).
 fn embeddable(goal: &str, text: &str) -> String {
     format!("{} — {}", goal.trim(), text)
 }
 
-/// The one write path for an entry. `observe` and `promote` differ only in what
-/// they are allowed to pass here.
+/// The one write path for an entry; `observe` and `promote` differ only in what they may pass here.
 ///
-/// One statement, no read first. `uses += 0` creates the counter when it is absent
-/// and preserves it when it is not, so re-observing a lesson keeps whatever
-/// standing it earned without this component ever holding a counter in a variable.
+/// One statement, no read first: `uses += 0` creates the counter or preserves it, so re-observing
+/// keeps earned standing.
 fn write(e: &Entry, promoted: bool) -> Result<String, MemoryError> {
     let text = truncate(e.text.trim(), MAX_TEXT);
     if text.is_empty() {
@@ -342,8 +268,6 @@ fn write(e: &Entry, promoted: bool) -> Result<String, MemoryError> {
         k => k.to_string(),
     };
     let h = handle(e.ns, &key);
-    // Provenance on every write: which environment, which attempt, at what score.
-    // That is what keeps attribution recoverable when two branches disagree.
     let w = surql::EntryWrite {
         handle: &h,
         ns: ns_name(e.ns),
@@ -359,18 +283,14 @@ fn write(e: &Entry, promoted: bool) -> Result<String, MemoryError> {
     let vector = embed(&embeddable(&e.goal, &text));
     match ask(&surql::upsert_entry(&w, vector.as_deref(), false)) {
         Ok(_) => {}
-        // The index is a different width, so the embedding model has changed. The
-        // lesson still lands; only its dense retrieval is lost, and the flag makes
-        // that queryable instead of invisible.
+        // The embedding model changed width: the lesson still lands without its vector, flagged so that is queryable.
         Err(err) if dimension_conflict(&err) => {
             ask(&surql::upsert_entry(&w, None, true))?;
         }
         Err(err) => return Err(err),
     }
 
-    // The lexical index is half of recall, so a write that reaches the graph and
-    // not the index is an entry nothing will retrieve on a token match. Surfaced,
-    // not swallowed.
+    // A write that reaches the graph and not the lexical index would never match on tokens. Surfaced, not swallowed.
     search::index_doc(&h, &embeddable(&e.goal, &text), &[format!("ns:{}", ns_name(e.ns))])
         .map_err(search_err)?;
 
@@ -390,9 +310,7 @@ impl Guest for Component {
     }
 
     fn recall(goal: String, opts: RecallOpts) -> Result<Vec<Hit>, MemoryError> {
-        // The control arm. Spelled as "read nothing" rather than defaulted into a
-        // `k`, because a branch that reads nothing is how anyone finds out whether
-        // the shared pool is helping at all.
+        // The control arm: "read nothing" rather than a defaulted `k`, so the shared pool's value can be measured.
         if opts.k == 0 || goal.trim().is_empty() {
             return Ok(Vec::new());
         }
@@ -404,9 +322,7 @@ impl Guest for Component {
         };
         let per = opts.k.saturating_mul(CANDIDATE_FACTOR);
 
-        // 1. Sparse recall, one query per pool so a caller can mix the pools
-        // per-branch. Ranks are kept per pool: being third in `errors` is not
-        // worth less than being third in `patterns`.
+        // 1. Sparse recall, one query per pool so a caller can mix pools per-branch. Ranks are kept per pool.
         let mut lexical: Vec<(String, usize)> = Vec::new();
         for ns in &pools {
             let hits =
@@ -417,9 +333,7 @@ impl Guest for Component {
             }
         }
 
-        // 2. Dense recall, in the database. The rows come back whole, so these
-        // candidates need no hydration — and a vector of another width is skipped
-        // by SurrealDB rather than compared.
+        // 2. Dense recall, in the database. Rows come back whole; a vector of another width is skipped by SurrealDB.
         let mut stored: Vec<Stored> = Vec::new();
         if let Some(q) = embed(&goal) {
             let names: Vec<&str> = pools.iter().map(|n| ns_name(*n)).collect();
@@ -427,15 +341,9 @@ impl Guest for Component {
             stored.extend(rows.iter().filter_map(stored_of));
         }
 
-        // 2b. Structural recall: what previous work against these INTERFACES
-        // learned, whatever it was called (ADR-0090). This is the half that crosses
-        // applications — a fact about `csv:codec/codec` is true for a billing
-        // ledger and a veterinary clinic, which share almost no wording, so
-        // similarity over goal text cannot connect them.
-        //
-        // Matched exactly, no embedding, and merged into the same candidate set:
-        // these rows then go through the identical fusion and outcome weighting as
-        // everything else, so a tagged lesson that keeps losing still sinks.
+        // 2b. Structural recall: what earlier work against these INTERFACES learned (ADR-0090). Crosses
+        // applications, where goal-text similarity cannot. Matched exactly, merged into the candidate set,
+        // so tagged lessons go through the same fusion and outcome weighting.
         let mut by_tag: Vec<String> = Vec::new();
         if !opts.tags.is_empty() {
             let names: Vec<&str> = pools.iter().map(|n| ns_name(*n)).collect();
@@ -448,9 +356,7 @@ impl Guest for Component {
             }
         }
 
-        // 3. Hydrate only the lexical candidates the dense pass did not already
-        // return, in ONE statement. One read per candidate is the N+1 ADR-0077 was
-        // written about, and a retrieval path would do it k×4 times per branch.
+        // 3. Hydrate lexical candidates the dense pass did not return, in ONE statement (the N+1 of ADR-0077).
         let missing: Vec<String> = lexical
             .iter()
             .map(|(h, _)| h.clone())
@@ -479,17 +385,10 @@ impl Guest for Component {
                 ranks.push(rank);
             }
             let sim = s.similarity.unwrap_or(0.0);
-            // The threshold applies to the dense score only, and only to hits that
-            // have one — otherwise a deployment with no embedding provider would
-            // filter its whole result set away.
-            //
-            // A TAG MATCH is exempt. `min-similarity` asks "is this text close
-            // enough to my goal", and a tag is the answer to a different question:
-            // somebody learned this while using an interface I import. Applying a
-            // textual threshold to structural evidence would make tags useless for
-            // exactly the case they exist for — the clinic lesson that a payroll
-            // exporter needs scores 0.42 against it, and any threshold worth
-            // setting is higher than that (ADR-0090).
+            // The threshold applies to the dense score only, and only to hits that have one, else a deployment
+            // without an embedding provider would filter everything. A TAG MATCH is exempt: it answers "learned
+            // while using an interface I import", not "is this text close", and a textual threshold would defeat
+            // exactly the cross-application case (ADR-0090).
             let matched_by_tag = by_tag.contains(&s.handle);
             if !matched_by_tag
                 && s.similarity.is_some()
@@ -509,9 +408,7 @@ impl Guest for Component {
                 },
             ));
         }
-        // Ties broken by handle, so two runs over the same pool read the same
-        // prompt. A retrieval layer that reorders equal scores at random makes
-        // every comparison downstream noisier for no gain.
+        // Ties broken by handle, so two runs over the same pool read the same prompt.
         out.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.key.cmp(&b.1.key)));
 
         Ok(trim(out.into_iter().map(|(_, h)| h).collect(), opts.k, budget))
@@ -526,12 +423,9 @@ impl Guest for Component {
         if keys.is_empty() {
             return Ok(());
         }
-        // One transaction for the whole verdict, and the counters move in the
-        // database. `UPDATE` (not `UPSERT`) so a handle that has since been decayed
-        // or deleted by a human is a no-op rather than a resurrected empty entry.
-        //
-        // The edges are the record; the counters are a denormalised read of them,
-        // which is why both are written under one commit.
+        // One transaction for the whole verdict; counters move in the database. `UPDATE` not `UPSERT`, so a
+        // decayed or deleted handle is a no-op rather than a resurrected empty entry. Edges are the record,
+        // counters a denormalised read of them, hence one commit.
         ask(&surql::attribute(&keys, &run, succeeded)).map(|_| ())
     }
 
@@ -542,11 +436,8 @@ impl Guest for Component {
             ));
         }
         let gone = ask(&surql::decay(max_age_days, min_uses))?;
-        // The lexical index is not swept: `search:index` has no "remove what is no
-        // longer in the graph" and a hit whose row is gone is filtered out on
-        // hydration anyway (a row with no text never reaches a prompt). Said out
-        // loud because an index that grows for ever is a real cost, just a slower
-        // one than a pool that does.
+        // The lexical index is not swept: `search:index` cannot remove what left the graph, and a hit whose
+        // row is gone is filtered on hydration. An ever-growing index is a real but slow cost.
         Ok(gone.len() as u32)
     }
 
@@ -570,8 +461,7 @@ impl Guest for Component {
         };
         match ask(&stmt(vector.as_deref(), false)) {
             Ok(_) => Ok(()),
-            // The embedding model changed width: the evaluation is worth more than
-            // its vector, so it lands without one and says so.
+            // The embedding model changed width: the evaluation lands without its vector and says so.
             Err(e) if dimension_conflict(&e) => ask(&stmt(None, true)).map(|_| ()),
             Err(e) => Err(e),
         }
@@ -590,9 +480,7 @@ impl Guest for Component {
                     .into(),
             ));
         }
-        // A goal that decomposes into itself is a loop with one step. Refused
-        // here rather than left for a depth bound to catch later, because by
-        // then it has already cost a run.
+        // A goal that decomposes into itself is refused here rather than caught later by a depth bound, at the cost of a run.
         let (pk, ck) = (digest(&normalise(&parent)), digest(&normalise(&child)));
         if pk == ck {
             return Err(MemoryError::Refused(
@@ -622,12 +510,9 @@ impl Guest for Component {
         }
         let floor = if min_similarity <= 0.0 { DEFAULT_SKIP_SIMILARITY } else { min_similarity };
         let (rows, exact) = match embed(&normalise(&goal)) {
-            // Nearest neighbour among the goals that have PASSED, computed in the
-            // database.
+            // Nearest neighbour among the goals that have PASSED, computed in the database.
             Some(q) => (ask(&surql::already_done_knn(&q))?, false),
-            // No embedding provider: an exact match on the normalised goal. It
-            // still catches the duplicated work that actually dominates — a
-            // retried generation asking for the same thing again.
+            // No embedding provider: exact match on the normalised goal, which still catches retried generations.
             None => (ask(&surql::already_done_exact(&digest(&normalise(&goal))))?, true),
         };
         let Some(row) = rows.first() else {
@@ -656,9 +541,8 @@ impl PromotionGuest for Component {
                 "a gate score of {gate_score} did not pass — nothing downstream of a failure is promoted"
             )));
         }
-        // The namespace is not the caller's to choose here: promotion means one
-        // thing, and a hook that could promote into `errors` would be a hook that
-        // could write a lesson nobody can tell from an observation.
+        // The namespace is not the caller's to choose: a hook that could promote into `errors` would write
+        // a lesson nobody can tell from an observation.
         let promoted = Entry { ns: Namespace::Patterns, score: gate_score, ..e };
         write(&promoted, true)
     }
@@ -672,7 +556,6 @@ mod tests {
     use serde_json::json;
     use surql::{define_index, lit, rid, similarity_of, vec_lit, ENTRIES, TASKS};
 
-    /// `surql::rows` reports the database's own words; the component wraps them.
     fn rows_of(body: &str) -> Result<Vec<Value>, MemoryError> {
         surql::rows(body).map_err(MemoryError::Rejected)
     }
@@ -777,10 +660,8 @@ mod tests {
         ));
     }
 
-    /// A body carrying `DEFINE INDEX` then `UPSERT` answers with two results, and
-    /// the rows wanted are the last statement's — but a failure in ANY of them is
-    /// still a failure, because inside `BEGIN`/`COMMIT` one failed statement takes
-    /// the transaction down with it.
+    /// A body with `DEFINE INDEX` then `UPSERT` answers with two results; the rows wanted are the last
+    /// statement's, but a failure in ANY of them fails the transaction.
     #[test]
     fn a_multi_statement_body_reads_the_last_result_and_the_first_error() {
         let ok = r#"[{"status":"OK","result":null},{"status":"OK","result":[{"id":"memory:x","text":"a lesson"}]}]"#;
@@ -788,16 +669,12 @@ mod tests {
         let failed_tx = r#"[{"status":"OK","result":null},
             {"status":"ERR","result":"Transaction conflict: Write conflict, retry the transaction. This transaction can be retried"},
             {"status":"ERR","result":"The query was not executed due to a failed transaction"}]"#;
-        // Retrying is `knowledge:graph`'s job (it resends the whole body); by the
-        // time a conflict reaches here it has already survived four attempts, and
-        // it must be reported rather than read as an empty result.
+        // Retrying is `knowledge:graph`'s job; a conflict reaching here already survived its attempts and must be reported.
         assert!(matches!(rows_of(failed_tx), Err(MemoryError::Rejected(_))));
     }
 
-    /// Captured live: the HNSW index refuses a vector of the wrong width, which is
-    /// the model-drift detector. It has to be told apart from every other rejection
-    /// or the fallback (write the lesson without its vector) would swallow real
-    /// failures.
+    /// Captured live: the HNSW index refuses a vector of the wrong width (the model-drift detector). It
+    /// must be told apart from other rejections or the vectorless fallback would swallow real failures.
     #[test]
     fn a_changed_embedding_width_is_a_recognisable_rejection() {
         let refused = rows_of(
@@ -826,11 +703,8 @@ mod tests {
         assert_eq!(hydrated.similarity, None, "a lexical hit has no cosine to report");
     }
 
-    /// Measured, and it is the reassuring half of the answer: `RELATE` against a
-    /// missing record creates the EDGE only — `SELECT * FROM memory:⟨never⟩` comes
-    /// back empty afterwards — so attributing an outcome to a handle a human has
-    /// deleted does not resurrect it. The guard stays anyway: a row with counters
-    /// and no lesson is not something to put in a prompt, however it got there.
+    /// Measured: `RELATE` against a missing record creates the EDGE only, so attributing an outcome to a
+    /// deleted handle does not resurrect it. The guard stays: a row with counters and no lesson must not reach a prompt.
     #[test]
     fn a_row_with_no_lesson_never_reaches_a_prompt() {
         let row = json!({ "id": "memory:⟨errors:gone⟩", "uses": 3, "wins": 0 });

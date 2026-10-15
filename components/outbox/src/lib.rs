@@ -1,12 +1,8 @@
 //! `outbox` — emit an event reliably after a state change — the transactional outbox, so a crash neither loses nor double-fires it
 //!
-//! A durable, at-least-once event queue implementing the transactional-outbox
-//! pattern, backed by `wasi:keyvalue`. The reliable-event problem: an app
-//! mutates state and wants to emit an event, but a crash between the two loses
-//! or double-fires it. The fix is to *enqueue the event in the same store* as
-//! the work, then have a relay claim and dispatch it with explicit ack. This
-//! component is the durable-queue half; dispatch (HTTP/NATS/notify) is the
-//! relay's job and stays out of scope.
+//! A durable, at-least-once event queue implementing the transactional-outbox pattern on `wasi:keyvalue`:
+//! enqueue the event in the same store as the work, then have a relay claim and dispatch it with explicit ack,
+//! so a crash neither loses nor double-fires it. This is the durable-queue half; dispatch is the relay's job.
 //!
 //! Lifecycle:
 //!   enqueue → pending → (claim, leased) → in-flight
@@ -14,29 +10,22 @@
 //!     └─ fail  → pending again (with backoff) … or → dead after max-attempts
 //!   dead → (replay) → pending
 //!
-//! Leased claim: `claim` flips a due event to `in-flight` and stamps
-//! `not_before = now + lease_seconds` as a lease deadline. Another claimer
-//! won't see it until that deadline passes — so a crashed relay's events become
-//! claimable again automatically (crash-safe, no stuck events). `ack` deletes
-//! the record; `fail` reschedules with exponential backoff
-//! (`base-backoff * 2^(attempts-1)`, shift capped to avoid overflow) until
-//! `attempts` exceeds `max-attempts`, after which it dead-letters.
+//! Leased claim: `claim` flips a due event to `in-flight` and stamps `not_before = now + lease_seconds`, so
+//! another claimer won't see it until the lease passes and a crashed relay's events become claimable again.
+//! `fail` reschedules with exponential backoff (`base-backoff * 2^(attempts-1)`, shift capped to avoid
+//! overflow) until `attempts` exceeds `max-attempts`, then dead-letters.
 //!
 //! Storage layout (BUCKET = "default"):
-//!   ob_{id}   one tab-delimited line per event (state, attempts, created,
-//!             not_before, base64(topic), base64(payload))
-//!   ob_idx    newline-joined list of all live event ids, so `claim` /
-//!             `dead-letters` can enumerate without a key-scan API.
+//!   ob_{id}   one tab-delimited line per event (state, attempts, created, not_before, base64(topic), base64(payload))
+//!   ob_idx    newline-joined list of all live event ids, so `claim` / `dead-letters` can enumerate without a key-scan API.
 //!
 //! Config (wasi:config/store):
 //!   max-attempts   retry cap before dead-lettering (default 8)
 //!   base-backoff   backoff base seconds, doubled per attempt (default 5)
 //!
-//! RACE CAVEAT (best-effort, NOT a correctness guarantee): the `ob_idx` index
-//! is maintained by read-modify-write. `wasi:keyvalue@0.2.0-draft` exposes no
-//! compare-and-swap (only `increment`), so concurrent writers can clobber each
-//! other's index updates and drop an id. This reference impl assumes a single
-//! writer (the common relay topology). A true fix needs CAS on the index.
+//! RACE CAVEAT (best-effort, NOT a correctness guarantee): the `ob_idx` index is maintained by
+//! read-modify-write and `wasi:keyvalue@0.2.0-draft` has no compare-and-swap, so concurrent writers can
+//! clobber each other's index updates and drop an id. Assumes a single writer; a true fix needs CAS on the index.
 
 #[allow(warnings)]
 mod bindings;
@@ -55,8 +44,6 @@ struct Component;
 const BUCKET: &str = "default";
 const INDEX_KEY: &str = "ob_idx";
 
-// ---- config -------------------------------------------------------------
-
 fn max_attempts() -> u32 {
     match config::get("max-attempts") {
         Ok(Some(v)) => v.parse().unwrap_or(8),
@@ -71,20 +58,16 @@ fn base_backoff() -> u64 {
     }
 }
 
-// ---- helpers ------------------------------------------------------------
-
 fn now() -> u64 {
     wall_clock::now().seconds
 }
 
-/// A fresh 16-hex id from 8 random bytes (same scheme as idempotency-guard's
-/// nonce).
+/// A fresh 16-hex id from 8 random bytes (same scheme as idempotency-guard's nonce).
 fn new_id() -> String {
     get_random_bytes(8).iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// Sanitize an opaque id to NATS-legal kv chars (same scheme as
-/// idempotency-guard's `id_key`), prefixed with `ob_`.
+/// Sanitize an opaque id to NATS-legal kv chars (same scheme as idempotency-guard's `id_key`), prefixed with `ob_`.
 fn ob_key(id: &str) -> String {
     let mut out = String::with_capacity(id.len() + 3);
     out.push_str("ob_");
@@ -118,11 +101,8 @@ fn char_state(c: char) -> Result<State, OutboxError> {
     }
 }
 
-// ---- record (de)serialization -------------------------------------------
-//
-// One tab-delimited line: `{state}\t{attempts}\t{created}\t{not_before}\t
-// {b64(topic)}\t{b64(payload)}`. topic + payload are base64'd so arbitrary
-// bytes (incl. tabs/newlines) round-trip safely.
+// ---- record (de)serialization: one tab-delimited line `{state}\t{attempts}\t{created}\t{not_before}\t{b64(topic)}\t{b64(payload)}`;
+// topic + payload are base64'd so arbitrary bytes (incl. tabs/newlines) round-trip.
 
 fn serialize(ev: &Event) -> String {
     format!(
@@ -186,8 +166,6 @@ fn store(bucket: &kv::Bucket, ev: &Event) -> Result<(), OutboxError> {
         .set(&ob_key(&ev.id), serialize(ev).as_bytes())
         .map_err(|e| OutboxError::BackendUnavailable(format!("set: {e:?}")))
 }
-
-// ---- index (best-effort, single-writer) ---------------------------------
 
 fn index_read(bucket: &kv::Bucket) -> Result<Vec<String>, OutboxError> {
     match bucket.get(INDEX_KEY) {
@@ -258,8 +236,7 @@ impl Guest for Component {
                 Some(ev) => ev,
                 None => continue,
             };
-            // Eligible: a due pending event, or an in-flight event whose lease
-            // (stored as not_before while in-flight) has expired.
+            // Eligible: a due pending event, or an in-flight event whose lease (stored as not_before) has expired.
             let eligible = match ev.state {
                 State::Pending => now >= ev.not_before,
                 State::InFlight => now >= ev.not_before,
@@ -294,12 +271,10 @@ impl Guest for Component {
         let now = now();
         ev.attempts = ev.attempts.saturating_add(1);
         if ev.attempts > max_attempts() {
-            // Exhausted retries — dead-letter it (kept in the index for
-            // inspection / replay).
+            // Exhausted retries: dead-letter it (kept in the index for inspection / replay).
             ev.state = State::Dead;
         } else {
-            // Exponential backoff: base * 2^(attempts-1), shift capped so the
-            // multiply can't overflow.
+            // Exponential backoff: base * 2^(attempts-1), shift capped so the multiply can't overflow.
             ev.state = State::Pending;
             let shift = (ev.attempts - 1).min(16);
             let backoff = base_backoff().saturating_mul(1u64 << shift);

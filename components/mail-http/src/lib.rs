@@ -1,18 +1,10 @@
 //! `mail-http` — one email, POSTed to whatever gateway config names.
 //!
-//! ## Why HTTP and not SMTP
+//! Why HTTP and not SMTP: `comp-host` wires no `wasi:sockets`, so a component cannot speak SMTP at all. That is why this
+//! interface is a POST and why `tools/mail-relay` exists: it speaks real SMTP on the outside, where sockets are allowed.
 //!
-//! `comp-host` wires no `wasi:sockets`, so a component cannot open a TCP connection
-//! and therefore cannot speak SMTP at all. That is not a limitation worked around
-//! here — it is the reason this interface is shaped as a POST, and the reason
-//! `tools/mail-relay` exists: it is the piece that speaks real SMTP, on the outside,
-//! where sockets are allowed.
-//!
-//! ## What is configured, and what is a secret
-//!
-//! `mail:gateway-url` and `mail:from` are config. The API key is a SECRET, read
-//! through `comp:secrets` under `mail-api-key` — ADR-0051: a secret arrives by
-//! reference, never as config. A gateway that needs no key (the local relay) simply
+//! `mail:gateway-url` and `mail:from` are config. The API key is a SECRET read through `comp:secrets` under
+//! `mail-api-key` (ADR-0051: a secret arrives by reference, never as config). A gateway needing no key (the local relay)
 //! has none, and the Authorization header is then absent rather than empty.
 
 #[allow(warnings)]
@@ -46,10 +38,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), SendError> {
     Ok((scheme, authority, path))
 }
 
-/// The gateway's key, revealed only at the moment it is used.
-///
-/// `none` is not an error — `comp:secrets` says so, and it is the normal way to run
-/// against a gateway that needs no credential, which is exactly the local relay.
+/// The gateway's key, revealed only at the moment it is used. `none` is not an error: it is the normal way to run against a gateway needing no credential (the local relay).
 fn api_key() -> Option<String> {
     match secrets::get("mail-api-key") {
         Ok(Some(s)) => secrets::reveal(&s).ok().filter(|v| !v.is_empty()),
@@ -61,12 +50,8 @@ fn cfg(key: &str) -> Option<String> {
     config::get(key).ok().flatten().filter(|s| !s.is_empty())
 }
 
-/// The gateway's own id for the message.
-///
-/// Resend answers `{"id":"..."}`; the relay answers the same shape with what MailHog
-/// assigned. A gateway that returns neither is not an error — the send happened —
-/// so the status stands in, and the caller gets something rather than an empty
-/// string it has to special-case.
+/// The gateway's own id for the message (Resend answers `{"id":"..."}`; the relay the same shape with MailHog's id).
+/// A gateway returning neither is not an error (the send happened), so the status stands in.
 fn message_id(body: &[u8], status: u16) -> String {
     serde_json::from_slice::<serde_json::Value>(body)
         .ok()
@@ -90,9 +75,7 @@ impl Guest for Component {
             return Err(SendError::Rejected(format!("not an address: {}", msg.to)));
         }
 
-        // Resend's shape, which the relay also accepts. `text` rather than `html`:
-        // an event notification has no markup, and a reader who cannot render HTML
-        // still gets the message.
+        // Resend's shape, which the relay also accepts. `text` rather than `html`: an event notification has no markup.
         let payload = serde_json::json!({
             "from": from,
             "to": [msg.to],
@@ -104,9 +87,7 @@ impl Guest for Component {
         let (scheme, authority, path) = parse_url(&url)?;
         let headers = Fields::new();
         let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-        // Absent, not empty, when there is no key: a gateway that needs none (the
-        // relay) would otherwise see `Authorization: Bearer ` and be entitled to
-        // reject it.
+        // Absent, not empty, with no key: a keyless gateway would otherwise see `Authorization: Bearer ` and be entitled to reject it.
         if let Some(key) = api_key() {
             let _ = headers.set("authorization", &[format!("Bearer {key}").into_bytes()]);
         }
@@ -153,9 +134,7 @@ impl Guest for Component {
         }
         let detail = String::from_utf8_lossy(&body).chars().take(200).collect::<String>();
 
-        // The split that `notify:dispatch` cannot make: a 4xx is the message's
-        // fault and will fail again identically, a 5xx is the gateway's and might
-        // not. Whoever reads this error is a different person in each case.
+        // The split `notify:dispatch` cannot make: a 4xx is the message's fault and fails again identically, a 5xx is the gateway's and might not.
         match status {
             200..=299 => Ok(message_id(&body, status)),
             400..=499 => Err(SendError::Rejected(format!("{status}: {detail}"))),

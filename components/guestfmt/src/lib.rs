@@ -1,46 +1,28 @@
 //! `guestfmt` — the two wire-format helpers components kept rewriting, and the bug that hid in one
 //!
-//! 28 percent-decoders across the pool, under six names, in two shapes that do not
-//! agree. The disagreement is not stylistic:
+//! A percent escape encodes a BYTE. The broken shape (`out.push(b as char)`, in 7 of 28 hand-written
+//! decoders) read it as a Unicode code point, so `caf%C3%A9` came back `cafÃ©`. ASCII is unaffected,
+//! which is why it survived. The right shape collects bytes and decodes once at the end.
 //!
 //! ```text
-//! input                       byte-correct     what 7 components did
+//! input                       byte-correct     the broken shape
 //! caf%C3%A9                   café             cafÃ©
 //! M%C3%A1rk+K%C5%91v%C3%A1ri  Márk Kővári      MÃ¡rk KÅvÃ¡ri
 //! ```
 //!
-//! A percent escape encodes a BYTE. The broken shape wrote `out.push(b as char)`,
-//! which reads that byte as a Unicode code point — so every multi-byte UTF-8
-//! sequence came back as its individual bytes reinterpreted as Latin-1. ASCII is
-//! unaffected, which is why it survived: it is correct for exactly the inputs a
-//! test written in English would use.
-//!
-//! The right shape collects bytes and decodes once at the end. That is what the
-//! majority already did (13 of them, byte-identical), and it is what this is.
-//!
-//! Unlike [`guestio`](../guestio), these are plain functions. That crate has to be
-//! macros because a bindings type cannot cross a crate boundary; nothing here takes
-//! one, so the ordinary answer applies.
+//! Unlike [`guestio`](../guestio) these are plain functions: nothing here takes a bindings type.
 
 /// Decode `application/x-www-form-urlencoded` text: `%XX` escapes and `+` for space.
 ///
-/// Bytes are collected and decoded as UTF-8 once, at the end — decoding each escape
-/// on its own cannot work, because one character is often several escapes.
+/// Bytes are collected and decoded as UTF-8 once, at the end: one character is often several escapes.
 ///
-/// Invalid UTF-8 becomes the replacement character rather than an error. A query
-/// string is attacker-supplied and this is the last step before a handler reads it:
-/// refusing would turn a malformed parameter into a failed request, where every
-/// caller here wants a lossy-but-present value.
+/// Invalid UTF-8 becomes the replacement character rather than an error: a query string is
+/// attacker-supplied and callers want a lossy-but-present value. A `%` not followed by two hex digits
+/// is left alone (a literal `%` in user text is common).
 ///
-/// A `%` with fewer than two hex digits after it, or non-hex digits, is left alone —
-/// literal `%` in user text is common enough that dropping it is worse than keeping it.
-///
-/// The `+`-to-space pass runs FIRST, and that ordering is load-bearing rather than
-/// stylistic. `u8::from_str_radix` accepts a leading sign, so `"+a"` parses as `+0x0a`
-/// — and the seven components that decoded escapes in one pass turned `%+a` into a
-/// newline, letting a caller inject control bytes through input this function leaves
-/// as the literal text `% a`. Replacing `+` before parsing means no `+` ever reaches
-/// the radix call.
+/// The `+`-to-space pass runs FIRST and that ordering is load-bearing: `u8::from_str_radix` accepts a
+/// leading sign, so `"+a"` parses as `+0x0a` and a one-pass decoder turned `%+a` into a newline, letting a
+/// caller inject control bytes. Replacing `+` before parsing means no `+` reaches the radix call.
 pub fn percent_decode(s: &str) -> String {
     let plus = s.replace('+', " ");
     let b = plus.as_bytes();
@@ -71,13 +53,8 @@ pub fn percent_decode(s: &str) -> String {
 
 /// Format Unix seconds as RFC 3339 UTC — `2026-08-29T18:12:02Z`.
 ///
-/// Howard Hinnant's `civil_from_days`: shift the year to start in March so the
-/// leap day lands at the end and the month-length table becomes arithmetic. No
-/// lookup tables and no branches on leap years, which is why the same twenty lines
-/// kept being copied instead of pulled in.
-///
-/// Always UTC and always second precision. A component that needs an offset or
-/// milliseconds needs a real date library, not this.
+/// Howard Hinnant's `civil_from_days`: shift the year to start in March so the leap day lands at the end
+/// and month lengths become arithmetic. Always UTC, second precision; for offsets or milliseconds use a real date library.
 pub fn rfc3339(secs: u64) -> String {
     let days = (secs / 86_400) as i64;
     let tod = secs % 86_400;
@@ -104,24 +81,15 @@ pub fn rfc3339(secs: u64) -> String {
 
 /// Pull the token out of an `Authorization` header value.
 ///
-/// 24 components parsed this by hand in nine shapes, and they did not agree on the
-/// two things RFC 7235 and RFC 6750 actually specify:
+/// Hand-written copies disagreed on what RFC 7235 and RFC 6750 specify:
 ///
-///   * **The scheme name is case-insensitive** (RFC 7235 §2.1). Twenty-two of the
-///     twenty-four matched the literal `"Bearer "`, so a perfectly legal
-///     `authorization: bearer <token>` was rejected as no credential at all — which
-///     presents as an unexplained 401 against a request that is correct.
+///   * **The scheme name is case-insensitive** (RFC 7235 §2.1): matching the literal `"Bearer "` rejected a
+///     legal `authorization: bearer <token>` as no credential, an unexplained 401.
+///   * **Whitespace around the token is not part of it.**
 ///
-///   * **Whitespace around the token is not part of it.** Eight trimmed and sixteen
-///     did not, so the same token with a trailing space authenticated against some
-///     components and failed against others.
-///
-/// Returns a borrow of the input, and `None` when the scheme is not Bearer, when
-/// there is no token, or when the token is empty — an empty credential is an absent
-/// one, never a valid one that happens to be blank.
-///
-/// The value only, not the header lookup: that needs a bindings type, so it lives in
-/// `guestio::guest_bearer!` and calls this.
+/// Returns a borrow of the input, and `None` when the scheme is not Bearer, there is no token, or it is
+/// empty (an empty credential is an absent one). The value only, not the header lookup, which needs a
+/// bindings type and lives in `guestio::guest_bearer!`.
 pub fn bearer_token(header_value: &str) -> Option<&str> {
     let (scheme, rest) = header_value.split_once(' ')?;
     if !scheme.eq_ignore_ascii_case("bearer") {
@@ -135,8 +103,7 @@ pub fn bearer_token(header_value: &str) -> Option<&str> {
 mod tests {
     use super::*;
 
-    /// The case that separated the two shapes. Kept as a test rather than a note,
-    /// because "ASCII still works" is exactly what let the broken one survive.
+    /// The case that separated the two shapes. Kept as a test because "ASCII still works" let the broken one survive.
     #[test]
     fn a_multi_byte_character_survives_decoding() {
         assert_eq!(percent_decode("caf%C3%A9"), "café");
@@ -159,24 +126,18 @@ mod tests {
         assert_eq!(percent_decode("50% off"), "50% off");
     }
 
-    /// `from_str_radix` accepts a sign, so a one-pass decoder reads `%+a` as `+0x0a`
-    /// and emits a newline. Found by fuzzing the two shapes against each other:
-    /// 200 000 inputs, 699 divergences on ASCII alone, all of this form.
-    ///
-    /// This is the half that is not about UTF-8 — it is a caller injecting a control
-    /// byte through text that should have stayed literal.
+    /// `from_str_radix` accepts a sign, so a one-pass decoder reads `%+a` as `+0x0a` and emits a newline.
+    /// Found by fuzzing the two shapes against each other. Not about UTF-8: a caller injecting a control byte.
     #[test]
     fn a_signed_escape_is_not_a_number() {
         assert_eq!(percent_decode("%+a"), "% a");
         assert_eq!(percent_decode("%+A"), "% A");
         assert_eq!(percent_decode("x%+dy"), "x% dy");
-        // `-` is rejected by the radix parse on its own (it will not fit a u8), so
-        // it was never the dangerous one. Asserted so the pair stays a pair.
+        // `-` is rejected by the radix parse on its own, so it was never the dangerous one; asserted so the pair stays a pair.
         assert_eq!(percent_decode("%-a"), "%-a");
     }
 
-    /// RFC 7235 §2.1 makes the scheme name case-insensitive, and 22 of 24 components
-    /// matched a literal `"Bearer "` — so a legal request got an unexplained 401.
+    /// RFC 7235 §2.1 makes the scheme name case-insensitive.
     #[test]
     fn the_scheme_name_is_case_insensitive() {
         for header in ["Bearer abc", "bearer abc", "BEARER abc", "BeArEr abc"] {
@@ -184,16 +145,14 @@ mod tests {
         }
     }
 
-    /// Whitespace around a credential is not part of it. Sixteen copies kept it, so
-    /// one trailing space authenticated in some components and not in others.
+    /// Whitespace around a credential is not part of it.
     #[test]
     fn the_token_is_trimmed() {
         assert_eq!(bearer_token("Bearer  abc  "), Some("abc"));
         assert_eq!(bearer_token("Bearer \tabc"), Some("abc"));
     }
 
-    /// An empty credential is an absent one. `strip_prefix` alone returns `Some("")`
-    /// here, which a caller reads as "a token was presented".
+    /// An empty credential is an absent one: `strip_prefix` alone returns `Some("")`, which a caller reads as "a token was presented".
     #[test]
     fn an_empty_credential_is_not_a_credential() {
         assert_eq!(bearer_token("Bearer "), None);

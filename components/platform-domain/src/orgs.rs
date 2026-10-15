@@ -1,28 +1,18 @@
 //! Organisations: who owns what, when a person can belong to several.
 //!
-//! `auth-guard` gives one identity with ONE tenant and roles scoped to it
-//! (docs/adr/0009). That is right for authentication and wrong for ownership: a
-//! person contracting for three companies has one identity and three sets of
-//! things they can touch. So orgs sit above it — auth-guard still answers "who are
-//! you", and this answers "on whose behalf, right now".
+//! `auth-guard` gives one identity ONE tenant (docs/adr/0009): right for authentication, wrong for
+//! ownership (a person contracting for three companies). Orgs sit above it: auth-guard answers "who are
+//! you", this answers "on whose behalf, right now".
 //!
-//! **An org is the isolation unit.** Everything that used to be keyed by tenant —
-//! the deployment record, the catalogue row, and critically the storage bucket a
-//! running instance gets — is keyed by org id. That keeps ADR-0012's property
-//! intact with a wider unit: two orgs cannot see each other's data for exactly the
-//! same reason two tenants could not, because the host still names the bucket from
-//! a control-plane record the guest cannot write.
+//! **An org is the isolation unit.** The deployment record, catalogue row and the storage bucket a running
+//! instance gets are keyed by org id, preserving ADR-0012: the host names the bucket from a control-plane
+//! record the guest cannot write.
 //!
-//! **Everyone gets a solo org on registration**, named after their personal tenant.
-//! Without it every existing call would need an explicit org, and a person who
-//! never joins a company would have nowhere to deploy. It also means "org" is never
-//! an optional concept with two code paths.
+//! **Everyone gets a solo org on registration**, named after their personal tenant, so "org" is never
+//! optional and has no second code path.
 //!
-//! Membership is by invite code rather than by email. Sending mail is a whole
-//! subsystem and this needs none of it: an owner mints a code, hands it over
-//! however they like, and the holder redeems it.
-//! ponytail: opaque codes, no email; add invitations-by-address when there is a
-//! mail path to put them on.
+//! Membership is by invite code, not email (no mail subsystem needed).
+//! ponytail: opaque codes, no email; add invitations-by-address when there is a mail path.
 
 use serde_json::{json, Map, Value};
 
@@ -32,10 +22,7 @@ pub const ORGS: &str = "orgs";
 pub const MEMBERS: &str = "members";
 pub const INVITES: &str = "invites";
 
-/// What a member may do. ADR-0009's vocabulary, unchanged.
-///
-/// Ordered, so a check is `role_of(..) >= Role::Member` rather than a set of
-/// equality tests that has to be updated everywhere a role is added.
+/// What a member may do. ADR-0009's vocabulary. Ordered, so a check is `role_of(..) >= Role::Member`.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Role {
     /// Read the catalogue and the deployments. Changes nothing.
@@ -79,11 +66,8 @@ fn member_key(org: &str, subject: &str) -> String {
     format!("{org}/{subject}")
 }
 
-/// The caller's role in `org`, or `None` if they are not a member.
-///
-/// This is THE authorisation primitive. Every org-scoped handler goes through it,
-/// so there is one place that decides whether someone is in an org rather than a
-/// check repeated at each call site with a chance to be forgotten at one of them.
+/// The caller's role in `org`, or `None` if they are not a member. THE authorisation primitive: every
+/// org-scoped handler goes through it, so one place decides membership.
 pub fn role_of(subject: &str, org: &str) -> Option<Role> {
     let key = member_key(org, subject);
     let row = crate::find_one(MEMBERS, "key", &key).map(|(_, _, v)| v)?;
@@ -109,8 +93,7 @@ pub fn create(name: &str, subject: &str, email: &str) -> Result<Value, String> {
 pub fn add_member(org: &str, subject: &str, email: &str, role: Role) -> Result<(), String> {
     let key = member_key(org, subject);
     if let Some((rec, rev, mut row)) = crate::find_one(MEMBERS, "key", &key) {
-        // Re-adding is a role change, not a duplicate. A second row would make
-        // `role_of` depend on which one the index returned first.
+        // Re-adding is a role change, not a duplicate: a second row would make `role_of` depend on index order.
         row["role"] = json!(role.as_str());
         records::update(MEMBERS, &rec, &row.to_string(), rev)
             .map_err(|_| "could not update the membership".to_string())?;
@@ -155,8 +138,7 @@ pub fn members(org: &str) -> Vec<Value> {
 }
 
 pub fn remove_member(org: &str, subject: &str) -> Result<(), String> {
-    // The last owner cannot leave. An org with no owner can never have its
-    // membership changed again, which is unrecoverable without a support ticket.
+    // The last owner cannot leave: an org with no owner can never have its membership changed again.
     if role_of(subject, org) == Some(Role::Owner) && owner_count(org) <= 1 {
         return Err("this is the last owner; promote someone else first".into());
     }
@@ -171,8 +153,7 @@ fn owner_count(org: &str) -> usize {
     members(org).iter().filter(|m| m["role"] == json!("owner")).count()
 }
 
-/// Mint a join code. The code IS the credential, so it is generated from the
-/// records store's own id rather than anything guessable like a counter.
+/// Mint a join code. The code IS the credential, so it comes from the records store's own id, not a counter.
 pub fn invite(org: &str, role: Role, by: &str, ttl_secs: u64) -> Result<Value, String> {
     let doc = json!({
         "org": org, "role": role.as_str(), "created_by": by,
@@ -180,7 +161,7 @@ pub fn invite(org: &str, role: Role, by: &str, ttl_secs: u64) -> Result<Value, S
     });
     let rec = records::create(INVITES, &doc.to_string(), &["org".to_string()])
         .map_err(|_| "could not create the invite".to_string())?;
-    // The record id is the code: unguessable, unique, and already stored.
+    // The record id is the code: unguessable, unique, already stored.
     let (id, rev) = (rec.id.clone(), rec.revision);
     let mut doc = doc;
     doc["code"] = json!(id);
@@ -188,8 +169,7 @@ pub fn invite(org: &str, role: Role, by: &str, ttl_secs: u64) -> Result<Value, S
     Ok(json!({ "code": id, "org": org, "role": role.as_str(), "expires": doc["expires"] }))
 }
 
-/// Redeem a code. Single use: the invite is deleted on success, so a leaked code
-/// that has already been used is worth nothing.
+/// Redeem a code. Single use: the invite is deleted on success.
 pub fn redeem(code: &str, subject: &str, email: &str) -> Result<Value, String> {
     let Ok(entry) = records::get(INVITES, code) else {
         return Err("no such invite".into());
@@ -208,11 +188,8 @@ pub fn redeem(code: &str, subject: &str, email: &str) -> Result<Value, String> {
     Ok(json!({ "org": org, "role": role.as_str() }))
 }
 
-/// Which org a request is acting on behalf of.
-///
-/// `?org=` when given, otherwise the caller's personal org. Returning the role
-/// alongside means a handler cannot accidentally check membership without
-/// checking permission — there is only one call, and it returns both.
+/// Which org a request is acting on behalf of: `?org=` when given, otherwise the caller's personal org.
+/// Returns the role alongside so a handler cannot check membership without checking permission.
 pub fn acting(
     subject: &str,
     personal: &str,
@@ -226,8 +203,7 @@ pub fn acting(
         .unwrap_or(personal)
         .to_string();
     match role_of(subject, &org) {
-        // 404 rather than 403 for a non-member: whether an org exists is itself
-        // information, and an attacker enumerating names should learn nothing.
+        // 404 rather than 403 for a non-member: whether an org exists is itself information.
         None => Err((404, format!("no organisation `{org}` that you belong to"))),
         Some(have) if have < need => Err((
             403,
@@ -243,8 +219,7 @@ mod tests {
 
     #[test]
     fn roles_are_ordered_so_a_check_is_a_comparison() {
-        // The alternative is a set of equality tests at every call site, and one of
-        // them being forgotten when a role is added.
+        // The alternative is equality tests at every call site, one forgotten when a role is added.
         assert!(Role::Owner > Role::Member);
         assert!(Role::Member > Role::Viewer);
         assert!(Role::Viewer >= Role::Viewer);
@@ -263,8 +238,7 @@ mod tests {
 
     #[test]
     fn a_slug_cannot_smuggle_a_path_or_a_bucket_separator() {
-        // It is concatenated into `b-app-<org>-<app>`; a `/` or a space there would
-        // be a different bucket than the one intended.
+        // It is concatenated into `b-app-<org>-<app>`; a `/` or a space would name a different bucket.
         for hostile in ["a/b", "a b", "../x", "a\u{1f}b", "a.b"] {
             let s = slug(hostile);
             assert!(

@@ -43,9 +43,7 @@ impl Guest for Component {
     }
 }
 
-/// Only `POST /api/intent` routes anywhere; everything else is 404. Split out
-/// so the matching itself — not just the handler that needs a live request —
-/// can be tested directly.
+/// Only `POST /api/intent` routes anywhere; everything else is 404. Split out so the matching itself can be tested directly.
 fn is_classify_route(method: &Method, path: &str) -> bool {
     let route = path.split('?').next().unwrap_or("/");
     matches!(method, Method::Post) && route.trim_matches('/') == "api/intent"
@@ -63,10 +61,8 @@ struct IntentReq {
     query: String,
 }
 
-/// The only domains the router will ever hand back. A model asked to name one
-/// of five things sometimes names a sixth — inventing `"helpdesk"` instead of
-/// `"helpdesk-domain"`, say — and a caller dispatching on that string deserves
-/// "unknown" over a route to somewhere that was never offered.
+/// The only domains the router hands back. A model asked to name one of five sometimes invents a sixth (`"helpdesk"` for
+/// `"helpdesk-domain"`), and a caller dispatching on that string deserves "unknown".
 const KNOWN_DOMAINS: &[&str] =
     &["helpdesk-domain", "clinic-domain", "studio-domain", "grocery-domain", "unknown"];
 
@@ -83,8 +79,7 @@ Respond with ONLY a JSON object in this exact format:
 
 Do not include markdown blocks or any other text.";
 
-/// 1 to 1000 characters — long enough for a real question, short enough that
-/// a caller cannot turn this into a place to paste a document.
+/// 1 to 1000 characters: long enough for a real question, too short to paste a document.
 fn validate_query(query: &str) -> Result<(), String> {
     if query.is_empty() || query.len() > 1000 {
         return Err("query must be between 1 and 1000 characters".into());
@@ -92,17 +87,10 @@ fn validate_query(query: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Turn what the model said into the JSON this endpoint promises: a `domain`
-/// from `KNOWN_DOMAINS` and a `confidence`. Three ways this can go wrong, and
-/// each is handled rather than trusted:
-///   - the reply isn't JSON at all (a model that added a sentence, markdown);
-///   - it's JSON but not shaped like `{"domain": ..., "confidence": ...}`;
-///   - it's shaped right but names a domain nobody offered it — a
-///     hallucinated label is worse than "unknown" because a caller matching
-///     on it would find no route rather than an honest miss.
-///
-/// All three land on the same fallback, carrying the raw text so a caller
-/// debugging a bad classification can see what the model actually said.
+/// Turn what the model said into the JSON this endpoint promises: a `domain` from `KNOWN_DOMAINS` and a `confidence`.
+/// Handled rather than trusted: a reply that isn't JSON (a model adding a sentence, markdown), JSON of the wrong shape,
+/// or a domain nobody offered (a hallucinated label is worse than an honest "unknown"). All land on the same
+/// fallback, carrying the raw text so a bad classification can be debugged.
 fn shape_completion(text: &str) -> Value {
     let fallback = || json!({"domain": "unknown", "confidence": 0.0, "raw": text});
     let Ok(parsed) = serde_json::from_str::<Value>(text) else { return fallback() };
@@ -128,8 +116,6 @@ async fn classify_intent(request: Request) -> Outcome {
         Err(e) => Outcome::Err(503, format!("LLM inference failed: {:?}", e)),
     }
 }
-
-// ---- helpers ---------------------------------------------------------------------
 
 async fn parse<T: for<'a> Deserialize<'a>>(request: Request) -> Result<T, String> {
     let body = read_body(request).await.map_err(|_| "could not read body".to_string())?;
@@ -182,9 +168,7 @@ mod tests {
         assert_eq!(out["confidence"], 0.92);
     }
 
-    /// A model asked to pick one of five things can still name a sixth. A
-    /// caller matching on the string deserves "unknown" over a route to
-    /// somewhere that was never offered.
+    /// A model asked to pick one of five can still name a sixth; a caller matching on the string deserves "unknown".
     #[test]
     fn a_hallucinated_domain_falls_back_to_unknown() {
         let out = shape_completion(r#"{"domain": "billing-domain", "confidence": 0.8}"#);

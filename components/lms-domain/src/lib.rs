@@ -122,8 +122,6 @@ fn usage() -> Outcome {
     )
 }
 
-// ---- auth -------------------------------------------------------------------
-
 guestio::guest_p3_bearer!();
 guestio::guest_p3_respond!();
 
@@ -208,8 +206,6 @@ fn logout(request: &Request) -> Outcome {
     }
 }
 
-// ---- records helpers --------------------------------------------------------
-
 fn get(coll: &str, id: &str) -> Option<Value> {
     records::get(coll, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok()).map(
         |mut v| {
@@ -231,8 +227,6 @@ fn find(coll: &str, field: &str, value: &str) -> Vec<Value> {
         })
         .collect()
 }
-
-// ---- courses / lessons / quizzes --------------------------------------------
 
 async fn create_course(request: Request) -> Outcome {
     let p = match introspect(&request) {
@@ -398,8 +392,6 @@ async fn add_quiz(request: Request, id: &str) -> Outcome {
     }
 }
 
-// ---- enroll / submit --------------------------------------------------------
-
 fn enroll(request: &Request, id: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
@@ -468,8 +460,6 @@ async fn submit_quiz(request: Request, quiz_id: &str) -> Outcome {
         json!({ "correct": r.correct, "total": r.total, "score_pct": r.score_pct, "passed": r.passed }).to_string(),
     )
 }
-
-// ---- progress / gradebook / certificate -------------------------------------
 
 /// A student's best submission per quiz in a course: quiz_id -> (best_pct, passed).
 fn best_scores(course: &str, student: &str) -> BTreeMap<String, (u32, bool)> {
@@ -640,8 +630,6 @@ fn certificate(request: &Request, course: &str) -> Outcome {
     Outcome::File(200, "application/pdf".into(), Some("certificate.pdf".into()), pdf::render(&doc))
 }
 
-// ---- demo seed --------------------------------------------------------------
-
 fn seed_demo(subject: &str) {
     let email = subject_email(subject);
     let c = json!({ "code": "WIT101", "title": "Intro to WIT Components", "description": "Build capabilities as composable WebAssembly components.", "instructor": subject, "instructor_email": email, "created": now() });
@@ -670,8 +658,6 @@ fn seed_demo(subject: &str) {
     let _ = records::create(QUIZZES, &quiz.to_string(), &["course".to_string()]);
 }
 
-// ---- http plumbing ----------------------------------------------------------
-
 fn hydrate(id: &str, data: &str) -> String {
     let mut v: Value = serde_json::from_str(data).unwrap_or_else(|_| json!({}));
     v["id"] = json!(id);
@@ -695,18 +681,9 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be, before the component stops reading it. Without a ceiling a guest
+/// accumulated until wasmtime's 64 MiB per-store cap TRAPPED, reaching the caller as a bare closed
+/// connection. Generous: a backstop, not a content policy; uploads police themselves with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

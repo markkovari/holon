@@ -1,8 +1,7 @@
 //! `notify-dispatch` — send an outbound notification — a webhook POST, or email/SMS through a configured gateway
 //!
-//! Synchronous outbound sender over `wasi:http/outgoing-handler`. The HTTP idiom
-//! (build OutgoingRequest -> write body -> handle -> block -> read response) is
-//! the same one auth-guard uses for OIDC; factored here into `post`.
+//! Synchronous outbound sender over `wasi:http/outgoing-handler`; the HTTP idiom (build OutgoingRequest -> write body ->
+//! handle -> block -> read response) is the one auth-guard uses for OIDC, factored into `post`.
 //!
 //! Channels:
 //!   webhook  POST `body` to `target` as application/json.

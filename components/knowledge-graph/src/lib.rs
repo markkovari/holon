@@ -1,27 +1,14 @@
 //! `knowledge-graph` — nodes, edges and traversal over SurrealDB's HTTP API.
 //!
-//! ## Why a component and not a host capability
+//! A component, not a host capability: it only needs a socket (`wasi:http/outgoing-handler`), so it is
+//! deployable mid-run, swappable, and bounded by the egress allow-list (ADR-0008).
 //!
-//! It needs a network socket, and the host already grants one
-//! (`wasi:http/outgoing-handler`). Nothing else about it needs the OS, so it is a
-//! component: deployable mid-run, swappable for a different backend, and bounded
-//! by the deployment's egress allow-list rather than by trust (ADR-0008). A host
-//! rebuilt to add a database driver is a host whose isolation you re-verify.
+//! Config via `wasi:config`: `surreal-url`, `surreal-ns`, `surreal-db`, `surreal-user`. The password is a
+//! SECRET read through `comp:secrets/reader` as `surreal-password` (ADR-0010, ADR-0051).
 //!
-//! ## Configuration, and where the password lives
-//!
-//! `wasi:config` carries `surreal-url`, `surreal-ns`, `surreal-db` and
-//! `surreal-user`. The password is a SECRET, read through `comp:secrets/reader`
-//! under the key `surreal-password`, because a manifest must never carry one
-//! (ADR-0010) and a config map is the most-dumped namespace there is (ADR-0051).
-//!
-//! ## The dangerous part
-//!
-//! Everything below builds SurrealQL by string. Nothing a caller supplies is
-//! interpolated raw: an id goes through `record_id`, a kind or edge has to BE a
-//! table name, and properties are re-serialised from parsed JSON so a value can
-//! never carry syntax. All four are tested against the injections they exist to
-//! stop. The one exception is `query`, an escape hatch by design that says so.
+//! SurrealQL is built by string, so nothing a caller supplies is interpolated raw: ids go through
+//! `record_id`, a kind or edge has to BE a table name, and properties are re-serialised from parsed
+//! JSON. Tested against the injections they stop. The one exception is `query`, an escape hatch by design.
 
 #[allow(warnings)]
 mod bindings;
@@ -77,16 +64,9 @@ impl Conn {
             None => (rest.to_string(), String::new()),
         };
         let user = cfg("surreal-user", "root");
-        // The password is the one thing that is not config. `none` is not fatal:
-        // a database with no auth is a legitimate local setup, and failing here
-        // would make an unauthenticated server unusable for no gain.
-        //
-        // "Not fatal" has to mean sending NO header, not sending `Basic root:`.
-        // An empty-password header is refused by an authenticated server AND by
-        // an `--unauthenticated` one (which has no `root` to name), so the
-        // previous version made the very setup this comment describes the one
-        // configuration that could not work. Found by the console's browser test,
-        // which runs against exactly that setup.
+        // The password is the one thing that is not config. `none` is not fatal (a local database may have no
+        // auth) but must send NO header: an empty-password `Basic root:` is refused by authenticated and
+        // `--unauthenticated` servers alike.
         let password = match secrets::get("surreal-password") {
             Ok(Some(s)) => secrets::reveal(&s).ok(),
             _ => None,
@@ -102,12 +82,8 @@ impl Conn {
     }
 }
 
-/// A record id: `kind:⟨id⟩`.
-///
-/// The angle brackets are SurrealDB's own quoting for an arbitrary id, so a ULID,
-/// a path with slashes and a name with a space all address correctly. The KIND is
-/// restricted instead of quoted, because it becomes a table name and a table name
-/// is not a place to be creative.
+/// A record id: `kind:⟨id⟩`. Angle brackets are SurrealDB's quoting for an arbitrary id (ULID, path,
+/// name with a space). The KIND is restricted instead of quoted because it becomes a table name.
 fn record_id(kind: &str, id: &str) -> Result<String, GraphError> {
     if kind.is_empty() || !kind.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Err(GraphError::Rejected(format!("kind must be [a-zA-Z0-9_], got {kind:?}")));
@@ -123,9 +99,8 @@ fn edge_name(edge: &str) -> Result<String, GraphError> {
     Ok(edge.to_string())
 }
 
-/// A JSON object, or `{}`. Anything else is refused: `CONTENT` takes an object,
-/// and letting an array or a bare string through would produce a statement whose
-/// error message is about SurrealQL rather than about the caller's mistake.
+/// A JSON object, or `{}`. Anything else is refused: `CONTENT` takes an object, and other shapes give
+/// an error about SurrealQL rather than the caller's mistake.
 fn object(properties: &str) -> Result<String, GraphError> {
     let t = properties.trim();
     if t.is_empty() {
@@ -139,27 +114,16 @@ fn object(properties: &str) -> Result<String, GraphError> {
 }
 
 /// POST one statement to `/sql` and hand back the body.
-/// Write a whole statement, however long it is.
 ///
-/// `blocking-write-and-flush` accepts at most 4096 bytes and TRAPS above that
-/// rather than returning an error — the component simply dies, and the caller two
-/// links away reports `every replica failed; n1 refused`. Nothing here noticed for
-/// as long as every statement was small: a contract file grew from 3645 bytes to
-/// 4573 and the next real run died with a message that named no size, no
-/// component and no write.
-///
-/// Chunking at a flat 4096 would fix that and flush once per 4 KB, which is a
-/// round trip the stream never asked for. `check-write` is the stream saying how
-/// much it will take right now — usually far more than 4096 — so this writes in
-/// whatever bites it offers, blocks on the pollable when it offers nothing, and
-/// flushes ONCE at the end. No magic constant, correct backpressure, and a
-/// statement carrying a 40 KB contract costs one flush rather than ten.
+/// `blocking-write-and-flush` accepts at most 4096 bytes and TRAPS above that rather than erroring, which
+/// reaches the caller as an opaque `every replica failed`. `check-write` says how much the stream will take
+/// now, so this writes in whatever bites it offers, blocks on the pollable when it offers nothing, and
+/// flushes ONCE at the end (no flat 4096 chunking, one flush for a 40 KB statement).
 fn write_all(stream: &OutputStream, mut bytes: &[u8]) -> Result<(), String> {
     while !bytes.is_empty() {
         let ready = match stream.check_write() {
             Ok(0) => {
-                // Zero is not an error: it is "full, wait". The pollable resolves
-                // when the stream has drained.
+                // Zero is "full, wait", not an error: the pollable resolves when the stream has drained.
                 stream.subscribe().block();
                 continue;
             }
@@ -226,20 +190,15 @@ fn sql(conn: &Conn, statement: &str) -> Result<String, GraphError> {
         match stream.blocking_read(64 * 1024) {
             Ok(chunk) if chunk.is_empty() => break,
             Ok(chunk) => out.extend_from_slice(&chunk),
-            // End of body.
             Err(OutputStreamError::Closed) => break,
-            // A failed read is not the end of the database's answer. Taking the
-            // truncated bytes and parsing them is how "half a result set" becomes
-            // "an empty result set" — a read that silently answers NOTHING FOUND
-            // for a row that exists. The write side of this component had the
-            // mirror-image bug and it took four runs to find.
+            // A failed read is not the end of the answer: parsing truncated bytes turns "half a result set" into
+            // "nothing found" for a row that exists.
             Err(e) => return Err(GraphError::Unavailable(format!("reading the answer: {e:?}"))),
         }
     }
     let text = String::from_utf8_lossy(&out).to_string();
     if !(200..300).contains(&status) {
-        // The database's own words, not a paraphrase: "table does not exist" is
-        // worth reading and a generic "rejected" is not.
+        // The database's own words, not a paraphrase.
         return Err(GraphError::Rejected(format!(
             "HTTP {status}: {}",
             text.chars().take(400).collect::<String>()
@@ -266,40 +225,22 @@ fn first_result(body: &str) -> Result<serde_json::Value, GraphError> {
     Ok(last["result"].clone())
 }
 
-/// Send a statement, and if the namespace or database is not there yet, define it
-/// and send the statement again.
-///
-/// SurrealDB 3 does not conjure a namespace on first write — it answers "The
-/// namespace 'comp' does not exist" and stops. Requiring an operator to
-/// pre-provision one would mean a component that works on the maintainer's
-/// machine and fails on a fresh database, which is the shape of a 3am page.
-/// Retried ONCE: if the define does not help, the second failure is the real
-/// answer and looping on it would only hide it.
+/// Send a statement, and if the namespace or database is not there yet, define it and send again. SurrealDB 3
+/// does not create a namespace on first write, and requiring pre-provisioning would break fresh databases.
+/// Retried ONCE: a second failure is the real answer.
 fn missing_namespace(msg: &str) -> bool {
     msg.contains("does not exist") && (msg.contains("namespace") || msg.contains("database"))
 }
 
 /// How many times a conflicted statement is resent.
 ///
-/// SurrealDB's transactions are OPTIMISTIC: two writers racing for one record do
-/// not queue and do not deadlock — the loser is aborted and told to try again.
-/// Measured against v3.1.3, 20-way concurrency, one hot key: 60 concurrent
-/// `SET uses += 1` produce 53 commits and 7 rejections carrying "Transaction
-/// conflict: Write conflict, retry the transaction. This transaction can be
-/// retried", and one immediate resend clears all 7 — 60/60, final value exactly
-/// 60. A conflicted transaction did NOT commit, which is what makes a resend safe
-/// for a non-idempotent statement like an increment.
+/// SurrealDB's transactions are OPTIMISTIC: the loser of a race is aborted and told to retry. Measured on
+/// v3.1.3, 20-way on one hot key: 60 `SET uses += 1` give 53 commits and 7 rejections, and one resend clears
+/// all 7. A conflicted transaction did NOT commit, so resending even a non-idempotent increment is safe.
+/// No backoff: the winner committed before the loser heard, so the record is already free.
 ///
-/// No backoff, deliberately: there is nothing to wait for. The winner committed
-/// before the loser heard about it, so the contended record is already free.
-///
-/// Twelve, not four. Four was chosen from the measurement above, on an idle
-/// machine, where one resend cleared every conflict. On a busy one it is not
-/// enough: the scenario that mirrors this shape lost a write roughly one run in
-/// three under the same 20-way concurrency while the machine was compiling — 59
-/// of 60, then 58 of 60. A resend costs one HTTP round trip against a database
-/// that is by then uncontended, so the ceiling is cheap to raise and expensive to
-/// leave low.
+/// Twelve, not four: on a busy machine one resend does not always clear every conflict (59 or 58 of 60 while
+/// compiling). A resend costs one round trip against a by-then uncontended database.
 const MAX_ATTEMPTS: u32 = 12;
 
 /// The loser of an optimistic race, in the database's own words.
@@ -317,22 +258,12 @@ fn body_error(body: &str) -> Option<String> {
         .map(|s| s["result"].as_str().unwrap_or("the statement failed").to_string())
 }
 
-/// Send a statement, surviving the two things that are not really failures.
-///
-/// Both live HERE rather than in `run`, because `query` — the escape hatch — needs
-/// them just as much and used to have neither: a component that does its writes
-/// through raw SurrealQL (`knowledge-memory` does, for `+=` and KNN) would
-/// otherwise get no namespace bootstrap and no conflict retry, which is exactly
-/// the caller that hits both hardest.
+/// Send a statement, surviving the two things that are not really failures. Both live HERE rather than in
+/// `run` because `query` (the escape hatch, used for `+=` and KNN by `knowledge-memory`) needs them too.
 fn send(conn: &Conn, statement: &str) -> Result<String, GraphError> {
     let mut body = sql(conn, statement)?;
 
-    // SurrealDB 3 does not conjure a namespace on first write — it answers "The
-    // namespace 'comp' does not exist" and stops. Requiring an operator to
-    // pre-provision one would mean a component that works on the maintainer's
-    // machine and fails on a fresh database, which is the shape of a 3am page.
-    // Retried ONCE: if the define does not help, the second failure is the real
-    // answer and looping on it would only hide it.
+    // SurrealDB 3 does not create a namespace on first write: define it and retry ONCE.
     if let Some(msg) = body_error(&body).filter(|m| missing_namespace(m)) {
         sql(
             conn,
@@ -341,9 +272,7 @@ fn send(conn: &Conn, statement: &str) -> Result<String, GraphError> {
                 conn.ns, conn.db
             ),
         )
-        // If defining is refused — a scoped user without DEFINE rights — say what
-        // the ORIGINAL statement said, because "permission denied on DEFINE
-        // NAMESPACE" would send the reader after the wrong bug.
+        // If defining is refused (scoped user without DEFINE rights), report the ORIGINAL statement's error, not the DEFINE's.
         .map_err(|_| {
             GraphError::NotConfigured(format!(
                 "{msg}, and this component may not create it — provision the namespace and database first"
@@ -357,13 +286,8 @@ fn send(conn: &Conn, statement: &str) -> Result<String, GraphError> {
         body = sql(conn, statement)?;
         attempts += 1;
     }
-    // Out of attempts and STILL conflicted is a write that did not commit, and it
-    // must not be returned as a success. It used to be: `query` — the raw-SurrealQL
-    // hatch that `contract-registry` and `knowledge-memory` do all their work
-    // through, including every `uses += 1` — handed the caller an `Ok(String)`
-    // whose contents said "retry the transaction". A silently dropped increment
-    // that reports success is the same shape as the truncated write and the
-    // truncated read: a failure wearing the return type of a success.
+    // Out of attempts and STILL conflicted is a write that did not commit; it must not be returned as a
+    // success (raw `query` callers would otherwise get an `Ok` whose contents say "retry the transaction").
     if conflicted(&body) {
         return Err(GraphError::Unavailable(format!(
             "the database rejected this statement {MAX_ATTEMPTS} times running with a \
@@ -378,12 +302,8 @@ fn run(conn: &Conn, statement: &str) -> Result<serde_json::Value, GraphError> {
     send(conn, statement).and_then(|b| first_result(&b))
 }
 
-/// A read of something that was never written is not an error.
-///
-/// SurrealDB answers `SELECT * FROM nosuch:x` with "The table 'nosuch' does not
-/// exist" rather than an empty set. For a graph an agent is still building, the
-/// first question about a kind ALWAYS precedes the first write of it, so letting
-/// that surface as a failure would make an empty graph look like a broken one.
+/// A read of something that was never written is not an error. SurrealDB answers a read on a missing table
+/// with "does not exist", but for a graph still being built the first question about a kind precedes its first write.
 fn absent_is_empty(
     r: Result<serde_json::Value, GraphError>,
 ) -> Result<serde_json::Value, GraphError> {
@@ -395,9 +315,8 @@ fn absent_is_empty(
     }
 }
 
-/// A SurrealDB row back into a node. `id` comes back as `kind:the-id`, so the
-/// kind is stripped rather than trusted from the caller's question — a row that
-/// came from a traversal may be of a kind the caller never named.
+/// A SurrealDB row back into a node. `id` comes back as `kind:the-id`, so the kind is stripped rather than
+/// trusted from the caller's question (a traversal may return other kinds).
 fn node_of(row: &serde_json::Value) -> Option<Node> {
     let full = row["id"].as_str()?;
     let (kind, id) = full.split_once(':')?;
@@ -407,16 +326,14 @@ fn node_of(row: &serde_json::Value) -> Option<Node> {
     }
     Some(Node {
         kind: kind.to_string(),
-        // Ids go out in angle brackets and come back in backticks — SurrealDB
-        // quotes on the way out with its own preferred form, and only when the
-        // id needs it. Both are stripped so `upsert` then `get` round-trips.
+        // Ids go out in angle brackets and come back in backticks (only when quoting is needed); both are stripped so `upsert` then `get` round-trips.
         id: id.trim_matches(|c| c == '⟨' || c == '⟩' || c == '`').to_string(),
         properties: props.to_string(),
     })
 }
 
-/// Format a compound atomic relate statement: upserts both endpoint nodes and creates the edge
-/// in a single SurrealQL script. Eliminates 3 separate HTTP roundtrips across the WASI boundary.
+/// Format a compound atomic relate statement: upserts both endpoint nodes and creates the edge in one
+/// SurrealQL script, saving 3 HTTP round trips across the WASI boundary.
 fn relate_statement(
     from_node: &Node,
     edge: &str,
@@ -459,10 +376,7 @@ impl Guest for Component {
         properties: String,
     ) -> Result<(), GraphError> {
         let conn = Conn::open()?;
-        // Both ends and the edge are submitted in ONE compound statement.
-        // A graph that refuses an edge because a node is not there yet forces every
-        // caller to order its writes; batching them into one statement ensures idempotency
-        // and cuts HTTP round trips from 3 to 1 across the WASI boundary.
+        // Both ends and the edge go in ONE compound statement, so callers need not order writes and it stays idempotent.
         let stmt = relate_statement(&from_node, &edge, &to_node, &properties)?;
         run(&conn, &stmt).map(|_| ())
     }
@@ -513,11 +427,9 @@ mod tests {
 
     #[test]
     fn an_id_is_quoted_rather_than_restricted() {
-        // Ids come from the world — file paths, URLs, ULIDs — so they are quoted
-        // with SurrealDB's own bracket form instead of being narrowed.
+        // Ids come from the world (paths, URLs, ULIDs), so they are quoted with SurrealDB's bracket form.
         assert_eq!(record_id("file", "a b/c.rs").unwrap(), "file:⟨a b/c.rs⟩");
-        // A closing bracket inside the id is the one thing that could end the
-        // quoting early, so it is removed rather than escaped.
+        // A closing bracket is the one thing that could end quoting early, so it is removed rather than escaped.
         assert_eq!(record_id("file", "x⟩ ; DROP").unwrap(), "file:⟨x ; DROP⟩");
     }
 
@@ -565,16 +477,13 @@ mod tests {
     }
 }
 
-/// The shapes below were taken from a live SurrealDB 3.1.3 over HTTP, not from
-/// the documentation. Three of them contradicted what the first draft assumed.
+/// The shapes below were taken from a live SurrealDB 3.1.3 over HTTP, not from the documentation.
 #[cfg(test)]
 mod live_shapes {
     use super::*;
 
-    /// SurrealDB quotes an id on the way OUT with backticks, having accepted it
-    /// in angle brackets — and leaves it bare when it needs no quoting at all.
-    /// The first draft stripped only brackets, so every path-shaped id read back
-    /// wrapped in backticks and no round-trip matched.
+    /// SurrealDB quotes an id on the way OUT with backticks (bare when no quoting is needed), having accepted
+    /// angle brackets.
     #[test]
     fn an_id_round_trips_through_the_quoting_the_server_chose() {
         let quoted = serde_json::json!({ "id": "file:`src/lib.rs`", "lines": 12 });
@@ -589,8 +498,7 @@ mod live_shapes {
     fn a_missing_namespace_is_worth_a_retry_and_a_missing_table_is_not() {
         assert!(missing_namespace("The namespace 'comp' does not exist"));
         assert!(missing_namespace("The database 'knowledge' does not exist"));
-        // Defining a namespace would not help a missing table, and retrying on
-        // it would double every read of a kind nobody has written yet.
+        // Defining a namespace would not help a missing table, and retrying would double every read of an unwritten kind.
         assert!(!missing_namespace("The table 'nosuch' does not exist"));
     }
 
@@ -604,17 +512,13 @@ mod live_shapes {
         assert!(absent_is_empty(refused).is_err());
     }
 
-    /// A write conflict is not a failure, and it is not a deadlock either.
-    ///
-    /// Captured from v3.1.3 under 20-way concurrency on one hot key. The whole
-    /// concurrency strategy rests on the last sentence of that message — the
-    /// transaction did not commit, so resending an increment cannot double-count.
+    /// A write conflict is not a failure, and not a deadlock. Captured from v3.1.3: the transaction did not commit,
+    /// so resending an increment cannot double-count.
     #[test]
     fn the_loser_of_an_optimistic_race_is_told_to_retry() {
         let body = r#"[{"kind":"Internal","result":"Transaction conflict: Write conflict, retry the transaction. This transaction can be retried","status":"ERR","time":"1ms","type":null}]"#;
         assert!(conflicted(body));
-        // Not every rejection is retriable, and retrying the rest would turn one
-        // failure into four.
+        // Not every rejection is retriable; retrying the rest would turn one failure into four.
         assert!(!conflicted(r#"[{"status":"ERR","result":"permission denied"}]"#));
         assert!(!conflicted(r#"[{"status":"ERR","result":"The table 'nosuch' does not exist"}]"#));
         // A conflict comes back inside an HTTP 200, so it has to be read out of

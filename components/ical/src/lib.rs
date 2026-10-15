@@ -1,14 +1,10 @@
 //! `ical` — write an .ics calendar file — RFC 5545, with the line folding, escaping and UTC timestamps it requires
 //!
-//! A correct, dependency-free RFC 5545 writer: events in, a `.ics` VCALENDAR
-//! document out. Handles the parts that actually bite — CRLF line endings,
-//! 75-octet line folding (continuation lines begin with a space), escaping of
-//! `\ ; , ` and newlines in text values, and UTC timestamps in the compact
-//! `YYYYMMDDTHHMMSSZ` basic format. Optional per-event RRULE and a VALARM.
+//! A correct, dependency-free RFC 5545 writer: events in, a `.ics` VCALENDAR out. Handles the parts that bite: CRLF line
+//! endings, 75-octet line folding (continuation lines begin with a space), escaping of `\ ; ,` and newlines in text, and
+//! UTC timestamps in `YYYYMMDDTHHMMSSZ` basic format. Optional per-event RRULE and VALARM.
 //!
-//! Pure compute — no state, no host imports. Timestamps are converted to civil
-//! dates with Howard Hinnant's `civil_from_days` (proleptic Gregorian), so no
-//! date library is needed.
+//! Pure compute. Timestamps become civil dates with Howard Hinnant's `civil_from_days`, so no date library is needed.
 //!
 //! ponytail: publish-only. Parsing arbitrary third-party .ics is a much larger
 //! job and out of scope — this covers "download .ics" and "subscribe to a feed".
@@ -71,7 +67,6 @@ fn fold(line: &str) -> String {
     let mut i = 0;
     let mut budget = 75; // first line: 75 octets; continuations: 74 (leading space)
     while i < bytes.len() {
-        // take up to `budget` bytes without splitting a UTF-8 char boundary
         let mut end = (i + budget).min(bytes.len());
         while end > i && (bytes[end - 1] & 0xC0) == 0x80 {
             end -= 1; // back off into the middle of a multibyte char

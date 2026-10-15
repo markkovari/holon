@@ -1,27 +1,14 @@
-//! `guestauth` — the `auth:identity` register/login/RBAC+ABAC boilerplate
-//! every "real SaaS" domain component needs, expanded into the caller rather
-//! than linked. Same reason as `guestio` (ADR-0095): `auth:identity`'s
-//! `Principal` and `AuthError` are generated PER CRATE by `cargo-component`,
-//! so a shared function that takes one is impossible — a macro that expands
-//! the function INTO the caller is not.
+//! `guestauth` — the `auth:identity` register/login/RBAC+ABAC boilerplate every "real SaaS" domain
+//! component needs, expanded into the caller rather than linked. Same reason as `guestio` (ADR-0095):
+//! `Principal` and `AuthError` are generated PER CRATE, so a shared function taking one is impossible
+//! while a macro that expands INTO the caller is not.
 //!
-//! `crm-domain`, `billing-domain`, `ats-domain`, `timesheet-domain` and
-//! `feedback-domain` each hand-wrote an identical `Reply` type, `introspect`,
-//! an audit helper, and a register/login/logout/me router — five copies
-//! differing only in a tenant string, a role list and a default role. Four
-//! of the five also hand-wrote an identical "owner or admin may act on this
-//! row" policy check, differing only in the resource's attribute name and
-//! which action it gates. This crate is that, once each. Every SaaS app
-//! built since — `expense-domain`, `survey-domain`, `parking-domain` — has
-//! also hand-wrote an identical `entries_json` (a page of `records:store`
-//! entries with each one's id merged in); `guest_entries_json!()` is that,
-//! once.
+//! Covers `Reply`, `introspect`, an audit helper, the register/login/logout/me router, the "owner or admin
+//! may act on this row" policy check and `entries_json`.
 //!
-//! What is DELIBERATELY not here: `timesheet-domain`'s policy check has no
-//! admin bypass at all (a routed manager decides, nobody else, including the
-//! member who logged the entry) — a real business-rule difference, not
-//! incidental duplication, so it stays hand-written rather than being forced
-//! through `guest_owner_or_admin_policy!` with an unused knob.
+//! DELIBERATELY not here: `timesheet-domain`'s policy has no admin bypass (a routed manager decides) — a
+//! real business-rule difference, so it stays hand-written rather than forced through
+//! `guest_owner_or_admin_policy!` with an unused knob.
 //!
 //! ```ignore
 //! use guestauth::Route;
@@ -35,30 +22,19 @@
 
 #![allow(clippy::crate_in_macro_def)]
 
-/// A request awaiting dispatch. A plain shared type, unlike everything else
-/// here: neither field names a `bindings::…` type, so nothing about
-/// ADR-0095 stops this one from being ordinary and non-macro.
+/// A request awaiting dispatch. A plain shared type: neither field names a `bindings::…` type.
 pub struct Route {
     pub segments: Vec<String>,
     pub bearer: String,
 }
 
-/// Define the `Reply` type every handler answers with, including the ONE
-/// mapping from `auth:identity`'s error variants to an HTTP status — measured
-/// identical across all five call sites this replaces.
-///
-/// Expanded rather than shared for the same reason `introspect` is: `err`'s
-/// parameter is `crate::bindings::auth::identity::types::AuthError`, a type
-/// that exists once per crate, not once for the whole dependency graph.
+/// Define the `Reply` type every handler answers with, including the ONE mapping from `auth:identity`'s
+/// error variants to an HTTP status. Expanded rather than shared because `AuthError` exists once per crate.
 #[macro_export]
 macro_rules! guest_auth_reply {
     () => {
-        /// What a handler answers with: a status and a JSON body, OR a
-        /// non-JSON one — a generated PDF, a CSV export — set via `file`
-        /// instead. Every existing call site in this repo only ever
-        /// constructs one through `Reply::json`/`Reply::err`, which leave
-        /// `file` at `None`, so this is purely additive: nothing that built
-        /// a `Reply` before this field existed changes behavior.
+        /// What a handler answers with: a status and a JSON body, OR a non-JSON one (a generated PDF, a CSV
+        /// export) set via `file` instead.
         ///
         /// Expanded by `guestauth::guest_auth_reply!()`.
         pub struct Reply {
@@ -74,9 +50,7 @@ macro_rules! guest_auth_reply {
             pub fn err(status: u16, code: &str) -> Self {
                 Reply::json(status, serde_json::json!({ "error": code }))
             }
-            /// A non-JSON body: `content_type` verbatim (e.g.
-            /// `"application/pdf"`), `bytes` written unchanged — no
-            /// `serde_json` anywhere near it, unlike every other reply here.
+            /// A non-JSON body: `content_type` verbatim (e.g. `"application/pdf"`), `bytes` written unchanged.
             pub fn file(status: u16, content_type: &str, bytes: Vec<u8>) -> Self {
                 Reply {
                     status,
@@ -120,13 +94,9 @@ macro_rules! guest_introspect {
     };
 }
 
-/// Define a role-membership check, e.g. `guest_role_check!(is_admin, "admin")`.
-///
-/// Reads `roles` directly rather than going through `auth:identity/rbac`'s
-/// permission-mapping layer — the domains this serves have few enough roles
-/// that a role check says as plainly as a permission check would, with no
-/// `rbac::set-role-permissions` seeding step to keep in sync (the same
-/// tradeoff `track-domain` makes).
+/// Define a role-membership check, e.g. `guest_role_check!(is_admin, "admin")`. Reads `roles` directly
+/// rather than `auth:identity/rbac`'s permission-mapping layer: few roles, and no
+/// `rbac::set-role-permissions` seeding step to keep in sync.
 #[macro_export]
 macro_rules! guest_role_check {
     ($name:ident, $role:literal) => {
@@ -179,11 +149,9 @@ macro_rules! guest_accounts_endpoints {
             role: Option<String>,
         }
 
-        /// Real account creation — `accounts::register` then `rbac::assign-role`
-        /// — never a test-only shortcut. A role outside `$roles` falls back to
-        /// `$default_role` rather than erroring: a role is a privilege, not a
-        /// free-text field, so an unrecognised request degrades quietly to the
-        /// least-privileged one instead of refusing to register at all.
+        /// Real account creation — `accounts::register` then `rbac::assign-role`. A role outside `$roles` falls
+        /// back to `$default_role` rather than erroring: a role is a privilege, so an unrecognised request
+        /// degrades to the least-privileged one.
         pub fn register(body: &str) -> Reply {
             use crate::bindings::auth::identity::accounts;
             use crate::bindings::auth::identity::rbac;
@@ -308,20 +276,15 @@ macro_rules! guest_saas_router {
     };
 }
 
-/// Write one `Reply` to the outgoing response — the part of `guest_saas_router!`
-/// that genuinely needs the caller's own `bindings` types, split out so the
-/// macro above stays readable.
+/// Write one `Reply` to the outgoing response — the part of `guest_saas_router!` that needs the caller's own `bindings` types.
 #[macro_export]
 macro_rules! guest_emit {
     () => {
         fn emit(response_out: crate::bindings::wasi::http::types::ResponseOutparam, reply: Reply) {
             use crate::bindings::wasi::http::types::{Fields, OutgoingBody, OutgoingResponse};
             let headers = Fields::new();
-            // `reply.file` set means a non-JSON body (a generated PDF, a CSV
-            // export): its own content-type, bytes written verbatim. Absent
-            // — every reply built before this existed — is the original
-            // behavior unchanged: `application/json`, and nothing written
-            // for a `Value::Null` body (a reply that means "no body").
+            // `reply.file` set means a non-JSON body: its own content-type, bytes written verbatim. Otherwise
+            // `application/json`, writing nothing for a `Value::Null` body ("no body").
             let write_bytes = match &reply.file {
                 Some((content_type, bytes)) => {
                     let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
@@ -346,17 +309,12 @@ macro_rules! guest_emit {
     };
 }
 
-/// Define `owns_or_admin`: the "a resource's own `$resource_attr` matches the
-/// caller, or the caller is an admin" row-level rule `auth:identity/rbac`
-/// cannot express — the same shape `crm-domain` enforces for "a rep only acts
-/// on their own deals", `billing-domain` for invoices, `ats-domain` for
-/// postings and `feedback-domain` for post deletion, differing only in the
-/// attribute name and the policy domain.
+/// Define `owns_or_admin`: the "a resource's own `$resource_attr` matches the caller, or the caller is an
+/// admin" row-level rule `auth:identity/rbac` cannot express, differing between apps only in the
+/// attribute name and policy domain.
 ///
-/// Idempotent rule registration lives here too: the two rules are only
-/// written to `policy:guard` once per deployment, guarded by a marker record
-/// in the `meta` collection — identical across all four call sites this
-/// replaces.
+/// Idempotent rule registration lives here too: the two rules are written to `policy:guard` once per
+/// deployment, guarded by a marker record in the `meta` collection.
 #[macro_export]
 macro_rules! guest_owner_or_admin_policy {
     ($policy_domain:expr, $resource_attr:literal) => {
@@ -399,11 +357,8 @@ macro_rules! guest_owner_or_admin_policy {
             }
         }
 
-        /// `action` is carried through even though every rule above matches
-        /// `"*"` — `policy:guard/guard::enforce` still takes one, and a future
-        /// rule scoped to a specific action (the way `feedback-domain` used to
-        /// scope its own to `"delete"`) can be added without touching the call
-        /// sites below.
+        /// `action` is carried through even though every rule matches `"*"`: `policy:guard/guard::enforce` still
+        /// takes one, and an action-scoped rule can be added without touching call sites.
         fn owns_or_admin(
             action: &str,
             p: &crate::bindings::auth::identity::types::Principal,
@@ -423,13 +378,8 @@ macro_rules! guest_owner_or_admin_policy {
     };
 }
 
-/// Who is calling, or bail — the four lines every handler in every SaaS app
-/// here opens with, unchanged since the first of them was hand-written:
-/// `introspect($route)`'s `Err` is already a `Reply` (401 on no bearer, the
-/// mapped `AuthError` otherwise), so the caller's own early return is exactly
-/// right, and this expands to an expression: `let principal =
-/// guestauth::guest_authenticated!(route);` reads the same as what it
-/// replaces.
+/// Who is calling, or bail. `introspect($route)`'s `Err` is already a `Reply` (401 on no bearer, else the
+/// mapped `AuthError`), so the caller's early return is right; expands to an expression.
 #[macro_export]
 macro_rules! guest_authenticated {
     ($route:expr) => {
@@ -440,14 +390,9 @@ macro_rules! guest_authenticated {
     };
 }
 
-/// Refuse with an audited 403 unless `$cond` holds — the same three lines
-/// every RBAC/ABAC check in every SaaS app here writes before its real work:
-/// `is_admin(&principal)`, `owns_or_admin("edit", &principal, &owner)`, or a
-/// domain's own bespoke rule (`timesheet-domain`'s `enforce(...)` call) all
-/// fit, since `$cond` is any boolean expression. A few call sites across
-/// these apps skipped the audit call on denial before this existed — an
-/// inconsistency this closes rather than preserves, since a 403 with no
-/// audit trail is a gap in exactly the record `audit:log` exists for.
+/// Refuse with an audited 403 unless `$cond` holds. `$cond` is any boolean expression
+/// (`is_admin(&principal)`, `owns_or_admin(...)`, a bespoke rule). The audit call on denial is included
+/// so a 403 never lacks an audit trail.
 #[macro_export]
 macro_rules! guest_deny_unless {
     ($cond:expr, $principal:expr, $event:expr, $detail:expr) => {
@@ -458,11 +403,7 @@ macro_rules! guest_deny_unless {
     };
 }
 
-/// Parse a request body into `$ty`, or refuse with 400 — the same
-/// three-line shape every `POST`/`PUT` handler here writes before its real
-/// work, differing only in the target type. `let req: ClientReq = match
-/// serde_json::from_str(body) { ... };` becomes `let req =
-/// guestauth::guest_parse_body!(body, ClientReq);`.
+/// Parse a request body into `$ty`, or refuse with 400.
 #[macro_export]
 macro_rules! guest_parse_body {
     ($body:expr, $ty:ty) => {
@@ -473,9 +414,7 @@ macro_rules! guest_parse_body {
     };
 }
 
-/// Fetch a `records:store` entry by id, or refuse with 404 — the same
-/// three-line shape every handler here writes before acting on a specific
-/// row, differing only in the collection name.
+/// Fetch a `records:store` entry by id, or refuse with 404.
 #[macro_export]
 macro_rules! guest_get_or_404 {
     ($collection:expr, $id:expr) => {
@@ -486,11 +425,7 @@ macro_rules! guest_get_or_404 {
     };
 }
 
-/// Define `entries_json`: a page of `records:store` entries as a JSON array,
-/// each entry's stored id merged into its own document — the same helper
-/// `billing-domain`, `crm-domain`, `ats-domain`, `timesheet-domain`,
-/// `feedback-domain`, `expense-domain` and `parking-domain` each hand-wrote,
-/// byte-identical every time.
+/// Define `entries_json`: a page of `records:store` entries as a JSON array, each entry's stored id merged into its own document.
 #[macro_export]
 macro_rules! guest_entries_json {
     () => {
@@ -512,12 +447,9 @@ macro_rules! guest_entries_json {
     };
 }
 
-// ---- WASI p3 ------------------------------------------------------------------
-//
-// The two macros above that touch `wasi:http` — the router and `emit` — for a
-// component whose door is the async p3 `wasi:http/handler`. Everything else here
-// is generation-neutral. They name `crate::bindings::p3::http`, the alias every p3
-// component defines (see `guestio`'s p3 section).
+// ---- WASI p3: the two macros above that touch `wasi:http` (the router and `emit`) for a component whose
+// door is the async p3 `wasi:http/handler`; everything else is generation-neutral. They name
+// `crate::bindings::p3::http`, the alias every p3 component defines (see `guestio`'s p3 section).
 
 /// `guest_saas_router!` for a p3 component: the same routes, dispatching to the
 /// same `crate::handlers::handle(&Method, &Route, &str) -> Reply`, where `Method`

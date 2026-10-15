@@ -1,10 +1,6 @@
-//! Pure OpenAI request-building + response-parsing, decoupled from the WIT
-//! bindings so it is unit-testable on the host (`cargo test`). The Guest impl in
-//! `lib.rs` converts the WIT records to/from these plain types at the edges.
-//!
-//! Everything here is deterministic and dependency-light (serde_json only) — no
-//! WASI, no config, no HTTP. The HTTP plumbing lives in `lib.rs`; this is just
-//! the codec, which is the part worth testing in isolation.
+//! Pure OpenAI request-building + response-parsing, decoupled from the WIT bindings so it is unit-testable on the host.
+//! The Guest impl in `lib.rs` converts WIT records to/from these plain types. Deterministic, serde_json only: no WASI,
+//! config or HTTP (that plumbing lives in `lib.rs`).
 
 use serde::Deserialize;
 
@@ -155,13 +151,11 @@ mod tests {
         let opts =
             Opts { model: "gpt-4o-mini", temperature: 700, max_tokens: 256, ..Default::default() };
         let body = chat_body(&msgs, &opts);
-        // valid JSON
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["model"], "gpt-4o-mini");
         assert_eq!(v["messages"][0]["role"], "system");
         assert_eq!(v["messages"][1]["role"], "user");
         assert_eq!(v["messages"][1]["content"], "Summarize: Bella limps.");
-        // milli-units -> float
         assert_eq!(v["temperature"], 0.7);
         assert_eq!(v["max_tokens"], 256);
     }

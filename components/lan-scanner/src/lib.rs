@@ -1,27 +1,17 @@
 //! `lan-scanner` — which hosts on the local network answer, for a component that cannot look
 //!
-//! The scanning happens in `comp-lanscan`, which is native because opening
-//! many outbound TCP connections against addresses a caller does not supply
-//! is not something a `wasm32-wasip2` guest can do (ADR-0095). This is the
-//! component side: it holds the contract, and reaches the daemon over HTTP the
-//! same way `fs-watcher` reaches `comp-fswatch`.
+//! The scanning happens in `comp-lanscan`, which is native because opening many outbound TCP connections against
+//! addresses a caller does not supply is not something a `wasm32-wasip2` guest can do (ADR-0095). This is the
+//! component side: it holds the contract and reaches the daemon over HTTP, as `fs-watcher` reaches `comp-fswatch`.
 //!
-//! Two things follow from that split, and both are the point rather than a cost:
+//! Two consequences, both the point:
 //!
-//!   * what this may dial is a MANIFEST decision (ADR-0008). The daemon's
-//!     address is `lanscan-url` in `wasi:config`, and the deployment's egress
-//!     allow-list decides whether the call leaves at all.
-//!   * the daemon has its own allow-list of CIDRs. There is no target in the
-//!     request at all — the scope of a scan is a daemon-side decision, the
-//!     same way fs-watcher's directories are daemon-side rather than named by
-//!     the caller.
+//!   * what this may dial is a MANIFEST decision (ADR-0008): the daemon's address is `lanscan-url` in
+//!     `wasi:config` and the deployment's egress allow-list decides whether the call leaves at all.
+//!   * the daemon has its own CIDR allow-list; the request names no target, so scan scope is a daemon-side decision.
 //!
 //! Config (wasi:config/store):
 //!   lanscan-url    where `comp-lanscan` is listening, e.g. http://127.0.0.1:8005
-//!
-//! It used to return `"UNIMPLEMENTED: ..."` — a sentence a caller could not
-//! tell apart from a real answer. That is what the old `-> string` contract
-//! permitted; the current one cannot express it.
 
 #[allow(warnings)]
 mod bindings;
@@ -36,15 +26,13 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Ten seconds. A scan of at most 254 hosts on the daemon side is bounded;
-/// anything slower than this is a daemon in trouble rather than a big LAN.
+/// Ten seconds. A scan of at most 254 hosts is bounded; slower means a daemon in trouble, not a big LAN.
 const TIMEOUT_NS: u64 = 10_000_000_000;
 
 fn daemon_url() -> Result<String, ScanError> {
     match config::get("lanscan-url") {
         Ok(Some(u)) if !u.is_empty() => Ok(u),
-        // Unavailable rather than not-permitted: nobody refused anything, the
-        // deployment simply never said where the scanner is.
+        // Unavailable rather than not-permitted: nobody refused anything, the deployment never said where the scanner is.
         _ => Err(ScanError::Unavailable(
             "lanscan-url is not set — this scanner has nowhere to ask".into(),
         )),
@@ -66,9 +54,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), ScanError> {
     Ok((scheme, authority, path))
 }
 
-/// POST the request and return the body. Every failure is `unavailable`: the
-/// daemon's own refusals arrive as JSON with a 200, so anything at this level is
-/// the transport rather than an answer.
+/// POST the request and return the body. Every failure is `unavailable`: the daemon's own refusals arrive as JSON with a 200, so anything at this level is the transport.
 fn post(body: Vec<u8>) -> Result<Vec<u8>, ScanError> {
     let url = daemon_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
@@ -76,10 +62,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, ScanError> {
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // A shared secret, if the deployment set one — see
-    // `comp_reconciler::daemon_auth`'s own doc for why loopback
-    // binding alone is not a boundary. Absent means the daemon was
-    // started with no --token, so there is nothing to send.
+    // A shared secret, if the deployment set one (see `comp_reconciler::daemon_auth` for why loopback binding alone is not a boundary). Absent means the daemon runs with no --token.
     if let Ok(Some(token)) = config::get("lanscan-token") {
         if !token.is_empty() {
             let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
@@ -124,9 +107,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, ScanError> {
         match stream.blocking_read(8192) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went wrong,
-            // and returning what arrived would be a truncated answer presented
-            // as a whole one.
+            // `Closed` is end-of-body; anything else is a read that went wrong, and returning what arrived would present a truncated answer as whole.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -134,10 +115,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, ScanError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser.
-///
-/// The daemon's replies have two shapes and no nesting beyond a flat host
-/// list, so a full serde dependency would be more code than the thing it reads.
+/// Pull one JSON string field out without a parser: the daemon's replies have two flat shapes, so serde would be more code than the thing it reads.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];
@@ -167,10 +145,7 @@ impl Guest for Component {
         let raw = post(b"{}".to_vec())?;
         let text = String::from_utf8_lossy(&raw).into_owned();
 
-        // The daemon reports its refusals in the body. Mapping them back to
-        // the variant matters even though this contract only has one error
-        // case: a body that failed to parse should not silently read as an
-        // empty, successful scan.
+        // The daemon reports refusals in the body; map them back so a body that failed to parse does not read as an empty, successful scan.
         if let Some(err) = field(&text, "error") {
             let detail = field(&text, "detail").unwrap_or_default().to_string();
             return Err(ScanError::Unavailable(format!("{err}: {detail}")));
@@ -198,8 +173,7 @@ mod tests {
         assert!(!hosts[1].reachable);
     }
 
-    /// An empty scan is a legitimate answer — every allowed host was
-    /// unreachable — and must not read as a failure.
+    /// An empty scan is a legitimate answer (every allowed host unreachable) and must not read as a failure.
     #[test]
     fn an_empty_scan_is_not_an_error() {
         let json = r#"{"hosts":[]}"#;

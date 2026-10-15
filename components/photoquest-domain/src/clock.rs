@@ -1,17 +1,12 @@
-//! The game's notion of "now". Every time rule (quest windows, competition
-//! entry/voting/judging deadlines) reads `now()`, never `now_secs()` directly, so
-//! an e2e run can close a competition without waiting for it.
-//!
-//! The offset only exists when config `allow-test-routes` is `true` — the same
-//! gate events-domain uses for its test routes. Without it `now()` is the wall
-//! clock and `POST /test/clock` is a 404.
+//! The game's notion of "now". Every time rule (quest windows, competition deadlines) reads `now()`, never `now_secs()`
+//! directly, so an e2e run can close a competition without waiting. The offset only exists when config
+//! `allow-test-routes` is `true` (as events-domain's test routes); otherwise `now()` is the wall clock and `POST /test/clock` is a 404.
 
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::config::store as config;
 use crate::{now_secs, Reply};
 
-/// A collection holding at most one record: the offset. Record ids are minted
-/// by the store, so "the" record is simply the first one.
+/// A collection holding at most one record: the offset. Record ids are store-minted, so "the" record is the first one.
 const CLOCK: &str = "test_clock";
 
 fn current() -> Option<records::Entry> {

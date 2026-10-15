@@ -102,8 +102,6 @@ fn usage() -> Outcome {
     )
 }
 
-// ---- iban ------------------------------------------------------------------
-
 fn iban_msg(e: &iban::IbanError) -> String {
     match e {
         iban::IbanError::TooShort => "too short".into(),
@@ -138,8 +136,6 @@ async fn verify(request: Request) -> Outcome {
         Err(e) => Outcome::Json(200, json!({ "valid": false, "error": iban_msg(&e) }).to_string()),
     }
 }
-
-// ---- auth -------------------------------------------------------------------
 
 guestio::guest_p3_bearer!();
 guestio::guest_p3_respond!();
@@ -199,8 +195,6 @@ fn logout(request: &Request) -> Outcome {
     }
 }
 
-// ---- payees -----------------------------------------------------------------
-
 async fn create_payee(request: Request) -> Outcome {
     let p = match introspect(&request) {
         Ok(p) => p,
@@ -214,7 +208,6 @@ async fn create_payee(request: Request) -> Outcome {
     if name.is_empty() {
         return Outcome::Err(422, "name required".into());
     }
-    // validate the IBAN before storing anything.
     let info = match iban::validate(b["iban"].as_str().unwrap_or("")) {
         Ok(i) => i,
         Err(e) => return Outcome::Err(422, format!("invalid IBAN: {}", iban_msg(&e))),
@@ -288,8 +281,6 @@ fn seed_demo(subject: &str) {
     }
 }
 
-// ---- http plumbing ----------------------------------------------------------
-
 fn store_err(e: records::StoreError) -> Outcome {
     match e {
         records::StoreError::NotFound => Outcome::Err(404, "not_found".into()),
@@ -308,18 +299,9 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be, before the component stops reading it. Without a ceiling a guest
+/// accumulated until wasmtime's 64 MiB per-store cap TRAPPED, reaching the caller as a bare closed
+/// connection. Generous: a backstop, not a content policy; uploads police themselves with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

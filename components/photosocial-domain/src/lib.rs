@@ -83,20 +83,17 @@ impl Guest for Component {
             }
             (Method::Get, ["api", "info"]) => Some(api_info()),
 
-            // Auth
             (Method::Post, ["api", "register"]) => Some(register(request).await),
             (Method::Post, ["api", "login"]) => Some(login(request).await),
             (Method::Post, ["api", "logout"]) => Some(logout(&request)),
             (Method::Get, ["api", "me"]) => Some(me(&request)),
 
-            // Attributes (Read: All, Manage: Admin RBAC)
             (Method::Get, ["api", "attributes"]) => Some(list_attributes()),
             (Method::Post, ["api", "admin", "attributes"]) => Some(create_attribute(request).await),
             (Method::Delete, ["api", "admin", "attributes", id]) => {
                 Some(delete_attribute(&request, id))
             }
 
-            // Photos
             (Method::Get, ["api", "photos"]) => Some(list_photos(&path)),
             (Method::Post, ["api", "photos"]) => Some(create_photo(request).await),
             (Method::Get, ["api", "photos", id]) => Some(get_photo(id)),
@@ -104,7 +101,6 @@ impl Guest for Component {
                 Some(analyze_photo_ai(&request, id))
             }
 
-            // Voting & Attribute Scoring
             (Method::Post, ["api", "photos", id, "vote"]) => Some(vote_photo(request, id).await),
             (Method::Post, ["api", "photos", id, "rate"]) => {
                 Some(rate_photo_attributes(request, id).await)
@@ -156,10 +152,6 @@ fn api_info() -> Outcome {
         .to_string(),
     )
 }
-
-// -----------------------------------------------------------------------------
-// Auth & RBAC Helpers
-// -----------------------------------------------------------------------------
 
 guestio::guest_p3_bearer!();
 guestio::guest_p3_respond!();
@@ -274,10 +266,6 @@ fn me(request: &Request) -> Outcome {
         .to_string(),
     )
 }
-
-// -----------------------------------------------------------------------------
-// Admin Attributes Management
-// -----------------------------------------------------------------------------
 
 fn seed_default_attributes_if_needed() {
     let existing = records::list_records(ATTRIBUTES_COLL, 10, "").ok();
@@ -410,10 +398,6 @@ fn delete_attribute(request: &Request, id: &str) -> Outcome {
 
     Outcome::Err(404, "attribute not found".into())
 }
-
-// -----------------------------------------------------------------------------
-// Photos & AI Automated Critique
-// -----------------------------------------------------------------------------
 
 fn run_ai_photo_critique(
     title: &str,
@@ -601,10 +585,6 @@ fn analyze_photo_ai(request: &Request, id: &str) -> Outcome {
     }
     Outcome::Err(404, "photo not found".into())
 }
-
-// -----------------------------------------------------------------------------
-// Voting & Community Attribute Ratings
-// -----------------------------------------------------------------------------
 
 async fn vote_photo(request: Request, photo_id: &str) -> Outcome {
     let principal = match introspect(&request) {
@@ -837,10 +817,6 @@ fn get_my_ratings(request: &Request, photo_id: &str) -> Outcome {
     )
 }
 
-// -----------------------------------------------------------------------------
-// Request / Response Plumbing
-// -----------------------------------------------------------------------------
-
 async fn body(request: Request) -> Result<Value, Outcome> {
     let raw = read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
@@ -878,9 +854,5 @@ fn emit(result: Outcome) -> Result<Response, ErrorCode> {
 
     respond_with(code, headers, body.into_bytes())
 }
-
-// -----------------------------------------------------------------------------
-// Embedded SPA UI
-// -----------------------------------------------------------------------------
 
 bindings::export!(Component with_types_in bindings);

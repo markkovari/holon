@@ -1,31 +1,23 @@
-//! A photographer's side of the game (CONTRACT.md "Journeys, quests, levels",
-//! "Submitting, XP, levels, badges", "Game routes" → `progress.rs`): the published
-//! journeys with my XP, level and quest lock/pass state, a quest, submitting a
-//! photo to it, my submissions, and `/api/me/progress`.
+//! A photographer's side of the game (CONTRACT.md "Journeys, quests, levels", "Submitting, XP, levels,
+//! badges", "Game routes"): published journeys with my XP, level and quest lock/pass state, a quest,
+//! submitting a photo, my submissions, and `/api/me/progress`.
 //!
-//! Collections this module writes:
+//! Collections written here:
 //!
-//! * `submissions` — `{user, quest, journey, photo, sha256, verdict, pass,
-//!   xp_awarded, xp_reason, level_up, badge, at}`, indexed by `user`. Every
-//!   submission is kept, passing or not: "passed" for a quest means "this user has
-//!   a submission with `pass: true`".
-//! * `xp_ledger` — the contract's append-only ledger `{user, journey, source,
-//!   source_id, photo, sha256, xp, at}`, indexed by `user`, `sha256`, `source_id`.
-//!   Written only through [`credit`], which `competitions.rs` also calls. A row is
-//!   written only when XP is actually awarded (> 0).
-//! * `badges` — `{user, journey, name, at}`, indexed by `user`; one per
-//!   (user, journey), granted when every published quest of the journey is passed.
+//! * `submissions` — `{user, quest, journey, photo, sha256, verdict, pass, xp_awarded, xp_reason,
+//!   level_up, badge, at}`, indexed by `user`. Every submission is kept; "passed" means a submission with `pass: true`.
+//! * `xp_ledger` — the append-only ledger `{user, journey, source, source_id, photo, sha256, xp, at}`,
+//!   indexed by `user`, `sha256`, `source_id`. Written only through [`credit`] (also called by
+//!   `competitions.rs`), and only when XP > 0.
+//! * `badges` — `{user, journey, name, at}`, indexed by `user`; one per (user, journey), granted when
+//!   every published quest of the journey is passed.
 //!
-//! **Which quests count.** A journey's unlock chain and its badge are over its
-//! *published* quests, in `journey.quests` order. A draft quest is invisible; an
-//! archived one drops out of the chain (it no longer locks the next one, and is no
-//! longer needed for the badge).
+//! **Which quests count.** A journey's unlock chain and badge are over its *published* quests in
+//! `journey.quests` order: a draft is invisible; an archived one drops out of the chain.
 //!
-//! **Races.** `records:store` has no unique constraint, so two concurrent writes of
-//! the "same" ledger row or badge are settled after the fact: each writer re-reads,
-//! and the one whose record id (a ULID) is not the smallest deletes its own and
-//! reports nothing awarded. Both writers agree on which id is smallest, so exactly
-//! one row survives.
+//! **Races.** `records:store` has no unique constraint, so concurrent writes of the "same" ledger row or
+//! badge are settled afterwards: each writer re-reads and the one whose record id (a ULID) is not the
+//! smallest deletes its own and reports nothing awarded, so exactly one row survives.
 
 use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
@@ -41,14 +33,10 @@ const PHOTOS: &str = "photos";
 const SUBMISSIONS: &str = "submissions";
 const LEDGER: &str = "xp_ledger";
 const BADGES: &str = "badges";
-/// The same index list `competitions.rs` used for its interim ledger rows, so the
-/// rows either module wrote are found by the same lookups.
+/// The same index list `competitions.rs` used for its interim ledger rows.
 const LEDGER_INDEX: &[&str] = &["user", "sha256", "source_id"];
 
-// ---- shared record helpers (curation.rs uses these too) ----------------------
-
-/// A record id as it may appear in a path. Record ids are ULIDs; anything else is
-/// a 404 before it reaches the store.
+/// A record id as it may appear in a path. Record ids are ULIDs; anything else is a 404 before it reaches the store.
 pub(crate) fn valid_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
@@ -144,8 +132,6 @@ macro_rules! tri {
 }
 pub(crate) use tri;
 
-// ---- levels -------------------------------------------------------------------
-
 /// `(level, next threshold)` for `xp` on a journey's `levels`: the highest level
 /// whose `xp` is reached, and the `xp` of the one after it (None at the top).
 pub(crate) fn level_of(levels: &Value, xp: u64) -> (u64, Option<u64>) {
@@ -164,8 +150,6 @@ pub(crate) fn level_of(levels: &Value, xp: u64) -> (u64, Option<u64>) {
     }
     (level, next)
 }
-
-// ---- the XP ledger ------------------------------------------------------------
 
 /// What [`credit`] did.
 pub struct Credit {
@@ -197,17 +181,13 @@ fn first_id(rows: &[Map<String, Value>]) -> Option<String> {
     rows.iter().map(|r| str_of(r, "id").to_string()).min()
 }
 
-/// Credit `xp` to `user` on the ledger (CONTRACT.md "Submitting, XP, levels,
-/// badges"), counted toward `journey`'s levels when there is one.
+/// Credit `xp` to `user` on the ledger, counted toward `journey`'s levels when there is one.
 ///
-/// * Idempotent: a second call for the same (user, source, source_id, photo)
-///   awards 0 with `already_rewarded`. A different photo for the same
-///   (user, source, source_id) awards 0 too — `already_passed` for a quest (XP
-///   once per (photographer, quest)), `already_rewarded` for anything else (a
-///   competition prize is once per (user, competition, place): `source_id`
-///   carries `"<competition>#<place>"`).
-/// * For `source == "quest"` only: a file (by `sha256`) earns XP at most once,
-///   ever, across every quest and every user — 0 with `already_rewarded`.
+/// * Idempotent: a second call for the same (user, source, source_id, photo) awards 0 with
+///   `already_rewarded`. A different photo for the same (user, source, source_id) awards 0 too:
+///   `already_passed` for a quest (XP once per (photographer, quest)), `already_rewarded` otherwise
+///   (a competition prize is once per (user, competition, place); `source_id` is `"<competition>#<place>"`).
+/// * For `source == "quest"` only: a file (by `sha256`) earns XP at most once across every quest and user.
 ///   Competition prizes neither consume nor are blocked by that rule.
 /// * `xp == 0` writes nothing and answers `awarded: 0, reason: None`.
 pub fn credit(
@@ -285,8 +265,6 @@ pub fn credit(
 fn journey_xp(ledger: &[Map<String, Value>], journey: &str) -> u64 {
     ledger.iter().filter(|r| str_of(r, "journey") == journey).map(|r| u64_of(r, "xp")).sum()
 }
-
-// ---- routes -------------------------------------------------------------------
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
@@ -482,14 +460,12 @@ struct SubmitReq {
     photo_id: String,
 }
 
-/// `POST /api/quests/{id}/submissions {photo_id}` — judge the photo now, store the
-/// verdict, and pay XP / level / badge for a pass.
+/// `POST /api/quests/{id}/submissions {photo_id}` — judge the photo now, store the verdict, and pay XP /
+/// level / badge for a pass.
 ///
-/// Refusals, in CONTRACT.md's order, all before judging: no such (visible) quest
-/// or photo → 404; not your photo → 403 `forbidden`; not evaluated → 409
-/// `not_evaluated`; hidden → 409 `photo_hidden`; quest locked / not started /
-/// ended / not published (archived) → 409 with that reason; suspended → 403
-/// `suspended`.
+/// Refusals in CONTRACT.md's order, all before judging: no such (visible) quest or photo → 404; not your
+/// photo → 403 `forbidden`; not evaluated → 409 `not_evaluated`; hidden → 409 `photo_hidden`; quest
+/// locked / not started / ended / archived → 409 with that reason; suspended → 403 `suspended`.
 fn submit(route: &Route, id: &str, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let req = guestauth::guest_parse_body!(body, SubmitReq);
