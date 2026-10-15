@@ -7,9 +7,8 @@
 //!   GET  /unread?subject=
 //!   POST /read                   {subject, seqs[]}   or {subject, through}
 //!
-//! Every route answers JSON with 200 unless the request itself was malformed. What
-//! is under test is what the capabilities decided, and a status code would flatten
-//! "that subject wants no email" into the same shape as "the gateway refused".
+//! Every route answers JSON with 200 unless the request itself was malformed: what is under test is what the capabilities
+//! decided, and a status code would flatten "that subject wants no email" into "the gateway refused".
 
 #[allow(warnings)]
 mod bindings {

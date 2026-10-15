@@ -1,10 +1,8 @@
 //! `ledger` — double-entry bookkeeping — validate that debits equal credits, and roll entries into balances
 //!
-//! The double-entry invariant, as pure functions over integer minor units (no
-//! float rounding): `validate` enforces that an entry has >= 2 lines, positive
-//! amounts, and equal debits and credits; `trial_balance` aggregates a set of
-//! validated entries into per-account totals whose grand totals are equal. No
-//! state, no host imports.
+//! The double-entry invariant as pure functions over integer minor units: `validate` enforces >= 2 lines, positive
+//! amounts and equal debits and credits; `trial_balance` aggregates validated entries into per-account totals with equal
+//! grand totals. No state, no host imports.
 
 #[allow(warnings)]
 mod bindings;

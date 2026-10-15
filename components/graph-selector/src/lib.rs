@@ -1,38 +1,21 @@
 //! `graph-selector` — which branch won, and the only path to a pull request.
 //!
-//! ## The order the rules are applied, and why each one
+//! ## Rules, in order
 //!
-//! 1. **Accepted, or not eligible.** The gate is the whole reason a swarm can be
-//!    trusted to run unattended, and a selection that could reach past it would
-//!    make that untrue whatever it reported afterwards.
-//! 2. **Higher score wins.** Two branches can both pass every REQUIRED check and
-//!    differ on the optional ones — that difference is the only quality signal
-//!    that came from running real commands rather than from a model's opinion.
-//! 3. **Then the smaller change.** Same gate passed, less to review and less to
-//!    go wrong. This is a judgement rather than a measurement, and it is second
-//!    because it should never override something a check actually verified.
-//! 4. **Then the cheaper run**, then the earlier branch. Both are tie-breaks
-//!    whose only real job is to be DETERMINISTIC: a selection that varies between
-//!    runs of identical inputs cannot be argued with afterwards.
+//! 1. **Accepted, or not eligible.** The gate is why a swarm can run unattended; a selection reaching past it would void that.
+//! 2. **Higher score wins.** Branches passing every REQUIRED check differ on the optional ones, the only quality
+//!    signal from real commands rather than a model's opinion.
+//! 3. **Then the smaller change.** A judgement, so second: it must never override something a check verified.
+//! 4. **Then the cheaper run**, then the earlier branch: tie-breaks whose job is to be DETERMINISTIC.
 //!
-//! ## What it deliberately cannot see
-//!
-//! The attempt log. A selector given "this branch tried nine times" would sooner
-//! or later reward persistence, and how hard a branch worked is not a property of
-//! the code it produced.
+//! It deliberately cannot see the attempt log: rewarding persistence would reward effort, not code.
 //!
 //! ## The Jev advisory
 //!
-//! `land` asks `jev:decision/decision::gate` one question about the winner,
-//! AFTER `decide()` has already picked it: does this look like a stub, a
-//! deletion of existing functionality, or otherwise a failure to implement the
-//! goal, rather than a genuine attempt? This is deliberately NOT a second
-//! selection signal — `decide()` runs first, is not passed the answer, and
-//! cannot be. It is a note on the PR the deterministic gate already accepted,
-//! the same way `because` is: something a person reads, never something the
-//! code that already decided the winner acts on. A Jev failure (timeout, rate
-//! limit, a bad key) never blocks `land` — it becomes the least interesting
-//! possible line in the PR body, not an error.
+//! `land` asks `jev:decision/decision::gate` one question about the winner AFTER `decide()` picked it: does
+//! it look like a stub, a deletion of existing functionality, or a failure to implement the goal? NOT a
+//! second selection signal (`decide()` is not passed the answer): a note on the PR, read by a person. A Jev
+//! failure never blocks `land`; it becomes a dull line in the PR body.
 
 #[allow(warnings)]
 mod bindings;
@@ -45,10 +28,8 @@ use bindings::jev::decision::decision::{self as jev, DecisionError, GateRequest,
 
 struct Component;
 
-/// The comparison, as a sort key. Lower is better in every position, so `score`
-/// is negated by subtracting from its maximum rather than by reversing the sort —
-/// reversing would also reverse the tie-breaks, and the earlier branch would stop
-/// winning ties.
+/// The comparison, as a sort key. Lower is better everywhere, so `score` is negated by subtracting from
+/// its maximum rather than reversing the sort, which would also reverse the tie-breaks.
 fn rank(e: &Entry, index: usize) -> (u32, usize, u32, usize) {
     (1000u32.saturating_sub(e.score), e.files.len(), e.spent_tokens, index)
 }
@@ -73,9 +54,7 @@ fn because(winner: &Entry, runner_up: Option<&Entry>) -> String {
             other.branch, winner.spent_tokens, other.spent_tokens
         )
     } else {
-        // Nothing separated them. Saying so is the useful answer — it means the
-        // generation had two equally good branches, which is worth knowing and
-        // is invisible if the report only names a winner.
+        // Nothing separated them: saying so is useful (two equally good branches) and invisible if only a winner is named.
         format!("indistinguishable from {}, and it came first", other.branch)
     }
 }
@@ -84,14 +63,11 @@ fn because(winner: &Entry, runner_up: Option<&Entry>) -> String {
 /// visible warning rather than a quiet confirmation.
 const CONCERN_THRESHOLD: u32 = 500;
 
-/// A cheap sanity check, not a code review — the winner's files are capped
-/// here rather than sent in full, since noticing "this looks suspiciously
-/// empty or stubbed" needs far less than every byte of a large candidate.
+/// A cheap sanity check, not a code review: the winner's files are capped, since spotting a stub needs far less than every byte.
 const STATE_BYTE_CAP: usize = 20_000;
 
-/// The winning candidate's files, as the `state` a Noul question judges. Capped
-/// and truncated rather than sent whole, and truncation is said out loud —
-/// a truncated file must never be mistaken for a short one.
+/// The winning candidate's files, as the `state` a Noul question judges. Capped and truncated, and
+/// truncation is said out loud so a truncated file is never mistaken for a short one.
 fn advisory_state(files: &[File]) -> String {
     let mut out = String::new();
     for (i, f) in files.iter().enumerate() {
@@ -107,10 +83,8 @@ fn advisory_state(files: &[File]) -> String {
     out
 }
 
-/// The Noul question `land` asks about the winner, before it ever reaches the
-/// forge. `instructions` names the goal from `p.title` (the only field a
-/// caller is guaranteed to have filled with something short); `p.body` is the
-/// fallback, truncated, since it can be arbitrarily long free text.
+/// The Noul question `land` asks about the winner before it reaches the forge. `instructions` names the
+/// goal from `p.title` (guaranteed short); `p.body` is the truncated fallback.
 fn advisory_request(winner: &Entry, p: &Landing) -> GateRequest {
     let goal =
         if !p.title.is_empty() { p.title.clone() } else { p.body.chars().take(200).collect() };
@@ -131,10 +105,7 @@ fn advisory_request(winner: &Entry, p: &Landing) -> GateRequest {
     }
 }
 
-/// Exactly one line for the PR body. Never absent (a silent guard is a guard
-/// nobody trusts) and never a reason to fail `land` — a Jev failure is the
-/// least interesting thing that can happen here, not an error the caller
-/// needs to handle.
+/// Exactly one line for the PR body. Never absent (a silent guard is not trusted) and never a reason to fail `land`.
 fn advisory_line(result: Result<GateResult, DecisionError>) -> String {
     match result {
         Ok(r) if r.probability >= CONCERN_THRESHOLD => format!(
@@ -166,9 +137,7 @@ fn decide(entries: &[Entry]) -> Result<Outcome, SelectError> {
         ));
     }
     if let Some(bad) = entries.iter().find(|e| e.accepted && e.files.is_empty()) {
-        // The forge refuses a diff-less proposal, but by then a branch has been
-        // declared the winner. Refused here so the generation fails rather than
-        // the pull request.
+        // The forge refuses a diff-less proposal, but by then a branch is declared winner: refuse here so the generation fails, not the pull request.
         return Err(SelectError::Invalid(format!(
             "{} claims the gate accepted it and changed nothing, which is what \
              `reported success having done nothing` looks like",
@@ -225,26 +194,20 @@ impl Guest for Component {
 
         let chosen = match outcome.decision {
             Decision::Winner(c) => c,
-            // Not a forge failure, and kept apart from one: the caller's move is
-            // to run another generation, not to retry this call.
+            // Not a forge failure: the caller's move is another generation, not a retry of this call.
             Decision::NothingAcceptable(why) => return Err(LandError::NothingAcceptable(why)),
         };
         let winner = &entries[chosen.index as usize];
 
-        // Advisory-only, and asked AFTER the winner is already decided — see
-        // the module doc. Its answer can add a line to the PR; it cannot
-        // change `chosen`, `winner`, or whether this proposal happens at all.
+        // Advisory-only, asked AFTER the winner is decided (see the module doc): it can add a PR line, not change `chosen`, `winner` or whether this happens.
         let advisory = advisory_line(jev::gate(&advisory_request(winner, &p)));
 
-        // The changes come from the branch that won, and from nowhere else.
-        // There is no argument by which a caller could supply them.
+        // The changes come from the branch that won and nowhere else; a caller cannot supply them.
         let proposal = forge::Proposal {
             branch: p.branch,
             base: p.base,
             title: p.title,
-            // What decided it travels with the proposal. A reviewer looking at
-            // one pull request cannot otherwise see that seven other branches
-            // tried and what they scored.
+            // What decided it travels with the proposal, so a reviewer can see that other branches tried and what they scored.
             body: format!(
                 "{}\n\nSelected: {} — {}.\n{}",
                 p.body, chosen.branch, chosen.because, advisory
@@ -295,12 +258,10 @@ mod tests {
         }
     }
 
-    /// The rule the whole design rests on. A branch that failed its checks is not
-    /// a candidate however good it looks on every other axis.
+    /// The rule the whole design rests on: a branch that failed its checks is not a candidate however good it looks.
     #[test]
     fn a_branch_that_failed_the_gate_cannot_win_on_any_other_rule() {
         let w = winner_of(&[
-            // Higher score, smaller change, cheaper — and rejected.
             entry("reckless", false, 900, 1, 10),
             entry("careful", true, 600, 9, 9000),
         ]);
@@ -319,8 +280,7 @@ mod tests {
         assert_eq!(out.accepted, 0);
     }
 
-    /// Both passed every required check; the optional ones separate them, and
-    /// that difference came from running real commands.
+    /// Both passed every required check; the optional ones separate them.
     #[test]
     fn score_beats_a_smaller_change() {
         let w =
@@ -344,8 +304,7 @@ mod tests {
         assert!(w.because.contains("less"), "{}", w.because);
     }
 
-    /// Determinism is the point of the last tie-break. A selection that varied
-    /// between runs of identical input could not be argued with afterwards.
+    /// Determinism is the point of the last tie-break.
     #[test]
     fn a_total_tie_goes_to_the_earlier_branch_every_time() {
         let entries = [entry("first", true, 1000, 2, 10), entry("second", true, 1000, 2, 10)];
@@ -355,8 +314,7 @@ mod tests {
         assert!(winner_of(&entries).because.contains("indistinguishable"));
     }
 
-    /// Herding is invisible from anywhere else: eight branches that agreed look
-    /// exactly like eight branches that explored.
+    /// Herding is invisible from anywhere else: eight branches that agreed look like eight that explored.
     #[test]
     fn a_generation_that_explored_one_idea_says_so() {
         let mut herd = [entry("a", true, 1000, 1, 10), entry("b", true, 1000, 1, 10)];
@@ -374,8 +332,7 @@ mod tests {
         assert_eq!(out.accepted, 1);
     }
 
-    /// Caught here rather than at the forge, where a branch has already been
-    /// declared the winner.
+    /// Caught here rather than at the forge, where a branch is already declared winner.
     #[test]
     fn an_accepted_branch_that_changed_nothing_is_refused() {
         let err = decide(&[entry("hollow", true, 1000, 0, 10)]).unwrap_err();
@@ -387,8 +344,6 @@ mod tests {
     fn a_generation_of_nothing_has_no_winner() {
         assert!(decide(&[]).is_err());
     }
-
-    // ---- the Jev advisory ----------------------------------------------
 
     fn landing(title: &str, body: &str) -> Landing {
         Landing {

@@ -1,11 +1,9 @@
 //! `media-pipeline` — presigned uploads and evaluation jobs for large photos
 //!
-//! Everything interesting happens in `comp-media`, which is native (ADR-0098):
-//! it signs URLs against the object store and owns the `MEDIA_JOBS` work queue.
-//! This is the component side. It holds the `media:pipeline/jobs` contract and
-//! turns each call into exactly one HTTP request to the daemon, the same way
-//! `image-optimizer` reaches `comp-imageopt`. No call carries pixels — only
-//! keys, sizes and URLs — so nothing here ever holds more than a few KiB.
+//! Everything interesting happens in `comp-media`, which is native (ADR-0098): it signs URLs against the object
+//! store and owns the `MEDIA_JOBS` work queue. This is the component side: it holds the `media:pipeline/jobs`
+//! contract and turns each call into exactly one HTTP request to the daemon (as `image-optimizer` reaches
+//! `comp-imageopt`). No call carries pixels, only keys, sizes and URLs.
 //!
 //! Config (wasi:config/store):
 //!   media-url     where `comp-media` is listening, e.g. http://127.0.0.1:8013
@@ -27,16 +25,13 @@ use serde_json::{json, Value};
 
 struct Component;
 
-/// Thirty seconds. Every route is bookkeeping — a presign, a
-/// `CompleteMultipartUpload`, a publish — and none of them waits on the
-/// evaluation itself, which comes back later as a callback.
+/// Thirty seconds. Every route is bookkeeping (presign, `CompleteMultipartUpload`, publish); none waits on the evaluation, which comes back as a callback.
 const TIMEOUT_NS: u64 = 30_000_000_000;
 
 fn daemon_url() -> Result<String, MediaError> {
     match config::get("media-url") {
         Ok(Some(u)) if !u.is_empty() => Ok(u),
-        // Unavailable rather than refused: nobody decided anything, the
-        // deployment simply never said where the daemon is.
+        // Unavailable rather than refused: nobody decided anything, the deployment never said where the daemon is.
         _ => Err(MediaError::Unavailable(
             "media-url is not set — this component has nowhere to ask".into(),
         )),
@@ -58,11 +53,8 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), MediaError> {
     Ok((scheme, authority, path))
 }
 
-/// POST `body` to `route` and return the parsed JSON answer.
-///
-/// Every failure at this level is `unavailable`: the daemon's own refusals
-/// arrive as JSON with a 200 (CONTRACT.md), so a non-200 — a 401 for a wrong
-/// token included — is the transport or the deployment, never an answer.
+/// POST `body` to `route` and return the parsed JSON answer. Every failure at this level is `unavailable`: the
+/// daemon's refusals arrive as JSON with a 200 (CONTRACT.md), so a non-200 (a 401 for a wrong token too) is the transport or deployment.
 fn post(route: &str, body: &Value) -> Result<Value, MediaError> {
     let url = daemon_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
@@ -71,12 +63,9 @@ fn post(route: &str, body: &Value) -> Result<Value, MediaError> {
     let payload = body.to_string().into_bytes();
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // Stated, so the request is not sent chunked: every body here is small and
-    // already whole, and a length is one less thing a daemon has to decode.
+    // Stated, so the request is not sent chunked: every body is small and whole.
     let _ = headers.set("content-length", &[payload.len().to_string().into_bytes()]);
-    // A shared secret, if the deployment set one — see
-    // `comp_reconciler::daemon_auth`'s own doc for why loopback binding alone
-    // is not a boundary. Absent means the daemon runs with no --token.
+    // A shared secret, if the deployment set one (see `comp_reconciler::daemon_auth` for why loopback binding alone is not a boundary). Absent means the daemon runs with no --token.
     if let Ok(Some(token)) = config::get("media-token") {
         if !token.is_empty() {
             let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
@@ -91,8 +80,7 @@ fn post(route: &str, body: &Value) -> Result<Value, MediaError> {
     let out = req.body().map_err(|_| net("body"))?;
     {
         let stream = out.write().map_err(|_| net("write"))?;
-        // Chunked: `blocking-write-and-flush` traps above 4096 bytes, and a
-        // part list for a 512 MiB upload is thirty-two ETags long.
+        // Chunked: `blocking-write-and-flush` traps above 4096 bytes and a part list for a 512 MiB upload is thirty-two ETags long.
         for chunk in payload.chunks(4096) {
             stream
                 .blocking_write_and_flush(chunk)
@@ -123,9 +111,7 @@ fn post(route: &str, body: &Value) -> Result<Value, MediaError> {
         match stream.blocking_read(8192) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went
-            // wrong, and parsing what arrived would be a truncated answer
-            // presented as a whole one.
+            // `Closed` is end-of-body; anything else is a read that went wrong, and parsing what arrived would present a truncated answer as whole.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -144,9 +130,7 @@ fn post(route: &str, body: &Value) -> Result<Value, MediaError> {
     check(reply)
 }
 
-/// The daemon reports its refusals in the body. Mapping them back to the
-/// variant matters: a caller that cannot tell "too big" from "the daemon is
-/// down" will retry the first one forever.
+/// The daemon reports refusals in the body; map them back to the variant, or a caller that cannot tell "too big" from "daemon down" retries the first forever.
 fn check(reply: Value) -> Result<Value, MediaError> {
     let Some(err) = reply.get("error").and_then(Value::as_str) else {
         return Ok(reply);
@@ -156,8 +140,7 @@ fn check(reply: Value) -> Result<Value, MediaError> {
         "refused" => MediaError::Refused(detail),
         "not-found" => MediaError::NotFound(detail),
         "unavailable" => MediaError::Unavailable(detail),
-        // An error the contract does not name is still an error — and the
-        // one a caller may retry, since nothing said it was a decision.
+        // An error the contract does not name is still an error, and the one a caller may retry (nothing said it was a decision).
         other => MediaError::Unavailable(format!("{other}: {detail}")),
     })
 }
@@ -173,7 +156,6 @@ fn missing(route: &str, field: &str) -> MediaError {
     MediaError::Unavailable(format!("comp-media's {route} answer had no {field}"))
 }
 
-/// `POST /uploads`' answer, as the WIT record.
 fn plan_from(reply: &Value) -> Result<UploadPlan, MediaError> {
     let s = |k: &str| {
         reply

@@ -1,18 +1,11 @@
 //! `notify-prefs` — read what a subject asked for, then tell them on those channels.
 //!
-//! ## Fan-out never fails as a whole
+//! Fan-out never fails as a whole: `notify` returns one outcome per channel it ATTEMPTED, and attempts every channel the
+//! subject asked for even after one fails (a down email gateway must not lose the in-app copy already written). A caller
+//! getting `[{in-app, ok}, {email, not ok, "gateway 503"}]` knows exactly what to retry, which a single `Err` cannot say.
 //!
-//! `notify` returns one outcome per channel it ATTEMPTED, and it attempts every
-//! channel the subject asked for even after one has failed. An email gateway being
-//! down must not lose the in-app copy that was already written — and a caller that
-//! gets `[{in-app, ok}, {email, not ok, "gateway 503"}]` knows exactly what to
-//! retry, which a single `Err` cannot say.
-//!
-//! ## Absent is different from empty
-//!
-//! An override with an empty channel list means "not this kind". No override at all
-//! means "use the defaults". Collapsing those two would make it impossible to mute
-//! one kind without muting everything, which is the first thing anybody wants.
+//! Absent is different from empty: an override with an empty channel list means "not this kind"; no override means "use the
+//! defaults". Collapsing them would make it impossible to mute one kind without muting everything.
 
 #[allow(warnings)]
 mod bindings;
@@ -54,10 +47,8 @@ fn channels_from(v: &serde_json::Value) -> Vec<Channel> {
         .unwrap_or_default()
 }
 
-/// `find_by` indexes the SERIALISED value, so a subject is stored under `"ada"` —
-/// quotes included. Getting this wrong returns `Ok(vec![])`, which is
-/// indistinguishable from a subject who has never set a preference, so every
-/// notification would silently go to the defaults instead.
+/// `find_by` indexes the SERIALISED value, so a subject is stored under `"ada"` (quotes included). Getting this wrong returns
+/// `Ok(vec![])`, indistinguishable from a subject with no preference, so every notification would silently use the defaults.
 fn stored(subject: &str) -> Option<records::Entry> {
     let encoded = serde_json::to_string(subject).ok()?;
     records::find_by(COLLECTION, "subject", &encoded).ok()?.into_iter().next()
@@ -86,9 +77,7 @@ impl Guest for Component {
                     serde_json::from_str(&e.data).unwrap_or_else(|_| json!({}));
                 Ok(to_preference(&subject, &doc))
             }
-            // Never set is not an error. In-app only, no address: the setting that
-            // cannot deliver anything anywhere it should not, which is the right
-            // thing for a default nobody chose.
+            // Never set is not an error: in-app only, no address, the default that cannot deliver anywhere it should not.
             None => Ok(Preference {
                 subject,
                 default_channels: vec![Channel::InApp],
@@ -103,7 +92,6 @@ impl Guest for Component {
             return Err(PrefsError::Invalid("subject is empty".into()));
         }
         if pref.email_address.contains('@') || pref.email_address.is_empty() {
-            // fine
         } else {
             return Err(PrefsError::Invalid(format!("not an address: {}", pref.email_address)));
         }
@@ -140,9 +128,7 @@ impl Guest for Component {
         payload: String,
     ) -> Result<Vec<Outcome>, PrefsError> {
         let pref = Self::get(subject.clone())?;
-        // An override wins, INCLUDING an empty one — that is how a kind is muted.
-        // Falling back to the defaults on an empty override would make muting one
-        // kind impossible.
+        // An override wins, INCLUDING an empty one: that is how a kind is muted.
         let wanted: Vec<Channel> = pref
             .overrides
             .iter()
@@ -159,9 +145,7 @@ impl Guest for Component {
                 },
                 Channel::Email => {
                     if pref.email_address.is_empty() {
-                        // Reported, not silently skipped: somebody opted into email
-                        // and is not getting any, and the only place that can be
-                        // noticed is here.
+                        // Reported, not silently skipped: somebody opted into email and is not getting any, and this is the only place to notice.
                         Outcome {
                             channel,
                             ok: false,

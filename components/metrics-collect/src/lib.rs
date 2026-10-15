@@ -1,10 +1,8 @@
 //! `metrics-collect` — count named events, read a family by prefix, and compute the rate between two counters
 //!
-//! Atomic named counters backed by `wasi:keyvalue`. Each counter is two kv keys:
-//!   `m/{key}`     — the count, mutated only via `atomics::increment` (race-free)
-//!   `t/{key}`     — the last-updated unix-seconds stamp (best-effort, plain set)
-//! `scan(prefix)` lists the `m/` keyspace, filters by prefix, and pairs each
-//! count with its `t/` sibling. `rate` divides two counters, guarding div-by-0.
+//! Atomic named counters on `wasi:keyvalue`. Each counter is two kv keys: `m/{key}` (the count, mutated only via
+//! `atomics::increment`, race-free) and `t/{key}` (last-updated unix-seconds stamp, best-effort plain set). `scan(prefix)`
+//! lists the `m/` keyspace, filters by prefix and pairs each count with its `t/` sibling. `rate` divides two counters, guarding div-by-0.
 
 #[allow(warnings)]
 mod bindings;

@@ -1,8 +1,7 @@
 //! `github-forge` — `git:forge` over GitHub's REST API.
 //!
-//! ## Six calls and no working tree
-//!
-//! GitHub's git-data API can build a commit out of nothing but HTTP:
+//! Six calls and no working tree: GitHub's git-data API builds a commit from HTTP alone, which is what keeps
+//! this a component (no clone, checkout or `git` binary):
 //!
 //!   1. `GET  /git/ref/heads/{base}`  → the sha to branch from
 //!   2. `POST /git/blobs`             → one per changed file
@@ -11,15 +10,8 @@
 //!   5. `POST /git/refs`              → the branch, pointing at the commit
 //!   6. `POST /pulls`                 → the pull request
 //!
-//! No clone, no checkout, no `git` binary, no host capability beyond the socket.
-//! That is what keeps this a component.
-//!
-//! ## The ordering is not arbitrary
-//!
-//! The branch is created LAST, after the commit exists. Create the ref first and
-//! a failure anywhere after it leaves an empty branch in someone's repository
-//! that nobody will ever explain. Blobs and trees that end up unreferenced are
-//! invisible and get garbage-collected; a stray branch is litter.
+//! The branch is created LAST: a failure after creating the ref would leave an empty branch nobody can
+//! explain, whereas unreferenced blobs and trees are invisible and garbage-collected.
 
 #[allow(warnings)]
 mod bindings;
@@ -53,9 +45,7 @@ fn cfg(key: &str, default: &str) -> String {
 impl Api {
     fn open() -> Result<Self, ForgeError> {
         let repo = cfg("forge-repo", "");
-        // `owner/name` is checked here rather than at the first request, because
-        // the error GitHub returns for a malformed path is a 404 that reads like
-        // "the repository does not exist" and sends the reader after the wrong bug.
+        // `owner/name` is checked here: GitHub's error for a malformed path is a 404 that reads like "the repository does not exist".
         if repo.split('/').filter(|s| !s.is_empty()).count() != 2 {
             return Err(ForgeError::NotConfigured(format!(
                 "forge-repo must be \"owner/name\", got {repo:?}"
@@ -80,8 +70,7 @@ impl Api {
             _ => String::new(),
         };
         if token.is_empty() {
-            // Unlike an inference key, this one is never optional: there is no
-            // such thing as an anonymous push.
+            // Unlike an inference key, never optional: there is no anonymous push.
             return Err(ForgeError::NotConfigured(
                 "no `forge-token` secret — a forge cannot write anonymously".into(),
             ));
@@ -107,8 +96,7 @@ fn call(
     };
     set("accept", "application/vnd.github+json");
     set("authorization", &format!("Bearer {}", api.token));
-    // GitHub rejects a request with no user-agent outright, and pins behaviour to
-    // an API version. Both are required rather than polite.
+    // GitHub rejects a request with no user-agent outright and pins behaviour to an API version; both are required.
     set("user-agent", "comp-github-forge");
     set("x-github-api-version", "2022-11-28");
     if body.is_some() {
@@ -126,8 +114,7 @@ fn call(
     {
         if let Some(b) = &body {
             let stream = out.write().map_err(|_| net("no request stream".into()))?;
-            // blocking_write_and_flush caps at 4096 bytes per call, and a blob of
-            // source code is routinely larger.
+            // blocking_write_and_flush caps at 4096 bytes per call and a blob of source is routinely larger.
             for chunk in b.as_bytes().chunks(4096) {
                 stream
                     .blocking_write_and_flush(chunk)
@@ -158,10 +145,8 @@ fn call(
         match stream.blocking_read(64 * 1024) {
             Ok(chunk) if chunk.is_empty() => break,
             Ok(chunk) => buf.extend_from_slice(&chunk),
-            // End of body.
             Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-            // A failed read is not the end of the answer. Keeping the truncated
-            // bytes turns half a reply into a whole one that happens to be wrong.
+            // A failed read is not the end of the answer: keeping the truncated bytes turns half a reply into a whole, wrong one.
             Err(e) => return Err(net(format!("reading the response: {e:?}"))),
         }
     }
@@ -179,8 +164,7 @@ fn status_error(what: &str, status: u16, body: &str) -> ForgeError {
             "{what}: 404 — the repository, or the base branch, is not there (a token \
              without access reads as 404 here, not 403): {snippet}"
         )),
-        // 422 on a ref create means it exists. GitHub says the same thing for a
-        // pull request that is already open for this head.
+        // 422 on a ref create means it exists; GitHub says the same for a pull request already open for this head.
         409 | 422 => ForgeError::Conflict(format!("{what}: {status}: {snippet}")),
         _ => ForgeError::Unavailable(format!("{what}: {status}: {snippet}")),
     }
@@ -202,10 +186,7 @@ fn sha_of(what: &str, v: &serde_json::Value) -> Result<String, ForgeError> {
         .ok_or_else(|| ForgeError::Unavailable(format!("{what}: no sha in the answer: {v}")))
 }
 
-/// A branch name that git will accept.
-///
-/// Checked here because the failure otherwise arrives as a 422 from the ref
-/// create — five calls in, with blobs already written.
+/// A branch name that git will accept. Checked here because otherwise the failure is a 422 from the ref create, five calls in.
 fn valid_branch(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 200
@@ -219,11 +200,8 @@ fn valid_branch(name: &str) -> bool {
         && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'))
 }
 
-/// A path inside the repository, and not outside it.
-///
-/// An agent that writes `../../etc/…` or an absolute path is an agent trying to
-/// escape the tree, whether or not it means to. GitHub would likely refuse, but
-/// "likely" is not a boundary.
+/// A path inside the repository, and not outside it. An agent writing `../../etc/…` or an absolute path is
+/// escaping the tree whether or not it means to; "GitHub would likely refuse" is not a boundary.
 fn valid_path(path: &str) -> bool {
     !path.is_empty()
         && !path.starts_with('/')
@@ -257,9 +235,7 @@ impl Guest for Component {
             return Err(ForgeError::Rejected(format!("not a usable branch name: {:?}", p.branch)));
         }
         if p.changes.is_empty() {
-            // A pull request with no diff is the shape of an agent that reported
-            // success having done nothing (ADR-0081). Refused here so it cannot
-            // reach a reviewer looking like work.
+            // A pull request with no diff is the shape of an agent that reported success having done nothing (ADR-0081); refuse so it cannot reach a reviewer.
             return Err(ForgeError::Rejected("no changes — there is nothing to propose".into()));
         }
         if let Some(bad) = p.changes.iter().find(|c| !valid_path(&c.path)) {
@@ -269,12 +245,10 @@ impl Guest for Component {
             )));
         }
 
-        // 1. What we are branching from. Every candidate in a generation must be
-        //    judged against the same base, which is why this is also public.
+        // 1. What we are branching from. Every candidate in a generation is judged against the same base, hence also public.
         let base_sha = Component::base_sha(&api, &p.base)?;
 
-        // 2. A blob per file. Base64 rather than raw, so a file that is not UTF-8
-        //    or contains a lone `"` survives the JSON.
+        // 2. A blob per file. Base64 so a non-UTF-8 file or a lone `"` survives the JSON.
         let mut entries = Vec::with_capacity(p.changes.len());
         for FileChange { path, content } in &p.changes {
             let body = serde_json::json!({
@@ -288,17 +262,14 @@ impl Guest for Component {
             )?;
             entries.push(serde_json::json!({
                 "path": path,
-                // 100644 — a regular non-executable file. An agent that needs to
-                // add an executable will need this to become a field, and until
-                // one does, guessing the mode from the path would be worse.
+                // 100644: a regular non-executable file. Guessing the mode from the path would be worse than adding a field when one is needed.
                 "mode": "100644",
                 "type": "blob",
                 "sha": sha_of("blob", &v)?,
             }));
         }
 
-        // 3. The tree, laid OVER the base tree — so files nobody touched stay.
-        //    Without base_tree this would be a commit that deletes the repository.
+        // 3. The tree, laid OVER the base tree so untouched files stay (without base_tree this commit deletes the repository).
         let tree = ok_json(
             "writing the tree",
             call(
@@ -309,7 +280,6 @@ impl Guest for Component {
             )?,
         )?;
 
-        // 4. The commit.
         let commit = ok_json(
             "writing the commit",
             call(
@@ -328,8 +298,7 @@ impl Guest for Component {
         )?;
         let commit_sha = sha_of("commit", &commit)?;
 
-        // 5. The branch, LAST — see the module comment. An unreferenced blob is
-        //    invisible; a stray branch is litter somebody has to explain.
+        // 5. The branch, LAST (see the module comment).
         ok_json(
             "creating the branch",
             call(
@@ -346,7 +315,6 @@ impl Guest for Component {
             )?,
         )?;
 
-        // 6. The pull request.
         let base = if p.base.is_empty() { cfg("forge-base", "main") } else { p.base.clone() };
         let pr = ok_json(
             "opening the pull request",
@@ -402,8 +370,7 @@ mod tests {
         }
     }
 
-    /// An agent writing outside the repository is an agent escaping the tree,
-    /// whether or not it means to.
+    /// An agent writing outside the repository is escaping the tree whether or not it means to.
     #[test]
     fn a_path_cannot_leave_the_repository() {
         for ok in ["src/lib.rs", "a/b/c.txt", ".comp/goals/x.md"] {
@@ -414,8 +381,7 @@ mod tests {
         }
     }
 
-    /// 404 is what GitHub answers for a token that cannot see the repository, so
-    /// the message has to mention that or every permissions bug reads as a typo.
+    /// 404 is what GitHub answers for a token that cannot see the repository, so the message must mention that or permissions bugs read as typos.
     #[test]
     fn a_404_says_it_might_be_permissions() {
         match status_error("reading the base ref", 404, "{}") {
@@ -424,8 +390,7 @@ mod tests {
         }
     }
 
-    /// A branch that already exists comes back 422, and the caller's move is to
-    /// pick another name — not to fix its request.
+    /// A branch that already exists comes back 422, and the caller's move is to pick another name, not fix its request.
     #[test]
     fn an_existing_branch_is_a_conflict_not_a_rejection() {
         assert!(matches!(

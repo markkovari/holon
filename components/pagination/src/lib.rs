@@ -1,20 +1,13 @@
 //! `pagination` — paginate a long list without drift — encode a sort position into an opaque cursor
 //!
 //! ## Keyset pagination
-//! Offset/`LIMIT … OFFSET` paging silently skips or repeats rows when the
-//! underlying set changes mid-scroll: insert a row before the offset and every
-//! later page shifts by one. Keyset (a.k.a. cursor / seek) pagination avoids
-//! this by remembering *where you were* rather than *how far in* you were. The
-//! "where" is a [`Position`]: the value of the stable sort key at the page
-//! boundary plus the unique id of that boundary row (the tiebreaker for rows
-//! sharing a sort-key value), and the direction the cursor was issued for. The
-//! next query becomes `WHERE (sort_key, id) > (:key, :id) ORDER BY sort_key, id
-//! LIMIT :n` — stable under concurrent inserts and deletes.
+//! Offset paging silently skips or repeats rows when the set changes mid-scroll. Keyset pagination remembers
+//! *where you were*: a [`Position`] is the stable sort key at the page boundary plus the boundary row's unique
+//! id (tiebreaker) and the direction. The next query is `WHERE (sort_key, id) > (:key, :id) ORDER BY sort_key,
+//! id LIMIT :n`, stable under concurrent inserts and deletes.
 //!
 //! ## Tamper-evident opaque cursor
-//! Clients must treat cursors as opaque and must not be able to forge or
-//! silently corrupt one (which would let them page to arbitrary positions or
-//! get confusing errors). So a cursor is:
+//! Clients must not be able to forge or silently corrupt a cursor (paging to arbitrary positions, confusing errors):
 //!
 //! ```text
 //!   cursor = base64url_nopad(payload) + "." + checksum_hex
@@ -22,16 +15,12 @@
 //!   checksum = hex(  HMAC-SHA256(key, payload)[..8]  )
 //! ```
 //!
-//! `decode` recomputes the HMAC over the decoded payload and compares it to the
-//! supplied checksum in constant time (`hmac`'s `verify_slice`). Any mismatch —
-//! forgery, bit-rot, or a cursor signed with a different key — yields
-//! `invalid-cursor`. The payload base64url-encodes each field so the `:`
-//! delimiter can never appear inside a field value.
+//! `decode` recomputes the HMAC and compares in constant time (`verify_slice`); any mismatch (forgery, bit-rot,
+//! a different key) yields `invalid-cursor`. Fields are base64url-encoded so the `:` delimiter never appears in one.
 //!
 //! ## Config (wasi:config/store)
-//!   cursor-secret   HMAC signing key. Defaults to a fixed development value;
-//!                   PRODUCTION DEPLOYMENTS MUST SET THIS to a real secret,
-//!                   otherwise cursors are trivially forgeable.
+//!   cursor-secret   HMAC signing key. Defaults to a fixed development value; PRODUCTION DEPLOYMENTS MUST
+//!                   SET THIS, otherwise cursors are trivially forgeable.
 //!   max-page-size   upper bound for `clamp-limit` (default 100).
 
 #[allow(warnings)]
@@ -52,8 +41,6 @@ type HmacSha256 = Hmac<Sha256>;
 /// Number of leading HMAC bytes kept as the cursor checksum (16 hex chars).
 const TAG_LEN: usize = 8;
 
-// ---- config -------------------------------------------------------------
-
 /// HMAC signing key. The fallback is a fixed, well-known development secret;
 /// production MUST override it via config `cursor-secret`, since anyone who
 /// knows the key can forge cursors.
@@ -71,11 +58,7 @@ fn max_page_size() -> u32 {
     }
 }
 
-// ---- payload codec ------------------------------------------------------
-
-/// Serialize a position into the canonical payload string. Each free-form
-/// field is base64url-encoded so the `:` delimiter cannot collide with field
-/// contents.
+/// Serialize a position into the canonical payload string; free-form fields are base64url-encoded so `:` cannot collide.
 fn payload_of(pos: &Position) -> String {
     format!(
         "f:{}:{}:{}",
@@ -85,11 +68,9 @@ fn payload_of(pos: &Position) -> String {
     )
 }
 
-/// Parse a payload string back into a position. Returns `None` on any
-/// structural problem (wrong field count, bad base64, non-utf8, bad flag).
+/// Parse a payload string back into a position; `None` on any structural problem.
 fn position_of(payload: &str) -> Option<Position> {
     let mut parts = payload.split(':');
-    // tag, forward-flag, sort-key, last-id
     if parts.next()? != "f" {
         return None;
     }
@@ -111,7 +92,6 @@ fn decode_field(b64: &str) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-/// Hex-encode the first `TAG_LEN` bytes of HMAC-SHA256(key, payload).
 fn checksum(key: &str, payload: &str) -> String {
     let mut mac =
         HmacSha256::new_from_slice(key.as_bytes()).expect("HMAC accepts keys of any length");
@@ -120,8 +100,7 @@ fn checksum(key: &str, payload: &str) -> String {
     tag[..TAG_LEN].iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Constant-time verify that `payload` carries `expected_hex` checksum under
-/// `key`. Decodes the hex into bytes and uses `hmac`'s `verify_slice`.
+/// Constant-time verify that `payload` carries `expected_hex` checksum under `key` (`hmac`'s `verify_slice`).
 fn verify(key: &str, payload: &str, expected_hex: &str) -> bool {
     let Some(expected) = hex_to_bytes(expected_hex) else {
         return false;
@@ -150,8 +129,6 @@ fn hex_to_bytes(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-// ---- guest --------------------------------------------------------------
-
 impl Guest for Component {
     fn encode(pos: Position) -> String {
         let key = signing_key();
@@ -161,7 +138,6 @@ impl Guest for Component {
     }
 
     fn decode(cursor: String) -> Result<Position, CursorError> {
-        // cursor = base64url(payload) "." checksum_hex
         let (b64_payload, sum) = cursor.split_once('.').ok_or(CursorError::InvalidCursor)?;
         let payload_bytes = B64URL.decode(b64_payload).map_err(|_| CursorError::InvalidCursor)?;
         let payload = String::from_utf8(payload_bytes).map_err(|_| CursorError::InvalidCursor)?;
@@ -210,9 +186,7 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::*;
 
-    /// A cursor is only opaque if it is also unforgeable. These pin that the
-    /// tag depends on BOTH the key and the payload, so a client cannot page
-    /// into someone else's results by editing the offset it was handed.
+    /// A cursor is only opaque if also unforgeable: the tag depends on BOTH key and payload.
     #[test]
     fn a_cursor_tag_binds_the_key_and_the_payload() {
         let tag = checksum("k1", "offset:10");
@@ -231,13 +205,9 @@ mod tests {
         assert!(!verify("other", "page:2", &tag), "the key is bound");
     }
 
-    /// Malformed tags must be REJECTED, not crash and not accidentally pass.
-    ///
-    /// A cursor arrives from a client, so every one of these is reachable by
-    /// anyone with a URL bar: odd-length hex, non-hex characters, an empty
-    /// tag, and a truncated one. The truncation case is the sharp one — the
-    /// verifier tolerates a shortened tag by design, so "shorter" must still
-    /// mean "wrong length" rather than "fewer bytes to guess".
+    /// Malformed tags must be REJECTED. A cursor comes from a client, so odd-length hex, non-hex characters, an
+    /// empty tag and a truncated one are all reachable. Truncation is the sharp one: the verifier tolerates a
+    /// shortened tag by design, so "shorter" must still mean "wrong length".
     #[test]
     fn a_malformed_tag_is_refused_rather_than_trusted() {
         let tag = checksum("secret", "page:2");

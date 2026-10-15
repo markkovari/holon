@@ -1,17 +1,11 @@
 //! `llm-local` — send a prompt to a language model running on this machine
 //!
-//! Running a model needs a runtime and weights on disk, and a `wasm32-wasip2`
-//! guest has neither (ADR-0095). This is the component side: it holds the
-//! contract and reaches `comp-llmlocal` over HTTP the same way `fs-watcher`
-//! reaches `comp-fswatch`. The daemon proxies to a local Ollama server — see
-//! its own doc comment for the honest boundary that implies.
+//! Running a model needs a runtime and weights on disk, which a `wasm32-wasip2` guest has not (ADR-0095). This is
+//! the component side: it holds the contract and reaches `comp-llmlocal` over HTTP, as `fs-watcher` reaches
+//! `comp-fswatch`. The daemon proxies to a local Ollama server; see its doc comment for the boundary that implies.
 //!
 //! Config (wasi:config/store):
 //!   llmlocal-url    where `comp-llmlocal` is listening, e.g. http://127.0.0.1:8006
-//!
-//! It used to return `format!("UNIMPLEMENTED: ...")` — a string shaped like an
-//! answer, which no caller could tell from a real one. That is what the old
-//! `-> string` contract permitted; the current one cannot express it.
 
 #[allow(warnings)]
 mod bindings;
@@ -26,17 +20,13 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// A local model can take a while to answer, and a caller waiting on an HTTP
-/// request would rather hear "unavailable" than hang indefinitely — but a
-/// real generation is slower than a directory poll, so this is minutes rather
-/// than fs-watcher's ten seconds.
+/// A local model can take a while, but a caller would rather hear "unavailable" than hang: minutes, not fs-watcher's ten seconds.
 const TIMEOUT_NS: u64 = 120_000_000_000;
 
 fn daemon_url() -> Result<String, InferError> {
     match config::get("llmlocal-url") {
         Ok(Some(u)) if !u.is_empty() => Ok(u),
-        // Unavailable rather than any other variant: nobody refused anything,
-        // the deployment simply never said where the model daemon is.
+        // Unavailable rather than any other variant: nobody refused anything, the deployment never said where the model daemon is.
         _ => Err(InferError::Unavailable(
             "llmlocal-url is not set — this component has nowhere to ask".into(),
         )),
@@ -58,9 +48,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), InferError> {
     Ok((scheme, authority, path))
 }
 
-/// POST the request and return the body. Every failure is `unavailable`: the
-/// daemon's own refusals arrive as JSON with a 200, so anything at this level
-/// is the transport rather than an answer.
+/// POST the request and return the body. Every failure is `unavailable`: the daemon's own refusals arrive as JSON with a 200, so anything at this level is the transport.
 fn post(body: Vec<u8>) -> Result<Vec<u8>, InferError> {
     let url = daemon_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
@@ -68,10 +56,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, InferError> {
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // A shared secret, if the deployment set one — see
-    // `comp_reconciler::daemon_auth`'s own doc for why loopback
-    // binding alone is not a boundary. Absent means the daemon was
-    // started with no --token, so there is nothing to send.
+    // A shared secret, if the deployment set one (see `comp_reconciler::daemon_auth` for why loopback binding alone is not a boundary). Absent means the daemon runs with no --token.
     if let Ok(Some(token)) = config::get("llmlocal-token") {
         if !token.is_empty() {
             let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
@@ -86,8 +71,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, InferError> {
     let out = req.body().map_err(|_| net("body"))?;
     {
         let stream = out.write().map_err(|_| net("write"))?;
-        // Chunked: `blocking-write-and-flush` traps above 4096 bytes, and a
-        // prompt is small but not bounded.
+        // Chunked: `blocking-write-and-flush` traps above 4096 bytes and a prompt is not bounded.
         for chunk in body.chunks(4096) {
             stream
                 .blocking_write_and_flush(chunk)
@@ -117,9 +101,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, InferError> {
         match stream.blocking_read(8192) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went
-            // wrong, and returning what arrived would be a truncated answer
-            // presented as a whole one.
+            // `Closed` is end-of-body; anything else is a read that went wrong, and returning what arrived would present a truncated answer as whole.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -127,10 +109,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, InferError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser.
-///
-/// The daemon's replies have two shapes and no nesting, so a full serde
-/// dependency would be more code than the thing it reads.
+/// Pull one JSON string field out without a parser: the daemon's replies have two flat shapes, so serde would be more code than the thing it reads.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];
@@ -156,8 +135,7 @@ impl Guest for Component {
     }
 }
 
-/// A JSON string literal. A prompt can contain a quote or a backslash, and
-/// this is building a request out of one.
+/// A JSON string literal: a prompt can contain a quote or a backslash, and this builds a request out of one.
 fn json_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -182,16 +160,14 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::*;
 
-    /// A prompt is caller-supplied and goes into a JSON request. A quote in it
-    /// would end the string early and the rest would be read as structure.
+    /// A prompt is caller-supplied and goes into a JSON request; an unescaped quote would end the string early and the rest be read as structure.
     #[test]
     fn a_prompt_cannot_break_out_of_the_request_it_is_put_in() {
         assert_eq!(json_str(r#"hello"#), r#""hello""#);
         assert_eq!(json_str(r#"say "hi""#), r#""say \"hi\"""#);
         assert_eq!(json_str("a\\b"), r#""a\\b""#);
         assert_eq!(json_str("a\nb"), r#""a\nb""#);
-        // Escaped, not stripped: a control character silently removed would
-        // change the prompt the daemon sees, and nobody would know.
+        // Escaped, not stripped: silently removing a control character would change the prompt the daemon sees.
         assert_eq!(json_str("a\u{1}b"), r#""a\u0001b""#);
     }
 

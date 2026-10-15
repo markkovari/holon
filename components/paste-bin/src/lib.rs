@@ -1,21 +1,15 @@
 //! bin:app — a paste / gist bin over a chain of mostly pure-compute contracts.
 //!
-//! The pipeline is a fold over stateless transforms, with exactly one stateful
-//! step:
+//! The pipeline is a fold over stateless transforms with exactly one stateful step:
 //!
 //!   validate::validate   (body required, length-bounded)   — pure
 //!   pii::mask            (emails / cards / ssn masked)      — pure, at INGEST
 //!   records::create      (store the already-redacted body)  — the ONE stateful step
 //!   slug::slugify/uniquify (URL-safe slug from the title)   — pure
 //!
-//! and on read:
+//! and on read `md::to_html` (sanitized Markdown -> HTML) and `md::to_text` (plain-text preview), both pure.
 //!
-//!   md::to_html          (sanitized Markdown -> HTML)        — pure
-//!   md::to_text          (plain-text preview)                — pure
-//!
-//! The headline is that redaction happens BEFORE storage — the raw PII never
-//! lands in the record store — and that four of the five contracts are pure
-//! functions with no host state of their own.
+//! Redaction happens BEFORE storage: the raw PII never lands in the record store.
 
 #[allow(warnings)]
 mod bindings {
@@ -119,8 +113,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- create: validate -> redact -> store -> slug -----------------------------
-
 async fn create_paste(request: Request) -> Outcome {
     let body = match parse_body(request).await {
         Ok(v) => v,
@@ -150,8 +142,7 @@ async fn create_paste(request: Request) -> Outcome {
         return Outcome::Json(422, json!({"error": "validation_failed", "fields": fe}).to_string());
     }
 
-    // 2. redact — pure, at INGEST. Count findings first (for the response), then
-    // mask, so the raw PII never reaches the store.
+    // 2. redact — pure, at INGEST. Count findings first (for the response), then mask, so raw PII never reaches the store.
     let opts = pii_opts();
     let findings = pii::detect(&raw, &opts).len();
     let redacted = pii::mask(&raw, &opts);
@@ -188,8 +179,6 @@ fn existing_slugs() -> Vec<String> {
         .unwrap_or_default()
 }
 
-// ---- read: render ------------------------------------------------------------
-
 fn get_paste(id: &str) -> Outcome {
     let entry = match records::get(PASTES, id) {
         Ok(e) => e,
@@ -198,7 +187,6 @@ fn get_paste(id: &str) -> Outcome {
     };
     let doc: Value = serde_json::from_str(&entry.data).unwrap_or_else(|_| json!({}));
     let stored_body = doc["body"].as_str().unwrap_or("");
-    // render markdown -> sanitized HTML + a plain-text preview — pure compute.
     let html = md::to_html(stored_body);
     let preview: String = md::to_text(stored_body).chars().take(160).collect();
     Outcome::Json(
@@ -243,8 +231,6 @@ fn list_pastes() -> Outcome {
     }
 }
 
-// ---- error mapping -----------------------------------------------------------
-
 fn store_err(e: records::StoreError) -> Outcome {
     match e {
         records::StoreError::NotFound => Outcome::err(404, "not_found"),
@@ -256,8 +242,6 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-// ---- http plumbing -----------------------------------------------------------
-
 async fn parse_body(request: Request) -> Result<Value, Outcome> {
     let body = read_body(request).await.map_err(|_| Outcome::err(400, "could not read body"))?;
     if body.is_empty() {
@@ -267,9 +251,7 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
         .map_err(|e| Outcome::Json(400, json!({"error": format!("bad json: {e}")}).to_string()))
 }
 
-/// A ceiling on a request body, not a policy: past this the read stops and the
-/// caller is told, rather than growing until the store's memory cap traps the
-/// component and the connection simply closes.
+/// A ceiling on a request body, not a policy: past this the read stops and the caller is told.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

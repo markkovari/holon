@@ -252,7 +252,6 @@ async fn login_user(request: Request) -> Outcome {
     let username = json["username"].as_str().unwrap_or("anonymous").to_string();
     let password = json["password"].as_str().unwrap_or("").to_string();
 
-    // Perform a 'full' authentication check
     if password != "password" && password != "admin" && !password.is_empty() {
         return Outcome::Err(401, "Invalid credentials".into());
     }

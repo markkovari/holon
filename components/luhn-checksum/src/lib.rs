@@ -5,11 +5,8 @@
 //!
 //! Pure compute: digits in, a bool/digit/string out.
 
-/// Sums the digits of `digits`, doubling every second one counted from the
-/// right. `double_rightmost` controls whether the rightmost digit itself is
-/// among the doubled ones (used by `checksum_digit`, where an as-yet-unwritten
-/// digit will land to the right of everything here). Returns `None` on empty
-/// input or a non-digit byte.
+/// Sums the digits, doubling every second one counted from the right. `double_rightmost` says whether the rightmost
+/// digit is among the doubled ones (`checksum_digit` uses it: an unwritten digit will land to its right). `None` on empty input or a non-digit byte.
 fn folded_sum(digits: &str, double_rightmost: bool) -> Option<u32> {
     if digits.is_empty() {
         return None;
@@ -41,11 +38,9 @@ pub fn is_valid(digits: &str) -> bool {
     matches!(folded_sum(digits, false), Some(sum) if sum % 10 == 0)
 }
 
-/// The check digit that would make `digits` valid once appended, or `None` if
-/// `digits` is empty or contains a non-digit character.
+/// The check digit that would make `digits` valid once appended, or `None` on empty/non-digit input.
 pub fn checksum_digit(digits: &str) -> Option<u8> {
-    // Once a digit is appended, every existing digit's doubling flips (the
-    // rightmost existing digit is no longer the rightmost overall).
+    // Once a digit is appended, every existing digit's doubling flips.
     let sum = folded_sum(digits, true)?;
     Some((10 - (sum % 10) as u8) % 10)
 }
@@ -57,11 +52,7 @@ pub fn append_checksum(digits: &str) -> Option<String> {
     Some(format!("{digits}{check}"))
 }
 
-// ---- the component -----------------------------------------------------
-//
-// A mapping between the WIT types and the ones above. `tests/luhn.rs` judges the
-// plain functions; this adds no behaviour, which is the only way that specification
-// keeps covering what actually ships.
+// A mapping between the WIT types and the ones above; adds no behaviour, so `tests/luhn.rs` keeps covering what ships.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]

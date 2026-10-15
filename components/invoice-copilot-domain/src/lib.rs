@@ -3,20 +3,13 @@
 //!
 //! ## What is scaffold and what is the goal
 //!
-//! This file is the ROUTER and no part may write it: it dispatches to `invoices`,
-//! `copilot` and `posting`, answers `/health`, mints a token, and seeds two invoices.
-//! Three parts need it and none owns it.
+//! This file is the ROUTER and no part may write it: it dispatches to `invoices`, `copilot` and `posting`,
+//! answers `/health`, mints a token and seeds two invoices. `src/invoices.rs`, `src/copilot.rs` and
+//! `src/posting.rs` are the goal; `CONTRACT.md` is what they must agree on.
 //!
-//! `src/invoices.rs`, `src/copilot.rs` and `src/posting.rs` are the goal.
-//! `CONTRACT.md` is what they must agree on.
-//!
-//! ## Why these three
-//!
-//! This is the only one of the five where being wrong costs money, and the chain is about
-//! TRUST. `invoices` decides what currency the arithmetic will be done in, `copilot` is the
-//! only part that asks a model and must use it for words alone, and `posting` is the only
-//! irreversible step — so it happens exactly once, or a customer is charged twice by a
-//! retry that any HTTP client will make on its own.
+//! This is the one of the five where being wrong costs money; the chain is about TRUST. `invoices` decides the
+//! currency the arithmetic is done in, `copilot` asks a model and must use it for words alone, and `posting`
+//! is the only irreversible step, so it happens exactly once or a retry charges a customer twice.
 
 #[allow(warnings)]
 mod bindings {
@@ -92,19 +85,15 @@ impl Reply {
     }
 }
 
-/// One request, as a part sees it.
-///
-/// The bearer is handed over as a STRING and not as a principal: resolving it is
-/// `auth:identity/authorizer`'s job and doing it here would take the part's whole
-/// reason for importing that capability away.
+/// One request, as a part sees it. The bearer is handed over as a STRING, not a principal: resolving it is
+/// `auth:identity/authorizer`'s job, which is the part's reason for importing that capability.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
     /// The `Authorization: Bearer …` value, empty when the header is absent.
     pub bearer: String,
-    /// The `Idempotency-Key` header, empty when absent. Handed over raw: what it means is
-    /// `idempotency:guard`'s business, and a part that invents its own key from the body
-    /// has built a different guarantee than the one the caller asked for.
+    /// The `Idempotency-Key` header, empty when absent. Handed over raw: its meaning is `idempotency:guard`'s
+    /// business, and a part inventing its own key from the body builds a different guarantee than the caller asked for.
     pub idempotency_key: String,
 }
 
@@ -121,10 +110,7 @@ impl Route {
 
 use guestfmt::percent_decode as percent;
 
-/// A `wasi:config` value, with a default.
-///
-/// Scaffold: reading config is plumbing every part would otherwise write out, and the
-/// contract names the keys. What a part does with the value is the goal.
+/// A `wasi:config` value, with a default. Scaffold: plumbing every part would write; the contract names the keys.
 pub fn cfg(key: &str, default: &str) -> String {
     bindings::wasi::config::store::get(key)
         .ok()
@@ -140,13 +126,8 @@ pub fn now_secs() -> u64 {
 
 use guestfmt::rfc3339;
 
-/// A token for a test caller, so no gate has to log in through a part it is not
-/// judging.
-///
-/// Scaffold, and it is `session::issue` rather than a hand-built JWT for the same
-/// reason the parts are made to call `authorize`: a fixture that mints its own
-/// tokens is a fixture that can drift from what the verifier accepts, and then
-/// every part fails for the router's reason.
+/// A token for a test caller, so no gate has to log in through a part it is not judging. Scaffold; uses
+/// `session::issue` rather than a hand-built JWT, since a fixture minting its own tokens can drift from what the verifier accepts.
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let subject = req.get("subject").and_then(Value::as_str).unwrap_or("ada").to_string();
@@ -167,13 +148,9 @@ fn mint(body: &str) -> Reply {
     }
 }
 
-/// Two invoices: one empty draft, one already carrying three allocated lines.
-///
-/// Scaffold, and each is there for a different part. `copilot` needs a draft to write lines
-/// onto; `posting` needs an invoice that already HAS lines, and must not have to wait for
-/// `copilot` to exist. The second one's amounts come from `money::allocate` here for the
-/// same reason the contract insists on it everywhere else: a fixture that divided by hand
-/// would hand `posting` a total that does not add up and blame the wrong part.
+/// Two invoices: one empty draft, one already carrying three allocated lines. Scaffold: `copilot` needs a
+/// draft to write onto; `posting` needs an invoice that already HAS lines without waiting for `copilot`. The
+/// second one's amounts come from `money::allocate`, since hand division could hand `posting` a total that does not add up.
 fn seed() -> Reply {
     let mut ids = Vec::new();
     let empty = json!({
@@ -220,9 +197,7 @@ fn seed() -> Reply {
     Reply::json(201, json!({ "invoice_ids": ids }))
 }
 
-/// A ceiling on a body read into memory, not a policy: past this the read gives up
-/// and the body reads as empty, rather than growing until the store's memory cap
-/// traps the component and the connection simply closes.
+/// A ceiling on a body read into memory, not a policy: past this the read gives up and the body reads as empty.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
@@ -254,23 +229,19 @@ impl Guest for Component {
             _ => String::new(),
         };
 
-        // The router: `/health`, the token and the fixture here, everything else to
-        // the part that owns it.
+        // The router: `/health`, the token and the fixture here, everything else to the part that owns it.
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
         let Reply { status, json: payload } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
             ["test", "token"] => mint(&body),
             ["test", "seed"] => seed(),
 
-            // The stored document, straight out of the store. Scaffold, and it says
-            // what it is: a part must be judgeable on what it WROTE without
-            // depending on the part that owns the route for reading it back.
+            // The stored document straight out of the store (scaffold): a part must be judgeable on what it WROTE.
             ["test", "invoice", id] => match records::get("invoices", id) {
                 Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
                 Err(_) => Reply::err(404, "not_found"),
             },
-            // Both before the `api/invoices` arm: a match on ["api","invoices",..] would
-            // hand the suggest and post routes to `invoices` instead.
+            // Both before the `api/invoices` arm: a match on ["api","invoices",..] would hand the suggest and post routes to `invoices`.
             ["api", "invoices", _, "lines", "suggest"] => copilot::handle(&method, &route, &body),
             ["api", "invoices", _, "post"] | ["api", "invoices", _, "entry"] => {
                 posting::handle(&method, &route, &body)

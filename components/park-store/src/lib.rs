@@ -1,21 +1,16 @@
-//! `park-store` — `holon:park/lot` for components, each call one HTTP request
-//! to `comp-park` (ADR-0100, ADR-0095).
+//! `park-store` — `holon:park/lot` for components, each call one HTTP request to `comp-park` (ADR-0100, ADR-0095).
 //!
-//! The engine needs a held NATS JetStream connection, which a `wasm32-wasip2`
-//! guest cannot dial, so it runs natively (`reconciler/src/bin/park.rs`) and
-//! this is its component face: it holds the contract, turns each call into
-//! `POST <park-url>/v1/<function>` with the arguments as JSON
-//! (`holon_park::wire`), and turns the answer back into the WIT result. It
-//! keeps no state and makes no decision.
+//! The engine needs a held NATS JetStream connection, which a `wasm32-wasip2` guest cannot dial, so it runs natively
+//! (`reconciler/src/bin/park.rs`). This is its component face: it turns each call into `POST <park-url>/v1/<function>`
+//! with JSON arguments (`holon_park::wire`) and the answer back into the WIT result. No state, no decisions.
 //!
 //! Config (wasi:config/store):
 //!   park-url     where `comp-park` listens, e.g. http://127.0.0.1:8015
 //!   park-token   the daemon's `--token`, sent as `Authorization: Bearer`, if set
 //!
-//! Errors: the daemon's refusals arrive as `{error, detail}` and come back as
-//! the `park-error` case they name, payload and all. Anything else — no
-//! `park-url`, nothing listening, a 401, a body that is not the daemon's JSON —
-//! is `storage-error`, which is what the contract says a caller may retry.
+//! Errors: the daemon's refusals arrive as `{error, detail}` and come back as the `park-error` case they name, payload
+//! and all. Anything else (no `park-url`, nothing listening, a 401, a non-daemon body) is `storage-error`, which the
+//! contract says a caller may retry.
 
 #[allow(warnings)]
 mod bindings;
@@ -43,9 +38,7 @@ use wit::t;
 
 struct Component;
 
-/// Five minutes, the same as `vcs-store`'s: a call that is genuinely slow
-/// (`comp-park` itself waiting on a CAS retry storm) should not hang a caller
-/// forever, but a normal one is milliseconds.
+/// Five minutes, as `vcs-store`'s: a genuinely slow call (`comp-park` waiting on a CAS retry storm) must not hang a caller forever; a normal one is milliseconds.
 const TIMEOUT_NS: u64 = 300_000_000_000;
 
 fn storage(msg: impl Into<String>) -> t::ParkError {
@@ -128,8 +121,7 @@ fn post(func: &str, body: &[u8]) -> Result<(u16, Vec<u8>), t::ParkError> {
         match stream.blocking_read(64 * 1024) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went wrong,
-            // and returning what arrived would be a truncated answer.
+            // `Closed` is end-of-body; anything else is a read that went wrong, and returning what arrived would be a truncated answer.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -216,9 +208,7 @@ mod tests {
         serde_json::to_vec(&wire::ErrorBody::from(e)).unwrap()
     }
 
-    /// Every refusal the daemon can send comes back as the case it names, with
-    /// its payload — a caller must be able to tell "retry" from "gone" from
-    /// "your request was wrong".
+    /// Every refusal the daemon can send comes back as the case it names, with its payload: a caller must tell "retry" from "gone" from "your request was wrong".
     #[test]
     fn daemon_refusals_map_back_to_their_park_error_case() {
         let got = decode::<m::ParkResult>(404, &body(&ParkError::NotFound("t1".into())));

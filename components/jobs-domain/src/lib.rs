@@ -1,15 +1,11 @@
 //! jobs:app — a durable background-job queue over composed contracts.
 //!
-//! The queue substrate is `outbox:dispatch` (durable enqueue-with-delay, claim
-//! under a crash-safe lease, fail-with-backoff, dead-letter, replay). Each drain
-//! tick claims a batch and runs every job through the `durable:workflow`
-//! execution seam — the in-process backend by default, the golem-workflow
-//! provider when you want crash-resumable durable execution. On success a job is
-//! acked (and, if recurring, rescheduled at the next `cron:expr` fire time); on
-//! failure the outbox reschedules with backoff and eventually dead-letters.
-//! `idempotency:guard` makes enqueue exactly-once, and a mirrored `records:store`
-//! row per job powers the live SSE board. The queue owns durability of *when* and
-//! *whether-retried*; the workflow backend owns durability of *during*.
+//! The queue substrate is `outbox:dispatch` (enqueue-with-delay, claim under a crash-safe lease, fail-with-backoff,
+//! dead-letter, replay). Each drain tick claims a batch and runs every job through the `durable:workflow` seam (in-process
+//! by default, the golem-workflow provider for crash-resumable execution). On success a job is acked (and, if recurring,
+//! rescheduled at the next `cron:expr` fire time); on failure the outbox reschedules with backoff and eventually dead-letters.
+//! `idempotency:guard` makes enqueue exactly-once and a mirrored `records:store` row per job powers the live SSE board.
+//! The queue owns durability of *when* and *whether-retried*; the workflow backend owns durability of *during*.
 
 #[allow(warnings)]
 mod bindings {
@@ -59,9 +55,7 @@ guestio::guest_p3_respond!();
 
 struct Component;
 
-// The board SPA, embedded so the component serves it on any host (the native
-// host also has it via --static-dir; on the v2 operator there is no static-dir,
-// so GET / must serve it here). Single source — the example's index.html.
+// The board SPA, embedded so the component serves it on any host (the v2 operator has no static-dir, so GET / must serve it here). Single source: the example's index.html.
 const BOARD: &str = include_str!("../../../examples/jobs/public/index.html");
 
 const JOBS: &str = "jobs";
@@ -122,8 +116,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- job records (the dashboard mirror, keyed by outbox id) ------------------
-
 fn touch(d: &mut Value) {
     d["updated"] = json!(now());
 }
@@ -161,7 +153,6 @@ fn board_json() -> Value {
     let entries = records::list_records(JOBS, 500, "").map(|p| p.entries).unwrap_or_default();
     let mut jobs: Vec<Value> =
         entries.iter().filter_map(|e| serde_json::from_str::<Value>(&e.data).ok()).collect();
-    // newest first
     jobs.sort_by(|a, b| {
         b["created"].as_u64().unwrap_or(0).cmp(&a["created"].as_u64().unwrap_or(0))
     });
@@ -175,8 +166,6 @@ fn board_json() -> Value {
     json!({ "jobs": jobs.iter().map(job_view).collect::<Vec<_>>(), "counts": counts })
 }
 
-// ---- enqueue ----------------------------------------------------------------
-
 async fn enqueue(request: Request) -> Outcome {
     let body = match parse_body(request).await {
         Ok(v) => v,
@@ -186,7 +175,6 @@ async fn enqueue(request: Request) -> Outcome {
     if job_type.is_empty() {
         return Outcome::Err(422, "type required".into());
     }
-    // payload: accept a JSON object/value or a string; store as a JSON string.
     let payload = match body.get("payload") {
         Some(Value::String(s)) => s.clone(),
         Some(v) if !v.is_null() => v.to_string(),
@@ -195,8 +183,7 @@ async fn enqueue(request: Request) -> Outcome {
     let cron_expr = body["cron"].as_str().unwrap_or("").trim().to_string();
     let key = body["key"].as_str().map(|s| s.to_string());
 
-    // exactly-once: a repeated key replays the first response instead of
-    // enqueuing again.
+    // exactly-once: a repeated key replays the first response instead of enqueuing again.
     if let Some(k) = &key {
         match idem::begin(k, IDEM_TTL) {
             Ok(Some(cached)) => {
@@ -213,7 +200,6 @@ async fn enqueue(request: Request) -> Outcome {
         }
     }
 
-    // recurring or delayed → compute the first delay.
     let delay = if !cron_expr.is_empty() {
         if cron::parse(&cron_expr).is_err() {
             if let Some(k) = &key {
@@ -260,8 +246,6 @@ fn cron_delay(expr: &str) -> u64 {
         .unwrap_or(0)
 }
 
-// ---- drain: claim -> run -> ack/fail ----------------------------------------
-
 fn drain_once() -> Value {
     let claimed = outbox::claim(BATCH, LEASE).unwrap_or_default();
     let n = claimed.len();
@@ -270,14 +254,12 @@ fn drain_once() -> Value {
     for e in claimed {
         let attempt = e.attempts + 1;
         let rec = job_by_oid(&e.id);
-        // mark running
         if let Some((rid, mut d)) = rec.clone() {
             d["state"] = json!("running");
             d["attempts"] = json!(attempt);
             touch(&mut d);
             save(&rid, &d);
         }
-        // payload + the current attempt number (the in-process backend reads it).
         let stored = rec.as_ref().map(|(_, d)| d["payload"].as_str().unwrap_or("{}").to_string());
         let mut pl: Value = stored
             .as_deref()
@@ -340,8 +322,6 @@ fn reschedule(cron_expr: &str, topic: &str, payload: &str) {
     }
 }
 
-// ---- replay -----------------------------------------------------------------
-
 fn replay(oid: &str) -> Outcome {
     match outbox::replay(oid) {
         Ok(()) => {}
@@ -358,8 +338,6 @@ fn replay(oid: &str) -> Outcome {
     Outcome::Json(200, json!({ "ok": true }).to_string())
 }
 
-// ---- SSE board (self-ticking) -----------------------------------------------
-
 fn stream_events(_path: &str) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
@@ -374,8 +352,7 @@ fn stream_events(_path: &str) -> Result<Response, ErrorCode> {
         }
         let mut last = String::new();
         for _ in 0..MAX_TICKS {
-            // the board drives the queue: each tick drains a batch, then pushes
-            // the board if it changed.
+            // the board drives the queue: each tick drains a batch, then pushes the board if it changed.
             drain_once();
             let s = board_json().to_string();
             let frame = if s != last {
@@ -396,8 +373,6 @@ fn stream_events(_path: &str) -> Result<Response, ErrorCode> {
     let _ = response.set_status_code(200);
     Ok(response)
 }
-
-// ---- http plumbing -----------------------------------------------------------
 
 fn run_err_msg(e: &workflow::RunError) -> String {
     match e {
@@ -432,18 +407,9 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be, before the component stops reading it. Without a ceiling a guest
+/// accumulated until wasmtime's 64 MiB per-store cap TRAPPED, reaching the caller as a bare closed
+/// connection. Generous: a backstop, not a content policy; uploads police themselves with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

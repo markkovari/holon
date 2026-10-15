@@ -1,14 +1,10 @@
 //! `mdns-discovery` — what a printer, speaker or other device is announcing
 //! on the local network
 //!
-//! Browsing mDNS/DNS-SD needs multicast on the host network, which a
-//! `wasm32-wasip2` guest does not have (ADR-0095). This is the component
-//! side: it holds the contract, and reaches the daemon over HTTP the same way
-//! `fs-watcher` reaches `comp-fswatch`.
-//!
-//! What this may dial is a MANIFEST decision (ADR-0008): the daemon's address
-//! is `mdns-url` in `wasi:config`, and the deployment's egress allow-list
-//! decides whether the call leaves at all.
+//! Browsing mDNS/DNS-SD needs multicast on the host network, which a `wasm32-wasip2` guest does not have (ADR-0095). This is
+//! the component side: it holds the contract and reaches the daemon over HTTP, as `fs-watcher` reaches `comp-fswatch`.
+//! What it may dial is a MANIFEST decision (ADR-0008): the daemon's address is `mdns-url` in `wasi:config` and the
+//! deployment's egress allow-list decides whether the call leaves at all.
 //!
 //! Config (wasi:config/store):
 //!   mdns-url    where `comp-mdns` is listening, e.g. http://127.0.0.1:8007
@@ -26,16 +22,13 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Ten seconds, same reasoning as `fs-watcher`: a browse is a bounded local
-/// operation, and anything slower is a daemon in trouble rather than a slow
-/// network.
+/// Ten seconds, as `fs-watcher`: a browse is a bounded local operation, and slower means a daemon in trouble.
 const TIMEOUT_NS: u64 = 10_000_000_000;
 
 fn daemon_url() -> Result<String, MdnsError> {
     match config::get("mdns-url") {
         Ok(Some(u)) if !u.is_empty() => Ok(u),
-        // Unavailable rather than not-permitted: nobody refused anything, the
-        // deployment simply never said where the browser is.
+        // Unavailable rather than not-permitted: nobody refused anything, the deployment never said where the browser is.
         _ => Err(MdnsError::Unavailable(
             "mdns-url is not set — this browser has nowhere to ask".into(),
         )),
@@ -57,9 +50,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), MdnsError> {
     Ok((scheme, authority, path))
 }
 
-/// POST the request and return the body. Every failure is `unavailable`: the
-/// daemon's own refusals arrive as JSON with a 200, so anything at this level
-/// is the transport rather than an answer.
+/// POST the request and return the body. Every failure is `unavailable`: the daemon's own refusals arrive as JSON with a 200, so anything at this level is the transport.
 fn post(body: Vec<u8>) -> Result<Vec<u8>, MdnsError> {
     let url = daemon_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
@@ -67,10 +58,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, MdnsError> {
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // A shared secret, if the deployment set one — see
-    // `comp_reconciler::daemon_auth`'s own doc for why loopback
-    // binding alone is not a boundary. Absent means the daemon was
-    // started with no --token, so there is nothing to send.
+    // A shared secret, if the deployment set one (see `comp_reconciler::daemon_auth` for why loopback binding alone is not a boundary). Absent means the daemon runs with no --token.
     if let Ok(Some(token)) = config::get("mdns-token") {
         if !token.is_empty() {
             let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
@@ -114,9 +102,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, MdnsError> {
         match stream.blocking_read(8192) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went
-            // wrong, and returning what arrived would be a truncated answer
-            // presented as a whole one.
+            // `Closed` is end-of-body; anything else is a read that went wrong, and returning what arrived would present a truncated answer as whole.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -124,10 +110,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, MdnsError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser.
-///
-/// The daemon's replies have two shapes and no nesting beyond a flat service
-/// list, so a full serde dependency would be more code than the thing it reads.
+/// Pull one JSON string field out without a parser: the daemon's replies have two flat shapes, so serde would be more code than the thing it reads.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];

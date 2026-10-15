@@ -1,8 +1,7 @@
 //! `i18n-catalog` — translate a message for a locale — placeholder interpolation, plural rules and locale negotiation
 //!
-//! Message catalog with `{name}` placeholder interpolation, English-style
-//! plural selection, and Accept-Language-style locale negotiation, backed by
-//! `wasi:keyvalue`.
+//! Message catalog with `{name}` placeholder interpolation, English-style plural selection and Accept-Language-style
+//! locale negotiation, backed by `wasi:keyvalue`.
 //!
 //! Storage (bucket "default"):
 //!   message key: `i18n_{locale}_{key}`  -> the template string bytes.
@@ -28,8 +27,6 @@ struct Component;
 
 const BUCKET: &str = "default";
 
-// ---- config -------------------------------------------------------------
-
 fn default_locale() -> String {
     match config::get("default-locale") {
         Ok(Some(v)) if !v.is_empty() => v,
@@ -37,10 +34,7 @@ fn default_locale() -> String {
     }
 }
 
-// ---- key sanitization ---------------------------------------------------
-
-/// Append `s`, sanitized to kv-legal chars (same scheme as
-/// `idempotency-guard`'s `id_key`).
+/// Append `s`, sanitized to kv-legal chars (same scheme as `idempotency-guard`'s `id_key`).
 fn push_safe(out: &mut String, s: &str) {
     for b in s.bytes() {
         match b {
@@ -71,8 +65,6 @@ fn base_lang(locale: &str) -> &str {
     locale.split('-').next().unwrap_or(locale)
 }
 
-// ---- kv helpers ---------------------------------------------------------
-
 fn open() -> Result<kv::Bucket, I18nError> {
     kv::open(BUCKET).map_err(|e| I18nError::BackendUnavailable(format!("open: {e:?}")))
 }
@@ -101,11 +93,7 @@ fn candidates(locale: &str) -> Vec<String> {
     out
 }
 
-// ---- interpolation ------------------------------------------------------
-
-/// Replace `{name}` tokens with matching arg values; unknown placeholders are
-/// left verbatim. A single scan, no allocation per non-placeholder char beyond
-/// the output buffer.
+/// Replace `{name}` tokens with matching arg values; unknown placeholders are left verbatim.
 fn interpolate(template: &str, args: &[Arg]) -> String {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
@@ -117,7 +105,6 @@ fn interpolate(template: &str, args: &[Arg]) -> String {
                 let name = &after[..end];
                 match args.iter().find(|a| a.name == name) {
                     Some(arg) => out.push_str(&arg.value),
-                    // unknown placeholder -> leave the literal `{name}`.
                     None => {
                         out.push('{');
                         out.push_str(name);
@@ -126,7 +113,6 @@ fn interpolate(template: &str, args: &[Arg]) -> String {
                 }
                 rest = &after[end + 1..];
             }
-            // unterminated '{' -> emit the rest verbatim.
             None => {
                 out.push_str(rest);
                 return out;
@@ -182,7 +168,6 @@ impl Guest for Component {
         args: Vec<Arg>,
     ) -> Result<String, I18nError> {
         let bucket = open()?;
-        // Resolve the plural blob with the same fallback chain.
         let mut forms: Option<Vec<(String, String)>> = None;
         for cand in candidates(&locale) {
             if let Some(blob) = get_string(&bucket, &plural_key(&cand, &key))? {
@@ -192,7 +177,6 @@ impl Guest for Component {
         }
         let forms = forms.ok_or(I18nError::MissingMessage)?;
 
-        // English plural rule: 1 -> "one", else "other".
         let category = if count == 1 { "one" } else { "other" };
         let template = forms
             .iter()
@@ -201,7 +185,6 @@ impl Guest for Component {
             .map(|(_, t)| t.clone())
             .ok_or(I18nError::MissingMessage)?;
 
-        // Auto-add a `count` arg unless the caller already supplied one.
         let mut args = args;
         if !args.iter().any(|a| a.name == "count") {
             args.push(Arg { name: "count".to_string(), value: count.to_string() });
@@ -215,9 +198,7 @@ impl Guest for Component {
             if available.iter().any(|a| a == tag) {
                 return tag.clone();
             }
-            // else an available tag whose base language equals this preferred
-            // tag's base language (covers "en-US" preferred -> "en" available
-            // and "en" preferred -> "en-GB" available).
+            // else an available tag whose base language equals this preferred tag's ("en-US" preferred -> "en" available and "en" -> "en-GB").
             let want_base = base_lang(tag);
             if let Some(hit) = available.iter().find(|a| base_lang(a) == want_base) {
                 return hit.clone();

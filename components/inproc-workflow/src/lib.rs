@@ -1,15 +1,10 @@
 //! `inproc-workflow` — the default execution backend for the jobs queue.
 //!
-//! Implements `durable:workflow/orchestrator` in-process. `trigger` decides a
-//! job's outcome from its workflow id + JSON payload; the queue owns durability
-//! (retry/backoff/DLQ over the outbox), so this stays a pure decision function.
-//! A few demo workflows:
-//!   - `email` / `resize` / `report` / `echo` — succeed.
-//!   - `flaky`  — fails while `attempt < fail_until` (the queue passes `attempt`),
-//!     then succeeds; exercises retry + backoff.
-//!   - `boom`   — always fails; exercises the dead-letter path.
-//!
-//! Anything else is `not-found`. `start`/`status` are the Golem backend's job.
+//! Implements `durable:workflow/orchestrator` in-process. `trigger` decides a job's outcome from its workflow id + JSON
+//! payload; the queue owns durability (retry/backoff/DLQ over the outbox), so this stays a pure decision function.
+//! Demo workflows: `email` / `resize` / `report` / `echo` succeed; `flaky` fails while `attempt < fail_until` (the queue
+//! passes `attempt`), exercising retry + backoff; `boom` always fails (dead-letter path). Anything else is `not-found`.
+//! `start`/`status` are the Golem backend's job.
 
 #[allow(warnings)]
 mod bindings;

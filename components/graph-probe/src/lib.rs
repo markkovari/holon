@@ -5,10 +5,8 @@
 //!   POST /relate?kind=&id=&edge=&to-kind=&to-id=
 //!   GET  /neighbours?kind=&id=&edge=&dir=out|in|both
 //!
-//! Every route answers JSON and reports an error as `{"error":"..."}` with a 200,
-//! because the thing under test is what the graph said, and a status code would
-//! flatten "the database refused this" into the same shape as "the host refused
-//! the egress" — which are the two failures this exists to tell apart.
+//! Every route answers JSON and reports an error as `{"error":"..."}` with a 200: the thing under test is what the graph
+//! said, and a status code would flatten "the database refused this" into "the host refused the egress", the two failures this tells apart.
 
 #[allow(warnings)]
 mod bindings {
@@ -77,9 +75,7 @@ fn node_json(n: &graph::Node) -> String {
     )
 }
 
-/// A ceiling on a request body, not a policy: past this the read gives up and
-/// the body reads as empty, rather than growing until the store's memory cap
-/// traps the component and the connection simply closes.
+/// A ceiling on a request body, not a policy: past this the read gives up and the body reads as empty.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
@@ -103,11 +99,8 @@ impl Guest for Component {
                     Err(e) => err(e),
                 }
             }
-            // The escape hatch, and until now the only interface of the graph no
-            // test could reach: `contract-registry` does every one of its reads and
-            // writes through `query`, and a bug that lived only here — a statement
-            // over 4096 bytes trapping the component — took down a real run while
-            // every typed verb stayed green.
+            // The escape hatch, the one interface no typed-verb test reached: `contract-registry` does all its reads and writes
+            // through `query`, and a statement over 4096 bytes trapping the component hid there while every typed verb stayed green.
             (Method::Post, "/query") => match graph::query(&read_body(request).await) {
                 Ok(body) => body,
                 Err(e) => err(e),

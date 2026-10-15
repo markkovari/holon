@@ -77,10 +77,7 @@ fn json_str(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
 }
 
-/// A ceiling on a body read into memory, not a policy: past this the read gives
-/// up, rather than growing until the store's memory cap traps the component and
-/// the connection simply closes. Both directions — a request, and a model's
-/// reply to one.
+/// A ceiling on a body read into memory, not a policy: past this the read gives up. Both directions: a request, and a model's reply.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 /// POST a JSON body to Anthropic and return (status, response-bytes).
@@ -119,10 +116,7 @@ async fn post_anthropic(body: Vec<u8>) -> Result<(u16, Vec<u8>), String> {
         buf.reserve(8192);
         let (st, b) = stream.read(buf).await;
         buf = b;
-        // The same ceiling on the way back. This is a model's answer over a
-        // network we do not control, and a reply larger than the request that
-        // provoked it is either a mistake or an attack — either way not
-        // something to hold in memory while deciding.
+        // The same ceiling on the way back: a model's answer over a network we do not control, larger than the request that provoked it, is a mistake or an attack.
         if buf.len() > MAX_BODY_BYTES {
             return Err(e("the response body is too large"));
         }
@@ -132,8 +126,7 @@ async fn post_anthropic(body: Vec<u8>) -> Result<(u16, Vec<u8>), String> {
         }
     }
     drop(res_tx);
-    // Like the p2 loop's `Err(_) => break`: what arrived is returned, and a
-    // truncated reply fails loudly as bad JSON in `evaluate`.
+    // Like the p2 loop's `Err(_) => break`: what arrived is returned, and a truncated reply fails loudly as bad JSON in `evaluate`.
     let _ = trailers.await;
     Ok((status, buf))
 }
@@ -142,8 +135,7 @@ guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
 /// The whole evaluate path: parse the upload, ask the model, return the critique.
 async fn evaluate(request: Request) -> Result<String, String> {
-    // A failed or over-long read is EMPTY rather than a plausible prefix of
-    // itself — a truncated image would decode into a critique of half a photograph.
+    // A failed or over-long read is EMPTY, not a plausible prefix: a truncated image would decode into a critique of half a photograph.
     let body = read_body(request).await.unwrap_or_default();
     let v: serde_json::Value =
         serde_json::from_slice(&body).map_err(|e| format!("bad JSON body: {e}"))?;

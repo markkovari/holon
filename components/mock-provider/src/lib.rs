@@ -16,40 +16,24 @@
 //! }
 //! ```
 //!
-//! `when` is a substring of the whole conversation, or `"*"` for anything.
-//! `seed` matches `options.seed` when present — which is how N branches asking
-//! the SAME question get N different answers. The seed field already exists in
-//! the contract for reproducibility, so nothing had to be invented for it, and a
-//! swarm that varies its branches by seed varies its mock the same way.
+//! `when` is a substring of the whole conversation, or `"*"` for anything. `seed` matches `options.seed`
+//! when present, so N branches asking the SAME question get N different answers.
 //!
-//! ## Delay, because latency changes the shape of everything
+//! ## Delay
 //!
-//! `"delay_ms"` on a rule makes it wait before answering. A mock that returns in
-//! microseconds turns a stress test into a measurement of the harness: real
-//! inference takes hundreds of milliseconds to seconds, and THAT is what decides
-//! how many branches are in flight at once, how long an environment is held open,
-//! and whether anything queues behind anything else.
+//! `"delay_ms"` on a rule waits before answering: a mock that returns in microseconds turns a stress test
+//! into a measurement of the harness, while real inference latency decides how many branches are in flight.
 //!
-//! ## Failure modes are the point
+//! ## Failure modes
 //!
-//! A rule may return an error instead of text. The interesting paths through a
-//! graph loop are the ones where inference is rate-limited, returns nothing, or
-//! answers with something unusable — and those are precisely the paths a real
-//! provider will not produce on demand. `"error"` names any `infer-error` case.
+//! A rule may return an error instead of text (`"error"` names any `infer-error` case): rate-limits,
+//! empty and unusable answers are paths a real provider will not produce on demand.
 //!
-//! ## Embeddings that actually have similarity structure
+//! ## Embeddings with similarity structure
 //!
-//! `embed` could return a hash and be useless: every test of retrieval or ranking
-//! would then be testing nothing, because unrelated texts would be equidistant.
-//! Instead this is a **hashing vectoriser** — tokens hashed into dimensions, the
-//! vector L2-normalised — so texts sharing words really are closer together. It
-//! is crude and it is deterministic and free, which makes retrieval logic
-//! testable without paying anyone.
-//!
-//! It is not semantic: "car" and "automobile" are orthogonal here and would not
-//! be to a real model. Anything asserting *semantic* similarity is asserting
-//! something this cannot provide, and should be recorded from a real provider
-//! instead.
+//! `embed` is a **hashing vectoriser** (tokens hashed into dimensions, L2-normalised), so texts sharing
+//! words really are closer. Crude, deterministic and free. Not semantic: "car" and "automobile" are
+//! orthogonal here, so anything asserting *semantic* similarity needs a real provider.
 
 #[allow(warnings)]
 mod bindings;
@@ -64,9 +48,7 @@ use sha2::{Digest, Sha256};
 
 struct Component;
 
-/// Deliberately small. A vector this size is enough to show that similar texts
-/// are closer than dissimilar ones, and small enough to eyeball in a failure
-/// message.
+/// Deliberately small: enough to show similar texts are closer, small enough to eyeball in a failure message.
 const EMBED_DIM: usize = 64;
 
 fn cfg(key: &str, default: &str) -> String {
@@ -77,14 +59,11 @@ fn model_name() -> String {
     cfg("mock-model", "mock-1")
 }
 
-/// Whether this deployment claims an embedding model, `mock-embeddings=false` to
-/// say it does not.
+/// Whether this deployment claims an embedding model; `mock-embeddings=false` says it does not.
 ///
-/// Not a feature — a test surface. `anthropic-provider` refuses `embed` because
-/// Anthropic has no embeddings endpoint, and a caller that degrades to sparse
-/// retrieval when `describe()` says so (`knowledge:memory` does) has no other way
-/// to exercise that path without an API key and a live vendor. Defaults to
-/// available, so nothing that already links this changes.
+/// A test surface: `anthropic-provider` refuses `embed` (no embeddings endpoint), and callers that degrade
+/// to sparse retrieval on `describe()` (`knowledge:memory`) have no other way to exercise that path
+/// without a live vendor. Defaults to available.
 fn embeddings_available() -> bool {
     cfg("mock-embeddings", "true") != "false"
 }
@@ -112,15 +91,12 @@ fn error_for(name: &str, detail: &str) -> InferError {
         "provider-unavailable" => InferError::ProviderUnavailable(detail.to_string()),
         "bad-response" => InferError::BadResponse(detail.to_string()),
         "no-content" => InferError::NoContent,
-        // An unknown error name is a mistake in the script, and saying so is far
-        // more useful than quietly picking one — a test asserting on
-        // `provider-denied` would otherwise pass or fail for the wrong reason.
+        // An unknown error name is a script mistake; saying so beats quietly picking one and passing for the wrong reason.
         other => InferError::InvalidRequest(format!("mock script names no such error: {other:?}")),
     }
 }
 
-/// Find the first rule that matches. Order is significant, so a specific rule can
-/// sit above a general one.
+/// Find the first rule that matches. Order is significant: a specific rule can sit above a general one.
 fn select(
     script: &serde_json::Value,
     text: &str,
@@ -137,8 +113,7 @@ fn select(
         if when != "*" && !text.contains(when) {
             continue;
         }
-        // A rule naming a seed only matches that seed. A rule with no seed
-        // matches any, which is what makes it a fallback.
+        // A rule naming a seed only matches that seed; one with no seed matches any (the fallback).
         if let Some(want) = rule["seed"].as_u64() {
             if want != seed {
                 continue;
@@ -146,24 +121,19 @@ fn select(
         }
         return Ok(rule);
     }
-    // Silence would be indistinguishable from an empty completion, and a test
-    // whose prompt drifted out of its script should say so loudly.
+    // Silence would look like an empty completion; a prompt that drifted out of its script should say so loudly.
     Err(InferError::InvalidRequest(format!(
         "no mock rule matches this conversation (seed {seed}); the script is out of date"
     )))
 }
 
-/// `default_model` is passed IN rather than read from config, so this stays a
-/// pure function: a native unit test cannot call a WASI import, and a mock whose
-/// own logic is untestable would be a poor foundation for testing everything else.
+/// `default_model` is passed IN rather than read from config, so this stays a pure function a native test can call.
 fn completion_from(
     rule: &serde_json::Value,
     prompt_len: usize,
     default_model: &str,
 ) -> Result<Completion, InferError> {
-    // Before the answer AND before an error, because a provider that refuses you
-    // still made you wait for the refusal — and a retry loop that assumes
-    // failures are free is a retry loop that will surprise somebody.
+    // Before the answer AND before an error: a refusing provider still made you wait, and a retry loop assuming failures are free will surprise somebody.
     if let Some(ms) = rule["delay_ms"].as_u64() {
         if ms > 0 {
             monotonic_clock::subscribe_duration(ms * 1_000_000).block();
@@ -180,9 +150,7 @@ fn completion_from(
         text: text.clone(),
         finish_reason: rule["finish"].as_str().unwrap_or("stop").to_string(),
         model: rule["model"].as_str().unwrap_or(default_model).to_string(),
-        // Token counts are made up but PROPORTIONAL, so a test of the fuel
-        // accounting sees a bigger answer cost more. A constant would make every
-        // budget test pass for the wrong reason.
+        // Token counts are made up but PROPORTIONAL, so a fuel-accounting test sees a bigger answer cost more.
         usage: Usage {
             prompt_tokens: (prompt_len / 4) as u32,
             completion_tokens: (text.len() / 4) as u32,
@@ -208,8 +176,7 @@ fn embed_text(text: &str) -> Vec<f32> {
         h.update(t.as_bytes());
         let d = h.finalize();
         let idx = (u16::from_le_bytes([d[0], d[1]]) as usize) % EMBED_DIM;
-        // The sign comes from a second byte, so unrelated tokens can cancel
-        // rather than all pushing the same way and making everything similar.
+        // The sign comes from a second byte, so unrelated tokens can cancel instead of all pushing the same way.
         let sign = if d[2] & 1 == 0 { 1.0 } else { -1.0 };
         v[idx] += sign;
     }
@@ -258,8 +225,7 @@ impl Guest for Component {
 
     fn embed(text: String, _opts: Options) -> Result<Vec<f32>, InferError> {
         if !embeddings_available() {
-            // A provider that says it cannot embed must also refuse to, or the
-            // degraded path is only tested in the callers that bother to ask.
+            // A provider that says it cannot embed must also refuse to, or the degraded path is only tested in callers that ask.
             return Err(InferError::InvalidRequest(
                 "mock-embeddings is off — this deployment has no embedding model".into(),
             ));
@@ -299,8 +265,7 @@ mod tests {
         assert_eq!(a.usage.completion_tokens, b.usage.completion_tokens);
     }
 
-    /// How N branches asking one question get N different candidates — using the
-    /// seed the contract already has, rather than a mechanism invented here.
+    /// How N branches asking one question get N different candidates, using the contract's existing seed.
     #[test]
     fn the_seed_is_what_makes_branches_differ() {
         let s = script_of(
@@ -349,16 +314,14 @@ mod tests {
             Err(InferError::ProviderDenied(m)) => assert!(m.contains("429")),
             other => panic!("expected a denial: {other:?}"),
         }
-        // An empty text is `no-content`, which is a real thing providers do and a
-        // distinct case the loop has to handle.
+        // An empty text is `no-content`, a real provider behaviour and a distinct case for the loop.
         assert!(matches!(
             completion_from(&select(&s, "empty please", 0).unwrap(), 1, "mock-1"),
             Err(InferError::NoContent)
         ));
     }
 
-    /// A prompt that drifted out of its script must fail loudly, not silently
-    /// return nothing — otherwise a test keeps passing while testing the mock.
+    /// A prompt that drifted out of its script must fail loudly, not silently return nothing.
     #[test]
     fn an_unmatched_prompt_is_an_error_not_silence() {
         let s = script_of(r#"{"rules":[{"when":"only this","text":"ok"}]}"#);
@@ -367,9 +330,7 @@ mod tests {
         assert!(select(&script_of(r#"{"rules":[]}"#), "hello", 0).is_err());
     }
 
-    /// Made-up token counts, but proportional — so a fuel test sees a longer
-    /// answer cost more. A constant would let every budget assertion pass for the
-    /// wrong reason.
+    /// Made-up token counts, but proportional, so a fuel test sees a longer answer cost more.
     #[test]
     fn a_longer_answer_costs_more() {
         let s = script_of(
@@ -380,9 +341,7 @@ mod tests {
         assert!(long.usage.completion_tokens > short.usage.completion_tokens);
     }
 
-    /// An embedding with real similarity structure, so retrieval and ranking can
-    /// be tested at all. A pure hash would make every text equidistant and every
-    /// such test vacuous.
+    /// An embedding with real similarity structure, so retrieval and ranking tests are not vacuous.
     #[test]
     fn similar_texts_embed_closer_than_dissimilar_ones() {
         let a = embed_text("the cache stores derived artifacts");
