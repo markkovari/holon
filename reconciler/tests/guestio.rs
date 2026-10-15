@@ -307,8 +307,8 @@ fn a_body_read_into_memory_has_a_ceiling() {
 ///   * multi-byte UTF-8 came back as Latin-1 (`caf%C3%A9` decoded to `cafÃ©`);
 ///   * `u8::from_str_radix` accepts a leading sign, so `%+a` parsed as `+0x0a` and emitted a
 ///     NEWLINE (a caller injecting a control byte).
-/// ASCII decodes identically under both, which is why it survived. `guestfmt::percent_decode` is the
-/// byte-correct one; replacing `+` before the radix call closes the second hole.
+///     ASCII decodes identically under both, which is why it survived. `guestfmt::percent_decode` is the
+///     byte-correct one; replacing `+` before the radix call closes the second hole.
 #[test]
 fn no_component_decodes_a_percent_escape_into_a_char() {
     let mut wrong = Vec::new();
