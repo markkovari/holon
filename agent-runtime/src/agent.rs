@@ -1229,16 +1229,36 @@ pub fn run(
         cause.project.as_ref().map(|p| format!("Project: {p}\n")).unwrap_or_default();
     // Photos that came with the run go to the model with the first message. One that cannot be
     // used is said, so the model tells Mark instead of answering as if it had looked.
-    let (images, problems) = crate::attach::load(host.store(), &spec.name, &cause.attachments);
-    let unread: String = problems.iter().map(|p| format!("\n(attachment: {p})")).collect();
-    let seen = match images.len() {
-        0 => String::new(),
-        n => format!(
-            "\n(attached: {n} photo{}. Look at {}.)",
-            if n == 1 { "" } else { "s" },
-            if n == 1 { "it" } else { "them" }
-        ),
+    // An agent with `food_photo` reads photos through Jev, not its own model: the model is told
+    // the photo is there and what it is called, and nothing is sent to it.
+    let (images, problems, seen) = if spec.has_capability("food_photo") {
+        let ok: Vec<&String> = cause
+            .attachments
+            .iter()
+            .filter(|f| crate::attach::exists(host.store(), &spec.name, f))
+            .collect();
+        let seen = match ok.len() {
+            0 => String::new(),
+            _ => format!(
+                "\n(attached: {}. Read {} with food_photo.)",
+                ok.iter().map(|f| format!("photo `{f}`")).collect::<Vec<_>>().join(", "),
+                if ok.len() == 1 { "it" } else { "each one, naming it in `file`," }
+            ),
+        };
+        (Vec::new(), Vec::new(), seen)
+    } else {
+        let (images, problems) = crate::attach::load(host.store(), &spec.name, &cause.attachments);
+        let seen = match images.len() {
+            0 => String::new(),
+            n => format!(
+                "\n(attached: {n} photo{}. Look at {}.)",
+                if n == 1 { "" } else { "s" },
+                if n == 1 { "it" } else { "them" }
+            ),
+        };
+        (images, problems, seen)
     };
+    let unread: String = problems.iter().map(|p| format!("\n(attachment: {p})")).collect();
     let mut msgs =
         vec![Msg::user(format!("Trigger: {trigger}\n{project_line}Task: {input}{seen}{unread}"))
             .with_images(images)];
@@ -1710,6 +1730,25 @@ mod tests {
         assert!(
             first.content.contains("Task: what is this?")
                 && first.content.contains("(attached: 1 photo. Look at it.)"),
+            "{}",
+            first.content
+        );
+    }
+
+    #[test]
+    fn an_agent_with_food_photo_is_told_the_photo_is_there_and_is_sent_no_picture() {
+        let mut s = spec();
+        s.capabilities.push(Capability::named("food_photo"));
+        let h = Fake::new("attach-jev", &["ok"], true);
+        let inbox = h.store.workspace("bot").unwrap().join("inbox");
+        std::fs::create_dir_all(&inbox).unwrap();
+        std::fs::write(inbox.join("1-lunch.png"), [0x89, b'P', b'N', b'G']).unwrap();
+        let cause = Cause { attachments: vec!["1-lunch.png".into()], ..Cause::default() };
+        run(&h, &s, "http", "lunch", &cause);
+        let first = &h.seen.lock().unwrap()[0][0];
+        assert!(first.images.is_empty(), "Jev reads it, not the model");
+        assert!(
+            first.content.contains("photo `1-lunch.png`") && first.content.contains("food_photo"),
             "{}",
             first.content
         );
