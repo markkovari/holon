@@ -1,13 +1,9 @@
 //! `ui-notifier` — raise a notification on the user's desktop
 //!
-//! Raising a desktop notification needs the platform's notification bus,
-//! which a `wasm32-wasip2` guest does not have (ADR-0095). This is the
-//! component side: it holds the contract, and reaches the daemon over HTTP
-//! the same way `fs-watcher` reaches `comp-fswatch`.
-//!
-//! What this may dial is a MANIFEST decision (ADR-0008): the daemon's address
-//! is `uinotify-url` in `wasi:config`, and the deployment's egress allow-list
-//! decides whether the call leaves at all.
+//! Raising a desktop notification needs the platform's notification bus, which a `wasm32-wasip2`
+//! guest lacks (ADR-0095). This is the component side: it holds the contract and reaches the
+//! daemon over HTTP, as `fs-watcher` reaches `comp-fswatch`. What this may dial is a MANIFEST
+//! decision (ADR-0008): `uinotify-url` in `wasi:config` plus the egress allow-list.
 //!
 //! Config (wasi:config/store):
 //!   uinotify-url    where `comp-uinotify` is listening, e.g. http://127.0.0.1:8009
@@ -25,8 +21,8 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Ten seconds, same reasoning as `fs-watcher`: raising a notification is a
-/// bounded local call, and anything slower is a daemon in trouble.
+/// Ten seconds: raising a notification is a bounded local call, so slower means a daemon in
+/// trouble.
 const TIMEOUT_NS: u64 = 10_000_000_000;
 
 fn daemon_url() -> Result<String, NotifyError> {
@@ -122,10 +118,8 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, NotifyError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser.
-///
-/// The daemon's replies have two flat shapes, so a full serde dependency
-/// would be more code than the thing it reads.
+/// Pull one JSON string field out without a parser: the replies are flat, so serde would be more
+/// code than what it reads.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];
@@ -149,8 +143,6 @@ impl Guest for Component {
     }
 }
 
-/// A JSON string literal. A message is caller-supplied and goes into a
-/// request body; a quote in it would end the string early.
 fn json_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');

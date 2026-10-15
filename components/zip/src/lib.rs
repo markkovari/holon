@@ -1,27 +1,22 @@
 //! `zip` — write a .zip archive from a list of named byte blobs
 //!
-//! A dependency-free ZIP writer using the STORE method (no compression): for
-//! each file a local header + its raw bytes, then a central directory and the
-//! end-of-central-directory record. Every value is little-endian; each entry
-//! carries a CRC-32 (IEEE, computed bit-by-bit — fine for the small text/CSV/JSON
-//! blobs this bundles). Any unzip tool reads the result. No state, no host
-//! imports, no external crates.
+//! A dependency-free ZIP writer using STORE (no compression): per file a local header + raw
+//! bytes, then a central directory and end-of-central-directory record. Little-endian; each entry
+//! carries a CRC-32 (bit-by-bit, fine for the small blobs this bundles).
 
 mod inflate;
 mod read;
 
 pub use read::{extract, ZipError};
 
-/// One archive member. The plain-Rust twin of the WIT record, so the held-out
-/// specification can judge this crate without a component runtime — the pattern
-/// `components/bytes-codec` uses, and the reason this crate is now an `rlib` too.
+/// One archive member: the plain-Rust twin of the WIT record, so the held-out specification can
+/// judge this crate without a component runtime.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct File {
     pub name: String,
     pub data: Vec<u8>,
 }
 
-/// CRC-32 (IEEE 802.3, polynomial 0xEDB88320), the checksum ZIP entries carry.
 pub(crate) fn crc32(data: &[u8]) -> u32 {
     let mut crc = 0xFFFF_FFFFu32;
     for &b in data {
@@ -48,7 +43,6 @@ const DOS_DATE: u16 = 0x0021;
 pub fn archive(files: &[File]) -> Vec<u8> {
     {
         let mut out = Vec::new();
-        // (crc, size, local-header-offset, name) per entry, for the central dir.
         let mut central: Vec<(u32, u32, u32, Vec<u8>)> = Vec::new();
 
         for f in files {
@@ -57,7 +51,6 @@ pub fn archive(files: &[File]) -> Vec<u8> {
             let size = f.data.len() as u32;
             let offset = out.len() as u32;
 
-            // local file header
             u32le(&mut out, 0x0403_4b50);
             u16le(&mut out, 20); // version needed
             u16le(&mut out, 0); // flags
@@ -75,7 +68,6 @@ pub fn archive(files: &[File]) -> Vec<u8> {
             central.push((crc, size, offset, name.to_vec()));
         }
 
-        // central directory
         let cd_offset = out.len() as u32;
         for (crc, size, offset, name) in &central {
             u32le(&mut out, 0x0201_4b50);
@@ -99,7 +91,6 @@ pub fn archive(files: &[File]) -> Vec<u8> {
         }
         let cd_size = out.len() as u32 - cd_offset;
 
-        // end of central directory
         u32le(&mut out, 0x0605_4b50);
         u16le(&mut out, 0); // this disk
         u16le(&mut out, 0); // disk with cd
@@ -113,7 +104,6 @@ pub fn archive(files: &[File]) -> Vec<u8> {
     }
 }
 
-// ---- the component -----------------------------------------------------
 //
 // A mapping between the WIT types and the ones above, and nothing else — the logic
 // is judged by `tests/` against the plain functions.

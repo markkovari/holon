@@ -1,9 +1,8 @@
 //! `svg-chart` — render a chart to SVG on the server — bar, line, donut and sparkline
 //!
-//! A dependency-free renderer: one data series in, a standalone `<svg>` out —
-//! bar, line, donut, or sparkline. Axes and labels are drawn in `currentColor`
-//! (so an embedded chart follows the page's light/dark theme); data uses a
-//! palette or a caller-supplied per-slice color. Pure compute, no host imports.
+//! A dependency-free renderer: one data series in, a standalone `<svg>` out (bar, line, donut,
+//! sparkline). Axes and labels use `currentColor` so an embedded chart follows the page theme;
+//! data uses a palette or per-slice color. Pure compute.
 //!
 //! ponytail: single-series only, which is the common report shape. Multi-series
 //! / stacked / rich gridlines is a much bigger renderer and out of scope.
@@ -30,7 +29,6 @@ fn color_of(s: &Slice, i: usize) -> String {
     }
 }
 
-/// Format a value: integers bare, else up to 2 decimals with trailing zeros trimmed.
 fn fmt(v: f64) -> String {
     if v.is_finite() && v == v.round() && v.abs() < 1e15 {
         format!("{}", v as i64)
@@ -40,7 +38,6 @@ fn fmt(v: f64) -> String {
     }
 }
 
-/// One decimal for coordinates (compact SVG).
 fn n(x: f64) -> String {
     format!("{:.1}", x)
 }
@@ -92,7 +89,6 @@ fn bar(c: &Chart, w: f64, h: f64) -> String {
     let bar_w = bwidth * 0.62;
 
     let mut s = open(w, h) + &title_el(&c.title, w);
-    // baseline
     s += &format!(
         "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"currentColor\" stroke-opacity=\"0.3\"/>",
         n(ml), n(base), n(ml + pw), n(base)

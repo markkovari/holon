@@ -1,10 +1,9 @@
 //! status:app — uptime monitor over composed capability contracts.
 //!
-//! The pump (`POST /api/tick`): timer::due -> probe each monitor's URL over
-//! outgoing HTTP -> fire `recover`/`fail` on its fsm instance when the event
-//! is legal in the current state -> on a real transition, publish to the bus
-//! and (optionally) alert via webhook. up -> degraded -> down takes two
-//! consecutive failures; a single good probe recovers from either.
+//! The pump (`POST /api/tick`): timer::due, probe each monitor's URL over outgoing HTTP, fire
+//! `recover`/`fail` on its fsm instance when legal, and on a real transition publish to the bus
+//! and optionally alert via webhook. up -> degraded -> down takes two consecutive failures; one
+//! good probe recovers from either.
 
 #[allow(warnings)]
 mod bindings {
@@ -92,16 +91,12 @@ fn now() -> u64 {
     system_clock::now().seconds as u64
 }
 
-// ---- monitors ----------------------------------------------------------------
-
 #[derive(Deserialize)]
 struct CreateMonitor {
     name: String,
     url: String,
-    /// probe period in seconds.
     #[serde(default)]
     period: Option<u64>,
-    /// webhook to POST on every state transition.
     #[serde(rename = "alert-url", alias = "alert_url", default)]
     alert_url: Option<String>,
 }
@@ -165,7 +160,6 @@ async fn create_monitor(request: Request) -> Outcome {
         let _ = records::delete(MONITORS, &entry.id);
         return Outcome::Err(503, format!("fsm: {e:?}"));
     }
-    // first run is due immediately, then every `period`.
     if let Err(e) = timer::schedule_every(&entry.id, period, now(), entry.id.as_bytes()) {
         let _ = records::delete(MONITORS, &entry.id);
         return Outcome::Err(503, format!("timer: {e:?}"));
@@ -225,8 +219,6 @@ fn history(id: &str) -> Outcome {
     }
 }
 
-// ---- the pump ------------------------------------------------------------------
-
 async fn tick() -> Outcome {
     let at = now();
     let jobs = match timer::due(at, TICK_BATCH, TICK_LEASE) {
@@ -237,7 +229,6 @@ async fn tick() -> Outcome {
     for job in &jobs {
         let id = &job.key;
         let Ok(monitor) = records::get(MONITORS, id) else {
-            // monitor deleted -> retire the orphaned job.
             let _ = timer::ack(id);
             let _ = timer::cancel(id);
             continue;
@@ -272,8 +263,6 @@ async fn tick() -> Outcome {
             }
         }
 
-        // last-probe snapshot on the record; best-effort (a concurrent tick
-        // losing this write only costs a fresher timestamp).
         let mut updated = data.clone();
         updated["last_status"] = json!(status.unwrap_or(0));
         updated["last_ok"] = json!(ok);
@@ -291,8 +280,6 @@ async fn tick() -> Outcome {
     Outcome::Json(200, json!({ "due": jobs.len(), "results": results }).to_string())
 }
 
-/// GET the target and report the status code; None = unreachable. The body is
-/// read (and dropped) so the connection is released.
 async fn probe(url: &str) -> Option<u16> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return None;
@@ -300,9 +287,6 @@ async fn probe(url: &str) -> Option<u16> {
     fetch(Method::Get, url, &[], Vec::new()).await.ok().map(|(status, _)| status)
 }
 
-// ---- event feed ------------------------------------------------------------------
-
-/// Consumer-group poll of state changes; `&ack=true` acknowledges what was read.
 fn events(query: &str) -> Outcome {
     let group = query_param(query, "group").unwrap_or_else(|| "default".into());
     let ack = query_param(query, "ack").as_deref() == Some("true");
@@ -327,8 +311,6 @@ fn events(query: &str) -> Outcome {
     Outcome::Json(200, json!({ "events": list, "group": group, "acked": ack }).to_string())
 }
 
-// ---- helpers ----------------------------------------------------------------------
-
 fn store_err(e: records::StoreError) -> Outcome {
     match e {
         records::StoreError::NotFound => Outcome::NotFound,
@@ -338,18 +320,9 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be before the component stops reading it. Without a ceiling,
+/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy; uploads police their own size with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
@@ -363,8 +336,6 @@ fn query_param(query: &str, key: &str) -> Option<String> {
         (it.next()? == key).then(|| it.next().unwrap_or("").to_string())
     })
 }
-
-// ---- responses --------------------------------------------------------------------
 
 fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {

@@ -1,32 +1,15 @@
 //! `semver-range` — does a version satisfy a range?
 //!
-//! `tests/ranges.rs` is the specification and is not writable from here. Every
-//! case in it is a rule people get wrong, and most of them are the pre-release
-//! rules — a matcher that handles `^1.2.3` and nothing else looks finished and
-//! is not.
+//! `tests/ranges.rs` is the specification and is not writable from here.
 //!
-//! ## The pre-release rule, which is the whole difficulty
+//! Pre-release rule: a version carrying a pre-release is only considered when some comparator in
+//! the range shares its `[major, minor, patch]`; otherwise the answer is `false` before any
+//! ordering.
+//! That is why `^1.0.0` refuses `1.1.0-alpha` (inside `>=1.0.0, <2.0.0`, but nobody asking for
+//! `^1.0.0` wants an unreleased 1.1.0), and why `<1.0.0` accepts `1.0.0-alpha` (the range names
+//! `1.0.0`, and ordering puts it below its release). One rule, not two.
 //!
-//! A version carrying a pre-release is only considered at all when some
-//! comparator in the range shares its `[major, minor, patch]`. Otherwise the
-//! answer is `false` before any ordering is done.
-//!
-//! That one sentence is what makes `^1.0.0` refuse `1.1.0-alpha`. Expanded,
-//! `^1.0.0` is `>=1.0.0, <2.0.0`, and `1.1.0-alpha` sits inside that interval —
-//! so an implementation that only compares would admit it. It must not: nobody
-//! asking for `^1.0.0` is asking to be handed an unreleased 1.1.0. The range has
-//! to have NAMED that triple somewhere before its pre-releases are in scope.
-//!
-//! And it is the same sentence that lets `<1.0.0` accept `1.0.0-alpha`, which
-//! looks like the opposite behaviour and is not: `<1.0.0` names the triple
-//! `1.0.0`, so `1.0.0-alpha` is in scope, and ordinary ordering then puts it
-//! below its own release. Both cases fall out of one rule rather than two, which
-//! is why it is written as one.
-//!
-//! ## Build metadata
-//!
-//! Dropped on sight, from both sides. SemVer §10: build metadata is not part of
-//! precedence, so `1.0.0+build.5` IS `1.0.0` for every question asked here.
+//! Build metadata is dropped on sight from both sides (SemVer §10: not part of precedence).
 
 /// One dot-separated piece of a pre-release tag.
 ///
@@ -67,7 +50,6 @@ impl Ord for Ident {
         match (self, other) {
             (Ident::Num(a), Ident::Num(b)) => a.cmp(b),
             (Ident::Text(a), Ident::Text(b)) => a.cmp(b),
-            // Different kinds: numeric is always the lower one.
             _ => self.rank().cmp(&other.rank()),
         }
     }
@@ -94,7 +76,6 @@ impl Version {
 
     /// `major.minor.patch` with an optional `-pre`, tolerating a missing minor
     /// or patch so `~1.2` can be written as a version.
-    ///
     /// Build metadata is discarded here rather than stored, because nothing
     /// downstream is allowed to look at it.
     fn parse(s: &str) -> Option<Self> {
@@ -139,7 +120,6 @@ impl Ord for Version {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.triple().cmp(&other.triple()).then_with(|| {
             match (self.pre.is_empty(), other.pre.is_empty()) {
-                // A release outranks any pre-release of the same triple.
                 (true, true) => std::cmp::Ordering::Equal,
                 (true, false) => std::cmp::Ordering::Greater,
                 (false, true) => std::cmp::Ordering::Less,
@@ -184,17 +164,9 @@ impl Comparator {
     }
 }
 
-/// `^1.2.3` — compatible within the leftmost NONZERO part.
-///
-/// Which is why `^0.2.3` is minor-locked and `^0.0.3` is patch-locked: with a
-/// zero major the minor is carrying the compatibility promise, and with a zero
-/// minor the patch is. Treating `^` as "same major" is the common bug, and on a
-/// 0.x dependency it is the expensive one.
+/// `^1.2.3` — compatible within the leftmost NONZERO part (`^0.2.3` is minor-locked, `^0.0.3` patch-locked). Treating `^` as 'same major' is the expensive bug on 0.x dependencies.
 fn caret(v: Version) -> Vec<Comparator> {
-    // `+1` is `saturating`, not plain: major/minor/patch parse straight from
-    // input with no upper bound, so a version component of exactly `u64::MAX`
-    // would otherwise overflow here. Saturating just means "nothing is above
-    // this bound", which is the right answer for an unrepresentable version.
+    // `+1` saturates: components parse from input with no upper bound, so `u64::MAX` would overflow, and 'nothing is above this bound' is right.
     let upper = if v.major > 0 {
         Version { major: v.major.saturating_add(1), minor: 0, patch: 0, pre: vec![] }
     } else if v.minor > 0 {
@@ -216,10 +188,8 @@ fn tilde(v: Version, written: usize) -> Vec<Comparator> {
     vec![Comparator { op: Op::Gte, version: v }, Comparator { op: Op::Lt, version: upper }]
 }
 
-/// One comma-separated term into the comparators it stands for.
-///
-/// Returns `None` for anything unparseable, and the caller turns that into a
-/// plain `false` — a range nobody can read matches nothing, rather than panics.
+/// One comma-separated term into the comparators it stands for; `None` for anything unparseable,
+/// which the caller turns into `false`.
 fn parse_term(term: &str) -> Option<Vec<Comparator>> {
     let term = term.trim();
     if term.is_empty() {
@@ -244,7 +214,6 @@ fn parse_term(term: &str) -> Option<Vec<Comparator>> {
     if let Some(rest) = term.strip_prefix('~') {
         return Some(tilde(Version::parse(rest)?, Version::written_parts(rest)));
     }
-    // A bare version is an exact match.
     Some(vec![Comparator { op: Op::Eq, version: Version::parse(term)? }])
 }
 
@@ -283,11 +252,8 @@ pub fn matches(range: &str, version: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// The ordering rules, tested directly rather than through `matches`.
-    ///
-    /// `tests/ranges.rs` reaches these through ranges, which is the contract;
-    /// this reaches them head-on, so a failure says "comparison is wrong" rather
-    /// than "some range is wrong".
+    /// The ordering rules, tested directly so a failure says 'comparison is wrong' rather than
+    /// 'some range is wrong'.
     #[test]
     fn precedence_follows_semver_11() {
         let v = |s: &str| Version::parse(s).expect(s);

@@ -1,9 +1,6 @@
 //! `volunteer-shift-domain` — router (scaffold, not part of the goal).
 //!
-//! `src/handlers.rs` is the goal: nothing in it is implemented yet. This file
-//! answers `/health` and mints a test token at `POST /test/token`
-//! `{"subject","roles":[...],"scopes":[...]}` — a fixture, so a gate never has
-//! to drive a real register/login flow to test `handlers.rs` in isolation.
+//! `src/handlers.rs` is the goal. This file answers `/health` and mints a test token at `POST /test/token` `{"subject","roles":[...],"scopes":[...]}`, a fixture so a gate never drives a real register/login flow.
 
 #[allow(warnings)]
 mod bindings {
@@ -54,7 +51,6 @@ guestio::guest_p3_bearer!();
 
 struct Component;
 
-/// What a handler answers with: a status and a JSON body.
 pub struct Reply {
     pub status: u16,
     pub json: Value,
@@ -72,11 +68,9 @@ impl Reply {
     }
 }
 
-/// One request, as `handlers::handle` sees it.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
-    /// The `Authorization: Bearer …` value, empty when the header is absent.
     pub bearer: String,
 }
 
@@ -97,10 +91,8 @@ pub fn now_secs() -> u64 {
     system_clock::now().seconds as u64
 }
 
-/// A test token, minted directly (never a real register/login) — the ROUTER's
-/// fixture, never `handlers.rs`'s: a fixture that mints its own tokens can
-/// drift from what the verifier actually accepts, and then `handlers.rs` fails
-/// for the router's reason, not its own.
+/// A test token minted directly: the ROUTER's fixture, never `handlers.rs`'s, so a fixture
+/// minting its own tokens cannot drift from what the verifier accepts.
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let subject = req.get("subject").and_then(Value::as_str).unwrap_or("test").to_string();
@@ -151,7 +143,6 @@ impl Guest for Component {
 
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
 
-        // Static UI Serving
         if seg.is_empty() || seg.as_slice() == ["index.html"] {
             return respond(200, "text/html", include_str!("../ui/index.html"));
         }

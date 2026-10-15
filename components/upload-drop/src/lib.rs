@@ -1,16 +1,12 @@
 //! drop:app — a presigned direct-upload drop-box over composed contracts.
 //!
-//! The presigned-ticket axis: the backend never streams the payload on the way
-//! IN. `POST /api/tickets` answers only the policy question via `upload::gate`
-//! (content-type allowed? under the size cap?) and returns a signed, expiring
-//! ticket. The client then `PUT`s the bytes at `/api/blob/{token}`; we
-//! `upload::redeem` the ticket (verifying the HMAC + expiry), store the bytes in
-//! `blob::store`, and write the object's metadata to `records::store`.
-//!
-//! Downloads go out under a `webhook::sign` HMAC token: `/api/object/{id}`
-//! returns a `{sig, exp}` pair, and `/api/blob/{id}?sig=&exp=` streams the bytes
-//! only if the signature verifies and hasn't expired. A shareable link that
-//! never exposes the underlying store — no auth component needed.
+//! Presigned-ticket axis: the backend never streams the payload IN. `POST /api/tickets` answers
+//! only the policy question via `upload::gate` and returns a signed, expiring ticket; the client
+//! `PUT`s the bytes at `/api/blob/{token}`, we `upload::redeem` it (HMAC + expiry), store the
+//! bytes in `blob::store` and the metadata in `records::store`.
+//! Downloads go out under a `webhook::sign` HMAC token: `/api/object/{id}` returns `{sig, exp}`
+//! and `/api/blob/{id}?sig=&exp=` streams only if it verifies and hasn't expired, so no auth
+//! component and no exposed store.
 
 #[allow(warnings)]
 mod bindings {
@@ -57,8 +53,8 @@ struct Component;
 
 const META: &str = "objects";
 const CONTAINER: &str = "drop";
-/// The download-link secret. Not a request secret — a deploy-time signing key
-/// for the shareable link HMAC. Swap via a real secret in production.
+/// The download-link signing secret: a deploy-time key, not a request secret. Swap via a real
+/// secret in production.
 const LINK_SECRET: &str = "drop-download-link-secret";
 /// Signed download links live this long.
 const LINK_TTL: u64 = 300;
@@ -86,7 +82,6 @@ impl Guest for Component {
 
 enum Outcome {
     Json(u16, String),
-    /// Raw bytes with an explicit content-type (the download path).
     Bytes(u16, String, Vec<u8>),
 }
 impl Outcome {
@@ -116,10 +111,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- ticket: the policy answer ----------------------------------------------
-
-/// Answer the policy question and mint a signed, expiring ticket. No bytes
-/// touched here — this is the whole point of the presigned axis.
 async fn make_ticket(request: Request) -> Outcome {
     let body = match parse_body(request).await {
         Ok(v) => v,
@@ -130,7 +121,6 @@ async fn make_ticket(request: Request) -> Outcome {
     if content_type.is_empty() {
         return Outcome::err(422, "content-type required");
     }
-    // tenant is fixed for the demo; a real deploy keys it off the caller.
     match upload::authorize("drop", &content_type, size, 0) {
         Ok(t) => Outcome::Json(
             201,
@@ -140,12 +130,8 @@ async fn make_ticket(request: Request) -> Outcome {
     }
 }
 
-// ---- upload: redeem + store --------------------------------------------------
-
-/// Redeem the ticket (HMAC + expiry checked inside `upload::redeem`), store the
-/// raw body under the granted object-key, and write metadata. The client PUTs
-/// straight here — we stream the body into the store once, no intermediate copy
-/// held for policy (policy was already decided at ticket time).
+/// Redeem the ticket, store the raw body under the granted object-key and write metadata. Policy
+/// was decided at ticket time, so the body streams into the store once.
 async fn put_blob(request: Request, token: &str) -> Outcome {
     let grant = match upload::redeem(token) {
         Ok(g) => g,
@@ -155,13 +141,11 @@ async fn put_blob(request: Request, token: &str) -> Outcome {
         Ok(b) => b,
         Err(_) => return Outcome::err(400, "could not read body"),
     };
-    // enforce the granted ceiling on the actual bytes (ticket carried max-size).
     if data.len() as u64 > grant.max_size {
         return Outcome::err(413, "body exceeds granted max-size");
     }
-    // create the metadata record first so the store mints the id; the blob is
-    // then keyed under that SAME id, so `GET /api/object/{id}` hydrates and the
-    // download path reads the right object.
+    // Create the metadata record first so the store mints the id; the blob is keyed under that
+    // SAME id so download reads the right object.
     let seed = json!({
         "object_key": grant.object_key,
         "content_type": grant.content_type,
@@ -174,11 +158,9 @@ async fn put_blob(request: Request, token: &str) -> Outcome {
     };
     let id = entry.id.clone();
     if let Err(e) = blob::put(CONTAINER, &id, &data, &grant.content_type) {
-        // bytes never landed — drop the orphaned metadata record.
         let _ = records::delete(META, &id);
         return blob_err(e);
     }
-    // rewrite the record with its own id embedded for the listing/meta views.
     let doc = json!({
         "id": id,
         "object_key": grant.object_key,
@@ -189,8 +171,6 @@ async fn put_blob(request: Request, token: &str) -> Outcome {
     let _ = records::update(META, &id, &doc.to_string(), entry.revision);
     Outcome::Json(201, json!({"id": id, "size": data.len() as u64}).to_string())
 }
-
-// ---- metadata + signed link --------------------------------------------------
 
 fn list_objects() -> Outcome {
     match records::list_records(META, 100, "") {
@@ -206,7 +186,6 @@ fn list_objects() -> Outcome {
     }
 }
 
-/// Return the object's metadata plus a freshly signed, expiring download link.
 fn object_meta(id: &str) -> Outcome {
     let entry = match records::get(META, id) {
         Ok(e) => e,
@@ -222,7 +201,6 @@ fn object_meta(id: &str) -> Outcome {
     Outcome::Json(200, doc.to_string())
 }
 
-/// Verify the signed link, then stream the stored bytes back out.
 fn get_blob(id: &str, path: &str) -> Outcome {
     let sig = query_str(path, "sig").unwrap_or_default();
     let exp: u64 = query_str(path, "exp").and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -240,8 +218,9 @@ fn get_blob(id: &str, path: &str) -> Outcome {
     }
 }
 
-/// Sign `id|exp` with the download secret using the signer's stripe scheme; the
-/// signature header string is opaque to the client and re-verified on download.
+/// Sign `id
+/// exp` with the download secret using the signer's stripe scheme; the header string is opaque to
+/// the client.
 fn sign_link(id: &str) -> (String, u64) {
     let exp = now() + LINK_TTL;
     let payload = format!("{id}|{exp}");
@@ -260,8 +239,6 @@ fn verify_link(id: &str, exp: u64, sig: &str) -> bool {
     sign::verify(payload.as_bytes(), sig, LINK_SECRET, sign::Scheme::Stripe, LINK_TTL + 60).is_ok()
 }
 
-// ---- stats -------------------------------------------------------------------
-
 fn stats() -> Outcome {
     let count = records::count(META).unwrap_or(0);
     let mut bytes: u64 = 0;
@@ -274,8 +251,6 @@ fn stats() -> Outcome {
     }
     Outcome::Json(200, json!({"objects": count, "total_bytes": bytes}).to_string())
 }
-
-// ---- error mapping -----------------------------------------------------------
 
 fn policy_err(e: upload::PolicyError) -> Outcome {
     match e {
@@ -311,8 +286,6 @@ fn store_err(e: records::StoreError) -> Outcome {
         }
     }
 }
-
-// ---- http plumbing -----------------------------------------------------------
 
 async fn parse_body(request: Request) -> Result<Value, Outcome> {
     let body = read_body(request).await.map_err(|_| Outcome::err(400, "could not read body"))?;

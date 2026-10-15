@@ -2,25 +2,13 @@
 //!
 //! `tests/xlsx.rs` is the specification and is not writable from here.
 //!
-//! ## What it does not do, on purpose
-//!
-//! It does not parse CSV and it does not open ZIP archives. `csv:codec` already
-//! does the first — quoted fields, embedded delimiters, ragged rows — and
-//! `zip:archive` does the second. Both are imported. What is left is the part
-//! neither knows about: the OOXML shape of a worksheet.
-//!
-//! ## The two things a naive xlsx reader gets wrong
-//!
-//! **A gap is an omission, not a blank.** `<c r="A1"/><c r="C1"/>` is three columns
-//! with the middle one empty, and a reader that pushes cells in document order
-//! silently shifts every value left of the gap into the wrong column. That is a
-//! bulk insert writing the price into the quantity field, and nothing fails. The
-//! cell reference carries the column letter for exactly this reason, so the letter
-//! is what decides position here — never the order.
-//!
-//! **Text lives somewhere else.** A cell with `t="s"` holds an INDEX into
-//! `xl/sharedStrings.xml`, not a string. Reading the number is how a spreadsheet of
-//! names becomes a spreadsheet of small integers.
+//! It does not parse CSV or open ZIP archives: `csv:codec` and `zip:archive` are imported, and
+//! what is left is the OOXML shape of a worksheet.
+//! A gap is an omission, not a blank: `<c r="A1"/><c r="C1"/>` is three columns, and pushing
+//! cells in document order shifts values into the wrong column (a bulk insert writing price into
+//! quantity, with nothing failing). The column letter in the cell reference decides position,
+//! never the order.
+//! Text lives elsewhere: a `t="s"` cell holds an INDEX into `xl/sharedStrings.xml`, not a string.
 
 /// One row, already lined up with the header.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,10 +37,7 @@ pub enum ImportError {
     Csv(String),
 }
 
-/// `A` -> 0, `Z` -> 25, `AA` -> 26. The letters of a cell reference like `BC12`.
-///
-/// This is what decides a cell's column. Document order does not, because a row
-/// with a gap in it omits the cell rather than emitting an empty one.
+/// `A` -> 0, `Z` -> 25, `AA` -> 26: the letters of a cell reference like `BC12`. This decides a cell's column; a row with a gap omits the cell rather than emitting an empty one.
 pub fn column_of(reference: &str) -> Option<usize> {
     let letters: String = reference
         .chars()
@@ -69,7 +54,6 @@ pub fn column_of(reference: &str) -> Option<usize> {
     Some(n - 1)
 }
 
-/// The text between the next `<tag ...>` and its `</tag>`, from `at`.
 fn tag_text(xml: &str, tag: &str, from: usize) -> Option<(String, usize)> {
     let open = xml[from..].find(&format!("<{tag}"))? + from;
     let gt = xml[open..].find('>')? + open;
@@ -182,15 +166,12 @@ pub fn worksheet_rows(xml: &str, shared: &[String]) -> Vec<Vec<String>> {
                     .unwrap_or_default(),
                 // Text stored in the cell itself.
                 Some("inlineStr") => tag_text(cbody, "t", 0).map(|(v, _)| v).unwrap_or_default(),
-                // Everything else — numbers, dates as serial numbers, booleans —
-                // comes back as the literal `<v>`. Formatting is a rendering
-                // concern and this is not a renderer.
+                // Everything else (numbers, serial dates, booleans) comes back as the literal
+                // `<v>`; formatting is a rendering concern.
                 _ => tag_text(cbody, "v", 0).map(|(v, _)| v).unwrap_or_default(),
             };
 
-            // Positioned by LETTER. The gap between `A` and `C` is a real empty
-            // column, and pushing in document order would shift every later value
-            // one place left.
+            // Positioned by LETTER: the gap between `A` and `C` is a real empty column.
             if cells.len() <= column {
                 cells.resize(column + 1, String::new());
             }
@@ -201,7 +182,6 @@ pub fn worksheet_rows(xml: &str, shared: &[String]) -> Vec<Vec<String>> {
     rows
 }
 
-/// Rows into a `Sheet`: first row is the header, the rest are lined up with it.
 pub fn shape(mut rows: Vec<Vec<String>>, sheet_name: &str) -> Result<Sheet, ImportError> {
     // Trailing blank rows are what a spreadsheet leaves behind when someone deletes
     // content without deleting the row.
@@ -247,7 +227,6 @@ pub fn shape(mut rows: Vec<Vec<String>>, sheet_name: &str) -> Result<Sheet, Impo
     Ok(Sheet { header, rows: out, sheet_name: sheet_name.to_string() })
 }
 
-/// Which reader a filename asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
     /// Comma-delimited.
@@ -273,11 +252,9 @@ pub fn format_of(name: &str) -> Result<Format, ImportError> {
     }
 }
 
-/// The worksheet part of an `.xlsx`, given its already-extracted members.
-///
-/// `sheet1.xml` rather than "the one the workbook says is first": the workbook's
-/// relationship graph is another two files to parse, and every writer in the world
-/// numbers the first sheet 1. Named in the WIT as a limit rather than hidden.
+/// The worksheet part of an `.xlsx`, given its already-extracted members. `sheet1.xml` rather
+/// than the workbook's first sheet, since the relationship graph is two more files to parse and
+/// writers number the first sheet 1. Named in the WIT as a limit.
 pub fn xlsx_from_parts(parts: &[(String, Vec<u8>)]) -> Result<Sheet, ImportError> {
     let find = |want: &str| {
         parts.iter().find(|(n, _)| n == want).map(|(_, d)| String::from_utf8_lossy(d).to_string())
@@ -293,11 +270,8 @@ pub fn xlsx_from_parts(parts: &[(String, Vec<u8>)]) -> Result<Sheet, ImportError
     shape(worksheet_rows(&sheet_xml, &shared), &short)
 }
 
-// ---- the component -----------------------------------------------------
-//
-// The two IMPORTS are the point of this component: the CSV is parsed by
-// `csv:codec` and the container is opened by `zip:archive`, both of which already
-// existed. What is written here is the OOXML shape, which neither knows about.
+// The two IMPORTS are the point: `csv:codec` parses the CSV and `zip:archive` opens the
+// container; only the OOXML shape is written here.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]

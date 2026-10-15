@@ -1,14 +1,11 @@
 //! scribe:app — a collaborative document editor over composed contracts.
 //!
-//! A document is one `crdt:merge` `lwwmap` state string persisted in
-//! `record:store` (one row per doc, looked up by an indexed `doc` field). An
-//! edit is an op `{field, value, ts, replica}`: the server merges it with
-//! `lwwmap-set` and stores the new state under optimistic concurrency (the
-//! record `revision` is the CAS token) — on a conflict it reloads and re-merges,
-//! which is safe precisely because CRDT merge is commutative + idempotent, so a
-//! retried op still converges. `GET /events` holds the connection open and
-//! pushes the merged document whenever its revision changes (real SSE push on
-//! wasip2, same trick as pulse).
+//! A document is one `crdt:merge` `lwwmap` state persisted in `record:store` (one row per doc,
+//! found by an indexed `doc` field). An edit is an op `{field, value, ts, replica}` merged with
+//! `lwwmap-set` under optimistic concurrency (record `revision` is the CAS token); on conflict it
+//! reloads and re-merges, safe because CRDT merge is commutative and idempotent. `GET /events`
+//! holds the connection open and pushes the merged document whenever its revision changes (SSE on
+//! wasip2, as in pulse).
 
 #[allow(warnings)]
 mod bindings {
@@ -73,8 +70,7 @@ impl Guest for Component {
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         match (&method, seg.as_slice()) {
-            // The SSE route owns the response (it streams); everything else
-            // computes an Outcome and emits once.
+            //
             (Method::Get, ["api", "docs", doc, "events"]) => stream_events(doc, &path),
             _ => {
                 let outcome = match (&method, seg.as_slice()) {
@@ -117,8 +113,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- document state ----------------------------------------------------------
-
 /// The stored row for `doc`, if any: (record id, crdt lwwmap state, revision).
 /// If more than one row somehow exists for a doc, the earliest (lowest id) wins
 /// deterministically.
@@ -148,7 +142,6 @@ fn load(doc: &str) -> Doc {
     }
 }
 
-/// A loaded document: the two CRDT states + the record id/revision.
 struct Doc {
     id: Option<String>,
     meta: String,
@@ -160,12 +153,10 @@ fn record_data(doc: &str, meta: &str, body: &str) -> String {
     json!({ "doc": doc, "meta": meta, "body": body }).to_string()
 }
 
-/// The merged scalar fields (title, …) for an lwwmap meta state.
 fn merged_doc(meta: &str) -> Value {
     crdt::value(meta).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| json!({}))
 }
 
-/// The current body text from the rga state.
 fn body_text(body: &str) -> String {
     crdt::value(body)
         .ok()
@@ -188,7 +179,6 @@ fn doc_json(doc: &str, d: &Doc) -> Value {
     json!({ "doc": doc, "rev": d.rev, "fields": fields, "body_elems": elems })
 }
 
-/// A scalar field's value as plain text (for diffing).
 fn field_text(meta: &str, field: &str) -> String {
     match merged_doc(meta).get(field) {
         Some(Value::String(s)) => s.clone(),
@@ -201,11 +191,6 @@ fn get_doc(doc: &str) -> Outcome {
     Outcome::Json(200, doc_json(doc, &load(doc)).to_string())
 }
 
-/// Apply one edit, merging it under optimistic concurrency (record revision as
-/// the CAS token; on conflict reload + re-merge, safe because CRDT merge is
-/// idempotent). The `body` field is an rga text sequence edited with id-anchored
-/// insert/delete ops (so concurrent typing interleaves); every other field is a
-/// last-writer-wins register.
 async fn apply_op(request: Request, doc: &str) -> Outcome {
     let body = match parse_body(request).await {
         Ok(v) => v,
@@ -226,8 +211,7 @@ async fn apply_op(request: Request, doc: &str) -> Outcome {
 
     for _ in 0..MAX_RETRY {
         let cur = load(doc);
-        // Compute the new (meta, body) pair + the (field, before, after) text for
-        // history, depending on the op.
+        //
         let (new_meta, new_body, before, after) = match field.as_str() {
             "body" => {
                 let before = body_text(&cur.body);
@@ -277,8 +261,8 @@ async fn apply_op(request: Request, doc: &str) -> Outcome {
     Outcome::Err(409, "too much contention, retry".into())
 }
 
-/// Apply an id-anchored rga op to the body state. `kind` is `insert`
-/// (`{after, text, ts, seq}`) or `delete` (`{ids}`).
+/// Apply an id-anchored rga op to the body: `insert` (`{after, text, ts, seq}`) or `delete`
+/// (`{ids}`).
 #[allow(clippy::result_large_err)]
 fn apply_body_op(body_state: &str, req: &Value, replica: &str) -> Result<String, Outcome> {
     match req["kind"].as_str().unwrap_or("") {
@@ -310,8 +294,6 @@ fn apply_body_op(body_state: &str, req: &Value, replica: &str) -> Result<String,
     }
 }
 
-// ---- history (composes diff:text) --------------------------------------------
-
 // ponytail: history grows unbounded (one row per real change); fine for a demo.
 // Cap it (keep last N) or roll up if a doc sees heavy editing.
 fn record_history(doc: &str, rev: u64, field: &str, replica: &str, before: &str, after: &str) {
@@ -331,7 +313,6 @@ fn get_history(doc: &str, path: &str) -> Outcome {
         .iter()
         .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
         .collect();
-    // newest first by revision
     rows.sort_by(|a, b| b["rev"].as_u64().unwrap_or(0).cmp(&a["rev"].as_u64().unwrap_or(0)));
     rows.truncate(limit);
 
@@ -360,8 +341,6 @@ fn get_history(doc: &str, path: &str) -> Outcome {
         .collect();
     Outcome::Json(200, json!({ "doc": doc, "history": entries }).to_string())
 }
-
-// ---- presence ----------------------------------------------------------------
 
 async fn heartbeat(request: Request, doc: &str) -> Outcome {
     let body = match parse_body(request).await {
@@ -405,8 +384,6 @@ fn presence(doc: &str) -> Outcome {
     Outcome::Json(200, json!({ "online": online }).to_string())
 }
 
-// ---- the SSE stream ----------------------------------------------------------
-
 /// Hold the connection open and push the merged document whenever its revision
 /// changes. Sends the current document immediately (so a late joiner is caught
 /// up), then loops until the client disconnects or the cap is hit.
@@ -447,8 +424,6 @@ fn stream_events(doc: &str, path: &str) -> Result<Response, ErrorCode> {
     Ok(response)
 }
 
-// ---- http plumbing -----------------------------------------------------------
-
 fn crdt_err(e: crdt::CrdtError) -> Outcome {
     match e {
         crdt::CrdtError::InvalidJson(m) => Outcome::Err(422, m),
@@ -474,18 +449,9 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be before the component stops reading it. Without a ceiling,
+/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy; uploads police their own size with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

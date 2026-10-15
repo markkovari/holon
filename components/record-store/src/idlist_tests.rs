@@ -191,8 +191,6 @@ fn explore(
     n
 }
 
-// ---- the algorithm this replaced, verbatim in shape ---------------------------
-
 mod old {
     use super::*;
 
@@ -298,17 +296,12 @@ mod old {
     }
 }
 
-// ---- the old bugs, reproduced ------------------------------------------------
-
-/// A `remove` that empties a chunk deletes it and rewrites the manifest with no
-/// guard at all. Run an `insert` inside that window and, depending on exactly
-/// where, the insert is lost (its CAS'd chunk deleted under it), or lost AND the
-/// list is wedged: the insert recreated chunk 0 and named it, the remove's plain
-/// manifest write then un-named it, and every later insert takes the bootstrap
-/// path, CASes chunk 0 with `expected: 0`, conflicts with the chunk that is still
-/// there, and loses all forty "races" — against nobody. That is the shape of the
-/// `ix_transfers_state_"pending"` drift line PR #280 saw: a pending index empties
-/// every time the last pending transfer settles.
+/// The old `remove` that empties a chunk deleted it and rewrote the manifest with no guard. An
+/// `insert` inside that window is lost, or lost AND the list is wedged: the insert recreated
+/// chunk 0 and named it, the remove's plain manifest write un-named it, and every later insert
+/// CASes chunk 0 with `expected: 0`, conflicts with the chunk still there, and loses all its
+/// "races" against nobody (seen as `ix_transfers_state_"pending"` drift, where a pending index
+/// empties whenever the last pending transfer settles).
 #[test]
 fn old_remove_emptying_a_chunk_loses_a_racing_insert_and_can_wedge_the_list() {
     let (mut lost, mut wedged) = (0, 0);
@@ -418,8 +411,6 @@ fn an_emptied_manifest_over_a_leftover_chunk_no_longer_wedges_inserts() {
     insert(&kv, B, "x").unwrap();
     assert_consistent(&kv, &set_of(&["x"]));
 }
-
-// ---- the current code under every single-preemption schedule -------------------
 
 fn insert4(kv: &MemKv, id: &str) {
     insert_capped(kv, B, id, 4).unwrap()
@@ -642,8 +633,6 @@ fn chunk_keys_are_recognised_and_base_keys_are_not() {
     assert!(!is_chunk_key("ix_t_c0x_12345678")); // `_c0` inside a base is not a suffix
     assert!(!is_chunk_key("ix_t_f_c1234567"));
 }
-
-// ---- stress ------------------------------------------------------------------
 
 /// Real threads, a store that yields on every call, a chunk cap of 3 so chunks
 /// are created and dropped constantly, and ids in random order so inserts land

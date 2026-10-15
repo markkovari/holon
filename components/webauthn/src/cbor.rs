@@ -1,14 +1,11 @@
 //! A minimal CBOR (RFC 8949) reader — only what WebAuthn actually sends.
 //!
-//! CTAP2 requires *canonical* CBOR: definite lengths, shortest-form integers.
-//! So this handles unsigned/negative integers, byte and text strings, arrays and
-//! maps, and refuses everything else (indefinite lengths, tags, floats) instead
-//! of guessing. Decoding also reports how many bytes an item consumed, which is
-//! how `authData` finds where the COSE public key ends and extensions begin.
-//!
-//! ponytail: hand-rolled instead of pulling in a CBOR crate — this is ~100 lines
-//! for a closed subset, and the repo's "no new dependency" property is worth more
-//! than the generality. Swap in `ciborium` if a full decoder is ever needed.
+//! CTAP2 requires *canonical* CBOR, so this handles unsigned/negative integers, byte and text
+//! strings, arrays and maps, and refuses everything else (indefinite lengths, tags, floats)
+//! instead of guessing. Decoding reports how many bytes an item consumed, which is how `authData`
+//! finds where the COSE public key ends.
+//! ponytail: hand-rolled for a closed subset (~100 lines) to keep the no-new-dependency property;
+//! swap in `ciborium` if a full decoder is needed.
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Cbor {
@@ -24,7 +21,6 @@ pub enum Cbor {
 }
 
 impl Cbor {
-    /// Look up a text key in a map.
     pub fn get(&self, key: &str) -> Option<&Cbor> {
         match self {
             Cbor::Map(pairs) => {
@@ -70,12 +66,10 @@ impl Cbor {
     }
 }
 
-/// Decode one CBOR item; returns it and the number of bytes consumed.
 pub fn decode(buf: &[u8]) -> Result<(Cbor, usize), String> {
     let (major, arg, mut used) = head(buf)?;
     match major {
         0 => Ok((Cbor::Uint(arg), used)),
-        // -1 - arg, per RFC 8949 §3.1.
         1 => Ok((Cbor::Nint(-1 - i64::try_from(arg).map_err(|_| "negative int too large")?), used)),
         2 | 3 => {
             let n = arg as usize;
@@ -140,8 +134,6 @@ fn head(buf: &[u8]) -> Result<(u8, u64, usize), String> {
     Ok((major, arg, used))
 }
 
-/// Encode a canonical CBOR map with integer keys — used only to re-serialise a
-/// COSE key for storage comparisons in tests. Kept tiny on purpose.
 #[cfg(test)]
 pub fn encode_int_map(pairs: &std::collections::BTreeMap<i64, Cbor>) -> Vec<u8> {
     let mut out = vec![0xa0 | pairs.len() as u8];

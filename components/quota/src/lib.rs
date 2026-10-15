@@ -1,27 +1,14 @@
 //! `quota` — meter cumulative usage against a budget over a billing period — reserve, consume, refund
 //!
-//! Cumulative usage metering + enforcement, backed by `wasi:keyvalue`.
-//!
-//! CONTRAST WITH `rate-limiter` (`ratelimit:guard`): the rate-limiter counts
-//! EVENTS within a sliding/fixed window for burst protection and resets the
-//! counter every window. `quota:meter` instead accumulates CONSUMPTION (API
-//! calls this month, GB stored, seats used) against a budget over a billing
-//! PERIOD — the counter only "resets" when the calendar period rolls over to a
-//! new bucket. Reserve-or-reject before the work, record actual usage after,
-//! peek the balance any time, reset on plan change.
-//!
-//! State: one counter key per (subject, period-bucket):
-//!   `q_{sanitized subject}_{bucket}`  -> units used, bumped via the ATOMIC
-//!                                        `wasi:keyvalue/atomics.increment`.
-//! The bucket = `now / period_seconds`, so a subject's counter for the current
-//! period is found purely by arithmetic on the wall clock — no enumeration.
-//! `resets_at = (bucket + 1) * period`.
-//!
-//! Concurrency: consumption lives in its own key and is bumped atomically, so
-//! two concurrent consumers can never lose an update and oversell silently.
-//! Because the draft API exposes only `increment` (no compare-and-swap), the
-//! reserve path is check-then-increment-then-recheck with best-effort
-//! compensation on overshoot — see `reserve` for the race note.
+//! Cumulative usage metering on `wasi:keyvalue`. Unlike `rate-limiter` (events in a window,
+//! resets every window), `quota:meter` accumulates CONSUMPTION against a budget per billing
+//! PERIOD; the counter only resets when the period rolls over to a new bucket.
+//! State: one counter `q_{sanitized subject}_{bucket}` bumped via the ATOMIC
+//! `wasi:keyvalue/atomics.increment`. Bucket = `now / period_seconds`, so the current counter is
+//! found by arithmetic, no enumeration; `resets_at = (bucket + 1) * period`.
+//! Concurrent consumers cannot lose an update, but the draft API has no compare-and-swap, so
+//! reserve is check-then-increment-then-recheck with best-effort compensation on overshoot (see
+//! `reserve`).
 
 #[allow(warnings)]
 mod bindings;
@@ -41,7 +28,6 @@ fn now() -> u64 {
     wall_clock::now().seconds
 }
 
-/// Treat a zero period as the 30-day default so we never divide by zero.
 fn period_or_default(period_seconds: u64) -> u64 {
     if period_seconds == 0 {
         DEFAULT_PERIOD
@@ -50,18 +36,16 @@ fn period_or_default(period_seconds: u64) -> u64 {
     }
 }
 
-/// The current period bucket index for `period` (= floor(now / period)).
 fn bucket_of(period: u64) -> u64 {
     now() / period
 }
 
-/// Unix seconds the given bucket's period ends / resets.
 fn resets_at(bucket: u64, period: u64) -> u64 {
     (bucket + 1).saturating_mul(period)
 }
 
-/// Sanitize an opaque subject to NATS-legal kv chars (same byte scheme as the
-/// idempotency-guard's `id_key` / rate-limiter's `safe`).
+/// Sanitize an opaque subject to NATS-legal kv chars (same byte scheme as idempotency-guard's
+/// `id_key`).
 fn sanitize(subject: &str) -> String {
     let mut out = String::with_capacity(subject.len());
     for b in subject.bytes() {
@@ -73,7 +57,6 @@ fn sanitize(subject: &str) -> String {
     out
 }
 
-/// Counter key for a subject's consumption in a given period bucket.
 fn counter_key(subject: &str, bucket: u64) -> String {
     format!("q_{}_{}", sanitize(subject), bucket)
 }
@@ -82,7 +65,6 @@ fn open() -> Result<kv::Bucket, QuotaError> {
     kv::open(BUCKET).map_err(|e| QuotaError::BackendUnavailable(format!("open: {e:?}")))
 }
 
-/// Read a u64 counter, treating absent / unparseable as 0.
 fn read_u64(bucket: &kv::Bucket, key: &str) -> Result<u64, QuotaError> {
     match bucket.get(key) {
         Ok(Some(bytes)) => {
@@ -99,7 +81,6 @@ fn write_u64(bucket: &kv::Bucket, key: &str, v: u64) -> Result<(), QuotaError> {
         .map_err(|e| QuotaError::BackendUnavailable(format!("set: {e:?}")))
 }
 
-/// Build a `Balance` snapshot from a known `used` total.
 fn balance(used: u64, limit: u64, bucket: u64, period: u64) -> Balance {
     Balance {
         used,
@@ -121,28 +102,21 @@ impl Guest for Component {
         let b = open()?;
         let key = counter_key(&subject, bucket);
 
-        // Optimistic pre-check against the current value.
         let current = read_u64(&b, &key)?;
         if current.saturating_add(amount) > limit {
-            // Wouldn't fit; consume nothing.
             return Err(QuotaError::Exceeded(limit.saturating_sub(current)));
         }
 
-        // Atomically claim the units. `increment` returns the NEW total, so two
-        // concurrent reservers can't both read the same `current` and oversell.
+        // Atomically claim the units: `increment` returns the NEW total, so concurrent reservers
+        // cannot both read the same `current` and oversell.
         let new = atomics::increment(&b, &key, amount)
             .map_err(|e| QuotaError::BackendUnavailable(format!("increment: {e:?}")))?;
 
-        // BEST-EFFORT race compensation (NOT a hard guarantee): a concurrent
-        // reserver may have incremented between our pre-check and our own
-        // increment, pushing the atomic total over `limit`. The draft API has
-        // no compare-and-swap to make claim-or-reject truly atomic, so on
-        // overshoot we roll our `amount` back by re-setting the key to its
-        // pre-increment value and reject. This `set` is itself non-atomic and
-        // can clobber another racer's concurrent write — at worst it briefly
-        // under-counts under heavy simultaneous contention, never permanently
-        // oversells. (Same class of caveat as the idempotency-guard's nonce
-        // race note.)
+        // BEST-EFFORT race compensation (NOT a hard guarantee): a concurrent reserver may push
+        // the atomic total over `limit` between our pre-check and increment. With no
+        // compare-and-swap, on overshoot we re-set the key to its pre-increment value and reject.
+        // That `set` can clobber another racer's write, so under heavy contention it can briefly
+        // under-count but never permanently oversells.
         if new > limit {
             let _ = write_u64(&b, &key, current);
             return Err(QuotaError::Exceeded(limit.saturating_sub(current)));
@@ -162,7 +136,6 @@ impl Guest for Component {
         let b = open()?;
         let key = counter_key(&subject, bucket);
 
-        // Unconditional post-hoc accounting: no limit check, just record.
         let new = atomics::increment(&b, &key, amount)
             .map_err(|e| QuotaError::BackendUnavailable(format!("increment: {e:?}")))?;
 
@@ -179,13 +152,7 @@ impl Guest for Component {
 
     fn reset(subject: String) -> Result<(), QuotaError> {
         let b = open()?;
-        // `reset` carries no period, so we can't reconstruct the exact bucket
-        // for a subject metered with a non-default period; we delete the
-        // CURRENT bucket under the DEFAULT period (the common monthly case).
-        // We also can't enumerate every historical bucket key cheaply, so older
-        // buckets are left untouched — they're never read again once the clock
-        // advances past their period, so they age out naturally and leaving
-        // them is harmless. Idempotent: deleting an absent key is a no-op.
+        // `reset` carries no period, so it deletes the CURRENT bucket under the DEFAULT period (the common monthly case); older buckets are never read again and age out. Idempotent.
         let bucket = bucket_of(DEFAULT_PERIOD);
         let _ = b.delete(&counter_key(&subject, bucket));
         Ok(())

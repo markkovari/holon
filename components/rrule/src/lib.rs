@@ -1,19 +1,11 @@
 //! `rrule` — expand a repeating or recurring event into concrete dates — every weekday, every 2 weeks on Mon and Wed
 //!
-//! Expand a normalized recurrence rule into occurrence dates (`YYYY-MM-DD`),
-//! clipped to a half-open-ish inclusive window. Dates are days-since-epoch
-//! internally (Hinnant civil<->days), so there is no date library and no
-//! time-of-day — a recurrence is a set of DAYS and the caller owns the clock.
-//!
-//! Correctness points that are easy to get wrong and are handled here:
-//!   * INTERVAL steps whole periods (N days for daily, N weeks for weekly).
-//!   * BYDAY emits the listed weekdays *within* each weekly period, ascending.
-//!   * COUNT is applied over the full series from `dtstart` — occurrences that
-//!     fall before the window still consume the count — then results are
-//!     clipped to `[from, to]`.
-//!   * A hard cap (366) bounds unbounded (no COUNT / no UNTIL) rules.
-//!
-//! Pure compute — no state, no host imports.
+//! Expand a normalized recurrence rule into occurrence dates (`YYYY-MM-DD`) clipped to an
+//! inclusive window. Dates are days-since-epoch internally, so there is no date library and no
+//! time-of-day. Easy to get wrong: INTERVAL steps whole periods; BYDAY emits the listed weekdays
+//! *within* each weekly period, ascending; COUNT applies over the full series from `dtstart`
+//! (occurrences before the window still consume it) before clipping to `[from, to]`; a hard cap
+//! (366) bounds unbounded rules.
 
 #[allow(warnings)]
 mod bindings;
@@ -27,7 +19,6 @@ struct Component;
 
 const CAP: usize = 366;
 
-/// Parse `YYYY-MM-DD` to days-since-epoch.
 fn parse(s: &str) -> Result<i64, RecurError> {
     let p: Vec<&str> = s.split('-').collect();
     let bad = || RecurError::BadDate(s.to_string());
@@ -62,8 +53,6 @@ fn expand_impl(dtstart: &str, r: &Rule, from: &str, to: &str) -> Result<Vec<Stri
     let mut out: Vec<String> = Vec::new();
     let mut n = 0usize; // occurrences over the full series (for COUNT)
 
-    // Stop conditions shared by both frequencies. `occ` is the candidate day.
-    // Returns true if we should stop the whole expansion.
     let stop = |occ: i64, n: usize| -> bool {
         (count > 0 && n >= count) || until.is_some_and(|u| occ > u) || occ > wt || n > CAP
     };
@@ -80,7 +69,6 @@ fn expand_impl(dtstart: &str, r: &Rule, from: &str, to: &str) -> Result<Vec<Stri
             }
         }
         Freq::Weekly => {
-            // weekdays within a week, ascending & de-duped; default = dtstart's.
             let mut wds: Vec<i64> = if r.by_weekday.is_empty() {
                 vec![weekday(ds)]
             } else {

@@ -82,7 +82,6 @@ impl Guest for Component {
         };
         let body = match (request.get_method(), route.as_str()) {
             (Method::Get, "/slugify") => {
-                // The real capability, invoked over the lattice.
                 let slug = slug::slugify(&param(&query, "text"));
                 format!("{{\"slug\":\"{}\"}}", esc(&slug))
             }

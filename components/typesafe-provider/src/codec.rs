@@ -3,17 +3,11 @@
 //! impl in `lib.rs` converts the WIT records to/from these plain types at the
 //! edges.
 //!
-//! Everything here is deterministic and dependency-light (serde_json only) —
-//! no WASI, no config, no HTTP. The HTTP plumbing lives in `lib.rs`.
-//!
 //! ## Wire shape (from docs.typesafe.ai/api, docs.typesafe.ai/primitives/*)
 //!
-//! One endpoint, `POST /v1/systemone`, takes a `state` (the content being
-//! evaluated) and a `questions` map (id -> Question), and returns an
-//! `answers` map keyed the same way. `choose`/`score`/`gate` each send exactly
-//! one question, under the fixed id [`QUESTION_ID`]; `evaluate` sends the
-//! caller's own ids, all in one request — the batching Jev's API already
-//! supports natively, and System One's own docs recommend over serial calls.
+//! One endpoint, `POST /v1/systemone`, takes a `state` and a `questions` map (id -> Question) and
+//! returns an `answers` map keyed the same way. `choose`/`score`/`gate` send one question under
+//! [`QUESTION_ID`]; `evaluate` batches the caller's own ids in one request.
 //!
 //! ```json
 //! // -> {"state": "...", "model": "jev-latest",
@@ -26,20 +20,12 @@
 //! //     "usage": {"input_tokens": 12, "output_tokens": 4}}
 //! ```
 //!
-//! Score's `criteria` is the ordered `levels` array; its answer's
-//! `probabilities` (and `legend`) are keyed by the level's 0-based position,
-//! stringified (`"0"`, `"1"`, ...) — this module reconstructs the by-name
-//! distribution `jev:decision` exposes from that index.
-//!
-//! Neither `probabilities` on a `score` answer is guaranteed present (the
-//! docs' own quickstart example omits it), so it is treated as optional,
-//! defaulting to no signal beyond `score`/`confidence`.
-//!
-//! Jev never reports a "flat distribution" flag itself — the docs describe it
-//! only qualitatively ("a flat shape ... means low confidence"). `flat` in
-//! `jev:decision::choice-result` is computed here: true when the top two
-//! candidates in the distribution are within [`FLAT_MARGIN_MILLI`] of each
-//! other, i.e. the provider could not clearly separate them.
+//! Score's `criteria` is the ordered `levels` array; its answer's `probabilities` are keyed by
+//! the level's 0-based position stringified (`"0"`, `"1"`), which this module maps back to the
+//! by-name distribution.
+//! `probabilities` on a `score` answer may be absent (the docs' quickstart omits it), so it is optional.
+//! Jev reports no flat-distribution flag; `flat` in `choice-result` is computed here: true when
+//! the top two candidates are within [`FLAT_MARGIN_MILLI`].
 
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -52,7 +38,6 @@ const QUESTION_ID: &str = "q";
 /// `choose` distribution are considered indistinguishable.
 const FLAT_MARGIN_MILLI: u32 = 100;
 
-/// A parsed choice result (plain mirror of the WIT `choice-result`).
 pub struct ParsedChoice {
     pub selected: String,
     pub confidence: u32,
@@ -60,14 +45,12 @@ pub struct ParsedChoice {
     pub flat: bool,
 }
 
-/// A parsed score result (plain mirror of the WIT `score-result`).
 pub struct ParsedScore {
     pub value: f32,
     pub confidence: u32,
     pub distribution: Vec<(String, u32)>,
 }
 
-/// Why parsing a response failed (mapped to `decision-error` by the caller).
 #[derive(Debug)]
 pub enum ParseError {
     BadResponse(String),
@@ -77,8 +60,6 @@ pub enum ParseError {
 fn frac_to_milli(f: f64) -> u32 {
     (f.clamp(0.0, 1.0) * 1000.0).round() as u32
 }
-
-// ---- one question, as JSON (shared by the single-question and batch bodies) ---
 
 fn choice_question(instructions: &str, options: &[String]) -> Value {
     let criteria: Map<String, Value> = options.iter().map(|o| (o.clone(), Value::Null)).collect();
@@ -113,24 +94,18 @@ fn systemone_body(model: &str, state: &str, questions: Map<String, Value>) -> St
     json!({ "state": state, "model": model, "questions": questions }).to_string()
 }
 
-/// Build the `/v1/systemone` request body for a Choice question.
-/// `options` become criteria keys with no description (`null`) — this
-/// contract carries labels only, never per-option guidance text.
 pub fn choose_body(model: &str, state: &str, instructions: &str, options: &[String]) -> String {
     let mut questions = Map::new();
     questions.insert(QUESTION_ID.to_string(), choice_question(instructions, options));
     systemone_body(model, state, questions)
 }
 
-/// Build the `/v1/systemone` request body for a Score question. `levels` is
-/// sent verbatim as the ordered `criteria` array (at least two entries).
 pub fn score_body(model: &str, state: &str, instructions: &str, levels: &[String]) -> String {
     let mut questions = Map::new();
     questions.insert(QUESTION_ID.to_string(), score_question(instructions, levels));
     systemone_body(model, state, questions)
 }
 
-/// Build the `/v1/systemone` request body for a Noul (gate) question.
 pub fn gate_body(
     model: &str,
     state: &str,
@@ -264,19 +239,16 @@ fn gate_from_value(answer: &Value) -> Result<u32, ParseError> {
     Ok(frac_to_milli(noul))
 }
 
-/// Parse a Choice response (the `choose_body` request's answer).
 pub fn parse_choice(body: &[u8], options: &[String]) -> Result<ParsedChoice, ParseError> {
     let answers = answers_of(body)?;
     choice_from_value(&find_answer(&answers, QUESTION_ID)?, options)
 }
 
-/// Parse a Score response (the `score_body` request's answer).
 pub fn parse_score(body: &[u8], levels: &[String]) -> Result<ParsedScore, ParseError> {
     let answers = answers_of(body)?;
     score_from_value(&find_answer(&answers, QUESTION_ID)?, levels)
 }
 
-/// Parse a Noul response (the `gate_body` request's answer).
 pub fn parse_gate(body: &[u8]) -> Result<u32, ParseError> {
     let answers = answers_of(body)?;
     gate_from_value(&find_answer(&answers, QUESTION_ID)?)

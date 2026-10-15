@@ -1,23 +1,12 @@
 //! `system-cron` — read the machine's scheduled jobs, for a component that
 //! cannot read crontab
 //!
-//! The read happens in `comp-cron`, which is native because crontab is the
-//! host's and a `wasm32-wasip2` guest has no such file (ADR-0095). This is the
-//! component side: it holds the contract, and reaches the daemon over HTTP the
-//! same way `fs-watcher` reaches `comp-fswatch`.
-//!
-//! What this may dial is a MANIFEST decision (ADR-0008). The daemon's address
-//! is `cron-url` in `wasi:config`, and the deployment's egress allow-list
-//! decides whether the call leaves at all. There is no allow-list on the
-//! daemon side beyond that: there is only one crontab to read, unlike a
-//! filesystem path that names somewhere.
-//!
-//! Config (wasi:config/store):
-//!   cron-url    where `comp-cron` is listening, e.g. http://127.0.0.1:8008
-//!
-//! It used to return `format!("UNIMPLEMENTED: ...")` — a sentence shaped like
-//! an answer, which no caller could tell from a real one. That is what the old
-//! `-> string` contract permitted; the current one cannot express it.
+//! The read happens in `comp-cron`, native because crontab is the host's (ADR-0095). This is the
+//! component side: it holds the contract and reaches the daemon over HTTP, as `fs-watcher`
+//! reaches `comp-fswatch`.
+//! What this may dial is a MANIFEST decision (ADR-0008): the daemon's address is `cron-url` in
+//! `wasi:config`, and the egress allow-list decides whether the call leaves. The daemon needs no
+//! allow-list of its own: there is only one crontab to read.
 
 #[allow(warnings)]
 mod bindings;
@@ -32,8 +21,7 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Ten seconds. Reading a crontab is a single process spawn; anything slower
-/// than this is a daemon in trouble rather than a big crontab.
+/// Ten seconds: reading a crontab is one process spawn, so slower means a daemon in trouble.
 const TIMEOUT_NS: u64 = 10_000_000_000;
 
 fn daemon_url() -> Result<String, CronError> {
@@ -132,11 +120,8 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, CronError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser.
-///
-/// The daemon's replies have two flat shapes and no nesting beyond a job
-/// list, so a full serde dependency would be more code than the thing it
-/// reads.
+/// Pull one JSON string field out without a parser: the replies are flat, so serde would be more
+/// code than what it reads.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];

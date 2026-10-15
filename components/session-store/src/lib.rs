@@ -1,14 +1,10 @@
 //! `session-store` — hold a server-side session — mint an opaque id, attach data, refresh a sliding expiry, revoke it
 //!
-//! Generic server-side session + CSRF capability, backed by `wasi:keyvalue`.
-//! The client only ever carries the opaque session id (a cookie); the payload
-//! and the CSRF token live here, server-side.
+//! Server-side session + CSRF capability on `wasi:keyvalue`. The client only carries the opaque
+//! session id (a cookie); payload and CSRF token live here.
 //!
-//! State per session: `sess_{id}` -> one line, four colon-separated fields:
-//!   {created}:{expires}:{csrf}:{base64url data}
-//! `created`/`expires` are unix seconds; `csrf` is already url-safe text; the
-//! app-defined `data` blob is base64url-encoded (URL_SAFE_NO_PAD) so it never
-//! collides with the field delimiter.
+//! State per session: `sess_{id}` -> `{created}:{expires}:{csrf}:{base64url data}` (unix seconds;
+//! `data` is base64url so it never collides with the `:` delimiter).
 //!
 //! Config (wasi:config/store):
 //!   default-ttl   session lifetime, seconds (default 86400). The per-call
@@ -30,8 +26,6 @@ struct Component;
 
 const BUCKET: &str = "default";
 
-// ---- config -------------------------------------------------------------
-
 fn default_ttl() -> u64 {
     match config::get("default-ttl") {
         Ok(Some(v)) => v.parse().unwrap_or(86400),
@@ -47,8 +41,6 @@ fn ttl_or_default(ttl_seconds: u64) -> u64 {
     }
 }
 
-// ---- record state -------------------------------------------------------
-
 struct Record {
     created: u64,
     expires: u64,
@@ -60,13 +52,12 @@ fn now() -> u64 {
     wall_clock::now().seconds
 }
 
-/// A fresh 256-bit (32-byte) unguessable token, base64url (no padding).
 fn token() -> String {
     B64.encode(get_random_bytes(32))
 }
 
-/// Sanitize an opaque session id to NATS-legal kv chars (same scheme as the
-/// idempotency-guard's `id_key` / rate-limiter's `rl_key`), prefixed `sess_`.
+/// Sanitize an opaque session id to NATS-legal kv chars (same scheme as idempotency-guard's
+/// `id_key`), prefixed `sess_`.
 fn sess_key(id: &str) -> String {
     let mut out = String::with_capacity(id.len() + 5);
     out.push_str("sess_");
@@ -83,7 +74,6 @@ fn open() -> Result<kv::Bucket, SessionError> {
     kv::open(BUCKET).map_err(|e| SessionError::BackendUnavailable(format!("open: {e:?}")))
 }
 
-/// Load a record by sanitized key; `Ok(None)` if absent.
 fn load(bucket: &kv::Bucket, key: &str) -> Result<Option<Record>, SessionError> {
     match bucket.get(key) {
         Ok(Some(bytes)) => {
@@ -97,7 +87,6 @@ fn load(bucket: &kv::Bucket, key: &str) -> Result<Option<Record>, SessionError> 
 }
 
 fn parse(s: &str) -> Result<Record, SessionError> {
-    // `{created}:{expires}:{csrf}:{b64url data}`
     let mut parts = s.splitn(4, ':');
     let created = parts
         .next()
@@ -130,7 +119,6 @@ fn set(bucket: &kv::Bucket, key: &str, body: &str) -> Result<(), SessionError> {
         .map_err(|e| SessionError::BackendUnavailable(format!("set: {e:?}")))
 }
 
-/// Load a record only if it exists AND is not expired; else `err(not-found)`.
 fn load_live(bucket: &kv::Bucket, key: &str) -> Result<Record, SessionError> {
     match load(bucket, key)? {
         Some(r) if now() < r.expires => Ok(r),
@@ -166,7 +154,6 @@ impl Guest for Component {
         let ttl = ttl_or_default(ttl_seconds);
         let bucket = open()?;
         let now = now();
-        // 256-bit opaque id, separate 256-bit csrf token.
         let id = token();
         let record = Record { created: now, expires: now + ttl, csrf: token(), data };
         set(&bucket, &sess_key(&id), &serialize(&record))?;
@@ -175,8 +162,6 @@ impl Guest for Component {
 
     fn get(id: String) -> Result<Session, SessionError> {
         let bucket = open()?;
-        // load_live applies the `now >= expires => not-found` rule; does NOT
-        // extend expiry.
         let record = load_live(&bucket, &sess_key(&id))?;
         Ok(to_session(&id, &record))
     }
@@ -185,7 +170,6 @@ impl Guest for Component {
         let bucket = open()?;
         let k = sess_key(&id);
         let mut record = load_live(&bucket, &k)?;
-        // rewrite payload, keep id/csrf/created/expires.
         record.data = data;
         set(&bucket, &k, &serialize(&record))
     }
@@ -195,7 +179,6 @@ impl Guest for Component {
         let bucket = open()?;
         let k = sess_key(&id);
         let mut record = load_live(&bucket, &k)?;
-        // slide the expiry forward to now + ttl.
         record.expires = now() + ttl;
         set(&bucket, &k, &serialize(&record))?;
         Ok(to_session(&id, &record))
@@ -213,7 +196,6 @@ impl Guest for Component {
 
     fn revoke(id: String) -> Result<(), SessionError> {
         let bucket = open()?;
-        // idempotent: deleting an unknown key succeeds.
         bucket
             .delete(&sess_key(&id))
             .map_err(|e| SessionError::BackendUnavailable(format!("delete: {e:?}")))

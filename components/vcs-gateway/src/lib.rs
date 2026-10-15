@@ -1,19 +1,13 @@
 //! `vcs-gateway` — the code store as HTTP routes, for agents and tests
 //! (ADR-0099).
 //!
-//! It imports `holon:vcs/code-store` and `holon:vcs/files` and serves each
-//! function at `POST /v1/<function>` with the same JSON `comp-vcs` takes
-//! (`holon_vcs::wire`): parse the body into the contract's records, make ONE
-//! import call, write the result back. Composed with `vcs-store`, the chain is
-//!
-//!   agent → comp-host (vcs-gateway ⊕ vcs-store) → comp-vcs → NATS + SurrealDB
-//!
-//! and every request here is a real round trip through the component model —
-//! which is the point: the e2e suite (`reconciler/tests/e2e_vcs.rs`) drives the
-//! store through this, not through the library.
-//!
-//! Errors are `{error, detail, message}` with the status `holon_vcs::wire`
-//! gives each `vcs-error` case, exactly as the daemon sends them.
+//! Imports `holon:vcs/code-store` and `holon:vcs/files` and serves each function at `POST
+//! /v1/<function>` with the same JSON `comp-vcs` takes (`holon_vcs::wire`): parse the body, make
+//! ONE import call, write the result back. Composed with `vcs-store` every request is a real
+//! round trip through the component model, which the e2e suite (`reconciler/tests/e2e_vcs.rs`)
+//! relies on.
+//! Errors are `{error, detail, message}` with the status `holon_vcs::wire` gives each `vcs-error`
+//! case.
 //!
 //! No auth of its own: whoever can reach this may edit every workspace. It is a
 //! tailnet app (apps/vcs.toml) and meant for agents on that network; a
@@ -56,19 +50,16 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use witconv::{ToModel, ToWit};
 
-/// The binding modules `witconv` is compiled against.
 mod wit {
     pub use crate::bindings::holon::vcs::files;
     pub use crate::bindings::holon::vcs::types as t;
 }
 use wit::t;
 
-/// An `ingest-tree` of a component's sources, base64'd.
 const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 
 struct Component;
 
-/// A route's answer.
 type Answer = (u16, Value);
 
 fn to_json<T: Serialize>(v: &T) -> Value {
@@ -80,7 +71,6 @@ fn refusal(e: t::VcsError) -> Answer {
     (wire::status_of(&body.error), to_json(&body))
 }
 
-/// The import's result, as the daemon would have written it.
 fn answer<W: ToModel>(r: Result<W, t::VcsError>) -> Answer
 where
     W::Out: Serialize,
@@ -96,7 +86,6 @@ fn parse<T: DeserializeOwned>(body: &[u8]) -> Result<T, Answer> {
         .map_err(|e| (400, to_json(&wire::ErrorBody::new("bad-request", e.to_string()))))
 }
 
-/// One contract function, by its WIT name, over a JSON body.
 fn dispatch(func: &str, body: &[u8]) -> Answer {
     match route(func, body) {
         Ok(a) | Err(a) => a,

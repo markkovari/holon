@@ -1,16 +1,11 @@
 //! `search-index` — let users search their own data — a full-text inverted index with ranked results
 //!
-//! A small, app-agnostic full-text inverted index that lives entirely in a
-//! `wasi:keyvalue` store. No external search engine, no network. The app owns
-//! its documents; this owns only the index. Aimed at the long tail of apps
-//! whose corpus comfortably fits in a KV store and who don't want to stand up
-//! Elasticsearch just to let users search their stuff.
+//! A small full-text inverted index living entirely in a `wasi:keyvalue` store; the app owns its
+//! documents, this owns only the index.
 //!
-//! Design — an inverted index plus TF-IDF ranking, decomposed across KV keys.
-//! All keys live in the `default` bucket; raw token / id / tag strings are
-//! folded into kv-legal keys with the same byte-escape scheme as the sibling
-//! idempotency-guard (`_XX` for any non `[A-Za-z0-9-/=]` byte), each behind a
-//! namespace prefix so the four key spaces never collide:
+//! TF-IDF ranking over an inverted index. All keys live in the `default` bucket; raw strings are
+//! folded into kv-legal keys with the byte-escape scheme of idempotency-guard (`_XX`), each
+//! behind a namespace prefix:
 //!
 //!   si_count            -> ASCII integer: number of documents indexed.
 //!   si_t_{token}        -> posting list, newline-joined "{docid}:{tf}" entries
@@ -22,26 +17,17 @@
 //!                          clean up the postings a doc previously contributed.
 //!   si_tag_{tag}        -> newline-joined docids carrying that tag.
 //!
-//! Tokenizer: lowercase, fold every non-ascii-alphanumeric byte to a space,
-//! split on whitespace, drop empties and tokens shorter than 2 chars. A doc's
-//! *term set* is deduped, but we keep the per-doc term frequency for ranking.
+//! Tokenizer: lowercase, fold non-ascii-alphanumeric bytes to spaces, split, drop tokens under 2
+//! chars; the term set is deduped but per-doc tf is kept.
+//! Ranking (`query`): candidates come from the query terms' posting lists (ANY = union, ALL =
+//! intersection), optionally intersected with docs carrying ALL given `tags`. Score is TF-IDF,
+//! score(d) += tf(d,t) * idf(t), idf(t) = ln((N + 1) / (df(t) + 1)) + 1, sorted descending,
+//! truncated to `limit`.
 //!
-//! Ranking (`query`): gather candidate docs from the query terms' posting
-//! lists (ANY = union, ALL = intersection across every query term). An optional
-//! `tags` filter intersects candidates with docs carrying ALL given tags. Each
-//! candidate is scored with TF-IDF: for every query term `t` matched in doc `d`,
-//!   score(d) += tf(d,t) * idf(t),   idf(t) = ln((N + 1) / (df(t) + 1)) + 1
-//! where N = `si_count` and df(t) = number of docs in t's posting list. Hits are
-//! returned sorted by score descending, truncated to `limit`.
-//!
-//! Single-writer / best-effort caveat: the posting lists, tag indexes and the
-//! forward record are maintained with read-modify-write sequences against the
-//! KV store, which `wasi:keyvalue@0.2.0-draft` cannot make atomic (it exposes no
-//! compare-and-swap, only `increment`). Concurrent writers to the *same* term or
-//! tag can therefore lose an update by interleaving. This is fine under a single
-//! logical writer per index (the common case); a multi-writer deployment would
-//! need external serialization. Reads/queries are always consistent with
-//! whatever the store currently holds.
+//! Single-writer caveat: posting lists, tag indexes and forward records are read-modify-write,
+//! which `wasi:keyvalue@0.2.0-draft` cannot make atomic (no compare-and-swap), so concurrent
+//! writers to the same term or tag can lose an update. Fine for one logical writer per index;
+//! reads are always consistent with the store.
 
 #[allow(warnings)]
 mod bindings;
@@ -53,10 +39,6 @@ struct Component;
 
 const BUCKET: &str = "default";
 
-// ---- key namespacing -----------------------------------------------------
-
-/// Escape a raw string to kv-legal bytes (same scheme as idempotency-guard's
-/// `id_key`), behind the given namespace prefix.
 fn safe_key(prefix: &str, raw: &str) -> String {
     let mut out = String::with_capacity(prefix.len() + raw.len() + 4);
     out.push_str(prefix);
@@ -83,9 +65,6 @@ fn tag_key(tag: &str) -> String {
 
 const COUNT_KEY: &str = "si_count";
 
-// ---- tokenizer -----------------------------------------------------------
-
-/// Lowercase, fold non-ascii-alnum to spaces, split, drop empties and len < 2.
 fn tokenize(text: &str) -> Vec<String> {
     let folded: String = text
         .chars()
@@ -101,7 +80,6 @@ fn tokenize(text: &str) -> Vec<String> {
     folded.split_whitespace().filter(|t| t.len() >= 2).map(|t| t.to_string()).collect()
 }
 
-/// Tokenize and reduce to per-doc term frequencies (deduped term set with counts).
 fn term_freqs(text: &str) -> Vec<(String, u64)> {
     let mut acc: Vec<(String, u64)> = Vec::new();
     'next: for tok in tokenize(text) {
@@ -115,8 +93,6 @@ fn term_freqs(text: &str) -> Vec<(String, u64)> {
     }
     acc
 }
-
-// ---- kv helpers ----------------------------------------------------------
 
 fn open() -> Result<kv::Bucket, SearchError> {
     kv::open(BUCKET).map_err(|e| SearchError::BackendUnavailable(format!("open: {e:?}")))
@@ -144,8 +120,6 @@ fn delete_key(bucket: &kv::Bucket, key: &str) -> Result<(), SearchError> {
     bucket.delete(key).map_err(|e| SearchError::BackendUnavailable(format!("delete {key}: {e:?}")))
 }
 
-// ---- count maintenance ---------------------------------------------------
-
 fn read_count(bucket: &kv::Bucket) -> Result<u64, SearchError> {
     Ok(get_string(bucket, COUNT_KEY)?.and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(0))
 }
@@ -154,9 +128,6 @@ fn write_count(bucket: &kv::Bucket, n: u64) -> Result<(), SearchError> {
     set_string(bucket, COUNT_KEY, &n.to_string())
 }
 
-// ---- posting-list maintenance --------------------------------------------
-
-/// Add (or update) `id`'s entry in `token`'s posting list with the given tf.
 fn posting_add(bucket: &kv::Bucket, token: &str, id: &str, tf: u64) -> Result<(), SearchError> {
     let key = term_key(token);
     let existing = get_string(bucket, &key)?.unwrap_or_default();
@@ -170,7 +141,6 @@ fn posting_add(bucket: &kv::Bucket, token: &str, id: &str, tf: u64) -> Result<()
     set_string(bucket, &key, &lines.join("\n"))
 }
 
-/// Remove `id`'s entry from `token`'s posting list (deleting the key if empty).
 fn posting_remove(bucket: &kv::Bucket, token: &str, id: &str) -> Result<(), SearchError> {
     let key = term_key(token);
     let existing = match get_string(bucket, &key)? {
@@ -186,7 +156,6 @@ fn posting_remove(bucket: &kv::Bucket, token: &str, id: &str) -> Result<(), Sear
     }
 }
 
-/// The docid portion of a "{docid}:{tf}" posting entry (tf may itself be absent).
 fn posting_docid(line: &str) -> &str {
     match line.rfind(':') {
         Some(i) => &line[..i],
@@ -194,7 +163,6 @@ fn posting_docid(line: &str) -> &str {
     }
 }
 
-/// Parse a "{docid}:{tf}" posting entry into (docid, tf).
 fn parse_posting(line: &str) -> (String, u64) {
     match line.rfind(':') {
         Some(i) => {
@@ -204,8 +172,6 @@ fn parse_posting(line: &str) -> (String, u64) {
         None => (line.to_string(), 1),
     }
 }
-
-// ---- tag-index maintenance -----------------------------------------------
 
 fn tag_add(bucket: &kv::Bucket, tag: &str, id: &str) -> Result<(), SearchError> {
     let key = tag_key(tag);
@@ -236,12 +202,8 @@ fn tag_docids(bucket: &kv::Bucket, tag: &str) -> Result<Vec<String>, SearchError
         .unwrap_or_default())
 }
 
-// ---- forward record ------------------------------------------------------
-
-/// A doc's stored forward record: tokens with their term frequency, and tags.
 type ForwardRecord = (Vec<(String, u64)>, Vec<String>);
 
-/// (tokens-with-tf, tags) of a doc's stored forward record, if present.
 fn load_forward(bucket: &kv::Bucket, id: &str) -> Result<Option<ForwardRecord>, SearchError> {
     let raw = match get_string(bucket, &doc_key(id))? {
         Some(s) => s,
@@ -283,15 +245,12 @@ fn cleanup_postings(bucket: &kv::Bucket, id: &str) -> Result<bool, SearchError> 
     Ok(true)
 }
 
-// ---- guest ---------------------------------------------------------------
-
 impl Guest for Component {
     fn index_doc(id: String, text: String, tags: Vec<String>) -> Result<(), SearchError> {
         let bucket = open()?;
 
-        // Replace semantics: if the doc already exists, strip the postings and
-        // tag entries it previously contributed before re-indexing. This is a
-        // replace, so `si_count` is left untouched here.
+        // Replace semantics: strip the postings and tags the doc previously contributed before
+        // re-indexing; `si_count` is left untouched.
         let existed = cleanup_postings(&bucket, &id)?;
 
         let terms = term_freqs(&text);
@@ -312,7 +271,6 @@ impl Guest for Component {
 
     fn remove(id: String) -> Result<(), SearchError> {
         let bucket = open()?;
-        // Idempotent: an absent doc is a no-op success.
         if !cleanup_postings(&bucket, &id)? {
             return Ok(());
         }
@@ -361,7 +319,6 @@ impl Guest for Component {
             if df == 0 {
                 continue;
             }
-            // idf(t) = ln((N + 1) / (df + 1)) + 1
             let idf = (((n + 1) as f64) / ((df + 1) as f64)).ln() + 1.0;
 
             for (doc, tf) in postings {
@@ -375,13 +332,11 @@ impl Guest for Component {
             }
         }
 
-        // mode = all -> a candidate must have matched every distinct query term.
         if matches!(mode, Mode::All) {
             let need = terms.len() as u32;
             cands.retain(|(_, c)| c.matched_terms >= need);
         }
 
-        // tag filter -> candidate must carry ALL given tags.
         if !tags.is_empty() {
             let mut allowed: Option<Vec<String>> = None;
             for tag in &tags {
@@ -390,7 +345,6 @@ impl Guest for Component {
                     None => ids,
                     Some(prev) => prev.into_iter().filter(|d| ids.contains(d)).collect(),
                 });
-                // Early exit: empty intersection -> no hits possible.
                 if allowed.as_ref().map(|v| v.is_empty()).unwrap_or(false) {
                     return Ok(Vec::new());
                 }
@@ -400,7 +354,6 @@ impl Guest for Component {
             }
         }
 
-        // Sort by score descending; truncate to limit.
         cands.sort_by(|a, b| {
             b.1.score
                 .partial_cmp(&a.1.score)

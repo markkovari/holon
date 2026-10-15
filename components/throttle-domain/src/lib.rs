@@ -1,13 +1,10 @@
 //! throttle:app — a live throttle wall over composed contracts.
 //!
-//! Each `hit` runs the request through two limiters: `ratelimit:guard` (a
-//! fixed-window attempt counter that LOCKS a key after the ceiling) and
-//! `quota:meter` (a cumulative budget with a reset period). The verdict —
-//! allow / throttled(locked) / quota-exceeded — is published on `event:bus`,
-//! and `GET /api/stream` sets its HTTP response early then LOOPS, writing each
-//! verdict as an SSE `data:` frame while the host streams to the browser (same
-//! server-push trick as pulse). No durable state of our own: the counters live
-//! in the two limiter contracts.
+//! Each `hit` runs through `ratelimit:guard` (fixed-window attempt counter that LOCKS a key after
+//! the ceiling) and `quota:meter` (cumulative budget with a reset period). The verdict (allow /
+//! throttled(locked) / quota-exceeded) is published on `event:bus`, and `GET /api/stream` sets
+//! its response early then LOOPS writing each verdict as an SSE frame (as pulse). No state of our
+//! own.
 
 #[allow(warnings)]
 mod bindings {
@@ -112,17 +109,12 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- the decision gate -------------------------------------------------------
-
-/// One request through the wall. Order: ratelimit lockout first (cheap, and the
-/// thing you throttle before spending budget), then the cumulative quota.
+/// One request through the wall: ratelimit lockout first (cheap, and throttling comes before
+/// spending budget), then the cumulative quota.
 fn decide(key: &str, subject: &str) -> (u16, Value) {
-    // 1. windowed lockout: check() returns attempts-left, or err(locked(after)).
     match limiter::check(key) {
         Ok(left) => {
-            // consuming an attempt: record it so the window counts this request.
             let _ = limiter::record_failure(key);
-            // 2. cumulative budget.
             match quota::record_usage(subject, 1, QUOTA_LIMIT, QUOTA_PERIOD) {
                 Ok(bal) => {
                     let v = json!({
@@ -178,7 +170,6 @@ async fn burst(request: Request) -> Outcome {
     )
 }
 
-/// Record a failure directly (drives lockout without consuming quota).
 async fn fail(request: Request) -> Outcome {
     let body = parse_body(request).await.unwrap_or(Value::Null);
     let key = body["key"].as_str().unwrap_or(DEFAULT_KEY).to_string();
@@ -227,8 +218,6 @@ fn state(path: &str) -> Outcome {
     )
 }
 
-// ---- events + SSE ------------------------------------------------------------
-
 fn publish(verdict: &str, key: &str, detail: &Value) {
     let mut frame = detail.clone();
     frame["xid"] = json!(ids::short_code(8));
@@ -246,8 +235,6 @@ fn stream_events(path: &str) -> Result<Response, ErrorCode> {
 
     let mut cursor = query_i64(path, "after").unwrap_or_else(current_seq);
 
-    // The response goes back now; this task keeps writing frames into its body
-    // stream while the host streams them to the browser.
     let (mut stream, rx) = bindings::wit_stream::new();
     wit_bindgen::spawn_local(async move {
         // `write_all` hands back what the reader never took: non-empty means the
@@ -303,8 +290,6 @@ fn current_seq() -> i64 {
         .unwrap_or(-1)
 }
 
-// ---- http plumbing -----------------------------------------------------------
-
 async fn parse_body(request: Request) -> Result<Value, Outcome> {
     let body =
         read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
@@ -314,18 +299,9 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be before the component stops reading it. Without a ceiling,
+/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy; uploads police their own size with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

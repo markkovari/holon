@@ -1,12 +1,10 @@
 //! pulse:app — a realtime chat room over composed contracts.
 //!
-//! Messages are an append-only log in `record:store`, each stamped with a global
-//! monotonic `seq` that doubles as the stream cursor. `GET /events` is the new
-//! trick: it sets its HTTP response early, then LOOPS — polling the log for
-//! `seq > cursor` and writing each new message as an SSE `data:` frame — while
-//! the host streams the body to the browser. It sleeps between polls with
-//! `monotonic-clock` (so it doesn't busy-spin) and stops when a write fails
-//! (the client hung up). Real server-push on WASI p3, no WebSocket.
+//! Messages are an append-only log in `record:store`, each stamped with a global monotonic `seq`
+//! that doubles as the stream cursor. `GET /events` sets its HTTP response early, then LOOPS
+//! polling for `seq > cursor` and writing each message as an SSE `data:` frame while the host
+//! streams the body, sleeping on `monotonic-clock` between polls and stopping when a write fails.
+//! Server-push on WASI p3, no WebSocket.
 
 #[allow(warnings)]
 mod bindings {
@@ -66,8 +64,6 @@ impl Guest for Component {
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         match (&method, seg.as_slice()) {
-            // The SSE route owns the response (it streams); everything else
-            // computes an Outcome and emits once.
             // Routes live under /api so the host's static-dir SPA fallback
             // (which returns index.html for unknown GETs) leaves them alone.
             (Method::Get, ["api", "rooms", room, "events"]) => stream_events(room, &path),
@@ -114,8 +110,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- post + history ----------------------------------------------------------
-
 async fn post_message(request: Request, room: &str) -> Outcome {
     let body = match parse_body(request).await {
         Ok(v) => v,
@@ -129,7 +123,6 @@ async fn post_message(request: Request, room: &str) -> Outcome {
     if text.len() > 2000 {
         return Outcome::Err(422, "text too long".into());
     }
-    // seq: a global monotonic counter (also the stream cursor).
     let seq = records::count(MESSAGES).unwrap_or(0);
     let data = json!({
         "id": ids::short_code(8),
@@ -143,7 +136,6 @@ async fn post_message(request: Request, room: &str) -> Outcome {
         Ok(e) => e,
         Err(e) => return store_err(e),
     };
-    // fan-out spine: other consumers (notify / moderation / webhooks) subscribe.
     let _ = bus::publish(&format!("room:{room}"), entry.data.as_bytes());
     Outcome::Json(201, msg_json(&data).to_string())
 }
@@ -154,7 +146,6 @@ fn history(room: &str, path: &str) -> Outcome {
     Outcome::Json(200, json!({ "messages": msgs, "cursor": cursor }).to_string())
 }
 
-/// Messages in `room` with `seq > after`, oldest-first, plus the new cursor.
 fn messages_after(room: &str, after: i64) -> (Vec<Value>, i64) {
     let entries = records::find_by(MESSAGES, "room", &json!(room).to_string()).unwrap_or_default();
     let mut rows: Vec<(i64, Value)> = entries
@@ -170,7 +161,6 @@ fn messages_after(room: &str, after: i64) -> (Vec<Value>, i64) {
     (rows.into_iter().map(|(_, d)| msg_json(&d)).collect(), cursor)
 }
 
-/// Current highest seq in the room (the "only new messages" starting cursor).
 fn max_seq(room: &str) -> i64 {
     let entries = records::find_by(MESSAGES, "room", &json!(room).to_string()).unwrap_or_default();
     entries
@@ -184,9 +174,6 @@ fn msg_json(d: &Value) -> Value {
     json!({"id": d["id"], "user": d["user"], "text": d["text"], "seq": d["seq"], "at": d["at"]})
 }
 
-// ---- presence (rung 3) -------------------------------------------------------
-
-/// Heartbeat: upsert this user's "last seen" for the room.
 async fn heartbeat(request: Request, room: &str) -> Outcome {
     let body = match parse_body(request).await {
         Ok(v) => v,
@@ -215,7 +202,6 @@ async fn heartbeat(request: Request, room: &str) -> Outcome {
     Outcome::Json(200, json!({"ok": true}).to_string())
 }
 
-/// Who's online: distinct users heartbeated within the presence window.
 fn presence(room: &str) -> Outcome {
     let cutoff = now().saturating_sub(PRESENCE_WINDOW);
     let entries = records::find_by(PRESENCE, "room", &json!(room).to_string()).unwrap_or_default();
@@ -230,12 +216,9 @@ fn presence(room: &str) -> Outcome {
     Outcome::Json(200, json!({ "online": online }).to_string())
 }
 
-// ---- the SSE stream ----------------------------------------------------------
-
-/// Hold the connection open and push each new message as an SSE `data:` frame.
-/// Returns the response, while a spawned task loops writing its body until the
-/// client disconnects (a write error) or the connection cap is hit. `?after=seq`
-/// catches up from `seq`; the default is "only messages posted after I connected".
+/// Hold the connection open and push each new message as an SSE `data:` frame; a spawned task
+/// loops until the client disconnects or the cap is hit. `?after=seq` catches up; the default is
+/// only messages posted after connecting.
 fn stream_events(room: &str, path: &str) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
@@ -264,7 +247,6 @@ fn stream_events(room: &str, path: &str) -> Result<Response, ErrorCode> {
             if !stream.write_all(frame.into_bytes()).await.is_empty() {
                 break; // client disconnected
             }
-            // sleep without busy-spinning: the monotonic clock's wait, awaited.
             monotonic_clock::wait_for(POLL_MS * 1_000_000).await;
         }
     });
@@ -274,8 +256,6 @@ fn stream_events(room: &str, path: &str) -> Result<Response, ErrorCode> {
     let _ = response.set_status_code(200);
     Ok(response)
 }
-
-// ---- http plumbing -----------------------------------------------------------
 
 fn store_err(e: records::StoreError) -> Outcome {
     match e {
@@ -295,18 +275,9 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be before the component stops reading it. Without a ceiling,
+/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy; uploads police their own size with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

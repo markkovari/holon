@@ -50,7 +50,6 @@ const TENANT: &str = "real-estate-escrow";
 
 impl Guest for Component {
     async fn handle(request: Request) -> Result<Response, ErrorCode> {
-        // Measure usage
         if let Ok(bucket) = store::open("default") {
             let count_bytes = bucket.get("usage_count").unwrap_or(None).unwrap_or(b"0".to_vec());
             let count = String::from_utf8_lossy(&count_bytes).parse::<u64>().unwrap_or(0);
@@ -95,8 +94,6 @@ fn now() -> u64 {
     system_clock::now().seconds as u64
 }
 
-// Removed serve_html() as it is now served directly via Outcome::Html
-
 guestio::guest_p3_bearer!();
 
 fn introspect(request: &Request) -> Result<Principal, Outcome> {
@@ -106,7 +103,6 @@ fn introspect(request: &Request) -> Result<Principal, Outcome> {
 }
 
 async fn body(request: Request) -> Result<Value, Outcome> {
-    // simplified body reader
     let raw =
         read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
@@ -173,7 +169,6 @@ async fn create_item(request: Request) -> Outcome {
         Err(o) => return o,
     };
 
-    // RBAC check: Only admins can create items
     if !p.roles.contains(&"agent".to_string()) {
         return Outcome::Err(403, "forbidden".into());
     }

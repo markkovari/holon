@@ -39,7 +39,6 @@ guestio::guest_p3_respond!();
 
 struct Component;
 
-/// One query parameter. A two-key query does not need a URL crate.
 fn param(query: &str, key: &str) -> String {
     query
         .split('&')
@@ -49,9 +48,8 @@ fn param(query: &str, key: &str) -> String {
         .unwrap_or_default()
 }
 
-/// JSON string escaping for the two characters a secret value could plausibly carry
-/// into one. Not a general encoder — this is a probe, and a dependency for two
-/// `replace` calls is the thing this repo keeps deleting.
+/// JSON string escaping for the two characters a secret value could plausibly carry. Not a
+/// general encoder; a dependency for two `replace` calls is not worth it.
 fn esc(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }

@@ -1,10 +1,8 @@
 //! `upload-policy` — validate a file upload against a size and content-type policy, then mint a signed upload ticket
 //!
-//! File-upload gatekeeping: validate a declared content-type + size against a
-//! config allow-policy, then mint a short-lived, HMAC-signed upload ticket the
-//! client presents back. A stand-in for a presigned URL — the *signing* is the
-//! reusable part; the real storage URL is the deploy's concern (pairs with
-//! `blob:store`). Also verifies a returned ticket (signature + expiry).
+//! Validate a declared content-type and size against a config allow-policy, then mint a
+//! short-lived HMAC-signed upload ticket (a stand-in for a presigned URL; the signing is the
+//! reusable part, the storage URL is the deploy's concern). Also verifies a returned ticket.
 //!
 //! Ticket wire format: `{base64url-nopad payload}.{checksum-hex}` where
 //!   payload  = `{b64url object-key}:{b64url content-type}:{size}:{expires}`
@@ -37,13 +35,10 @@ struct Component;
 
 type HmacSha256 = Hmac<Sha256>;
 
-// ---- config -------------------------------------------------------------
-
 const DEFAULT_MAX_SIZE: u64 = 10_485_760; // 10 MiB
 const DEFAULT_TTL: u64 = 300;
 const DEFAULT_SECRET: &str = "upload-default-secret";
 
-/// The configured content-type allow-list (comma-separated). Empty = allow all.
 fn allowed_types() -> Vec<String> {
     match config::get("allowed-types") {
         Ok(Some(v)) => {
@@ -74,19 +69,15 @@ fn ticket_secret() -> String {
     }
 }
 
-// ---- helpers ------------------------------------------------------------
-
 fn now() -> u64 {
     wall_clock::now().seconds
 }
 
-/// 16 hex chars from 8 random bytes — the ticket / object id.
 fn random16hex() -> String {
     get_random_bytes(8).iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// Sanitize a tenant into key-legal chars (same byte scheme as the other
-/// components): keep `[A-Za-z0-9-/=]`, escape anything else as `_HH`.
+/// Sanitize a tenant into key-legal chars (same byte scheme as other components).
 fn sanitize(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -98,7 +89,6 @@ fn sanitize(s: &str) -> String {
     out
 }
 
-/// First 8 bytes of HMAC-SHA256(secret, payload), lowercase hex.
 fn checksum(secret: &str, payload: &str) -> String {
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
     mac.update(payload.as_bytes());
@@ -106,12 +96,9 @@ fn checksum(secret: &str, payload: &str) -> String {
     tag[..8].iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// Build the signed payload string for an authorized upload.
 fn payload(object_key: &str, content_type: &str, size: u64, expires: u64) -> String {
     format!("{}:{}:{}:{}", B64.encode(object_key), B64.encode(content_type), size, expires)
 }
-
-// ---- guest --------------------------------------------------------------
 
 impl Guest for Component {
     fn check(content_type: String, size: u64) -> Result<(), PolicyError> {
@@ -148,7 +135,6 @@ impl Guest for Component {
     }
 
     fn redeem(token: String) -> Result<Grant, PolicyError> {
-        // token = {base64url-nopad payload}.{checksum-hex}
         let (b64_payload, presented) = token.split_once('.').ok_or(PolicyError::InvalidTicket)?;
 
         let payload_bytes = B64.decode(b64_payload).map_err(|_| PolicyError::InvalidTicket)?;
@@ -160,7 +146,6 @@ impl Guest for Component {
             return Err(PolicyError::InvalidTicket);
         }
 
-        // payload = {b64 object-key}:{b64 content-type}:{size}:{expires}
         let mut parts = payload.split(':');
         let object_key = parts
             .next()
@@ -185,7 +170,6 @@ impl Guest for Component {
     }
 }
 
-/// Length-checked constant-time byte comparison (no early-out on first diff).
 fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;

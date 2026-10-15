@@ -212,11 +212,9 @@ fn write_transfer(route: &Route, body: &str) -> Reply {
         }
     };
 
-    // Credit loop
     let final_to_units = match do_credit(to_id, &amount) {
         Ok(u) => u,
         Err(_) => {
-            // Failed to credit, refund the source account
             if do_credit(from_id, &amount).is_err() {
                 // If refund also fails, we've truly lost money (or it's hanging).
                 // In this case, we MUST report 500
@@ -236,10 +234,8 @@ fn write_transfer(route: &Route, body: &str) -> Reply {
         match records::create("transfers", &transfer_doc.to_string(), &["state".to_string()]) {
             Ok(e) => e,
             Err(_) => {
-                // Failed to create transfer record! But money was moved!
-                // Wait, we CANNOT fail here without losing the journal.
-                // Oh boy, we should create the transfer record FIRST!
-                // The contract says: "Only a settled transfer is journalled: a refusal moved nothing."
+                // The money has moved but the transfer record could not be created; the contract
+                // journals only settled transfers, so nothing is journalled.
                 return do_complete_err(503, "store_unavailable");
             }
         };

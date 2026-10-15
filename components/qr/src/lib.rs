@@ -1,12 +1,9 @@
 //! `qr` — turn a URL or a string into a scannable QR code, as SVG
 //!
-//! The `qrcode` crate does the hard part (segment encoding, Reed-Solomon error
-//! correction, mask selection); we take its module grid and render it three
-//! ways — a self-contained SVG, compact unicode blocks, and the raw matrix as
-//! JSON. Rendering from the grid ourselves keeps the dependency to the encoder
-//! only (no image/font features) and lets `svg` honor an arbitrary quiet zone.
-//!
-//! Pure compute, no host imports, no state.
+//! The `qrcode` crate does segment encoding, Reed-Solomon and mask selection; we render its
+//! module grid as a self-contained SVG, compact unicode blocks, or raw JSON. Rendering ourselves
+//! keeps the dependency to the encoder only and lets `svg` honor an arbitrary quiet zone. Pure
+//! compute.
 
 #[allow(warnings)]
 mod bindings;
@@ -16,7 +13,6 @@ use qrcode::{Color, EcLevel, QrCode};
 
 struct Component;
 
-/// Encode into (module count per side, dark-flags row-major).
 fn grid(data: &str, level: Ecc) -> Result<(usize, Vec<bool>), QrError> {
     let ec = match level {
         Ecc::Low => EcLevel::L,
@@ -36,8 +32,6 @@ impl Guest for Component {
         let (w, m) = grid(&data, level)?;
         let qz = quiet_zone as usize;
         let dim = w + 2 * qz;
-        // One <path> of unit squares for the dark modules over a white ground;
-        // viewBox makes it scale to any rendered size.
         let mut path = String::new();
         for y in 0..w {
             for x in 0..w {

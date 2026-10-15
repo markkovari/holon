@@ -3,25 +3,14 @@
 //! `GET /` creates one, `GET /p/{code}` votes in one, and the results are an SVG
 //! the page embeds rather than a chart the page draws.
 //!
-//! ## What is imported and why that is the interesting part
-//!
-//! The chart comes from `svg:chart` and the QR from `qr:encode`, both already in
-//! this repository, both pure compute. So there is no charting library in the page,
-//! no QR library, no build step, and the same `<svg>` works in a browser, an email,
-//! or a screenshot. `records:store` holds the polls and the votes; `id:generate`
-//! mints the share code and the voter id.
-//!
-//! ## One vote per browser is a cookie, and that is why this has a browser suite
-//!
-//! A voter is a cookie this component sets — `voter=<ulid>`, `HttpOnly`, `SameSite`
-//! — and a vote record keyed by `(poll, voter)`. Nothing about that is visible to an
-//! API test driving one HTTP client: it would either pass a cookie it set itself or
-//! never send one at all. Two browser contexts have two cookie jars, which is the
-//! thing being asserted, so the e2e is Playwright rather than curl.
-//!
-//! Deliberately not identity: a cookie is clearable and this is a poll, not a
-//! ballot. `auth-guard` is the component for the case where it matters, and saying
-//! so here is cheaper than pretending a cookie is more than it is.
+//! The chart comes from `svg:chart` and the QR from `qr:encode` (pure compute), so the page needs
+//! no charting or QR library and the same `<svg>` works in a browser, an email or a screenshot.
+//! `records:store` holds polls and votes; `id:generate` mints the share code and voter id.
+//! One vote per browser is a cookie (`voter=<ulid>`, `HttpOnly`, `SameSite`) plus a vote record
+//! keyed by `(poll, voter)`. An API test with one HTTP client cannot see that, so the e2e is
+//! Playwright with two cookie jars.
+//! Deliberately not identity: a cookie is clearable and this is a poll, not a ballot;
+//! `auth-guard` is for when it matters.
 
 #[allow(warnings)]
 mod bindings {
@@ -64,8 +53,7 @@ struct Component;
 
 const POLLS: &str = "polls";
 const VOTES: &str = "votes";
-/// How many options a poll may carry. A ballot with forty options is a form, not a
-/// poll, and the chart stops being readable long before that.
+/// How many options a poll may carry; the chart stops being readable long before forty.
 const MAX_OPTIONS: usize = 8;
 const MAX_BODY_BYTES: usize = 64 * 1024;
 
@@ -99,9 +87,8 @@ impl Reply {
             set_voter: None,
         }
     }
-    /// An SVG document, sent as one. `image/svg+xml` and not JSON: the page embeds
-    /// this with `<img>` and `innerHTML`, and a JSON-wrapped SVG is a string a
-    /// browser will not render.
+    /// An SVG document sent as `image/svg+xml`, not JSON: the page embeds it with `<img>` and
+    /// `innerHTML`.
     fn svg(body: String) -> Self {
         Reply {
             status: 200,
@@ -118,10 +105,8 @@ impl Reply {
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
-/// The `voter` cookie, or empty.
-///
-/// Parsed rather than matched: `voter=x` and `other=1; voter=x` and `xvoter=y` all
-/// contain the substring, and only two of them are this cookie.
+/// The `voter` cookie, or empty. Parsed rather than substring-matched: `xvoter=y` contains
+/// `voter=` and is not this cookie.
 fn voter_of(request: &Request) -> String {
     let headers = request.get_headers();
     for raw in headers.get("cookie") {
@@ -138,7 +123,6 @@ fn voter_of(request: &Request) -> String {
 }
 
 fn poll_by_code(code: &str) -> Option<(String, Value)> {
-    // `code` is indexed, so this reads the one poll rather than every poll.
     let found = records::find_by(POLLS, "code", &json_value(code)).ok()?;
     let e = found.into_iter().next()?;
     let v: Value = serde_json::from_str(&e.data).ok()?;
@@ -189,7 +173,7 @@ fn create_poll(body: &str) -> Reply {
                 .collect()
         })
         .unwrap_or_default();
-    // Two options is the smallest thing that is a question. One is an announcement.
+    // Two options is the smallest thing that is a question.
     if question.is_empty() || options.len() < 2 || options.len() > MAX_OPTIONS {
         return Reply::err(400, "invalid");
     }
@@ -272,7 +256,6 @@ fn vote(code: &str, body: &str, voter: &str) -> Reply {
     }
 }
 
-/// The results as an SVG document, drawn by `svg:chart`.
 fn chart_svg(code: &str) -> Reply {
     let Some((id, poll)) = poll_by_code(code) else { return Reply::err(404, "not_found") };
     let options = options_of(&poll);
@@ -296,7 +279,6 @@ fn chart_svg(code: &str) -> Reply {
     }))
 }
 
-/// The share link as a QR, drawn by `qr:encode`.
 fn qr_svg(code: &str, base: &str) -> Reply {
     if poll_by_code(code).is_none() {
         return Reply::err(404, "not_found");
@@ -341,8 +323,7 @@ impl Guest for Component {
         let reply = match (&method, seg.as_slice()) {
             (Method::Get, []) | (Method::Get, ["index.html"]) => Reply::html(CREATE_PAGE),
             (Method::Get, ["health"]) => Reply::json(200, json!({ "ok": true })),
-            // The voting page. One HTML document for any code; it reads the code out
-            // of its own URL, so there is no template to render server-side.
+            // One HTML document for any code; it reads the code from its own URL.
             (Method::Get, ["p", _code]) => Reply::html(VOTE_PAGE),
             (Method::Post, ["api", "polls"]) => create_poll(&body),
             (Method::Get, ["api", "polls", code]) => results(code),

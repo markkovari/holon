@@ -52,7 +52,6 @@ impl Guest for Component {
                     if state.status == "closed" {
                         return Err("ticket is closed".into());
                     }
-                    // (In a real implementation, we'd emit an event here and maybe change state)
                 }
                 TicketMessage::ChangeState { event } => {
                     // Apply FSM transitions directly on the actor's state
