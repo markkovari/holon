@@ -1,14 +1,9 @@
 //! `slug` — turn a title into a clean URL slug, transliterating accents and suffixing on collision
 //!
-//! Pure-compute URL slug generation: no host imports, no state.
-//!
-//! `slugify`/`slugify-with` lowercase the input, transliterate common accented
-//! Latin characters to ASCII, collapse every run of non-alphanumerics into a
-//! single separator, and trim leading/trailing separators. With a non-zero
-//! `max-length` the result is truncated on a separator boundary (so words are
-//! never cut mid-way), falling back to a hard byte truncation when no boundary
-//! fits. `uniquify` appends the smallest free numeric suffix (`-2`, `-3`, …) so
-//! a desired slug never collides with one already taken.
+//! Pure compute. `slugify` lowercases, transliterates common accented Latin to ASCII, collapses
+//! non-alphanumeric runs into one separator and trims the ends. A non-zero `max-length` truncates
+//! on a separator boundary, falling back to a hard byte cut. `uniquify` appends the smallest free
+//! numeric suffix (`-2`, `-3`, ...).
 
 #[allow(warnings)]
 mod bindings;
@@ -19,8 +14,6 @@ use bindings::exports::slug::generate::generator::{Guest, Options};
 
 struct Component;
 
-/// Map a single lowercased char to its ASCII transliteration, if any.
-/// Returns `Some(&str)` for known accented Latin chars, `None` otherwise.
 fn translit(c: char) -> Option<&'static str> {
     match c {
         'à' | 'â' | 'ä' | 'á' | 'ã' | 'å' => Some("a"),
@@ -35,7 +28,6 @@ fn translit(c: char) -> Option<&'static str> {
     }
 }
 
-/// Slugify `text` using `sep` as the word separator.
 fn slugify_sep(text: &str, sep: &str) -> String {
     // Build a flat stream of ASCII alphanumerics; every other char (spaces,
     // punctuation, unknown unicode) is a boundary we model as a single space.
@@ -46,12 +38,10 @@ fn slugify_sep(text: &str, sep: &str) -> String {
         } else if let Some(rep) = translit(c) {
             tokens.extend(rep.chars());
         } else {
-            // boundary marker
             tokens.push(' ');
         }
     }
 
-    // Collapse runs of boundary markers into a single `sep`, trim edges.
     let mut out = String::with_capacity(tokens.len());
     let mut pending_sep = false;
     let mut started = false;
@@ -70,20 +60,16 @@ fn slugify_sep(text: &str, sep: &str) -> String {
     out
 }
 
-/// Truncate `s` (built with `sep`) to at most `max` bytes, cutting back to the
-/// last separator boundary so no partial word remains.
 fn bound_length(mut s: String, sep: &str, max: usize) -> String {
     if max == 0 || s.len() <= max {
         return s;
     }
     s.truncate(max);
-    // Cut back to the last separator boundary, if any.
     if !sep.is_empty() {
         if let Some(idx) = s.rfind(sep) {
             s.truncate(idx);
         }
     }
-    // Trim any trailing separator left behind.
     if !sep.is_empty() {
         while s.ends_with(sep) {
             let n = s.len() - sep.len();

@@ -60,7 +60,6 @@ struct Component;
 
 const COMPONENTS: &str = "components";
 const GRAPHS: &str = "graphs";
-/// blob:store container for the raw uploads.
 const BIN: &str = "wasm";
 
 impl Guest for Component {
@@ -98,7 +97,6 @@ enum Outcome {
     Err(u16, String),
 }
 
-/// A raw body with just a content type.
 fn raw(code: u16, content_type: &str, bytes: Vec<u8>) -> Outcome {
     Outcome::Raw(code, vec![("content-type".to_string(), content_type.to_string())], bytes)
 }
@@ -139,9 +137,6 @@ fn usage() -> Outcome {
     )
 }
 
-// ---- the palette: reflected components --------------------------------------
-
-/// A stored surface, as JSON. `wit:reflect` owns the shape; we only transcribe.
 fn surface_json(s: &inspector::Surface) -> Value {
     let refs = |list: &Vec<inspector::IfaceRef>| -> Vec<Value> {
         list.iter()
@@ -184,9 +179,8 @@ fn surface_from(v: &Value) -> inspector::Surface {
     }
 }
 
-/// Upload a component: reflect it, keep the surface for the palette and the bytes
-/// for composing. The id defaults to the component's own name section, so
-/// `POST /api/components` with no id still lands as `mesh-domain`.
+/// Upload a component: reflect it, keep the surface for the palette and the bytes for composing.
+/// The id defaults to the component's own name section.
 async fn component_add(request: Request, query: &Map<String, Value>) -> Outcome {
     let bytes = match read_body(request).await {
         Ok(b) if !b.is_empty() => b,
@@ -215,7 +209,6 @@ async fn component_add(request: Request, query: &Map<String, Value>) -> Outcome 
     let doc = json!({
         "id": id, "surface": surface_json(&surface), "uploaded": now(),
     });
-    // Re-uploading the same id replaces it, so seeding the palette twice is harmless.
     let existing = find_one(COMPONENTS, "id", &id);
     let stored = match existing {
         Some((rec_id, revision, _)) => {
@@ -266,8 +259,6 @@ fn find_one(coll: &str, field: &str, value: &str) -> Option<(String, u64, Value)
 fn stored_surface(id: &str) -> Option<inspector::Surface> {
     find_one(COMPONENTS, "id", id).map(|(_, _, doc)| surface_from(&doc["surface"]))
 }
-
-// ---- resolving a request's graph --------------------------------------------
 
 /// The canvas as the component wants it: nodes rehydrated from storage, edges
 /// verbatim. Missing ids are reported rather than silently dropped — a plan over
@@ -350,8 +341,8 @@ async fn plan_route(request: Request) -> Outcome {
     Outcome::Json(200, plan_json(&plan).to_string())
 }
 
-/// The UI's connection guard: which interfaces `wac` would actually wire between
-/// these two. An empty list means the edge must not be drawn.
+/// The UI's connection guard: which interfaces `wac` would wire between these two. An empty list
+/// means the edge must not be drawn.
 async fn satisfies_route(request: Request) -> Outcome {
     let b = match body(request).await {
         Ok(v) => v,
@@ -370,8 +361,6 @@ async fn satisfies_route(request: Request) -> Outcome {
         Err(e) => Outcome::Err(422, reflect_error(&e)),
     }
 }
-
-// ---- the three text forms ---------------------------------------------------
 
 async fn emit_route(request: Request) -> Outcome {
     let b = match body(request).await {
@@ -416,8 +405,6 @@ async fn emit_route(request: Request) -> Outcome {
     raw(200, content_type, text.into_bytes())
 }
 
-// ---- composing for real -----------------------------------------------------
-
 async fn compose_route(request: Request) -> Outcome {
     let b = match body(request).await {
         Ok(v) => v,
@@ -429,7 +416,6 @@ async fn compose_route(request: Request) -> Outcome {
     };
     let plan = composer::plan(&nodes, &edges);
 
-    // Pick the root: the caller's, or the only node nothing plugs into.
     let root = match b["root"].as_str().filter(|s| !s.is_empty()) {
         Some(r) => r.to_string(),
         None => match plan.roots.as_slice() {
@@ -487,8 +473,6 @@ async fn compose_route(request: Request) -> Outcome {
     }
 }
 
-// ---- saved canvases ---------------------------------------------------------
-
 async fn graph_save(request: Request, id: Option<&str>) -> Outcome {
     let b = match body(request).await {
         Ok(v) => v,
@@ -496,8 +480,7 @@ async fn graph_save(request: Request, id: Option<&str>) -> Outcome {
     };
     let doc = json!({
         "name": b["name"].as_str().unwrap_or("untitled"),
-        // The canvas verbatim: node positions live here, the studio never
-        // interprets them (that is the UI's business).
+        // The canvas verbatim: node positions are the UI's business.
         "nodes": b["nodes"].clone(),
         "edges": b["edges"].clone(),
         "saved": now(),
@@ -538,7 +521,6 @@ fn graphs_list() -> Outcome {
         .filter_map(|e| {
             serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
                 v["id"] = json!(e.id);
-                // The list view wants names and sizes, not the whole canvas.
                 json!({
                     "id": e.id,
                     "name": v["name"],
@@ -551,8 +533,6 @@ fn graphs_list() -> Outcome {
         .collect();
     Outcome::Json(200, json!({ "graphs": list }).to_string())
 }
-
-// ---- http plumbing ---------------------------------------------------------
 
 fn reflect_error(e: &inspector::ReflectError) -> String {
     match e {
@@ -570,22 +550,11 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// Read the whole body. Component uploads are megabytes; a read error is an
-/// ERROR, not a short body — the usual pattern in this
-/// repo silently truncates, which for a .wasm means a corrupt component that
-/// looks fine until it doesn't.
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// Read the whole body. A read error is an ERROR, not a short body: truncating silently turns a
+/// .wasm into a corrupt component that looks fine until it doesn't.
+/// The most a request body may be before the component stops reading it. Without a ceiling,
+/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy; uploads police their own size with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

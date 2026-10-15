@@ -16,10 +16,6 @@
 //!
 //! Config (wasi:config/store):
 //!   ffmpeg-url    where `comp-ffmpeg` is listening, e.g. http://127.0.0.1:8010
-//!
-//! It used to return `format!("UNIMPLEMENTED: ...")` — a sentence shaped like
-//! an answer, which no caller could tell from a real one. That is what the old
-//! `-> string` contract permitted; the current one cannot express it.
 
 #[allow(warnings)]
 mod bindings;
@@ -34,10 +30,8 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Sixty seconds. A transcode is a real ffmpeg run and can take a while even
-/// for a short clip; a caller waiting on an HTTP request would rather hear
-/// "unavailable" than wait forever, but ten seconds (fs-watcher's poll budget)
-/// would time out on anything but a trivial file.
+/// Sixty seconds: a transcode is a real ffmpeg run, and fs-watcher's ten-second poll budget would
+/// time out on anything but a trivial file.
 const TIMEOUT_NS: u64 = 60_000_000_000;
 
 fn daemon_url() -> Result<String, TranscodeError> {
@@ -137,10 +131,8 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, TranscodeError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser.
-///
-/// The daemon's replies have two flat shapes, so a full serde dependency
-/// would be more code than the thing it reads.
+/// Pull one JSON string field out without a parser: the daemon's replies have two flat shapes, so
+/// serde would be more code than what it reads.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];

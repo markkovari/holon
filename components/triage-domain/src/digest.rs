@@ -1,10 +1,8 @@
 //! The day's reports, counted and tabulated.
 //!
-//! One decomposition instead of two: the CSV table IS the intermediate
-//! representation. `table()` builds the five columns once, sorted; the JSON
-//! digest is then read back out of those columns (`tally(col)`), so the summary
-//! and the CSV cannot disagree about what happened that day. `csv:codec::format`
-//! does the quoting — `Login fails, silently` keeps its five columns.
+//! The CSV table IS the intermediate representation: `table()` builds the five columns once,
+//! sorted, and the JSON digest is read back from them (`tally(col)`), so summary and CSV cannot
+//! disagree. `csv:codec::format` does the quoting.
 use crate::bindings::csv::codec::codec as csv;
 use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
@@ -18,8 +16,6 @@ const COMPONENT: usize = 2;
 const STATE: usize = 3;
 const SEVERITY: usize = 4;
 
-/// `YYYY-MM-DD` and nothing else. No chrono: a date this API only ever compares
-/// as a string prefix does not need to become a date.
 fn valid_day(d: &str) -> bool {
     let b = d.as_bytes();
     b.len() == 10
@@ -30,8 +26,6 @@ fn valid_day(d: &str) -> bool {
         && (1..=31).contains(&d[8..10].parse::<u8>().unwrap_or(0))
 }
 
-/// The day's reports as the CSV body rows, sorted by `reported_at` then `id`.
-///
 /// ponytail: whole-collection walk. `reported_at` is not an index field in the
 /// contract, so `query` would scan anyway; index it and switch to `find-by` if a
 /// day ever costs more than a page or two.
@@ -66,8 +60,6 @@ fn table(day: &str) -> Vec<Vec<String>> {
     keyed.into_iter().map(|(_, fields)| fields).collect()
 }
 
-/// Count one column's values, skipping blanks — which is exactly "only the keys
-/// that occur", with no zero-filling to undo afterwards.
 fn tally(rows: &[Vec<String>], col: usize) -> BTreeMap<String, u32> {
     let mut counts = BTreeMap::new();
     for r in rows {

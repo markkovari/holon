@@ -17,8 +17,7 @@
 //! | signature | the private key — which never left the authenticator — signed it |
 //! | counter | strictly increasing, or the authenticator was cloned |
 //!
-//! Skipping any single one of these turns a passkey into a bearer token, which is
-//! exactly why this is a component and not eight lines in a request handler.
+//! Skipping any single one of these turns a passkey into a bearer token.
 
 #[allow(warnings)]
 mod bindings;
@@ -65,7 +64,6 @@ impl Guest for Component {
         let ad = parse_auth_data(&auth_data)?;
         check_ceremony_flags(&ad, &exp)?;
 
-        // Registration must carry the new credential (the AT flag).
         let (cred_id, cose_bytes) = match (ad.cred_id.as_ref(), ad.cose.as_ref()) {
             (Some(id), Some(cose)) if !id.is_empty() => (id.clone(), cose.clone()),
             _ => return Err(VerifyError::Malformed("no attested credential data".into())),
@@ -127,7 +125,6 @@ impl Guest for Component {
         if alg != ES256 && alg != RS256 {
             return Err(VerifyError::UnsupportedAlgorithm(cred.alg));
         }
-        // The signed message is authenticatorData || SHA-256(clientDataJSON).
         let mut signed = authenticator_data.clone();
         signed.extend_from_slice(&Sha256::digest(&client_data_json));
         verify_signature(&cred.public_key, alg, &signed, &signature)?;
@@ -146,8 +143,6 @@ impl Guest for Component {
         })
     }
 }
-
-// ---- clientDataJSON ---------------------------------------------------------
 
 fn check_client_data(json: &[u8], want_type: &str, exp: &Expectations) -> Result<(), VerifyError> {
     let v: serde_json::Value = serde_json::from_slice(json)
@@ -180,8 +175,6 @@ fn b64url(s: &str) -> Result<Vec<u8>, VerifyError> {
         .or_else(|_| URL_SAFE.decode(s))
         .map_err(|e| VerifyError::BadEncoding(format!("base64url: {e}")))
 }
-
-// ---- authenticatorData ------------------------------------------------------
 
 struct AuthData {
     rp_id_hash: [u8; 32],
@@ -243,8 +236,6 @@ fn check_ceremony_flags(ad: &AuthData, exp: &Expectations) -> Result<(), VerifyE
     }
     Ok(())
 }
-
-// ---- signatures -------------------------------------------------------------
 
 enum Key {
     Es256(p256::ecdsa::VerifyingKey),
@@ -357,7 +348,6 @@ mod tests {
         cbor::encode_int_map(&m)
     }
 
-    /// authData for a registration (AT set) or an assertion (AT clear).
     fn auth_data(rp: &str, flags: u8, count: u32, cred: Option<(&[u8], &[u8])>) -> Vec<u8> {
         let mut ad = Sha256::digest(rp.as_bytes()).to_vec();
         ad.push(flags);
@@ -372,7 +362,6 @@ mod tests {
     }
 
     fn attestation_object(auth_data: &[u8]) -> Vec<u8> {
-        // {"fmt": "none", "attStmt": {}, "authData": <bytes>}
         let mut out = vec![0xa3];
         out.extend(b"\x63fmt\x64none\x67attStmt\xa0\x68authData");
         out.extend(bytes_head(auth_data.len()));
@@ -401,7 +390,6 @@ mod tests {
         (sk, cred)
     }
 
-    /// Sign an assertion the way an authenticator does.
     fn assert_with(
         sk: &SigningKey,
         rp: &str,

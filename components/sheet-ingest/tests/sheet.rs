@@ -1,19 +1,14 @@
 //! The specification, held out.
 //!
-//! What this can judge natively is the part this component actually WRITES: the
-//! OOXML shape, and the row/header discipline. The CSV path and the ZIP path are
-//! delegated to `csv:codec` and `zip:archive`, so they are judged by their own
-//! specifications and by the app's e2e over the composed artifact — testing them
-//! again here would be testing a mock.
-//!
-//! The fixture is a real `.xlsx`, deflated, written by a tool that is not this one.
+//! Judges what this component WRITES natively: the OOXML shape and the row/header discipline. The
+//! CSV and ZIP paths are delegated to `csv:codec` and `zip:archive` and judged by their own specs
+//! and the app's e2e. The fixture is a real deflated `.xlsx` written by another tool.
 
 use sheet_ingest::{
     column_of, format_of, shape, shared_strings, worksheet_rows, xlsx_from_parts, Format,
     ImportError, Row,
 };
 
-/// The whole path, from the real file's parts.
 fn parts() -> Vec<(String, Vec<u8>)> {
     let bytes = include_bytes!("fixtures/cards.xlsx");
     zip::extract(bytes)

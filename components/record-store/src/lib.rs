@@ -1,43 +1,13 @@
 //! `record-store` — store JSON records in named collections, query them by field, and index them
 //!
-//! Typed JSON records in named COLLECTIONS, the primitive every app
-//! reimplements as glue. Each record is an opaque JSON object string keyed by
-//! an auto-minted ULID; the component owns the storage shape (collection
-//! prefixes, id minting, index maintenance), the app owns the schema.
-//!
-//! Why ULIDs: a ULID's 48-bit time prefix makes its Crockford-base32 encoding
-//! sort lexicographically by creation time. So the per-collection id index is
-//! kept SORTED and is therefore time-ordered for free — `list` paginates over
-//! it and `count` is just its length.
-//!
-//! Secondary INDEXES turn "all pets owned by X" into an O(matches) lookup
-//! instead of an O(n) scan over every record. For each configured index field
-//! `F` with JSON value `V`, a key `ix_{collection}_{F}_{sanitize(V)}` holds the
-//! list of matching ids. Maintained on create / update / delete. Because `V` is
-//! sanitized and length-capped into the key, distinct values *can* collide onto
-//! one index key — that only ever OVER-matches, so `find-by` always re-verifies
-//! the record's actual `field == value` before returning it.
-//!
-//! Optimistic locking: every record carries a monotonic `revision`; `update`
-//! with a non-zero `expected-revision` that no longer matches yields
-//! `revision-conflict(current)`.
-//!
-//! Storage is `wasi:keyvalue` + `wasi:clocks` (id time) + `wasi:random` (id
-//! entropy), plus `comp:store/cas` for the one operation that needs a real
-//! guard. `update` compares and writes THROUGH the store (ADR-0065) — it used to
-//! read, compare and write over three separate calls, which let a concurrent
-//! writer's record be overwritten by one that never saw it.
-//!
-//! Index maintenance (`idlist`) is guarded the same way: every write to an index
-//! manifest or chunk is a compare-and-set against the revision of the value it
-//! was computed from, and nothing deletes an index key. Concurrent inserts and
-//! removes of DIFFERENT ids on one index key cannot drop or resurrect each other.
-//! What is still not atomic is the record write and its index upkeep — they are
-//! separate keys, the upkeep runs after the record commits, and two requests'
-//! upkeep for the SAME record can land in either order — so the records stay
-//! authoritative: `find-by`/`query` re-verify every candidate, `list` reports
-//! dangling ids, and `repair` rebuilds the indexes from the records. The exact
-//! guarantee is in `idlist`'s module doc.
+//! Typed JSON records in named collections; the app owns the schema.
+//! Ids are ULIDs, so the per-collection id index stays sorted in creation order (`list` pages
+//! over it, `count` is its length).
+//! Secondary indexes `ix_{collection}_{F}_{sanitize(V)}` hold matching ids. The value is
+//! sanitized and capped, so keys can collide and only ever over-match; `find-by` re-verifies.
+//! `update` with a non-zero `expected-revision` yields `revision-conflict(current)` on mismatch, comparing and writing through `comp:store/cas` (ADR-0065).
+//! Index upkeep (`idlist`) is CAS-guarded but not atomic with the record write, so records stay
+//! authoritative: readers re-verify, `list` reports dangling ids, `repair` rebuilds.
 
 #[allow(warnings)]
 mod bindings;
@@ -68,8 +38,6 @@ const MAX_LIMIT: usize = 500;
 /// (over-matching), which the readers then re-filter away.
 const MAX_INDEXED_VALUE: usize = 120;
 
-// ---- stored shape -------------------------------------------------------
-
 /// What we persist per record at `rec_{collection}_{id}`. `data` is the JSON
 /// object body verbatim (so re-serialization can't reorder/normalize it).
 #[derive(Serialize, Deserialize)]
@@ -89,8 +57,6 @@ fn now_ms() -> u128 {
     let t = wall_clock::now();
     (t.seconds as u128) * 1000 + (t.nanoseconds as u128) / 1_000_000
 }
-
-// ---- key naming ---------------------------------------------------------
 
 /// Sanitize one opaque segment to NATS-legal kv chars (same byte scheme as
 /// config-store's `sanitize` / idempotency-guard's `id_key`).
@@ -130,7 +96,6 @@ fn ix_key(collection: &str, field: &str, value: &str) -> String {
     format!("ix_{}_{}_{}", sanitize(collection), sanitize(field), sanitize_value(value))
 }
 
-// ---- ULID minting -------------------------------------------------------
 //
 // 128 bits = [48-bit ms timestamp big-endian | 80-bit random], rendered as 26
 // Crockford-base32 chars. The top char encodes the high 2 bits; the remaining
@@ -162,18 +127,13 @@ fn mint_ulid() -> String {
     String::from_utf8(buf.to_vec()).expect("crockford alphabet is ascii")
 }
 
-// ---- kv plumbing --------------------------------------------------------
-
 fn open() -> Result<kv::Bucket, StoreError> {
     kv::open(BUCKET).map_err(|e| StoreError::BackendUnavailable(format!("open: {e:?}")))
 }
 
-/// Say that the index disagreed with the records, in the shape `audit-log` uses
-/// so an existing scrape picks it up without new plumbing.
-///
-/// A component instance is per-request (ADR-0037), so there is nowhere to keep a
-/// counter — one line per occurrence is the only honest option, and a quiet
-/// system prints nothing at all.
+/// Say the index disagreed with the records, in the shape `audit-log` uses.
+/// Instances are per-request (ADR-0037), so there is no counter: one line per occurrence, nothing
+/// when quiet.
 fn drift(collection: &str, op: &str, missing: usize) {
     if missing == 0 {
         return;
@@ -212,12 +172,11 @@ fn load_record(
     }
 }
 
-/// Load many records in ONE backend round-trip via `wasi:keyvalue/batch`
-/// get-many. Returns (id, record) pairs in input-id order, skipping absent
-/// ids. A get-many error propagates: every supported host links the batch
-/// interface (a host without it fails at LINK time), so a runtime error is a
-/// real backend fault — degrading to N sequential per-key gets there turned
-/// one transient error into a 20-second page.
+/// Load many records in ONE backend round-trip via `wasi:keyvalue/batch` get-many. Returns (id,
+/// record) pairs in input-id order, skipping absent ids.
+/// A get-many error propagates: a host without the batch interface fails at LINK time, so a
+/// runtime error is a real backend fault, and degrading to sequential gets turned one transient
+/// error into a 20-second page.
 fn load_records_many(
     bucket: &kv::Bucket,
     collection: &str,
@@ -229,7 +188,6 @@ fn load_records_many(
     let keys: Vec<String> = ids.iter().map(|id| rec_key(collection, id)).collect();
     let found = batch::get_many(bucket, &keys)
         .map_err(|e| StoreError::BackendUnavailable(format!("get-many: {e:?}")))?;
-    // get-many returns (key, bytes) pairs; map back to ids in input order.
     let mut by_key: std::collections::HashMap<String, Vec<u8>> =
         found.into_iter().flatten().collect();
     let mut out = Vec::with_capacity(ids.len());
@@ -243,7 +201,6 @@ fn load_records_many(
     Ok(out)
 }
 
-// ---- id lists (the id index and every secondary index) --------------------
 //
 // The chunked sorted lists live in `idlist`, written against a two-call `Kv`
 // trait so their interleavings can be tested without a host. This is the
@@ -304,7 +261,6 @@ fn read_ix(bucket: &kv::Bucket, key: &str) -> Result<Vec<String>, StoreError> {
     idlist::read_all(&BucketKv(bucket), key).map_err(be)
 }
 
-// Secondary index entries are ULID-sorted (== creation order).
 fn ix_add(bucket: &kv::Bucket, key: &str, id: &str) -> Result<(), StoreError> {
     idlist::insert(&BucketKv(bucket), key, id).map_err(be)
 }
@@ -337,17 +293,11 @@ fn secondary_keys(collection: &str, parsed: &Value, index_fields: &[String]) -> 
 /// pathological contention.
 const INDEX_TRIES: u32 = 3;
 
-/// Apply one index edit after the record it describes has already committed.
-///
-/// This must NOT fail the call. The record is authoritative and already stored;
-/// reporting `err` now tells the caller the write did not happen when it did, and
-/// a caller that believes that acts on it — `treasury:ledger` refunded or
-/// abandoned transfers whose debit had landed, and ten concurrent transfers
-/// destroyed the money they moved. An index that missed an edit is the recoverable
-/// failure (`find-by`/`query` re-verify every candidate, `list` skips and reports
-/// dangling ids, `repair` rebuilds from the records); a caller misled about its own
-/// write is not. So: retry, and if it still fails, say so in the `drift` shape and
-/// leave it for `repair`.
+/// Apply one index edit after the record has committed. This must NOT fail the call: the record
+/// is authoritative, and reporting `err` misleads a caller about a write that landed
+/// (`treasury:ledger` refunded transfers whose debit had landed).
+/// A missed index edit is recoverable (readers re-verify, `repair` rebuilds), so retry, then say
+/// so in the `drift` shape and leave it for `repair`.
 fn index_after_commit(
     collection: &str,
     op: &str,
@@ -372,15 +322,10 @@ fn index_after_commit(
     );
 }
 
-/// Move `id` between the secondary indexes `old` implied and those `new` implies,
-/// touching ONLY the keys whose value changed. Best-effort — see
-/// `index_after_commit`.
-///
-/// Skipping unchanged keys is not just a saving. The old code removed `id` from
-/// every index and re-added it on every update, so an update that changed
-/// nothing indexed (a balance, not a name) still rewrote the `name` index twice —
-/// concurrent updates to one record all contended on that one key, and between
-/// the remove and the add `find-by` could not see the record at all.
+/// Move `id` between the secondary indexes `old` implied and those `new` implies, touching ONLY
+/// the keys whose value changed. Best-effort — see `index_after_commit`.
+/// Rewriting unchanged keys made concurrent updates contend on one key and hid the record from
+/// `find-by` between the remove and the add.
 fn reindex_after_commit(
     bucket: &kv::Bucket,
     collection: &str,
@@ -396,8 +341,6 @@ fn reindex_after_commit(
         index_after_commit(collection, op, key, || ix_add(bucket, key, id));
     }
 }
-
-// ---- helpers ------------------------------------------------------------
 
 fn entry_from(id: &str, s: Stored) -> Entry {
     Entry {
@@ -419,8 +362,6 @@ fn parse_object(data: &str) -> Result<Value, StoreError> {
     Ok(v)
 }
 
-// ---- guest --------------------------------------------------------------
-
 impl Guest for Component {
     fn create(
         collection: String,
@@ -432,17 +373,8 @@ impl Guest for Component {
         let ts = now();
         let stored = Stored { data, revision: 1, created: ts, updated: ts, index_fields };
 
-        // `put_record` used to be a plain, unconditional `bucket.set` trusting
-        // `mint_ulid`'s 80 random bits never to repeat. A collision would
-        // silently overwrite the first document with the second's — both
-        // still indexed fine, since the index just sees the same id twice —
-        // which is the class of bug this store shouldn't have to trust never
-        // happens. CAS'd here with `expected: 0` ("must not exist yet"); a
-        // collision retries with a freshly minted id instead of clobbering.
-        // Defense-in-depth: not confirmed as the cause of any specific
-        // observed failure, and a real collision at 80 random bits should be
-        // vanishingly rare — but "should be rare" is exactly what the
-        // manifest write above was trusted on too, wrongly.
+        // CAS'd with `expected: 0` (must not exist yet), so an id collision retries with a fresh
+        // id instead of silently overwriting the first record.
         let mut id = mint_ulid();
         let mut placed = false;
         for _ in 0..CAS_TRIES {
@@ -492,16 +424,7 @@ impl Guest for Component {
         let parsed_new = parse_object(&data)?;
         let key = rec_key(&collection, &id);
 
-        // ADR-0065: this used to be `load_record`, compare, `put_record` — three
-        // separate keyvalue calls. Anything that changed the record in between (a
-        // second node, or a host read cache) made the comparison agree with itself
-        // about state that was already gone, and the write silently overwrote it.
-        // Measured: three appends accepted, two survived.
-        //
-        // Now the store does the comparing. `cas::get` reports the revision the
-        // store is actually at and may never be served from a cache; `cas::set`
-        // only lands if the key is still there. A writer that lost the race is told
-        // so and comes round again.
+        // `cas::get` reports the revision the store is actually at and is never cached; `cas::set` only lands if the key is unchanged. A writer that lost the race re-reads and retries (comparing in the component raced with other nodes and the host cache, ADR-0065).
         for _ in 0..CAS_TRIES {
             let (store_revision, bytes) = match cas::get(&bucket, &key) {
                 Ok(Some(v)) => (v.revision, v.value),
@@ -511,11 +434,8 @@ impl Guest for Component {
             let current: Stored = serde_json::from_slice(&bytes)
                 .map_err(|e| StoreError::BackendUnavailable(format!("corrupt record {id}: {e}")))?;
 
-            // The CALLER's expectation is about the record's own revision, which is
-            // a different number from the store's — one is this component's
-            // counter, the other is the backend's sequence. Both have to hold: the
-            // first is optimistic concurrency for the app, the second is what makes
-            // the first enforceable.
+            // The CALLER's expectation is about the record's own revision, not the backend's
+            // sequence. Both have to hold.
             if expected_revision != 0 && expected_revision != current.revision {
                 return Err(StoreError::RevisionConflict(current.revision));
             }
@@ -532,15 +452,10 @@ impl Guest for Component {
 
             match cas::set(&bucket, &key, &body, store_revision) {
                 Ok(cas::Outcome::Committed(_)) => {
-                    // Indexes follow the record. Still separate writes — a crash
-                    // between them leaves an index entry pointing at an old value,
-                    // which is the pre-existing weakness ADR-0065 did not touch and
-                    // is a different problem from losing the record itself.
-                    //
-                    // The write has landed, so nothing below may report `err`:
-                    // this used to `?` the index edits, and an index that lost its
-                    // races turned a committed update into a failed one in the
-                    // caller's eyes (see `index_after_commit`).
+                    // Indexes follow the record as separate writes; a crash between them leaves a
+                    // stale index entry.
+                    // The write has landed, so nothing below may report `err` (see
+                    // `index_after_commit`).
                     let old_keys = serde_json::from_str::<Value>(&current.data)
                         .map(|v| secondary_keys(&collection, &v, &current.index_fields))
                         .unwrap_or_default();
@@ -548,9 +463,7 @@ impl Guest for Component {
                     reindex_after_commit(&bucket, &collection, &id, "update", &old_keys, &new_keys);
                     return Ok(entry_from(&id, stored));
                 }
-                // Someone else wrote between the read and the write. Re-read and
-                // try again — this is the retry the old code could not do, because
-                // it never found out.
+                // Someone else wrote between the read and the write. Re-read and retry.
                 Ok(cas::Outcome::Conflict(_)) => continue,
                 Err(e) => return Err(StoreError::BackendUnavailable(format!("cas set: {e:?}"))),
             }
@@ -567,12 +480,8 @@ impl Guest for Component {
             return Ok(());
         };
 
-        // The record goes FIRST, and it is the only step that can fail the call.
-        // It used to be last, after index removals that `?`-ed: a failed index
-        // edit reported the delete as failed with the record's index entries
-        // already half gone — a record that existed and could not be listed.
-        // This way round an interrupted delete leaves only dangling ids, which
-        // every read already skips (and `list` reports) and `repair` prunes.
+        // The record goes FIRST and is the only step that can fail the call; an interrupted
+        // delete then leaves only dangling ids, which reads skip and `repair` prunes.
         bucket
             .delete(&rec_key(&collection, &id))
             .map_err(|e| StoreError::BackendUnavailable(format!("delete: {e:?}")))?;
@@ -603,13 +512,8 @@ impl Guest for Component {
             .into_iter()
             .map(|(id, stored)| entry_from(&id, stored))
             .collect();
-        // The index named ids this page could not resolve. That was silent: the
-        // page just came back short, and nothing anywhere said why (ADR-0075).
-        //
-        // Free to notice, because the work already happened — and this is the
-        // ONLY drift a read can see. The opposite direction, a record the index
-        // never mentions, is invisible from here by definition: a read cannot
-        // miss what it was never told to look for. That one needs `verify`.
+        // The index named ids this page could not resolve (ADR-0075). This is the only drift a
+        // read can see; a record the index never mentions needs `verify`.
         drift(&collection, "list", window.len().saturating_sub(entries.len()));
 
         let next = if more {
@@ -623,7 +527,6 @@ impl Guest for Component {
 
     fn find_by(collection: String, field: String, value: String) -> Result<Vec<Entry>, StoreError> {
         let bucket = open()?;
-        // Missing index key -> empty list, not an error.
         let ids = read_ix(&bucket, &ix_key(&collection, &field, &value))?;
 
         let mut entries = Vec::new();
@@ -659,12 +562,8 @@ impl Guest for Component {
         let candidates = match filters.first() {
             Some(f) => {
                 let ix = read_ix(&bucket, &ix_key(&collection, &f.field, &f.value))?;
-                // If the first filter's field isn't indexed there's no index key,
-                // so `ix` is empty — but the field may still match records. Fall
-                // back to a full scan (the per-record re-check below filters it).
-                // Only an indexed field with a genuine zero matches stays empty,
-                // which `find-by` semantics would also give. To distinguish, scan
-                // when the index is absent: treat empty index as "scan".
+                // A non-indexed first filter has no index key, so `ix` is empty yet records may
+                // match: scan when the index is absent.
                 if ix.is_empty() {
                     read_id_index(&bucket, &collection)?
                 } else {
@@ -688,7 +587,6 @@ impl Guest for Component {
                 let Ok(parsed) = serde_json::from_str::<Value>(&stored.data) else {
                     continue;
                 };
-                // AND: every filter's top-level field must JSON-equal its value.
                 let matches = filters
                     .iter()
                     .all(|f| field_value(&parsed, &f.field).as_deref() == Some(f.value.as_str()));
@@ -706,17 +604,8 @@ impl Guest for Component {
         idlist::count(&BucketKv(&bucket), &idx_key(&collection)).map_err(be)
     }
 
-    /// Rebuild the id index from the records (ADR-0068).
-    ///
-    /// The records are authoritative and the index is an acceleration layer over
-    /// them, so a disagreement is always resolvable in one direction: scan what
-    /// exists, make the index say that. This is the only call that can bring back
-    /// a record which had gone missing from `list` — and until now nothing could,
-    /// which meant an index that dropped an id was permanent.
-    ///
-    /// It scans the whole bucket. That is fine for an operator action and would
-    /// not be on a request path, which is why it is a separate call rather than
-    /// something `list` does when it smells trouble.
+    /// Rebuild the id index from the records (ADR-0068). Records are authoritative. It scans the
+    /// whole bucket, so it is an operator action, not something `list` does.
     fn repair(collection: String) -> Result<RepairReport, StoreError> {
         repair_inner(&collection, true)
     }
@@ -735,7 +624,6 @@ fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreErro
         let bucket = open()?;
         let prefix = format!("rec_{}_", sanitize(&collection));
 
-        // Every record that actually exists, by id, straight from the keyspace.
         let keys = bucket
             .list_keys(None)
             .map_err(|e| StoreError::BackendUnavailable(format!("list-keys: {e:?}")))?;
@@ -759,14 +647,8 @@ fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreErro
         let dangling: Vec<&String> = indexed_set.difference(&real_set).copied().collect();
         let (readded, pruned) = (missing.len() as u64, dangling.len() as u64);
 
-        // Refuse to act on a scan that found nothing while the index is populated.
-        //
-        // Learned the hard way: `list_keys` was handing back corrupted names on the
-        // NATS backend, so the scan came back empty, and the first version of this
-        // happily pruned a perfectly good index down to zero — a repair that
-        // destroys what it was called to protect. Any scan that disagrees with the
-        // index THAT completely is far more likely to be a broken scan than a
-        // collection that lost every record at once, so it stops and says so.
+        // Refuse to act on a scan that found nothing while the index is populated: a broken scan
+        // (`list_keys` once returned corrupted names on NATS) would prune a good index to zero.
         if real.is_empty() && !indexed.is_empty() {
             return Err(StoreError::BackendUnavailable(format!(
                 "repair {collection}: the scan found no records while the index names {}. \
@@ -775,12 +657,9 @@ fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreErro
             )));
         }
 
-        // Patched id by id through the same guarded insert/remove every request
-        // uses, NOT rewritten wholesale. A wholesale rewrite is a plain write of a
-        // list computed from a scan, so anything a request inserted after the scan
-        // was erased by it. A half-finished patch is harmless: the next run
-        // finishes it. `heal` then re-derives every manifest entry, which is what
-        // migrates a manifest an older version left inconsistent.
+        // Patched id by id through the guarded insert/remove, not rewritten wholesale (a
+        // wholesale write erases ids inserted after the scan). `heal` then re-derives every
+        // manifest entry.
         let lists = BucketKv(&bucket);
         if write {
             let ix = idx_key(&collection);
@@ -797,13 +676,8 @@ fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreErro
             idlist::heal(&lists, &ix).map_err(be)?;
         }
 
-        // And the secondary indexes, which ADR-0068 left out. `find-by` and
-        // `query` read these, so an id missing from one is a record that exists,
-        // is listed, and cannot be found by the field it is indexed on — the same
-        // silent invisibility one layer down.
-        //
-        // What each index SHOULD hold is recomputed from the records; the fix is
-        // the difference, applied with the guarded writers.
+        // Then the secondary indexes (ADR-0068 left them out): recompute what each should hold
+        // from the records and apply the difference with the guarded writers.
         let mut wanted: std::collections::BTreeMap<String, Vec<String>> =
             std::collections::BTreeMap::new();
         for (id, stored) in load_records_many(&bucket, &collection, &real)? {
@@ -829,7 +703,6 @@ fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreErro
                     .unwrap_or(false)
             }))
         };
-        // Bring one index in line with `want`; `true` if it disagreed.
         let fix_index = |key: &str, want: &[String]| -> Result<bool, StoreError> {
             let have = idlist::read_all(&lists, key).map_err(be)?;
             let want_set: std::collections::BTreeSet<&String> = want.iter().collect();
@@ -852,17 +725,13 @@ fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreErro
             fix_index(key, ids)?;
         }
 
-        // An index key nothing points at any more. Left behind by a delete that
-        // was interrupted, or by a field whose value changed — it would keep
-        // over-matching until `find-by` re-verified it away, which costs a read
-        // per stale id forever. Counted only while it still names something, so
-        // a second run reports zero.
+        // An index key nothing points at any more (interrupted delete, changed value)
+        // over-matches until re-verified. Counted only while it still names something, so a
+        // second run reports zero.
         let ix_prefix = format!("ix_{}_", sanitize(&collection));
         let mut dropped = 0u64;
         for k in keys.keys.iter() {
-            // Chunk keys hang off their base and are handled through it. (This
-            // was `contains("_c0")`, which also skipped any base key with `_c0`
-            // in it — a field named `c0…`.)
+            // Chunk keys hang off their base and are handled through it.
             if !k.starts_with(&ix_prefix) || idlist::is_chunk_key(k) || wanted.contains_key(k) {
                 continue;
             }
@@ -887,13 +756,9 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::*;
 
-    /// The escape scheme has to be INJECTIVE, and `_` is why.
-    ///
-    /// `_` is both the joiner in every key (`rec_{collection}_{id}`) and the
-    /// escape prefix, so it must never survive a segment unescaped. If it did, a
-    /// collection named `a_b` and a collection `a` holding ids that start with
-    /// `b` would write to the same keys — one tenant's records readable, and
-    /// overwritable, through another's name.
+    /// The escape scheme has to be INJECTIVE: `_` is both the key joiner and the escape prefix,
+    /// so it must never survive unescaped, or collection `a_b` and `a` with ids starting `b`
+    /// would share keys.
     #[test]
     fn the_joiner_cannot_be_forged_from_inside_a_segment() {
         assert_eq!(sanitize("a_b"), "a_5Fb", "an underscore must be escaped");
@@ -902,8 +767,6 @@ mod tests {
         assert_ne!(ix_key("c", "f_g", "v"), ix_key("c", "f", "g_v"));
     }
 
-    /// Distinct inputs, distinct keys — checked over the awkward characters
-    /// rather than asserted in prose.
     #[test]
     fn distinct_segments_give_distinct_keys() {
         let segs = ["", "a", "a_", "_a", "a/b", "a=b", "a.b", "a b", "é", "a_5Fb", "A", "0"];
@@ -929,12 +792,8 @@ mod tests {
         assert!(sanitize("naïve").is_ascii());
     }
 
-    /// An indexed value is capped, and the cap is allowed to OVER-match.
-    ///
-    /// Two values sharing a long prefix land on one index key, so a reader gets
-    /// a superset and re-verifies. That is the documented trade; this pins that
-    /// it over-matches rather than under-matches, because a miss would silently
-    /// lose records from a query and a hit costs only a re-check.
+    /// An indexed value is capped, and the cap may OVER-match (readers re-verify) but must never
+    /// under-match.
     #[test]
     fn a_long_indexed_value_is_truncated_and_can_only_over_match() {
         let long = "x".repeat(MAX_INDEXED_VALUE + 50);
@@ -942,20 +801,14 @@ mod tests {
         let a = format!("{long}aaa");
         let b = format!("{long}bbb");
         assert_eq!(ix_key("c", "f", &a), ix_key("c", "f", &b), "a shared prefix over-matches");
-        // Short values are untouched, so the common case is exact.
         assert_eq!(sanitize_value("short"), "short");
         // Escaping happens BEFORE the cap, so the cap is on key bytes and the
         // key cannot exceed it however many escapes a value needs.
         assert!(sanitize_value(&"é".repeat(100)).len() <= MAX_INDEXED_VALUE);
     }
 
-    /// The cursor is exclusive, and an absent cursor resumes where it would be.
-    ///
-    /// The second half matters more than it looks: a caller pages with the last
-    /// id it saw, and that record can be DELETED before the next page is asked
-    /// for. Resuming at the insertion point means the page after a vanished
-    /// cursor is the next one, not the first one — a restart that would repeat
-    /// every record already delivered.
+    /// The cursor is exclusive, and an absent cursor resumes at the insertion point, so a deleted
+    /// cursor record does not restart paging.
     #[test]
     fn paging_is_exclusive_and_survives_a_deleted_cursor() {
         let ids: Vec<String> = ["a", "c", "e", "g"].iter().map(|s| s.to_string()).collect();
@@ -973,7 +826,6 @@ mod tests {
     #[test]
     fn an_update_that_changes_no_indexed_field_touches_no_index() {
         // The treasury bug: every balance update rewrote the `name` index, and
-        // ten concurrent transfers lost that key's races. Same keys in, same out.
         let fields = vec!["name".to_string(), "name".to_string(), "absent".to_string()];
         let before = serde_json::json!({"name": "a", "units": 10});
         let after = serde_json::json!({"name": "a", "units": 0});

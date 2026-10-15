@@ -1,12 +1,9 @@
 //! `static-assets` — serve an embedded static bundle — an SPA in a component of its own, so the domain artifact stays slim
 //!
-//! The built React SPA embedded at build time (build.rs walks `static/` and
-//! `include_bytes!`s every file). Exists so the HTTP-facing domain component
-//! stays slim — it links this capability for `GET /`, `/assets/*` etc. instead
-//! of carrying ~620 KB of UI in its own artifact, which inflates per-request
-//! instantiation on hosts that instantiate per request (wasmCloud).
-//!
-//! Pure compute: exact-path lookup over a static table. No imports, no state.
+//! The built React SPA embedded at build time (build.rs walks `static/` and `include_bytes!`s
+//! every file), so the HTTP-facing domain component stays slim: ~620 KB of UI in its artifact
+//! inflates per-request instantiation on hosts that instantiate per request (wasmCloud). Pure
+//! compute: exact-path lookup over a static table.
 
 #[allow(warnings)]
 mod bindings;

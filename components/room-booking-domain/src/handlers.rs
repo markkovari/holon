@@ -172,7 +172,6 @@ fn book(route: &Route, id: &str, body: &str) -> Reply {
 
 fn cancel(route: &Route, id: &str) -> Reply {
     let principal = match authorize_perm(route, "bookings", "write") {
-        // Wait, the scope is bookings:write
         Ok(p) => p,
         Err(r) => return r,
     };

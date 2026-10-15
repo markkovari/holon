@@ -1,24 +1,13 @@
 //! `triage-assist-domain` — authenticated, rate-limited defect intake with an AI
 //! severity assist and an audit ledger, as one component.
 //!
-//! ## What is scaffold and what is the goal
-//!
-//! This file is the ROUTER and no part may write it: it dispatches to `intake`,
-//! `assist` and `ledger`, answers `/health` so the harness can tell "the component
-//! is not up" from "the component is wrong", mints a test token, and seeds a
-//! fixture. Three parts need it and none owns it, which is the shape a shared file
-//! has to have when three agents work at once.
-//!
-//! `src/intake.rs`, `src/assist.rs` and `src/ledger.rs` are the goal.
-//! `CONTRACT.md` is what they must agree on.
-//!
-//! ## Why these three
-//!
-//! They form a chain, not a set: `assist` reads what `intake` STORED rather than
-//! what the request said, because a redaction that happens after the model call is
-//! a leak nothing in the response reveals — and `ledger` is the only way to show,
-//! afterwards, that any of it happened. A part that invents its own storage shape
-//! or its own audit signature passes its own gate and fails the composition.
+//! This file is the ROUTER and no part may write it: it dispatches to `intake`, `assist` and
+//! `ledger`, answers `/health`, mints a test token, and seeds a fixture. `src/intake.rs`,
+//! `src/assist.rs` and `src/ledger.rs` are the goal; `CONTRACT.md` is what they must agree on.
+//! They form a chain: `assist` reads what `intake` STORED rather than the request, because a
+//! redaction after the model call is an invisible leak, and `ledger` is the only way to show
+//! afterwards that it happened. A part with its own storage shape or audit signature passes its
+//! own gate and fails the composition.
 
 mod assist;
 #[allow(warnings)]
@@ -93,9 +82,7 @@ impl Reply {
 
 /// One request, as a part sees it.
 ///
-/// The bearer is handed over as a STRING and not as a principal: resolving it is
-/// `auth:identity/authorizer`'s job and doing it here would take the part's whole
-/// reason for importing that capability away.
+/// The bearer is handed over as a STRING: resolving it is `auth:identity/authorizer`'s job.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
@@ -119,20 +106,14 @@ impl Route {
 
 use guestfmt::percent_decode as percent;
 
-/// Unix seconds, for anything that has to be stamped.
 pub fn now_secs() -> u64 {
     system_clock::now().seconds as u64
 }
 
 use guestfmt::rfc3339;
 
-/// A token for a test caller, so no gate has to log in through a part it is not
-/// judging.
-///
-/// Scaffold, and it is `session::issue` rather than a hand-built JWT for the same
-/// reason the parts are made to call `authorize`: a fixture that mints its own
-/// tokens is a fixture that can drift from what the verifier accepts, and then
-/// every part fails for the router's reason.
+/// A token for a test caller. It is `session::issue` rather than a hand-built JWT so the fixture
+/// cannot drift from what the verifier accepts.
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let subject = req.get("subject").and_then(Value::as_str).unwrap_or("ada").to_string();
@@ -153,16 +134,8 @@ fn mint(body: &str) -> Reply {
     }
 }
 
-/// Two reports written straight to the store, so a part can be judged before the
-/// part upstream of it exists.
-///
-/// `assist` needs reports and must not depend on `intake` being finished; `ledger`
-/// needs neither but is cheaper to drive with something in the store. So the
-/// fixture writes the contract's document shape directly.
-///
-/// Scaffold, and it says what it is: `assist` is absent on purpose, because
-/// producing it is the assist part's job and a fixture that pre-filled it would let
-/// a part that never calls a model pass.
+/// Two reports written straight to the store, so `assist` can be judged before `intake` exists.
+/// `assist` is absent on purpose: producing it is the assist part's job.
 fn seed() -> Reply {
     let mut ids = Vec::new();
     for (title, body, component) in [
@@ -244,9 +217,8 @@ impl Guest for Component {
             ["health"] => Reply::json(200, json!({ "ok": true })),
             ["test", "token"] => mint(&body),
             ["test", "seed"] => seed(),
-            // The stored document, straight out of the store. Scaffold, and it says
-            // what it is: a part must be judgeable on what it WROTE without
-            // depending on the part that owns the route for reading it back.
+            // The stored document straight out of the store, so a part is judgeable on what it
+            // WROTE.
             ["test", "report", id] => match records::get("reports", id) {
                 Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
                 Err(_) => Reply::err(404, "not_found"),
@@ -259,9 +231,8 @@ impl Guest for Component {
             _ => Reply::err(404, "not_found"),
         };
 
-        // Every dispatched request is noted, which is what lets `ledger` be judged
-        // before either other part exists. The parts note their own events too, with
-        // the detail only they know; this line is the traffic, not the story.
+        // Every dispatched request is noted, so `ledger` can be judged before the other parts
+        // exist; parts note their own events with the detail only they know.
         if !seg.is_empty() && seg[0] == "api" {
             ledger::note(
                 &route.trace,

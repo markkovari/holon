@@ -1,8 +1,6 @@
 //! The specification, held out: this file is not writable by the goal.
 //!
-//! Every case here is a rule people get wrong, and most of them are the
-//! pre-release rules — which is the point. A range matcher that handles `^1.2.3`
-//! and nothing else looks finished and is not.
+//! Every case here is a rule people get wrong, mostly the pre-release rules.
 
 use semver_range::matches;
 

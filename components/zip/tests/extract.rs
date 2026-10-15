@@ -1,10 +1,8 @@
 //! The specification for reading an archive, held out.
 //!
-//! The fixture is a REAL `.xlsx` written by Python's `zipfile` with
-//! `ZIP_DEFLATED` — every entry is method 8, with sizes and CRCs from a writer
-//! that is not this one. A round trip through our own `archive()` would only
-//! prove the writer and reader agree with each other, which is the one thing that
-//! cannot go wrong in a way anybody notices.
+//! The fixture is a REAL `.xlsx` written by Python's `zipfile` with `ZIP_DEFLATED`: every entry
+//! is method 8, with sizes and CRCs from a writer that is not this one. A round trip through our
+//! own `archive()` would only prove the writer and reader agree.
 
 use zip::{archive, extract, File, ZipError};
 

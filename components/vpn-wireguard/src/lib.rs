@@ -1,26 +1,12 @@
 //! `vpn-wireguard` — whether a WireGuard tunnel is up and which peers are connected
 //!
-//! The inspection happens in `comp-wireguard`, which is native because reading
-//! a WireGuard interface needs the `wg` binary and a kernel module, neither of
-//! which a `wasm32-wasip2` guest has (ADR-0095). This is the component side: it
-//! holds the contract, and reaches the daemon over HTTP the same way
-//! `fs-watcher` reaches `comp-fswatch`.
-//!
-//! Two things follow from that split, and both are the point rather than a cost:
-//!
-//!   * what this may dial is a MANIFEST decision (ADR-0008). The daemon's
-//!     address is `wireguard-url` in `wasi:config`, and the deployment's
-//!     egress allow-list decides whether the call leaves at all.
-//!   * the daemon has its own allow-list of interfaces, set by its operator at
-//!     startup. `status` takes no argument, so there is nothing here for a
-//!     caller to name that could be refused.
-//!
-//! Config (wasi:config/store):
-//!   wireguard-url    where `comp-wireguard` is listening, e.g. http://127.0.0.1:8011
-//!
-//! It used to return `"UNIMPLEMENTED: ..."` — a sentence a caller could not
-//! tell apart from a real answer. That is what the old `-> string` contract
-//! permitted; the current one cannot express it.
+//! The inspection happens in `comp-wireguard`, native because reading a WireGuard interface needs
+//! the `wg` binary and a kernel module (ADR-0095). This is the component side: it holds the
+//! contract and reaches the daemon over HTTP, as `fs-watcher` reaches `comp-fswatch`.
+//! What this may dial is a MANIFEST decision (ADR-0008): the daemon's address is `wireguard-url`
+//! in `wasi:config`, and the egress allow-list decides whether the call leaves. The daemon has
+//! its own interface allow-list, and `status` takes no argument, so there is nothing for a caller
+//! to name that could be refused.
 
 #[allow(warnings)]
 mod bindings;
@@ -35,8 +21,7 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Ten seconds. `wg show ... dump` returns immediately; anything slower than
-/// this is a daemon in trouble.
+/// Ten seconds: `wg show ... dump` returns immediately, so anything slower is a daemon in trouble.
 const TIMEOUT_NS: u64 = 10_000_000_000;
 
 fn daemon_url() -> Result<String, WgError> {
@@ -133,10 +118,8 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, WgError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser.
-///
-/// The daemon's replies have two shapes and no nesting beyond a flat peer
-/// list, so a full serde dependency would be more code than the thing it reads.
+/// Pull one JSON string field out without a parser: the replies are flat, so serde would be more
+/// code than what it reads.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];
@@ -145,7 +128,6 @@ fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     Some(&rest[start..end])
 }
 
-/// Pull one JSON numeric field out.
 fn number(json: &str, key: &str) -> u64 {
     json.find(&format!("\"{key}\":"))
         .map(|i| &json[i + key.len() + 3..])

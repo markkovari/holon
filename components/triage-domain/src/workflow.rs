@@ -1,19 +1,13 @@
 //! The report lifecycle. **This file is the goal of the `workflow` part.**
 //!
-//! Two ideas hold this file up, and neither is a state ladder:
-//!
-//! 1. `MOVES` is the lifecycle, written once. The fsm definition, the set of legal
-//!    event names (the 400 gate) and the catch-up walk are all *derived* from it, so
-//!    a lifecycle change is one line in one table.
-//! 2. Nothing asks the fsm whether it is ready. `fire` is attempted first and the
-//!    fsm's own typed errors say what is missing: `UnknownMachine` → `define` and
-//!    retry, `UnknownInstance` → `create_instance` and retry. That is why the
-//!    machine is never re-defined defensively and an existing instance is never
-//!    re-created (which would reset it to `open`) — the error is the trigger.
-//!
-//! Both copies of the state move together: the fsm instance is the authority on
-//! whether a move is legal, the document in `records:store` is the readable copy
-//! `digest` uses.
+//! Two ideas hold this file up. `MOVES` is the lifecycle, written once: the fsm definition, the
+//! legal event names (the 400 gate) and the catch-up walk are all derived from it. Nothing asks
+//! the fsm whether it is ready: `fire` is attempted first and its typed errors say what is
+//! missing (`UnknownMachine` then `define`, `UnknownInstance` then `create_instance`, retry), so
+//! the machine is never defensively re-defined and an instance never re-created (which would
+//! reset it to `open`).
+//! The fsm instance is the authority on whether a move is legal; the document in `records:store`
+//! is the readable copy `digest` uses.
 use crate::bindings::fsm::workflow::engine as fsm;
 use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
@@ -24,10 +18,8 @@ const MACHINE: &str = "report";
 const REPORTS: &str = "reports";
 const STATES: [&str; 4] = ["open", "triaged", "fixed", "closed"];
 const TERMINAL: &str = "closed";
-/// Most urgent first; anything absent ranks after all of these.
 const SEVERITIES: [&str; 3] = ["high", "medium", "low"];
 
-/// The lifecycle. `(event, source, target)` — everything else is derived.
 const MOVES: &[(&str, &str, &str)] = &[
     ("triage", "open", "triaged"),
     ("fix", "triaged", "fixed"),
@@ -63,8 +55,6 @@ fn catch_up(id: &str, want: &str) -> Result<(), fsm::FsmError> {
             .iter()
             .find(|(_, s, t)| *s == at && *t == want)
             .or_else(|| MOVES.iter().find(|(_, s, t)| *s == at && *t != TERMINAL));
-        // Unknown state in the document: leave the instance at initial rather than
-        // looping.
         let Some((event, _, target)) = step else { return Ok(()) };
         fsm::fire(MACHINE, id, event)?;
         at = target;
@@ -107,7 +97,6 @@ fn transition(id: &str, body: &str) -> Reply {
     let doc_state = doc.get("state").and_then(Value::as_str).unwrap_or(STATES[0]).to_string();
     let status = match fire(id, event, &doc_state) {
         Ok(s) => s,
-        // The fsm carries the current state, which is exactly the 409 body.
         Err(fsm::FsmError::IllegalTransition(state)) => {
             return Reply::json(409, json!({ "error": "illegal", "state": state }))
         }
@@ -130,7 +119,6 @@ fn transition(id: &str, body: &str) -> Reply {
 }
 
 fn queue() -> Reply {
-    // (severity rank, reported_at, id, row) — sort on the key, answer with the row.
     let mut ranked: Vec<(usize, String, String, Value)> = Vec::new();
     let mut cursor = String::new();
     loop {

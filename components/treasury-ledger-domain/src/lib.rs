@@ -76,7 +76,6 @@ pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
     pub bearer: String,
-    /// The `Idempotency-Key` header, empty when absent.
     pub idempotency_key: String,
 }
 
@@ -93,7 +92,6 @@ impl Route {
 
 use guestfmt::percent_decode as percent;
 
-/// A `wasi:config` value, with a default.
 pub fn cfg(key: &str, default: &str) -> String {
     bindings::wasi::config::store::get(key)
         .ok()
@@ -133,11 +131,9 @@ fn mint(body: &str) -> Reply {
     }
 }
 
-/// Two accounts, each opened with a starting balance the caller names.
-///
-/// Scaffold: `transfers` and `reconcile` both need accounts and neither may wait for
-/// `accounts` to exist. The starting balance is a parameter because a contention test has to
-/// choose it — a fixture with a fixed one would make the interesting cases unreachable.
+/// Two accounts, each opened with a starting balance the caller names (a contention test has to
+/// choose it). Scaffold: `transfers` and `reconcile` both need accounts and neither may wait for
+/// `accounts`.
 fn seed(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let start = req.get("start").and_then(Value::as_str).unwrap_or("100.00");
@@ -160,12 +156,9 @@ fn seed(body: &str) -> Reply {
     Reply::json(201, json!({ "account_ids": ids, "units": amount.units }))
 }
 
-/// One journal line, written straight through.
-///
-/// Scaffold. `reconcile` recomputes balances FROM the journal, and it is judged with
-/// `transfers` — the only part that writes one — still a stub. Without this it could only ever
-/// be judged against an empty journal, which is the one case where a part that reads nothing
-/// looks correct.
+/// One journal line, written straight through. Scaffold: `reconcile` recomputes balances FROM the
+/// journal and is judged while `transfers`, the only writer, is a stub; against an empty journal
+/// a part that reads nothing looks correct.
 fn seed_journal(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let f = |k: &str| req.get(k).and_then(Value::as_str).unwrap_or("").to_string();
@@ -176,8 +169,8 @@ fn seed_journal(body: &str) -> Reply {
     let doc = json!({
         "transfer": req.get("transfer").and_then(Value::as_str).unwrap_or("fixture"),
         "from": f("from"), "to": f("to"), "units": units,
-        // An explicit `at` lets a gate write lines whose time disagrees with the order the
-        // store lists them in — the only way to tell "oldest first" from "first listed".
+        // An explicit `at` lets a gate write lines whose time disagrees with listing order, the
+        // only way to tell "oldest first" from "first listed".
         "at": req.get("at").and_then(Value::as_str).map(str::to_string)
             .unwrap_or_else(|| rfc3339(now_secs())),
     });
@@ -187,13 +180,9 @@ fn seed_journal(body: &str) -> Reply {
     }
 }
 
-/// Every journal line, straight out of the store.
-///
-/// Scaffold. `transfers` ends in a journal write and the route that READS the journal belongs to
-/// `reconcile` — a stub while `transfers` is judged. Without this, the one thing that proves a
-/// transfer was written down is unobservable exactly when it matters, and the part is
-/// unpassable. That is not a hypothetical: it cost app 6 its first run, three generations of six
-/// branches each, on a check no implementation could satisfy.
+/// Every journal line, straight out of the store. Scaffold: the route that READS the journal
+/// belongs to `reconcile`, a stub while `transfers` is judged, so without this the proof that a
+/// transfer was written down is unobservable and the part is unpassable.
 fn peek_journal() -> Reply {
     let mut lines = Vec::new();
     let mut after = String::new();
@@ -260,8 +249,6 @@ impl Guest for Component {
             ["test", "seed"] => seed(&body),
             ["test", "journal"] if matches!(method, Method::Post) => seed_journal(&body),
             ["test", "journal"] => peek_journal(),
-            // The stored record, straight out of the store, so a part is judgeable on what it
-            // WROTE without depending on the part that owns the read route.
             ["test", "account", id] => match records::get("accounts", id) {
                 Ok(e) => {
                     let mut v: Value = serde_json::from_str(&e.data).unwrap_or(json!({}));

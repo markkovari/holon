@@ -15,7 +15,6 @@ struct Component;
 impl Guest for Component {
     fn grade(answers: Vec<u32>, key: Vec<u32>, pass_mark: u32) -> GradeResult {
         let total = key.len() as u32;
-        // compare position by position; a missing answer counts wrong.
         let correct =
             key.iter().enumerate().filter(|(i, k)| answers.get(*i) == Some(*k)).count() as u32;
         let score_pct = (correct * 100 + total / 2).checked_div(total).unwrap_or(0);

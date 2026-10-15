@@ -1,17 +1,14 @@
 //! Minimal ISO-8601 -> unix-seconds parser for the appointment-datetime rules.
 //!
-//! The TS reference leans on the JS engine's `Date.parse`; a wasm component has
-//! no such runtime, so this parses the practical subset the clinic uses —
-//! `YYYY-MM-DD`, optionally `THH:MM[:SS]`, optionally a `Z` or `±HH:MM` offset.
-//! Returns unix seconds (UTC). `None` for anything it can't read, which the
-//! callers treat exactly like the TS `Number.isNaN(Date.parse(...))` path
-//! (no reminder scheduled / `bad_datetime` on delete).
+//! The TS reference leans on `Date.parse`; a wasm component has no such runtime, so this parses
+//! the subset the clinic uses: `YYYY-MM-DD`, optionally `THH:MM[:SS]`, optionally `Z` or
+//! `±HH:MM`. Returns unix seconds (UTC), `None` for anything unreadable (callers treat it like
+//! the TS `NaN` path).
 
-/// Parse an ISO-8601-ish datetime string to unix seconds (UTC). Best-effort:
-/// a bare date is treated as midnight UTC; a missing offset is assumed UTC.
+/// Parse an ISO-8601-ish datetime to unix seconds (UTC). A bare date is midnight UTC; a missing
+/// offset is UTC.
 pub fn parse_unix_seconds(s: &str) -> Option<i64> {
     let s = s.trim();
-    // split date and the rest (time + offset).
     let (date_part, rest) = match s.split_once(['T', ' ']) {
         Some((d, r)) => (d, r),
         None => (s, ""),
@@ -28,14 +25,12 @@ pub fn parse_unix_seconds(s: &str) -> Option<i64> {
         return None;
     }
 
-    // time + optional offset.
     let (time_part, offset_secs) = split_offset(rest)?;
     let (mut hour, mut min, mut sec) = (0i64, 0i64, 0i64);
     if !time_part.is_empty() {
         let mut tp = time_part.splitn(3, ':');
         hour = tp.next()?.parse().ok()?;
         min = tp.next().unwrap_or("0").parse().ok()?;
-        // seconds may carry a fractional part (e.g. "30.500") — drop the frac.
         let sec_field = tp.next().unwrap_or("0");
         let sec_int = sec_field.split('.').next().unwrap_or("0");
         sec = sec_int.parse().ok()?;
@@ -49,7 +44,6 @@ pub fn parse_unix_seconds(s: &str) -> Option<i64> {
 
     let days = days_from_civil(year, month, day);
     let secs = days * 86_400 + hour * 3600 + min * 60 + sec;
-    // an offset of +HH:MM means local time is ahead of UTC -> subtract to get UTC.
     Some(secs - offset_secs)
 }
 
@@ -83,8 +77,6 @@ fn split_offset(rest: &str) -> Option<(&str, i64)> {
     Some((rest, 0))
 }
 
-/// Days since the unix epoch (1970-01-01) for a civil date. Howard Hinnant's
-/// well-known branchless algorithm (valid for the Gregorian calendar).
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = if y >= 0 { y } else { y - 399 } / 400;

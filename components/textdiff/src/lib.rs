@@ -1,11 +1,8 @@
 //! `textdiff` — what changed between two texts — a structured edit script, a unified diff, and apply
 //!
-//! Line-based diff. The edit script comes from a longest-common-subsequence
-//! backtrack; `unified` groups the script into hunks with context, and
-//! `apply-unified` replays a unified diff against a source, checking every
-//! context/delete line. Round-trip holds: `apply-unified(a, unified(a,b)) == b`.
-//!
-//! Pure compute, no host imports, no state.
+//! Line-based diff: the edit script comes from an LCS backtrack, `unified` groups it into hunks
+//! with context, `apply-unified` replays a diff against a source checking every context/delete
+//! line. Round-trip holds: `apply-unified(a, unified(a,b)) == b`. Pure compute.
 
 #[allow(warnings)]
 mod bindings;
@@ -25,12 +22,10 @@ fn lines(s: &str) -> Vec<&str> {
     }
 }
 
-/// LCS edit script over lines.
 // ponytail: O(n*m) LCS table — fine for docs/snippets; swap for Myers O(ND) if
 // this ever diffs large files.
 fn edit_script<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<Op> {
     let (n, m) = (a.len(), b.len());
-    // dp[i][j] = LCS length of a[i..], b[j..]
     let mut dp = vec![vec![0u32; m + 1]; n + 1];
     for i in (0..n).rev() {
         for j in (0..m).rev() {
@@ -64,7 +59,6 @@ fn edit_script<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<Op> {
     ops
 }
 
-/// A positioned row: tag + 0-based source (a) and target (b) line indices.
 struct Row {
     op: Op,
     ai: usize,
@@ -124,7 +118,6 @@ fn build_unified(a: &str, b: &str, from: &str, to: &str, context: usize) -> Stri
         let run = &rows[s..=e];
         let a_count = run.iter().filter(|r| !matches!(r.op, Op::Insert(_))).count();
         let b_count = run.iter().filter(|r| !matches!(r.op, Op::Delete(_))).count();
-        // 1-based start; for a pure-insert run use the insertion point.
         let a_start = run
             .iter()
             .find(|r| !matches!(r.op, Op::Insert(_)))
@@ -148,8 +141,6 @@ fn build_unified(a: &str, b: &str, from: &str, to: &str, context: usize) -> Stri
     out
 }
 
-/// Parse the source start line (1-based) from a hunk header body (text after
-/// the leading `@@`): `... -A,S +B,S @@`.
 fn hunk_a_start(h: &str) -> Option<usize> {
     let minus = h.find('-')?;
     let rest = &h[minus + 1..];
@@ -182,7 +173,6 @@ fn apply(a: &str, patch: &str) -> Result<String, DiffError> {
             out.push(al[ai].to_string());
             ai += 1;
         }
-        // hunk body: until the next header or EOF
         while let Some(&body) = it.peek() {
             if body.starts_with("@@") {
                 break;

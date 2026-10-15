@@ -1,12 +1,10 @@
 //! `vcs-store` — `holon:vcs/code-store` and `holon:vcs/files` for components,
 //! each call one HTTP request to `comp-vcs` (ADR-0099, ADR-0095).
 //!
-//! The engine needs NATS JetStream and SurrealDB, which a `wasm32-wasip2` guest
-//! cannot dial, so it runs natively (`reconciler/src/bin/vcs.rs`) and this is
-//! its component face: it holds the contract, turns each call into
-//! `POST <vcs-url>/v1/<function>` with the arguments as JSON
-//! (`holon_vcs::wire`), and turns the answer back into the WIT result. It keeps
-//! no state and makes no decision.
+//! The engine needs NATS JetStream and SurrealDB, which a `wasm32-wasip2` guest cannot dial, so
+//! it runs natively (`reconciler/src/bin/vcs.rs`) and this is its component face: each call
+//! becomes `POST <vcs-url>/v1/<function>` with JSON arguments (`holon_vcs::wire`) and the answer
+//! is turned back into the WIT result. No state, no decisions.
 //!
 //! Config (wasi:config/store):
 //!   vcs-url     where `comp-vcs` listens, e.g. http://127.0.0.1:8014
@@ -36,7 +34,6 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use witconv::{ToModel, ToWit};
 
-/// The binding modules `witconv` is compiled against.
 mod wit {
     pub use crate::bindings::exports::holon::vcs::files;
     pub use crate::bindings::holon::vcs::types as t;
@@ -46,8 +43,8 @@ use wit::t;
 
 struct Component;
 
-/// Five minutes. An `ingest-tree` of a whole component, or an export waiting
-/// out a crashed writer's lease, is slow but should not hang a caller forever.
+/// Five minutes: an `ingest-tree` of a whole component, or an export waiting out a crashed
+/// writer's lease, is slow but must not hang forever.
 const TIMEOUT_NS: u64 = 300_000_000_000;
 
 fn storage(msg: impl Into<String>) -> t::VcsError {
@@ -76,7 +73,6 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), t::VcsError> {
     Ok((scheme, authority, path))
 }
 
-/// POST `body` to `/v1/<func>`; the status and the whole response body.
 fn post(func: &str, body: &[u8]) -> Result<(u16, Vec<u8>), t::VcsError> {
     let url = daemon_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
@@ -139,8 +135,6 @@ fn post(func: &str, body: &[u8]) -> Result<(u16, Vec<u8>), t::VcsError> {
     Ok((status, buf))
 }
 
-/// The daemon's answer, as the WIT result: `200` is the `ok` value; anything
-/// else is its `{error, detail}` or, failing that, a storage error.
 fn decode<T: DeserializeOwned>(status: u16, body: &[u8]) -> Result<T, t::VcsError> {
     if status == 200 {
         return serde_json::from_slice(body).map_err(|e| {
@@ -161,7 +155,6 @@ fn decode<T: DeserializeOwned>(status: u16, body: &[u8]) -> Result<T, t::VcsErro
     }
 }
 
-/// One call: the request as JSON, the answer as `R` (the model type), then WIT.
 fn call<Q: Serialize, R: DeserializeOwned + ToWit>(
     func: &str,
     req: &Q,

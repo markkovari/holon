@@ -6,7 +6,6 @@ use crate::bindings::records::store::store;
 use serde_json::{json, Value};
 
 pub fn list() -> Reply {
-    // 2. Fetch records
     let items = match store::list_records("ticket", 100, "") {
         Ok(page) => page
             .entries
@@ -27,7 +26,6 @@ pub fn list() -> Reply {
         Err(_) => vec![],
     };
 
-    // 3. Log read action
     let now = system_clock::now();
     let _ = recorder::record_event(&types::Event {
         id: crate::bindings::id::generate::generator::ulid(),

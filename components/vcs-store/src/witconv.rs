@@ -192,8 +192,6 @@ impl ToModel for t::VcsError {
     }
 }
 
-// ---- holon:vcs/files, against the wire's records ----------------------------------
-
 impl ToWit for wire::EditKind {
     type Out = f::EditKind;
     fn to_wit(self) -> f::EditKind {

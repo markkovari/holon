@@ -1,60 +1,18 @@
 //! Chunked, sorted id lists over a store with per-key compare-and-set — the index
 //! layer under `record-store`'s id index and every secondary index.
 //!
-//! # Layout (unchanged on disk)
-//!
-//! A list at `base` is a MANIFEST at `base` plus chunk values at
-//! `{base}_c{seq:08}`, each a sorted JSON `Vec<String>`. The manifest names the
-//! chunks in id order (`first` = smallest id, `count` = length) and is the only
-//! thing a reader trusts to find them: an id is IN the list exactly when it sits in
-//! a chunk the manifest names. A legacy whole-array value at `base` is still read,
-//! and converted on the first write.
-//!
-//! Two fields are new and both are optional, so old manifests read unchanged and
-//! old readers ignore them: `ChunkMeta::rev`, the chunk revision the entry was
-//! computed from, and `Manifest::next_seq`, the next chunk sequence never handed
-//! out.
-//!
-//! # The guarantee
-//!
-//! Every write to a manifest or a chunk is a compare-and-set against the revision
-//! of the value the write was computed from — read, compute, CAS with that
-//! revision, and on conflict re-read and recompute. Nothing here writes a list key
-//! unconditionally and nothing here deletes one. From that:
-//!
-//! * An `insert` that returns `Ok` has its id in a chunk the manifest names, and no
-//!   concurrent `insert`/`remove` of a DIFFERENT id can take it out again. Likewise
-//!   a `remove` that returns `Ok` leaves the id in no named chunk it was routed to
-//!   or found in, and cannot resurrect or drop anybody else's id.
-//! * Once writers go quiet, every manifest entry agrees with its chunk (`count`,
-//!   `first`, `rev`) — the last writer to touch a chunk re-derives its entry from
-//!   a read taken after its own write, and the `rev` equality check stops an older
-//!   derivation from landing on top of it.
-//! * Chunk keys are never deleted, so a key's revision never resets and a CAS can
-//!   never match a revision from a previous life of the key (ABA). An emptied chunk
-//!   is dropped from the manifest and left behind as `[]`; new chunks always take
-//!   a fresh key (`expected: 0`).
-//!
-//! What is NOT guaranteed:
-//!
-//! * Concurrent `insert` and `remove` of the SAME id have no defined winner. Index
-//!   upkeep in `record-store` runs after the record commits, in no particular order
-//!   against another request's upkeep, so the record is the arbiter — every reader
-//!   re-verifies against it and `repair` rebuilds from it.
-//! * A process that dies between writing a chunk and naming it leaves that id out
-//!   of the list until `repair`. There is no multi-key transaction to prevent it.
-//! * An id can transiently sit in the chunk BEFORE the one its value routes to (a
-//!   writer routed on a manifest read just before a new chunk was named). Readers
-//!   sort and dedupe, `page` also reads one chunk back, and `remove` falls back to
-//!   searching every chunk, so this costs order-of-work, not membership.
-//!
-//! # A backend without CAS
-//!
-//! There is no fallback. This module needs `comp:store/cas`, the host links that
-//! interface for every backend it ships (memory, sqlite, redis, nats, surreal,
-//! turso — `KvBackend::set_if_revision` has no default so a backend cannot forget
-//! it), and a host that lacks it fails to instantiate `record-store` at link time
-//! rather than degrading to a racy read-modify-write.
+//! Layout: a MANIFEST at `base` names chunk values at `{base}_c{seq:08}` (each a sorted JSON
+//! `Vec<String>`) in id order; an id is IN the list exactly when a named chunk holds it. A legacy
+//! whole-array value is converted on first write.
+//! Every write to a manifest or chunk is a compare-and-set against the revision it was computed
+//! from, and chunk keys are never deleted (no ABA), so a successful `insert`/`remove` is not
+//! undone by a concurrent op on a DIFFERENT id.
+//! Not guaranteed: concurrent `insert`/`remove` of the SAME id (the record is the arbiter;
+//! `repair` rebuilds), and an id whose writer died between writing a chunk and naming it.
+//! An id can transiently sit one chunk before its routed one, so readers sort/dedupe, `page`
+//! reads one chunk back, and `remove` searches every chunk.
+//! Needs `comp:store/cas`; a host without it fails at link time rather than degrading to
+//! read-modify-write.
 
 use serde::{Deserialize, Serialize};
 
@@ -64,14 +22,10 @@ use serde::{Deserialize, Serialize};
 /// multi-key transaction (see `insert`).
 pub const CHUNK_MAX: usize = 1024;
 
-/// How many CAS races one operation may lose before it gives up.
-///
-/// Every loss means another writer's CAS on the same key LANDED — nothing here
-/// retries against a conflict nobody caused — so this bounds starvation, not
-/// livelock. N writers on one key need up to about N rounds for the unluckiest of
-/// them, and the treasury gate puts two dozen creates on one id index at once:
-/// forty (what this was) lost all its races once in thirty runs. The cost of a
-/// larger number is paid only while contended.
+/// How many CAS races one operation may lose before giving up. Every loss means another writer's
+/// CAS landed, so this bounds starvation, not livelock; N writers on one key need about N rounds,
+/// and the treasury gate puts two dozen creates on one id index at once (forty lost all its races
+/// once in thirty runs).
 pub const CAS_TRIES: u32 = 200;
 
 /// The store the lists live in. Implemented over `wasi:keyvalue` +
@@ -215,17 +169,11 @@ enum Named {
     No,
 }
 
-/// Bring the manifest's entry for chunk `seq` in line with the chunk, after a
-/// write to it. The manifest is read FIRST and the chunk second, and the manifest
-/// is CAS'd against the revision read — so whatever lands was derived from a chunk
-/// read taken after the manifest it replaces, and a derivation from an older chunk
-/// read cannot overwrite a newer one (its CAS fails, or the `rev` check below
-/// makes the newer writer rewrite it).
-///
-/// Also where chunks leave the list: an empty chunk is dropped when others remain.
-/// The drop is a CAS on the manifest taken after reading the chunk empty; an
-/// insert racing it either lands its own reconcile first (the drop's CAS fails and
-/// it re-reads a non-empty chunk) or finds its chunk un-named and moves its id.
+/// Bring the manifest's entry for chunk `seq` in line with the chunk after a write. The manifest
+/// is read FIRST and the chunk second, and the manifest is CAS'd against the revision read, so an
+/// older derivation cannot overwrite a newer one.
+/// Also where chunks leave the list: an empty chunk is dropped when others remain, via a CAS
+/// taken after reading it empty.
 fn reconcile(kv: &dyn Kv, base: &str, seq: u32) -> Result<Named, String> {
     for _ in 0..CAS_TRIES {
         let (mrev, mut m) = match load(kv, base)? {
@@ -343,22 +291,15 @@ fn convert_legacy(
     Ok(())
 }
 
-// ---- writers ----------------------------------------------------------------
-
 /// Insert `id`, keeping the list sorted and deduplicated.
 pub fn insert(kv: &dyn Kv, base: &str, id: &str) -> Result<(), String> {
     insert_capped(kv, base, id, CHUNK_MAX)
 }
 
-/// `insert` with the chunk cap as a parameter, so tests can reach the new-chunk
-/// path without a thousand ids.
-///
-/// A full chunk is never split in half. That would copy ids into a new chunk and
-/// then remove them from the old one, and a `remove` landing between the two
-/// resurrects its id from the copy — there is no way to close that without a
-/// multi-key transaction. Instead an APPEND to a full chunk starts a new chunk
-/// holding just the new id (ULIDs are time-ordered, so that is where nearly every
-/// insert lands), and an insert into the middle of a full chunk grows it.
+/// `insert` with the chunk cap as a parameter, so tests can reach the new-chunk path.
+/// A full chunk is never split: copying then removing ids lets a `remove` landing between the two
+/// be resurrected from the copy. An APPEND to a full chunk starts a new chunk (ULIDs are
+/// time-ordered, so that is nearly every insert); a middle insert grows it.
 pub fn insert_capped(kv: &dyn Kv, base: &str, id: &str, cap: usize) -> Result<(), String> {
     for _ in 0..CAS_TRIES {
         let m = match load(kv, base)? {
@@ -512,8 +453,6 @@ pub fn heal(kv: &dyn Kv, base: &str) -> Result<(), String> {
     Ok(())
 }
 
-// ---- readers ----------------------------------------------------------------
-
 fn read_head(kv: &dyn Kv, base: &str) -> Result<Option<Head>, String> {
     match kv.read(base)? {
         None => Ok(None),
@@ -584,9 +523,8 @@ pub fn page(
     if m.chunks.is_empty() {
         return Ok((Vec::new(), false));
     }
-    // Skip whole chunks that end at-or-before `after`: chunk i's ids are all
-    // < chunks[i+1].first. Then step ONE chunk back, because an id can sit one
-    // chunk early (see the module doc) and would otherwise be skipped.
+    // Skip whole chunks that end at-or-before `after`, then step ONE chunk back because an id can
+    // sit one chunk early.
     let mut start_chunk = 0;
     if !after.is_empty() {
         while start_chunk + 1 < m.chunks.len() && m.chunks[start_chunk + 1].first.as_str() <= after
@@ -595,7 +533,6 @@ pub fn page(
         }
     }
     let from_chunk = start_chunk.saturating_sub(1);
-    // Worst case every id in the chunks up to the start is <= `after`.
     let skip_bound: usize =
         m.chunks[from_chunk..=start_chunk].iter().map(|c| c.count as usize).sum();
     let mut upto = from_chunk;

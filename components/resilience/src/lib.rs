@@ -1,9 +1,8 @@
 //! `resilience` — stop hammering a failing service — a circuit breaker and exponential backoff, as pure functions
 //!
-//! A circuit breaker and a backoff schedule, as pure functions. The caller owns
-//! the state and passes it in; every function returns the state to persist. No
-//! state, no clock, no host imports — `now-ms` and the jitter `seed` come in as
-//! arguments, which is also what makes the state machine exhaustively testable.
+//! The caller owns the state and passes it in; every function returns the state to persist. No
+//! clock or host imports: `now-ms` and the jitter `seed` are arguments, which also makes the
+//! state machine exhaustively testable.
 //!
 //! The state machine:
 //!
@@ -21,11 +20,9 @@
 //! the count, and `window-ms` bounds how long a partial streak is remembered, so
 //! an upstream that fails once an hour never trips.
 //!
-//! ponytail: consecutive-with-staleness, not a sliding error *ratio*. It needs
-//! one counter instead of a bucket ring and behaves identically for the failure
-//! mode that matters (an upstream that is actually down). Upgrade to a ratio
-//! (`sketch`-style bucket ring in the same record) only if a partially-degraded
-//! upstream — say 30% errors, forever — must also trip.
+//! ponytail: consecutive-with-staleness, not a sliding error *ratio*: one counter instead of a
+//! bucket ring, and identical for the mode that matters (an upstream that is down). Upgrade to a
+//! ratio only if a partially-degraded upstream (say 30% errors, forever) must also trip.
 
 #[allow(warnings)]
 mod bindings;
@@ -36,7 +33,6 @@ use bindings::exports::resilience::breaker::breaker::{
 
 struct Component;
 
-/// A zero threshold would mean "trip on nothing" / "never close"; clamp to 1.
 fn at_least_1(n: u32) -> u32 {
     n.max(1)
 }
@@ -46,7 +42,6 @@ impl Guest for Component {
         let mut c = state;
         match c.state {
             CircuitState::Closed => {
-                // Forget a stale failure streak before admitting.
                 if pol.window_ms > 0 && now_ms.saturating_sub(c.window_start_ms) >= pol.window_ms {
                     c.failures = 0;
                     c.window_start_ms = now_ms;
@@ -56,14 +51,12 @@ impl Guest for Component {
             CircuitState::Open => {
                 let elapsed = now_ms.saturating_sub(c.changed_ms);
                 if elapsed >= pol.open_ms {
-                    // Cooldown done: go half-open and spend the first probe.
                     c.state = CircuitState::HalfOpen;
                     c.changed_ms = now_ms;
                     c.successes = 0;
                     c.probes = 1;
                     (Admission { admit: true, state: CircuitState::HalfOpen, retry_after_ms: 0 }, c)
                 } else {
-                    // Fail fast — the upstream is not dialled at all.
                     (
                         Admission {
                             admit: false,
@@ -123,7 +116,6 @@ impl Guest for Component {
                 c.probes = c.probes.saturating_sub(1);
                 c.successes += 1;
                 if c.successes >= at_least_1(pol.success_threshold) {
-                    // Recovered.
                     c.state = CircuitState::Closed;
                     c.failures = 0;
                     c.successes = 0;
@@ -140,8 +132,6 @@ impl Guest for Component {
                 c.successes = 0;
                 c.probes = 0;
             }
-            // An outcome reported while open means the caller ignored `admit`.
-            // Nothing to learn from it; leave the cooldown running.
             (CircuitState::Open, _) => {}
         }
         c
@@ -233,7 +223,6 @@ mod tests {
         c = observe(next, 30, false);
         assert!(matches!(c.state, CircuitState::Open), "3rd failure trips");
 
-        // Fail fast for the whole cooldown, with an exact retry-after.
         let (a, _) = admit(c, 400);
         assert!(!a.admit);
         assert_eq!(a.retry_after_ms, 630, "open_ms 1000 - 370 elapsed");
@@ -265,7 +254,6 @@ mod tests {
 
     #[test]
     fn half_open_probe_recovers_then_closes() {
-        // Trip it.
         let mut c = fresh();
         for t in [10, 20, 30] {
             c = observe(c, t, false);

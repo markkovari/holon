@@ -1,15 +1,9 @@
 //! DEFLATE (RFC 1951), decode only.
 //!
-//! Here because a `.xlsx` is a ZIP of XML and every spreadsheet writes it with
-//! DEFLATE, so a reader that only handles STORE refuses every real file.
-//!
-//! Written out rather than taken as a dependency for the same reason the writer
-//! above is: this crate builds for `wasm32-wasip2` and stays dependency-free, and
-//! the decoder is about two hundred lines of well-specified table lookups. The
-//! ENCODER is still out of scope — writing STORE is honest and small, and nothing
-//! here needs to make an archive smaller.
+//! Here because a `.xlsx` is a ZIP of XML written with DEFLATE, so a STORE-only reader refuses
+//! every real file. Written out rather than depended on so the crate stays dependency-free for
+//! `wasm32-wasip2`; the ENCODER is out of scope (writing STORE is honest and small).
 
-/// Bits, least-significant first, which is the order DEFLATE packs them in.
 struct Bits<'a> {
     data: &'a [u8],
     pos: usize,
@@ -43,7 +37,6 @@ impl<'a> Bits<'a> {
         Ok(out)
     }
 
-    /// Drop to the next byte boundary — a stored block starts there.
     fn align(&mut self) {
         let drop = self.bit % 8;
         self.acc >>= drop;
@@ -51,9 +44,9 @@ impl<'a> Bits<'a> {
     }
 }
 
-/// A canonical Huffman table: for each code length, the first code and the symbols
-/// that use it. Decoding walks bit by bit, which is slower than a lookup table and
-/// is not the bottleneck for a spreadsheet.
+/// A canonical Huffman table: for each code length, the first code and the symbols using it.
+/// Decoding walks bit by bit, slower than a lookup table but not the bottleneck for a
+/// spreadsheet.
 struct Huffman {
     /// counts[len] = how many codes have this length
     counts: [u16; 16],
@@ -70,7 +63,6 @@ impl Huffman {
             }
             counts[l as usize] += 1;
         }
-        // Length 0 means "unused", not "a zero-bit code".
         counts[0] = 0;
 
         let mut offsets = [0u16; 16];
@@ -162,7 +154,6 @@ fn dynamic_tables(bits: &mut Bits) -> Result<(Huffman, Huffman), String> {
                 lengths[i] = sym as u8;
                 i += 1;
             }
-            // Repeat the PREVIOUS length 3-6 times.
             16 => {
                 if i == 0 {
                     return Err("a repeat with nothing to repeat".into());
@@ -177,7 +168,6 @@ fn dynamic_tables(bits: &mut Bits) -> Result<(Huffman, Huffman), String> {
                     i += 1;
                 }
             }
-            // Repeat ZERO 3-10, then 11-138.
             17 | 18 => {
                 let n = if sym == 17 {
                     3 + bits.take(3)? as usize
@@ -202,7 +192,6 @@ pub fn inflate(data: &[u8], expected: usize) -> Result<Vec<u8>, String> {
     loop {
         let last = bits.take(1)?;
         match bits.take(2)? {
-            // Stored: byte-aligned, a length and its complement, then raw bytes.
             0 => {
                 bits.align();
                 let len = bits.take(16)? as usize;
