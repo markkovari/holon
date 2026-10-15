@@ -138,8 +138,6 @@ pub fn take_frames(buf: &mut String) -> Vec<String> {
     out
 }
 
-// ---- Anthropic ----
-
 fn anthropic_body(model: &str, msgs: &[Msg]) -> Value {
     let messages: Vec<Value> = msgs
         .iter()
@@ -246,8 +244,6 @@ impl AnthropicAcc {
         self.turn
     }
 }
-
-// ---- OpenAI-compatible ----
 
 fn openai_body(model: &str, msgs: &[Msg]) -> Value {
     let mut messages = vec![json!({"role": "system", "content": SYSTEM})];
@@ -361,8 +357,6 @@ fn parse_args(json: &str) -> Value {
     }
     serde_json::from_str(json).unwrap_or_else(|_| json!({ "_raw": json }))
 }
-
-// ---- Mock ----
 
 /// Lists the workspace, then answers with what it found. Deterministic, so a
 /// test (or a bot author) sees the whole event vocabulary without a model.

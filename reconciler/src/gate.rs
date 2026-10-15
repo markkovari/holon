@@ -1,15 +1,8 @@
 //! Where the gate runner is, and how this process reaches it.
 //!
-//! Split out of `bin/goalrun.rs` for the reason that file states about the search
-//! loop: what a binary is for is saying what happened and landing it, and
-//! everything a test would want to drive belongs where a test can drive it. This
-//! is the second half of that — `Gate` decides WHERE the gate is, and `goalrun`
-//! is a caller.
-//!
-//! The two cases differ only in who owns the process. Everything downstream — the
-//! manifest's `checks-url`, its egress entry, the token granted to the gate
-//! component, the direct POST that gates a composition — reads the same three
-//! answers from here, so a remote gate cannot be half-wired.
+//! Split out of `bin/goalrun.rs`: what a binary is for is saying what happened and landing it, and
+//! everything a test would want to drive belongs where a test can drive it. `Gate` decides WHERE the
+//! gate is; `goalrun` is a caller.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -19,17 +12,13 @@ use anyhow::{bail, Context, Result};
 
 use crate::fleet::{bin_path, free_port};
 
-/// What a component may dial, as the manifest spells it: `host:port`.
 pub fn egress_authority(base_url: &str) -> String {
     let rest = base_url.split_once("://").map(|(_, r)| r).unwrap_or(base_url);
     rest.split('/').next().unwrap_or(rest).to_string()
 }
 
-/// A bearer token nobody has to manage: 32 bytes of the OS's randomness, hex.
-///
-/// Minted per run rather than configured, because a token for a runner this
-/// process starts and kills has no reason to outlive it — and a generated secret
-/// is one that cannot be left at its default.
+/// A bearer token nobody has to manage: 32 bytes of the OS's randomness, hex. Minted per run: a token
+/// for a runner this process starts and kills has no reason to outlive it.
 pub fn mint_token() -> Result<String> {
     let mut b = [0u8; 32];
     std::io::Read::read_exact(
@@ -42,8 +31,8 @@ pub fn mint_token() -> Result<String> {
 
 /// Is this `host:port` one only this machine can reach?
 ///
-/// Resolved rather than string-matched, and an unresolvable name counts as NOT
-/// loopback — the safe side of an unknown is the side that demands a token.
+/// Resolved rather than string-matched; an unresolvable name counts as NOT loopback (the safe side of
+/// an unknown demands a token).
 pub fn authority_is_loopback(authority: &str) -> bool {
     use std::net::ToSocketAddrs;
     let with_port =
@@ -57,13 +46,10 @@ pub fn authority_is_loopback(authority: &str) -> bool {
     }
 }
 
-/// Where the gate is: a runner this process started, or one already listening
-/// somewhere else.
-///
-/// The two cases differ only in who owns the process. Everything downstream —
-/// the manifest's `checks-url`, its egress entry, the token granted to the gate
-/// component, the direct POST that gates a composition — reads the same three
-/// answers from here, so a remote gate cannot be half-wired.
+/// Where the gate is: a runner this process started, or one already listening somewhere else.
+/// The two cases differ only in who owns the process. Everything downstream (the manifest's
+/// `checks-url`, its egress entry, the gate component's token, the direct POST that gates a
+/// composition) reads the same three answers from here, so a remote gate cannot be half-wired.
 #[derive(Debug)]
 pub enum Gate {
     /// Started here, killed with the run.
@@ -96,10 +82,8 @@ impl Gate {
                 }
                 p.to_path_buf()
             }
-            // The same refusal `comp-checks` makes at its own end, made here too:
-            // a runner that demanded a token and a caller that never sends one
-            // fail as 401 on every candidate, which reads as a broken gate rather
-            // than as a missing flag.
+            // The same refusal `comp-checks` makes at its own end: a runner that demanded a token and a caller
+            // that never sends one fail as 401 on every candidate, reading as a broken gate.
             (None, false) => bail!(
                 "--checks-url {url} is not on this machine, so it needs --checks-token-file.\n\
                  \n\
@@ -108,8 +92,8 @@ impl Gate {
                  \n\
                  \x20 head -c 32 /dev/urandom | base64 > ~/.comp-secrets/checks   # on both boxes"
             ),
-            // A loopback runner somebody else started. Its own guard already
-            // allows this, so refusing it here would be a second opinion.
+            // A loopback runner somebody else started: its own guard already allows this, so refusing it here
+            // would be a second opinion.
             (None, true) => {
                 let dir = std::env::temp_dir().join(format!("comp-goalrun-{}", std::process::id()));
                 std::fs::create_dir_all(&dir)?;
@@ -129,8 +113,8 @@ impl Gate {
         }
     }
 
-    /// What the gate component is allowed to dial. A manifest decision, so it has
-    /// to be the real host and not a stand-in (ADR-0008).
+    /// What the gate component is allowed to dial. A manifest decision, so it has to be the real host and
+    /// not a stand-in (ADR-0008).
     pub fn authority(&self) -> String {
         egress_authority(&self.url())
     }
@@ -142,8 +126,8 @@ impl Gate {
         }
     }
 
-    /// The token itself, for the one call that is made from here rather than from
-    /// the gate component: the composition gate.
+    /// The token itself, for the one call made from here rather than from the gate component: the
+    /// composition gate.
     pub fn token(&self) -> Option<String> {
         std::fs::read_to_string(self.token_file())
             .ok()
@@ -152,7 +136,6 @@ impl Gate {
     }
 }
 
-/// The native gate runner, alive for the run.
 #[derive(Debug)]
 pub struct Checks {
     child: Child,
@@ -170,14 +153,13 @@ impl Checks {
     pub fn start(allow: &[&str], check_env: &[String], timeout: u64) -> Result<Self> {
         let dir = tempfile::tempdir()?;
         let port = free_port();
-        // Authenticated even on loopback. Not because loopback is unsafe, but
-        // because the alternative is one code path used every day and a second
-        // one used only when someone points at another box — and the second is
-        // the one that matters. Minted here, so it costs the operator nothing.
+        // Authenticated even on loopback: otherwise there is one code path used every day and a second used
+        // only when someone points at another box, and the second is the one that matters. Minted here, so
+        // it costs the operator nothing.
         let token_file = dir.path().join("token");
         std::fs::write(&token_file, mint_token()?)?;
-        // The work directory is a SUBDIRECTORY, so the runner's throwaway trees
-        // and cached bases never share a parent with the token file.
+        // The work directory is a SUBDIRECTORY, so throwaway trees and cached bases never share a parent with
+        // the token file.
         let work = dir.path().join("work");
         std::fs::create_dir_all(&work)?;
         let mut cmd = Command::new(bin_path("comp-checks"));
@@ -211,10 +193,8 @@ mod tests {
 
     /// The line between "the loopback is the boundary" and "there has to be one".
     ///
-    /// Resolved, not string-matched: a substring test for `127.` accepts
-    /// `10.0.127.4` and rejects `::1`, and both mistakes point the same way —
-    /// letting a runner that runs commands listen where a second machine can
-    /// reach it with nothing in front of it.
+    /// Resolved, not string-matched: a substring test for `127.` accepts `10.0.127.4` and rejects `::1`,
+    /// both letting a runner that runs commands listen where a second machine can reach it.
     #[test]
     fn what_counts_as_only_this_machine() {
         for local in ["127.0.0.1:8099", "localhost:8099", "[::1]:8099", "127.9.9.9:1"] {
@@ -225,7 +205,6 @@ mod tests {
         }
     }
 
-    /// A token that is 64 hex characters and not the same one twice.
     #[test]
     fn a_minted_token_is_random_and_hex() {
         let a = mint_token().expect("/dev/urandom");
@@ -235,12 +214,8 @@ mod tests {
         assert_ne!(a, b, "two runs minted the same token");
     }
 
-    /// The refusals `Gate::open` makes, which nothing could reach before this
-    /// moved out of the binary — it took `&Args`, so the only way to exercise it
-    /// was to run a whole goal.
-    ///
-    /// Each one is the difference between a missing flag found now and a 401 on
-    /// every candidate found after a run has been paid for.
+    /// The refusals `Gate::open` makes: each is a missing flag found now instead of a 401 on every
+    /// candidate after a run has been paid for.
     #[test]
     fn a_remote_gate_is_refused_when_it_cannot_be_reached_safely() {
         let e = Gate::open(Some("malna:8199/check"), None, 30, &["true"], &[])
@@ -268,9 +243,8 @@ mod tests {
         .expect_err("a token file that is not there");
         assert!(format!("{e}").contains("does not exist"), "{e}");
 
-        // A loopback runner somebody else started needs no token, and must not be
-        // refused — a guard that broke every local gate to protect the remote
-        // case is one that gets deleted.
+        // A loopback runner somebody else started needs no token and must not be refused: a guard that
+        // broke every local gate would get deleted.
         let g = Gate::open(Some("http://127.0.0.1:8199/check"), None, 30, &["true"], &[])
             .expect("loopback without a token is a supported setup");
         assert_eq!(g.url(), "http://127.0.0.1:8199/check");

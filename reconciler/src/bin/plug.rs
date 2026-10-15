@@ -1,12 +1,6 @@
 //! `comp-plug` — a shim over [`comp_reconciler::plug`], for callers that are not
 //! Rust.
-//!
-//! The composition itself is a library call and belongs in a library: the loop
-//! composes a candidate in-process, with the wiring, the gaps and the failure as
-//! values. This exists because a GATE is a shell script — `e2e-access.sh` has to
-//! get a composed artifact from somewhere before it can start a host — and a shell
-//! script cannot call a Rust function. It is deliberately thin: find the
-//! components, ask the library, print the path. No decisions live here.
+//! A GATE is a shell script (`e2e-access.sh`) that cannot call a Rust function; this is the thin CLI over the library.
 //!
 //!   comp-plug clinic-domain --dir components/target/wasm32-wasip2/debug
 //!   comp-plug clinic-domain --wiring     # what would be plugged, and what is missing
@@ -26,9 +20,7 @@ struct Args {
     #[arg(long)]
     wiring: bool,
 
-    /// Where to look for built components. Repeatable; earlier wins, and the
-    /// defaults are appended — so a gate that rebuilt one crate passes its own
-    /// output and lets every plug resolve against `cargo xtask build --force`'s.
+    /// Where to look for built components. Repeatable; earlier wins, defaults appended.
     #[arg(long = "dir")]
     dirs: Vec<PathBuf>,
 
@@ -51,10 +43,7 @@ fn main() -> Result<(), String> {
     }
 
     let wiring = wiring(&args.component, &catalog)?;
-    // Missing capabilities go to stderr either way: on a `--wiring` they are the
-    // answer, and on a compose they are the explanation for whatever `wac` says
-    // next. A composition that silently drops one is how a component reaches
-    // production still importing something nothing provides.
+    // Missing capabilities go to stderr either way: on `--wiring` they are the answer, on a compose they explain what `wac` says next.
     for (node, iface) in &wiring.missing {
         eprintln!("  ! nothing built exports {iface} (imported by {node})");
     }

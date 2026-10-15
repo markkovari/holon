@@ -1,13 +1,10 @@
 //! How the control loop scales with nodes and apps.
 //!
-//! `plan()` is a pure function that runs on every reconciler pass over the WHOLE
-//! world — every manifest, every node's inventory. That makes it the one part of
-//! the platform whose scaling can be measured exactly, with no fleet, no NATS and
-//! no guessing, so it is measured rather than reasoned about.
+//! `plan()` is a pure function run on every reconciler pass over the WHOLE world, so its scaling can be
+//! measured exactly with no fleet or NATS, rather than reasoned about.
 //!
-//! Also reports the inventory payload per node, because the snapshot-not-delta
-//! decision in `plan.rs` names a ceiling (the NATS max payload) and nobody had
-//! put a number next to it.
+//! Also reports the inventory payload per node: the snapshot-not-delta decision in `plan.rs` names a
+//! ceiling (the NATS max payload) and nobody had put a number next to it.
 //!
 //! `comp-planscale [--nodes 10,100,1000] [--apps 100,1000,10000]`
 
@@ -28,8 +25,8 @@ fn list(args: &[String], flag: &str, default: &[usize]) -> Vec<usize> {
 
 /// `apps` apps spread over the fleet, each two replicas of one component.
 ///
-/// Tenants are `apps / 10`, so the org count grows with the app count rather
-/// than staying at one — a single tenant would hide any per-tenant cost.
+/// Tenants are `apps / 10`, so the org count grows with the app count (one tenant would hide any
+/// per-tenant cost).
 fn world(nodes: usize, apps: usize) -> (Vec<Manifest>, Vec<NodeInventory>) {
     let digest = |a: usize| format!("sha256:{:064x}", a % 50); // 50 distinct artifacts
     let desired: Vec<Manifest> = (0..apps)
@@ -56,9 +53,8 @@ fn world(nodes: usize, apps: usize) -> (Vec<Manifest>, Vec<NodeInventory>) {
         })
         .collect();
 
-    // Converged: each app's two replicas on two adjacent nodes, round-robin. This
-    // is the steady state the loop actually spends its life in — the pass that
-    // changes nothing still costs a full diff.
+    // Converged: each app's two replicas on two adjacent nodes, round-robin. The steady state the loop
+    // spends its life in: the pass that changes nothing still costs a full diff.
     let mut per_node: Vec<Vec<RunningInstance>> = vec![Vec::new(); nodes];
     for (a, m) in desired.iter().enumerate() {
         for r in 0..2 {
@@ -98,11 +94,8 @@ fn main() {
         for &apps in &app_counts {
             let (desired, observed) = world(nodes, apps);
 
-            // ONE hysteresis across every run, because that is what the loop has:
-            // it is created at startup and lives forever. A fresh one per run
-            // measures only the cold pass — the pass after a reconciler restart or
-            // a node joining — and never the steady state the loop actually spends
-            // its life in. Both are reported, because they are different questions.
+            // ONE hysteresis across every run, as the loop has; a fresh one per run measures only the cold pass
+            // (after a restart or a node joining), never the steady state. Both are reported.
             let mut hyst = Hysteresis::default();
             let t = Instant::now();
             let out = plan(&desired, &observed, None, &mut hyst, &cfg);
@@ -117,10 +110,8 @@ fn main() {
                 })
                 .collect();
             runs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            // What the loop pays BEFORE plan() even runs: pull every snapshot and
-            // parse it. Polling re-does this every pass; a watched mirror would do
-            // it once per change. Measured, because "read the whole world each
-            // pass" only matters if reading is expensive next to planning.
+            // What the loop pays BEFORE plan() runs: pull every snapshot and parse it. Polling re-does this each
+            // pass; a watched mirror would do it once per change.
             let wire: Vec<Vec<u8>> =
                 observed.iter().map(|n| serde_json::to_vec(n).unwrap()).collect();
             let t = Instant::now();
@@ -128,11 +119,9 @@ fn main() {
                 std::hint::black_box(serde_json::from_slice::<NodeInventory>(raw).unwrap());
             }
             let parse = t.elapsed().as_secs_f64() * 1000.0;
-            // And what it costs to notice nothing changed. A snapshot is
-            // identical between passes unless the node did something, so hashing
-            // the bytes and reusing the previous parse is the same answer for a
-            // fraction of the work — without a watch protocol, and without giving
-            // up the TTL expiry that read_all's absence-is-death depends on.
+            // And what it costs to notice nothing changed: snapshots are identical between passes unless the node
+            // did something, so hashing the bytes and reusing the previous parse gives the same answer for a
+            // fraction of the work, without a watch protocol or losing the TTL expiry `read_all` depends on.
             let t = Instant::now();
             for raw in &wire {
                 use std::hash::{Hash, Hasher};

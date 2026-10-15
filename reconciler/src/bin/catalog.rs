@@ -1,32 +1,25 @@
 //! `comp-catalog` — the component catalogue, from the components' own sources.
 //!
-//! What a consumer needs in order to adopt a component WITHOUT reading its source:
-//! the WIT package and exports, the dependency footprint, the `wasi:config` knobs it
-//! reads, and the one-line description from its module doc. Written as
-//! Printed as JSON with `--json`, and rendered into `components/CATALOG.md` for
-//! people. Deliberately NOT a committed `catalog.json`: see the note in `main`.
+//! What a consumer needs to adopt a component WITHOUT reading its source: the WIT package and exports,
+//! the dependency footprint, the `wasi:config` knobs it reads, and the one-line description from its
+//! module doc. Printed as JSON with `--json`, and rendered into `components/CATALOG.md`.
+//! Deliberately NOT a committed `catalog.json`: see the note in `main`.
 //!
 //! ## Why this is not `comp-capgraph`
 //!
-//! They answer different questions from different evidence, and the difference is
-//! load-bearing. `comp-capgraph` reads the BUILT ARTIFACTS: what a component really
-//! imports, after the linker has dropped everything unreachable. This reads the
-//! SOURCE: what a component says it is for. A component that does not build has no
-//! artifact and vanishes from the graph; it still has a description here.
+//! They answer different questions from different evidence. `comp-capgraph` reads the BUILT ARTIFACTS
+//! (what a component really imports, after the linker drops the unreachable); this reads the SOURCE
+//! (what a component says it is for). A component that does not build vanishes from the graph but
+//! still has a description here.
 //!
 //! ## Why this is not Python any more
 //!
-//! It was `tools/gen-catalog.py`, and the port is not about taste. The catalogue is
-//! read by `capsearch`, which is what stops a goal from generating a capability the
-//! pool already has (ADR-0089) — so it is load-bearing, and it had no test, because
-//! it could not have one: it embedded `wasm_size_bytes` and `wasm_sha256_12` from
-//! the last build and was therefore stale by construction. With those gone it is a
-//! function of the source, and a function of the source can be checked. Being in the
-//! same workspace as `reconciler/tests/derived.rs` is what makes that cheap.
+//! It was `tools/gen-catalog.py`. The catalogue is read by `capsearch`, so it is load-bearing, and it
+//! could not be tested while it embedded `wasm_size_bytes` and `wasm_sha256_12` from the last build
+//! (stale by construction). Now it is a function of the source and can be checked, cheaply, from
+//! `reconciler/tests/derived.rs`.
 //!
-//! One deliberate difference from the Python: non-ASCII is written as itself. Python
-//! escapes it by default (`ensure_ascii=True`), which turned 256 em-dashes into
-//! `—`. Both are valid JSON and one of them is readable.
+//! Non-ASCII is written as itself (Python's `ensure_ascii=True` turned 256 em-dashes into `—`).
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -41,7 +34,6 @@ struct ConfigKey {
     description: String,
 }
 
-/// Field order is the SERIALISED order, and it is the committed file's order.
 #[derive(Serialize)]
 struct Entry {
     name: String,
@@ -51,26 +43,19 @@ struct Entry {
     capability_deps: Vec<String>,
     config_keys: Vec<ConfigKey>,
     reusable_as_is: bool,
-    /// A component whose exports all return an `UNIMPLEMENTED:` marker is a CONTRACT,
-    /// not a capability. Detected from the source rather than kept in a list, because
-    /// a list is a second place to forget: implement the thing and the flag clears
-    /// itself.
+    /// A component whose exports all return an `UNIMPLEMENTED:` marker is a CONTRACT, not a capability.
+    /// Detected from the source rather than a list, so implementing the thing clears the flag.
     unimplemented: bool,
 }
 
 /// Where this crate's WIT actually lives.
 ///
-/// A local `wit/` is the common case and was once assumed to be the only one. It is
-/// not: a crate may point `[package.metadata.component.target].path` at a shared
-/// directory, and `auth-guard` does — it uses the repo-root `wit/` so it can share the
-/// wkg-vendored `wasi:*` packages. That assumption made the single most-depended-on
-/// capability in the tree invisible to `capsearch`: 36 applications import
-/// `auth:guard`, and a goal asking to let users log in could not find it, because a
-/// crate with no local `wit/` was skipped before its description was ever read.
+/// A crate may point `[package.metadata.component.target].path` at a shared directory: `auth-guard`
+/// uses the repo-root `wit/` to share the wkg-vendored `wasi:*` packages. Assuming a local `wit/` hid
+/// the most-depended-on capability from `capsearch` (36 applications import `auth:guard`).
 fn component_wit_dir(dir: &Path) -> Option<PathBuf> {
     let manifest = dir.join("Cargo.toml");
     if let Ok(text) = std::fs::read_to_string(&manifest) {
-        // Only trust the path when the crate declares itself a component at all.
         if text.contains("[package.metadata.component]") {
             let re = Regex::new(
                 r#"(?ms)\[package\.metadata\.component\.target\][^\[]*?^path\s*=\s*"([^"]+)""#,
@@ -88,7 +73,6 @@ fn component_wit_dir(dir: &Path) -> Option<PathBuf> {
     local.is_dir().then_some(local)
 }
 
-/// The first non-empty `//!` line, trailing full stop removed.
 fn first_doc_line(lib: &Path) -> String {
     let Ok(text) = std::fs::read_to_string(lib) else { return String::new() };
     for line in text.lines() {
@@ -107,12 +91,8 @@ fn first_doc_line(lib: &Path) -> String {
 
 /// The world this crate builds, from `[package.metadata.component.target].world`.
 ///
-/// Needed because a crate may point at a SHARED wit directory — `accounts-app` and
-/// `auth-guard` use the repo-root `wit/` so they can share the wkg-vendored `wasi:*`
-/// packages — and that directory holds many worlds. Reading exports from all of them
-/// attributed an unrelated `types` interface to `accounts-app` and `sample-consumer`,
-/// and told the catalogue they offered a contract when the built artifact exports
-/// nothing but a door.
+/// Needed because a shared wit directory holds many worlds, and reading exports from all of them
+/// attributed an unrelated `types` interface to `accounts-app` and `sample-consumer`.
 fn target_world(dir: &Path) -> Option<String> {
     let text = std::fs::read_to_string(dir.join("Cargo.toml")).ok()?;
     let re =
@@ -121,7 +101,6 @@ fn target_world(dir: &Path) -> Option<String> {
     re.captures(&text).map(|c| c[1].to_string())
 }
 
-/// The body of `world <name> { ... }`, brace-matched.
 fn world_body<'a>(text: &'a str, world: &str) -> Option<&'a str> {
     let at = text.find(&format!("world {world} "))?;
     let open = at + text[at..].find('{')?;
@@ -154,12 +133,9 @@ fn scan(dir: &Path, res: &Regexes) -> Option<Entry> {
     if wits.is_empty() || !lib.is_file() {
         return None;
     }
-    // Comments stripped FIRST, and that is not fussiness. A world may be written on
-    // one line — `world calc { export arith; }` — so the export pattern cannot be
-    // anchored to the start of a line, and an unanchored one matches the word
-    // "export" inside prose. It captured `"and a PII-redacted audit view — every
-    // cross-cutting concern…"` as an interface name and reclassified seven
-    // components on the strength of it.
+    // Comments stripped FIRST: a world may be written on one line (`world calc { export arith; }`), so the
+    // export pattern cannot be anchored to a line start, and an unanchored one matches "export" inside
+    // prose (it reclassified seven components).
     let wit_text = wits
         .iter()
         .filter_map(|w| std::fs::read_to_string(w).ok())
@@ -177,9 +153,8 @@ fn scan(dir: &Path, res: &Regexes) -> Option<Entry> {
 
     let package =
         res.package.captures(&wit_text).map(|c| c[1].trim().to_string()).unwrap_or_default();
-    // Only the world this crate actually builds. Falls back to the whole text when the
-    // crate names no world, which is the common case of a component with its own
-    // single-world `wit/`.
+    // Only the world this crate builds; the whole text when it names none (a component with its own
+    // single-world `wit/`).
     let scope = target_world(dir)
         .and_then(|w| world_body(&wit_text, &w).map(str::to_string))
         .unwrap_or_else(|| wit_text.clone());
@@ -210,7 +185,6 @@ fn scan(dir: &Path, res: &Regexes) -> Option<Entry> {
         sources.sort();
         for src in sources {
             let Ok(text) = std::fs::read_to_string(&src) else { continue };
-            // Preferred: the documented Config block, which carries a description.
             for block in res.config_block.captures_iter(&text) {
                 for line in res.config_line.captures_iter(&block[1]) {
                     let name = line[1].to_string();
@@ -220,7 +194,6 @@ fn scan(dir: &Path, res: &Regexes) -> Option<Entry> {
                     }
                 }
             }
-            // Fallback: string literals at get/cfg call sites, undocumented.
             for c in res.get_call.captures_iter(&text) {
                 let name = c[1].to_string();
                 if seen.insert(name.clone()) {
@@ -265,7 +238,6 @@ impl Regexes {
             std_wasi: Regex::new(r"^wasi:(clocks|random|io|cli|filesystem|sockets)/").unwrap(),
             get_call: Regex::new(r#"[a-z_]*(?:get|cfg)[a-z_0-9]*\(\s*"([a-z0-9._-]{2,})""#)
                 .unwrap(),
-            // The repo convention: a module-doc block listing knobs with descriptions.
             config_block: Regex::new(r"(?m)^//! Config[^\n]*:\n((?://!.*\n)+)").unwrap(),
             config_line: Regex::new(r"(?m)^//!\s{2,}([a-z0-9._-]{2,})\s{2,}(.+?)\s*$").unwrap(),
         }

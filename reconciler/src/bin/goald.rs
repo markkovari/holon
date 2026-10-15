@@ -1,38 +1,28 @@
 //! `comp-goald` — the thing that drains the queue.
 //!
-//! ADR-0082 built a worklist and deliberately left it to a person to pull from:
-//! no runner loop, one active run per project. This is the loop that ADR left
-//! out, kept as narrow as the argument for leaving it out allows.
+//! ADR-0082 built a worklist and left it to a person to pull from (no runner loop, one active run per
+//! project). This is the loop that ADR left out, kept as narrow as that argument allows.
 //!
-//! **A human still starts every goal.** The daemon picks up goals already in
-//! `running` — the state a person (or the console) moved them to — and never
-//! touches `queued`. That keeps ADR-0082's one deliberate act per goal, which is
-//! the whole reason the interruption rate is measurable, and removes only the
-//! part nobody wanted: sitting at a terminal typing `goal run` one at a time.
+//! **A human still starts every goal.** The daemon picks up goals already in `running` (moved there by
+//! a person or the console) and never touches `queued`, keeping ADR-0082's one deliberate act per
+//! goal, which is why the interruption rate is measurable.
 //!
-//! What it does change is **one active run per project**, which ADR-0082 answered
-//! concurrent pull requests with. `--max-runs` above 1 means concurrent PRs are
-//! back, off one base. They are independent branches off the same sha, so the
-//! forge is fine; what is not fine is two goals writing the same file, and
-//! nothing here detects that. Scope goals to disjoint `writable` sets.
+//! What it does change is **one active run per project**: `--max-runs` above 1 means concurrent PRs
+//! are back, as independent branches off one sha. Two goals writing the same file is not detected;
+//! scope goals to disjoint `writable` sets.
 //!
 //! ## What the goals know about each other
 //!
-//! Nothing, directly — and that is the design. Every run shares one knowledge
-//! pool (`--surreal-url`, passed through to `comp-goalrun`), so a goal reads the
-//! lessons, capabilities and verdicts every earlier goal left there, and a goal
-//! whose work a past run already did is skipped before it spends a branch
-//! (`--skip-above`). Concurrent runs see each other's writes only once they land,
-//! which is the honest behaviour: a lesson from a branch that has not been gated
-//! yet is not a lesson.
+//! Nothing, directly. Every run shares one knowledge pool (`--surreal-url`, passed to `comp-goalrun`),
+//! so a goal reads the lessons, capabilities and verdicts earlier goals left, and a goal a past run
+//! already did is skipped before it spends a branch (`--skip-above`). Concurrent runs see each
+//! other's writes only once they land: a lesson from an ungated branch is not a lesson.
 //!
 //!   comp-goald --project holon --checkout ~/src/holon --repo me/holon \
 //!     --max-runs 2 -- --anthropic-base-url http://127.0.0.1:8787 --model qwen …
 //!
-//! Everything after `--` is handed to `comp-goalrun` verbatim. The daemon adds
-//! `--checkout`, `--repo` and `--goal`; every other decision — the model, the
-//! budget, the pool, the branch count — stays where it already is, and this
-//! binary does not grow a second copy of it that can disagree.
+//! Everything after `--` is handed to `comp-goalrun` verbatim. The daemon adds `--checkout`, `--repo`
+//! and `--goal`; every other decision stays there, so this binary has no second copy to disagree.
 
 use std::collections::HashSet;
 use std::os::unix::process::CommandExt;
@@ -130,21 +120,16 @@ struct Args {
     goalrun: Vec<String>,
 }
 
-// ---- the platform, as the four calls this needs -----------------------------
-
 struct Session {
     url: String,
-    /// Replaced in place when the platform stops accepting it, so every caller
-    /// picks the new one up without threading it through.
+    /// Replaced in place when the platform stops accepting it, so every caller picks up the new one.
     token: Mutex<String>,
-    /// What to sign back in with. `None` means a 401 is simply an error, which is
-    /// the right behaviour for a daemon nobody gave credentials to.
+    /// What to sign back in with. `None` means a 401 is simply an error.
     login: Option<(String, String)>,
 }
 
-/// The same credentials file the CLI writes, read the same way — so `comp login`
-/// is the only way a token gets onto this box, and the daemon does not become a
-/// second place that knows how to authenticate.
+/// The same credentials file the CLI writes, so `comp login` is the only way a token gets onto this
+/// box and the daemon is not a second place that knows how to authenticate.
 fn session(override_url: Option<String>, login: Option<(String, String)>) -> Result<Session> {
     let p = std::env::var("COMP_CREDENTIALS").map(PathBuf::from).unwrap_or_else(|_| {
         PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
@@ -162,7 +147,6 @@ fn session(override_url: Option<String>, login: Option<(String, String)>) -> Res
     })
 }
 
-/// Trade the credentials for a fresh token and store it.
 fn re_login(s: &Session) -> Result<()> {
     let Some((email, password)) = &s.login else {
         bail!("the session expired and no --email/--password-file was given to renew it");
@@ -187,8 +171,7 @@ fn re_login(s: &Session) -> Result<()> {
 
 fn call(s: &Session, method: &str, path: &str, body: Option<Value>) -> Result<Value> {
     match call_once(s, method, path, body.clone()) {
-        // A 401 is the one status worth a second attempt, and only after doing
-        // something about it. Retrying anything else would just repeat it.
+        // A 401 is the one status worth a second attempt, and only after doing something about it.
         Err(e) if e.to_string().starts_with("401") && s.login.is_some() => {
             re_login(s)?;
             call_once(s, method, path, body)
@@ -218,21 +201,17 @@ fn call_once(s: &Session, method: &str, path: &str, body: Option<Value>) -> Resu
     Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
 }
 
-/// The goals a person has started and nothing has picked up yet.
 fn started(s: &Session, project: &str) -> Result<Vec<Value>> {
     let v = call(s, "GET", &format!("/api/projects/{project}/goals?state=running"), None)?;
     Ok(v["goals"].as_array().cloned().unwrap_or_default())
 }
 
-/// `POST /api/goals/{id}/fail {reason}` — three call sites want exactly
-/// this, differing only in whether they can afford to wait for the answer.
+/// `POST /api/goals/{id}/fail {reason}`: three call sites want exactly this, differing only in whether
+/// they can afford to wait for the answer.
 fn fail_goal(s: &Session, id: &str, reason: &str) -> Result<Value> {
     call(s, "POST", &format!("/api/goals/{id}/fail"), Some(serde_json::json!({ "reason": reason })))
 }
 
-// ---- closing the loop on a merged (or abandoned) pull request ---------------
-
-/// What GitHub says about a pull request right now.
 #[derive(Debug, PartialEq, Eq)]
 enum PrStatus {
     Open,
@@ -240,8 +219,8 @@ enum PrStatus {
     ClosedUnmerged,
 }
 
-/// `owner`, `repo`, `number` out of a URL `comp-goalrun` printed — the same
-/// shape `github-forge` returns and the only shape ever stored in `pr`.
+/// `owner`, `repo`, `number` out of a URL `comp-goalrun` printed (the shape `github-forge` returns and
+/// the only shape ever stored in `pr`).
 fn parse_pr_url(url: &str) -> Option<(String, String, String)> {
     let rest = url.trim().trim_end_matches('/').strip_prefix("https://github.com/")?;
     let mut parts = rest.splitn(4, '/');
@@ -254,10 +233,7 @@ fn parse_pr_url(url: &str) -> Option<(String, String, String)> {
     Some((owner, repo, number))
 }
 
-/// Ask GitHub directly — this is a fact about the FORGE, not about anything
-/// `comp-goald` itself keeps, so there is no reason to route it through the
-/// platform or through a wasm component that cannot make outbound calls of
-/// its own choosing anyway.
+/// Ask GitHub directly: this is a fact about the FORGE, not anything `comp-goald` keeps.
 fn pr_status(http: &reqwest::blocking::Client, token: Option<&str>, url: &str) -> Result<PrStatus> {
     let (owner, repo, number) =
         parse_pr_url(url).with_context(|| format!("`{url}` does not look like a GitHub PR URL"))?;
@@ -283,10 +259,8 @@ fn pr_status(http: &reqwest::blocking::Client, token: Option<&str>, url: &str) -
     })
 }
 
-/// One pass over every `awaiting-human` goal with a recorded PR: land it if
-/// GitHub says it merged, dead-letter it if GitHub says it closed without
-/// merging, leave it alone otherwise. The human decision already happened on
-/// GitHub — this only keeps the platform's own record from lagging behind it.
+/// One pass over every `awaiting-human` goal with a recorded PR: land it if merged, dead-letter it if
+/// closed without merging, leave it otherwise.
 fn sweep_awaiting_human(
     http: &reqwest::blocking::Client,
     token: Option<&str>,
@@ -308,9 +282,7 @@ fn sweep_awaiting_human(
     for goal in goals {
         let id = goal["id"].as_str().unwrap_or_default().to_string();
         let Some(pr) = goal["pr"].as_str() else {
-            // Nothing recorded — an older review, or one from a client that
-            // never sent it. There is nothing here to check, so it waits for
-            // a person exactly as it always has.
+            // Nothing recorded (an older review, or a client that never sent it): it waits for a person.
             continue;
         };
         match pr_status(http, token, pr) {
@@ -328,19 +300,15 @@ fn sweep_awaiting_human(
     }
 }
 
-// ---- one goal ---------------------------------------------------------------
-
 /// Run one goal to a pull request and report where it landed.
-///
-/// `running -> awaiting-human` on success, because a PR is not a finished goal:
-/// somebody still reads it and merges it, and `done` is theirs to set. On failure
-/// `running -> failed`, which is TERMINAL by ADR-0082 — this does not retry, and
-/// the reason travels with the goal so the dead-letter queue is readable.
+/// `running -> awaiting-human` on success, because a PR is not a finished goal and `done` is the
+/// human's to set. On failure `running -> failed`, TERMINAL by ADR-0082: no retry, and the reason
+/// travels with the goal so the dead-letter queue is readable.
 fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
     let id = goal["id"].as_str().unwrap_or_default().to_string();
     let title = goal["title"].as_str().unwrap_or("(untitled)").to_string();
-    // The FROZEN spec, not the live one: ADR-0081 says the spec a run is judged
-    // against must not move under it, and `goal_transition` froze it at start.
+    // The FROZEN spec, not the live one: the spec a run is judged against must not move under it
+    // (ADR-0081); `goal_transition` froze it at start.
     let spec = goal["frozen_spec"]
         .as_str()
         .filter(|v| !v.is_empty())
@@ -364,22 +332,14 @@ fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
         .arg("--goal")
         .arg(&spec)
         .args(&args.goalrun)
-        // Piped, not inherited: this is the only way to see the "PR opened:
-        // <url>" line `comp-goalrun` prints on a win, so the platform can be
-        // told which pull request a goal is actually waiting on instead of
-        // losing that fact the moment this process's stdout scrolls past.
-        // Echoed straight through below, so a human watching the daemon's own
-        // log still sees everything `comp-goalrun` printed, unchanged.
+        // Piped, not inherited: the only way to see the "PR opened: <url>" line `comp-goalrun` prints on a
+        // win, so the platform learns which PR the goal waits on. Echoed through below, so the daemon's own
+        // log is unchanged.
         .stdout(std::process::Stdio::piped())
-        // Its own process group, not this daemon's: `comp-goalrun` spawns a
-        // whole internal fleet (comp-checks, lattice comp-host nodes,
-        // nats-server), and without this every one of them shares
-        // `comp-goald`'s own group by default. That would mean a signal aimed
-        // at the DAEMON's group — the exact shape a supervisor's stop sends —
-        // reaches in-flight work too, straight through the graceful-drain
-        // logic below this function that exists specifically to prevent that.
-        // A distinct group is also what makes the sweep after `wait()` below
-        // possible: `kill(-pid, …)` targets a process group, not a single pid.
+        // Its own process group, not the daemon's: `comp-goalrun` spawns a whole internal fleet
+        // (comp-checks, comp-host nodes, nats-server), and a signal aimed at the DAEMON's group (what a
+        // supervisor's stop sends) would otherwise reach in-flight work, past the graceful-drain logic
+        // below. A distinct group also enables the sweep after `wait()`: `kill(-pid, …)` targets a group.
         .process_group(0)
         .spawn()
         .with_context(|| {
@@ -407,22 +367,10 @@ fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
     let _ = echo.join();
     let pr = pr.lock().unwrap().clone();
 
-    // The guaranteed sweep. `comp-goalrun` itself is confirmed dead by
-    // `wait()` above, so this only ever reaches ORPHANED descendants — the
-    // fleet's own `Drop`-based cleanup (`gate.rs`'s `Checks`, `fleet.rs`'s
-    // `Fleet`) already covers every normal exit path; this is what still
-    // catches it if that process was itself killed by a signal (which skips
-    // `Drop` exactly the way `std::process::exit` used to) or crashes in some
-    // way nobody has thought of yet. "no such process" — nothing left to
-    // kill — is the expected, common outcome, so the result is discarded.
-    //
-    // Shelled out to the `kill` utility rather than calling the syscall
-    // directly: the negative-pid form (a process GROUP, not one pid) is the
-    // same either way, and this way nothing here needs `unsafe`. `--` stops
-    // `-<pgid>` from being parsed as another flag. Output silenced: "no such
-    // process" is the expected result on every normal run — the fleet's own
-    // Drop-based cleanup already got there first — and printing that every
-    // single time would drown the log in routine noise.
+    // The guaranteed sweep: `comp-goalrun` is confirmed dead by `wait()`, so this only reaches ORPHANED
+    // descendants, e.g. if it was killed by a signal (skipping `Drop`). "No such process" is the
+    // expected outcome, so the result is discarded. Shelled out to `kill` so nothing here needs
+    // `unsafe`; `--` stops `-<pgid>` parsing as a flag.
     let _ = Command::new("kill")
         .args(["-KILL", "--", &format!("-{child_pgid}")])
         .stdout(std::process::Stdio::null())
@@ -436,18 +384,15 @@ fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
         );
         call(s, "POST", &format!("/api/goals/{id}/review"), Some(serde_json::json!({ "pr": pr })))?;
     } else {
-        // 3 is `comp-goalrun`'s "every branch ran, none passed" — the search was
-        // healthy and the answer was no. Said differently from a broken harness
-        // because the fix is different: one wants a better goal, the other wants
-        // someone to look at the machine.
+        // 3 is `comp-goalrun`'s "every branch ran, none passed": a healthy search whose answer was no. Said
+        // differently from a broken harness because the fix differs (a better goal vs. looking at the
+        // machine).
         let reason = comp_reconciler::goalexit::failure_reason(status.code());
         eprintln!("[goald] {id} FAILED: {reason}");
         fail_goal(s, &id, &reason)?;
     }
     Ok(())
 }
-
-// ---- the loop ---------------------------------------------------------------
 
 fn main() -> Result<()> {
     let args = Arc::new(Args::parse());
@@ -476,9 +421,8 @@ fn main() -> Result<()> {
         args.project, s.url, args.poll, args.max_runs
     );
 
-    // Read once at startup: every run this daemon starts shares the same
-    // trailing `comp-goalrun` args, so the model — and whether it is
-    // DeepSeek's — never changes between polls.
+    // Read once at startup: every run shares the same trailing `comp-goalrun` args, so the model (and
+    // whether it is DeepSeek's) never changes between polls.
     let off_peak_days = match &args.holidays {
         Some(path) => comp_reconciler::offpeak::parse_holidays(
             &std::fs::read_to_string(path)
@@ -509,27 +453,23 @@ fn main() -> Result<()> {
         eprintln!("[goald] auto-closing awaiting-human goals once their pull request resolves");
     }
 
-    // Claimed IN THIS PROCESS. The platform's `running` state is not a lease — it
-    // is what a person set — so it cannot tell "started, waiting for a runner"
-    // apart from "a runner has it". One daemon per project is the assumption, and
-    // a second one would double-run every goal.
+    // Claimed IN THIS PROCESS. The platform's `running` state is what a person set, not a lease, so it
+    // cannot tell "waiting for a runner" from "a runner has it". One daemon per project is assumed; a
+    // second would double-run every goal.
     //
     // ponytail: in-process claim set. A real lease (a `claimed_by` + expiry on the
     // goal record) is the fix if a second daemon ever becomes a thing.
     let claimed: Arc<Mutex<HashSet<String>>> = Arc::default();
-    // Goals currently held back by `--enforce-deepseek-offpeak`. Tracked only so
-    // the DEFERRED/starting log lines fire once per transition instead of once
-    // per poll — with the default 15s poll a goal held for hours would otherwise
-    // print itself out of the log entirely.
+    // Goals currently held back by `--enforce-deepseek-offpeak`, tracked so the DEFERRED/starting log
+    // lines fire once per transition, not per 15s poll.
     let deferred: Arc<Mutex<HashSet<String>>> = Arc::default();
     let running = Arc::new(AtomicUsize::new(0));
 
     let stop = Arc::new(AtomicBool::new(false));
     {
         let stop = stop.clone();
-        // First Ctrl-C stops PICKING UP work; runs already in flight finish. A
-        // killed run leaves a goal stuck in `running` with a half-open PR, which
-        // is the one state nobody can tell from a run still going.
+        // First Ctrl-C stops PICKING UP work; runs in flight finish. A killed run leaves a goal stuck in
+        // `running` with a half-open PR, indistinguishable from one still going.
         ctrlc_ish(move || {
             eprintln!("[goald] draining — in-flight runs finish, nothing new starts (Ctrl-C again to kill)");
             stop.store(true, Ordering::SeqCst);
@@ -541,10 +481,8 @@ fn main() -> Result<()> {
         if free > 0 && !stop.load(Ordering::SeqCst) {
             match started(&s, &args.project) {
                 Ok(goals) => {
-                    // NOT `.take(free)`: a deferred goal spawns nothing, so
-                    // truncating the candidate list before checking the
-                    // schedule would waste a free slot on a goal this pass
-                    // was never going to start, and starve one that could.
+                    // NOT `.take(free)`: a deferred goal spawns nothing, so truncating first would waste a free slot on
+                    // a goal this pass will not start and starve one that could.
                     let mut started_this_pass = 0;
                     for goal in goals {
                         if started_this_pass >= free {
@@ -583,9 +521,7 @@ fn main() -> Result<()> {
                         let (args, s, running) = (args.clone(), s.clone(), running.clone());
                         std::thread::spawn(move || {
                             if let Err(e) = work(&args, &s, &goal) {
-                                // Logged, not fatal: one goal that could not be
-                                // reported on must not take the daemon down and
-                                // strand every other run in flight.
+                                // Logged, not fatal: one goal that could not be reported on must not take the daemon down.
                                 eprintln!("[goald] {id} ERROR: {e:#}");
                             }
                             running.fetch_sub(1, Ordering::SeqCst);
@@ -596,9 +532,8 @@ fn main() -> Result<()> {
             }
         }
 
-        // Independent of the dispatch above and of `--max-runs`: closing a
-        // finished goal frees nothing this daemon is itself holding, so it
-        // is not gated on a free slot — only on whether anyone asked for it.
+        // Independent of the dispatch above and of `--max-runs`: closing a finished goal frees nothing this
+        // daemon holds, so it is gated only on whether anyone asked for it.
         if args.auto_close_merged_prs {
             sweep_awaiting_human(&http, github_token.as_deref(), &s, &args.project);
         }
@@ -609,15 +544,14 @@ fn main() -> Result<()> {
         std::thread::sleep(Duration::from_secs(args.poll));
     }
 
-    // `--once` returns before its runs do; without this the process exits and
-    // takes every child with it, which looks exactly like a run that crashed.
+    // `--once` returns before its runs do; without this the process exits and takes every child with it,
+    // which looks like a crashed run.
     while running.load(Ordering::SeqCst) > 0 {
         std::thread::sleep(Duration::from_millis(200));
     }
     Ok(())
 }
 
-/// Ctrl-C, without pulling in a crate for one signal.
 fn ctrlc_ish(f: impl Fn() + Send + 'static) {
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
@@ -638,8 +572,7 @@ mod tests {
             parse_pr_url("https://github.com/acme/widgets/pull/42"),
             Some(("acme".into(), "widgets".into(), "42".into()))
         );
-        // A trailing slash, or one `comp-goalrun`'s own println leaves in from
-        // formatting — trimmed rather than refused.
+        // A trailing slash, or one `comp-goalrun`'s own println leaves in: trimmed rather than refused.
         assert_eq!(
             parse_pr_url("https://github.com/acme/widgets/pull/42/"),
             Some(("acme".into(), "widgets".into(), "42".into()))
@@ -659,13 +592,9 @@ mod tests {
         }
     }
 
-    /// Live, read-only, against a PR from this very session (`markkovari/holon`
-    /// #273 — the marketplace-domain build, merged 2026-09-19) — a fixture
-    /// nothing else in this file could construct, since "GitHub's own JSON
-    /// shape" is the thing this function translates and mocking it would only
-    /// test that the mock agrees with itself. Skipped without network instead
-    /// of failing, the same discipline `deepseek_live.rs` uses for its own
-    /// live provider check.
+    /// Live, read-only, against a real merged PR (`markkovari/holon` #273): a fixture nothing else here
+    /// could construct, since mocking GitHub's JSON would only test that the mock agrees with itself.
+    /// Skipped without network.
     #[test]
     fn pr_status_reads_a_real_merged_pull_request() {
         let http = reqwest::blocking::Client::builder()

@@ -202,13 +202,11 @@ mod tests {
     fn tampering_of_every_kind_is_refused() {
         let s = sealed(2 * CHUNK + 10);
         let sink = || Vec::new();
-        // A flipped bit.
         let mut t = s.clone();
         t[40] ^= 1;
         assert!(open(&key(), "b/p", &t[..], sink()).is_err());
         // Another name: the part moved to a different place in the backup.
         assert!(open(&key(), "b/other", &s[..], sink()).is_err());
-        // Another key.
         assert!(open(&Key([8u8; 32]), "b/p", &s[..], sink()).is_err());
         // Truncated at a chunk boundary: every surviving chunk opens, and the
         // reader still refuses, because none of them was the last.

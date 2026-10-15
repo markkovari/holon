@@ -1,24 +1,19 @@
 //! JetStream streams, dumped message by message and replayed.
 //!
-//! Every piece of state on NATS is a stream underneath: a KV bucket is `KV_<b>`,
-//! an object store is `OBJ_<b>`, a queue is itself. So one mechanism backs up
-//! all of them, history and delete markers included, without knowing which is
-//! which: the stream's config, then each message's subject, headers and bytes,
-//! in sequence order.
+//! Every piece of state on NATS is a stream underneath (a KV bucket is `KV_<b>`, an object store
+//! `OBJ_<b>`, a queue is itself), so one mechanism backs up all of them, history and delete markers
+//! included: the stream's config, then each message's subject, headers and bytes, in sequence order.
 //!
 //! ```text
 //! {"stream":"KV_x","config":{...},"messages":N,"last_seq":S}   -- line 1
 //! {"s":"$KV.x.k","h":[["KV-Operation","DEL"]],"d":"<base64>"}  -- one per message
 //! ```
 //!
-//! **What a restore changes.** Sequence numbers restart from 1 and every
-//! message is timestamped at the restore, so KV revisions differ from the
-//! original and a `max_age` restarts. Anything that holds a revision across a
-//! restore — a pending compare-and-set, a vcs intent guard — must re-read,
-//! which is what they do on a mismatch anyway. Headers a publisher used to
-//! guard its write (`Nats-Expected-*`) or deduplicate it (`Nats-Msg-Id`) are
-//! dropped on replay: the stored message carries them, and replaying them
-//! against a fresh stream would refuse every guarded write.
+//! **What a restore changes.** Sequence numbers restart from 1 and messages are timestamped at the
+//! restore, so KV revisions differ and a `max_age` restarts; anything holding a revision across a
+//! restore (a pending compare-and-set, a vcs intent guard) must re-read, as it does on a mismatch
+//! anyway. Headers a publisher used to guard (`Nats-Expected-*`) or deduplicate (`Nats-Msg-Id`) a
+//! write are dropped on replay, or every guarded write against a fresh stream would be refused.
 
 use std::io::{BufRead, Write};
 use std::time::Duration;
@@ -32,8 +27,8 @@ use serde::{Deserialize, Serialize};
 
 const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
 
-/// How long a dump waits for the next message before deciding the stream has
-/// nothing more — only reached if the server stops sending mid-stream.
+/// How long a dump waits for the next message before deciding the stream has nothing more; only
+/// reached if the server stops sending mid-stream.
 const IDLE: Duration = Duration::from_secs(15);
 
 #[derive(Serialize, Deserialize)]
@@ -142,15 +137,15 @@ pub async fn dump(
                 };
                 write_line(out, next.subject.as_str(), next.headers.as_ref(), &next.payload)?;
                 written += 1;
-                // Caught up with what the stream held when this message was
-                // delivered. Later writes belong to the next backup.
+                // Caught up with what the stream held when this message was delivered; later writes belong to the
+                // next backup.
                 if pending == 0 || seq >= last {
                     break;
                 }
             }
         }
-        // A work-queue stream refuses a second, unfiltered consumer. Read it by
-        // sequence instead: slower, one request per message, and it works.
+        // A work-queue stream refuses a second, unfiltered consumer: read it by sequence instead (slower, one
+        // request per message).
         Err(e) => {
             eprintln!("comp-backup: {name}: no ordered consumer ({e}); reading by sequence");
             for seq in info.state.first_sequence..=last {
@@ -198,9 +193,8 @@ pub struct Restored {
     pub messages: u64,
 }
 
-/// Replay one dumped stream. An existing stream of that name is refused
-/// unless `replace`, which deletes it first. `replicas` overrides the saved
-/// replica count, for a restore onto a smaller cluster than the backup's.
+/// Replay one dumped stream. An existing stream of that name is refused unless `replace`, which
+/// deletes it first. `replicas` overrides the saved count, for a smaller cluster.
 pub async fn restore(
     js: &jetstream::Context,
     input: impl BufRead,
@@ -250,8 +244,8 @@ pub async fn restore(
             .with_context(|| format!("replaying into {}", cfg.name))?;
         acks.push(ack);
         n += 1;
-        // Pipelined, in order on one connection; bounded so a large stream
-        // does not queue unboundedly many acks.
+        // Pipelined, in order on one connection; bounded so a large stream does not queue unboundedly many
+        // acks.
         if acks.len() >= 256 {
             for a in acks.drain(..) {
                 a.await.with_context(|| format!("replaying into {}", cfg.name))?;

@@ -1,20 +1,15 @@
 //! `comp-mailrelay` — HTTP in, real SMTP out. The piece that lets a wasm component
 //! reach MailHog.
 //!
-//! `comp-host` wires no `wasi:sockets`, so a component cannot open a TCP connection
-//! and therefore cannot speak SMTP at all. MailHog only ingests SMTP — its HTTP API
-//! is read-only. So something outside the sandbox has to bridge the two.
+//! `comp-host` wires no `wasi:sockets`, so a component cannot speak SMTP, and MailHog only ingests SMTP
+//! (its HTTP API is read-only). Something outside the sandbox has to bridge the two.
 //!
-//! It is NOT a mock. It accepts the same JSON body `mail-http` POSTs to Resend and
-//! turns it into a genuine SMTP session, which MailHog genuinely receives, stores
-//! and serves back. The component under test is byte-identical whether it is pointed
-//! here or at Resend, which is the property that makes this worth having and a stub
-//! worthless.
+//! It is NOT a mock: it accepts the JSON body `mail-http` POSTs to Resend and turns it into a genuine
+//! SMTP session that MailHog receives and serves back, so the component under test is
+//! byte-identical whether pointed here or at Resend.
 //!
-//! std only, no dependencies, in the shape of `examples/mesh/src/bin/flaky.rs` — the
-//! other small native thing in this repository that exists so a gate has something
-//! real to talk to. SMTP's submission path is four commands and a dot; a crate for
-//! it would be a dependency for sixty lines.
+//! std only, in the shape of `examples/mesh/src/bin/flaky.rs`: SMTP submission is four commands and a
+//! dot, and a crate would be a dependency for sixty lines.
 //!
 //!   comp-mailrelay 127.0.0.1:3390 127.0.0.1:1025
 //!   POST /  {"from","to":[…],"subject","text"}  ->  201 {"id":"…"}
@@ -50,8 +45,8 @@ fn reply(stream: &mut TcpStream, code: u16, body: &str) {
 }
 
 fn serve(mut stream: TcpStream, smtp: &str) {
-    // Read the head, then exactly `content-length` more. A body cannot be read by
-    // "until the socket closes" here: the client keeps it open waiting for us.
+    // Read the head, then exactly `content-length` more: "until the socket closes" would hang, since the
+    // client keeps it open waiting for us.
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
     let head_end = loop {
@@ -93,7 +88,7 @@ fn serve(mut stream: TcpStream, smtp: &str) {
     let body = String::from_utf8_lossy(&body).to_string();
 
     let from = json_str(&body, "from").unwrap_or_default();
-    // Resend takes `to` as a list; one recipient is still a list of one.
+    // Resend takes `to` as a list; one recipient is a list of one.
     let to = json_first_of_array(&body, "to").or_else(|| json_str(&body, "to")).unwrap_or_default();
     if from.is_empty() || to.is_empty() {
         return reply(&mut stream, 422, r#"{"error":"from and to are required"}"#);
@@ -101,20 +96,19 @@ fn serve(mut stream: TcpStream, smtp: &str) {
     let subject = json_str(&body, "subject").unwrap_or_default();
     let text = json_str(&body, "text").or_else(|| json_str(&body, "body")).unwrap_or_default();
 
-    // The id goes ON the message as its Message-ID and is also what the caller gets
-    // back, so a gate can find this exact send among everything else in the mailbox.
+    // The id goes ON the message as its Message-ID and is also returned, so a gate can find this exact
+    // send in the mailbox.
     let id = format!("{}.{}@relay.local", std::process::id(), now_nanos());
     match send_smtp(smtp, &from, &to, &subject, &text, &id) {
-        // 502 rather than 500: the relay is fine and the thing behind it is not,
-        // which is what `mail:send`'s `unavailable` means and what a retry might fix.
+        // 502 rather than 500: the relay is fine and the thing behind it is not, which is what `mail:send`'s
+        // `unavailable` means and a retry might fix.
         Err(e) => reply(&mut stream, 502, &format!(r#"{{"error":"smtp: {}"}}"#, esc(&e))),
         Ok(()) => reply(&mut stream, 201, &format!(r#"{{"id":"{id}"}}"#)),
     }
 }
 
-/// SMTP submission: greet, envelope, DATA, dot. Every step's reply must start with
-/// a 2 or a 3 — anything else and the message did not arrive, which is the one
-/// thing a relay must never report as success.
+/// SMTP submission: greet, envelope, DATA, dot. Every reply must start with a 2 or a 3; anything else
+/// and the message did not arrive, which a relay must never report as success.
 fn send_smtp(
     addr: &str,
     from: &str,
@@ -158,9 +152,8 @@ fn send_smtp(
     cmd(&mut r, &format!("RCPT TO:<{to}>"), "RCPT TO")?;
     cmd(&mut r, "DATA", "DATA")?;
 
-    // Dot-stuffing: a line that is exactly "." would end the message early, so a
-    // leading dot is doubled. RFC 5321 says so and MailHog will believe us either
-    // way, which is why it has to be right here rather than discovered later.
+    // Dot-stuffing: a line that is exactly "." would end the message early, so a leading dot is doubled
+    // (RFC 5321).
     let mut data = format!(
         "From: {from}\r\nTo: {to}\r\nSubject: {subject}\r\nMessage-ID: <{id}>\r\n\
          Content-Type: text/plain; charset=utf-8\r\n\r\n"
@@ -181,10 +174,8 @@ fn send_smtp(
     Ok(())
 }
 
-// ---- the smallest JSON reading that does the job -----------------------------
-//
-// Three fields out of a body this program also defines the shape of. Pulling
-// serde_json in for that would be a dependency for `"to":[" ... "]`.
+// The smallest JSON reading that does the job: three fields out of a body this program also defines;
+// serde_json would be a dependency for `"to":[" ... "]`.
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)

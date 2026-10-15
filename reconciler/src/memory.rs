@@ -3,22 +3,16 @@
 //!
 //! ## Nothing here may fail a run
 //!
-//! Every function answers with a plain value and swallows what went wrong into a
-//! `String` the caller may print. That is the whole contract of this module and it
-//! is deliberate in one direction: a knowledge pool that is down, misconfigured or
-//! simply absent must cost a run nothing but the knowledge. The loop worked before
-//! this existed and has to keep working when it is unreachable.
-//!
-//! The asymmetry that matters: **an error means DO THE WORK.** `already_done`
-//! answers `None` when it cannot reach the pool, never "probably done". Redoing
-//! work costs money; skipping work that was not done is a silent wrong answer, and
-//! the two are not the same kind of mistake (ADR-0084).
+//! Every function answers with a plain value and swallows what went wrong into a `String` the caller
+//! may print: a knowledge pool that is down, misconfigured or absent must cost a run nothing but the
+//! knowledge. **An error means DO THE WORK**: `already_done` answers `None` when it cannot reach the
+//! pool, never "probably done", since skipping work not done is a silent wrong answer and redoing it
+//! only costs money (ADR-0084).
 //!
 //! ## Why HTTP and not a link
 //!
-//! The reconciler is native and reaches components through the ingress, the same
-//! way it reaches the driver and the selector — `memory-probe` in front of
-//! `knowledge-memory` is the same shape as `driver-probe` in front of
+//! The reconciler is native and reaches components through the ingress, as it reaches the driver and
+//! selector: `memory-probe` in front of `knowledge-memory` is the shape of `driver-probe` in front of
 //! `agent-driver`.
 
 use std::time::Duration;
@@ -27,9 +21,7 @@ use serde_json::Value;
 
 /// Where the memory app is, and the ingress host that routes to it.
 ///
-/// `None` is a supported configuration and the default: a run without
-/// `--surreal-url` deploys no memory app, makes no calls, and behaves exactly as
-/// it did before this module existed.
+/// `None` is the default: a run without `--surreal-url` deploys no memory app and makes no calls.
 #[derive(Clone)]
 pub struct Memory {
     pub url: String,
@@ -55,8 +47,7 @@ impl Prior {
         } else {
             self.artifact.clone()
         };
-        // One line of it: a goal is often a paragraph, and a summary that spans
-        // the terminal is a summary nobody reads.
+        // One line of it: a goal is often a paragraph.
         let goal = self.goal.lines().next().unwrap_or_default();
         let goal = if goal.len() > 72 { format!("{}…", &goal[..71]) } else { goal.to_string() };
         format!(
@@ -71,7 +62,6 @@ fn client(timeout: Duration) -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder().timeout(timeout).build().expect("http client")
 }
 
-/// Percent-encode a goal for a query string. Goals are sentences.
 fn enc(s: &str) -> String {
     s.chars()
         .map(|c| match c {
@@ -87,8 +77,7 @@ impl Memory {
         self.call_with(method, path, String::new())
     }
 
-    /// The same, with a body — which `/observe` needs, because a lesson is prose
-    /// and prose does not belong in a query string.
+    /// The same, with a body: `/observe` needs one because a lesson is prose.
     fn call_with(
         &self,
         method: reqwest::Method,
@@ -107,8 +96,7 @@ impl Memory {
 
     /// Has this goal already been done? `Ok(None)` means go and do the work.
     ///
-    /// Called ONCE per goal, before anything is spawned. Calling it per branch
-    /// would be paying for the answer after having already paid for the question.
+    /// Called ONCE per goal, before anything is spawned, not per branch.
     pub fn already_done(&self, goal: &str, min_similarity: f64) -> Result<Option<Prior>, String> {
         let v = self.call(
             reqwest::Method::GET,
@@ -132,10 +120,8 @@ impl Memory {
 
     /// Forget what nobody read. Returns how many entries went.
     ///
-    /// Driven by the run rather than by a daemon: a `decay` that is exposed and
-    /// never called is the gap ADR-0081 caught in alpha-swarm2, and every run
-    /// paying a few milliseconds to keep the pool bounded is cheaper than a
-    /// scheduler nobody remembers to deploy.
+    /// Driven by the run, not a daemon: a `decay` that is exposed and never called is the gap ADR-0081
+    /// caught in alpha-swarm2, and a few milliseconds per run beats a scheduler nobody deploys.
     pub fn decay(&self, days: u32, min_uses: u64) -> Result<u32, String> {
         let v =
             self.call(reqwest::Method::POST, &format!("/decay?days={days}&min-uses={min_uses}"))?;
@@ -147,17 +133,13 @@ impl Memory {
 
     /// Record one verdict.
     ///
-    /// Called once per BRANCH, not once per generation: the count of failed
-    /// attempts on a goal is what says whether another generation is worth buying,
-    /// and a generation-level record cannot say it. Idempotent per `(goal, run)`,
-    /// so the landing path may call it again with the pull request once the forge
-    /// has opened one.
+    /// Called once per BRANCH, not per generation: the count of failed attempts says whether another
+    /// generation is worth buying. Idempotent per `(goal, run)`, so the landing path may call it again
+    /// with the pull request.
     /// Record that this goal was decomposed into that one.
     ///
-    /// Idempotent per `(parent, child)`. Failure is REPORTED, never fatal to the
-    /// caller: a run whose parts are already computed can still do the work, and
-    /// losing the edge costs the pool its memory of the decomposition rather than
-    /// the run its result — the same asymmetry `already_done` is built on.
+    /// Idempotent per `(parent, child)`. Failure is REPORTED, never fatal: losing the edge costs the pool
+    /// its memory of the decomposition, not the run its result.
     pub fn decomposed_into(
         &self,
         parent: &str,
@@ -180,13 +162,12 @@ impl Memory {
         Ok(())
     }
 
-    /// What this goal broke into, in ordinal order. Empty is an answer.
     pub fn parts_of(&self, goal: &str) -> Result<Vec<SubGoal>, String> {
         self.sub_goals("/parts-of", goal)
     }
 
-    /// The goals this one is a part of — plural, because one sub-goal reached
-    /// from two parents is one node with two edges.
+    /// The goals this one is a part of: plural, since one sub-goal reached from two parents is one node
+    /// with two edges.
     pub fn parents_of(&self, goal: &str) -> Result<Vec<SubGoal>, String> {
         self.sub_goals("/parents-of", goal)
     }
@@ -234,61 +215,46 @@ impl Memory {
     }
 }
 
-/// One part of a decomposed goal, as the pool holds it.
 pub struct SubGoal {
     pub goal: String,
     pub ordinal: u32,
     pub why: String,
-    /// Whether any run has PASSED on this part — derived from its own verdict
-    /// edges, so it cannot disagree with the trail. This is what makes a parent
-    /// resumable rather than all-or-nothing.
+    /// Whether any run has PASSED on this part, derived from its verdict edges so it cannot disagree with
+    /// the trail; what makes a parent resumable rather than all-or-nothing.
     pub done: bool,
 }
 
-/// One lesson, as it came back from the pool.
 pub struct Lesson {
-    /// The handle to attribute an outcome to later. Opaque.
     pub key: String,
-    /// `patterns` | `solutions` | `errors`.
     pub ns: String,
     pub text: String,
     pub dense: bool,
 }
 
-/// What a branch is allowed to read.
-///
-/// The DIVERSITY BUDGET, and the reason it is per branch: a generation whose
-/// branches all read the same top-k is an expensive way to run one branch
-/// (ADR-0081). `k = 0` reads nothing, which is the control arm.
+/// The DIVERSITY BUDGET, per branch because branches that all read the same top-k are an expensive way
+/// to run one (ADR-0081). `k = 0` reads nothing: the control arm.
 pub struct Reading {
     pub k: u32,
     pub budget: u32,
-    /// Empty means all three pools.
     pub pools: Vec<String>,
     /// Drop dense hits below this cosine. 0 disables it.
     ///
-    /// The contract has always offered this and the client never passed it, so a
-    /// caller could not say "only text that is genuinely close". That matters now
-    /// that tags exist: a threshold is how you ask for structural evidence WITHOUT
-    /// whatever the embedding happens to think of your goal, and a tag match is
-    /// exempt from it by design (ADR-0090).
+    /// A threshold asks for structural evidence WITHOUT whatever the embedding thinks of your goal; a tag
+    /// match is exempt by design (ADR-0090).
     pub min_similarity: f64,
     /// Interfaces the part imports, so retrieval can cross applications.
     ///
-    /// Text similarity finds a lesson when the wording rhymes. These find it when
-    /// the CONTRACT is shared, which is the case that actually repeats: a fact
-    /// about `csv:codec/codec` is true for a billing ledger and a veterinary
-    /// clinic alike, and those two goals have almost nothing in common to match on
-    /// (ADR-0090). Empty is text-only, which is what the control arm wants.
+    /// Text similarity finds a lesson when the wording rhymes; these find it when the CONTRACT is shared,
+    /// which is what repeats: a fact about `csv:codec/codec` holds for a ledger and a clinic alike
+    /// (ADR-0090). Empty is text-only, what the control arm wants.
     pub tags: Vec<String>,
 }
 
 impl Memory {
     /// What the swarm learned that bears on this goal.
     ///
-    /// An error is NOT fatal and NOT an empty answer dressed up as one: the caller
-    /// gets the error, prints it, and runs the branch cold. A pool that is down
-    /// must cost a run its advice and nothing else.
+    /// An error is NOT fatal and NOT an empty answer dressed up as one: the caller prints it and runs the
+    /// branch cold.
     pub fn recall(&self, goal: &str, r: &Reading) -> Result<Vec<Lesson>, String> {
         if r.k == 0 {
             return Ok(Vec::new());
@@ -322,8 +288,7 @@ impl Memory {
             .collect())
     }
 
-    /// What happened to the lessons a branch read. The ONLY thing that moves an
-    /// entry's standing, so a branch that read nothing attributes nothing.
+    /// What happened to the lessons a branch read: the ONLY thing that moves an entry's standing.
     pub fn attribute(&self, keys: &[String], run: &str, succeeded: bool) -> Result<(), String> {
         if keys.is_empty() {
             return Ok(());
@@ -341,15 +306,12 @@ impl Memory {
 
 /// What a branch learned by failing, in the gate's own words.
 ///
-/// The source is deliberately not a model: the failing check ids and the first
-/// line of what the runner said. Negative knowledge derived from a real verdict
-/// cannot be a hallucination, so it needs none of the machinery that keeps model
-/// output out of the trusted pool — and it is visible to siblings immediately,
-/// which is the asymmetry ADR-0081 argues for. Its worst case is a branch avoiding
-/// something that would have worked.
+/// Deliberately not a model: the failing check ids and the first line of what the runner said.
+/// Negative knowledge from a real verdict cannot be a hallucination, so it is visible to siblings
+/// immediately (ADR-0081's asymmetry); its worst case is avoiding something that would have worked.
 ///
-/// `None` when there is nothing to learn: a branch that passed, or one that never
-/// produced a candidate at all and so failed for a reason about the harness.
+/// `None` when there is nothing to learn: a branch that passed, or one that never produced a candidate
+/// and so failed for a reason about the harness.
 pub fn failure_text(failures: &Value, score: u64) -> Option<String> {
     let list = failures.as_array()?;
     if list.is_empty() {
@@ -380,7 +342,6 @@ pub fn failure_text(failures: &Value, score: u64) -> Option<String> {
 }
 
 impl Memory {
-    /// Record what a branch failed on, as negative knowledge.
     pub fn observe_failure(
         &self,
         goal: &str,
@@ -391,7 +352,6 @@ impl Memory {
         self.observe_failure_tagged(goal, env, attempt, text, &[])
     }
 
-    /// The same, carrying what the work touched (ADR-0090).
     pub fn observe_failure_tagged(
         &self,
         goal: &str,
@@ -420,14 +380,9 @@ impl Memory {
 
 /// What to ask a cheap model when a candidate has passed.
 ///
-/// The prompt carries the goal, the files that passed, and the score — and asks
-/// for ONE paragraph of transferable advice. Not a summary of the diff: a summary
-/// is what the diff already says, and a future run reading "added a bounds check
-/// to page()" learns nothing it could not have read from the code.
-///
-/// The ≤900 characters is in the prompt as well as enforced after, because a model
-/// told the limit writes to it and a model told nothing writes an essay that gets
-/// cut mid-sentence.
+/// ONE paragraph of transferable advice, not a summary of the diff (which the diff already says). The
+/// ≤900 characters is in the prompt as well as enforced after: a model told the limit writes to it,
+/// one told nothing writes an essay that gets cut mid-sentence.
 pub fn distil_prompt(goal: &str, files: &Value, score: u64) -> String {
     let changed: Vec<String> = files
         .as_array()
@@ -456,16 +411,15 @@ transferable here, answer exactly NOTHING and nothing else.",
 
 /// The lesson in a reply, or `None` when the model said there was none.
 ///
-/// `NOTHING` is a legitimate answer and the reason it is offered: most passing
-/// candidates teach nothing, and a pool that records a platitude for every one of
-/// them buries the few that matter.
+/// `NOTHING` is offered because most passing candidates teach nothing, and a pool that records a
+/// platitude for each buries the few that matter.
 pub fn distilled(reply: &str) -> Option<String> {
     let text = reply.trim();
     if text.is_empty() || text.eq_ignore_ascii_case("nothing") {
         return None;
     }
-    // A model that ignored the instruction and pasted the diff back has not
-    // distilled anything, and storing it would put a diff in every future prompt.
+    // A model that pasted the diff back has not distilled anything, and storing it would put a diff in
+    // every future prompt.
     if text.contains("=== ") {
         return None;
     }
@@ -474,13 +428,11 @@ pub fn distilled(reply: &str) -> Option<String> {
 }
 
 impl Memory {
-    /// Promote a distilled lesson to `patterns` — the trusted pool.
+    /// Promote a distilled lesson to `patterns`, the trusted pool.
     ///
-    /// This is the ONLY writer of it, and it goes through the registry's
-    /// `promotion` interface rather than `memory`, which is the whole
-    /// anti-poisoning argument: an agent's world does not contain this call
-    /// (ADR-0084). The score is the gate's, and a score that did not pass is
-    /// refused on the other side.
+    /// The ONLY writer of it, through the registry's `promotion` interface rather than `memory`: an
+    /// agent's world does not contain this call (ADR-0084), the anti-poisoning argument. A score that
+    /// did not pass is refused on the other side.
     pub fn promote(
         &self,
         goal: &str,
@@ -508,9 +460,8 @@ impl Memory {
 
 /// Lessons as a branch sees them: one bullet each, negative knowledge marked.
 ///
-/// The namespace is shown because the three are not worth the same. `errors` is
-/// what did not work and is visible to a sibling immediately; `patterns` survived
-/// a gate. A model handed both without the distinction weighs them equally.
+/// The namespace is shown because the three are not worth the same: `errors` did not work, `patterns`
+/// survived a gate; a model handed both undifferentiated weighs them equally.
 pub fn render(lessons: &[Lesson]) -> String {
     lessons
         .iter()
@@ -528,10 +479,8 @@ pub fn render(lessons: &[Lesson]) -> String {
 
 /// The run id a verdict is attributed to.
 ///
-/// It has to be stable for one branch of one search and distinct across them, and
-/// it has to mean something to a human reading the graph later — `gen 1 branch
-/// risk-first of this search` rather than an opaque number. The seed is in it
-/// because that is what makes a branch replayable (ADR-0078).
+/// Stable for one branch of one search, distinct across them, and readable (`gen 1 branch risk-first`);
+/// the seed is in it because that makes a branch replayable (ADR-0078).
 pub fn run_id(search_seed: u64, round: usize, branch: &str) -> String {
     format!("{search_seed}/g{round}/{branch}")
 }
@@ -577,13 +526,9 @@ mod tests {
 
     #[test]
     fn most_passing_candidates_teach_nothing_and_that_is_allowed() {
-        // A pool that records a platitude for every passing candidate buries the
-        // few entries that matter, so `NOTHING` is a first-class answer.
         assert_eq!(distilled("NOTHING"), None);
         assert_eq!(distilled("  nothing  "), None);
         assert_eq!(distilled(""), None);
-        // And a model that ignored the brief and pasted the diff back has not
-        // distilled anything.
         assert_eq!(distilled("=== src/lib.rs\npub fn x() {}"), None);
     }
 
@@ -616,8 +561,7 @@ mod tests {
 
     #[test]
     fn a_branch_with_nothing_to_teach_writes_nothing() {
-        // A branch that passed, and one that never produced a candidate at all —
-        // the second failed for a reason about the harness, not about the code.
+        // A branch that passed, and one that never produced a candidate (a harness failure, not a code one).
         assert!(failure_text(&json!([]), 1000).is_none());
         assert!(failure_text(&json!(null), 0).is_none());
     }
@@ -629,9 +573,6 @@ mod tests {
             lesson("patterns", "split on syntax, not token count"),
             lesson("solutions", "the retry belongs in the client"),
         ]);
-        // The three are not worth the same, and a model handed them undifferentiated
-        // weighs them equally: `errors` is what did not work, `patterns` survived a
-        // gate, `solutions` is one branch's word for it.
         assert!(out.contains("[AVOID] a bare unwrap"), "{out}");
         assert!(out.contains("[PROVEN] split on syntax"), "{out}");
         assert!(out.contains("[TRIED] the retry belongs"), "{out}");
@@ -653,7 +594,6 @@ mod tests {
         };
         let cold = Reading { k: 0, budget: 0, pools: vec![], tags: vec![], min_similarity: 0.0 };
         assert!(m.recall("anything", &cold).expect("no call, no failure").is_empty());
-        // And a branch that read nothing attributes nothing, for the same reason.
         assert!(m.attribute(&[], "run-1", true).is_ok());
     }
 

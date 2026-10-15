@@ -2,45 +2,35 @@
 //!
 //! ## Why this is a process and not a component
 //!
-//! A Sony a7R V raw file is 129 MB. A guest has 64 MiB of memory, every image
-//! app reads at most 16 MiB of body, and a NATS value is 1 MB (ADR-0098 has the
-//! table). None of that is a gap to route around: a component's job here is
-//! deciding who may upload what, not moving the bytes. So the bytes go to
-//! S3-compatible object storage, straight from the browser, and this daemon does
-//! the three things a `wasm32-wasip2` guest cannot — hold a JetStream consumer,
-//! reach Metal / Core Image / Vision, and hold a 129 MB file.
+//! A Sony a7R V raw file is 129 MB: a guest has 64 MiB of memory, every image app reads at most 16 MiB
+//! of body, and a NATS value is 1 MB (ADR-0098 has the table). A component's job is deciding who may
+//! upload what, not moving the bytes; those go to S3-compatible storage straight from the browser,
+//! and this daemon does what a `wasm32-wasip2` guest cannot: hold a JetStream consumer, reach Metal /
+//! Core Image / Vision, and hold a 129 MB file.
 //!
-//! `components/media-pipeline` is the component side: it holds the WIT contract
-//! and dials this. `components/media-pipeline/CONTRACT.md` is the wire format,
-//! and it is authoritative — this file implements it, not the other way round.
+//! `components/media-pipeline` is the component side; its `CONTRACT.md` is the wire format and is
+//! authoritative: this file implements it.
 //!
 //! ## What it does
 //!
-//! - **Signs**, never carries ([`routes`]). `POST /uploads` plans a presigned
-//!   multipart upload; the browser `PUT`s each part to the store and reports
-//!   the ETags; `POST /uploads/complete` stitches them. `POST /sign` hands out
-//!   a time-limited GET for a rendition. rusty-s3 is sans-IO ([`store`]): it
-//!   computes the SigV4 URL and the reqwest client sends it, so there is no S3
-//!   SDK here.
-//! - **Queues** ([`routes::submit`]). `POST /jobs` publishes to the JetStream
-//!   work-queue stream `MEDIA_JOBS` with `Nats-Msg-Id: <job_id>`, so a double
-//!   submit is one job. A guest cannot publish to NATS (comp-host offers no
-//!   messaging), which is why the queue is the daemon's.
-//! - **Evaluates** ([`job_worker`]), one photo at a time — the GPU is the
-//!   bottleneck, not the queue. Download to a temp file (hashing as it
-//!   streams), decode with `rawler` ([`decode`]), take the half-resolution
-//!   green plane straight from the Bayer data, then either run the Swift
-//!   helper ([`apple_helper`]: Core Image develop, Metal sharpness, Vision) or
-//!   do it on the CPU ([`develop`]: `rawler`'s own developer, the same
-//!   sharpness metric in Rust ([`sharpness`]), no Vision). Upload three
-//!   renditions, then POST a signed result to the job's callback.
+//! - **Signs**, never carries ([`routes`]). `POST /uploads` plans a presigned multipart upload; the
+//! browser `PUT`s each part and reports the ETags; `POST /uploads/complete` stitches them; `POST
+//! /sign` hands out a time-limited GET for a rendition. rusty-s3 is sans-IO ([`store`]), so there is
+//! no S3 SDK here.
+//! - **Queues** ([`routes::submit`]). `POST /jobs` publishes to the JetStream work-queue stream
+//! `MEDIA_JOBS` with `Nats-Msg-Id: <job_id>`, so a double submit is one job. A guest cannot publish
+//! to NATS (comp-host offers no messaging), which is why the queue is the daemon's.
+//! - **Evaluates** ([`job_worker`]), one photo at a time (the GPU is the bottleneck): download to a
+//! temp file hashing as it streams, decode with `rawler` ([`decode`]), take the half-resolution
+//! green plane from the Bayer data, then run the Swift helper ([`apple_helper`]) or the CPU path
+//! ([`develop`], [`sharpness`], no Vision). Upload three renditions, POST a signed result to the
+//! job's callback.
 //!
 //! ## Keys
 //!
-//! A key's first segment names the bucket and the rest is the object inside
-//! it: `originals/<photo_id>.arw` is object `<photo_id>.arw` in
-//! `--bucket-originals`. Keys are built here from a validated `photo_id` —
-//! nothing a caller sends is spliced into a key unchecked ([`keys`]).
+//! A key's first segment names the bucket and the rest is the object inside it:
+//! `originals/<photo_id>.arw` is object `<photo_id>.arw` in `--bucket-originals`. Keys are built here
+//! from a validated `photo_id`; nothing a caller sends is spliced in unchecked ([`keys`]).
 //!
 //!   comp-media --addr 127.0.0.1:8013 --token-file /run/credentials/media-token \
 //!     --s3-endpoint http://127.0.0.1:9000 --s3-access-key-file ... --s3-secret-key-file ... \
@@ -330,9 +320,8 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
 
-    /// `e2e/photoquest.sh` relies on `MEDIA_NATS_URL` reaching the daemon
-    /// through `cargo xtask host` (which inherits its environment); pin the
-    /// env name here rather than mutating the process env in a test.
+    /// `e2e/photoquest.sh` relies on `MEDIA_NATS_URL` reaching the daemon through `cargo xtask host`; pin
+    /// the env name here rather than mutating the process env in a test.
     #[test]
     fn nats_url_reads_media_nats_url() {
         use clap::CommandFactory;

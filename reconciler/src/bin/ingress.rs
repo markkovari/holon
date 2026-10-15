@@ -1,26 +1,19 @@
 //! `comp-ingress` — the door into the lattice.
 //!
-//! Two nodes serving one app does nothing for a caller that knows one address.
-//! This is the thing that makes multi-node placement useful rather than merely
-//! true: it terminates HTTP, looks up which nodes run the app the `Host` header
-//! names, and forwards to one of them.
+//! Two nodes serving one app does nothing for a caller that knows one address: this terminates HTTP,
+//! looks up which nodes run the app the `Host` header names, and forwards to one of them.
 //!
-//! **It proxies HTTP directly rather than tunnelling over the bus.** Every node is
-//! mutually reachable on the tailnet, and a node already advertises where it can be
-//! reached, so there is no envelope to define and no serialization to get wrong —
-//! the request goes as HTTP and comes back as HTTP. NATS queue groups are the
-//! alternative and would be the right answer if nodes were *not* directly
-//! reachable, or if we wanted the bus to do the balancing; neither is true here,
-//! and the bus hop would cost latency for nothing.
+//! **It proxies HTTP directly rather than tunnelling over the bus.** Nodes are mutually reachable on
+//! the tailnet and advertise where they can be reached, so there is no envelope to define. NATS queue
+//! groups would only win if nodes were not directly reachable; the bus hop would cost latency for
+//! nothing.
 //!
-//! **Its routing table comes from inventory, not from the control plane.** A node
-//! advertises the `Host` header each instance answers to, so this needs no platform
-//! credential, no manifest access, and keeps working while the control plane is
-//! down — the same property the node ledger buys on the other side.
+//! **Its routing table comes from inventory, not from the control plane.** A node advertises the `Host`
+//! header each instance answers to, so this needs no platform credential and keeps working while the
+//! control plane is down.
 //!
-//! Failure handling is inventory expiry plus retry-past-the-dead: a node that stops
-//! heartbeating disappears from the table within a TTL, and nodes that die between
-//! refreshes cost a request the walk past them rather than a 502.
+//! Failure handling is inventory expiry plus retry-past-the-dead: a node that stops heartbeating leaves
+//! the table within a TTL, and one that dies between refreshes costs a walk past it, not a 502.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -59,8 +52,8 @@ struct Args {
     config: Option<std::path::PathBuf>,
 
     // The tunables below take their default from the config file when the flag is
-    // absent, so they are Option here rather than carrying a clap default — a clap
-    // default is indistinguishable from a value someone typed.
+    // The tunables below take their default from the config file when the flag is absent, so they are
+    // Option here: a clap default is indistinguishable from a value someone typed.
     #[arg(long, env = "COMP_REFRESH_SECS")]
     refresh_secs: Option<u64>,
 
@@ -143,20 +136,15 @@ enum Verdict {
     Believe,
 }
 
-/// The decision that turned a momentary gap into a total outage when it was
-/// implicit.
-///
-/// Pulled out as a function because the bug lived in exactly one branch of it and
-/// was only reproducible by loading the machine until the timing went wrong,
-/// which is a lottery rather than a test. Here every case is one line.
+/// The decision that turned a momentary gap into a total outage when it was implicit.
+/// Pulled out as a function because the bug was only reproducible by loading the machine until the
+/// timing went wrong; here every case is one line.
 fn verdict(had_routes: bool, next_is_empty: bool, streak_before: u32) -> Verdict {
     if !next_is_empty {
         return Verdict::Adopt;
     }
     if !had_routes {
-        // Nothing to protect. An ingress that never had routes and reads none has
-        // learned nothing, and refusing to adopt would only delay the first real
-        // table.
+        // Nothing to protect: an ingress that never had routes and reads none has learned nothing.
         return Verdict::Adopt;
     }
     if streak_before + 1 < EMPTY_READS_BEFORE_BELIEVING {
@@ -167,17 +155,10 @@ fn verdict(had_routes: bool, next_is_empty: bool, streak_before: u32) -> Verdict
 }
 
 /// Read the routing table, surviving a poisoned lock.
-///
-/// `RwLock::read().unwrap()` panics if ANY thread ever panicked while holding the
-/// lock — and in the refresh task that panic is fatal and silent: the task ends,
-/// nothing supervises it, and the table freezes at whatever it last held for the
-/// rest of the process's life. That is how an ingress ended up answering `no app
-/// answers` forever while the fleet was healthy.
-///
-/// A poisoned routing table is not dangerous. It is a cache of what the fleet
-/// last said, rebuilt from scratch every few seconds, so the worst a poisoning
-/// can mean is that one request saw a torn view — and the cure of killing the
-/// refresh loop is far worse than that disease.
+/// `RwLock::read().unwrap()` panics if ANY thread ever panicked holding the lock, and in the refresh
+/// task that is fatal and silent: the task ends, nothing supervises it, and the table freezes (an
+/// ingress answered `no app answers` forever on a healthy fleet). A poisoned table is only a cache
+/// rebuilt every few seconds, so the worst case is one torn view.
 fn read_table(table: &RwLock<Table>) -> std::sync::RwLockReadGuard<'_, Table> {
     table.read().unwrap_or_else(|e| e.into_inner())
 }
@@ -196,22 +177,16 @@ struct Table {
 struct Backend {
     node: String,
     address: String,
-    /// Cores this node advertised. The shedding bound is PER CORE, because a
-    /// four-core Pi and a ten-core laptop are not interchangeable — the placement
-    /// ranking has divided by this since ADR-0055 and the door had not caught up.
-    ///
-    /// Measured: at a bound that let a Mac shed nothing, the same load through
-    /// the same ingress shed 3 412 requests on a Pi. The Pi was not overloaded;
-    /// the number was written for a bigger machine.
+    /// Cores this node advertised. The shedding bound is PER CORE, because a four-core Pi and a ten-core
+    /// laptop are not interchangeable: at a bound that let a Mac shed nothing, the same load shed 3 412
+    /// requests on a Pi.
     cpus: usize,
 }
 
 /// Requests currently in flight per node.
-///
-/// Keyed by node name and held OUTSIDE the routing table on purpose: the table is
-/// replaced wholesale on every inventory refresh, and counters that were replaced
-/// with it would reset to zero every few seconds — which is exactly often enough to
-/// hide the imbalance they exist to correct.
+/// Keyed by node name and held OUTSIDE the routing table on purpose: the table is replaced wholesale on
+/// every refresh, and counters replaced with it would reset every few seconds, hiding the imbalance
+/// they exist to correct.
 type InFlight = Arc<RwLock<BTreeMap<String, Arc<AtomicUsize>>>>;
 
 fn counter(inflight: &InFlight, node: &str) -> Arc<AtomicUsize> {
@@ -237,16 +212,11 @@ impl Drop for Busy {
 }
 
 /// The backends to try, best first.
-///
-/// Returns an ORDER rather than one choice so the retry path reuses the same
-/// judgement instead of a second, differently-wrong rule.
+/// Returns an ORDER rather than one choice so the retry path reuses the same judgement.
 /// Is this node already carrying `bound` requests?
-///
-/// Split out from the walk below so the shedding rule can be tested directly: a
-/// rule that only exists inside an async proxy loop is a rule nobody checks.
-/// One activation per host at a time. Without it a cold app's first burst sends one
-/// activate per request — a stampede at exactly the moment the fleet has nothing
-/// running to absorb it.
+/// Split out from the walk below so the shedding rule can be tested directly.
+/// One activation per host at a time: otherwise a cold app's first burst sends one activate per request,
+/// a stampede when the fleet has nothing running to absorb it.
 type Activating = Arc<RwLock<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>>;
 
 fn activation_lock(map: &Activating, host: &str) -> Arc<tokio::sync::Mutex<()>> {
@@ -257,11 +227,8 @@ fn activation_lock(map: &Activating, host: &str) -> Arc<tokio::sync::Mutex<()>> 
 }
 
 /// Ask the reconciler to place a replica of `host`, and return where it went.
-///
-/// Single-flighted: whoever gets the lock asks, everyone else waits and then re-reads
-/// the route table, which the winner's activation will have populated by way of the
-/// next refresh — or, if it has not yet, takes the same answer from a second ask that
-/// is now cheap because the instance is already running (a start is idempotent).
+/// Single-flighted: whoever gets the lock asks, everyone else waits and re-reads the route table, or
+/// takes the same answer from a second ask, which is cheap because a start is idempotent.
 async fn activate(
     commands: &Arc<dyn CommandBus>,
     activating: &Activating,
@@ -290,31 +257,20 @@ async fn activate(
     let backend = Backend {
         node: v["node"].as_str()?.to_string(),
         address: v["address"].as_str()?.to_string(),
-        // An activation reply carries no capacity. One core is the pessimistic
-        // reading and it only holds until the next inventory refresh replaces
-        // this entry with the node's real advertisement.
+        // An activation reply carries no capacity. One core is the pessimistic reading, held until the next
+        // refresh replaces this entry with the node's real advertisement.
         cpus: v["cpus"].as_u64().unwrap_or(1) as usize,
     };
-    // Publish it. Without this the check above — "someone may have activated
-    // while we waited" — could never succeed, because nothing ever wrote what it
-    // was looking for: the table only changed on the refresh timer. So every
-    // request to a host missing from the table took the lock in turn and paid its
-    // own round trip to the reconciler, for up to a full refresh interval.
-    //
-    // Measured: 13 000 spurious 503s in a 0.9-second window at the start of a
-    // run, on an app that was placed and healthy the whole time, in two runs out
-    // of four. It read as the ingress shedding load. It was the ingress
-    // forgetting what it had just been told.
-    //
-    // The next refresh replaces this entry with the node's full advertisement,
-    // including its real core count.
+    // Publish it. Without this the check above ("someone may have activated while we waited") could never
+    // succeed, since the table only changed on the refresh timer: every request to a missing host took
+    // the lock in turn and paid its own round trip, for up to a full refresh interval. Measured: 13 000
+    // spurious 503s in 0.9 s at the start of a run, read as load shedding.
     table.write().unwrap().routes.entry(host.to_string()).or_default().push(backend.clone());
     eprintln!("comp-ingress: activated {host:?} on {}", backend.node);
     Some(backend)
 }
 
-/// `bound` is per CORE. A node advertising eight cores absorbs eight times what
-/// a single-core one does before the ingress starts refusing on its behalf.
+/// `bound` is per CORE: a node advertising eight cores absorbs eight times what a single-core one does.
 fn saturated(b: &Backend, inflight: &InFlight, bound: usize) -> bool {
     bound > 0 && counter(inflight, &b.node).load(Ordering::Relaxed) >= bound * b.cpus
 }
@@ -332,9 +288,8 @@ fn order<'a>(
             ranked.rotate_left(start % backends.len().max(1));
         }
         Balance::LeastOutstanding => {
-            // Rotate FIRST so that ties — which is every request on an idle fleet —
-            // still spread. Without it, least-outstanding degenerates to "always the
-            // alphabetically first node" whenever the fleet is keeping up.
+            // Rotate FIRST so that ties (every request on an idle fleet) still spread; otherwise least-outstanding
+            // degenerates to "always the alphabetically first node".
             ranked.rotate_left(start % backends.len().max(1));
             ranked.sort_by_key(|b| counter(inflight, &b.node).load(Ordering::Relaxed));
         }
@@ -343,9 +298,7 @@ fn order<'a>(
 }
 
 /// Build `host -> [node]` from what the nodes themselves advertise.
-///
-/// A node with no address is skipped rather than guessed at: forwarding to an
-/// address we invented would produce a confusing failure a long way from here.
+/// A node with no address is skipped rather than guessed at.
 fn table_of(inventory: &[NodeInventory]) -> Table {
     let mut routes: BTreeMap<String, Vec<Backend>> = BTreeMap::new();
     for node in inventory {
@@ -357,9 +310,8 @@ fn table_of(inventory: &[NodeInventory]) -> Table {
                 continue;
             };
             let backends = routes.entry(host.to_ascii_lowercase()).or_default();
-            // One entry per node, not per instance: a node holding two replicas is
-            // still one place to send a request, and counting it twice would skew
-            // the round robin toward whichever node happens to be busiest.
+            // One entry per node, not per instance: counting a node twice would skew the round robin toward the
+            // busiest one.
             if !backends.iter().any(|b| b.node == node.node) {
                 backends.push(Backend {
                     node: node.node.clone(),
@@ -382,28 +334,18 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let addr: SocketAddr = args.addr.parse()?;
 
-    // Resolve every tunable once, here, so no call site has to know where a value
-    // came from.
+    // Resolve every tunable once, here.
     let file = comp_reconciler::settings::File::load(args.config.as_deref())?.ingress;
     let backend_timeout = settings::pick(args.backend_timeout, file.backend_timeout, 30);
     let max_inflight = settings::pick(args.max_inflight, file.max_inflight, 64);
     let slow_budget = settings::pick(args.slow_budget, file.slow_budget, 2);
     let activation_timeout = settings::pick(args.activation_timeout, file.activation_timeout, 10);
 
-    // The inventory TTL is NOT this process's to choose, and pretending otherwise
-    // is a bug that took a while to find.
-    //
-    // Three processes call `create_key_value` on the SAME bucket with their own
-    // `max_age`: a host asks for `heartbeat_secs * 3`, the reconciler for
-    // `inventory_ttl`, and this used to ask for a hardcoded 15. Whoever creates
-    // the bucket first wins and the others silently get a TTL they did not ask
-    // for. They agree today only because three defaults coincide at 15s — change
-    // `--heartbeat-secs` on a host and they stop agreeing, with nothing said.
-    //
-    // Worse, the refresh interval was unrelated to it. Entries that live `T`
-    // seconds must be re-read well inside `T`, and a 3s poll against a bucket
-    // whose real TTL is short enough is a poll that mostly sees an empty bucket —
-    // which is what `no app answers` looked like from the outside.
+    // The inventory TTL is NOT this process's to choose. Three processes call `create_key_value` on the
+    // SAME bucket with their own `max_age` (a host `heartbeat_secs * 3`, the reconciler `inventory_ttl`);
+    // whoever creates it first wins and the others silently get a TTL they did not ask for. They agree
+    // today only because the defaults coincide at 15s. The refresh interval must also be well inside the
+    // TTL, or a poll mostly sees an empty bucket (which looked like `no app answers`).
     let inventory_ttl = settings::pick(args.inventory_ttl, file.inventory_ttl, 15).max(1);
 
     let fabric = Arc::new(
@@ -411,17 +353,10 @@ async fn main() -> Result<()> {
             .await?,
     );
 
-    // The refresh comes off the bucket's REAL ttl, not the one asked for above.
-    //
-    // A third of it, so two reads may be lost before anything is noticed. That
-    // arithmetic is only worth anything against the number the bucket actually
-    // holds: `connect` hands back the existing bucket when one exists, so a process
-    // that sized its poll against its own request could poll at a third of a TTL
-    // three times too long and read a bucket that had already expired everything.
-    // `effective_ttl()` is what the bucket says; it reports the difference itself.
-    //
-    // An explicit `--refresh-secs` still wins, because an operator who sets it means
-    // it.
+    // The refresh comes off the bucket's REAL ttl, not the one asked for above: `connect` hands back the
+    // existing bucket when there is one, so sizing the poll against our own request could poll three
+    // times too slowly. A third of it, so two reads may be lost before anything is noticed.
+    // `effective_ttl()` is what the bucket says. An explicit `--refresh-secs` still wins.
     let effective_ttl = fabric.effective_ttl().as_secs().max(1);
     let refresh_secs = match args.refresh_secs.or(file.refresh_secs) {
         Some(v) => v.max(1),
@@ -431,18 +366,15 @@ async fn main() -> Result<()> {
         "comp-ingress: inventory ttl {effective_ttl}s (asked for {inventory_ttl}s), \
          refreshing every {refresh_secs}s"
     );
-    // No inventory handle taken off `fabric`: the refresh loop below opens its own
-    // NATS connection on its own thread, for the priority-inversion reason spelled
-    // out there. This binding outlived that change.
-    //
-    // Used only when a host has NO replica placed: ask the reconciler to start one
-    // and route to the address it replies with. The ingress still holds no platform
-    // credential and no manifest — it asks, it does not decide.
+    // No inventory handle taken off `fabric`: the refresh loop below opens its own NATS connection on its
+    // own thread, for the priority-inversion reason spelled out there.
+    // Used only when a host has NO replica placed: ask the reconciler to start one and route to the address
+    // it replies with. The ingress holds no platform credential and no manifest: it asks, it does not
+    // decide.
     let commands: Arc<dyn CommandBus> = fabric;
     let activating: Activating = Arc::new(RwLock::new(BTreeMap::new()));
-    // Best effort: an ingress that cannot open the load bucket still routes. Load is
-    // an input to autoscaling, not to serving, and conflating them would make a
-    // control-plane hiccup an outage.
+    // Best effort: an ingress that cannot open the load bucket still routes. Load is an input to
+    // autoscaling, not to serving.
     let load_out: Option<Arc<dyn Inventory>> = match NatsLattice::connect_bucket(
         &args.nats_url,
         &args.lattice,
@@ -459,31 +391,19 @@ async fn main() -> Result<()> {
     };
     let table: Arc<RwLock<Table>> = Arc::new(RwLock::new(Table::default()));
 
-    // Refreshed on a timer and read from a lock per request. A request that had to
-    // ask the bus for its route would put the control plane on the data path, which
-    // is the thing this design keeps apart.
+    // Refreshed on a timer and read from a lock per request: asking the bus per request would put the
+    // control plane on the data path.
     // ON ITS OWN THREAD, WITH ITS OWN RUNTIME AND ITS OWN CONNECTION.
-    //
-    // Every request depends on this table, so letting the task that maintains it
-    // compete with request handling for scheduler time is a priority inversion —
-    // the ingress is busiest exactly when it most needs to know where to send
-    // things. And it is worse than a slow refresh: async-nats drives its
-    // connection from a task on the runtime it was created on, so a starved
-    // runtime does not merely delay `read_all`, it can leave it awaiting a reply
-    // that nothing is left to deliver. The loop then stops printing and stops
-    // updating, with no panic and no exit — which is exactly what was seen, and
-    // is indistinguishable from a dead task from the outside.
-    //
-    // A dedicated OS thread with a current-thread runtime and a SEPARATE NATS
-    // connection removes the coupling entirely. It costs one thread.
+    // Every request depends on this table, so letting its maintainer compete with request handling for
+    // scheduler time is a priority inversion: async-nats drives its connection from a task on the runtime
+    // it was created on, so a starved runtime can leave `read_all` awaiting a reply nothing is left to
+    // deliver, with no panic and no exit. A dedicated OS thread with a current-thread runtime and a
+    // SEPARATE NATS connection removes the coupling; it costs one thread.
     {
         let (table, every) = (table.clone(), refresh_secs);
-        // The EFFECTIVE ttl, for the same reason `refresh_secs` is derived from it:
-        // this thread opens its own connection, so it calls `create_key_value`
-        // again, and handing it the requested value would have it ask for a TTL the
-        // bucket will not give — reported once per connection instead of silently
-        // taken. It only reads, so the number changes nothing here beyond what gets
-        // printed; passing the wrong one would just be a second lie in the log.
+        // The EFFECTIVE ttl, for the same reason `refresh_secs` is derived from it: this thread opens its own
+        // connection and calls `create_key_value` again, and it only reads, so the value only changes what
+        // gets printed.
         let (nats_url, lattice_name, ttl) =
             (args.nats_url.clone(), args.lattice.clone(), effective_ttl);
         std::thread::Builder::new()
@@ -501,10 +421,8 @@ async fn main() -> Result<()> {
                 match NatsLattice::connect(&nats_url, &lattice_name, Duration::from_secs(ttl)).await
                 {
                     Ok(l) => break Arc::new(l),
-                    // Retried rather than fatal: an ingress that cannot reach the
-                    // bus at startup still serves what it is told to activate, and
-                    // giving up here would mean it never routes again even once
-                    // the bus comes back.
+                    // Retried rather than fatal: an ingress that cannot reach the bus at startup still serves what it is
+                    // told to activate, and giving up would mean it never routes again.
                     Err(e) => {
                         eprintln!("comp-ingress: refresh connection failed ({e:#}), retrying");
                         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -524,10 +442,8 @@ async fn main() -> Result<()> {
                             .collect();
                         let next = table_of(&nodes);
 
-                        // A heartbeat on EVERY read, so silence in the log means
-                        // the loop is not running rather than the loop having
-                        // nothing to say. Distinguishing those two took three
-                        // wrong diagnoses.
+                        // A heartbeat on EVERY read, so silence in the log means the loop is not running, not that it had
+                        // nothing to say.
                         eprintln!(
                             "comp-ingress: refresh #{reads}: {} node(s), {} instance(s), {} route(s)",
                             nodes.len(),
@@ -536,9 +452,7 @@ async fn main() -> Result<()> {
                         );
                         reads += 1;
 
-                        // The decision lives in `verdict` so it can be tested
-                        // without waiting for a machine to be busy enough to go
-                        // wrong. See its tests for every case.
+                        // The decision lives in `verdict` so it can be tested without loading a machine.
                         let had_routes = !read_table(&table).routes.is_empty();
                         let instances: usize = nodes.iter().map(|n| n.instances.len()).sum();
                         match verdict(had_routes, next.routes.is_empty(), empty_streak) {
@@ -562,10 +476,8 @@ async fn main() -> Result<()> {
                             }
                         }
 
-                        // Nodes present and routes NEVER built is a different fault
-                        // from losing them, and wants a different fix: instances
-                        // that carry no ingress-host. One "0 routes" cannot tell
-                        // the two apart, so both halves are counted.
+                        // Nodes present and routes NEVER built is a different fault from losing them (instances that carry no
+                        // ingress-host); one "0 routes" cannot tell them apart, so both halves are counted.
                         if next.routes.is_empty() && !nodes.is_empty() && !had_routes {
                             let with_host: usize = nodes
                                 .iter()
@@ -593,17 +505,13 @@ async fn main() -> Result<()> {
                             *cur = next;
                         }
                     }
-                    // A failed read leaves the previous table in place. The
-                    // alternative — an empty table — would 503 every request
-                    // because the CONTROL plane blinked, which is precisely what
-                    // reading inventory instead of asking the platform avoids.
+                    // A failed read leaves the previous table in place: an empty one would 503 every request because the
+                    // CONTROL plane blinked.
                     Err(e) => eprintln!("comp-ingress: inventory read failed: {e:#}"),
                 }
             }
-            // Unreachable while the loop is `loop {}`, and here because a
-            // background task that stops is the failure that started all this:
-            // the routing table simply freezes and every request is answered from
-            // a snapshot of a fleet that has since moved on, with nothing said.
+            // Unreachable while the loop is `loop {}`, and here because a background task that stops freezes the
+            // routing table with nothing said.
             #[allow(unreachable_code)]
             {
                 eprintln!(
@@ -626,10 +534,8 @@ async fn main() -> Result<()> {
     let shed: InFlight = Arc::new(RwLock::new(BTreeMap::new()));
     let served: InFlight = Arc::new(RwLock::new(BTreeMap::new()));
 
-    // Publish observed concurrency per host so the reconciler can autoscale on it.
-    // A short TTL on the bucket means a dead ingress stops voting on its own rather
-    // than pinning an app at whatever it last saw — the same mechanism that retires
-    // a dead node's inventory.
+    // Publish observed concurrency per host so the reconciler can autoscale on it. A short bucket TTL means
+    // a dead ingress stops voting on its own.
     if let Some(load) = load_out {
         let (per_host, shed, served) = (per_host.clone(), shed.clone(), served.clone());
         let every = refresh_secs.max(1);
@@ -644,14 +550,11 @@ async fn main() -> Result<()> {
                     .map(|(h, c)| (h.clone(), c.load(Ordering::Relaxed)))
                     .collect();
                 for (host, n) in sample {
-                    // Taken and RESET: this is what was refused during the interval,
-                    // not since the process started. A cumulative count would keep
-                    // asking for replicas long after the pressure was gone.
+                    // Taken and RESET: what was refused during the interval, not since start; a cumulative count would keep
+                    // asking for replicas after the pressure was gone.
                     let refused = counter(&shed, &host).swap(0, Ordering::Relaxed);
                     let answered = counter(&served, &host).swap(0, Ordering::Relaxed);
-                    // The key is the host with dots swapped: NATS KV keys may not
-                    // contain arbitrary punctuation, and `shop.eve.test` would be a
-                    // subject wildcard boundary rather than one key.
+                    // The key is the host with dots swapped: NATS KV keys may not contain arbitrary punctuation.
                     let key = host.replace('.', "_");
                     let body = serde_json::json!({
                         "host": host,
@@ -747,18 +650,15 @@ async fn forward(
     client: Client,
     next: Arc<AtomicUsize>,
     inflight: InFlight,
-    // Concurrency per HOST, which is what autoscaling needs. The per-node counter
-    // above cannot answer it: several apps share a node, so its value says how busy
-    // the node is, not how busy this app is.
+    // Concurrency per HOST, which is what autoscaling needs; the per-node counter says how busy the node
+    // is, not this app.
     per_host: InFlight,
-    // Requests refused since the last publish. Shedding creates a blind spot in the
-    // autoscaling signal: a shed request never becomes in-flight, so concurrency
-    // UNDERSTATES demand exactly when demand is highest and the app most needs
-    // replicas. Counting refusals is what closes it (ADR-0045).
+    // Requests refused since the last publish: a shed request never becomes in-flight, so concurrency
+    // UNDERSTATES demand exactly when the app most needs replicas (ADR-0045).
     shed: InFlight,
-    // Responses a backend actually produced this interval. Without it, "every
-    // replica is busy" and "every replica is wedged" publish the same shed count,
-    // and scaling up a wedged component just makes more wedged instances.
+    // Responses a backend actually produced this interval. Without it "every replica is busy" and "every
+    // replica is wedged" publish the same shed count, and scaling up a wedged component only makes more
+    // wedged instances.
     served: InFlight,
     commands: Arc<dyn CommandBus>,
     activating: Activating,
@@ -779,19 +679,16 @@ async fn forward(
         .unwrap_or_default()
         .to_ascii_lowercase();
 
-    // Held for the whole request INCLUDING retries: a request being retried is
-    // still a request the app owes an answer to.
+    // Held for the whole request INCLUDING retries.
     let _busy_host = Busy::on(counter(&per_host, &host));
 
     let mut backends = read_table(&table).routes.get(&host).cloned().unwrap_or_default();
     if backends.is_empty() {
-        // Nothing placed. Rather than refuse, ask the reconciler to start one and
-        // hold this request while it does — a scaled-to-zero app is meant to come
-        // back on demand, and ADR-0040 made that cost 0.43 ms of actual work.
+        // Nothing placed: rather than refuse, ask the reconciler to start one and hold this request while it
+        // does; a scaled-to-zero app is meant to come back on demand (ADR-0040: 0.43 ms of actual work).
         match activate(&commands, &activating, &table, &host, activation_timeout).await {
             Some(b) => backends = vec![b],
-            // 503, not 404: the app may exist and simply have no replica up. A 404
-            // would tell a caller to stop retrying, which is the wrong advice.
+            // 503, not 404: the app may exist with no replica up, and a 404 tells a caller to stop retrying.
             None => {
                 return Ok(status(503, &format!("no replica of {host:?} is currently placed\n")))
             }
@@ -800,9 +697,8 @@ async fn forward(
 
     let ranked = order(&backends, mode, &next, &inflight);
 
-    // Shed rather than queue. If every replica is already at the bound, this request
-    // would join a queue with no bound and no way for the caller to see it — the 46
-    // second p99 in ADR-0036. A 503 now is information the caller can act on.
+    // Shed rather than queue: if every replica is at the bound, this request would join an unbounded,
+    // invisible queue (the 46 second p99 in ADR-0036). A 503 now is information the caller can act on.
     if !ranked.is_empty() && ranked.iter().all(|b| saturated(b, &inflight, max_inflight)) {
         counter(&shed, &host).fetch_add(1, Ordering::Relaxed);
         return Ok(status(
@@ -814,22 +710,18 @@ async fn forward(
     let bytes = body.collect().await.context("reading the request body")?.to_bytes();
 
     let mut last = String::new();
-    // Walk the ranking past dead replicas, but spend at most `SLOW_BUDGET` on slow
-    // ones. The two failures are not alike and treating them alike cost a measured
-    // outage: least-outstanding ranks a DEAD node FIRST, because a node answering
-    // nothing has nothing in flight. With `.take(2)` — one retry — two corpses at
-    // the top of the ranking exhausted the budget and the request 502'd, which is
-    // exactly what killing a two-node machine out of three did (0.04% of requests,
-    // for 13s). A refused connection is an instant RST and costs nothing to skip; a
-    // timeout is the one that turns a retry into a stampede, so only it is budgeted.
+    // Walk the ranking past dead replicas, but spend at most `SLOW_BUDGET` on slow ones. Least-outstanding
+    // ranks a DEAD node FIRST (it has nothing in flight), so with `.take(2)` two corpses at the top
+    // exhausted the budget and the request 502'd (0.04% of requests for 13s when killing a node of
+    // three). A refused connection is an instant RST and free to skip; only a timeout turns a retry
+    // into a stampede, so only it is budgeted.
     let mut slow = 0;
     for backend in ranked.into_iter() {
         if slow >= slow_budget {
             break;
         }
-        // Skip a saturated replica the way a dead one is skipped. The check above
-        // only fires when EVERY replica is saturated; this is what steers around a
-        // single hot node while the others still have room.
+        // Skip a saturated replica the way a dead one is skipped: the check above only fires when EVERY
+        // replica is saturated; this steers around a single hot node.
         if saturated(backend, &inflight, max_inflight) {
             continue;
         }
@@ -850,13 +742,11 @@ async fn forward(
 
         match tokio::time::timeout(Duration::from_secs(timeout), client.request(out)).await {
             Ok(Ok(resp)) => {
-                // Any completed response counts, not just 2xx: a 429 from a rate
-                // limiter is the component doing its job. What is being measured is
-                // "is the fleet answering at all", not "is it answering happily".
+                // Any completed response counts, not just 2xx: a 429 from a rate limiter is the component doing its
+                // job. What is measured is "is the fleet answering at all".
                 counter(&served, &host).fetch_add(1, Ordering::Relaxed);
                 let (mut rp, rb) = resp.into_parts();
-                // Which replica answered. The single most useful thing an ingress
-                // can tell you, and the only way to see the balance from outside.
+                // Which replica answered: the only way to see the balance from outside.
                 if let Ok(v) = hyper::header::HeaderValue::from_str(&backend.node) {
                     rp.headers.insert("x-comp-node", v);
                 }
@@ -890,11 +780,6 @@ mod tests {
     use super::*;
     use comp_reconciler::plan::RunningInstance;
 
-    /// A control plane that will answer an activation exactly once.
-    ///
-    /// The second ask fails, which is what makes this a test rather than a
-    /// demonstration: the only way both calls succeed is if the first one left
-    /// its answer somewhere the second could find it.
     struct AnswersOnce(AtomicUsize);
 
     #[async_trait::async_trait]
@@ -920,13 +805,6 @@ mod tests {
     }
 
     /// An activation is published, so concurrent requests do not each pay for one.
-    ///
-    /// `activate` checks the table for a backend someone else already brought up.
-    /// That check could never succeed, because nothing wrote what it was looking
-    /// for — the table only changed on the refresh timer. Every request to a host
-    /// missing from it took the lock in turn and made its own round trip, and
-    /// under load 13 000 of them were refused inside a 0.9-second window for an
-    /// app that was placed and healthy throughout.
     #[tokio::test]
     async fn an_activation_is_published_so_the_next_request_finds_it() {
         let bus: Arc<dyn CommandBus> = Arc::new(AnswersOnce(AtomicUsize::new(0)));
@@ -936,8 +814,8 @@ mod tests {
         let first = activate(&bus, &activating, &table, "shop.example.com", 5).await;
         assert!(first.is_some(), "the first activation should succeed");
 
-        // The control plane refuses to answer again, so this can only be served
-        // from what the first one published.
+        // The control plane refuses to answer again, so this can only be served from what the first one
+        // published.
         let second = activate(&bus, &activating, &table, "shop.example.com", 5).await;
         assert_eq!(second, first, "the second request must reuse the published backend");
         assert_eq!(
@@ -980,8 +858,7 @@ mod tests {
 
     #[test]
     fn a_node_holding_two_replicas_is_still_one_backend() {
-        // Counting it twice would skew the rotation toward whichever node happens
-        // to hold the most replicas, which is usually the busiest one.
+        // Counting it twice would skew the rotation toward the busiest node.
         let mut n = node("n1", "10.0.0.1:3401", &["shop.alice.test"]);
         n.instances.push(n.instances[0].clone());
         assert_eq!(table_of(&[n]).routes["shop.alice.test"].len(), 1);
@@ -989,16 +866,14 @@ mod tests {
 
     #[test]
     fn a_node_with_no_advertised_address_is_skipped() {
-        // Forwarding to an address we invented fails a long way from here, with a
-        // message that points at the wrong thing.
+        // Forwarding to an address we invented fails a long way from here.
         let t = table_of(&[node("n1", "", &["shop.alice.test"])]);
         assert!(t.routes.is_empty());
     }
 
     #[test]
     fn the_rotation_is_stable_across_refreshes() {
-        // Inventory comes back in whatever order the KV lists it. If the backend
-        // order moved with it, the "round robin" would be a random walk.
+        // Inventory comes back in whatever order the KV lists it; backend order must not move with it.
         let a = table_of(&[
             node("n2", "10.0.0.2:3401", &["shop.alice.test"]),
             node("n1", "10.0.0.1:3401", &["shop.alice.test"]),
@@ -1033,8 +908,7 @@ mod tests {
 
     #[test]
     fn least_outstanding_avoids_the_backend_that_is_falling_behind() {
-        // THE case round robin gets wrong: a node that is up but slow accumulates
-        // in-flight requests, and an even split keeps feeding it anyway.
+        // THE case round robin gets wrong: a node that is up but slow accumulates in-flight requests.
         let t = table_of(&[
             node("fast-1", "10.0.0.1:1", &["a.test"]),
             node("fast-2", "10.0.0.2:1", &["a.test"]),
@@ -1051,8 +925,8 @@ mod tests {
 
     #[test]
     fn least_outstanding_still_spreads_when_every_backend_is_idle() {
-        // On a fleet that is keeping up every counter is 0, and a stable sort over
-        // equal keys would hand every request to the same node forever.
+        // On a keeping-up fleet every counter is 0, and a stable sort over equal keys would hand every
+        // request to the same node.
         let t = table_of(&[
             node("n1", "10.0.0.1:1", &["a.test"]),
             node("n2", "10.0.0.2:1", &["a.test"]),
@@ -1070,8 +944,7 @@ mod tests {
 
     #[test]
     fn a_busy_guard_cannot_leak_a_count() {
-        // A leaked increment retires a healthy backend permanently, which is worse
-        // than any imbalance it was meant to fix.
+        // A leaked increment retires a healthy backend permanently.
         let inflight = inflight_of(&[("n1", 0)]);
         let c = counter(&inflight, "n1");
         {
@@ -1083,9 +956,7 @@ mod tests {
 
     #[test]
     fn the_retry_uses_the_same_ranking_rather_than_a_second_rule() {
-        // The fallback is just the next-best backend. A separate retry rule is a
-        // second thing to get wrong, and it would fire exactly when things are
-        // already going badly.
+        // The fallback is just the next-best backend; a separate retry rule is a second thing to get wrong.
         let t = table_of(&[
             node("n1", "10.0.0.1:1", &["a.test"]),
             node("n2", "10.0.0.2:1", &["a.test"]),
@@ -1118,15 +989,14 @@ mod tests {
         assert!(!saturated(&b("n1"), &inflight, 64), "63 of 64 still has room");
         assert!(saturated(&b("n2"), &inflight, 64), "at the bound is saturated");
         assert!(saturated(&b("n3"), &inflight, 64));
-        // 0 is the escape hatch back to the old behaviour, and it must be total:
-        // an operator who turns shedding off must not get it at 999 in flight.
+        // 0 must be total: an operator who turns shedding off must not get it at 999 in flight.
         assert!(!saturated(&b("n3"), &inflight, 0), "0 must disable shedding entirely");
     }
 
     #[test]
     fn shedding_steers_around_a_hot_node_before_it_refuses_anything() {
-        // The rule that matters most: one saturated replica must NOT cost the app a
-        // 503 while its siblings are idle. Only an entirely saturated set sheds.
+        // One saturated replica must NOT cost the app a 503 while its siblings are idle; only an entirely
+        // saturated set sheds.
         let inflight = inflight_of(&[("hot", 64), ("cool", 0)]);
         let backends = [
             Backend { node: "hot".into(), address: "127.0.0.1:1".into(), cpus: 1 },
@@ -1142,9 +1012,8 @@ mod tests {
 
     #[test]
     fn a_fully_saturated_app_sheds_rather_than_queueing() {
-        // ADR-0036: with nothing shedding, the survivor took every connection and
-        // answered a p99 of 46 SECONDS. Every replica at the bound is the state that
-        // produced it, and it must now be a refusal instead.
+        // ADR-0036: with nothing shedding the survivor answered a p99 of 46 SECONDS; every replica at the
+        // bound must now be a refusal.
         let inflight = inflight_of(&[("n1", 64), ("n2", 70)]);
         let backends = [
             Backend { node: "n1".into(), address: "127.0.0.1:1".into(), cpus: 1 },
@@ -1158,28 +1027,23 @@ mod tests {
 mod refresh_tests {
     use super::*;
 
-    /// The failure this function was extracted for.
-    ///
-    /// An ingress that HAS routes and reads none must keep what it has. Losing
-    /// every route while the fleet is plainly still there is a gap to ride out,
-    /// not news to act on — and adopting the empty table is what turned a
-    /// momentary blink into `no app answers` for the rest of the process's life.
+    /// The failure this function was extracted for: an ingress that HAS routes and reads none must keep
+    /// what it has. Adopting the empty table turned a momentary blink into `no app answers` for the
+    /// rest of the process's life.
     #[test]
     fn a_blink_does_not_empty_a_working_table() {
         assert_eq!(verdict(true, true, 0), Verdict::RideOut);
         assert_eq!(verdict(true, true, 1), Verdict::RideOut);
     }
 
-    /// But a fleet that really has stopped must eventually be believed, or the
-    /// ingress routes to backends that are gone forever.
+    /// But a fleet that really has stopped must eventually be believed.
     #[test]
     fn an_empty_fleet_is_believed_in_the_end() {
         assert_eq!(verdict(true, true, EMPTY_READS_BEFORE_BELIEVING - 1), Verdict::Believe);
         assert_eq!(verdict(true, true, EMPTY_READS_BEFORE_BELIEVING), Verdict::Believe);
     }
 
-    /// A read with routes is always taken, whatever happened before it. This is
-    /// what makes the ride-out temporary rather than a latch.
+    /// A read with routes is always taken, so the ride-out is temporary rather than a latch.
     #[test]
     fn a_good_read_is_always_adopted_and_clears_the_streak() {
         assert_eq!(verdict(true, false, 0), Verdict::Adopt);
@@ -1187,33 +1051,26 @@ mod refresh_tests {
         assert_eq!(verdict(false, false, 2), Verdict::Adopt);
     }
 
-    /// An ingress that never had routes has nothing to protect, and refusing to
-    /// adopt would only delay its first real table — including at startup, where
-    /// every read is empty until something is placed.
+    /// An ingress that never had routes has nothing to protect, including at startup.
     #[test]
     fn nothing_to_lose_means_nothing_to_defend() {
         assert_eq!(verdict(false, true, 0), Verdict::Adopt);
         assert_eq!(verdict(false, true, 5), Verdict::Adopt);
     }
 
-    /// The bug in the FIRST attempt at this guard, kept as a test so it cannot
-    /// come back: the check sat on whether any NODES were present, so three
-    /// healthy nodes advertising zero routes sailed straight past it and wiped
-    /// the table. The decision must depend only on whether routes were lost.
+    /// The first attempt at this guard keyed on whether any NODES were present, so three healthy nodes
+    /// advertising zero routes wiped the table. The decision must depend only on whether routes were lost.
     #[test]
     fn the_guard_is_about_routes_not_about_nodes() {
         // Three nodes, zero routes, and a table that had some: still a ride-out.
-        // A guard keyed on node count would have said "adopt" here.
         assert_eq!(verdict(true, true, 0), Verdict::RideOut);
     }
 
-    /// Walking the sequence that actually happened, one read at a time.
     #[test]
     fn a_working_ingress_survives_two_bad_reads_and_recovers_on_the_third() {
         let mut streak = 0;
         let mut routes = true;
 
-        // Two blinks: the table is kept both times.
         for _ in 0..2 {
             match verdict(routes, true, streak) {
                 Verdict::RideOut => streak += 1,
@@ -1221,7 +1078,6 @@ mod refresh_tests {
             }
             assert!(routes, "the table must still be there");
         }
-        // The fleet comes back.
         assert_eq!(verdict(routes, false, streak), Verdict::Adopt);
         streak = 0;
         routes = true;
@@ -1229,13 +1085,7 @@ mod refresh_tests {
         assert!(routes);
     }
 
-    /// A poisoned lock must not be able to stop the refresh loop.
-    ///
-    /// This is the failure underneath the failure. `read().unwrap()` panics on a
-    /// poisoned lock, and in the refresh task that panic is fatal AND silent: the
-    /// task ends, nothing supervises it, and the routing table freezes at
-    /// whatever it last held. An ingress in that state answers `no app answers`
-    /// forever while every backend is healthy, which is exactly what was seen.
+    /// `read().unwrap()` panics on a poisoned lock, and in the refresh task that is fatal AND silent.
     #[test]
     fn a_poisoned_table_does_not_stop_the_world() {
         let table = Arc::new(RwLock::new(Table::default()));
@@ -1249,10 +1099,8 @@ mod refresh_tests {
         .join();
         assert!(table.is_poisoned(), "the lock should be poisoned for this test to mean anything");
 
-        // The plain form is what used to be here, and it would end the task.
         assert!(table.read().is_err(), "a poisoned lock refuses the ordinary read");
 
-        // These must not.
         assert!(read_table(&table).routes.is_empty());
         write_table(&table).routes.insert("shop.test".into(), Vec::new());
         assert_eq!(
@@ -1263,7 +1111,6 @@ mod refresh_tests {
         );
     }
 
-    /// And the sequence where the fleet really did stop.
     #[test]
     fn three_bad_reads_running_are_believed() {
         let mut verdicts = Vec::new();

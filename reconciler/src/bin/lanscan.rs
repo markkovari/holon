@@ -2,34 +2,25 @@
 //!
 //! ## Why this is a process and not a component
 //!
-//! Scanning a LAN means opening many outbound TCP connections against
-//! addresses a caller does not supply, and a `wasm32-wasip2` guest has no way
-//! to do that. That is the sandbox working rather than a gap to route around
-//! (ADR-0095), so the part that needs an operating system is native and is
-//! reached over HTTP exactly like the gate, the database and the model
-//! provider are.
+//! Scanning a LAN means opening many outbound TCP connections against addresses a caller does not
+//! supply, which a `wasm32-wasip2` guest cannot do (ADR-0095). So the part that needs an operating
+//! system is native and reached over HTTP like the gate, the database and the model provider.
 //!
-//! `components/lan-scanner` is the component side: it holds the WIT contract
-//! and dials this. Nothing here knows what a goal is.
+//! `components/lan-scanner` is the component side: it holds the WIT contract and dials this.
 //!
 //! ## An allow-list, for the same reason `comp-fswatch` has one
 //!
-//! A scan's scope is not something a caller may set — the request carries no
-//! target at all. `--allow-cidr 192.168.1.0/24` permits scanning that
-//! network; nothing is permitted by default, which is the correct behaviour
-//! for a capability nobody has scoped yet.
-//!
-//! A CIDR broader than /24 is refused rather than scanned, to keep a scan
-//! bounded: a /24 is at most 254 hosts, and a /16 is 65534.
+//! A scan's scope is not something a caller may set (the request carries no target): `--allow-cidr
+//! 192.168.1.0/24` permits scanning that network, and nothing is permitted by default. A CIDR
+//! broader than /24 is refused rather than scanned, to keep a scan bounded (/24 is at most 254
+//! hosts, a /16 is 65534).
 //!
 //! ## No raw ICMP
 //!
-//! A true ping needs a raw socket, which needs root this daemon does not
-//! assume it has. Reachability here is a TCP-connect probe against
-//! `--port` (default 80): a successful connect means "something is
-//! listening", a refused or timed-out one means "unreachable", and neither is
-//! a scan failure — only "no --allow-cidr configured" or a CIDR that fails to
-//! parse is.
+//! A true ping needs a raw socket, which needs root this daemon does not assume. Reachability here is
+//! a TCP-connect probe against `--port` (default 80): a connect means "something is listening", a
+//! refused or timed-out one means "unreachable", and neither is a scan failure; only "no
+//! --allow-cidr configured" or an unparseable CIDR is.
 //!
 //!   comp-lanscan --addr 127.0.0.1:8005 --allow-cidr 192.168.1.0/24 --port 80 --timeout-ms 200
 
@@ -81,8 +72,8 @@ struct Args {
     timeout_ms: u64,
 }
 
-/// Every host address in `cidr`, or `None` if it does not parse or is broader
-/// than /24 (kept out of scope so a scan stays bounded — at most 254 hosts).
+/// Every host address in `cidr`, or `None` if it does not parse or is broader than /24 (so a scan
+/// stays bounded, at most 254 hosts).
 fn hosts_in_cidr(cidr: &str) -> Option<Vec<Ipv4Addr>> {
     let (addr, prefix) = cidr.split_once('/')?;
     let base: Ipv4Addr = addr.parse().ok()?;
@@ -173,9 +164,8 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
 
-    /// A /24 enumerates its 254 usable-plus-broadcast-plus-network addresses
-    /// (256 total, this function does not special-case network/broadcast —
-    /// they get probed too and will simply read as unreachable).
+    /// A /24 enumerates 256 addresses: network and broadcast are not special-cased, they get probed too
+    /// and read as unreachable.
     #[test]
     fn a_slash_24_enumerates_its_256_addresses() {
         let hosts = hosts_in_cidr("192.168.1.0/24").expect("parses");
@@ -184,15 +174,13 @@ mod tests {
         assert_eq!(hosts[255], Ipv4Addr::new(192, 168, 1, 255));
     }
 
-    /// A /32 is a single host.
     #[test]
     fn a_slash_32_is_a_single_host() {
         let hosts = hosts_in_cidr("10.0.0.5/32").expect("parses");
         assert_eq!(hosts, vec![Ipv4Addr::new(10, 0, 0, 5)]);
     }
 
-    /// Anything broader than /24 is refused rather than scanned, to keep a
-    /// scan bounded.
+    /// Anything broader than /24 is refused rather than scanned, to keep a scan bounded.
     #[test]
     fn a_cidr_broader_than_slash_24_is_refused() {
         assert!(hosts_in_cidr("10.0.0.0/16").is_none());

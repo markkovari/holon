@@ -2,29 +2,22 @@
 //!
 //! ## Why this is a process and not a component
 //!
-//! Transcoding needs to spawn `ffmpeg`, and a `wasm32-wasip2` guest cannot fork
-//! a process. That is the sandbox working rather than a gap to route around
-//! (ADR-0095), so the part that needs an operating system is native and is
-//! reached over HTTP exactly like the watcher, the gate and the database are.
+//! Transcoding needs to spawn `ffmpeg`, and a `wasm32-wasip2` guest cannot fork a process (ADR-0095).
+//! So the part that needs an operating system is native and reached over HTTP like the watcher, the
+//! gate and the database.
 //!
-//! `components/video-ffmpeg` is the component side: it holds the WIT contract
-//! and dials this. Nothing here knows what a goal is.
+//! `components/video-ffmpeg` is the component side: it holds the WIT contract and dials this.
 //!
 //! ## An allow-list, for the same reason `comp-fswatch` has one
 //!
-//! The input path in a request can come from a model. So a request names a
-//! file and this refuses it unless the file's directory was listed by an
-//! operator. `--allow-path /var/media` permits `/var/media` and anything
-//! beneath it. Nothing is permitted by default; a daemon started with no
-//! `--allow-path` refuses everything, which is the correct behaviour for a
-//! capability nobody has scoped yet.
+//! The input path in a request can come from a model, so a file is refused unless its directory was
+//! listed by an operator: `--allow-path /var/media` permits it and anything beneath. Nothing is
+//! permitted by default.
 //!
 //! ## The target format
 //!
-//! The WIT contract takes one string argument, so there is no room for a
-//! second "output format" parameter without inventing one nobody asked for.
-//! The target is fixed: MP4, alongside the input with the same stem — an
-//! input `/x/y/clip.mov` becomes `/x/y/clip.mp4`.
+//! The WIT contract takes one string argument, so there is no room for an "output format" parameter.
+//! The target is fixed: MP4 alongside the input with the same stem (`clip.mov` becomes `clip.mp4`).
 //!
 //!   comp-ffmpeg --addr 127.0.0.1:8010 --allow-path /var/media
 
@@ -82,15 +75,12 @@ struct TranscodeResp {
 }
 
 impl Daemon {
-    /// Is `path` inside something an operator listed? Returns the CANONICAL
-    /// path when it is — the caller must act on that, not the path it was
-    /// given, or a symlink swapped in between this check and the read that
-    /// follows it resolves to somewhere this check never approved (TOCTOU).
+    /// Is `path` inside something an operator listed? Returns the CANONICAL path; the caller must act on
+    /// that, not the path it was given, or a symlink swapped in after this check resolves somewhere it
+    /// never approved (TOCTOU).
     ///
-    /// Canonicalises the PARENT directory rather than `path` itself: `path`
-    /// need not exist yet for this check — a missing file is `no-such-file`,
-    /// not `not-permitted`, and canonicalizing the whole path would fail for
-    /// both the same way, collapsing that distinction.
+    /// Canonicalises the PARENT directory rather than `path`: a missing file is `no-such-file`, not
+    /// `not-permitted`, and canonicalizing the whole path would fail both the same way.
     fn permits(&self, path: &Path) -> Option<PathBuf> {
         let dir = path.parent()?;
         let name = path.file_name()?;
@@ -103,9 +93,8 @@ impl Daemon {
     }
 }
 
-/// The fixed output path for a given input: same directory and stem, `.mp4`
-/// extension. A fixed target rather than a second parameter, because the WIT
-/// contract only carries one string.
+/// The fixed output path for a given input: same directory and stem, `.mp4`. A fixed target because
+/// the WIT contract only carries one string.
 fn output_path(input: &Path) -> PathBuf {
     input.with_extension("mp4")
 }
@@ -116,12 +105,9 @@ async fn transcode(
 ) -> Json<Value> {
     let requested = PathBuf::from(&req.input);
 
-    // Not-permitted and no-such-file are different answers on purpose: one is
-    // a decision an operator made and the other is a fact about the disk, and
-    // a caller retrying a refusal forever is the worse mistake.
-    //
-    // Act on the CANONICAL path `permits` approved, not the one the caller
-    // sent — see `permits`'s own doc for why.
+    // Not-permitted and no-such-file are different answers on purpose: one is an operator's decision, the
+    // other a fact about the disk, and a caller retrying a refusal forever is worse. Act on the
+    // CANONICAL path `permits` approved (see its doc).
     let Some(input) = d.permits(&requested) else {
         return Json(json!({ "error": "not-permitted", "detail": req.input }));
     };
@@ -182,7 +168,6 @@ mod tests {
         Daemon { allowed: allow.iter().map(|p| p.to_path_buf()).collect() }
     }
 
-    /// The allow-list is the boundary, and `..` is how a path escapes one.
     #[test]
     fn a_dot_dot_cannot_walk_out_of_the_allow_list() {
         // Test scaffolding, not a security-sensitive file: the path only ever
@@ -205,7 +190,6 @@ mod tests {
         assert!(d.permits(Path::new("/etc/input.avi")).is_none(), "nor is somewhere unrelated");
     }
 
-    /// Nothing is permitted by default.
     #[test]
     fn an_unscoped_daemon_reads_nothing() {
         let d = daemon(&[]);
@@ -213,9 +197,8 @@ mod tests {
         assert!(d.permits(Path::new("/input.avi")).is_none());
     }
 
-    /// `permits` checks the PARENT directory, not the file itself — a
-    /// missing file inside an allowed directory must come back permitted
-    /// (`no-such-file` is the caller's job to report), not `not-permitted`.
+    /// `permits` checks the PARENT directory, not the file: a missing file inside an allowed directory must
+    /// come back permitted (`no-such-file` is the caller's to report), not `not-permitted`.
     #[test]
     fn a_missing_file_in_an_allowed_directory_is_still_permitted() {
         let tmp = std::env::temp_dir().canonicalize().expect("temp dir"); // nosemgrep: rust.lang.security.temp-dir.temp-dir
@@ -228,8 +211,6 @@ mod tests {
         std::fs::remove_dir_all(&inside).ok();
     }
 
-    /// The output path is derived, not invented: same directory and stem,
-    /// `.mp4` extension.
     #[test]
     fn the_output_path_swaps_the_extension_to_mp4() {
         assert_eq!(output_path(Path::new("/x/y/clip.mov")), PathBuf::from("/x/y/clip.mp4"));

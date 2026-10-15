@@ -2,45 +2,35 @@
 //!
 //! ## Why this is a process and not a component
 //!
-//! Watching a filesystem needs a syscall — inotify, FSEvents, kqueue — and a
-//! `wasm32-wasip2` guest has none of them. That is the sandbox working rather
-//! than a gap to route around (ADR-0095), so the part that needs an operating
-//! system is native and is reached over HTTP exactly like the gate, the database
-//! and the model provider are.
+//! Watching a filesystem needs a syscall (inotify, FSEvents, kqueue) and a `wasm32-wasip2` guest has
+//! none: the sandbox working (ADR-0095). So the part that needs an operating system is native and
+//! reached over HTTP like the gate, the database and the model provider.
 //!
-//! `components/fs-watcher` is the component side: it holds the WIT contract and
-//! dials this. Nothing here knows what a goal is.
+//! `components/fs-watcher` is the component side: it holds the WIT contract and dials this.
 //!
 //! ## An allow-list, for the same reason `comp-checks` has one
 //!
-//! The directory in a request can come from a model. `comp-checks` takes
-//! `--allow` because "the input comes from an agent, and 'probably fine' is not
-//! a boundary", and a filesystem watcher is the same shape with a worse failure:
-//! a path is a way to read somewhere nobody agreed to.
+//! The directory in a request can come from a model. `comp-checks` takes `--allow` because "the input
+//! comes from an agent, and 'probably fine' is not a boundary"; a watcher is the same shape with a
+//! worse failure: a path is a way to read somewhere nobody agreed to.
 //!
-//! So a request names a directory and this refuses it unless an operator listed
-//! it. `--allow-path /var/log` permits `/var/log` and anything beneath it.
-//! Nothing is permitted by default; a daemon started with no `--allow-path`
-//! refuses everything, which is the correct behaviour for a capability nobody
-//! has scoped yet.
+//! A request names a directory and this refuses it unless an operator listed it: `--allow-path
+//! /var/log` permits `/var/log` and anything beneath it. Nothing is permitted by default, so a daemon
+//! with no `--allow-path` refuses everything.
 //!
 //! ## Polling, and what the cursor is
 //!
-//! `POST /poll {"dir": "...", "cursor": "..."}` answers with the changes since
-//! that cursor. The cursor here is a millisecond timestamp; the contract says it
-//! is opaque, so an implementation over a real watch queue can put an offset
-//! there without the component noticing.
+//! `POST /poll {"dir": "...", "cursor": "..."}` answers with the changes since that cursor. Here it is
+//! a millisecond timestamp; the contract says it is opaque, so a real watch queue can put an offset
+//! there.
 //!
-//! An empty cursor means "start from now" and reports nothing. A first call that
-//! replayed a directory's history would hand a caller thousands of events it did
-//! not ask for, and there is no way for it to say it wanted only the future.
+//! An empty cursor means "start from now" and reports nothing: replaying a directory's history would
+//! hand a caller thousands of events it did not ask for.
 //!
 //! ## What it deliberately does not do
 //!
-//! It does not watch. It stats the tree on each poll and compares against what it
-//! saw last time, which is O(entries) per call and honest about it: a real watch
-//! syscall is the next version, and the contract above was written so that this
-//! one can be replaced without a caller changing.
+//! It does not watch. It stats the tree on each poll and compares against the last, O(entries) per
+//! call; a real watch syscall can replace this without a caller changing.
 //!
 //!   comp-fswatch --addr 127.0.0.1:8000 --allow-path /var/log --allow-path /tmp/x
 
@@ -96,10 +86,8 @@ struct Args {
 
 /// What the last poll saw, per directory: path -> (mtime_ms, len).
 ///
-/// Held in memory, so a restart makes every watched directory look unchanged
-/// until something moves. That is the honest failure for a poller: the
-/// alternative is persisting a snapshot and reporting a restart as a thousand
-/// modifications.
+/// Held in memory, so a restart makes every watched directory look unchanged until something moves:
+/// the honest failure for a poller, versus reporting a restart as a thousand modifications.
 type Snapshot = HashMap<PathBuf, (u64, u64)>;
 
 struct Daemon {
@@ -127,14 +115,12 @@ fn now_ms() -> u64 {
 }
 
 impl Daemon {
-    /// Is `dir` inside something an operator listed? Returns the CANONICAL
-    /// path when it is — the caller must act on that, not the path it was
-    /// given, or a symlink swapped in between this check and the read that
-    /// follows it resolves to somewhere this check never approved (TOCTOU).
+    /// Is `dir` inside something an operator listed? Returns the CANONICAL path; the caller must act on
+    /// that, not the path it was given, or a symlink swapped in after this check resolves somewhere it
+    /// never approved (TOCTOU).
     ///
-    /// Canonicalised on both sides before comparing, so `/var/log/../etc` is
-    /// judged as `/etc` — a prefix test on the string a caller sent would let
-    /// `..` walk straight out of the allow-list.
+    /// Canonicalised on both sides before comparing, so `/var/log/../etc` is judged as `/etc`: a prefix
+    /// test on the string sent would let `..` walk out of the allow-list.
     fn permits(&self, dir: &Path) -> Option<PathBuf> {
         let real = dir.canonicalize().ok()?;
         self.allowed
@@ -162,13 +148,10 @@ impl Daemon {
 
 async fn poll(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<PollReq>) -> Json<Value> {
     let requested = PathBuf::from(&req.dir);
-    // Act on the CANONICAL path `permits` approved, not the one the caller
-    // sent — a symlink swapped in between the check and this read would
-    // otherwise resolve somewhere the allow-list never saw.
+    // Act on the CANONICAL path `permits` approved, not the one the caller sent (symlink swap).
     let Some(dir) = d.permits(&requested) else {
-        // Not-permitted and no-such-directory are different answers on purpose:
-        // one is a decision an operator made and the other is a fact about the
-        // disk, and a caller retrying a refusal forever is the worse mistake.
+        // Not-permitted and no-such-directory are different answers on purpose: one is an operator's
+        // decision, the other a fact about the disk, and a caller retrying a refusal forever is worse.
         return Json(json!({ "error": "not-permitted", "detail": req.dir }));
     };
     if !dir.is_dir() {
@@ -181,7 +164,6 @@ async fn poll(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<PollReq>)
     seen.insert(dir.clone(), fresh.clone());
     drop(seen);
 
-    // An empty cursor, or a directory never polled before, means "from now".
     let Some(before) = previous.filter(|_| !req.cursor.is_empty()) else {
         return Json(json!({ "events": [], "cursor": now_ms().to_string(), "truncated": false }));
     };
@@ -254,9 +236,8 @@ mod tests {
 
     /// The allow-list is the boundary, and `..` is how a path escapes one.
     ///
-    /// The check canonicalises before comparing, so a request for
-    /// `<allowed>/../<elsewhere>` is judged as `<elsewhere>` and refused. A
-    /// prefix test on the string as sent would have let it through.
+    /// The check canonicalises before comparing, so `<allowed>/../<elsewhere>` is judged as
+    /// `<elsewhere>` and refused.
     #[test]
     fn a_dot_dot_cannot_walk_out_of_the_allow_list() {
         let tmp = std::env::temp_dir().canonicalize().expect("temp dir");
@@ -270,7 +251,6 @@ mod tests {
         assert!(d.permits(Path::new("/etc")).is_none(), "nor is somewhere unrelated");
     }
 
-    /// Nothing is permitted by default.
     #[test]
     fn an_unscoped_watcher_watches_nothing() {
         let d = daemon(&[]);
@@ -278,7 +258,6 @@ mod tests {
         assert!(d.permits(Path::new("/")).is_none());
     }
 
-    /// A created file, a modified one and a removed one, told apart.
     #[test]
     fn a_snapshot_diff_names_what_actually_changed() {
         let dir = std::env::temp_dir().join(format!("fswatch-diff-{}", std::process::id()));

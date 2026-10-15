@@ -2,37 +2,26 @@
 //!
 //! ## Why this is a process and not a component
 //!
-//! Driving a real browser needs a process — Chrome forks renderer subprocesses
-//! of its own — and a `wasm32-wasip2` guest has none of that (ADR-0095). So the
-//! part that needs an operating system is native and is reached over HTTP
-//! exactly like the filesystem watcher and the checks runner are.
+//! Driving a real browser needs a process (Chrome forks renderer subprocesses) and a `wasm32-wasip2`
+//! guest has none of that (ADR-0095). So the part that needs an operating system is native and
+//! reached over HTTP like the filesystem watcher and the checks runner.
 //!
-//! `components/browser-automation` is the component side: it holds the WIT
-//! contract and dials this. Nothing here knows what a goal is.
+//! `components/browser-automation` is the component side: it holds the WIT contract and dials this.
 //!
 //! ## An allow-list, for the same reason `comp-fswatch` has one
 //!
-//! The url in a request can come from a model. A url is a way to make this
-//! process fetch (and execute the JavaScript of) anywhere on the internet, so
-//! a request names a url and this refuses it unless its host was listed.
-//! `--allow-host example.com` permits `example.com` and any subdomain of it
-//! (`www.example.com`, `a.b.example.com`) — a suffix match on the labels of
-//! the host, not a substring match, so `example.com.evil.com` (whose host ends
-//! in the bytes "example.com" but has "evil.com" as its actual registered
-//! domain) is refused rather than let through by a naive `ends_with`.
-//! Nothing is permitted by default; a daemon started with no `--allow-host`
-//! refuses everything, which is the correct behaviour for a capability nobody
-//! has scoped yet.
+//! The url in a request can come from a model, and a url is a way to make this process fetch (and
+//! run the JavaScript of) anywhere on the internet. A request is refused unless its host was listed:
+//! `--allow-host example.com` permits `example.com` and any subdomain, by a suffix match on host
+//! labels, not bytes, so `example.com.evil.com` is refused rather than let through by a naive
+//! `ends_with`. Nothing is permitted by default.
 //!
 //! ## What this needs on the host, and what happens when it is missing
 //!
-//! `headless_chrome::Browser::default()` launches a real Chrome or Chromium
-//! binary. That binary is not part of this repository and is not installed in
-//! every environment this daemon might run in (a CI sandbox with no display,
-//! for instance). When launching or navigating fails, this reports
-//! `unavailable` rather than crashing the daemon process — the honest answer
-//! in a sandbox with no browser is "I could not do that", not a panic that
-//! takes every other in-flight request down with it.
+//! `headless_chrome::Browser::default()` launches a real Chrome or Chromium, which is not part of this
+//! repository and not installed everywhere (a CI sandbox with no display). When launching or
+//! navigating fails this reports `unavailable` rather than crashing the daemon and every in-flight
+//! request with it.
 //!
 //!   comp-browser --addr 127.0.0.1:8001 --allow-host example.com
 
@@ -78,12 +67,9 @@ struct Args {
     allow_host: Vec<String>,
 }
 
-/// Most of the daemon's reply this will send back. Matches the ceiling the
-/// component buffers on its side (`MAX_REPLY_BYTES` in
-/// `components/browser-automation/src/lib.rs`) — sending more than the other
-/// side will read is a truncated answer either way, so it is truncated here
-/// with a caller able to tell that happened rather than the component's read
-/// loop failing outright.
+/// Most of the daemon's reply this will send back. Matches the ceiling the component buffers
+/// (`MAX_REPLY_BYTES` in `components/browser-automation/src/lib.rs`): more than the other side will
+/// read is truncated either way, so it is truncated here with a caller able to tell.
 const MAX_CONTENT_BYTES: usize = 2 * 1024 * 1024;
 
 struct Daemon {
@@ -98,12 +84,9 @@ struct SnapshotReq {
 impl Daemon {
     /// Is `host` the allow-listed name itself, or a subdomain of it?
     ///
-    /// A suffix match on dot-separated labels, not on raw bytes: `ends_with`
-    /// on the string would let `example.com` (allowed) match the host
-    /// `evil-example.com`, and — the sharper version of the same mistake —
-    /// `example.com.evil.com`, whose actual owner is `evil.com`. Requiring the
-    /// character before the match to be a label boundary (`.`, or nothing at
-    /// all) closes both.
+    /// A suffix match on dot-separated labels: `ends_with` on the string would let `example.com` match
+    /// `evil-example.com` and `example.com.evil.com` (owned by `evil.com`). Requiring a label boundary
+    /// (`.`, or nothing) before the match closes both.
     fn permits(&self, host: &str) -> bool {
         let host = host.to_ascii_lowercase();
         self.allowed.iter().any(|allowed| {
@@ -113,8 +96,8 @@ impl Daemon {
     }
 }
 
-/// The host a url names, lowercased, with any port stripped. `None` if the
-/// url has no scheme this understands or no host at all.
+/// The host a url names, lowercased, port stripped. `None` if the url has no scheme this understands
+/// or no host.
 fn host_of(url: &str) -> Option<String> {
     let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
     let authority = rest.split('/').next().unwrap_or(rest);
@@ -140,9 +123,8 @@ async fn snapshot(
         return Json(json!({ "error": "not-permitted", "detail": host }));
     }
 
-    // Chrome is launched, driven and torn down inside one blocking call: a
-    // browser instance held across requests would leak tabs and state between
-    // callers, and this is not a latency-sensitive path.
+    // Chrome is launched, driven and torn down inside one blocking call: a browser held across requests
+    // would leak tabs and state between callers, and this is not a latency-sensitive path.
     let url = req.url.clone();
     let result = tokio::task::spawn_blocking(move || -> Result<String, String> {
         let browser = Browser::default().map_err(|e| format!("launch: {e}"))?;
@@ -158,9 +140,8 @@ async fn snapshot(
             content.truncate(MAX_CONTENT_BYTES);
             Json(json!({ "content": content }))
         }
-        // Any navigation or launch failure is unavailable and retryable — it
-        // says nothing about whether the host was allowed, only that this
-        // attempt did not produce a page.
+        // Any navigation or launch failure is unavailable and retryable; it says nothing about whether the
+        // host was allowed.
         Ok(Err(detail)) => Json(json!({ "error": "unavailable", "detail": detail })),
         Err(join_err) => {
             Json(json!({ "error": "unavailable", "detail": format!("task panicked: {join_err}") }))
@@ -209,8 +190,7 @@ mod tests {
         assert_eq!(host_of("not-a-url"), None);
     }
 
-    /// The allowed host and its subdomains match; a host that merely ends in
-    /// the same bytes does not.
+    /// The allowed host and its subdomains match; a host that merely ends in the same bytes does not.
     #[test]
     fn a_lookalike_host_cannot_pass_as_an_allowed_one() {
         let d = daemon(&["example.com"]);

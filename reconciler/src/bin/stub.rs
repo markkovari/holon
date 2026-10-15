@@ -1,15 +1,12 @@
 //! A stand-in control plane for benchmarks: serves authored YAML specs and nothing
 //! else.
 //!
-//! The thing under test in `bench/` is the host, the reconciler and the ingress. A
-//! real `platform-domain` would drag in orgs, auth and a records store to measure
-//! none of them, so this serves the four endpoints the reconciler actually calls and
-//! stops there.
+//! The thing under test in `bench/` is the host, the reconciler and the ingress; a real
+//! `platform-domain` would drag in orgs, auth and a records store to measure none of them, so this
+//! serves the four endpoints the reconciler calls.
 //!
-//! It replaces `stub-control-plane.py`. Not for its own sake: this one reads the same
-//! `comp/v1` YAML the e2e fixtures use, through the same `AppSpec::to_manifest`, so a
-//! benchmark and a test cannot disagree about what a manifest means — and a fixture
-//! that stops parsing breaks the build rather than one script.
+//! It reads the same `comp/v1` YAML the e2e fixtures use, through the same `AppSpec::to_manifest`, so
+//! a benchmark and a test cannot disagree about what a manifest means.
 //!
 //! ```
 //! comp-stub --port 8099 --spec bench/autoscale/app.yaml \
@@ -106,11 +103,10 @@ async fn main() -> Result<()> {
     for s in &args.secrets {
         let (reference, value) =
             s.split_once('=').context("--secret wants vault://org/name=value")?;
-        // `@path` reads the value from a FILE, so a real credential never appears
-        // in argv (and hence never in `ps`, a shell history, or a crash dump). The
-        // curl convention; the path is not the secret. A trailing newline is
-        // trimmed because an editor adds one and a key with a stray `\n` fails auth
-        // in a way that is maddening to diagnose.
+        // `@path` reads the value from a FILE so a real credential never appears in argv (`ps`, shell
+        // history, crash dumps); the curl convention. A trailing newline is trimmed because an editor adds
+        // one and a key with a stray `
+        // ` fails auth maddeningly.
         let value = match value.strip_prefix('@') {
             Some(path) => std::fs::read_to_string(path)
                 .with_context(|| format!("reading secret from {path}"))?
@@ -137,8 +133,7 @@ async fn main() -> Result<()> {
         .route("/api/internal/pushed", post(pushed))
         .route("/api/internal/fetch-token", post(fetch_token))
         .route("/api/internal/secret", get(secret))
-        // Accepted and dropped: the reconciler posts what it could not schedule, and
-        // a benchmark reads that from its log rather than from here.
+        // Accepted and dropped: a benchmark reads unschedulable reports from its log.
         .route("/api/internal/status", post(|| async { StatusCode::OK }))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", args.port)).await?;
@@ -148,8 +143,8 @@ async fn main() -> Result<()> {
 
 async fn revisions(axum::extract::State(s): axum::extract::State<Shared>) -> Json<Value> {
     let s = s.lock().unwrap();
-    // A component with no digest is one the reconciler still has to distribute;
-    // filling it in once pushed is what closes that queue.
+    // A component with no digest is one the reconciler still has to distribute; filling it in once
+    // pushed closes that queue.
     let revisions: Vec<Value> = s
         .manifests
         .iter()
@@ -202,9 +197,8 @@ async fn pushed(
 
 /// A capability authorising exactly the refs in one instance's manifest (ADR-0051).
 ///
-/// No expiry here, unlike the real platform: a token that ages out mid-benchmark
-/// would measure the clock. What this stub does keep is the SCOPE, because that is
-/// the property the host's start-time check and the 403 path both depend on.
+/// No expiry, unlike the real platform: a token that ages out mid-benchmark would measure the clock.
+/// The SCOPE is kept, since the host's start-time check and the 403 path depend on it.
 async fn fetch_token(
     axum::extract::State(s): axum::extract::State<Shared>,
     Json(body): Json<Value>,
@@ -215,16 +209,16 @@ async fn fetch_token(
         .unwrap_or_default();
     let instance = body["instance"].as_str().unwrap_or("anon").to_string();
     let mut s = s.lock().unwrap();
-    // Deterministic rather than random: `Math.random` in a control plane makes a
-    // failing run unrepeatable, and the token only has to be unique per instance.
+    // Deterministic rather than random: a random token makes a failing run unrepeatable, and it only
+    // has to be unique per instance.
     let token = format!("stub-{}-{}", s.tokens.len(), instance.replace('/', "-"));
     s.tokens.insert(token.clone(), refs);
     Json(json!({ "token": token }))
 }
 
-/// The value, or `?probe=1` for "does it resolve" — the same authorisation, without
-/// a plaintext on the wire. The status codes are the contract the host reads:
-/// 401 is the token (restart me), 403 is the reference (fix the manifest).
+/// The value, or `?probe=1` for "does it resolve": the same authorisation without a plaintext on the
+/// wire. The status codes are the contract the host reads: 401 is the token (restart me), 403 is the
+/// reference (fix the manifest).
 async fn secret(
     axum::extract::State(s): axum::extract::State<Shared>,
     headers: axum::http::HeaderMap,
