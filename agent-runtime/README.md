@@ -140,6 +140,19 @@ The runtime's address must be in the tenant's egress list, which the operator
 grants through `platform-domain`'s `default-egress` config (ADR-0008 holds: a
 tenant never authors its own egress).
 
+## Food photos (Jev)
+
+With `HOLON_JEV_KEY_FILE` naming a TypeSafe key, an agent can be granted `food_photo`, `food_pool` and
+`food_correct`. Jev looks at the picture itself (the photo is shrunk to 800 px first: cost grows with
+pixels) and answers four typed questions in one request: is there food, which dish from the user's
+**pool** it is (each pool entry offered with its own reference photo), what kind of dish, and a kcal
+band. A match is counted again; a miss is **added to the pool** with its kind, an estimated kcal and
+the photo as a reference. Every photo is logged as a meal.
+
+Per user, in the shared store under `food.<user>`: `pool/f<n>` and `meal/<unix time>`. Reference
+photos are in the agent's workspace (`food-pool/`). Estimates are marked until `food_correct` gives
+the real kcal or a better name. The photo is sent to TypeSafe; Jev's image support is a preview.
+
 ## Google Calendar
 
 Tools an agent can be granted by name: `gcal_calendars`, `gcal_list`, `gcal_add`, `gcal_update`,

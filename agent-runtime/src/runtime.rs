@@ -127,6 +127,8 @@ pub struct Runtime {
     speech: crate::speech::Speech,
     embedder: Option<crate::embed::Embedder>,
     google: crate::google::Google,
+    /// Jev, for reading pictures, when `HOLON_JEV_KEY_FILE` names a key.
+    jev: Option<crate::jev::JevClient>,
     local: Mutex<LocalModel>,
     started: u64,
     busy: Mutex<HashMap<String, Arc<Mutex<()>>>>,
@@ -244,6 +246,7 @@ impl Runtime {
             speech: crate::speech::Speech::new(cfg.speech.clone()),
             embedder: crate::embed::Embedder::new(&cfg.embed_url, &cfg.embed_service),
             google: crate::google::Google::new(cfg.google.clone()),
+            jev: crate::jev::JevClient::from_env(),
             cfg,
             started: unix_now(),
             busy: Mutex::new(HashMap::new()),
@@ -1196,6 +1199,10 @@ impl Host for Runtime {
 
     fn google(&self) -> Option<&crate::google::Google> {
         Some(&self.google)
+    }
+
+    fn jev(&self) -> Option<&dyn crate::jev::Jev> {
+        self.jev.as_ref().map(|j| j as &dyn crate::jev::Jev)
     }
 
     fn restore_agent(&self, name: &str) -> Result<String, String> {
