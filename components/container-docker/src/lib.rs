@@ -1,21 +1,14 @@
 //! `container-docker` — list containers running on the machine
 //!
-//! Listing containers needs a container runtime socket, and a
-//! `wasm32-wasip2` guest has none of those (ADR-0095). This is the component
-//! side: it holds the contract, and reaches the daemon over HTTP the same
-//! way `fs-watcher` reaches `comp-fswatch`.
-//!
-//! What this may dial is a MANIFEST decision (ADR-0008). The daemon's address
-//! is `docker-url` in `wasi:config`, and the deployment's egress allow-list
-//! decides whether the call leaves at all. A component that could reach any
+//! Listing containers needs a container runtime socket, which a `wasm32-wasip2` guest does
+//! not have (ADR-0095). This component holds the contract and reaches the daemon over HTTP,
+//! like `fs-watcher` reaches `comp-fswatch`. What it may dial is a MANIFEST decision
+//! (ADR-0008): the daemon's address is `docker-url` in `wasi:config` and the egress
+//! allow-list decides whether the call leaves at all; a component that could reach any
 //! address would make the allow-list decorative.
 //!
 //! Config (wasi:config/store):
 //!   docker-url    where `comp-docker` is listening, e.g. http://127.0.0.1:8002
-//!
-//! It used to return `"UNIMPLEMENTED: ..."` — honest, but a `-> string`
-//! contract cannot express failure any better than it can express success.
-//! The current one can.
 
 #[allow(warnings)]
 mod bindings;
@@ -30,10 +23,8 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Ten seconds. Listing containers is a local socket call on the daemon's
-/// side; anything slower than this is a daemon in trouble rather than a lot
-/// of containers, and a caller waiting on an HTTP request would rather hear
-/// that than wait.
+/// Ten seconds: a slower local socket call is a daemon in trouble, and a caller would rather
+/// hear that than wait.
 const TIMEOUT_NS: u64 = 10_000_000_000;
 
 fn daemon_url() -> Result<String, DockerError> {
@@ -130,10 +121,8 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, DockerError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser.
-///
-/// The daemon's replies are a flat list of flat objects, so a full serde
-/// dependency would be more code than the thing it reads.
+/// Pull one JSON string field out without a parser: the daemon's replies are flat, so serde
+/// would be more code than the thing it reads.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];

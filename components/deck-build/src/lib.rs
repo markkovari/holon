@@ -9,27 +9,16 @@
 //! Pure compute. A deck, a collection and some prices in; a verdict and a shopping
 //! list out. Nothing here fetches a price or reads a store.
 //!
-//! ## The four-copy rule counts NAMES, not printings
+//! The four-copy rule counts NAMES, not printings: "at most four of any card" means four
+//! `Pikachu` across every set and printing. Counting by the collection's id gives a
+//! sixteen-Pikachu deck that passes and is not legal.
 //!
-//! This is the rule an implementation gets wrong while looking finished. "At most
-//! four of any card" means four `Pikachu`, across every set, every printing, every
-//! rarity — a Base Set Pikachu and an Obsidian Flames Pikachu are the same card for
-//! this purpose even though they are different cards for every other purpose in the
-//! app. Counting by the id the collection is keyed on gives a deck of sixteen
-//! Pikachu that passes, and it is not a legal deck.
+//! Basic Energy is uncapped; Special Energy is an ordinary card capped at four. One word
+//! apart, and the whole rule.
 //!
-//! ## Basic Energy is exempt, Special Energy is not
-//!
-//! You may play any number of Basic Energy. "Special Energy" cards are ordinary
-//! cards and capped at four like everything else. The two are one word apart and the
-//! difference is the whole rule.
-//!
-//! ## Sixty cards, and at least one Basic Pokémon
-//!
-//! Exactly sixty — not "at least". And a deck with no Basic Pokémon cannot put
-//! anything into play on the first turn, so it is illegal however good it looks.
-//! Both are checked, and every reason a deck fails is reported rather than the first
-//! one: a builder that fixes one problem per attempt is a builder nobody uses.
+//! Exactly sixty, not "at least"; no Basic Pokémon means nothing in play on turn one, so
+//! illegal. Every reason a deck fails is reported, not the first: a builder fixing one
+//! problem per attempt is one nobody uses.
 
 /// What a card is, for the rules that care. The collection knows far more about a
 /// card than this; a deck only needs to know what the format restricts.
@@ -195,10 +184,8 @@ pub fn shortfall(deck: &[Slot], owned: &[Owned], prices: &[Price], currency: &st
     Shortfall { missing, cost_minor, currency: currency.to_string(), unpriced }
 }
 
-// ---- the component -----------------------------------------------------
-//
-// A mapping between the WIT types and the ones above, and nothing else — the logic
-// is judged by `tests/legality.rs` against the plain functions.
+// WIT <-> plain-type mapping only; the logic is judged by `tests/legality.rs` against the
+// plain functions.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]

@@ -6,12 +6,9 @@
 //! the API key from the vault — which failures to fix first and what to change
 //! them to, returning `{report}`.
 //!
-//! Same two grants as `photo-critic`, an external secret and egress, and the
-//! opposite payload. Where that one downscales an image so a smaller image can be
-//! sent, this one MEASURES in the browser and sends no image at all — only the
-//! colours found. A screenshot of an unreleased product is exactly the sort of
-//! thing people paste into a contrast checker, and the interesting property here
-//! is that it cannot leave the device even by accident.
+//! Same two grants as `photo-critic` (a secret and egress), opposite payload: this one
+//! MEASURES in the browser and sends no image at all, only the colours found. A screenshot
+//! of an unreleased product cannot leave the device even by accident.
 
 #[allow(warnings)]
 mod bindings {
@@ -58,21 +55,12 @@ const DEFAULT_MODEL: &str = "claude-sonnet-5";
 /// findings and drops the ones that already pass comfortably.
 const MAX_PAIRS: usize = 12;
 
-/// The reply budget. A report is a few hundred tokens, so this is nearly all
-/// headroom, deliberately.
-///
-/// `max_tokens` is a cap and not a reservation, so a large one costs nothing and
-/// buys room for a model that thinks before it writes — `goalrun`'s
-/// `--max-tokens` documents that case being real and expensive to diagnose:
-/// `["thinking"]` and `stop_reason: max_tokens` at 4096 on claude-sonnet-5.
-///
-/// Honest history, because the comment here first claimed more than was measured:
-/// this app asked for 1500, saw `the model returned no text` on a 200 ONCE, and
-/// raising the budget was the change that followed. 1500 has since succeeded on
-/// the same prompt and model, and `photo-critic` runs the same model at 1024, so
-/// the budget was probably not the cause and the one failure is unexplained. The
-/// error below is the part that earns its place: next time it will say which empty
-/// it is instead of leaving the next person to guess as I did.
+/// The reply budget. A report is a few hundred tokens, so this is nearly all headroom,
+/// deliberately: `max_tokens` is a cap, not a reservation, and a large one buys room for a
+/// model that thinks before it writes (`goalrun`'s `--max-tokens` documents `["thinking"]`
+/// with `stop_reason: max_tokens` at 4096 on claude-sonnet-5). `the model returned no text`
+/// was seen once at 1500 and has not recurred, so the budget was probably not the cause;
+/// the error below says which empty it is.
 const MAX_TOKENS: u32 = 16000;
 
 const PROMPT: &str = "You are an accessibility engineer reviewing the colour contrast of a user \
@@ -116,7 +104,6 @@ fn json_str(s: &str) -> String {
 /// approaching a megabyte is not a request this app has a use for.
 const MAX_BODY_BYTES: usize = 256 * 1024;
 
-/// POST a JSON body to Anthropic and return (status, response-bytes).
 async fn post_anthropic(body: Vec<u8>) -> Result<(u16, Vec<u8>), String> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
@@ -152,10 +139,8 @@ async fn post_anthropic(body: Vec<u8>) -> Result<(u16, Vec<u8>), String> {
         buf.reserve(8192);
         let (st, b) = stream.read(buf).await;
         buf = b;
-        // The same ceiling on the way back — a reply far larger
-        // than the request that provoked it is a mistake or an
-        // attack, and either way not something to accumulate
-        // while deciding.
+        // The same ceiling on the way back: a reply far larger than its request is a
+        // mistake or an attack.
         if buf.len() > MAX_BODY_BYTES * 8 {
             return Err(e("the response body is too large"));
         }
@@ -176,10 +161,8 @@ async fn post_anthropic(body: Vec<u8>) -> Result<(u16, Vec<u8>), String> {
 // some of an interface and report as though it had seen all of it.
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
-/// Render the audited pairs as the table the model reads.
-///
-/// A table and not JSON: the numbers are already decided and this is the form a
-/// reader of the transcript can check by eye against the report.
+/// Render the audited pairs as the table the model reads: a table, not JSON, so a reader
+/// of the transcript can check it by eye against the report.
 fn table(pairs: &[wcag::Pair]) -> String {
     let mut s =
         String::from("| text | background | ratio | grade | share |\n|---|---|--:|---|--:|\n");
@@ -196,7 +179,6 @@ fn table(pairs: &[wcag::Pair]) -> String {
     s
 }
 
-/// The whole audit path: parse the pairs, do the maths, ask the model.
 async fn audit(request: Request) -> Result<String, String> {
     let body = read_body(request).await.unwrap_or_default();
     let v: serde_json::Value =
@@ -264,9 +246,8 @@ async fn audit(request: Request) -> Result<String, String> {
     if !text.is_empty() {
         return Ok(text);
     }
-    // Say WHICH empty this is. A thinking model that ran out of budget returns a
-    // perfectly valid 200 whose content holds no text block, and "the model
-    // returned no text" sent me looking at the parse rather than at `max_tokens`.
+    // Say WHICH empty this is: a thinking model out of budget returns a valid 200 with no
+    // text block.
     let kinds: Vec<&str> = parsed["content"]
         .as_array()
         .map(|b| b.iter().filter_map(|b| b["type"].as_str()).collect())

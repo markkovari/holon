@@ -1,23 +1,14 @@
-//! Pure Anthropic Messages-API request-building + response-parsing, decoupled
-//! from the WIT bindings so it is unit-testable on the host (`cargo test`).
+//! Pure Anthropic Messages-API request building and response parsing, decoupled from
+//! the WIT bindings so it is unit-testable on the host. HTTP, config and the secret
+//! live in `lib.rs`.
 //!
-//! Everything here is deterministic and dependency-light (serde_json only). The
-//! HTTP plumbing, config and secret live in `lib.rs`; this is just the codec —
-//! and the codec is where Anthropic differs from OpenAI, so it is the part worth
-//! testing in isolation.
-//!
-//! The three shape differences from an OpenAI request, each encoded below:
-//!
-//! * the SYSTEM prompt is a top-level string, not a message with role `system`,
-//!   so system turns are lifted out of `messages`;
-//! * `max_tokens` is REQUIRED — a request without it is a 400, so the caller
-//!   always resolves one;
-//! * the response is a list of `content` BLOCKS, not `choices`, and usage counts
-//!   are `input_tokens`/`output_tokens`.
+//! Differences from an OpenAI request:
+//! * the SYSTEM prompt is a top-level string, so system turns are lifted out of `messages`;
+//! * `max_tokens` is REQUIRED (a request without it is a 400);
+//! * the response is a list of `content` BLOCKS, with `input_tokens`/`output_tokens` usage.
 
 use serde::Deserialize;
 
-/// A chat message (plain mirror of the WIT `message`).
 pub struct Msg<'a> {
     pub role: &'a str, // "system" | "user" | "assistant"
     pub content: &'a str,
@@ -32,7 +23,6 @@ pub struct Opts<'a> {
     pub stop: Vec<String>,
 }
 
-/// A parsed completion (plain mirror of the WIT `completion`).
 pub struct Parsed {
     pub text: String,
     pub finish_reason: String,
@@ -41,7 +31,6 @@ pub struct Parsed {
     pub completion_tokens: u32,
 }
 
-/// Why parsing a response failed (mapped to `infer-error` by the caller).
 pub enum ParseError {
     BadResponse(String),
     NoContent,
@@ -51,9 +40,8 @@ fn json_str(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
 }
 
-/// Whether a model accepts a `temperature`, as a tagged union rather than a
-/// bare bool, so a future tier that caps at a different range says so in one
-/// place instead of a `< 0.7` scattered through the caller.
+/// Whether a model accepts a `temperature`, as a tagged union so a future tier with a
+/// different range says so in one place.
 enum TempSupport {
     /// Accepts temperature up to `max_milli` milli-units (1000 == 1.0).
     Ranged { max_milli: u32 },
@@ -61,11 +49,9 @@ enum TempSupport {
     Deprecated,
 }
 
-/// Classify a model id. The default is DEPRECATED, deliberately: sending
-/// temperature to a model that rejects it is a hard 400 that kills the run,
-/// while withholding it from one that would accept it only forfeits a knob. So a
-/// model earns temperature by being on the known-accepting list, not by failing
-/// to match a deny-list that a new 5-gen name would slip through.
+/// Classify a model id. The default is DEPRECATED, deliberately: sending temperature to
+/// a model that rejects it is a hard 400 that kills the run, while withholding it only
+/// forfeits a knob. A model earns temperature by being on the known-accepting list.
 fn temp_support(model: &str) -> TempSupport {
     let m = model.to_ascii_lowercase();
     let accepts = m.contains("haiku-4-5")
@@ -87,15 +73,10 @@ fn temp_support(model: &str) -> TempSupport {
 /// removed from `messages`; everything else stays a user/assistant turn. An
 /// unknown role is treated as `user`, because the alternative — dropping it —
 /// silently loses a turn the caller meant to send.
-/// The ephemeral cache-breakpoint marker, appended inside a content block.
-/// Everything in the request up to and including a marked block is cached and,
-/// on a later request whose prefix is byte-identical, read back at ~10% of the
-/// price. We keep ONE explicit breakpoint — on the system block — because the
-/// system + files prefix is identical across every branch AND every repair, so
-/// it must cache independently of the message tail that a repair changes. The
-/// growing message tail is left to automatic caching (the top-level field
-/// below), which the docs call the simplest way and which moves its own
-/// breakpoint to the last cacheable block for us.
+/// The ephemeral cache-breakpoint marker, appended inside a content block. We keep ONE
+/// explicit breakpoint, on the system block: the system + files prefix is identical
+/// across every branch AND repair, so it must cache independently of the message tail.
+/// The growing tail is left to automatic caching (the top-level field below).
 const CACHE: &str = ",\"cache_control\":{\"type\":\"ephemeral\"}";
 
 pub fn messages_body(messages: &[Msg], opts: &Opts) -> String {
@@ -109,10 +90,7 @@ pub fn messages_body(messages: &[Msg], opts: &Opts) -> String {
         }
     }
 
-    // The turns are plain text blocks; the message tail's breakpoint is handled
-    // by automatic caching (the top-level `cache_control` below), which places
-    // and advances its own breakpoint on the last cacheable block. Hand-marking
-    // the last turn here would only duplicate what automatic caching does.
+    // Plain text blocks; the message tail's breakpoint is automatic caching's job.
     let turns: Vec<String> = user_turns
         .iter()
         .map(|m| {
@@ -126,31 +104,26 @@ pub fn messages_body(messages: &[Msg], opts: &Opts) -> String {
 
     let mut parts = vec![
         format!("\"model\":{}", json_str(opts.model)),
-        // Required. Resolved by the caller, never 0 here.
         format!("\"max_tokens\":{}", opts.max_tokens),
         format!("\"messages\":[{}]", turns.join(",")),
-        // Automatic caching: one top-level breakpoint that the system places on
-        // the last cacheable block and moves forward as the conversation grows.
-        // The docs' simplest enable, and it composes with the explicit system
-        // breakpoint (they take separate breakpoint slots).
+        // Automatic caching: one top-level breakpoint the system moves forward as the
+        // conversation grows; composes with the explicit system breakpoint.
         "\"cache_control\":{\"type\":\"ephemeral\"}".to_string(),
     ];
     if !system_parts.is_empty() {
-        // The system prompt is identical across every branch and every attempt,
-        // so it is its own cache breakpoint — written once, read forever after.
+        // The system prompt is identical across every branch and attempt, so it is
+        // its own cache breakpoint.
         parts.push(format!(
             "\"system\":[{{\"type\":\"text\",\"text\":{}{CACHE}}}]",
             json_str(&system_parts.join("\n\n"))
         ));
     }
-    // Whether `temperature` is sent depends on the model. The 5-generation models
-    // deprecated it and answer 400 if it carries; earlier tiers accept it. Sent
-    // only where accepted, clamped to the tier's range — so a repair can turn the
-    // knob up (the writer escalates it) without a 400 killing the whole run.
+    // The 5-generation models deprecated `temperature` and answer 400 if it is sent.
+    // Sent only where accepted and clamped to the tier's range, so a repair can turn
+    // the knob up without a 400 killing the run.
     if let TempSupport::Ranged { max_milli } = temp_support(opts.model) {
         let milli = opts.temperature.min(max_milli);
-        // milli-units to a JSON float: 200 -> 0.2, 1000 -> 1. Rust's shortest
-        // round-trip formatting keeps it a clean decimal.
+        // milli-units to a JSON float: 200 -> 0.2, 1000 -> 1.
         parts.push(format!("\"temperature\":{}", milli as f64 / 1000.0));
     }
     if !opts.stop.is_empty() {
@@ -190,10 +163,9 @@ struct UsageResp {
     input_tokens: u32,
     #[serde(default)]
     output_tokens: u32,
-    // With caching on, `input_tokens` counts ONLY the tokens after the last
-    // breakpoint; the cached prefix is reported here instead. Summing all three
-    // gives the true input the model processed — without them a cached run looks
-    // ~free and the wallet under-counts what it spent.
+    // With caching on, `input_tokens` counts ONLY tokens after the last breakpoint;
+    // the cached prefix is reported here. Summing all three gives the true input,
+    // else a cached run looks ~free and the wallet under-counts.
     #[serde(default)]
     cache_creation_input_tokens: u32,
     #[serde(default)]
@@ -205,11 +177,9 @@ struct ApiError {
     message: String,
 }
 
-/// Parse a `/v1/messages` response into the domain completion.
-///
-/// Anthropic answers a 200 with `{"type":"error",...}` in some throttling cases,
-/// so an error envelope is checked even on a success status rather than trusting
-/// the code alone.
+/// Parse a `/v1/messages` response into the domain completion. Anthropic sometimes
+/// answers a 200 with `{"type":"error",...}` when throttling, so an error envelope is
+/// checked even on a success status.
 pub fn parse_completion(body: &[u8]) -> Result<Parsed, ParseError> {
     let parsed: MsgResp = serde_json::from_slice(body)
         .map_err(|e| ParseError::BadResponse(format!("messages json: {e}")))?;
@@ -219,8 +189,7 @@ pub fn parse_completion(body: &[u8]) -> Result<Parsed, ParseError> {
         return Err(ParseError::BadResponse(format!("api error: {m}")));
     }
 
-    // Concatenate the text of every text block. A response can carry non-text
-    // blocks (tool use, thinking); those are skipped rather than stringified.
+    // Non-text blocks (tool use, thinking) are skipped rather than stringified.
     let text: String = parsed
         .content
         .iter()
@@ -229,12 +198,9 @@ pub fn parse_completion(body: &[u8]) -> Result<Parsed, ParseError> {
         .collect::<Vec<_>>()
         .join("");
     if text.is_empty() {
-        // A thinking model on a real task can spend the WHOLE budget thinking and
-        // never reach a text block: `content` is `["thinking"]` and `stop_reason`
-        // is `max_tokens`. Measured on claude-sonnet-5 at 4096 — which is a
-        // perfectly good budget for a non-thinking model, so the failure arrives
-        // the day someone changes the model and nothing else. "The model returned
-        // nothing" sends that person to the wrong place; this says where to look.
+        // A thinking model can spend the WHOLE budget thinking and never reach a text
+        // block (`stop_reason` is `max_tokens`). "The model returned nothing" would send
+        // the reader to the wrong place; this says where to look.
         if parsed.stop_reason.as_deref() == Some("max_tokens") {
             return Err(ParseError::BadResponse(
                 "the model used its entire max-tokens budget before writing any text \
@@ -251,10 +217,9 @@ pub fn parse_completion(body: &[u8]) -> Result<Parsed, ParseError> {
         cache_creation_input_tokens: 0,
         cache_read_input_tokens: 0,
     });
-    // True total input = post-breakpoint + freshly-cached + cache-read. Reported
-    // as prompt_tokens so cost/budget see the real work. Cache reads are billed
-    // at ~10% and writes at ~125%, so counting them at par makes the dollar cost
-    // an UPPER bound — safe for a budget ceiling, which should never undershoot.
+    // True total input = post-breakpoint + freshly-cached + cache-read. Cache reads are
+    // billed at ~10% and writes at ~125%, so counting them at par makes the dollar cost
+    // an UPPER bound — safe for a budget ceiling.
     let prompt_tokens = usage
         .input_tokens
         .saturating_add(usage.cache_creation_input_tokens)
@@ -277,8 +242,7 @@ mod tests {
         serde_json::from_str(&messages_body(messages, &opts)).unwrap()
     }
 
-    /// The system turn must leave `messages` and become the top-level field, or
-    /// Anthropic rejects a `system` role with a 400.
+    /// The system turn must leave `messages` and become the top-level field.
     #[test]
     fn a_system_message_becomes_the_top_level_system_field() {
         let v = body(
@@ -308,8 +272,7 @@ mod tests {
         assert_eq!(v["system"][0]["text"], "A.\n\nB.");
     }
 
-    /// max_tokens is required and always present, because a request without it is
-    /// a 400 from Anthropic.
+    /// max_tokens is required and always present (a request without it is a 400).
     #[test]
     fn max_tokens_is_always_present() {
         let v = body(&[Msg { role: "user", content: "hi" }], 4096);
@@ -328,18 +291,15 @@ mod tests {
 
     #[test]
     fn temperature_is_sent_only_to_a_model_that_accepts_it() {
-        // Haiku 4.5 accepts it; a 5-gen model would 400, so it is withheld.
         let ok = body_with("claude-haiku-4-5-20251001", 500);
         assert_eq!(ok["temperature"], 0.5, "0.5 as a JSON float, not 500 milli-units");
         let dep = body_with("claude-opus-5", 500);
         assert!(dep.get("temperature").is_none(), "deprecated on 5-gen — never sent");
-        // The safe default: an unknown model is treated as deprecated.
         assert!(body_with("some-vendor/model", 500).get("temperature").is_none());
     }
 
     #[test]
     fn an_escalated_temperature_is_clamped_to_the_range() {
-        // The writer may ask for more than 1.0 as it escalates; it clamps to max.
         let v = body_with("claude-haiku-4-5-20251001", 4000);
         assert_eq!(v["temperature"], 1.0, "1000 milli is the ceiling");
     }
@@ -351,14 +311,12 @@ mod tests {
             v["cache_control"]["type"], "ephemeral",
             "automatic caching is enabled at the request level"
         );
-        // The message tail is a plain text block — automatic caching owns its breakpoint.
         assert!(v["messages"][0]["content"][0].get("cache_control").is_none());
     }
 
     #[test]
     fn cached_input_tokens_fold_into_the_prompt_total() {
-        // input_tokens is only the post-breakpoint tail; the cached prefix lives
-        // in the two cache fields. The reported prompt total sums all three.
+        // input_tokens is only the post-breakpoint tail; the prompt total sums all three.
         let body = br#"{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":1000,"output_tokens":7}}"#;
         let p = parse_completion(body).ok().unwrap();
         assert_eq!(p.prompt_tokens, 1050, "50 fresh + 1000 read from cache");
@@ -382,8 +340,7 @@ mod tests {
         assert_eq!(p.completion_tokens, 7);
     }
 
-    /// A non-text block (tool use, thinking) alongside text must not corrupt the
-    /// answer.
+    /// A non-text block alongside text must not corrupt the answer.
     #[test]
     fn non_text_blocks_are_skipped() {
         let body = br#"{"content":[{"type":"thinking","text":"hmm"},{"type":"text","text":"real"}],"usage":{"input_tokens":1,"output_tokens":1}}"#;
@@ -409,16 +366,10 @@ mod tests {
         assert!(matches!(parse_completion(b"not json"), Err(ParseError::BadResponse(_))));
     }
 
-    /// `tools/claude-shim.mjs` answers `/v1/messages` from `claude -p` instead of
-    /// the API, so the loop can run on a Claude Code subscription. It is only
-    /// useful if THIS parser accepts what it emits — and the shim is a separate
-    /// file in a different language, so nothing else would catch a drift between
-    /// the two. This is the contract, pinned as the exact bytes the shim writes.
-    ///
-    /// Zeroed usage is deliberate on the shim's side: `claude -p` reports no
-    /// token counts, and inventing them would make the wallet's numbers look
-    /// measured. The assertion is here so that stays a decision rather than
-    /// something that quietly starts failing.
+    /// `tools/claude-shim.mjs` answers `/v1/messages` from `claude -p`. It is a separate
+    /// file in another language, so this pins the exact bytes it writes to catch drift.
+    /// Zeroed usage is deliberate: `claude -p` reports no token counts, and inventing
+    /// them would make the wallet's numbers look measured.
     #[test]
     fn the_claude_code_shims_response_parses() {
         let shim = br#"{"type":"message","role":"assistant","model":"claude-haiku-4-5-20251001",
@@ -435,14 +386,10 @@ mod tests {
         assert_eq!(p.completion_tokens, 0);
     }
 
-    /// The shim's failure envelope must reach the driver as a RETRYABLE error.
-    ///
-    /// A crashed or timed-out `claude -p` is a transient local fault, so the shim
-    /// answers 529 — which `status_error` maps to `provider-unavailable` and the
-    /// driver retries. If it answered 400 or 500 the whole generation would die
-    /// on one slow subprocess. The status mapping lives in `lib.rs`; what this
-    /// pins is that the body shape is the error envelope the parser recognises,
-    /// so the message survives to the log rather than becoming "bad json".
+    /// The shim's failure envelope must reach the driver as a RETRYABLE error: a crashed
+    /// `claude -p` is transient, so the shim answers 529 (`provider-unavailable`). This
+    /// pins that the body is the error envelope the parser recognises, so the message
+    /// survives to the log rather than becoming "bad json".
     #[test]
     fn the_shims_error_envelope_is_recognised_as_an_api_error() {
         let shim = br#"{"type":"error","error":{"type":"overloaded_error",

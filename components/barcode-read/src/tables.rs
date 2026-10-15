@@ -1,10 +1,8 @@
 //! The published symbologies, as run-length widths.
 //!
-//! Every row here was GENERATED from `python-barcode`'s own charset tables and
-//! not typed: one transposed digit in a 106-row table is a decoder that reads
-//! most labels and silently misreads one, which is the failure this component
-//! exists not to have. They are fixed standards — EAN/UPC 1977, Code 128 1981 —
-//! so there is nothing to regenerate and no generator to keep.
+//! Every row was GENERATED from `python-barcode`'s charset tables, not typed: one
+//! transposed digit in a 106-row table is a decoder that silently misreads one label.
+//! They are fixed standards (EAN/UPC 1977, Code 128 1981), so nothing needs regenerating.
 
 /// EAN/UPC left-odd (L): 4 runs over 7 modules, SPACE first.
 pub const L: [[u16; 4]; 10] = [
@@ -34,9 +32,8 @@ pub const G: [[u16; 4]; 10] = [
     [2, 1, 1, 3],
 ];
 
-/// Right (R): BAR first. Same widths as L — only the colours differ, and a
-/// run sequence already alternates, so this table earns a name of its own
-/// only because reading `R` at a right-hand digit is clearer than `L`.
+/// Right (R): BAR first. Same widths as L (only the colours differ); named separately
+/// for readability.
 pub const R: [[u16; 4]; 10] = [
     [3, 2, 1, 1],
     [2, 2, 2, 1],

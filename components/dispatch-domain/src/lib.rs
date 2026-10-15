@@ -1,25 +1,14 @@
 //! `dispatch-domain` — service requests, scheduling and the day's manifest.
 //!
-//! ## What is scaffold and what is the goal
-//!
-//! This file is the ROUTER and no part may write it: it dispatches to `requests`,
-//! `schedule` and `manifest`, answers `/health` so the harness can tell "the
-//! component is not up" from "the component is wrong", and seeds a fixture. Three
-//! parts need it and none owns it, which is the shape a shared file has to have
-//! when three agents work at once — the alternative is a merge conflict on every
-//! run.
-//!
-//! `src/requests.rs`, `src/schedule.rs` and `src/manifest.rs` are the goal.
+//! This file is the ROUTER and no part may write it: it dispatches to `requests`, `schedule`
+//! and `manifest`, answers `/health` so the harness can tell "not up" from "wrong", and
+//! seeds a fixture. `src/requests.rs`, `src/schedule.rs` and `src/manifest.rs` are the goal;
 //! `CONTRACT.md` is what they must agree on.
 //!
-//! ## Why this goal exists next to `triage-domain`
-//!
-//! Same three-part shape, one deliberate difference. In triage each part imported a
-//! capability the others did not, so a part that reimplemented one failed alone, in
-//! its own gate. Here `geo:resolve` is imported by TWO parts — `schedule` picks the
-//! nearest engineer with it, `manifest` filters by radius with it — so a part that
-//! hand-rolls haversine can be internally consistent, pass its own gate, and
-//! disagree with its sibling. Only the composition sees it.
+//! Next to `triage-domain` because there each part imported a capability the others did not;
+//! here `geo:resolve` is imported by TWO parts (`schedule` picks the nearest engineer,
+//! `manifest` filters by radius), so a part that hand-rolls haversine can pass its own gate
+//! and disagree with its sibling. Only the composition sees it.
 
 #[allow(warnings)]
 mod bindings {
@@ -70,11 +59,8 @@ pub struct Reply {
     pub status: u16,
     /// The JSON body. `Value::Null` means no body at all — see `no_content`.
     pub json: Value,
-    /// A body the router must NOT serialise as JSON, with its content type.
-    ///
-    /// `text/csv` cannot be expressed as a `Value`: `Value::String` serialises to a
-    /// JSON string *literal*, surrounding quotes and `\"` escapes included, so a
-    /// CSV parser reads one quoted blob instead of columns.
+    /// A body the router must NOT serialise as JSON, with its content type: `Value::String`
+    /// serialises to a JSON string *literal*, so a CSV parser would read one quoted blob.
     pub raw: Option<(String, Vec<u8>)>,
 }
 
@@ -95,11 +81,8 @@ impl Reply {
     }
 }
 
-/// The path segments of a request and its query string.
-///
-/// No bearer here: this API has no auth, deliberately. The clinic already proves a
-/// part can be made to call `auth:identity` rather than hash a password, and
-/// repeating it would spend a part's whole budget on a lesson already recorded.
+/// The path segments of a request and its query string. No bearer: this API has no auth,
+/// deliberately (the clinic already proves a part can call `auth:identity`).
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
@@ -118,30 +101,18 @@ impl Route {
 
 use guestfmt::percent_decode as percent;
 
-/// Three requests written straight to the store, so a part can be judged before the
-/// part upstream of it exists.
+/// Three requests written straight to the store, so a part can be judged before the part
+/// upstream exists (all three are written concurrently by different agents, so the fixture
+/// writes the contract's document shape directly).
 ///
-/// This is the three-part problem in one function. `schedule` is judged on moving a
-/// request through its lifecycle and `manifest` on counting what the other two
-/// produced — both need requests, and neither may depend on `requests` being
-/// finished, because all three are written at the same time by different agents. So
-/// the fixture writes the contract's document shape directly.
+///   * the first two are `new` with no engineer: assigning is `schedule`'s job, and
+///     pre-filling would let a part that never assigns pass its own gate;
+///   * the THIRD is pre-assigned because `manifest` must report `by_engineer` and
+///     `total_distance_m`, and the only other way to get an assigned request is `schedule`'s
+///     route, a stub while `manifest` is judged alone. Its `distance_m` is a fixed number the
+///     gate only SUMS.
 ///
-/// Two decisions in here, and both are scaffold saying what it is:
-///
-///   * the first two are `new` with no engineer, because assigning is `schedule`'s
-///     job and a fixture that pre-filled every one would let a part that never
-///     assigns anything pass its own gate;
-///   * the THIRD is pre-assigned, because `manifest` has to report `by_engineer` and
-///     `total_distance_m`, and the only other way to get an assigned request is
-///     `POST /api/requests/{id}/assign` — which belongs to `schedule`, is a stub
-///     while `manifest` is judged alone, and would have the gate blame `manifest`
-///     for a route it does not own. Its `distance_m` is a fixed number the gate
-///     treats as opaque and only ever SUMS — asserting it is geometrically right
-///     would be this fixture testing `geo`, which has its own tests.
-///
-/// The first title carries a comma, for the same reason triage's does: `manifest`'s
-/// CSV has to quote it or the row loses a column.
+/// The first title carries a comma so `manifest`'s CSV has to quote it.
 fn seed() -> Reply {
     let mut ids = Vec::new();
     for (title, notes, lat, lon, state, engineer, distance_m) in [
@@ -201,15 +172,9 @@ impl Guest for Component {
         let Reply { status, json: payload, raw } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
             ["test", "seed"] => seed(),
-            // The stored document, straight out of the store. Scaffold, and it says
-            // what it is: a part must be judgeable on what it WROTE without
-            // depending on the part that owns the route for reading it back.
-            //
-            // `schedule`'s gate needs exactly this. The contract makes it update the
-            // request document as well as the fsm instance, and the only other way
-            // to see the document is `GET /api/requests/{id}` — which belongs to
-            // `requests`, is a stub while `schedule` is judged alone, and would
-            // answer `not_implemented` to a gate that then blamed `schedule`.
+            // The stored document, straight out of the store. Scaffold: `schedule`'s gate
+            // must see what it WROTE without depending on `requests`' `GET /api/requests/{id}`,
+            // a stub that would make the gate blame `schedule`.
             ["test", "request", id] => match records::get("requests", id) {
                 Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
                 Err(_) => Reply::err(404, "not_found"),

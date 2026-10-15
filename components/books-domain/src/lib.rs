@@ -116,9 +116,6 @@ fn usage() -> Outcome {
     )
 }
 
-// ---- money ------------------------------------------------------------------
-
-/// Format integer minor units as a signed dollar string.
 fn money(cents: i64) -> String {
     let neg = cents < 0;
     let a = cents.abs();
@@ -133,8 +130,6 @@ fn natural(acc_type: &str, net: i64) -> i64 {
         _ => -net,
     }
 }
-
-// ---- auth -------------------------------------------------------------------
 
 guestio::guest_p3_bearer!();
 guestio::guest_p3_respond!();
@@ -194,8 +189,6 @@ fn logout(request: &Request) -> Outcome {
     }
 }
 
-// ---- chart of accounts ------------------------------------------------------
-
 fn owned_accounts(subject: &str) -> Vec<Value> {
     records::find_by(ACCOUNTS, "owner", &json!(subject).to_string())
         .unwrap_or_default()
@@ -204,7 +197,6 @@ fn owned_accounts(subject: &str) -> Vec<Value> {
         .collect()
 }
 
-/// code -> (name, type) for the owner's chart.
 fn account_meta(subject: &str) -> BTreeMap<String, (String, String)> {
     owned_accounts(subject)
         .into_iter()
@@ -262,8 +254,6 @@ fn list_accounts(request: &Request) -> Outcome {
     Outcome::Json(200, json!({ "items": items }).to_string())
 }
 
-// ---- journal ----------------------------------------------------------------
-
 fn parse_side(s: &str) -> Option<ledger::Side> {
     match s {
         "debit" => Some(ledger::Side::Debit),
@@ -272,7 +262,6 @@ fn parse_side(s: &str) -> Option<ledger::Side> {
     }
 }
 
-/// Build a `ledger::Entry` from a stored/posted entry's JSON.
 fn to_ledger(id: &str, v: &Value) -> Option<ledger::Entry> {
     let mut lines = Vec::new();
     for l in v["lines"].as_array()? {
@@ -313,7 +302,6 @@ async fn create_entry(request: Request) -> Outcome {
     if date.is_empty() {
         return Outcome::Err(422, "date required (YYYY-MM-DD)".into());
     }
-    // build + validate the double-entry (the invariant lives in ledger:doubleentry).
     let le = match to_ledger("", &b) {
         Some(e) => e,
         None => {
@@ -323,7 +311,6 @@ async fn create_entry(request: Request) -> Outcome {
             )
         }
     };
-    // every account must exist in the owner's chart.
     let meta = account_meta(&p.subject);
     for l in &le.lines {
         if !meta.contains_key(&l.account) {
@@ -373,8 +360,6 @@ fn list_entries(request: &Request) -> Outcome {
     });
     Outcome::Json(200, json!({ "items": items }).to_string())
 }
-
-// ---- reports (derived from the trial balance) -------------------------------
 
 /// An enriched trial-balance line.
 struct Row {
@@ -634,8 +619,6 @@ fn trunc(s: &str, n: usize) -> String {
     }
 }
 
-// ---- demo seed --------------------------------------------------------------
-
 fn seed_demo(subject: &str) {
     let chart = [
         ("1000", "Cash", "asset"),
@@ -665,8 +648,6 @@ fn seed_demo(subject: &str) {
     }
 }
 
-// ---- http plumbing ----------------------------------------------------------
-
 fn store_err(e: records::StoreError) -> Outcome {
     match e {
         records::StoreError::NotFound => Outcome::Err(404, "not_found".into()),
@@ -685,18 +666,8 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
+/// guest traps and the caller just sees a closed connection.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

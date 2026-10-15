@@ -1,14 +1,9 @@
 //! abtest:app — an A/B/n experiment console over composed contracts.
 //!
-//! Assignment is `experiment:assign` (sticky, weighted, named variants).
-//! Attribution is `metrics:collect`: two counters per arm —
-//!   `exp:{name}:{tenant}:{arm}:exposed`  and  `…:converted`
-//! whose ratio is the conversion rate. Every assignment / exposure / conversion
-//! publishes on `event:bus` (`abtest`), and `GET /api/stream` sets its HTTP
-//! response early then LOOPS, writing each event as an SSE `data:` frame while
-//! the host streams to the browser — same server-push trick as pulse. The
-//! console can then show two DIFFERENT subjects landing in different arms live,
-//! and the per-arm conversion bars pulling apart as conversions arrive.
+//! Assignment is `experiment:assign`; per-arm counters in `metrics:collect`
+//! (`exp:{name}:{tenant}:{arm}:exposed` / `…:converted`) give the conversion rate.
+//! Every event publishes on `event:bus` (`abtest`); `GET /api/stream` replies
+//! early then loops, writing each event as an SSE `data:` frame.
 
 #[allow(warnings)]
 mod bindings {
@@ -118,15 +113,11 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- metric key scheme -------------------------------------------------------
-
 /// `exp:{name}:{tenant}:{arm}:{kind}` — kind is "exposed" | "converted". Tenant
 /// "" is kept literal (empty segment) so the global experiment has its own keys.
 fn metric_key(name: &str, tenant: &str, arm: &str, kind: &str) -> String {
     format!("exp:{name}:{tenant}:{arm}:{kind}")
 }
-
-// ---- experiment definition ---------------------------------------------------
 
 async fn set_experiment(request: Request, name: &str) -> Outcome {
     let body = match parse_body(request).await {
@@ -174,8 +165,6 @@ fn describe(path: &str, name: &str) -> Outcome {
     }
 }
 
-// ---- assignment --------------------------------------------------------------
-
 fn assign_one(path: &str) -> Outcome {
     let name = query_str(path, "exp").unwrap_or_default();
     let tenant = query_str(path, "tenant").unwrap_or_default();
@@ -213,8 +202,6 @@ fn cohort(path: &str) -> Outcome {
     }
 }
 
-// ---- attribution -------------------------------------------------------------
-
 /// Record an exposure ("exposed") or conversion ("converted") for a subject.
 /// Assigns the subject first (sticky) so the count lands on the right arm.
 async fn record(request: Request, kind: &str) -> Outcome {
@@ -245,7 +232,6 @@ async fn record(request: Request, kind: &str) -> Outcome {
     }
 }
 
-/// Per-variant exposed / converted / rate for an experiment.
 fn results(path: &str) -> Outcome {
     let name = query_str(path, "exp").unwrap_or_default();
     let tenant = query_str(path, "tenant").unwrap_or_default();
@@ -269,8 +255,6 @@ fn results(path: &str) -> Outcome {
     }
     Outcome::Json(200, json!({ "exp": name, "arms": arms }).to_string())
 }
-
-// ---- events + SSE ------------------------------------------------------------
 
 fn publish(kind: &str, exp: &str, tenant: &str, subject: &str, arm: &str) {
     let frame = json!({
@@ -345,8 +329,6 @@ fn current_seq() -> i64 {
         .unwrap_or(-1)
 }
 
-// ---- http plumbing -----------------------------------------------------------
-
 fn assign_err(e: exp::AssignError) -> Outcome {
     match e {
         exp::AssignError::NotFound => Outcome::Err(404, "experiment not found".into()),
@@ -370,18 +352,8 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
+/// guest traps and the caller just sees a closed connection.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

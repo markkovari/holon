@@ -117,7 +117,6 @@ pub fn verify(token: &str) -> Result<Claims, AuthError> {
         return Err(AuthError::InvalidToken(format!("algorithm {} not allowed", header.alg)));
     }
 
-    // 2. Verify the signature with the pinned algorithm.
     let signing_input = format!("{h}.{p}");
     match header.alg.as_str() {
         "RS256" => verify_rs256(&payload.iss, header.kid.as_deref(), &signing_input, &signature)?,
@@ -126,15 +125,13 @@ pub fn verify(token: &str) -> Result<Claims, AuthError> {
         other => return Err(AuthError::InvalidToken(format!("unsupported alg {other}"))),
     }
 
-    // 3. Validate the claims (iss / aud / exp / nbf).
     validate_claims(&payload, now, &policy).map_err(ClaimError::into_auth)?;
 
     Ok(payload_to_claims(payload))
 }
 
-/// Reason a token's claims were rejected. A bindings-free enum so claim
-/// validation is pure and host-unit-testable (the wasm `AuthError` type only
-/// exists for the wasm target). Mapped to `AuthError` at the call site.
+/// Reason a token's claims were rejected; bindings-free so claim validation is
+/// host-unit-testable. Mapped to `AuthError` at the call site.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ClaimError {
     NotYetValid,
@@ -156,9 +153,9 @@ impl ClaimError {
     }
 }
 
-/// Pure claim validation — no I/O, no bindings types — so it is unit-tested
-/// directly (see tests below). Checks, in order: not-before, expiry, issuer,
-/// audience. Time checks allow `clock_skew` seconds of tolerance.
+/// Pure claim validation (no I/O, no bindings types) so it is unit-tested directly.
+/// Checks, in order: not-before, expiry, issuer, audience; time checks allow
+/// `clock_skew` seconds of tolerance.
 fn validate_claims(p: &Payload, now: u64, policy: &Policy) -> Result<(), ClaimError> {
     let skew = policy.clock_skew;
 
@@ -222,7 +219,6 @@ mod tests {
 
     #[test]
     fn allows_expiry_within_skew() {
-        // expired 30s ago, skew 60 -> still valid.
         let p = payload("https://idp", Aud::None, NOW - 30, 0);
         assert!(validate_claims(&p, NOW, &policy("", "")).is_ok());
     }
@@ -262,7 +258,6 @@ mod tests {
 
     #[test]
     fn empty_policy_skips_iss_aud() {
-        // no expected iss/aud configured -> those checks are disabled.
         let p = payload("anything", Aud::None, NOW + 60, 0);
         assert!(validate_claims(&p, NOW, &policy("", "")).is_ok());
     }
@@ -288,8 +283,6 @@ fn payload_to_claims(p: Payload) -> Claims {
         .collect();
     Claims { iss: p.iss, sub: p.sub, aud: p.aud.into_vec(), exp: p.exp, iat: p.iat, scopes, raw }
 }
-
-// ---- signature verification --------------------------------------------
 
 fn verify_rs256(
     issuer: &str,

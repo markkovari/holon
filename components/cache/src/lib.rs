@@ -53,7 +53,6 @@ fn raw_get(bucket: &store::Bucket, k: &str) -> Result<Option<(u64, Vec<u8>)>, Ca
     }
 }
 
-/// Fresh value for `key`, deleting it lazily if expired.
 fn fresh(key: &str) -> Result<Option<Vec<u8>>, CacheError> {
     let bucket = open()?;
     let k = ckey(key);
@@ -106,7 +105,6 @@ impl Guest for Component {
         let want = ckey(&prefix); // namespaced prefix to match stored keys
         let mut removed = 0u32;
         let mut cursor: Option<u64> = None;
-        // Page through all keys; delete those under the namespaced prefix.
         loop {
             let page = bucket
                 .list_keys(cursor)
@@ -134,14 +132,10 @@ impl Guest for Component {
         }
     }
 
-    // ---- strategies ----
-
     fn get_through(key: String, ttl_seconds: u64) -> Result<Option<Vec<u8>>, CacheError> {
-        // hit?
         if let Some(v) = fresh(&key)? {
             return Ok(Some(v));
         }
-        // miss -> load from the backing source, then populate.
         match source::load(&key).map_err(CacheError::SourceFailed)? {
             Some(v) => {
                 Self::set(key, v.clone(), ttl_seconds)?;
@@ -180,10 +174,8 @@ impl Guest for Component {
                 if !stored.starts_with(WB_PREFIX) {
                     continue;
                 }
-                // recover the original cache key from the marker value.
                 let Ok(Some(raw)) = bucket.get(stored) else { continue };
                 let Ok(orig) = String::from_utf8(raw) else { continue };
-                // current cached value for that key (skip if expired/gone).
                 if let Some(val) = fresh(&orig)? {
                     // On failure, the marker is left for the next flush to retry.
                     if sink::store(&orig, &val).is_ok() {

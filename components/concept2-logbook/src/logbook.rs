@@ -53,8 +53,6 @@ pub fn workout_path(profile: &str, id: &str) -> String {
     format!("/profile/{profile}/log/{id}")
 }
 
-// ---- what a request asks for ----------------------------------------------------------------
-
 /// What to do with a request, decided before anything is fetched.
 #[derive(Debug, PartialEq)]
 pub enum Plan {
@@ -117,8 +115,6 @@ pub fn redirect_target(location: &str) -> Option<String> {
         _ => None, // `log.concept2.com.evil.example`, `log.concept2.com:444`
     }
 }
-
-// ---- text -----------------------------------------------------------------------------------
 
 /// Python's `str.isspace`, which is what `\s` and `.strip()` use on text.
 fn is_space(c: char) -> bool {
@@ -280,8 +276,6 @@ pub fn text(h: &str) -> String {
     out
 }
 
-// ---- the list page --------------------------------------------------------------------------
-
 /// Each `<tr …>…</tr>`: `<tr` then a space or `>` (not a newline, as in the script), up to the
 /// first `</tr>`.
 fn rows(h: &str) -> Vec<&str> {
@@ -362,8 +356,6 @@ pub fn listing(html: &str, limit: usize) -> String {
     out.truncate(limit);
     out.join("\n")
 }
-
-// ---- the workout page -----------------------------------------------------------------------
 
 /// The maximal run of `set` characters that is followed by `suffix`: `(\d+) Heart Rate`,
 /// `([\d:.]+) Pace` and friends. The first run that is followed by the suffix wins.

@@ -1,64 +1,43 @@
 //! The decoder: PNG bytes in, digits out. Pure compute, no host imports.
 //!
-//! ## Why a scanline decoder and not a library
+//! Why a scanline decoder and not a library: the bars carry no information vertically,
+//! so one horizontal line of pixels suffices, not an image pipeline. That is what lets
+//! this fit in `wasm32-wasip2` with nothing behind it.
 //!
-//! A linear barcode is one-dimensional. The bars carry no information vertically
-//! — the height exists so that a scanner sweeping at an angle still crosses the
-//! whole symbol — so a decoder needs one horizontal line of pixels, not an image
-//! pipeline. That is what makes this fit in `wasm32-wasip2` with nothing behind
-//! it: no host, no dataset, no model. Bytes in, digits out, the same answer
-//! every time.
-//!
-//! ## What stops it returning a plausible constant
-//!
-//! Three of this repository's contract-only capabilities shipped one
-//! (`"mocked_clipboard_text_123"`), and `docs/CURRENT.md` records that as worse
-//! than returning nothing, because no caller could tell it from something that
-//! works. Two things here make that failure impossible to ship quietly:
-//!
-//!   * **The check digit.** Every EAN/UPC and Code 128 result is verified
-//!     against its own checksum before it is returned. A misread is far more
-//!     likely to fail that than to pass it, so a decoder that guesses answers
-//!     `err`, not a number.
-//!   * **`not-a-barcode.png`.** A blank image is a fixture, and the gate asserts
-//!     it decodes to nothing. A constant-returner fails on the first test.
+//! What stops it returning a plausible constant (three contract-only capabilities
+//! shipped one; `docs/CURRENT.md` calls that worse than nothing):
+//!   * **The check digit.** Every EAN/UPC and Code 128 result is verified against its
+//!     checksum, so a decoder that guesses answers `err`, not a number.
+//!   * **`not-a-barcode.png`.** A blank-image fixture the gate asserts decodes to nothing.
 
 use crate::tables::{C128, C128_STOP, G, L, PARITY, R};
 
-/// What was read, and under which symbology.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Symbol {
     pub text: String,
     pub symbology: String,
 }
 
-/// A run of one colour, in pixels.
 #[derive(Clone, Copy)]
 struct Run {
     black: bool,
     len: u16,
 }
 
-/// How far a measured run may sit from its ideal width before the match is
-/// refused, as a fraction of one module. 0.7 is ZXing's figure and the reason it
-/// is not tighter is print gain: ink spreads, so bars read wide and spaces read
-/// narrow by a consistent amount that this has to absorb without absorbing a
-/// genuinely different pattern.
+/// How far a measured run may sit from its ideal width (as a fraction of a module)
+/// before the match is refused. 0.7 is ZXing's figure; not tighter because print gain
+/// makes bars read wide and spaces narrow by a consistent amount.
 const MAX_VARIANCE: f32 = 0.7;
 
-/// Scanlines to try per orientation. The bars carry nothing vertically, so any
-/// row that crosses the whole symbol decodes — but a row through a thumb, a
-/// crease or the human-readable digits underneath decodes nothing, which is why
-/// this is not 1.
+/// Scanlines to try per orientation: a row through a thumb, a crease or the
+/// human-readable digits decodes nothing, so not 1.
 const SCANLINES: usize = 24;
 
-/// Decode the first barcode in a PNG image.
 pub fn decode_png(bytes: &[u8]) -> Result<Symbol, String> {
     let (gray, w, h) = to_gray(bytes)?;
     decode_gray(&gray, w, h).ok_or_else(|| "no barcode found".to_string())
 }
 
-/// PNG bytes to an 8-bit grayscale buffer.
 fn to_gray(bytes: &[u8]) -> Result<(Vec<u8>, usize, usize), String> {
     let decoder = png::Decoder::new(bytes);
     let mut reader = decoder.read_info().map_err(|e| format!("not a readable PNG: {e}"))?;
@@ -66,8 +45,7 @@ fn to_gray(bytes: &[u8]) -> Result<(Vec<u8>, usize, usize), String> {
     let info = reader.next_frame(&mut buf).map_err(|e| format!("truncated PNG: {e}"))?;
     let (w, h) = (info.width as usize, info.height as usize);
     let px = info.color_type.samples();
-    // 16-bit channels arrive big-endian; taking the high byte is the whole of
-    // the conversion, and a barcode does not need the low one.
+    // 16-bit channels are big-endian; the high byte is all a barcode needs.
     let step = if info.bit_depth == png::BitDepth::Sixteen { 2 } else { 1 };
     let mut gray = Vec::with_capacity(w * h);
     for i in 0..w * h {
@@ -94,10 +72,8 @@ pub fn decode_gray(gray: &[u8], w: usize, h: usize) -> Option<Symbol> {
     if w < 24 || h == 0 || gray.len() < w * h {
         return None;
     }
-    // Rows first, then columns — which is 90 degrees, and 180 comes free because
-    // each line is also read backwards. That covers a label held sideways or
-    // upside down; a label held at 30 degrees is NOT covered, and the ceiling is
-    // named in the crate docs rather than hidden here.
+    // Rows then columns (90 degrees); 180 is free since each line is also read
+    // backwards. A label held at 30 degrees is NOT covered (see the crate docs).
     for by_column in [false, true] {
         let (across, along) = if by_column { (h, w) } else { (w, h) };
         for i in 0..SCANLINES {
@@ -117,7 +93,6 @@ pub fn decode_gray(gray: &[u8], w: usize, h: usize) -> Option<Symbol> {
     None
 }
 
-/// One line of pixels, both ways round.
 fn decode_line(line: &[u8]) -> Option<Symbol> {
     let mut runs = to_runs(line)?;
     if let Some(found) = decode_runs(&runs) {
@@ -127,15 +102,12 @@ fn decode_line(line: &[u8]) -> Option<Symbol> {
     decode_runs(&runs)
 }
 
-/// Pixels to runs of black and white.
-///
-/// The threshold is the midpoint of this line's own range, not a global or fixed
-/// one: a photographed label is brighter at one end than the other, and a single
-/// threshold for the whole image turns the dim end into one long black run.
+/// Pixels to runs of black and white. The threshold is the midpoint of this line's own
+/// range: a photographed label is brighter at one end, and one global threshold turns
+/// the dim end into one long black run.
 fn to_runs(line: &[u8]) -> Option<Vec<Run>> {
     let (min, max) = line.iter().fold((255u8, 0u8), |(lo, hi), &v| (lo.min(v), hi.max(v)));
-    // A line with no contrast is blank paper, and thresholding it produces one
-    // run of noise that the pattern matcher then works hard to reject.
+    // No contrast is blank paper; thresholding it yields noise the matcher works hard to reject.
     if max - min < 40 {
         return None;
     }
@@ -151,7 +123,6 @@ fn to_runs(line: &[u8]) -> Option<Vec<Run>> {
     Some(runs)
 }
 
-/// Every symbology, at every position a symbol could start.
 fn decode_runs(runs: &[Run]) -> Option<Symbol> {
     for start in 0..runs.len() {
         if !runs[start].black {
@@ -164,12 +135,9 @@ fn decode_runs(runs: &[Run]) -> Option<Symbol> {
     None
 }
 
-/// How far `widths` sits from `pattern`, in modules, or `None` if any single run
-/// is further out than `MAX_VARIANCE`.
-///
-/// The module width is derived from THIS symbol's own total rather than the
-/// image's, which is what lets one line decode a label that is slightly wider at
-/// one end than the other.
+/// How far `widths` sits from `pattern`, in modules, or `None` if any run is further out
+/// than `MAX_VARIANCE`. The module width comes from THIS symbol's own total, so one line
+/// can decode a label slightly wider at one end.
 fn variance(widths: &[u16], pattern: &[u16]) -> Option<f32> {
     let total: u32 = widths.iter().map(|&w| w as u32).sum();
     let modules: u32 = pattern.iter().map(|&w| w as u32).sum();
@@ -188,7 +156,6 @@ fn variance(widths: &[u16], pattern: &[u16]) -> Option<f32> {
     Some(score)
 }
 
-/// The best-matching digit in one of the three EAN alphabets.
 fn digit(widths: &[u16], table: &[[u16; 4]; 10]) -> Option<usize> {
     let mut best: Option<(usize, f32)> = None;
     for (d, pattern) in table.iter().enumerate() {
@@ -205,7 +172,6 @@ fn widths_at(runs: &[Run], at: usize, n: usize) -> Option<Vec<u16>> {
     runs.get(at..at + n).map(|r| r.iter().map(|r| r.len).collect())
 }
 
-/// A guard: `n` runs of one module each, starting with a bar.
 fn guard(runs: &[Run], at: usize, n: usize) -> bool {
     let Some(w) = widths_at(runs, at, n) else { return false };
     let ones = vec![1u16; n];
@@ -224,9 +190,8 @@ fn decode_ean(runs: &[Run], start: usize) -> Option<Symbol> {
         let middle_at = left_at + half * 4;
         let right_at = middle_at + 5;
         let end_at = right_at + half * 4;
-        // The middle guard is space-bar-space-bar-space, so it starts on a
-        // space, and `guard` wants a bar — check its widths and its colour
-        // separately rather than teach `guard` a second shape.
+        // The middle guard starts on a space and `guard` wants a bar, so check its
+        // widths and colour separately.
         let Some(mid) = widths_at(runs, middle_at, 5) else { continue };
         if runs[middle_at].black || variance(&mid, &[1, 1, 1, 1, 1]).is_none() {
             continue;
@@ -278,7 +243,6 @@ fn decode_ean(runs: &[Run], start: usize) -> Option<Symbol> {
             continue;
         }
         let text = if half == 6 {
-            // The leading digit is the parity pattern of the left six.
             let lead = PARITY.iter().position(|&p| p == parity)?;
             let mut s = lead.to_string();
             s.extend(digits.iter().map(|d| char::from_digit(*d as u32, 10).unwrap()));
@@ -294,15 +258,9 @@ fn decode_ean(runs: &[Run], start: usize) -> Option<Symbol> {
         if !checksum_ok(&text) {
             continue;
         }
-        // A UPC-A and an EAN-13 with a leading zero are the SAME BARS. Nothing
-        // in the image distinguishes them, so the symbology is reported and the
-        // text is not shortened: a caller keying a catalogue on the twelve
-        // digits printed on an American box strips the zero itself, and one
-        // that wants the GTIN-13 already has it.
-        //
-        // Returning twelve here was tried and is wrong — it silently truncated
-        // `0166131860910`, a perfectly ordinary EAN-13 that begins with 0, in a
-        // spot check of eighteen codes the decoder had never seen.
+        // A UPC-A and an EAN-13 with a leading zero are the SAME BARS, so the symbology
+        // is reported and the text is not shortened. Returning twelve digits silently
+        // truncated `0166131860910`, an ordinary EAN-13 that begins with 0.
         let symbology = match (half, text.starts_with('0')) {
             (6, true) => "upc-a",
             (6, false) => "ean-13",
@@ -313,7 +271,6 @@ fn decode_ean(runs: &[Run], start: usize) -> Option<Symbol> {
     None
 }
 
-/// The modulo-10 check digit every EAN and UPC carries as its last digit.
 fn checksum_ok(text: &str) -> bool {
     let d: Vec<u32> = text.chars().filter_map(|c| c.to_digit(10)).collect();
     if d.len() != text.len() || d.len() < 8 {
@@ -327,14 +284,10 @@ fn checksum_ok(text: &str) -> bool {
     (10 - sum % 10) % 10 == check[0]
 }
 
-/// Code 128 — the symbology on shelf and price labels, and the only one here
-/// that carries letters.
-///
-/// Read whole and then decoded, rather than decoded as it is read. The check
-/// symbol sits immediately before the stop and is indistinguishable from data
-/// until the stop arrives, so a streaming decoder has to append it and take it
-/// back — and taking it back means reconstructing its VALUE from the text it
-/// already produced, across mode shifts, which is a second decoder to get wrong.
+/// Code 128 — the symbology on shelf and price labels, and the only one here that
+/// carries letters. Read whole, then decoded: the check symbol is indistinguishable
+/// from data until the stop arrives, and taking it back from a streaming decode means
+/// reconstructing its VALUE across mode shifts — a second decoder to get wrong.
 fn decode_code128(runs: &[Run], start: usize) -> Option<Symbol> {
     let start_value = best_c128(&widths_at(runs, start, 6)?)?;
     // 103, 104, 105 are Start A, B and C. Any other value means this is the
@@ -403,7 +356,6 @@ fn decode_code128(runs: &[Run], start: usize) -> Option<Symbol> {
     Some(Symbol { text, symbology: "code-128".into() })
 }
 
-/// The Code 128 symbol value these six runs are closest to.
 fn best_c128(widths: &[u16]) -> Option<u8> {
     let mut best: Option<(u8, f32)> = None;
     for (v, pattern) in C128.iter().enumerate() {

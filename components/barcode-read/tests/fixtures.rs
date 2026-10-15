@@ -26,10 +26,8 @@ fn reads(name: &str) -> (String, String) {
 fn the_four_symbologies_a_shop_meets() {
     assert_eq!(reads("ean13.png"), ("4006381333931".into(), "ean-13".into()));
     assert_eq!(reads("ean8.png"), ("96385074".into(), "ean-8".into()));
-    // Thirteen digits, and the symbology says UPC-A. The two are the same bars
-    // — nothing in the image tells them apart — so the name is reported and the
-    // text is not shortened. A caller keying on the twelve digits printed on an
-    // American box strips the leading zero itself.
+    // Thirteen digits reported as UPC-A: the same bars as the EAN-13, so the name is
+    // reported and the text is not shortened.
     assert_eq!(reads("upca.png"), ("0036000291452".into(), "upc-a".into()));
     assert_eq!(reads("code128.png"), ("SHELF-A17".into(), "code-128".into()));
 }
@@ -46,13 +44,9 @@ fn a_label_that_is_not_held_straight_still_reads() {
     assert_eq!(reads("ean13-thumb.png").0, "4006381333931");
 }
 
-/// Three codes chosen at random rather than chosen to be readable.
-///
-/// The four above are the textbook examples every barcode article uses, and a
-/// decoder can be tuned until exactly those work. These were generated from a
-/// seeded random string, and the first run of a wider version of this check
-/// caught a real bug: `0166131860910` came back as `166131860910`, because a
-/// leading zero was being stripped as if every such code were a UPC-A.
+/// Three codes chosen at random, not to be readable: the textbook examples can be tuned
+/// for. A wider version of this check caught `0166131860910` coming back as
+/// `166131860910` (a leading zero stripped as if every such code were a UPC-A).
 #[test]
 fn codes_that_were_not_picked_to_be_easy() {
     assert_eq!(reads("ean13-leading-zero.png"), ("0166131860910".into(), "upc-a".into()));
@@ -73,11 +67,8 @@ fn nothing_is_not_something() {
 
 #[test]
 fn a_check_digit_is_actually_checked() {
-    // The EAN-13 fixture with its last digit changed is a valid-looking code
-    // that fails its own checksum. Rather than render one (which would need the
-    // encoder this test deliberately does not use), assert the property
-    // directly: every fixture that decodes carries a correct check digit, and
-    // the decoder is what enforces it.
+    // A last-digit-changed fixture would need the encoder this test avoids, so assert the
+    // property: every fixture that decodes carries a correct check digit.
     for name in ["ean13.png", "ean8.png", "upca.png"] {
         let (text, _) = reads(name);
         let d: Vec<u32> = text.chars().map(|c| c.to_digit(10).unwrap()).collect();

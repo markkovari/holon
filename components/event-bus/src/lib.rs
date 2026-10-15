@@ -39,8 +39,6 @@ struct Component;
 const BUCKET: &str = "default";
 const TOPICS_KEY: &str = "eb_topics";
 
-// ---- helpers ------------------------------------------------------------
-
 fn now() -> u64 {
     wall_clock::now().seconds
 }
@@ -100,8 +98,6 @@ fn set_u64(bucket: &kv::Bucket, key: &str, v: u64) -> Result<(), BusError> {
         .map_err(|e| BusError::BackendUnavailable(format!("set {key}: {e:?}")))
 }
 
-// ---- topic index --------------------------------------------------------
-
 fn topics_read(bucket: &kv::Bucket) -> Result<Vec<String>, BusError> {
     match bucket.get(TOPICS_KEY) {
         Ok(Some(bytes)) => {
@@ -125,9 +121,6 @@ fn topics_add(bucket: &kv::Bucket, topic: &str) -> Result<(), BusError> {
     Ok(())
 }
 
-// ---- event (de)serialization --------------------------------------------
-// One line: `at\tb64(payload)`.
-
 fn parse_event(topic: &str, seq: u64, s: &str) -> Result<Event, BusError> {
     let mut p = s.splitn(2, '\t');
     let at = p
@@ -139,8 +132,6 @@ fn parse_event(topic: &str, seq: u64, s: &str) -> Result<Event, BusError> {
         .map_err(|_| BusError::BackendUnavailable("corrupt event: payload".into()))?;
     Ok(Event { id: seq.to_string(), topic: topic.to_string(), payload, at })
 }
-
-// ---- guest --------------------------------------------------------------
 
 impl Guest for Component {
     fn publish(topic: String, payload: Vec<u8>) -> Result<String, BusError> {

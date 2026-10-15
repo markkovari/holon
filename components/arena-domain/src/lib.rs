@@ -1,14 +1,10 @@
 //! arena:app — multiplayer Connect Four over composed contracts.
 //!
-//! One `record:store` row per game holds the board (a 42-char string, index
-//! `row*7 + col`, row 0 = bottom), the two seats + their secret tokens, whose
-//! turn it is, and the outcome. Every move is validated server-side — the game
-//! is live, the caller's token owns the seat whose turn it is, the column has
-//! room — then applied and win/draw-checked, all under the store's optimistic
-//! revision check so two racing moves resolve to exactly one. `GET /events`
-//! streams the public board (tokens redacted) to both players and any spectators
-//! (the same SSE loop as pulse). Rules + interactive authoritative state; the
-//! only bespoke logic is Connect Four itself.
+//! One `record:store` row per game holds the board (42 chars, index `row*7 + col`, row 0
+//! = bottom), the two seats + secret tokens, whose turn it is, and the outcome. Moves are
+//! validated server-side and applied under the store's optimistic revision check, so two
+//! racing moves resolve to exactly one. `GET /events` streams the public board (tokens
+//! redacted) via the same SSE loop as pulse.
 
 #[allow(warnings)]
 mod bindings {
@@ -109,8 +105,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- Connect Four rules -----------------------------------------------------
-
 fn empty_board() -> String {
     ".".repeat(COLS * ROWS)
 }
@@ -129,7 +123,6 @@ fn winning_line(board: &[u8], r: usize, c: usize, color: u8) -> Option<Vec<usize
     // (dr, dc) for the four axes: horizontal, vertical, both diagonals.
     for (dr, dc) in [(0i32, 1i32), (1, 0), (1, 1), (1, -1)] {
         let mut line = vec![idx(r, c)];
-        // extend both directions along the axis
         for sign in [1i32, -1] {
             let (mut rr, mut cc) = (r as i32 + dr * sign, c as i32 + dc * sign);
             while rr >= 0
@@ -154,8 +147,6 @@ fn winning_line(board: &[u8], r: usize, c: usize, color: u8) -> Option<Vec<usize
 fn board_full(board: &[u8]) -> bool {
     !board.contains(&b'.')
 }
-
-// ---- game records -----------------------------------------------------------
 
 fn load(id: &str) -> Option<(Value, u64)> {
     let e = records::get(GAMES, id).ok()?;
@@ -293,7 +284,6 @@ async fn make_move(request: Request, id: &str) -> Outcome {
     if d["status"] != "active" {
         return Outcome::Err(409, "game is not active".into());
     }
-    // token -> seat
     let seat = if token == token_of(&d, "red") {
         "R"
     } else if token == token_of(&d, "yellow") {
@@ -315,7 +305,6 @@ async fn make_move(request: Request, id: &str) -> Outcome {
     };
     board[idx(row, col)] = color;
 
-    // outcome
     if let Some(line) = winning_line(&board, row, col, color) {
         d["status"] = json!("finished");
         d["winner"] = json!(seat);
@@ -338,8 +327,6 @@ async fn make_move(request: Request, id: &str) -> Outcome {
         Err(e) => store_err(e),
     }
 }
-
-// ---- SSE --------------------------------------------------------------------
 
 fn stream_events(id: &str, path: &str) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
@@ -377,8 +364,6 @@ fn stream_events(id: &str, path: &str) -> Result<Response, ErrorCode> {
     Ok(response)
 }
 
-// ---- http plumbing -----------------------------------------------------------
-
 fn store_err(e: records::StoreError) -> Outcome {
     match e {
         records::StoreError::NotFound => Outcome::Err(404, "not_found".into()),
@@ -397,18 +382,8 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
+/// guest traps and the caller just sees a closed connection.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

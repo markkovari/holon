@@ -81,8 +81,6 @@ impl Reg {
     }
 }
 
-// ---- helpers ------------------------------------------------------------
-
 fn parse_state(s: &str, what: &str) -> Result<State, CrdtError> {
     let v: Value =
         serde_json::from_str(s).map_err(|e| CrdtError::InvalidJson(format!("{what}: {e}")))?;
@@ -102,7 +100,6 @@ fn canon(v: &Value) -> String {
     serde_json::to_string(v).unwrap_or_default()
 }
 
-/// Per-replica max of two grow-only counters (the G-counter join).
 fn max_merge(mut a: BTreeMap<String, u64>, b: BTreeMap<String, u64>) -> BTreeMap<String, u64> {
     for (k, v) in b {
         let e = a.entry(k).or_insert(0);
@@ -112,8 +109,6 @@ fn max_merge(mut a: BTreeMap<String, u64>, b: BTreeMap<String, u64>) -> BTreeMap
     }
     a
 }
-
-// ---- core join-semilattice ops (pure, binding-free, unit-tested) --------
 
 /// The CvRDT join: least-upper-bound of two same-type states. `None` means the
 /// two states are different CRDT types. Commutative, associative, idempotent.
@@ -200,12 +195,10 @@ fn rga_visible(elems: &BTreeMap<String, RgaElem>) -> Vec<String> {
         .collect()
 }
 
-/// The text the RGA represents.
 fn rga_text(elems: &BTreeMap<String, RgaElem>) -> String {
     rga_visible(elems).iter().filter_map(|id| elems.get(id).map(|e| e.ch.as_str())).collect()
 }
 
-/// The logical value a state represents.
 fn value_of(st: State) -> Value {
     match st {
         State::Lww { v, .. } => v,
@@ -232,8 +225,6 @@ fn value_of(st: State) -> Value {
         State::Rga { elems } => Value::String(rga_text(&elems)),
     }
 }
-
-// ---- guest (thin boundary: parse -> core op -> serialize) ---------------
 
 impl Guest for Component {
     fn merge(a: String, b: String) -> Result<String, CrdtError> {
@@ -529,7 +520,6 @@ mod tests {
         assert!(merge_states(pn, set).is_none());
     }
 
-    // ---- RGA (text sequence) --------------------------------------------
     fn text(state: &str) -> String {
         match value_of(s(state)) {
             Value::String(t) => t,

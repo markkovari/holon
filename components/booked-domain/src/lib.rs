@@ -132,7 +132,7 @@ fn usage() -> Outcome {
     )
 }
 
-// ---- date helpers (Hinnant civil<->days; times are minutes-from-midnight) ----
+// Date helpers: Hinnant civil<->days; times are minutes-from-midnight.
 
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
@@ -190,8 +190,6 @@ fn epoch(day: &str, min: i64) -> u64 {
 fn hhmm(min: i64) -> String {
     format!("{:02}:{:02}", min / 60, min % 60)
 }
-
-// ---- auth (auth-guard: auth:identity) ---------------------------------------
 
 guestio::guest_p3_bearer!();
 guestio::guest_p3_respond!();
@@ -272,8 +270,6 @@ fn logout(request: &Request) -> Outcome {
         Err(e) => Outcome::Auth(e),
     }
 }
-
-// ---- resources + availability (owner-managed) -------------------------------
 
 async fn create_resource(request: Request) -> Outcome {
     let p = match introspect(&request) {
@@ -386,8 +382,6 @@ fn get_availability(request: &Request, id: &str) -> Outcome {
     }
     Outcome::Json(200, json!({ "windows": availability(id) }).to_string())
 }
-
-// ---- bookings ---------------------------------------------------------------
 
 /// (start, end) of every booking for a resource on a day.
 fn bookings_on(resource: &str, day: &str) -> Vec<(i64, i64)> {
@@ -639,8 +633,6 @@ fn cancel_booking(request: &Request, id: &str) -> Outcome {
     Outcome::Json(200, json!({ "ok": true }).to_string())
 }
 
-// ---- .ics export (ical:codec) -----------------------------------------------
-
 fn booking_event(bk: &Value) -> ical::Event {
     let day = bk["day"].as_str().unwrap_or("1970-01-01");
     let start = bk["start"].as_i64().unwrap_or(0);
@@ -710,8 +702,6 @@ fn resource_ics(request: &Request, id: &str) -> Outcome {
     Outcome::File(200, "text/calendar; charset=utf-8".into(), None, ics.into_bytes())
 }
 
-// ---- free-slot search -------------------------------------------------------
-
 fn slots(request: &Request, id: &str, path: &str) -> Outcome {
     if let Err(o) = introspect(request) {
         return o;
@@ -755,8 +745,6 @@ fn slots(request: &Request, id: &str, path: &str) -> Outcome {
     Outcome::Json(200, json!({ "day": day, "slot": slot, "slots": free }).to_string())
 }
 
-// ---- http plumbing ----------------------------------------------------------
-
 fn query_str(path: &str, key: &str) -> Option<String> {
     let query = path.split('?').nth(1)?;
     query.split('&').find_map(|pair| {
@@ -787,18 +775,8 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
+/// guest traps and the caller just sees a closed connection.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

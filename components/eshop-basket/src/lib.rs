@@ -111,8 +111,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- basket ------------------------------------------------------------------
-
 #[derive(Deserialize)]
 struct BasketItem {
     #[serde(rename = "productId")]
@@ -124,7 +122,6 @@ struct BasketItem {
     quantity: u64,
 }
 
-/// The buyer's basket record, or None if they have none yet.
 fn find_basket(buyer: &str) -> Result<Option<records::Entry>, Outcome> {
     match records::find_by(BASKETS, "buyer", &json!(buyer).to_string()) {
         Ok(entries) => Ok(entries.into_iter().next()),
@@ -194,8 +191,6 @@ fn put_basket(request: &Incoming) -> Outcome {
         Err(e) => store_err(e),
     }
 }
-
-// ---- checkout ----------------------------------------------------------------
 
 #[derive(Deserialize)]
 #[allow(non_snake_case)]
@@ -275,8 +270,6 @@ fn checkout(request: &Incoming) -> Outcome {
     }
 }
 
-// ---- pump (OrderStarted -> clear basket) ---------------------------------------
-
 fn pump() -> Outcome {
     let mut cleared = 0;
     match bus::poll("OrderStarted", GROUP, 32) {
@@ -298,8 +291,6 @@ fn pump() -> Outcome {
     }
     Outcome::Json(200, json!({ "cleared": cleared }).to_string())
 }
-
-// ---- helpers -------------------------------------------------------------------
 
 fn introspect(request: &Incoming) -> Result<Principal, Outcome> {
     let Some(token) = request.bearer.clone() else {
@@ -343,26 +334,14 @@ fn parse<T: for<'a> Deserialize<'a>>(request: &Incoming) -> Result<T, String> {
     serde_json::from_slice(&body).map_err(|e| format!("bad json: {e}"))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
+/// guest traps and the caller just sees a closed connection.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 guestio::guest_p3_respond!();
 
 guestio::guest_p3_bearer!();
-
-// ---- responses -------------------------------------------------------------------
 
 fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     const JSON: &str = "application/json";

@@ -1,7 +1,6 @@
 //! `case-conv` — turn an identifier written in one case convention into another.
 //!
-//! `tests/case.rs` is the specification and is not writable from here. None of
-//! the four functions below is implemented yet.
+//! `tests/case.rs` is the specification and is not writable from here.
 //!
 //! Pure compute: split into words, rejoin in the target convention.
 //!
@@ -32,12 +31,8 @@
 //!
 //! An empty string is empty in every convention — there is nothing to split.
 
-/// Split `s` into words per the rules above.
-///
-/// A single left-to-right scan: separators flush the current word and are
-/// dropped; everywhere else a one-character lookbehind (plus a one-character
-/// lookahead just for the acronym case) decides whether a boundary falls
-/// right before the current character.
+/// Split `s` into words per the rules above: a single left-to-right scan with a
+/// one-character lookbehind (plus one lookahead for the acronym case).
 fn words(s: &str) -> Vec<String> {
     let chars: Vec<char> = s.chars().collect();
     let mut result = Vec::new();
@@ -82,17 +77,14 @@ fn capitalize(word: &str) -> String {
     }
 }
 
-/// `s` split into words and rejoined as `snake_case`.
 pub fn to_snake(s: &str) -> String {
     words(s).iter().map(|w| w.to_lowercase()).collect::<Vec<_>>().join("_")
 }
 
-/// `s` split into words and rejoined as `kebab-case`.
 pub fn to_kebab(s: &str) -> String {
     words(s).iter().map(|w| w.to_lowercase()).collect::<Vec<_>>().join("-")
 }
 
-/// `s` split into words and rejoined as `camelCase`.
 pub fn to_camel(s: &str) -> String {
     let ws = words(s);
     let mut out = String::new();
@@ -106,16 +98,11 @@ pub fn to_camel(s: &str) -> String {
     out
 }
 
-/// `s` split into words and rejoined as `PascalCase`.
 pub fn to_pascal(s: &str) -> String {
     words(s).iter().map(|w| capitalize(w)).collect()
 }
 
-// ---- the component -----------------------------------------------------
-//
-// A mapping between the WIT types and the ones above. `tests/case.rs` judges the
-// plain functions; this adds no behaviour, which is the only way that specification
-// keeps covering what actually ships.
+// WIT <-> plain-type mapping only; no behaviour, so `tests/case.rs` covers what ships.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]

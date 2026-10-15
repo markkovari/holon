@@ -1,22 +1,13 @@
 //! `desktop-clipboard` — read the desktop session's clipboard
 //!
-//! Reading the clipboard needs the desktop session's pasteboard, and a
-//! `wasm32-wasip2` guest has none of those (ADR-0095). This is the component
-//! side: it holds the contract, and reaches the daemon over HTTP the same
-//! way `fs-watcher` reaches `comp-fswatch`.
-//!
-//! What this may dial is a MANIFEST decision (ADR-0008). The daemon's address
-//! is `clipboard-url` in `wasi:config`, and the deployment's egress allow-list
-//! decides whether the call leaves at all. A component that could reach any
-//! address would make the allow-list decorative.
+//! Reading the clipboard needs the desktop session's pasteboard, which a `wasm32-wasip2`
+//! guest does not have (ADR-0095). This component holds the contract and reaches the daemon
+//! over HTTP like `fs-watcher` reaches `comp-fswatch`. What it may dial is a MANIFEST
+//! decision (ADR-0008): the daemon's address is `clipboard-url` in `wasi:config` and the
+//! egress allow-list decides whether the call leaves at all.
 //!
 //! Config (wasi:config/store):
 //!   clipboard-url    where `comp-clipboard` is listening, e.g. http://127.0.0.1:8003
-//!
-//! It used to return `"UNIMPLEMENTED: ..."` — honest, but a `-> string`
-//! contract cannot express failure any better than it can express success.
-//! The current one can, including telling "nothing on the clipboard" apart
-//! from "could not ask".
 
 #[allow(warnings)]
 mod bindings;
@@ -31,9 +22,8 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Ten seconds. Reading the clipboard is a local desktop-API call on the
-/// daemon's side; anything slower than this is a daemon in trouble, and a
-/// caller waiting on an HTTP request would rather hear that than wait.
+/// Ten seconds: a slower local desktop-API call is a daemon in trouble, and a caller would
+/// rather hear that than wait.
 const TIMEOUT_NS: u64 = 10_000_000_000;
 
 fn daemon_url() -> Result<String, ClipboardError> {

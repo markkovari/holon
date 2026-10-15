@@ -2,40 +2,22 @@
 //!
 //! `tests/guess.rs` is the specification and is not writable from here.
 //!
-//! Nobody types a card in. They photograph it, a vision model describes what it
-//! sees, and this turns that answer into the typed fields an app can store —
-//! along with the list of fields a person should check, because half of what
-//! makes a card valuable is invisible at photo resolution.
+//! Nobody types a card in: a vision model describes the photo and this turns that answer
+//! into typed fields plus the list of fields a person should check (half of a card's value
+//! is invisible at photo resolution). This is the DETERMINISTIC half; the vision call is a
+//! provider and deliberately not here: a model call cannot be gated, and this can.
 //!
-//! This crate is the DETERMINISTIC half: model answer in, typed guess out. The
-//! vision call itself is a provider (the shape `components/photo-critic` already
-//! proves: egress, key from the vault, an image block), and it is deliberately
-//! not here — a model call cannot be gated, and this can.
+//! Never invent a field: the expensive failure is a CONFIDENT wrong guess, e.g. 300 cards
+//! silently saying "Near Mint" by default. An absent field stays absent and its name goes
+//! in `needs_review`.
 //!
-//! ## Never invent a field
+//! Refusing is a valid answer: a hand, a booster wrapper or two cards at once must be an
+//! error, not a blank card row.
 //!
-//! The expensive failure is not a wrong guess, it is a CONFIDENT wrong guess: a
-//! blank or defaulted field that looks entered. A collection where 300 cards
-//! silently say "Near Mint" because that was the default is worth an unknown
-//! amount of money, and no screen will ever show you which 300.
-//!
-//! So an absent field stays absent and its name goes in `needs_review`. The app's
-//! job is to ask; this crate's job is to know what to ask about.
-//!
-//! ## Refusing is a valid answer
-//!
-//! A photo of a hand, a booster wrapper, or two cards at once must come back as
-//! an error and not as a card with empty fields. The blank-card row is how a
-//! collection quietly fills with garbage nobody deletes.
-//!
-//! ## Normalising is not guessing
-//!
-//! `58/165`, `058/165` and `#58` are the same card number written three ways, and
-//! collapsing them is a lookup requirement, not an inference — a price source
-//! keyed on `058/165` finds nothing for `#58`. Normalisation is applied and does
-//! not lower confidence. Anything that needs a fact not on the card — the set
-//! total when the photo cut it off, the language when there is no Japanese text
-//! to see — is inference, and lowers it.
+//! Normalising is not guessing: `58/165`, `058/165` and `#58` are one number, and
+//! collapsing them is a lookup requirement that does not lower confidence. Anything needing
+//! a fact not on the card (set total cut off, language with no Japanese text) is inference
+//! and does.
 
 /// How the card is printed. Drives price more than anything except condition: a
 /// reverse holo and a normal copy of one card are different markets.
@@ -144,7 +126,6 @@ fn str_field(obj: &serde_json::Map<String, serde_json::Value>, key: &str) -> Opt
     obj.get(key).and_then(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
-/// Returns (normalised number, needs review).
 fn normalize_number(raw: Option<String>) -> (String, bool) {
     match raw {
         None => (String::new(), true),
@@ -317,11 +298,8 @@ pub fn parse(answer: &str) -> Result<Guess, IdentifyError> {
     })
 }
 
-/// The prompt the vision provider should send, so the shape this parses and the
-/// shape the model is asked for cannot drift apart.
-///
-/// Lives here rather than in the provider for exactly that reason: they are one
-/// decision, and a prompt in another crate is a second place to change.
+/// The prompt the vision provider should send. It lives here so the shape this parses and
+/// the shape the model is asked for cannot drift apart.
 pub fn prompt() -> &'static str {
     r#"Look at this photo of a trading card and answer with a single JSON object, nothing else.
 
@@ -344,15 +322,9 @@ Otherwise reply with these fields, using an empty string or omitting a field you
 }"#
 }
 
-// ---- the component -----------------------------------------------------
-//
-// A mapping between the WIT types and the ones above. `tests/guess.rs` judges the
-// plain `parse`; this adds no behaviour, which is the only way the specification
-// keeps covering what actually ships.
-//
-// Gated on the target like `components/demo`: a `cdylib` carrying wit-bindgen's
-// exports does not link natively, and the held-out gate builds every crate-type
-// before it runs.
+// WIT <-> plain-type mapping only (no behaviour, so `tests/guess.rs` covers what ships).
+// Gated on the target like `components/demo`: a `cdylib` carrying wit-bindgen's exports
+// does not link natively.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]

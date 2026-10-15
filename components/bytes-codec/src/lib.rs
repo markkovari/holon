@@ -2,33 +2,16 @@
 //!
 //! `tests/codec.rs` is the specification and is not writable from here.
 //!
-//! Five components in this repository had written base64 by hand, in five different
-//! shapes: two encode-only, three decode-only, two URL-safe, three standard, and one
-//! that reached for a crate instead. None of them could be reused by any of the
-//! others, and the one in an authentication path is the one it matters most to get
-//! right.
+//! Five components here had hand-written base64 in five incompatible shapes, one of them
+//! in an authentication path; this is the shared one. Pure compute.
 //!
-//! Pure compute: bytes in, text out, and back.
+//! Two alphabets, not interchangeable: standard (`+`, `/`) and URL-SAFE (`-`, `_`; WebAuthn,
+//! JWTs, ids in links). Decoding one with the other's table does not fail, it produces
+//! different bytes, and nothing reports it.
 //!
-//! ## Two alphabets, and they are not interchangeable
-//!
-//! Standard base64's last two characters are `+` and `/`. Both are meaningful inside
-//! a URL and neither survives a path segment or a query string unescaped, which is
-//! why WebAuthn, JWTs and every id-in-a-link use the URL-SAFE alphabet: `-` and `_`.
-//! Decoding one with the other's table does not fail — it produces different bytes.
-//! That is the failure worth designing against, because nothing reports it.
-//!
-//! ## Padding is optional on the way in and chosen on the way out
-//!
-//! `=` exists so a decoder knows how many bytes the last group holds, and the length
-//! already says that. WebAuthn forbids it, JSON payloads usually carry it, and a
-//! decoder that refuses unpadded input rejects half the real world. So: decode
-//! accepts either, and encode is told which to produce.
-//!
-//! ## Hex, because the alternative is `format!("{:02x}")` in a loop
-//!
-//! Lowercase out, either case in — a digest printed by one tool and read by another
-//! is the whole use, and the two tools rarely agree on case.
+//! Padding is optional on the way in and chosen on the way out: WebAuthn forbids `=`, JSON
+//! payloads usually carry it, and a decoder refusing unpadded input rejects half the real
+//! world. Hex: lowercase out, either case in (digests move between tools that disagree).
 
 /// Which alphabet, and what to do about padding when encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,11 +91,8 @@ pub fn encode(bytes: &[u8], alphabet: Alphabet) -> String {
     out
 }
 
-/// Decode base64 in `alphabet`.
-///
-/// Padding is accepted whether or not the alphabet would have produced it: `=` on
-/// the end of URL-safe input is wrong per the specification and unambiguous in
-/// practice, and refusing it fails on real tokens.
+/// Decode base64 in `alphabet`. Padding is accepted either way: `=` on URL-safe input is
+/// wrong per the specification but unambiguous, and refusing it fails on real tokens.
 pub fn decode(text: &str, alphabet: Alphabet) -> Result<Vec<u8>, DecodeError> {
     if text.is_empty() {
         return Ok(Vec::new());
@@ -178,7 +158,6 @@ fn hex_val(c: char) -> Option<u8> {
     }
 }
 
-/// Lowercase hex.
 pub fn to_hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
     for b in bytes {
@@ -187,7 +166,6 @@ pub fn to_hex(bytes: &[u8]) -> String {
     out
 }
 
-/// Hex in either case.
 pub fn from_hex(text: &str) -> Result<Vec<u8>, DecodeError> {
     let chars: Vec<char> = text.chars().collect();
     let mut values = Vec::with_capacity(chars.len());
@@ -207,11 +185,7 @@ pub fn from_hex(text: &str) -> Result<Vec<u8>, DecodeError> {
     Ok(out)
 }
 
-// ---- the component -----------------------------------------------------
-//
-// A mapping between the WIT types and the ones above. `tests/codec.rs` judges the
-// plain functions; this adds no behaviour, which is the only way that specification
-// keeps covering what actually ships.
+// WIT <-> plain-type mapping only; no behaviour, so `tests/codec.rs` keeps covering what ships.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]

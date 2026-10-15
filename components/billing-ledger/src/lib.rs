@@ -108,8 +108,6 @@ enum Outcome {
     NotFound,
 }
 
-// ---- accounts --------------------------------------------------------------
-
 #[derive(Deserialize)]
 struct CreateAccount {
     name: String,
@@ -171,8 +169,6 @@ fn fmt(units: i64, currency: &str) -> String {
         .unwrap_or_else(|_| units.to_string())
 }
 
-// ---- entries ---------------------------------------------------------------
-
 #[derive(Deserialize)]
 struct PostEntry {
     kind: String,
@@ -187,7 +183,6 @@ async fn post_entry(request: Request, account_id: &str) -> Outcome {
     };
     let idem_key = format!("ledger:{account_id}:{key}");
     match idem::begin(&idem_key, IDEM_TTL) {
-        // seen before: replay the original response verbatim.
         Ok(Some(cached)) => {
             return Outcome::Cached(
                 cached.status,
@@ -367,8 +362,6 @@ fn list_entries(account_id: &str) -> Outcome {
     }
 }
 
-// ---- statement + allocate ----------------------------------------------------
-
 fn statement(account_id: &str) -> Outcome {
     if let Err(records::StoreError::NotFound) = records::get(ACCOUNTS, account_id) {
         return Outcome::NotFound;
@@ -426,8 +419,6 @@ fn allocate(query: &str) -> Outcome {
     }
 }
 
-// ---- feed --------------------------------------------------------------------
-
 /// Claim-and-ack the entry feed — an at-least-once poll for an external
 /// consumer (dedupe on event id downstream).
 fn drain_events() -> Outcome {
@@ -450,8 +441,6 @@ fn drain_events() -> Outcome {
     Outcome::Json(200, json!({ "events": list }).to_string())
 }
 
-// ---- helpers -----------------------------------------------------------------
-
 fn store_err(e: records::StoreError) -> Outcome {
     match e {
         records::StoreError::NotFound => Outcome::NotFound,
@@ -461,18 +450,8 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
+/// guest traps and the caller just sees a closed connection.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
@@ -488,8 +467,6 @@ fn query_param(query: &str, key: &str) -> Option<String> {
         (it.next()? == key).then(|| it.next().unwrap_or("").to_string())
     })
 }
-
-// ---- responses -----------------------------------------------------------------
 
 fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     match result {

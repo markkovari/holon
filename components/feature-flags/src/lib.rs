@@ -29,8 +29,6 @@ struct Component;
 const BUCKET: &str = "default";
 const PREFIX: &str = "ff_";
 
-// ---- key scheme ---------------------------------------------------------
-
 /// Runtime-rule kv key: `ff_{tenant}/{flag}`, both parts sanitized so neither
 /// the separator `/` nor the escape char `_` can appear inside a part. A `""`
 /// tenant yields the global key `ff_/{flag}`.
@@ -80,8 +78,6 @@ fn open() -> Result<kv::Bucket, FlagError> {
     kv::open(BUCKET).map_err(|e| FlagError::BackendUnavailable(format!("open: {e:?}")))
 }
 
-// ---- rule (de)serialization ---------------------------------------------
-
 fn rule_to_bytes(rule: &Rule) -> Vec<u8> {
     match rule {
         Rule::Enabled => b"e".to_vec(),
@@ -115,8 +111,6 @@ fn rule_from_config(val: &str) -> Option<Rule> {
         _ => None,
     }
 }
-
-// ---- evaluation ---------------------------------------------------------
 
 /// FNV-1a 64-bit hash — small, deterministic, dependency-free. Stable across
 /// runs so a subject's rollout bucket never changes.
@@ -156,23 +150,19 @@ fn kv_rule_by_key(bucket: &kv::Bucket, key: &str) -> Result<Option<Rule>, FlagEr
 impl Guest for Component {
     fn is_enabled(flag: String, ctx: Context) -> Result<bool, FlagError> {
         let bucket = open()?;
-        // 1. tenant-scoped runtime rule.
         if !ctx.tenant.is_empty() {
             if let Some(r) = kv_rule(&bucket, &ctx.tenant, &flag)? {
                 return Ok(rule_verdict(&r, &ctx.subject));
             }
         }
-        // 2. global runtime rule.
         if let Some(r) = kv_rule(&bucket, "", &flag)? {
             return Ok(rule_verdict(&r, &ctx.subject));
         }
-        // 3. config definition.
         if let Ok(Some(v)) = config::get(&format!("flag:{flag}")) {
             if let Some(r) = rule_from_config(&v) {
                 return Ok(rule_verdict(&r, &ctx.subject));
             }
         }
-        // 4. unknown flag -> off.
         Ok(false)
     }
 

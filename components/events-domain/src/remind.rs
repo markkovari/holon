@@ -1,20 +1,12 @@
 //! Reminders, and telling people things.
 //!
-//! ## Why a timer and not a check on read
+//! Why a timer and not a check on read: a check on every read sends nothing if nobody loads
+//! the page and twice if two people load it at once. `sched:timer` holds the job, leases it
+//! to one caller when due, and takes an `ack`.
 //!
-//! "Notify everyone 24 hours before it starts" is a time in the future, and a
-//! request handler cannot wait for one. The alternative — work out on every read
-//! whether a reminder is due — sends nothing at all if nobody happens to load the
-//! page, and sends it twice if two people load it at once. `sched:timer` holds the
-//! job, leases it to one caller when it is due, and takes an `ack`.
-//!
-//! ## What the app does not decide
-//!
-//! Whether a reminder becomes an email, an in-app note, both or neither is
-//! `notify:prefs`' answer, read from what the person set. This module calls
-//! `notify` and reads back what happened; it never picks a channel. An app that
-//! sent its own email would be re-deciding, for every one of its users, a question
-//! they had already answered.
+//! The app does not decide the channel: whether a reminder becomes an email, an in-app note,
+//! both or neither is `notify:prefs`' answer. This module calls `notify` and reads back what
+//! happened.
 
 use serde_json::json;
 
@@ -38,12 +30,9 @@ pub fn now() -> u64 {
     system_clock::now().seconds as u64
 }
 
-/// `2026-09-01T18:00:00Z` -> unix seconds.
-///
-/// By hand, because the alternative is a date crate in a component whose entire
-/// need is one shape of one format — the one this app's own contract specifies.
-/// Anything that is not that shape returns `None` and the caller declines to
-/// schedule, rather than scheduling for the epoch and firing immediately.
+/// `2026-09-01T18:00:00Z` -> unix seconds. By hand: a date crate is too much for one shape
+/// of one format. Anything else returns `None` and the caller declines to schedule, rather
+/// than scheduling for the epoch and firing immediately.
 pub fn parse_iso(s: &str) -> Option<u64> {
     let b = s.as_bytes();
     if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' {
@@ -55,9 +44,7 @@ pub fn parse_iso(s: &str) -> Option<u64> {
     if !(1..=12).contains(&mo) || !(1..=31).contains(&d) {
         return None;
     }
-    // Days from the civil epoch — Howard Hinnant's algorithm, which is exact for
-    // every proleptic Gregorian date and shorter than the table of month lengths
-    // and leap rules it replaces.
+    // Days from the civil epoch (Hinnant): exact for every proleptic Gregorian date.
     let y2 = if mo <= 2 { y - 1 } else { y };
     let era = if y2 >= 0 { y2 } else { y2 - 399 } / 400;
     let yoe = y2 - era * 400;
@@ -126,12 +113,9 @@ pub fn tell(
     }
 }
 
-/// `POST /api/reminders/run` — fire whatever is due.
-///
-/// A route rather than a background loop because a component has no loop: it runs
-/// when something calls it. In a deployment that caller is `comp-relay` on a
-/// schedule (the `[triggers]` block in an app spec); in a demo it is a button. The
-/// work is identical either way, which is the point of it being a route.
+/// `POST /api/reminders/run` — fire whatever is due. A route because a component has no
+/// loop: in a deployment the caller is `comp-relay` on a schedule (the `[triggers]` block in
+/// an app spec), in a demo it is a button.
 pub fn run(method: &Method, route: &Route) -> Reply {
     if !matches!(method, Method::Post) {
         return Reply::err(404, "not_found");

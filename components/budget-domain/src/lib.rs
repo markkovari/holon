@@ -35,7 +35,6 @@ impl Component {
     }
     
     fn validate_token(token: &str) -> String {
-        // Just use introspect to get the principal.subject
         match introspect(token) {
             Ok(principal) => principal.subject,
             Err(_) => panic!("Unauthorized"),
