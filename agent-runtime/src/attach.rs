@@ -56,12 +56,12 @@ pub fn exists(store: &Store, agent: &str, file: &str) -> bool {
 
 /// An iPhone's HEIC converted to JPEG, and a large photo shrunk, with the system `sips` (macOS;
 /// nowhere else). `None` when it could not: a HEIC is then unusable, a large photo goes as it is.
-fn sips(bytes: &[u8]) -> Option<Vec<u8>> {
+fn sips(bytes: &[u8], longest: u32) -> Option<Vec<u8>> {
     let dir = tempfile::tempdir().ok()?;
     let (src, out) = (dir.path().join("in"), dir.path().join("out.jpg"));
     std::fs::File::create(&src).ok()?.write_all(bytes).ok()?;
     let done = Command::new("/usr/bin/sips")
-        .args(["-Z", "1600", "-s", "format", "jpeg"])
+        .args(["-Z", &longest.to_string(), "-s", "format", "jpeg"])
         .arg(&src)
         .arg("--out")
         .arg(&out)
@@ -70,6 +70,32 @@ fn sips(bytes: &[u8]) -> Option<Vec<u8>> {
         .status
         .success();
     done.then(|| std::fs::read(&out).ok()).flatten()
+}
+
+/// A photo from the inbox as a JPEG whose longest side is at most `longest` pixels, ready for a
+/// service with strict picture rules (Jev takes only PNG and JPEG, 256 to 1568 px a side). Off a
+/// Mac, with no `sips`, a PNG or JPEG goes as it is and anything else is refused.
+pub fn jpeg_of(store: &Store, agent: &str, file: &str, longest: u32) -> Result<Image, String> {
+    let path =
+        inbox_file(store, agent, file).ok_or_else(|| format!("`{file}` is not in your inbox"))?;
+    let media_type = media_type_of(file).ok_or_else(|| format!("`{file}` is not a photo"))?;
+    if path.metadata().map(|m| m.len()).unwrap_or(u64::MAX) > MAX_BYTES {
+        return Err(format!("`{file}` is too large"));
+    }
+    let bytes = std::fs::read(&path).map_err(|_| format!("`{file}` could not be read"))?;
+    shrunk(bytes, media_type, longest).ok_or_else(|| format!("`{file}` could not be converted"))
+}
+
+/// `bytes` as a JPEG of at most `longest` pixels, or as they are when already a PNG or JPEG and
+/// `sips` is not there.
+pub fn shrunk(bytes: Vec<u8>, media_type: &str, longest: u32) -> Option<Image> {
+    match sips(&bytes, longest) {
+        Some(data) => Some(Image { media_type: "image/jpeg".into(), data }),
+        None if matches!(media_type, "image/jpeg" | "image/png") => {
+            Some(Image { media_type: media_type.into(), data: bytes })
+        }
+        None => None,
+    }
 }
 
 /// The pictures for these files, and a sentence for each one that could not be used.
@@ -93,7 +119,7 @@ pub fn load(store: &Store, agent: &str, files: &[String]) -> (Vec<Image>, Vec<St
             continue;
         };
         let image = if media_type == "image/heic" {
-            match sips(&bytes) {
+            match sips(&bytes, 1600) {
                 Some(jpeg) => Image { media_type: "image/jpeg".into(), data: jpeg },
                 None => {
                     problems.push(format!("`{file}` is a HEIC photo and could not be converted"));
@@ -101,7 +127,7 @@ pub fn load(store: &Store, agent: &str, files: &[String]) -> (Vec<Image>, Vec<St
                 }
             }
         } else if bytes.len() > SHRINK_ABOVE {
-            match sips(&bytes) {
+            match sips(&bytes, 1600) {
                 Some(jpeg) => Image { media_type: "image/jpeg".into(), data: jpeg },
                 None => Image { media_type: media_type.into(), data: bytes },
             }
