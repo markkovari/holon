@@ -2,36 +2,12 @@
 //!
 //! `tests/history.rs` is the specification and is not writable from here.
 //!
-//! Turns the quotes a price source actually returns — sparse, duplicated,
-//! sometimes stale, sometimes from two sources disagreeing on the same day — into
-//! the series a chart can be drawn from. Pure compute: quotes in, series out. It
-//! fetches nothing; the fetching is a provider behind `price:source`, and this is
-//! the part that has to be right whichever provider answers.
-//!
-//! ## Carry forward, never interpolate
-//!
-//! A market has no price on a day nobody traded. The last known price is still
-//! the price — that is what "the card is worth €40" means on a Sunday. Drawing a
-//! straight line between Friday and Monday invents two days of movement that did
-//! not happen, and on a 5-year chart that invention is most of the line.
-//!
-//! So a gap carries the previous quote forward, unchanged, and the point says it
-//! was carried. A caller that wants to render carried points differently — a
-//! dashed segment, a lighter stroke — has what it needs; one that does not can
-//! ignore the flag and still not be lied to.
-//!
-//! ## Before the first quote there is no price
-//!
-//! Not zero. A card whose first observation is in 2021 has no 2019 price, and a
-//! chart that starts at zero and jumps shows a gain nobody made. Those samples
-//! are absent from the series rather than zero-valued.
-//!
-//! ## Stale is returned, and labelled
-//!
-//! A quote from four months ago is the best information available and also barely
-//! information. Refusing it would leave a caller with nothing for every card that
-//! has stopped trading; returning it silently would put a confident number on a
-//! dead listing. It comes back with `age_seconds`, and the caller decides.
+//! Pure compute: quotes in, series out; the fetching is a provider behind `price:source`.
+//! Carry forward, never interpolate: a gap carries the previous quote forward unchanged and the
+//! point says it was carried, because a line between Friday and Monday invents movement that did
+//! not happen.
+//! Before the first quote there is no price, not zero; those samples are absent from the series.
+//! Stale is returned and labelled with `age_seconds`, and the caller decides.
 
 /// A currency, ISO-4217, compared exactly and never converted.
 pub type Currency = String;
@@ -189,15 +165,10 @@ pub fn series(
     Ok(points)
 }
 
-// ---- the component -----------------------------------------------------
-//
-// A mapping between the WIT types and the ones above, and nothing else: the logic is
-// judged by `tests/history.rs` against the plain functions, and a component that
-// re-derived any of it would be untested by its own specification.
-//
-// Gated on the target like `components/demo`: a `cdylib` carrying wit-bindgen's
-// exports does not link natively, and `cargo test` builds every crate-type before it
-// runs a test — so without this the held-out gate dies at the linker.
+// A mapping between the WIT types and the ones above, nothing else: the logic is judged by
+// `tests/history.rs` against the plain functions.
+// Gated on the target: a `cdylib` with wit-bindgen exports does not link natively, and `cargo
+// test` builds every crate-type, so the held-out gate would die at the linker.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]

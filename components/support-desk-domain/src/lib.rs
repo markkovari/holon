@@ -1,23 +1,14 @@
 //! `support-desk-domain` — a model writes the reply, and the reply gets there.
 //!
-//! ## What is scaffold and what is the goal
 //!
-//! This file is the ROUTER and no part may write it: it dispatches to `tickets`, `reply`
-//! and `courier`, answers `/health`, mints a token, opens a session with its CSRF token,
-//! seeds tickets, and can put a reply straight into the outbox. Three parts need it and
-//! none owns it.
-//!
-//! `src/tickets.rs`, `src/reply.rs` and `src/courier.rs` are the goal.
-//! `CONTRACT.md` is what they must agree on.
-//!
-//! ## Why these three
-//!
-//! The chain is about DELIVERY. `tickets` decides what can be answered, `reply` is the
-//! only part that spends a model call and it must ENQUEUE rather than send, and `courier`
-//! is the only part that talks to the far end. A part that sends inline loses a reply the
-//! moment the far end is down; a courier that acks a refusal loses it silently. Neither
-//! failure is visible in a request that succeeds, which is why the gates run a sink they
-//! can break on purpose.
+//! This file is the ROUTER and no part may write it: it dispatches to `tickets`, `reply` and
+//! `courier`, answers `/health`, mints a token, opens a session with its CSRF token, seeds
+//! tickets, and can put a reply straight into the outbox. `src/tickets.rs`, `src/reply.rs` and
+//! `src/courier.rs` are the goal; `CONTRACT.md` is what they must agree on.
+//! The chain is about DELIVERY: `reply` must ENQUEUE rather than send, and `courier` is the only
+//! part that talks to the far end. Sending inline loses a reply when the far end is down and a
+//! courier that acks a refusal loses it silently; neither is visible in a request that succeeds,
+//! so the gates run a sink they can break on purpose.
 
 #[allow(warnings)]
 mod bindings {
@@ -75,7 +66,6 @@ guestio::guest_p3_respond!();
 
 struct Component;
 
-/// What a handler answers with: a status and a JSON body.
 pub struct Reply {
     pub status: u16,
     /// `Value::Null` means no body at all — see `no_content`.
@@ -97,17 +87,14 @@ impl Reply {
 
 /// One request, as a part sees it.
 ///
-/// The bearer is handed over as a STRING and not as a principal: resolving it is
-/// `auth:identity/authorizer`'s job and doing it here would take the part's whole
-/// reason for importing that capability away.
+/// The bearer is handed over as a STRING: resolving it is `auth:identity/authorizer`'s job.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
     /// The `Authorization: Bearer …` value, empty when the header is absent.
     pub bearer: String,
-    /// The agent's session id (`x-session`) and its CSRF token (`x-csrf`), empty when
-    /// absent. Handed over raw: verifying them is `session:store`'s job, and doing it here
-    /// would take the part's reason for importing that capability away.
+    /// The agent's session id (`x-session`) and CSRF token (`x-csrf`), empty when absent, handed
+    /// over raw: verifying them is `session:store`'s job.
     pub session: String,
     pub csrf: String,
 }
@@ -125,10 +112,7 @@ impl Route {
 
 use guestfmt::percent_decode as percent;
 
-/// A `wasi:config` value as a number, with a default.
-///
-/// Scaffold: reading config is plumbing every part would otherwise write out, and the
-/// contract names the keys. What a part does with the number is the goal.
+/// A `wasi:config` value as a number, with a default. Scaffold: the contract names the keys.
 pub fn cfg_u64(key: &str, default: u64) -> u64 {
     bindings::wasi::config::store::get(key)
         .ok()
@@ -137,20 +121,14 @@ pub fn cfg_u64(key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-/// Unix seconds, for anything that has to be stamped.
 pub fn now_secs() -> u64 {
     system_clock::now().seconds as u64
 }
 
 use guestfmt::rfc3339;
 
-/// A token for a test caller, so no gate has to log in through a part it is not
-/// judging.
-///
-/// Scaffold, and it is `session::issue` rather than a hand-built JWT for the same
-/// reason the parts are made to call `authorize`: a fixture that mints its own
-/// tokens is a fixture that can drift from what the verifier accepts, and then
-/// every part fails for the router's reason.
+/// A token for a test caller. It is `session::issue` rather than a hand-built JWT so the fixture
+/// cannot drift from what the verifier accepts.
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let subject = req.get("subject").and_then(Value::as_str).unwrap_or("ada").to_string();
@@ -179,16 +157,9 @@ fn mint(body: &str) -> Reply {
     }
 }
 
-/// Two open tickets aimed at a target the caller names, so `reply` and `courier` can be
-/// judged before `tickets` exists.
-///
-/// The target is a parameter because a gate has to point it at a sink it controls — a
-/// fixture with a hardcoded address would make delivery unobservable, which is the one
-/// thing this app is about.
-///
-/// Scaffold, and it says what it is: `reply` is absent on purpose, because drafting one is
-/// the reply part's job and a fixture that pre-filled it would let a part that drafts
-/// nothing pass.
+/// Two open tickets aimed at a target the caller names, so `reply` and `courier` can be judged
+/// before `tickets` exists. The target is a parameter so a gate can point it at a sink it
+/// controls. `reply` is absent on purpose: drafting it is the reply part's job.
 fn seed(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let target = req
@@ -217,11 +188,8 @@ fn seed(body: &str) -> Reply {
     Reply::json(201, json!({ "ticket_ids": ids }))
 }
 
-/// One reply put straight into the outbox, in the contract's payload shape.
-///
-/// `courier` is judged with `reply` stubbed, and it has nothing to deliver otherwise. The
-/// shape here is the contract's, which is what makes a part that invented its own shape
-/// pass its gate and fail the composition.
+/// One reply put straight into the outbox, in the contract's payload shape, so `courier` can be
+/// judged with `reply` stubbed.
 fn enqueue_fixture(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let target =
@@ -238,10 +206,8 @@ fn enqueue_fixture(body: &str) -> Reply {
     }
 }
 
-/// A session, and the CSRF token that goes with it.
-///
-/// `reply`'s first check is the CSRF one, and the session it checks against belongs to no
-/// part. Opening one here is what lets `reply` be judged on anything past that check.
+/// A session and its CSRF token: `reply`'s first check is CSRF, against a session that belongs to
+/// no part.
 fn open_session() -> Reply {
     match sessions::create(b"{}", 900) {
         Ok(s) => Reply::json(201, json!({ "session": s.id, "csrf": s.csrf_token })),
@@ -256,7 +222,6 @@ const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
-/// One header, as a string. Absent, repeated or non-UTF8 all read as empty.
 fn header(request: &Request, name: &str) -> String {
     let fields = request.get_headers();
     let values = fields.get(name);
@@ -293,9 +258,8 @@ impl Guest for Component {
             ["test", "seed"] => seed(&body),
             ["test", "session"] => open_session(),
             ["test", "enqueue"] => enqueue_fixture(&body),
-            // The stored document, straight out of the store. Scaffold, and it says
-            // what it is: a part must be judgeable on what it WROTE without
-            // depending on the part that owns the route for reading it back.
+            // The stored document straight out of the store, so a part is judgeable on what it
+            // WROTE without the part that owns the read route.
             ["test", "ticket", id] => match records::get("tickets", id) {
                 Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
                 Err(_) => Reply::err(404, "not_found"),

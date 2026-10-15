@@ -96,7 +96,6 @@ enum Outcome {
     Json(u16, String),
     Err(u16, String),
     Auth(AuthError),
-    // status, content-type, optional download filename, body.
     File(u16, String, Option<String>, Vec<u8>),
 }
 
@@ -117,8 +116,6 @@ fn usage() -> Outcome {
         .to_string(),
     )
 }
-
-// ---- auth (auth-guard: auth:identity) ---------------------------------------
 
 guestio::guest_p3_bearer!();
 guestio::guest_p3_respond!();
@@ -144,7 +141,6 @@ async fn register(request: Request) -> Outcome {
         Ok(p) => p,
         Err(e) => return Outcome::Auth(e),
     };
-    // demo self-assign of the global role (an operator would grant it in prod).
     let wanted = body["role"].as_str().unwrap_or("rider");
     let role = if ["rider", "validator"].contains(&wanted) { wanted } else { "rider" };
     let _ = rbac::assign_role(&p.tenant, &p.subject, role);
@@ -189,9 +185,6 @@ fn logout(request: &Request) -> Outcome {
     }
 }
 
-// ---- fares ------------------------------------------------------------------
-
-/// Seed the fare catalog on first read (idempotent).
 fn ensure_fares() {
     let empty = records::list_records(FARES, 1, "").map(|p| p.entries.is_empty()).unwrap_or(true);
     if !empty {
@@ -226,8 +219,6 @@ fn list_fares(request: &Request) -> Outcome {
     Outcome::Json(200, json!({ "items": items }).to_string())
 }
 
-// ---- tickets ----------------------------------------------------------------
-
 async fn buy_ticket(request: Request) -> Outcome {
     let p = match introspect(&request) {
         Ok(p) => p,
@@ -258,9 +249,9 @@ fn get_ticket(id: &str) -> Option<Value> {
     records::get(TICKETS, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok())
 }
 
-/// Compute (status, valid_until, remaining_min) from a ticket's stored fields.
-/// status: "valid" (bought, unused) | "active" (duration/pass, in window) |
-/// "used" (single, consumed) | "expired" (window lapsed).
+/// Compute (status, valid_until, remaining_min) from a ticket's stored fields. status: "valid"
+/// (bought, unused), "active" (duration/pass, in window), "used" (single, consumed), "expired"
+/// (window lapsed).
 fn status_of(t: &Value) -> (String, Option<u64>, Option<i64>) {
     let kind = t["kind"].as_str().unwrap_or("single");
     let activated = t["activated"].as_u64().unwrap_or(0);
@@ -280,7 +271,6 @@ fn status_of(t: &Value) -> (String, Option<u64>, Option<i64>) {
     }
 }
 
-/// Attach id + computed status fields to a ticket's stored JSON.
 fn hydrate(id: &str, data: &str) -> String {
     let mut v: Value = serde_json::from_str(data).unwrap_or_else(|_| json!({}));
     v["id"] = json!(id);
@@ -301,7 +291,6 @@ fn my_tickets(request: &Request) -> Outcome {
         .iter()
         .filter_map(|e| serde_json::from_str::<Value>(&hydrate(&e.id, &e.data)).ok())
         .collect();
-    // newest first.
     items.sort_by(|a, b| b["purchased"].as_u64().cmp(&a["purchased"].as_u64()));
     Outcome::Json(200, json!({ "items": items }).to_string())
 }
@@ -333,14 +322,11 @@ fn ticket_qr(request: &Request, id: &str) -> Outcome {
     if !is_validator(&p) && t["rider"].as_str() != Some(&p.subject) {
         return Outcome::Err(403, "not your ticket".into());
     }
-    // the QR payload is the ticket id itself — unguessable and record-backed.
     match qr::svg(id, qr::Ecc::Medium, 2) {
         Ok(svg) => Outcome::File(200, "image/svg+xml".into(), None, svg.into_bytes()),
         Err(_) => Outcome::Err(500, "qr encode failed".into()),
     }
 }
-
-// ---- validation (the single-use, concurrency-safe critical section) ---------
 
 async fn validate(request: Request) -> Outcome {
     let p = match introspect(&request) {
@@ -356,10 +342,9 @@ async fn validate(request: Request) -> Outcome {
     };
     let code = b["code"].as_str().unwrap_or("").trim().to_string();
 
-    // Single-use under concurrency via record-revision CAS: read the ticket + its
-    // revision, decide, then write back guarded by that revision. A losing writer
-    // gets a revision-conflict, re-reads the now-activated ticket, and the second
-    // decision sees "already used" — so exactly one concurrent scan accepts.
+    // Single-use under concurrency via record-revision CAS: read the ticket and revision, decide,
+    // write back guarded by the revision. A losing writer re-reads, sees "already used", so
+    // exactly one concurrent scan accepts.
     for _ in 0..32 {
         let entry = match records::get(TICKETS, &code) {
             Ok(e) => e,
@@ -368,9 +353,7 @@ async fn validate(request: Request) -> Outcome {
         };
         let t: Value = serde_json::from_str(&entry.data).unwrap_or_else(|_| json!({}));
         match decide(&t, &p.subject) {
-            // no state change (already used / expired) -> answer immediately.
             Step::Done(outcome) => return outcome,
-            // activation / use recorded -> commit guarded by the read revision.
             Step::Commit(next, outcome) => {
                 match records::update(TICKETS, &code, &next.to_string(), entry.revision) {
                     Ok(_) => return outcome,
@@ -390,8 +373,6 @@ enum Step {
     Commit(Value, Outcome),
 }
 
-/// The fare rules — pure w.r.t. the store: reads the ticket, returns the next
-/// state (for accepts) + the ACCEPT/REJECT response. The CAS loop does the write.
 fn decide(t: &Value, validator: &str) -> Step {
     let kind = t["kind"].as_str().unwrap_or("single").to_string();
     let minutes = t["minutes"].as_i64().unwrap_or(0);
@@ -422,7 +403,6 @@ fn decide(t: &Value, validator: &str) -> Step {
             Step::Done(reject("already used", t))
         }
     } else {
-        // duration / pass: activate on first scan, then valid until the window ends.
         if activated == 0 {
             let until = now + (minutes as u64) * 60;
             Step::Commit(
@@ -457,8 +437,6 @@ fn reject(reason: &str, t: &Value) -> Outcome {
     )
 }
 
-// ---- http plumbing ----------------------------------------------------------
-
 fn store_err(e: records::StoreError) -> Outcome {
     match e {
         records::StoreError::NotFound => Outcome::Err(404, "not_found".into()),
@@ -477,18 +455,9 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be before the component stops reading it. Without a ceiling,
+/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy; uploads police their own size with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

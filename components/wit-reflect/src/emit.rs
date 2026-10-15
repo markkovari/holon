@@ -1,34 +1,23 @@
 //! The same graph, written three ways.
 //!
-//! These are not three formats for one idea — they are three different deployment
-//! models, and the comments each emitter writes into its output say where they
-//! diverge:
-//!
-//! * `plug_script` — imperative `wac plug`, one invocation per socket, in build
-//!   order. Each socket gets its OWN instance of every plug.
-//! * `wac_file` — declarative `wac compose`. A capability instantiated once is
-//!   SHARED by every consumer wired to it. This is the only one of the two static
-//!   forms that can express a diamond as a diamond.
-//! * `workload` — a wasmCloud v2 `WorkloadDeployment`. Nothing is fused: the
-//!   runtime links same-workload components in-process, so composable edges leave
-//!   no trace in the manifest and only host capabilities appear.
-//!
-//! YAML is written by hand rather than through a serializer: every value here is
-//! an identifier, a small integer, or a registry path, and a fixed shape emitted
-//! by `format!` is less machinery than a serde dependency. The shape is pinned by
-//! `emits_a_workload_manifest` against the fields `examples/*/k8s/*.yaml` use.
+//! Three different deployment models, not three formats for one idea: `plug_script` is imperative
+//! `wac plug` (each socket gets its OWN instance of every plug); `wac_file` is declarative `wac
+//! compose` (a capability instantiated once is SHARED, the only static form that can express a
+//! diamond); `workload` is a wasmCloud v2 `WorkloadDeployment` (nothing fused: composable edges
+//! leave no trace, only host capabilities appear).
+//! YAML is written by hand with `format!` rather than serde, since every value is an identifier,
+//! small integer or registry path. The shape is pinned by `emits_a_workload_manifest`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::bindings::exports::wit::reflect::composer::{CompositionPlan, Edge, Node, WorkloadMeta};
 
-/// cargo names artifacts with underscores; canvas ids carry hyphens.
 fn artifact_stem(id: &str) -> String {
     id.replace('-', "_")
 }
 
-/// A wac-safe identifier for a `let` binding. wac identifiers are kebab-case like
-/// WIT's: an underscore is a parse error, not a style preference.
+/// A wac-safe identifier for a `let` binding: wac identifiers are kebab-case, an underscore is a
+/// parse error.
 fn ident(id: &str) -> String {
     let s: String = id.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
     let s = s.trim_matches('-').to_string();
@@ -38,8 +27,6 @@ fn ident(id: &str) -> String {
         s
     }
 }
-
-// ---- imperative: wac plug ---------------------------------------------------
 
 pub(crate) fn plug_script(plan: &CompositionPlan, out_dir: &str) -> String {
     let mut s = String::new();
@@ -62,8 +49,6 @@ pub(crate) fn plug_script(plan: &CompositionPlan, out_dir: &str) -> String {
         return s;
     }
 
-    // A plug that is itself a socket earlier in the order is consumed as the
-    // composed intermediate, not as its raw artifact.
     let built: BTreeSet<&str> = plan.steps.iter().map(|st| st.socket.as_str()).collect();
     let path_of = |id: &str| -> String {
         if built.contains(id) {
@@ -106,13 +91,9 @@ pub(crate) fn plug_script(plan: &CompositionPlan, out_dir: &str) -> String {
     s
 }
 
-// ---- declarative: a .wac file ----------------------------------------------
-
-/// The wac package name to instantiate a node as. A capability's identity is its
-/// exported interface (`records:store/store@0.1.0` -> `records:store`); an app
-/// that exports only `wasi:http` has no identity of its own in the binary, so it
-/// gets `<id>:component`, matching how `components/login-app/compose.wac` names
-/// its consumer.
+/// The wac package name to instantiate a node as: a capability's identity is its exported
+/// interface (`records:store/store@0.1.0` -> `records:store`); an app exporting only `wasi:http`
+/// gets `<id>:component`.
 fn wac_package(node: &Node) -> String {
     for e in &node.surface.exports {
         if e.namespace != "wasi" && !e.namespace.is_empty() {
@@ -153,12 +134,10 @@ pub(crate) fn wac_file(
         return s;
     }
 
-    // Emit deepest-first so every referenced binding already exists.
     let depth: BTreeMap<&str, u32> = plan.depth.iter().map(|(id, d)| (id.as_str(), *d)).collect();
     let mut ordered: Vec<&Node> = nodes.iter().collect();
     ordered.sort_by_key(|n| (depth.get(n.id.as_str()).copied().unwrap_or(0), n.id.clone()));
 
-    // socket -> (iface, plug id)
     let mut wiring: BTreeMap<&str, Vec<(&str, &str)>> = BTreeMap::new();
     for e in edges {
         if by_id.contains_key(e.plug.as_str()) && by_id.contains_key(e.socket.as_str()) {
@@ -192,8 +171,6 @@ pub(crate) fn wac_file(
     }
     s
 }
-
-// ---- wasmCloud v2: a WorkloadDeployment ------------------------------------
 
 pub(crate) fn workload(nodes: &[Node], plan: &CompositionPlan, meta: &WorkloadMeta) -> String {
     let name = if meta.name.is_empty() { "app" } else { meta.name.as_str() };
@@ -258,7 +235,6 @@ pub(crate) fn workload(nodes: &[Node], plan: &CompositionPlan, meta: &WorkloadMe
         s.push_str(&format!("          name: {name}\n"));
     }
 
-    // hostInterfaces: one entry per (namespace, package, interface).
     let mut entries: BTreeSet<(String, String, String)> = BTreeSet::new();
     for h in &plan.host_needs {
         if h.namespace.is_empty() || h.pkg.is_empty() || h.name.is_empty() {

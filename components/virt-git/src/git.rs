@@ -1,12 +1,8 @@
 //! Git's object serialisation, as pure functions.
 //!
-//! Separated from the component so it can be tested natively against the real
-//! `git` binary — which is the only ground truth worth having here. Every id this
-//! produces is checked against `git hash-object` and `git mktree` rather than
-//! against what we expected, because "our tree hashes consistently" and "our tree
-//! hashes the way git does" are different claims and only the second one matters.
-//!
-//! No WASI, no storage, no bindings. Just bytes in, bytes and ids out.
+//! Separated from the component so it can be tested natively against the real `git` binary: every
+//! id is checked against `git hash-object` and `git mktree`, because "hashes consistently" and
+//! "hashes the way git does" are different claims. No WASI, no storage, no bindings.
 
 use sha1::{Digest, Sha1};
 
@@ -25,7 +21,6 @@ pub fn frame(kind: &str, payload: &[u8]) -> Vec<u8> {
     out
 }
 
-/// The git object id of an already-framed object.
 pub fn id_of(framed: &[u8]) -> String {
     let mut h = Sha1::new();
     h.update(framed);
@@ -38,7 +33,6 @@ pub fn id_of(framed: &[u8]) -> String {
     s
 }
 
-/// Split a stored object back into (type, payload).
 pub fn unframe(bytes: &[u8]) -> Result<(String, &[u8]), String> {
     let nul = bytes.iter().position(|b| *b == 0).ok_or("no NUL in the object header")?;
     let head = core::str::from_utf8(&bytes[..nul]).map_err(|_| "header is not utf-8")?;
@@ -60,8 +54,6 @@ pub struct Entry {
     pub id: String,
 }
 
-/// Git's tree ordering.
-///
 /// Entries sort by name, except that a SUBTREE sorts as though its name ended in
 /// `/`. So `foo` the file comes before `foo.txt`, and `foo` the directory comes
 /// after it — because `foo/` > `foo.`. Get this wrong and the tree still
@@ -74,7 +66,6 @@ fn sort_key(e: &Entry) -> Vec<u8> {
     k
 }
 
-/// `<mode> <name>\0<20 raw bytes>` per entry, sorted.
 pub fn tree_payload(entries: &[Entry]) -> Result<Vec<u8>, String> {
     let mut sorted: Vec<&Entry> = entries.iter().collect();
     sorted.sort_by_key(|e| sort_key(e));
@@ -140,10 +131,8 @@ pub struct Commit {
 
 /// The commit payload, in the order git writes it.
 ///
-/// The timezone is fixed at `+0000` and the time comes from the caller, so the
-/// same inputs always produce the same commit id. A commit whose id moves with
-/// the wall clock cannot be deduplicated, compared between generations, or
-/// re-derived to check anything.
+/// Timezone fixed at `+0000` and time from the caller, so the same inputs always produce the same
+/// commit id.
 pub fn commit_payload(c: &Commit) -> Result<Vec<u8>, String> {
     if c.tree.len() != 40 {
         return Err(format!("tree id {:?} is not a sha", c.tree));
@@ -226,7 +215,6 @@ fn raw_to_hex(raw: &[u8]) -> String {
     s
 }
 
-/// A path split into its segments, refusing anything that leaves the tree.
 pub fn split_path(path: &str) -> Result<Vec<String>, String> {
     if path.is_empty() || path.starts_with('/') {
         return Err(format!("{path:?} is not a path inside the tree"));
@@ -296,7 +284,6 @@ mod tests {
             Entry { mode: "100644".into(), name: "a.txt".into(), id: empty.clone() },
         ];
 
-        // Build the subtree first so it has a real id.
         let sub_payload = tree_payload(&[Entry {
             mode: "100644".into(),
             name: "inner".into(),
@@ -316,7 +303,6 @@ mod tests {
             let kind = if e.mode == "40000" { "tree" } else { "blob" };
             spec.push_str(&format!("{} {} {}\t{}\n", e.mode, kind, e.id, e.name));
         }
-        // Sorted the way we sort, then handed over verbatim.
         let mut lines: Vec<&str> = spec.lines().collect();
         lines.sort_by_key(|l| {
             let name = l.split('\t').nth(1).unwrap_or("");
@@ -329,7 +315,6 @@ mod tests {
         });
         let ordered = lines.join("\n") + "\n";
 
-        // The blobs have to exist in a real repository for mktree to accept them.
         let dir = std::env::temp_dir().join(format!("comp-vgit-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -341,7 +326,6 @@ mod tests {
         }
         let hashed = git(&["-C", &d, "hash-object", "-w", "-t", "blob", "--stdin"], Some(b""));
         assert_eq!(hashed.as_deref(), Some(empty.as_str()), "the empty blob should round-trip");
-        // Write the subtree into the repo too.
         let _ =
             git(&["-C", &d, "mktree"], Some(format!("100644 blob {empty}\tinner\n").as_bytes()));
 
@@ -366,7 +350,6 @@ mod tests {
         ];
         let payload = tree_payload(&entries).unwrap();
         let back = parse_tree(&payload).unwrap();
-        // Sorted, so `a` comes first regardless of what the caller passed.
         assert_eq!(back[0].name, "a.txt");
         assert_eq!(back[1].name, "b.txt");
         assert_eq!(back[0].id, empty);
@@ -411,7 +394,6 @@ mod tests {
         assert_eq!(back.message.trim_end(), "first");
     }
 
-    /// And the commit git would make from the same inputs.
     #[test]
     fn a_commit_id_is_the_id_git_gives_it() {
         let dir = std::env::temp_dir().join(format!("comp-vgit-c-{}", std::process::id()));
@@ -422,7 +404,6 @@ mod tests {
             eprintln!("SKIPPED: no usable `git` binary");
             return;
         }
-        // The empty tree, which git knows without being told.
         let tree = git(&["-C", &d, "mktree"], Some(b"")).unwrap_or_default();
         let c = Commit {
             tree: tree.clone(),

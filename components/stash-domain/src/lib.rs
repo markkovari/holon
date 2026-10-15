@@ -106,8 +106,6 @@ fn usage() -> Outcome {
     )
 }
 
-// ---- auth -------------------------------------------------------------------
-
 guestio::guest_p3_bearer!();
 guestio::guest_p3_respond!();
 
@@ -165,8 +163,6 @@ fn logout(request: &Request) -> Outcome {
         Err(e) => Outcome::Auth(e),
     }
 }
-
-// ---- notes ------------------------------------------------------------------
 
 fn owned_notes(subject: &str) -> Vec<(String, Value)> {
     let mut v: Vec<(String, Value)> = records::find_by(NOTES, "owner", &json!(subject).to_string())
@@ -273,9 +269,6 @@ fn delete_note(request: &Request, id: &str) -> Outcome {
     }
 }
 
-// ---- the ZIP export (zip:archive + csv:codec) -------------------------------
-
-/// Sanitize a title into a filename-safe slug.
 fn slug(title: &str) -> String {
     let mut s: String = title
         .chars()
@@ -300,7 +293,6 @@ fn export_zip(request: &Request) -> Outcome {
     let notes = owned_notes(&p.subject);
 
     let mut files: Vec<zip::File> = Vec::new();
-    // one Markdown file per note (id suffix keeps names unique).
     let mut index_rows: Vec<csv::Row> =
         vec![csv::Row { fields: vec!["id".into(), "title".into(), "created".into()] }];
     let mut manifest_notes: Vec<Value> = Vec::new();
@@ -318,22 +310,17 @@ fn export_zip(request: &Request) -> Outcome {
         manifest_notes.push(json!({ "id": id, "title": title }));
     }
 
-    // index.csv via csv:codec.
     let dialect = csv::Dialect { delimiter: ",".into(), has_header: true, trim: false };
     let index_csv = csv::format(&index_rows, &dialect);
     files.push(zip::File { name: "index.csv".into(), data: index_csv.into_bytes() });
 
-    // manifest.json.
     let manifest =
         json!({ "app": "stash", "exported": now(), "count": notes.len(), "notes": manifest_notes });
     files.push(zip::File { name: "manifest.json".into(), data: manifest.to_string().into_bytes() });
 
-    // assemble the archive.
     let bytes = zip::archive(&files);
     Outcome::File(200, "application/zip".into(), Some("stash-export.zip".into()), bytes)
 }
-
-// ---- demo seed --------------------------------------------------------------
 
 fn seed_demo(subject: &str) {
     let demo = [
@@ -346,8 +333,6 @@ fn seed_demo(subject: &str) {
         let _ = records::create(NOTES, &d.to_string(), &["owner".to_string()]);
     }
 }
-
-// ---- http plumbing ----------------------------------------------------------
 
 fn store_err(e: records::StoreError) -> Outcome {
     match e {
@@ -367,18 +352,9 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be before the component stops reading it. Without a ceiling,
+/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy; uploads police their own size with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

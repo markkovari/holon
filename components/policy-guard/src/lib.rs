@@ -1,11 +1,8 @@
 //! `policy-guard` — does this principal own THIS row? — attribute-based, row-level authorization beyond roles
 //!
-//! Declarative attribute-based access control (ABAC) / row-level authz that
-//! *complements* `auth-guard`'s RBAC. RBAC answers "does this principal's ROLE
-//! grant action X on resource TYPE Y"; it cannot answer "does this principal
-//! own THIS row". `policy:guard` makes those checks a declarative, reusable
-//! rule set: principal attrs + resource attrs + an action go in, an allow/deny
-//! decision (with the deciding rule) comes out.
+//! Declarative ABAC / row-level authz that complements `auth-guard`'s RBAC (which cannot answer
+//! "does this principal own THIS row"). Principal attrs + resource attrs + an action go in; an
+//! allow/deny decision with the deciding rule comes out.
 //!
 //! Semantics:
 //!   * **Default-deny** — if no rule matches a request, the decision is DENY
@@ -18,9 +15,8 @@
 //!     ownership rule `{left:"resource.owner", op:eq, right:"principal.subject"}`
 //!     compares the resource's owner attr to the principal's subject attr.
 //!
-//! State is just the rule set per domain, kept in `wasi:keyvalue` so rules are
-//! updatable without a redeploy. Rules live at `pol_{sanitize(domain)}` as the
-//! serde_json encoding of a `Vec<StoredRule>`.
+//! State is the rule set per domain in `wasi:keyvalue` (updatable without a redeploy), at
+//! `pol_{sanitize(domain)}` as the serde_json encoding of a `Vec<StoredRule>`.
 
 #[allow(warnings)]
 mod bindings;
@@ -37,11 +33,8 @@ struct Component;
 
 const BUCKET: &str = "default";
 
-// ---- stored mirror types ------------------------------------------------
-//
-// The WIT-generated `Op`/`Effect` enums don't derive serde, so we mirror the
-// `rule`/`condition`/`op`/`effect` shapes with our own serde-deriving structs
-// and convert to/from the WIT types on the boundary.
+// The WIT-generated `Op`/`Effect` enums don't derive serde, so serde-deriving mirrors are
+// converted at the boundary.
 
 #[derive(Serialize, Deserialize)]
 struct StoredCond {
@@ -157,10 +150,8 @@ impl From<&StoredRule> for Rule {
     }
 }
 
-// ---- key naming ---------------------------------------------------------
-
-/// Sanitize one opaque segment to NATS-legal kv chars (same byte scheme as
-/// config-store's `sanitize`).
+/// Sanitize one opaque segment to NATS-legal kv chars (same byte scheme as config-store's
+/// `sanitize`).
 fn sanitize(seg: &str) -> String {
     let mut out = String::with_capacity(seg.len());
     for b in seg.bytes() {
@@ -172,18 +163,14 @@ fn sanitize(seg: &str) -> String {
     out
 }
 
-/// Storage key for a domain's rule set: `pol_{sanitize(domain)}`.
 fn pol_key(domain: &str) -> String {
     format!("pol_{}", sanitize(domain))
 }
-
-// ---- kv plumbing --------------------------------------------------------
 
 fn open() -> Result<kv::Bucket, PolicyError> {
     kv::open(BUCKET).map_err(|e| PolicyError::BackendUnavailable(format!("open: {e:?}")))
 }
 
-/// Load + decode the rule set for `domain`, returning an empty vec if absent.
 fn load_rules(bucket: &kv::Bucket, domain: &str) -> Result<Vec<StoredRule>, PolicyError> {
     match bucket.get(&pol_key(domain)) {
         Ok(Some(bytes)) => serde_json::from_slice::<Vec<StoredRule>>(&bytes)
@@ -193,10 +180,6 @@ fn load_rules(bucket: &kv::Bucket, domain: &str) -> Result<Vec<StoredRule>, Poli
     }
 }
 
-// ---- validation ---------------------------------------------------------
-
-/// Is this operand a reference (resolved from an attr map) rather than a
-/// literal? References start with `principal.` or `resource.`.
 fn is_reference(s: &str) -> bool {
     s.starts_with("principal.") || s.starts_with("resource.")
 }
@@ -212,7 +195,6 @@ fn validate_cond(rule_id: &str, c: &Condition) -> Result<(), PolicyError> {
                 "rule {rule_id:?}: {label} operand is empty"
             )));
         }
-        // A reference must have a non-empty key after the prefix dot.
         if is_reference(side) {
             let key = side.split_once('.').map(|x| x.1).unwrap_or("");
             if key.is_empty() {
@@ -228,10 +210,6 @@ fn validate_cond(rule_id: &str, c: &Condition) -> Result<(), PolicyError> {
     Ok(())
 }
 
-// ---- evaluation ---------------------------------------------------------
-
-/// Resolve one operand: a `principal.`/`resource.` reference is looked up in
-/// the matching attr map (absent -> ""); anything else is the literal itself.
 fn resolve(
     side: &str,
     principal: &HashMap<String, String>,
@@ -246,7 +224,6 @@ fn resolve(
     }
 }
 
-/// Does a single condition hold for the given attr maps?
 fn cond_holds(
     c: &StoredCond,
     principal: &HashMap<String, String>,
@@ -270,7 +247,6 @@ fn cond_holds(
     }
 }
 
-/// Build a `key -> value` lookup map from an attr list.
 fn attr_map(attrs: &[Attr]) -> HashMap<String, String> {
     attrs.iter().map(|a| (a.key.clone(), a.value.clone())).collect()
 }
@@ -310,7 +286,6 @@ impl Guest for Component {
         let pmap = attr_map(&principal);
         let rmap = attr_map(&target_attrs);
 
-        // Consider only rules whose action matches (exact or wildcard).
         rules.retain(|r| r.action == action || r.action == "*");
         // Stable sort by ascending priority — lower priority wins. Within the
         // same priority a DENY must be seen before an ALLOW so deny overrides.
@@ -330,7 +305,6 @@ impl Guest for Component {
             }
         }
 
-        // No rule matched -> default deny.
         Ok(Decision {
             allowed: false,
             rule_id: String::new(),

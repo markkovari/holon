@@ -1,24 +1,17 @@
 //! `secrets-vault` — store secrets envelope-encrypted, so an API key never sits in plaintext beside ordinary data
 //!
-//! A minimal envelope-encryption vault backed by `wasi:keyvalue`. Every secret
-//! *value version* is sealed with AEAD (ChaCha20-Poly1305) under a single
-//! per-vault **master key** before it ever touches the record store, so only
-//! ciphertext lives in the backend. The master key itself is never persisted by
-//! this component: it is injected via `wasi:config/store` (config key
-//! `master-key`, base64 STANDARD, exactly 32 bytes) and read fresh on each call.
+//! An envelope-encryption vault on `wasi:keyvalue`. Every secret *value version* is sealed with
+//! AEAD (ChaCha20-Poly1305) under a per-vault **master key**, so only ciphertext lives in the
+//! backend. The master key is never persisted: it comes from `wasi:config/store` (`master-key`,
+//! base64 STANDARD, exactly 32 bytes) and is read fresh on each call.
+//! Each version is encrypted independently with a fresh random 96-bit nonce; the stored blob is
+//! `nonce
 //!
-//! "Envelope" here means each version's plaintext is encrypted independently
-//! with a fresh random 96-bit nonce; the stored blob is `nonce || ciphertext`
-//! (base64). Old versions stay sealed-but-decryptable after a rotation so
-//! consumers can cut over gracefully (`get-version`).
+//! ciphertext` (base64). Old versions stay decryptable after a rotation (`get-version`).
+//! State (BUCKET = "default"): `sv_meta_{name}` -> "{version}:{updated}"; `sv_{name}_v{version}`
+//! -> base64(nonce
 //!
-//! State layout (BUCKET = "default"):
-//!   sv_meta_{name}        -> "{version}:{updated}"  current version + write secs
-//!   sv_{name}_v{version}  -> base64(nonce||ciphertext) for one version
-//!   sv_index              -> newline-joined list of stored secret names
-//!
-//! Config (wasi:config/store):
-//!   master-key   base64 STANDARD, MUST decode to exactly 32 bytes — required.
+//! ciphertext); `sv_index` -> newline-joined secret names.
 
 #[allow(warnings)]
 mod bindings;
@@ -44,10 +37,8 @@ fn now() -> u64 {
     wall_clock::now().seconds
 }
 
-// ---- key naming ---------------------------------------------------------
-
-/// Sanitize a secret name to NATS-legal kv chars (same byte scheme as
-/// idempotency-guard's `id_key` / the rate-limiter's `rl_key`).
+/// Sanitize a secret name to NATS-legal kv chars (same byte scheme as idempotency-guard's
+/// `id_key`).
 fn safe_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for b in name.bytes() {
@@ -67,12 +58,8 @@ fn version_key(name: &str, version: u32) -> String {
     format!("sv_{}_v{version}", safe_name(name))
 }
 
-// ---- crypto -------------------------------------------------------------
-
-/// Build the AEAD cipher from the config-injected master key.
-///
-/// `master-key` must be base64 STANDARD decoding to exactly 32 bytes; anything
-/// else is a `crypto` error (the host mis-provisioned the vault).
+/// Build the AEAD cipher from the config-injected master key; anything but 32 base64 bytes is a
+/// `crypto` error (the host mis-provisioned the vault).
 fn cipher() -> Result<ChaCha20Poly1305, VaultError> {
     let raw = match config::get("master-key") {
         Ok(Some(v)) => v,
@@ -100,8 +87,6 @@ fn cipher() -> Result<ChaCha20Poly1305, VaultError> {
     Ok(ChaCha20Poly1305::new(&Key::from(key)))
 }
 
-/// Seal a plaintext value: fresh 96-bit nonce, encrypt, return
-/// base64(nonce || ciphertext).
 fn seal(plaintext: &[u8]) -> Result<String, VaultError> {
     let cipher = cipher()?;
     let nonce_bytes = get_random_bytes(NONCE_LEN as u64);
@@ -119,7 +104,6 @@ fn seal(plaintext: &[u8]) -> Result<String, VaultError> {
     Ok(B64.encode(&blob))
 }
 
-/// Open a sealed blob produced by `seal`: split nonce, decrypt + authenticate.
 fn unseal(blob: &str) -> Result<Vec<u8>, VaultError> {
     let cipher = cipher()?;
     let raw = B64
@@ -134,8 +118,6 @@ fn unseal(blob: &str) -> Result<Vec<u8>, VaultError> {
     let nonce = Nonce::from(n);
     cipher.decrypt(&nonce, ct).map_err(|_| VaultError::Crypto("decrypt/authenticate failed".into()))
 }
-
-// ---- kv plumbing --------------------------------------------------------
 
 fn open() -> Result<kv::Bucket, VaultError> {
     kv::open(BUCKET).map_err(|e| VaultError::BackendUnavailable(format!("open: {e:?}")))
@@ -161,10 +143,6 @@ fn delete_key(bucket: &kv::Bucket, key: &str) -> Result<(), VaultError> {
     bucket.delete(key).map_err(|e| VaultError::BackendUnavailable(format!("delete: {e:?}")))
 }
 
-// ---- meta ---------------------------------------------------------------
-
-/// Read the current version + last-update secs for `name`, if any.
-/// Meta value shape: "{version}:{updated}".
 fn read_meta(bucket: &kv::Bucket, name: &str) -> Result<Option<(u32, u64)>, VaultError> {
     match get_str(bucket, &meta_key(name))? {
         Some(s) => {
@@ -188,13 +166,9 @@ fn write_meta(
     set_str(bucket, &meta_key(name), &format!("{version}:{updated}"))
 }
 
-// ---- name index ---------------------------------------------------------
-//
-// Best-effort newline-joined registry of secret names, kept for `list-names`.
-// Maintained with read-modify-write on first put and on delete. Like
-// idempotency-guard's reservation, this is single-writer best-effort: two
-// concurrent first-puts of distinct names can clobber each other's index entry
-// since wasi:keyvalue@0.2.0-draft offers no compare-and-swap.
+// Best-effort registry of secret names for `list-names`, read-modify-write like
+// idempotency-guard's reservation: concurrent first-puts of distinct names can clobber each
+// other's entry (no compare-and-swap in `wasi:keyvalue@0.2.0-draft`).
 
 fn read_index(bucket: &kv::Bucket) -> Result<Vec<String>, VaultError> {
     Ok(match get_str(bucket, INDEX_KEY)? {
@@ -225,8 +199,6 @@ fn index_remove(bucket: &kv::Bucket, name: &str) -> Result<(), VaultError> {
     }
     Ok(())
 }
-
-// ---- guest impl ---------------------------------------------------------
 
 impl Guest for Component {
     fn put(name: String, value: Vec<u8>) -> Result<SecretMeta, VaultError> {

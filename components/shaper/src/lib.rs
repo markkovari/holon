@@ -1,8 +1,7 @@
 //! `shaper` — the arithmetic behind rate limiting — token bucket and GCRA, as pure functions whose state the caller holds
 //!
-//! The math behind rate limiting and smoothing, as pure functions. The caller
-//! owns the per-key state and passes it in; each function returns the allow/deny
-//! decision plus the state to persist. No state, no host imports.
+//! Pure functions: the caller owns the per-key state and passes it in; each returns the decision
+//! plus the state to persist.
 //!
 //! * `token_bucket` — refill to `capacity` at `refill_per_sec`, spend `cost`.
 //!   Bursty: a full bucket lets `capacity` requests through at once.

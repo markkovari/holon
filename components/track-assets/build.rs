@@ -29,7 +29,6 @@ fn walk(dir: &Path, root: &Path, out: &mut Vec<(String, PathBuf)>) {
         if path.is_dir() {
             walk(&path, root, out);
         } else {
-            // web path: "/" + relative, forward slashes.
             let rel = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
             out.push((format!("/{rel}"), path));
         }

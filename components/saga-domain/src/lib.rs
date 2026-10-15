@@ -1,16 +1,11 @@
 //! saga:app — a durable trip-booking saga over composed contracts.
 //!
-//! Book flight → hotel → car in sequence; if a leg fails, compensate the booked
-//! legs in reverse. The engine is a step machine: `step()` does ONE unit of work
-//! (book the next pending leg, run one compensation, or finalize) and PERSISTS,
-//! so a saga is fully resumable — `run()` loops `step()` to a terminal state;
-//! `pump()` advances every live saga one step (for timers / retries / restart
-//! resume). Nothing lives in component memory.
-//!
-//! Durable state = a `saga` record (steps + cursor) + the `fsm:workflow`
-//! instance (running → committed | compensating → compensated | failed). Each
-//! book/compensate is fenced by `idempotency:guard`, so re-running or re-pumping
-//! never double-books or double-refunds. Every move emits an `event:bus` event.
+//! Book flight → hotel → car in sequence; if a leg fails, compensate the booked legs in reverse.
+//! `step()` does ONE unit of work and PERSISTS, so a saga is resumable: `run()` loops `step()` to
+//! a terminal state, `pump()` advances every live saga one step. Nothing lives in component
+//! memory.
+//! Durable state = a `saga` record + the `fsm:workflow` instance. Each book/compensate is fenced
+//! by `idempotency:guard`, so re-running never double-books or double-refunds.
 
 #[allow(warnings)]
 mod bindings {
@@ -111,9 +106,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- machine + pricing -------------------------------------------------------
-
-/// Idempotent: define the saga lifecycle machine once (gated on a meta record).
 fn ensure_seeded() {
     if records::count("meta").map(|n| n > 0).unwrap_or(false) {
         return;
@@ -153,8 +145,6 @@ fn ref_prefix(leg: &str) -> &str {
         _ => "CR",
     }
 }
-
-// ---- endpoints ---------------------------------------------------------------
 
 async fn create_trip(request: Request) -> Outcome {
     ensure_seeded();
@@ -209,7 +199,6 @@ fn get_trip(id: &str) -> Outcome {
     }
 }
 
-/// Drive one saga to a terminal state (loop `step` until it stops advancing).
 async fn run_trip(id: &str) -> Outcome {
     if records::get(SAGAS, id).is_err() {
         return Outcome::Err(404, "not_found".into());
@@ -223,9 +212,8 @@ async fn run_trip(id: &str) -> Outcome {
     Outcome::Json(200, saga_json(id))
 }
 
-/// Advance every live (running | compensating) saga by ONE step. This is the
-/// resume/retry entry point: after a host restart, pumping picks each saga up
-/// exactly where its persisted state left off.
+/// Advance every live (running
+/// compensating) saga by ONE step: the resume/retry entry point after a host restart.
 async fn pump() -> Outcome {
     // Drain due retry timers: each marks a `retrying` leg eligible again; the
     // step pass below re-attempts it. Ack so a one-shot timer doesn't re-fire.
@@ -247,9 +235,6 @@ async fn pump() -> Outcome {
     Outcome::Json(200, json!({ "advanced": advanced }).to_string())
 }
 
-// ---- the step machine --------------------------------------------------------
-
-/// One unit of work for saga `id`; persists and returns whether it advanced.
 /// Terminal sagas return false.
 async fn step(id: &str) -> bool {
     let entry = match records::get(SAGAS, id) {
@@ -267,7 +252,6 @@ async fn step(id: &str) -> bool {
         "running" => {
             match next_active(&data) {
                 None => {
-                    // every leg booked → commit
                     set_status(&mut data, fire(id, "commit").unwrap_or_else(|| "committed".into()));
                     save(id, &data);
                     publish("saga.committed", &json!({"saga": id}));
@@ -279,9 +263,7 @@ async fn step(id: &str) -> bool {
                     if fail_leg == leg {
                         begin_compensation(id, &mut data, i, &leg); // permanent failure
                     } else if flaky_leg == leg && attempts < flaky_fails {
-                        // this attempt fails transiently…
                         if attempts + 1 < MAX_ATTEMPTS {
-                            // …and we still have retries: record + arm a retry timer.
                             data["steps"][i]["attempts"] = json!(attempts + 1);
                             data["steps"][i]["state"] = json!("retrying");
                             let _ = timer::schedule_at(&timer_key, now(), b""); // backoff 0 = eligible now
@@ -291,12 +273,10 @@ async fn step(id: &str) -> bool {
                                 &json!({"saga": id, "leg": leg, "attempt": attempts + 1}),
                             );
                         } else {
-                            // …and retries are exhausted: give up and roll back.
                             let _ = timer::cancel(&timer_key);
                             begin_compensation(id, &mut data, i, &leg);
                         }
                     } else {
-                        // success (also the recovery of a previously-flaky leg)
                         let _ = timer::cancel(&timer_key);
                         match book_leg(
                             id,
@@ -314,7 +294,6 @@ async fn step(id: &str) -> bool {
                                 );
                             }
                             // the leg's durable provider (Golem) failed → roll back,
-                            // like any other leg failure. Prior legs are compensated.
                             Err(e) => {
                                 data["lastError"] = json!(e);
                                 begin_compensation(id, &mut data, i, &leg);
@@ -326,7 +305,6 @@ async fn step(id: &str) -> bool {
             true
         }
         "compensating" => {
-            // undo the last still-booked leg; when none remain, finish.
             match last_booked(&data) {
                 Some(i) => {
                     let leg = leg_name(&data, i);
@@ -351,9 +329,8 @@ async fn step(id: &str) -> bool {
     }
 }
 
-/// Reserve a leg, fenced so the booking record is created at most once. Returns
-/// the booking ref (a fresh one, or the replayed ref if already booked). The
-/// decision to book/fail/retry is the caller's; this only performs the reserve.
+/// Reserve a leg, fenced so the booking record is created at most once. Returns the booking ref
+/// (fresh, or replayed if already booked); the book/fail/retry decision is the caller's.
 async fn book_leg(saga: &str, leg: &str, golem: Option<(&str, &str)>) -> Result<String, String> {
     let key = format!("saga:{saga}:book:{leg}");
     if let Ok(Some(cached)) = idem::begin(&key, 3600) {
@@ -361,7 +338,6 @@ async fn book_leg(saga: &str, leg: &str, golem: Option<(&str, &str)>) -> Result<
     }
     // first caller (single-writer per saga, so in-progress can't race here).
     let reference = match golem {
-        // book the leg by invoking a REAL durable Golem worker over HTTP.
         Some((url, host)) => match golem_book(url, host, &format!("{leg}-{saga}")).await {
             Ok(result) => format!("{}-golem-{result}", ref_prefix(leg)),
             Err(e) => {
@@ -369,7 +345,6 @@ async fn book_leg(saga: &str, leg: &str, golem: Option<(&str, &str)>) -> Result<
                 return Err(e);
             }
         },
-        // in-process simulated booking.
         None => format!("{}-{}", ref_prefix(leg), ids::short_code(6)),
     };
     let booking = json!({"saga": saga, "leg": leg, "ref": reference, "price": price(leg)});
@@ -378,7 +353,6 @@ async fn book_leg(saga: &str, leg: &str, golem: Option<(&str, &str)>) -> Result<
     Ok(reference)
 }
 
-/// The (url, host) of the Golem gateway if this saga's legs are golem-backed.
 fn golem_opts(data: &Value) -> Option<(String, String)> {
     let url = data["golemUrl"].as_str().unwrap_or("");
     if url.is_empty() {
@@ -387,10 +361,8 @@ fn golem_opts(data: &Value) -> Option<(String, String)> {
     Some((url.to_string(), data["golemHost"].as_str().unwrap_or("").to_string()))
 }
 
-/// Invoke a durable Golem worker via the API gateway (`POST
-/// {url}/counters/{workflow}/increment`) and return its result body. This is the
-/// same call the `golem-workflow` provider makes — here the saga makes it
-/// directly over `wasi:http`, so a saga leg IS a crash-proof Golem worker.
+/// Invoke a durable Golem worker via the API gateway (`POST {url}/counters/{workflow}/increment`)
+/// and return its result body, directly over `wasi:http`.
 async fn golem_book(url: &str, host: &str, workflow: &str) -> Result<String, String> {
     let (scheme, url_authority) = if let Some(rest) = url.strip_prefix("https://") {
         ("https", rest.trim_end_matches('/').to_string())
@@ -419,7 +391,6 @@ async fn golem_book(url: &str, host: &str, workflow: &str) -> Result<String, Str
     Ok(String::from_utf8_lossy(&bytes).trim().to_string())
 }
 
-/// Mark a leg failed and move the saga into `compensating`.
 fn begin_compensation(id: &str, data: &mut Value, i: usize, leg: &str) {
     set_leg(data, i, "failed", "");
     publish("saga.leg.failed", &json!({"saga": id, "leg": leg}));
@@ -427,7 +398,6 @@ fn begin_compensation(id: &str, data: &mut Value, i: usize, leg: &str) {
     save(id, data);
 }
 
-/// Cancel a leg's booking, fenced so it happens at most once.
 fn compensate_leg(saga: &str, leg: &str) {
     let key = format!("saga:{saga}:comp:{leg}");
     if let Ok(Some(_)) = idem::begin(&key, 3600) {
@@ -443,8 +413,6 @@ fn compensate_leg(saga: &str, leg: &str) {
     let _ = idem::complete(&key, 200, b"compensated");
 }
 
-// ---- saga-record helpers -----------------------------------------------------
-
 /// First leg still needing work: `pending` (not yet tried) or `retrying` (a
 /// transient failure armed a retry timer).
 fn next_active(data: &Value) -> Option<usize> {
@@ -452,7 +420,6 @@ fn next_active(data: &Value) -> Option<usize> {
     steps.iter().position(|s| matches!(s["state"].as_str(), Some("pending") | Some("retrying")))
 }
 
-/// Highest-index leg still in `booked` (compensate in reverse order).
 fn last_booked(data: &Value) -> Option<usize> {
     let steps = data["steps"].as_array()?;
     (0..steps.len()).rev().find(|&i| steps[i]["state"].as_str() == Some("booked"))
@@ -481,7 +448,6 @@ fn save(id: &str, data: &Value) {
     let _ = records::update(SAGAS, id, &data.to_string(), 0);
 }
 
-/// Fire an fsm transition; returns the new state (None if illegal/unavailable).
 fn fire(id: &str, event: &str) -> Option<String> {
     fsm::fire(MACHINE, id, event).ok().map(|s| s.state)
 }
@@ -513,8 +479,6 @@ fn publish(topic: &str, payload: &Value) {
     let _ = bus::publish(topic, payload.to_string().as_bytes());
 }
 
-// ---- http plumbing -----------------------------------------------------------
-
 fn store_err(e: records::StoreError) -> Outcome {
     match e {
         records::StoreError::NotFound => Outcome::Err(404, "not_found".into()),
@@ -532,18 +496,9 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be before the component stops reading it. Without a ceiling,
+/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy; uploads police their own size with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

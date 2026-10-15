@@ -1,18 +1,13 @@
 //! tempo:app — a multi-person worktime logger over composed contracts.
 //!
-//! Accounts + RBAC come from the composed auth-guard (`auth:identity`). Two
-//! global roles — admin (creates projects/categories, manages membership, sees
-//! all) and member (default) — and per-project **memberships** (member | lead):
-//! you log only against projects you belong to, and a project **lead** sees that
-//! project's whole distribution (its managerial view). Projects, categories,
-//! time entries, memberships, and the per-user running timer are `record:store`
-//! collections. Owners (and admins) can edit/delete entries. A time entry carries a
-//! `day` (YYYY-MM-DD, so a range filter is a string compare — the client owns
-//! the calendar), denormalized project/category names for reporting, and
-//! minutes. `GET /report` sums minutes grouped by project, category,
-//! project×category, day, and user over a date range, scoped by the caller's
-//! role — the shape the charts render. A "pomodoro" is just start (store now) →
-//! stop (an entry with the elapsed minutes).
+//! Accounts + RBAC come from the composed auth-guard (`auth:identity`). Global roles: admin
+//! (creates projects/categories, manages membership, sees all) and member; per-project
+//! memberships (member or lead): you log only against projects you belong to, and a lead sees
+//! that project's whole distribution. Everything is a `record:store` collection. A time entry
+//! carries a `day` (YYYY-MM-DD, so range filters are string compares), denormalized
+//! project/category names, and minutes. `GET /report` sums minutes by project, category,
+//! project×category, day and user, scoped by role. A "pomodoro" is start (store now) then stop
+//! (an entry with the elapsed minutes).
 
 #[allow(warnings)]
 mod bindings {
@@ -138,8 +133,6 @@ fn usage() -> Outcome {
     )
 }
 
-// ---- auth (auth-guard: auth:identity) ---------------------------------------
-
 guestio::guest_p3_bearer!();
 guestio::guest_p3_respond!();
 
@@ -156,11 +149,9 @@ fn is_admin(p: &Principal) -> bool {
     has_role(p, "admin")
 }
 
-// ---- project membership -----------------------------------------------------
 // A regular user's reach is defined by per-project memberships (member | lead),
 // not a global role. Admin transcends all of it.
 
-/// This user's membership rows.
 fn my_memberships(subject: &str) -> Vec<Value> {
     records::find_by(MEMBERS, "user", &json!(subject).to_string())
         .unwrap_or_default()
@@ -169,7 +160,6 @@ fn my_memberships(subject: &str) -> Vec<Value> {
         .collect()
 }
 
-/// Project ids the user may log against: None = all (admin), else the set.
 fn logging_projects(p: &Principal) -> Option<Vec<String>> {
     if is_admin(p) {
         return None;
@@ -182,7 +172,6 @@ fn logging_projects(p: &Principal) -> Option<Vec<String>> {
     )
 }
 
-/// Project ids the user leads (sees the whole distribution of): None = all (admin).
 fn led_projects(p: &Principal) -> Option<Vec<String>> {
     if is_admin(p) {
         return None;
@@ -203,7 +192,6 @@ fn can_log(p: &Principal, project: &str) -> bool {
     }
 }
 
-/// May the user see beyond their own time? admin, or a lead of ≥1 project.
 fn can_see_all(p: &Principal) -> bool {
     match led_projects(p) {
         None => true,
@@ -229,12 +217,9 @@ async fn register(request: Request) -> Outcome {
         Ok(p) => p,
         Err(e) => return Outcome::Auth(e),
     };
-    // demo self-assign of the global role (an admin would grant this in prod).
-    // managerial reach is per-project (lead), not a global role.
     let wanted = body["role"].as_str().unwrap_or("member");
     let role = if ["member", "admin"].contains(&wanted) { wanted } else { "member" };
     let _ = rbac::assign_role(&p.tenant, &p.subject, role);
-    // remember the email for human-readable reports.
     let u = json!({ "subject": p.subject, "email": email });
     let _ = records::create(USERS, &u.to_string(), &["subject".to_string(), "email".to_string()]);
     Outcome::Json(201, json!({ "subject": p.subject, "roles": [role] }).to_string())
@@ -285,8 +270,6 @@ fn email_of(subject: &str) -> String {
         .unwrap_or_else(|| subject.to_string())
 }
 
-// ---- projects + categories (admin creates) ----------------------------------
-
 async fn create_project(request: Request) -> Outcome {
     let p = match introspect(&request) {
         Ok(p) => p,
@@ -328,7 +311,6 @@ async fn create_category(request: Request) -> Outcome {
     save_named(CATEGORIES, d)
 }
 
-/// Create a record and write its own id back in (so views carry it).
 fn save_named(collection: &str, mut d: Value) -> Outcome {
     let entry = match records::create(collection, &d.to_string(), &[]) {
         Ok(e) => e,
@@ -347,8 +329,6 @@ fn list_named(request: &Request, collection: &str) -> Outcome {
     Outcome::Json(200, json!({ "items": items }).to_string())
 }
 
-/// Projects the caller belongs to (admin: all), each annotated with the caller's
-/// role on it (`admin` | `lead` | `member`).
 fn list_projects(request: &Request) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
@@ -387,7 +367,6 @@ fn subject_for_email(email: &str) -> Option<String> {
         .and_then(|d| d["subject"].as_str().map(String::from))
 }
 
-/// Admin or a project lead adds a user (by email) to the project as member|lead.
 async fn add_member(request: Request, project: &str) -> Outcome {
     let p = match introspect(&request) {
         Ok(p) => p,
@@ -414,7 +393,6 @@ async fn add_member(request: Request, project: &str) -> Outcome {
             return Outcome::Err(404, "no user with that email (they must register first)".into())
         }
     };
-    // upsert: one membership row per (project, user).
     let existing = records::find_by(MEMBERS, "user", &json!(subject).to_string())
         .unwrap_or_default()
         .into_iter()
@@ -466,7 +444,6 @@ fn load_all(collection: &str) -> Vec<Value> {
         .collect()
 }
 
-/// id -> name map for a named collection.
 fn name_map(collection: &str) -> BTreeMap<String, String> {
     load_all(collection)
         .into_iter()
@@ -478,8 +455,6 @@ fn name_map(collection: &str) -> BTreeMap<String, String> {
         .collect()
 }
 
-// ---- entries (log time) -----------------------------------------------------
-
 fn valid_day(d: &str) -> bool {
     let b = d.as_bytes();
     d.len() == 10
@@ -488,9 +463,6 @@ fn valid_day(d: &str) -> bool {
         && b.iter().enumerate().all(|(i, &c)| i == 4 || i == 7 || c.is_ascii_digit())
 }
 
-/// Build an entry record from (project, category, minutes, day, note) for
-/// `subject`, resolving + denormalizing the project/category names. Returns the
-/// record or an error Outcome.
 fn build_entry(subject: &str, b: &Value) -> Result<Value, Outcome> {
     let project = b["project"].as_str().unwrap_or("").to_string();
     let category = b["category"].as_str().unwrap_or("").to_string();
@@ -545,7 +517,6 @@ async fn create_entry(request: Request) -> Outcome {
     }
 }
 
-/// Edit own entry (owner or admin): minutes / category / day / note.
 async fn edit_entry(request: Request, id: &str) -> Outcome {
     let p = match introspect(&request) {
         Ok(p) => p,
@@ -641,9 +612,8 @@ fn save_indexed_entry(mut d: Value) -> Outcome {
     Outcome::Json(201, d.to_string())
 }
 
-/// Entries in [from,to] visible to the caller:
-///   scope=me → own; scope=all → admin: everything, lead: their led projects'
-///   entries (all users). A member asking for `all` falls back to own.
+/// Entries in [from,to] visible to the caller: scope=me is own; scope=all is everything for admin
+/// and the led projects' entries for a lead; a member asking for `all` falls back to own.
 fn visible_entries(p: &Principal, from: &str, to: &str, scope_all: bool) -> Vec<Value> {
     let team = scope_all && can_see_all(p);
     let led = if team { led_projects(p) } else { Some(Vec::new()) }; // None = admin (all)
@@ -677,8 +647,6 @@ fn list_entries(request: &Request, path: &str) -> Outcome {
     Outcome::Json(200, json!({ "entries": entries }).to_string())
 }
 
-// ---- pomodoro timer ---------------------------------------------------------
-
 fn my_timer(subject: &str) -> Option<(String, Value)> {
     records::find_by(TIMERS, "user", &json!(subject).to_string())
         .ok()?
@@ -709,7 +677,6 @@ async fn timer_start(request: Request) -> Outcome {
         "user": p.subject, "project": project, "category": category, "day": day,
         "note": b["note"].as_str().unwrap_or(""), "started": now(),
     });
-    // one running timer per user — replace any existing.
     match my_timer(&p.subject) {
         Some((id, _)) => {
             let _ = records::update(TIMERS, &id, &d.to_string(), 0);
@@ -752,8 +719,6 @@ fn timer_get(request: &Request) -> Outcome {
     }
 }
 
-// ---- report (the aggregation the charts render) -----------------------------
-
 fn report(request: &Request, path: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
@@ -762,8 +727,6 @@ fn report(request: &Request, path: &str) -> Outcome {
     Outcome::Json(200, report_data(&p, path).to_string())
 }
 
-/// The aggregated range report as a JSON object — shared by the JSON endpoint
-/// and the PDF export so both read exactly the same numbers.
 fn report_data(p: &Principal, path: &str) -> Value {
     let (from, to) = range(path);
     let scope_all = query_str(path, "scope").as_deref() == Some("all");
@@ -827,7 +790,6 @@ fn report_data(p: &Principal, path: &str) -> Value {
     Value::Object(out)
 }
 
-/// The same range report rendered to a downloadable PDF via `pdf:codec`.
 fn report_pdf(request: &Request, path: &str) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
@@ -902,8 +864,6 @@ fn trunc(s: &str, n: usize) -> String {
     }
 }
 
-// ---- http plumbing -----------------------------------------------------------
-
 fn range(path: &str) -> (String, String) {
     let from = query_str(path, "from").unwrap_or_else(|| "0000-00-00".into());
     let to = query_str(path, "to").unwrap_or_else(|| "9999-99-99".into());
@@ -940,18 +900,9 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be before the component stops reading it. Without a ceiling,
+/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy; uploads police their own size with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

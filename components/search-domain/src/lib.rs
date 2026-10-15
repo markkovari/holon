@@ -1,11 +1,9 @@
 //! search:app — faceted search-as-you-type over composed contracts.
 //!
-//! The query pipeline: tokenize the box → build a cache key → `cache::get`;
-//! on a MISS run `search::query` (TF-IDF ranked ids) → hydrate each id from
-//! `records::store` → page (offset/limit) → `cache::set` the JSON. Every query
-//! bumps a `search:hit` or `search:miss` counter in `metrics::collect`, so the
-//! console can show a live hit-ratio — the read-path headline. No SSE: search
-//! is request/response; the new thing here is the query/read axis.
+//! Query pipeline: tokenize the box, build a cache key, `cache::get`; on a MISS run
+//! `search::query` (TF-IDF ranked ids), hydrate each id from `records::store`, page, `cache::set`
+//! the JSON. Every query bumps a `search:hit` or `search:miss` counter in `metrics::collect` for
+//! a live hit-ratio.
 
 #[allow(warnings)]
 mod bindings {
@@ -103,8 +101,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- query pipeline ----------------------------------------------------------
-
 fn do_search(path: &str) -> Outcome {
     let q = query_str(path, "q").unwrap_or_default();
     let mode_s = query_str(path, "mode").unwrap_or_else(|| "any".into());
@@ -121,7 +117,6 @@ fn do_search(path: &str) -> Outcome {
     }
 
     let started = now();
-    // cache key covers everything that changes the result.
     let ckey = format!("q/{mode_s}/{}/{offset}/{limit}/{}", tags.join("+"), q.trim());
 
     if let Ok(Some(bytes)) = cache::get(&ckey) {
@@ -136,7 +131,6 @@ fn do_search(path: &str) -> Outcome {
 
     let mode =
         if mode_s.eq_ignore_ascii_case("all") { search::Mode::All } else { search::Mode::Any };
-    // over-fetch so we can offset within the ranked list.
     let want = (offset as u32).saturating_add(limit).saturating_add(1);
     let hits = match search::query(q.trim(), mode, &tags, want) {
         Ok(h) => h,
@@ -145,7 +139,6 @@ fn do_search(path: &str) -> Outcome {
     let total = hits.len();
     let page: Vec<&search::Hit> = hits.iter().skip(offset).take(limit as usize).collect();
 
-    // hydrate each hit id from the corpus.
     let mut rows = Vec::with_capacity(page.len());
     for h in &page {
         if let Ok(entry) = records::get(DOCS, &h.id) {
@@ -179,8 +172,6 @@ fn get_doc(id: &str) -> Outcome {
     }
 }
 
-// ---- write path --------------------------------------------------------------
-
 async fn index_doc(request: Request) -> Outcome {
     let body = match parse_body(request).await {
         Ok(v) => v,
@@ -200,9 +191,9 @@ async fn index_doc(request: Request) -> Outcome {
     persist_and_index(given, &title, &bodytext, &url, &tags)
 }
 
-/// Upsert the record + (re)index its postings + invalidate the query cache.
-/// The record-store owns the id (it mints a ULID on create); we index under
-/// that SAME id so a hit hydrates. `given` = an existing record id to re-index.
+/// Upsert the record, (re)index its postings and invalidate the query cache. The record-store
+/// mints the id; we index under that SAME id so a hit hydrates. `given` = an existing record id
+/// to re-index.
 fn persist_and_index(
     given: Option<String>,
     title: &str,
@@ -211,7 +202,6 @@ fn persist_and_index(
     tags: &[String],
 ) -> Outcome {
     let id = match &given {
-        // re-index an existing document.
         Some(id) => match records::get(DOCS, id) {
             Ok(existing) => {
                 let doc = json!({"id": id, "title": title, "body": body, "url": url, "tags": tags, "at": now()});
@@ -225,7 +215,6 @@ fn persist_and_index(
             }
             Err(e) => return store_err(e),
         },
-        // new document: create first so we index under the store-minted id.
         None => {
             // create with a placeholder, then rewrite with the real id embedded.
             let seed = json!({"title": title, "body": body, "url": url, "tags": tags, "at": now()});
@@ -242,12 +231,9 @@ fn persist_and_index(
     if let Err(e) = search::index_doc(&id, &text, tags) {
         return search_err(e);
     }
-    // any write changes result sets — drop the whole query cache namespace.
     let _ = cache::invalidate_prefix("q/");
     Outcome::Json(201, json!({"id": id, "indexed": true}).to_string())
 }
-
-// ---- seed corpus -------------------------------------------------------------
 
 fn seed() -> Outcome {
     let mut n = 0;
@@ -314,8 +300,6 @@ const CORPUS: &[(&str, &str, &[&str])] = &[
     ),
 ];
 
-// ---- stats -------------------------------------------------------------------
-
 fn stats() -> Outcome {
     let docs = search::doc_count().unwrap_or(0);
     let hit = metrics::get(HIT).unwrap_or(0);
@@ -327,8 +311,6 @@ fn stats() -> Outcome {
         json!({"docs": docs, "cache_hits": hit, "cache_misses": miss, "hit_ratio": (ratio * 1000.0).round() / 1000.0}).to_string(),
     )
 }
-
-// ---- http plumbing -----------------------------------------------------------
 
 fn search_err(e: search::SearchError) -> Outcome {
     match e {
@@ -355,18 +337,9 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be before the component stops reading it. Without a ceiling,
+/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy; uploads police their own size with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

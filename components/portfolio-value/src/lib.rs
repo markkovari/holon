@@ -6,31 +6,16 @@
 //! gain, and the value series a line chart is drawn from. Pure compute — events
 //! and quotes in, numbers out. Nothing here fetches a price or reads a store.
 //!
-//! ## FIFO, and why it is not a preference
+//! FIFO, not average cost: a collector buys the same card at wildly different prices and asks
+//! 'did I do well on that one?', which is about a specific purchase. A sale consumes the OLDEST
+//! unsold lot first, at that lot's own cost.
 //!
-//! Sell one of three copies of the same card and something has to decide WHICH
-//! copy left. Average cost is easier and wrong here: a collector buys the same
-//! card at wildly different prices over years, and the whole question they are
-//! asking — "did I do well on that one?" — is about a specific purchase. FIFO
-//! answers it, matches how a tax authority reads a disposal in most places, and
-//! is deterministic, which average cost also is but blurs.
+//! Money is integer minor units tagged with a currency (as `money:amount`): never a float, and
+//! mixing currencies is an error, because the historical exchange rate is not knowable here.
 //!
-//! So: a sale consumes the OLDEST unsold lot first, at that lot's own cost.
-//!
-//! ## Money is integer minor units, tagged with a currency
-//!
-//! Same rule as `money:amount`: never a float, and two currencies never add.
-//! Mixing them is an error rather than a conversion, because the exchange rate on
-//! the day of a purchase eight years ago is not something this component can
-//! know, and inventing one would put a wrong number on a chart that looks right.
-//!
-//! ## An unpriced holding is not worth zero
-//!
-//! Most of a real collection has no quote: bulk commons, a card whose set is not
-//! in the price source, a misprint nobody lists. Valuing those at zero makes a
-//! portfolio chart lie downward, and dropping them makes it lie upward. They are
-//! carried at COST and counted, so the caller can say "plus 340 cards not
-//! priced" instead of showing a number that pretends to be complete.
+//! An unpriced holding is not worth zero: valuing it at zero makes the chart lie downward and
+//! dropping it lies upward. It is carried at COST and counted, so the caller can say 'plus 340
+//! cards not priced'.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -38,11 +23,8 @@ use std::collections::{HashMap, VecDeque};
 pub type Currency = String;
 
 /// What happened to a card, and when.
-///
-/// A swap is two events, not one: the card that left is a disposal at the value
-/// both sides agreed, and the card that arrived is an acquisition at that same
-/// value. That keeps a trade honest in both directions — a swap where you got the
-/// better end shows up as a gain, which is the point of recording it.
+/// A swap is two events: the card that left is a disposal at the agreed value and the card that
+/// arrived an acquisition at that value, so a lopsided swap shows up as a gain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventKind {
     /// Bought, or received in a swap, at `unit_minor`.
@@ -257,21 +239,12 @@ pub fn series(
     Ok(points)
 }
 
-// ---- the component -----------------------------------------------------
-//
-// A thin mapping between the WIT types and the ones above, and nothing else. The
-// logic is not repeated here and must not be: `tests/valuation.rs` judges the plain
-// Rust functions, and a component that re-derived anything would be untested by the
-// suite that is supposed to be its specification.
-//
-// ADR-0095's rule is why this mapping exists at all rather than a shared crate:
-// components meet through WIT, so the price of reuse is a conversion at the edge.
-//
-// Gated on the target, the way `components/demo` already does it: a `cdylib` with
-// wit-bindgen's exports does not LINK natively, so `cargo test` — which builds every
-// crate-type before it runs a test — dies at the linker and the held-out gate cannot
-// run at all. Natively this crate is the plain functions the specification judges;
-// for wasm32 it is the whole component. Neither one's behaviour changes.
+// A thin mapping between the WIT types and the ones above; the logic must not be repeated here,
+// because `tests/valuation.rs` judges the plain Rust functions (ADR-0095: components meet through
+// WIT, so reuse costs a conversion at the edge).
+// Gated on the target: a `cdylib` with wit-bindgen exports does not LINK natively, so `cargo
+// test` would die at the linker. Natively this crate is the plain functions; for wasm32 it is the
+// whole component.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]

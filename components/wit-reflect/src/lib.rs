@@ -1,26 +1,9 @@
 //! `wit-reflect` — read a component's real imports and exports out of the binary, and compose components from them
 //!
-//! Three layers, and only the middle one is interesting:
-//!
-//! * `inspector` reads a component's import/export sections with `wasmparser`.
-//!   Interface names in a component binary are already the strings everything
-//!   else keys on (`records:store/store@0.1.0`), so this is a parse, not an
-//!   inference — no WIT resolver, no source tree, no regex.
-//! * `composer::plan` is plain graph work: order the plugs, find the gaps, refuse
-//!   the cycles, count the instances.
-//! * `composer::satisfies` and `composer::compose` delegate to `wac-graph`, which
-//!   is what the `wac` CLI itself is built on. `satisfies` runs its
-//!   `SubtypeChecker`, so a UI's connection validation is the real type check;
-//!   `compose` runs its `plug`, so the artifact is the artifact `wac plug` writes.
-//!
-//! What a built component does NOT tell you: its own package name. The embedded
-//! type says `package root:component; world root { ... }` — the world name and
-//! package from the source WIT are gone. A `component-name` section can carry the
-//! crate name, but on `wasm32-wasip2` nothing writes one by default
-//! (`wasm-component-ld` doesn't; cargo-component's adapter path used to), so this
-//! repo's `cargo xtask build --force` stamps it back with `wasm-tools metadata add`. Treat it as
-//! a hint, not a guarantee: a p2 component from elsewhere arrives anonymous, and
-//! an app exporting only `wasi:http` is unidentifiable either way. Hence ids.
+//! `inspector` reads a component's import/export sections with `wasmparser` (interface names are already the keys everything else uses, so no WIT resolver). `composer::plan` is graph work: order plugs, find gaps, refuse cycles, count instances. `composer::satisfies`/`compose` delegate to `wac-graph` (its `SubtypeChecker` and `plug`).
+//! A built component does NOT tell you its own package name; the `component-name` section is a
+//! hint stamped by `cargo xtask build --force` (`wasm-component-ld` writes none), so callers
+//! still supply ids.
 
 #[allow(warnings)]
 mod bindings;
@@ -40,27 +23,14 @@ use bindings::exports::wit::reflect::inspector::{
 
 struct Component;
 
-/// Namespaces only a runtime can satisfy. Everything else is a composition edge.
-///
-/// This is the distinction `tools/gen-catalog.py` gets wrong: it treats a subset
-/// of `wasi:*` as "std" and files `wasi:keyvalue`, `wasi:config` and
-/// `wasi:blobstore` alongside real component contracts, so the catalog cannot say
-/// which imports `wac plug` is able to erase.
-/// `comp` is here for the same reason `wasi` is: `comp:secrets/reader` (ADR-0061)
-/// and `comp:store/cas` (ADR-0066) are implemented by the host on every node, so
-/// they are satisfied by running rather than by wiring. Leaving them out made
-/// every component that imports one undeployable with `unsatisfied_imports` —
-/// including anything using `record-store`, which has imported `comp:store/cas`
-/// since ADR-0066. Nothing caught it because nothing deployed a record-using
-/// component through the real control plane until `tests/environments.rs`.
+/// Namespaces only a runtime can satisfy; everything else is a composition edge.
+/// `comp` is here like `wasi`: `comp:secrets/reader` (ADR-0061) and `comp:store/cas` (ADR-0066) are host-implemented on every node, and leaving them out made every component importing one undeployable (`unsatisfied_imports`).
 const HOST_NAMESPACES: &[&str] = &["wasi", "wasmcloud", "comp"];
 
 /// wasmtime refuses to instantiate a component nesting more than this many
 /// component instances. It is why `vet-domain` cannot be fused in one piece
 /// (104 modules) and had to keep its stateful capabilities as links.
 const NESTED_INSTANCE_LIMIT: u32 = 30;
-
-// ---- inspector --------------------------------------------------------------
 
 impl InspectorGuest for Component {
     fn inspect(bytes: Vec<u8>) -> Result<Surface, ReflectError> {
@@ -106,7 +76,6 @@ impl InspectorGuest for Component {
                     }
                 }
                 CustomSection(c) if c.name() == "component-name" && depth == 0 => {
-                    // Best-effort: a missing or odd name section is not an error.
                     name = component_name(c.data()).unwrap_or_default();
                 }
                 _ => {}
@@ -196,8 +165,6 @@ fn hex12(bytes: &[u8]) -> String {
     Sha256::digest(bytes).iter().take(6).map(|b| format!("{b:02x}")).collect()
 }
 
-// ---- composer ---------------------------------------------------------------
-
 impl ComposerGuest for Component {
     fn satisfies(socket: Vec<u8>, plug: Vec<u8>) -> Result<Vec<String>, ReflectError> {
         use wac_graph::types::{Package, SubtypeChecker};
@@ -212,10 +179,8 @@ impl ComposerGuest for Component {
         let socket_id = graph.register_package(socket_pkg).map_err(|e| bad(e.to_string()))?;
         let plug_id = graph.register_package(plug_pkg).map_err(|e| bad(e.to_string()))?;
 
-        // Exactly the test wac-graph's `plug` applies: the plug's export type must
-        // be a SUBTYPE of the socket's import type. Matching names is not enough —
-        // two `foo:bar/baz@0.1.0` interfaces with different function signatures do
-        // not fit, and this is where you find out.
+        // The test wac-graph's `plug` applies: the plug's export type must be a SUBTYPE of the
+        // socket's import; matching names is not enough.
         let mut cache = Default::default();
         let mut checker = SubtypeChecker::new(&mut cache);
         let mut out = Vec::new();
@@ -240,7 +205,6 @@ impl ComposerGuest for Component {
         if !bytes.contains_key(root.as_str()) {
             return Err(ComposeError::MissingPart(root));
         }
-        // socket -> its direct plugs, in the order the caller drew them.
         let mut deps: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
         for e in &edges {
             if !bytes.contains_key(e.plug.as_str()) {
@@ -300,7 +264,6 @@ fn compose_node<'a>(
     let own = *bytes.get(id).ok_or_else(|| ComposeError::MissingPart(id.to_string()))?;
     let plugs = match deps.get(id) {
         Some(p) if !p.is_empty() => p.clone(),
-        // A leaf: nothing to plug, its own bytes are the answer.
         _ => return Ok(own.to_vec()),
     };
 
@@ -352,8 +315,6 @@ fn plug_together(
     })?;
     graph.encode(EncodeOptions::default()).map_err(|e| ComposeError::EncodeFailed(e.to_string()))
 }
-
-// ---- the planning graph -----------------------------------------------------
 
 /// Everything `plan` needs, resolved once.
 pub(crate) struct Graph<'a> {
@@ -435,7 +396,6 @@ impl<'a> Graph<'a> {
         g
     }
 
-    /// Depth-first cycle detection over socket -> plug dependencies.
     fn find_cycle(&self) -> Option<Vec<&'a str>> {
         #[derive(Clone, Copy, PartialEq)]
         enum Mark {
@@ -536,7 +496,6 @@ impl<'a> Graph<'a> {
             .map(String::from)
             .collect();
 
-        // Build order: shallowest socket first. Stable within a depth by id.
         let mut sockets: Vec<&str> = self.deps.keys().copied().collect();
         sockets.sort_by_key(|id| (depth.get(id).copied().unwrap_or(0), *id));
         let steps: Vec<PlugStep> = if cyclic {
@@ -682,7 +641,6 @@ mod tests {
 
     #[test]
     fn plans_a_two_level_build_in_order() {
-        // app <- cache <- cache-backing, the shape four recipes hand-write.
         let nodes = vec![
             node(
                 "app",
@@ -764,7 +722,6 @@ mod tests {
         );
         assert_eq!(p.steps.len(), 1);
         assert_eq!(p.steps[0].also_satisfies, vec!["auth:identity/accounts@0.1.0"]);
-        // ...and so it is not reported as a gap either.
         assert!(
             p.unsatisfied.iter().any(|g| g.iface.name == "accounts"),
             "still listed as undrawn until the user wires it"
@@ -784,7 +741,6 @@ mod tests {
         assert!(p.cyclic);
         assert!(p.steps.is_empty(), "no static build order exists");
         assert!(p.problems.iter().any(|pr| pr.kind == "cycle"));
-        // The point: it's still deployable as a workload, and the message says so.
         assert!(p.problems.iter().any(|pr| pr.detail.contains("workload")));
     }
 
@@ -810,7 +766,6 @@ mod tests {
                 p.problems
             );
         }
-        // A host capability is not a composition edge, however you draw it.
         let host = node("kv", surface("kv", &["wasi:keyvalue/store@0.2.0-draft"], &[], &[]));
         let mut with_host = nodes.clone();
         with_host.push(host);
@@ -838,8 +793,6 @@ mod tests {
         assert!(p.problems.iter().any(|pr| pr.kind == "nested-instance-limit"));
     }
 
-    // ---- against real artifacts from this repo ------------------------------
-
     fn artifact(name: &str) -> Option<Vec<u8>> {
         let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../target/wasm32-wasip2/release")
@@ -858,10 +811,8 @@ mod tests {
     fn inspects_a_real_component() {
         let bytes = require("mesh_domain");
         let s = <Component as InspectorGuest>::inspect(bytes).expect("mesh-domain inspects");
-        // The name is here because `cargo xtask build --force` stamps it back on: wasm32-wasip2
-        // artifacts come out anonymous (`wasm-component-ld` writes no name section,
-        // where cargo-component's adapter path did). A p2 component from ANYWHERE
-        // ELSE will have an empty name, which is why callers still supply ids.
+        // wasm32-wasip2 artifacts come out anonymous; `cargo xtask build --force` stamps the name
+        // back.
         assert_eq!(s.name, "mesh-domain", "the build's `wasm-tools metadata add` pass");
         assert_eq!(s.exports.len(), 1);
         assert_eq!(s.exports[0].raw, "wasi:http/handler@0.3.0-rc-2026-03-15"); // p3 (ADR-0103)
@@ -870,7 +821,6 @@ mod tests {
         assert!(composable.contains(&"resilience:breaker/breaker@0.1.0"));
         assert!(composable.contains(&"proxy:route/router@0.1.0"));
         assert_eq!(composable.len(), 3, "exactly the three plugs its recipe uses: {composable:?}");
-        // ...and everything else needs a host, which no component can supply.
         assert!(s.host_imports.iter().all(|h| h.namespace == "wasi"));
         assert!(
             s.host_imports.iter().any(|h| h.raw == "wasi:keyvalue/store@0.2.0-draft")
@@ -885,12 +835,9 @@ mod tests {
         // imports as outstanding.
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../target/mesh_domain.composed.wasm");
-        // Skipped, loudly, rather than failed. This artifact comes from a
-        // hand-written plug chain (`cargo xtask compose mesh`), so a fresh checkout that
-        // has only run `cargo xtask build --force` does not have it — and a test that is red
-        // until someone runs a second, unrelated recipe is a test people learn to
-        // ignore. `just test` reached this for the first time only after the demo
-        // crate stopped failing to link, and found it red.
+        // Skipped, loudly, not failed: this artifact comes from a hand-written plug chain (`cargo
+        // xtask compose mesh`) a fresh checkout lacks, and a test that is red until an unrelated
+        // recipe runs gets ignored.
         let Ok(bytes) = std::fs::read(&path) else {
             eprintln!(
                 "SKIPPED: {} is not there — run `cargo xtask compose mesh`. Nothing about composed artifacts was verified by \
@@ -951,7 +898,6 @@ mod tests {
         let out =
             <Component as ComposerGuest>::compose(parts, edges, "mesh".into()).expect("composes");
 
-        // It is a component, and every composable import is gone.
         let s = <Component as InspectorGuest>::inspect(out.clone()).expect("output inspects");
         assert!(s.imports.is_empty(), "left over: {:?}", s.imports);
         assert!(s
@@ -960,13 +906,9 @@ mod tests {
             .any(|h| h.name == "incoming-handler" || h.namespace == "wasi"));
         assert_eq!(s.exports[0].raw, "wasi:http/handler@0.3.0-rc-2026-03-15"); // p3 (ADR-0103)
 
-        // Structurally what `wac plug` writes: the plugs are nested inside, so the
-        // instance count went up and the artifact is bigger than the socket alone.
-        //
-        // NOT compared against components/target/mesh_domain.composed.wasm here.
-        // `cargo test` doesn't rebuild that file, so a stale one would fail this
-        // for no reason. The equality check against the CLI's own output belongs
-        // in the e2e, where the Justfile has just rebuilt both.
+        // Structurally what `wac plug` writes: plugs nested inside, so instance count and size go
+        // up. Not compared with the CLI's output here (`cargo test` doesn't rebuild it); that
+        // belongs in the e2e.
         assert!(s.nested_instances >= 4, "socket + 3 plugs are nested in: {}", s.nested_instances);
         assert!(out.len() > require("mesh_domain").len(), "it contains its plugs");
     }
@@ -978,7 +920,6 @@ mod tests {
             <Component as ComposerGuest>::compose(parts.clone(), vec![], "ghost".into()),
             Err(ComposeError::MissingPart(_))
         ));
-        // An edge naming bytes we don't have.
         assert!(matches!(
             <Component as ComposerGuest>::compose(
                 parts,
@@ -987,7 +928,6 @@ mod tests {
             ),
             Err(ComposeError::MissingPart(_))
         ));
-        // A plug whose exports the socket doesn't import: wac says no.
         let parts = vec![
             Part { id: "mesh".into(), bytes: require("mesh_domain") },
             Part { id: "zip".into(), bytes: require("zip") },

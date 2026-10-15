@@ -1,17 +1,10 @@
 //! `rate-limiter` — stop a caller making too many requests — count attempts against a key and lock it out after too many
 //!
-//! Fixed-window failure counter with lockout, backed by `wasi:keyvalue`.
-//! State is two keys per limited identifier:
-//!   `rlc_{key}`  -> the failure count (mutated via the ATOMIC `increment`)
-//!   `rlw_{key}`  -> the window-start unix seconds
-//! When `count` reaches `max-attempts` within `lockout-window` seconds, the key
-//! is locked until the window expires; a new window starts once the old elapses.
-//!
-//! Concurrency: the count lives in its own key and is bumped with
-//! `wasi:keyvalue/atomics.increment`, so concurrent `record-failure` calls never
-//! lose an update (the bug a load/modify/save would have). The window reset
-//! (clearing the counter when the window elapses) is a benign, rare race — at
-//! worst it briefly under-counts right at a window boundary, never over-counts.
+//! Fixed-window failure counter with lockout on `wasi:keyvalue`: `rlc_{key}` is the failure count
+//! (mutated via the ATOMIC `increment`, so concurrent `record-failure` calls never lose an
+//! update), `rlw_{key}` the window-start unix seconds. At `max-attempts` within `lockout-window`
+//! the key is locked until the window expires. Clearing the counter when the window elapses is a
+//! rare, benign race: at worst it briefly under-counts at a boundary.
 //!
 //! Config (wasi:config/store):
 //!   max-attempts     failures allowed per window before lockout (default 5; 0 = disabled)
@@ -30,8 +23,6 @@ struct Component;
 
 const BUCKET: &str = "default";
 
-// ---- config -------------------------------------------------------------
-
 fn max_attempts() -> u64 {
     cfg_u64("max-attempts", 5)
 }
@@ -49,7 +40,6 @@ fn now() -> u64 {
     wall_clock::now().seconds
 }
 
-/// Sanitize an identifier to NATS-legal kv chars, with a per-purpose prefix.
 fn safe(prefix: &str, key: &str) -> String {
     let mut out = String::with_capacity(key.len() + prefix.len());
     out.push_str(prefix);
@@ -87,8 +77,6 @@ fn write_u64(bucket: &store::Bucket, key: &str, v: u64) -> Result<(), LimitError
         .map_err(|e| LimitError::BackendUnavailable(format!("set: {e:?}")))
 }
 
-/// Current (count, window_start) for `key`, treating an elapsed window as a
-/// fresh zero count.
 fn current(bucket: &store::Bucket, key: &str, window: u64) -> Result<(u64, u64), LimitError> {
     let now = now();
     match read_u64(bucket, &window_key(key))? {
@@ -96,7 +84,6 @@ fn current(bucket: &store::Bucket, key: &str, window: u64) -> Result<(u64, u64),
             let count = read_u64(bucket, &count_key(key))?.unwrap_or(0);
             Ok((count, start))
         }
-        // absent or elapsed -> fresh window.
         _ => Ok((0, now)),
     }
 }
@@ -128,9 +115,6 @@ impl Guest for Component {
         let wk = window_key(&key);
         let now = now();
 
-        // Start (or roll over) the window if none is active. Clearing the
-        // counter here is the only non-atomic step; the increment below is what
-        // must not lose updates, and it is atomic.
         match read_u64(&bucket, &wk)? {
             Some(start) if now.saturating_sub(start) < window => {}
             _ => {
@@ -139,7 +123,6 @@ impl Guest for Component {
             }
         }
 
-        // Atomic: concurrent failures all count, no lost updates.
         atomics::increment(&bucket, &ck, 1)
             .map(|_| ())
             .map_err(|e| LimitError::BackendUnavailable(format!("increment: {e:?}")))

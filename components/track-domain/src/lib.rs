@@ -1,18 +1,13 @@
 //! track:app — a Linear-lite project tracker over composed contracts.
 //!
-//! Five axes in one component (see wit/track.wit):
-//!   write  — records + ids + md
-//!   auth   — auth-guard introspect + role gating; project membership via policy:guard
-//!   read   — search:index + paginate
-//!   stream — every mutation publishes to event:bus; /api/stream is an SSE feed
-//!   bg     — /api/tick sweeps stale in_progress issues
-//!   out    — an issue move fires a webhook:sign-signed notify:dispatch webhook
-//!   AI     — /api/issues/{id}/summarize condenses the comment thread
-//!
-//! Auth model: an account has a global role (admin can create projects); write
-//! access to a project's issues is a per-project ABAC membership decision made
-//! by policy:guard (a member/lead of the project may write). The issue
-//! lifecycle is an fsm:workflow machine, mirrored onto the issue record.
+//! Five axes in one component (see wit/track.wit): write (records + ids + md), auth (auth-guard
+//! introspect + role gating; project membership via policy:guard), read (search:index +
+//! paginate), stream (mutations publish to event:bus; /api/stream is SSE), bg (/api/tick sweeps
+//! stale in_progress issues), out (an issue move fires a signed notify:dispatch webhook), AI
+//! (/api/issues/{id}/summarize).
+//! Auth: an account has a global role (admin can create projects); write access to a project's
+//! issues is a per-project membership decision by policy:guard. The issue lifecycle is an
+//! fsm:workflow machine mirrored onto the issue record.
 
 #[allow(warnings)]
 mod bindings {
@@ -131,7 +126,6 @@ impl Guest for Component {
 
             (Method::Get, ["api", "search"]) => do_search(&request, &path),
             (Method::Post, ["api", "tick"]) => tick(),
-            // non-API GET -> the baked SPA (index.html fallback for client routes).
             (Method::Get, _) => serve_static(&route),
             _ => Outcome::NotFound,
         };
@@ -150,8 +144,7 @@ enum Outcome {
     NotFound,
 }
 
-/// Serve the baked SPA via ui:assets: exact path, else fall back to index.html
-/// so client-side routes render the shell. API routes matched earlier.
+///
 fn serve_static(route: &str) -> Outcome {
     let want = if route == "/" { "/index.html" } else { route };
     match statics::get(want).or_else(|| statics::get("/index.html")) {
@@ -182,10 +175,7 @@ fn usage_json() -> Outcome {
     )
 }
 
-// ---- seeding -----------------------------------------------------------------
-
-/// Idempotent: define the issue lifecycle machine + the project-write policy
-/// (a member OR lead of the project may write its issues).
+///
 fn ensure_seeded() {
     if records::count("meta").map(|n| n > 0).unwrap_or(false) {
         return;
@@ -201,7 +191,6 @@ fn ensure_seeded() {
             t("begin", "todo", "in_progress"),
             t("finish", "in_progress", "done"),
             t("reopen", "done", "todo"),
-            // allow jumping back a step
             t("stop", "in_progress", "todo"),
             t("shelve", "todo", "backlog"),
         ],
@@ -226,8 +215,6 @@ fn ensure_seeded() {
     let _ = records::create("meta", "{\"seeded\":true}", &[]);
 }
 
-// ---- auth --------------------------------------------------------------------
-
 #[derive(Deserialize)]
 struct RegisterReq {
     email: String,
@@ -246,7 +233,6 @@ async fn register(request: Request) -> Outcome {
         Ok(p) => p,
         Err(e) => return Outcome::Auth(e),
     };
-    // global role: `admin` may create projects; everyone else is `member`.
     let wanted = req.role.unwrap_or_else(|| "member".into());
     let role =
         if ["member", "admin"].contains(&wanted.as_str()) { wanted } else { "member".into() };
@@ -305,8 +291,7 @@ fn is_admin(p: &Principal) -> bool {
     p.roles.iter().any(|r| r == "admin")
 }
 
-/// Per-project write check: look up the caller's membership row, then ask
-/// policy:guard whether that role may `write`. Admins always may.
+///
 fn may_write_project(p: &Principal, project: &str) -> bool {
     if is_admin(p) {
         return true;
@@ -325,7 +310,6 @@ fn may_write_project(p: &Principal, project: &str) -> bool {
     )
 }
 
-/// The caller's role in a project ("lead"|"member") or "" if not a member.
 fn member_role(p: &Principal, project: &str) -> String {
     let key = format!("{project}:{}", p.subject);
     records::find_by(MEMBERS, "key", &json!(key).to_string())
@@ -335,8 +319,6 @@ fn member_role(p: &Principal, project: &str) -> String {
         .and_then(|v| v["role"].as_str().map(String::from))
         .unwrap_or_default()
 }
-
-// ---- projects ----------------------------------------------------------------
 
 async fn create_project(request: Request) -> Outcome {
     ensure_seeded();
@@ -371,7 +353,6 @@ async fn create_project(request: Request) -> Outcome {
         Ok(e) => e,
         Err(e) => return store_err(e),
     };
-    // the creator is the project lead.
     add_member_row(&entry.id, &p.subject, "lead");
     publish("project.created", &json!({"project": entry.id, "key": key, "by": p.subject}));
     Outcome::Json(201, json!({"id": entry.id, "key": key, "name": req.name.trim()}).to_string())
@@ -402,7 +383,6 @@ async fn add_member(request: Request, pk: &str) -> Outcome {
         Ok(p) => p,
         Err(o) => return o,
     };
-    // only an admin or the project lead adds members.
     if !is_admin(&p) && member_role(&p, pk) != "lead" {
         return Outcome::Forbidden("only an admin or the project lead adds members".into());
     }
@@ -429,7 +409,6 @@ async fn add_member(request: Request, pk: &str) -> Outcome {
 
 fn add_member_row(project: &str, subject: &str, role: &str) {
     let key = format!("{project}:{subject}");
-    // replace an existing membership if present.
     if let Ok(entries) = records::find_by(MEMBERS, "key", &json!(key).to_string()) {
         if let Some(e) = entries.into_iter().next() {
             let data = json!({"key": key, "project": project, "subject": subject, "role": role});
@@ -441,8 +420,6 @@ fn add_member_row(project: &str, subject: &str, role: &str) {
     let _ =
         records::create(MEMBERS, &data.to_string(), &["key".to_string(), "project".to_string()]);
 }
-
-// ---- issues ------------------------------------------------------------------
 
 async fn create_issue(request: Request) -> Outcome {
     ensure_seeded();
@@ -476,7 +453,6 @@ async fn create_issue(request: Request) -> Outcome {
     if req.title.trim().is_empty() || req.title.len() > 200 {
         return Outcome::Bad("title must be 1..200 chars".into());
     }
-    // per-project issue number.
     let mut proj: Value = serde_json::from_str(&project.data).unwrap_or(Value::Null);
     let num = proj["counter"].as_u64().unwrap_or(0) + 1;
     proj["counter"] = json!(num);
@@ -504,7 +480,6 @@ async fn create_issue(request: Request) -> Outcome {
         Err(e) => return store_err(e),
     };
     let _ = fsm::create_instance(MACHINE, &entry.id);
-    // index for search: title + body, faceted by project + label.
     let mut tags = vec![format!("project:{}", req.project)];
     if !label.is_empty() {
         tags.push(format!("label:{label}"));
@@ -523,7 +498,6 @@ fn list_issues(request: &Request) -> Outcome {
         Err(o) => return o,
     };
     let _ = p;
-    // filters come from the query string on the ORIGINAL path.
     let path = request.get_path_with_query().unwrap_or_default();
     let project = query_str(&path, "project");
     let status = query_str(&path, "status");
@@ -537,7 +511,6 @@ fn list_issues(request: &Request) -> Outcome {
         _ => String::new(),
     };
 
-    // narrow by an index when a filter is given, else page the collection.
     let entries = if let Some(pr) = &project {
         match records::find_by(ISSUES, "project", &json!(pr).to_string()) {
             Ok(e) => e,
@@ -615,7 +588,6 @@ async fn move_issue(request: Request, id: &str) -> Outcome {
                 "issue.moved",
                 &json!({"issue": id, "ref": data["ref"], "event": req.event, "to": status.state, "by": p.subject}),
             );
-            // out axis: signed webhook on every transition.
             fire_webhook(
                 "issue.moved",
                 &json!({"issue": id, "ref": data["ref"], "to": status.state}),
@@ -664,8 +636,6 @@ async fn add_comment(request: Request, id: &str) -> Outcome {
     Outcome::Json(201, json!({"id": created.id, "html": md::to_html(&req.body)}).to_string())
 }
 
-// ---- AI: summarize the comment thread ----------------------------------------
-
 fn summarize(request: &Request, id: &str) -> Outcome {
     if let Err(o) = introspect(request) {
         return o;
@@ -677,7 +647,6 @@ fn summarize(request: &Request, id: &str) -> Outcome {
     };
     let data: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);
     let comments = records::find_by(COMMENTS, "issue", &json!(id).to_string()).unwrap_or_default();
-    // assemble the thread text: title + body + every comment.
     let mut thread = format!(
         "{}\n{}\n",
         data["title"].as_str().unwrap_or(""),
@@ -697,8 +666,6 @@ fn summarize(request: &Request, id: &str) -> Outcome {
         Err(e) => Outcome::Err(503, format!("ai: {e:?}")),
     }
 }
-
-// ---- read: search ------------------------------------------------------------
 
 fn do_search(request: &Request, path: &str) -> Outcome {
     if let Err(o) = introspect(request) {
@@ -729,8 +696,6 @@ fn do_search(request: &Request, path: &str) -> Outcome {
     Outcome::Json(200, json!({"hits": rows}).to_string())
 }
 
-// ---- background: stale-issue sweep -------------------------------------------
-
 /// The timer pump (wasip2 has no background tasks). Flag in_progress issues
 /// older than STALE_SECS that aren't already flagged, publishing an event each.
 fn tick() -> Outcome {
@@ -760,8 +725,6 @@ fn tick() -> Outcome {
     }
     Outcome::Json(200, json!({"swept": entries.len(), "flagged": flagged}).to_string())
 }
-
-// ---- stream: SSE activity feed -----------------------------------------------
 
 fn stream_events(path: &str) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
@@ -798,13 +761,11 @@ fn stream_events(path: &str) -> Result<Response, ErrorCode> {
     Ok(response)
 }
 
-/// Publish an activity event (the SSE spine). Best-effort — never fails a write.
 fn publish(kind: &str, detail: &Value) {
     let frame = json!({"kind": kind, "detail": detail, "at": now()});
     let _ = bus::publish(ACTIVITY, frame.to_string().as_bytes());
 }
 
-/// Highest activity seq so far (the "only new" starting cursor).
 fn current_seq() -> i64 {
     bus::poll(ACTIVITY, "snapshot", 4096)
         .unwrap_or_default()
@@ -814,7 +775,6 @@ fn current_seq() -> i64 {
         .unwrap_or(-1)
 }
 
-/// Activity rows with seq > cursor (JSON strings), plus the new cursor.
 fn activity_after(cursor: i64) -> (Vec<String>, i64) {
     let events = bus::poll(ACTIVITY, "snapshot", 4096).unwrap_or_default();
     let mut max = cursor;
@@ -833,11 +793,8 @@ fn activity_after(cursor: i64) -> (Vec<String>, i64) {
     (rows, max)
 }
 
-// ---- out: signed webhook -----------------------------------------------------
-
-/// Fire a signed outbound webhook via notify:dispatch. The target URL comes
-/// from config (notify:*-url); the body carries a Stripe-style signature header.
-/// Best-effort — a delivery failure never fails the request.
+/// Fire a signed outbound webhook via notify:dispatch (target URL from config `notify:*-url`).
+/// Best-effort: a delivery failure never fails the request.
 fn fire_webhook(event: &str, detail: &Value) {
     let body = json!({"event": event, "detail": detail, "at": now()}).to_string();
     let sig = match sign::sign(body.as_bytes(), WEBHOOK_SECRET, sign::Scheme::Stripe) {
@@ -855,8 +812,6 @@ fn fire_webhook(event: &str, detail: &Value) {
     };
     let _ = notify::send(&msg);
 }
-
-// ---- helpers -----------------------------------------------------------------
 
 fn issue_json(entry: &records::Entry) -> Value {
     let d: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);
@@ -910,18 +865,9 @@ async fn parse<T: for<'a> Deserialize<'a>>(request: Request) -> Result<T, String
     serde_json::from_slice(&body).map_err(|e| format!("bad json: {e}"))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be before the component stops reading it. Without a ceiling,
+/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy; uploads police their own size with a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

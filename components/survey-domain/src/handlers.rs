@@ -1,10 +1,6 @@
-//! Surveys (`open -> closed`) and the responses submitted against them. The
-//! only authorization here is a plain role check (`is_admin`) plus one
-//! business rule — a subject may answer a given survey at most once — which
-//! is enforced against the `responses` collection directly, not with
-//! `policy:guard`. There is no ownership concept, so no `owner-or-admin`
-//! policy: just "admin for the management routes, anyone authenticated to
-//! read and to answer an open survey".
+//! Surveys (`open -> closed`) and their responses. Authorization is a plain role check
+//! (`is_admin`) plus one business rule, at most one answer per subject per survey, enforced
+//! against `responses` directly rather than with `policy:guard`.
 
 use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
@@ -59,9 +55,8 @@ fn create_survey(route: &Route, body: &str) -> Reply {
     }
 }
 
-/// Every OPEN survey, for anyone authenticated; an admin also sees closed
-/// ones. Status is filtered in Rust rather than by index so both callers can
-/// share one list.
+/// Every OPEN survey for anyone authenticated; an admin also sees closed ones. Filtered in Rust
+/// so both callers share one list.
 fn list_surveys(route: &Route) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let admin = is_admin(&principal);
@@ -143,7 +138,6 @@ fn create_response(route: &Route, id: &str, body: &str) -> Reply {
     }
 }
 
-/// `admin` only: every response to a survey, with respondent and answers.
 fn results(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "survey.results", id);
@@ -176,7 +170,6 @@ fn results(route: &Route, id: &str) -> Reply {
     }
 }
 
-/// `admin` only: `open -> closed`, and refused (400) if it is already closed.
 fn close_survey(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "survey.close", id);

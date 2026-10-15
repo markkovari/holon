@@ -41,9 +41,8 @@ use serde_json::json;
 
 struct Component;
 
-/// A ceiling on a request body, not a policy: past this the read gives up and
-/// the body reads as empty, rather than growing until the store's memory cap
-/// traps the component and the connection simply closes.
+/// A ceiling on a request body, not a policy: past this the body reads as empty rather than
+/// growing until the memory cap traps the component.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);

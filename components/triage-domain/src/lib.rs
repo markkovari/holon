@@ -1,24 +1,12 @@
 //! `triage-domain` — defect intake, lifecycle and digest, as one component.
 //!
-//! ## What is scaffold and what is the goal
 //!
-//! This file is the ROUTER and no part may write it: it dispatches to `intake`,
-//! `workflow` and `digest`, answers `/health` so the harness can tell "the
-//! component is not up" from "the component is wrong", and seeds a fixture. Three
-//! parts need it and none owns it, which is the shape a shared file has to have
-//! when three agents work at once — the alternative is a merge conflict on every
-//! run.
-//!
-//! `src/intake.rs`, `src/workflow.rs` and `src/digest.rs` are the goal.
-//! `CONTRACT.md` is what they must agree on.
-//!
-//! ## Why three parts and not two
-//!
-//! The data flows one way: `intake` writes reports, `workflow` moves them through
-//! a lifecycle, `digest` counts what the other two produced. So `digest` can only
-//! be right if both of the others wrote what the contract says. A part that invents
-//! its own storage shape passes its own gate and fails the composition — a failure
-//! two independent halves cannot produce, and the reason this exists.
+//! This file is the ROUTER and no part may write it: it dispatches to `intake`, `workflow` and
+//! `digest`, answers `/health` (so the harness can tell 'not up' from 'wrong'), and seeds a
+//! fixture. `src/intake.rs`, `src/workflow.rs` and `src/digest.rs` are the goal; `CONTRACT.md` is
+//! what they must agree on.
+//! Data flows one way (`intake` writes, `workflow` moves, `digest` counts), so a part that
+//! invents its own storage shape passes its own gate and fails the composition.
 
 #[allow(warnings)]
 mod bindings {
@@ -69,11 +57,7 @@ pub struct Reply {
     /// The JSON body. `Value::Null` means no body at all — see `no_content`.
     pub json: Value,
     /// A body the router must NOT serialise as JSON, with its content type.
-    ///
-    /// `text/csv` cannot be expressed as a `Value`: `Value::String` serialises to
-    /// a JSON string *literal*, surrounding quotes and `\"` escapes included, so a
-    /// CSV parser reads one quoted blob instead of columns. `clinic-domain` needed
-    /// this arm and did not have it; here it is from the start.
+    /// `text/csv` cannot be a `Value`: `Value::String` serialises to a JSON string literal with quotes and escapes, so a CSV parser reads one quoted blob.
     pub raw: Option<(String, Vec<u8>)>,
 }
 
@@ -95,10 +79,7 @@ impl Reply {
 }
 
 /// The path segments of a request and its query string.
-///
-/// No bearer here: this API has no auth, deliberately. The clinic already proves a
-/// part can be made to call `auth:identity` rather than hash a password, and
-/// repeating it would spend a part's whole budget on a lesson already recorded.
+/// No bearer: this API has no auth, deliberately.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
@@ -117,23 +98,12 @@ impl Route {
 
 use guestfmt::percent_decode as percent;
 
-/// Two reports written straight to the store, so a part can be judged before the
-/// part upstream of it exists.
-///
-/// This is the three-part problem in one function. `workflow` is judged on moving a
-/// report through its lifecycle and `digest` on counting reports — both need
-/// reports, and neither may depend on `intake` being finished, because all three
-/// are written at the same time by different agents. So the fixture writes the
-/// contract's report shape directly.
-///
-/// Scaffold, not a feature, and it says what it is: `severity` is absent on
-/// purpose, because assigning it is `workflow`'s job and a fixture that pre-filled
-/// it would let a part that never assigns anything pass.
+/// Two reports written straight to the store, so `workflow` and `digest` can be judged before
+/// `intake` exists. `severity` is absent on purpose: assigning it is `workflow`'s job.
 fn seed() -> Reply {
     let mut ids = Vec::new();
     for (title, body, component) in [
-        // A comma in the title, for the same reason the clinic has a pet called
-        // `Rex, Jr.` — `digest`'s CSV has to quote it or the row loses a column.
+        // A comma in the title: `digest`'s CSV has to quote it or the row loses a column.
         ("Login fails, silently", "no error shown to the user", "auth"),
         ("Checkout total is wrong", "off by one cent on 3 items", "billing"),
     ] {
@@ -186,15 +156,9 @@ impl Guest for Component {
         let Reply { status, json: payload, raw } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
             ["test", "seed"] => seed(),
-            // The stored document, straight out of the store. Scaffold, and it says
-            // what it is: a part must be judgeable on what it WROTE without
-            // depending on the part that owns the route for reading it back.
-            //
-            // `workflow`'s gate needs exactly this. The contract makes it update the
-            // report document as well as the fsm instance, and the only other way to
-            // see the document is `GET /api/reports/{id}` — which belongs to
-            // `intake`, is a stub while `workflow` is judged alone, and answered
-            // `not_implemented` to a gate that then blamed `workflow` for it.
+            // The stored document straight out of the store, so a part is judgeable on what it
+            // WROTE: `workflow` updates the report document, and the only other read is
+            // `intake`'s route, a stub while `workflow` is judged alone.
             ["test", "report", id] => match records::get("reports", id) {
                 Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
                 Err(_) => Reply::err(404, "not_found"),

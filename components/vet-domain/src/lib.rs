@@ -1,22 +1,9 @@
 //! `vet-domain` — the vet-clinic domain as a WIT HTTP component (FULL PARITY).
 //!
-//! The pet/appointment/note orchestration that used to be TypeScript glue under
-//! jco, here a `wasi:http/incoming-handler` component that owns NO storage and
-//! NO auth logic — it maps HTTP onto the capability contracts it imports. The
-//! core slice (auth + pets/appointments/notes) is here joined by the full set
-//! of cross-cutting capabilities, each a real comp component:
-//!   auth:identity, records:store, validate:schema, search:index,
-//!   blob:store + upload:policy (photos), fsm:workflow (lifecycle),
-//!   money:amount (invoices), md:render (notes), csv:codec (export),
-//!   pii:redact (audit), otp:totp + secrets:vault (2FA), i18n:catalog,
-//!   paginate:cursor, ai:inference + cache:store (summary), sched:timer
-//!   (reminders), lock:mutex (claim), event:bus (fan-out).
-//!
-//! Every mutating route authorizes the bearer (authorizer.authorize with the
-//! required {target, action}); bodies are validated by validate:schema; owners
-//! are scoped to their own pets/appointments, doctors/admins see all. The same
-//! .wasm runs under jco or wasmCloud — backends + the LLM provider are a
-//! compose-time choice, never in this code.
+//! Maps HTTP onto the capability contracts it imports; owns NO storage and NO auth logic.
+//! Every mutating route authorizes the bearer and validates bodies via validate:schema; owners
+//! are scoped to their own pets/appointments, doctors/admins see all.
+//! Backends and the LLM provider are a compose-time choice, never in this code.
 //!
 //! Routes — see the match in `handle` for the full list.
 
@@ -122,8 +109,6 @@ const CURRENCY: &str = "USD";
 const REMINDER_LEAD_SECONDS: i64 = 24 * 3600;
 const AISUM_TTL_SECONDS: u64 = 24 * 3600;
 
-// ---- routing ------------------------------------------------------------
-
 impl Guest for Component {
     async fn handle(request: Request) -> Result<Response, ErrorCode> {
         let method = request.get_method();
@@ -131,7 +116,6 @@ impl Guest for Component {
         let route = path.split('?').next().unwrap_or("/").to_string();
         let query = path.split_once('?').map(|x| x.1).unwrap_or("").to_string();
 
-        // segment helpers for /appointments/{id}/... and /pets/{id}/... routes.
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let result = match (&method, route.as_str()) {
@@ -145,57 +129,44 @@ impl Guest for Component {
             (Method::Get, "/auth/me") => me(&request),
             (Method::Post, "/auth/logout") => logout(&request),
 
-            // ---- pets ----
             (Method::Get, "/pets") => list_pets(&request, &query),
             (Method::Post, "/pets") => create_pet(request).await,
 
-            // ---- appointments ----
             (Method::Get, "/appointments") => list_appointments(&request),
             (Method::Post, "/appointments") => create_appointment(request).await,
 
-            // ---- admin: RBAC seeding ----
             (Method::Post, "/admin/role-permissions") => admin_set_role_perms(request).await,
             (Method::Post, "/admin/assign-role") => admin_assign_role(request).await,
             (Method::Get, "/admin/audit") => admin_audit(&request),
             (Method::Post, "/admin/run-reminders") => admin_run_reminders(&request, &query),
             (Method::Post, "/admin/run-projection") => admin_run_projection(&request),
 
-            // ---- staff 2FA ----
             (Method::Post, "/auth/2fa/enroll") => twofa_enroll(&request),
             (Method::Post, "/auth/2fa/verify") => twofa_verify(request).await,
             (Method::Get, "/auth/2fa/status") => twofa_status(&request),
 
             // segment-matched routes.
             _ => match (&method, seg.as_slice()) {
-                // /admin/export/{what}.csv
                 (Method::Get, ["admin", "export", file]) if file.ends_with(".csv") => {
                     admin_export_csv(&request, file.trim_end_matches(".csv"))
                 }
-                // /i18n/{locale}
                 (Method::Get, ["i18n", locale]) => i18n_bundle(locale),
 
-                // /pets/{id}
                 (Method::Get, ["pets", id]) => get_pet_detail(&request, id),
                 (Method::Delete, ["pets", id]) => delete_pet(&request, id),
-                // /pets/{id}/photo
                 (Method::Get, ["pets", id, "photo"]) => {
                     return serve_pet_photo(&request, id);
                 }
                 (Method::Post, ["pets", id, "photo"]) => upload_pet_photo(request, id).await,
 
-                // /appointments/{id}
                 (Method::Delete, ["appointments", id]) => delete_appointment(&request, id),
-                // /appointments/{id}/transition
                 (Method::Post, ["appointments", id, "transition"]) => {
                     transition_appointment(request, id).await
                 }
-                // /appointments/{id}/invoice
                 (Method::Get, ["appointments", id, "invoice"]) => get_invoice(&request, id),
                 (Method::Put, ["appointments", id, "invoice"]) => put_invoice(request, id).await,
-                // /appointments/{id}/notes
                 (Method::Post, ["appointments", id, "notes"]) => add_note(request, id).await,
                 (Method::Get, ["appointments", id, "notes"]) => list_notes(&request, id),
-                // /appointments/{id}/summary
                 (Method::Post, ["appointments", id, "summary"]) => {
                     post_summary(&request, id, &query)
                 }
@@ -252,19 +223,14 @@ fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     }
 }
 
-// ---- boot seeding (fsm machine + i18n catalog) --------------------------
-
 fn ensure_seeded() {
-    // Idempotent seeding of the fsm machine + i18n catalog, gated on one KV
-    // read (a marker in a `meta` collection). Called ONLY from the routes that
-    // consume the seeded state (create/transition appointment, i18n bundle) —
-    // running it in the global handler charged every request, including static
-    // assets and /pets, one KV round-trip for state they never touch.
+    // Idempotent seeding gated on one KV read (a marker in a `meta` collection). Called ONLY from
+    // routes that consume the seeded state: running it in the global handler charged every
+    // request, static assets included, a KV round-trip.
     if records::count("meta").map(|n| n > 0).unwrap_or(false) {
         return; // already seeded
     }
 
-    // appointment lifecycle: booked -> confirmed -> completed | cancel.
     let def = fsm::Definition {
         states: vec!["booked".into(), "confirmed".into(), "completed".into(), "cancelled".into()],
         initial: "booked".into(),
@@ -298,7 +264,6 @@ fn ensure_seeded() {
         let _ = i18n::set_message(locale, key, value);
     }
 
-    // mark seeded so subsequent requests skip all of the above (one record).
     let _ = records::create("meta", "{\"seeded\":true}", &[]);
 }
 
@@ -334,8 +299,6 @@ const UI_KEYS: [&str; 7] = [
     "notes.title",
 ];
 
-// ---- auth routes --------------------------------------------------------
-
 /// The clinic's single tenant. The SPA omits `tenant` on register/login, so an
 /// empty value must resolve to this — otherwise accounts land under tenant ""
 /// and can never be found again. (Mirrors the jco app's `default-tenant`.)
@@ -368,7 +331,6 @@ async fn register(request: Request) -> Outcome {
         Ok(p) => p,
         Err(e) => return Outcome::Auth(e),
     };
-    // assign the requested role (default pet-owner), gated to the known set.
     let wanted = req.role.unwrap_or_else(|| "pet-owner".to_string());
     let role = if ["pet-owner", "doctor", "admin"].contains(&wanted.as_str()) {
         wanted
@@ -406,7 +368,6 @@ fn me(request: &Request) -> Outcome {
     }
 }
 
-/// Revoke the bearer's session (logout). 204 on success.
 fn logout(request: &Request) -> Outcome {
     let token = match bearer(request) {
         Some(t) => t,
@@ -429,7 +390,6 @@ fn require(request: &Request, target: &str, action: &str) -> Result<Principal, O
     authorizer::authorize(&token, &perm).map_err(Outcome::Auth)
 }
 
-/// Just introspect the bearer (no permission requirement) — for /me + 2FA.
 fn introspect(request: &Request) -> Result<Principal, Outcome> {
     let token = match bearer(request) {
         Some(t) => t,
@@ -448,22 +408,16 @@ fn is_doctor(p: &Principal) -> bool {
     p.roles.iter().any(|r| r == "doctor")
 }
 
-// ---- static SPA (linked static:assets component) --------------------------
-// Serve the built React app via the static:assets capability: exact path
-// match, else the SPA fallback to index.html (client-side routing). API paths
-// never reach here (they matched earlier in the router). The bytes live in the
-// linked component, keeping this artifact slim.
+// Serve the built React app via static:assets: exact path match, else fall back to index.html for
+// client-side routing. The bytes live in the linked component, keeping this artifact slim.
 
 fn serve_static(path: &str) -> Outcome {
     let want = if path == "/" { "/index.html" } else { path };
-    // unknown non-asset path -> index.html so the SPA router handles it.
     match statics::get(want).or_else(|| statics::get("/index.html")) {
         Some(a) => Outcome::Raw(200, a.content_type, a.body),
         None => Outcome::NotFound,
     }
 }
-
-// ---- admin: RBAC seeding ------------------------------------------------
 
 #[derive(Deserialize)]
 struct PermDto {
@@ -510,8 +464,6 @@ async fn admin_assign_role(request: Request) -> Outcome {
     }
 }
 
-// ---- pets ---------------------------------------------------------------
-
 #[derive(Deserialize)]
 struct PetReq {
     name: String,
@@ -543,7 +495,6 @@ async fn create_pet(request: Request) -> Outcome {
         Err(e) => return Outcome::Bad(format!("bad json: {e}")),
     };
     let notes = req.notes.unwrap_or_default();
-    // store WITHOUT an id — records:store mints the ULID. owner is the subject.
     let data = format!(
         "{{\"name\":{},\"species\":{},\"owner\":{},\"notes\":{}}}",
         js(&req.name),
@@ -598,7 +549,6 @@ fn list_pets(request: &Request, query: &str) -> Outcome {
     )
 }
 
-/// All pet entries (id, data) for an owner (or all, when `owner` is None).
 fn list_pet_entries(owner: Option<&str>) -> Vec<(String, String)> {
     match owner {
         Some(o) => records::find_by("pets", "owner", &js(o))
@@ -612,19 +562,16 @@ fn list_pet_entries(owner: Option<&str>) -> Vec<(String, String)> {
     }
 }
 
-/// Cursor-paginated page of pets, sorted by name (id as tiebreaker), assembled
-/// via paginate:cursor (clamp + opaque signed cursors + page envelope).
+///
 fn paginate_pets(owner: Option<&str>, limit: u32, cursor: Option<&str>, viewer: &str) -> Outcome {
     let clamped = paginate::clamp_limit(if limit > 0 { limit } else { 10 }).unwrap_or(10) as usize;
     let mut all = list_pet_entries(owner);
-    // sort by name then id; name is a JSON field of the data blob.
     all.sort_by(|a, b| {
         let na = json_field(&a.1, "name").unwrap_or_default();
         let nb = json_field(&b.1, "name").unwrap_or_default();
         na.cmp(&nb).then(a.0.cmp(&b.0))
     });
 
-    // decode the incoming cursor to find the start offset (after that boundary).
     let mut start = 0usize;
     if let Some(c) = cursor {
         if let Ok(pos) = paginate::decode(c) {
@@ -662,7 +609,6 @@ fn paginate_pets(owner: Option<&str>, limit: u32, cursor: Option<&str>, viewer: 
     )
 }
 
-/// Full detail for a pet: the pet + its appointments, each with visit notes.
 /// Owner-scoped; doctors/admins may view any.
 fn get_pet_detail(request: &Request, pet_id: &str) -> Outcome {
     let principal = match require(request, "pets", "read") {
@@ -677,7 +623,6 @@ fn get_pet_detail(request: &Request, pet_id: &str) -> Outcome {
     if !is_privileged(&principal) && owner != principal.subject {
         return Outcome::Err(403, "not_your_pet".into());
     }
-    // appointments for this pet (newest datetime first), each with its notes.
     let mut appts = records::find_by("appointments", "pet", &js(pet_id)).unwrap_or_default();
     appts.sort_by(|a, b| {
         let da = json_field(&a.data, "datetime").unwrap_or_default();
@@ -707,7 +652,6 @@ fn get_pet_detail(request: &Request, pet_id: &str) -> Outcome {
     )
 }
 
-/// Delete a pet — only if it has no active (non-cancelled) bookings. Owner-scoped.
 fn delete_pet(request: &Request, pet_id: &str) -> Outcome {
     let principal = match require(request, "pets", "write") {
         Ok(p) => p,
@@ -737,8 +681,6 @@ fn delete_pet(request: &Request, pet_id: &str) -> Outcome {
     Outcome::Json(204, String::new())
 }
 
-// ---- pet photos (upload:policy + blob:store) ----------------------------
-
 async fn upload_pet_photo(request: Request, pet_id: &str) -> Outcome {
     let principal = match require(&request, "pets", "write") {
         Ok(p) => p,
@@ -761,21 +703,17 @@ async fn upload_pet_photo(request: Request, pet_id: &str) -> Outcome {
     if body.is_empty() {
         return Outcome::Err(400, "empty_body".into());
     }
-    // 1) upload:policy — validate + mint a signed ticket.
     let ticket =
         match upload::authorize(&format!("pet/{pet_id}"), &content_type, body.len() as u64, 0) {
             Ok(t) => t,
             Err(e) => return policy_err(e),
         };
-    // 2) upload:policy — redeem the ticket (signature + expiry check).
     if upload::redeem(&ticket.token).is_err() {
         return Outcome::Err(400, "invalid_ticket".into());
     }
-    // 3) blob:store — store the bytes under the pet id.
     if let Err(e) = blob::put(PHOTO_CONTAINER, pet_id, &body, &content_type) {
         return Outcome::Err(400, format!("blob: {e:?}"));
     }
-    // record the content-type on the pet (the bytes live in blob:store).
     let new_data = set_json_field(&pet.data, "photo", &content_type);
     let _ = records::update("pets", pet_id, &new_data, 0);
     Outcome::Json(201, "{\"ok\":true}".into())
@@ -801,8 +739,6 @@ fn serve_pet_photo(request: &Request, pet_id: &str) -> Result<Response, ErrorCod
         Err(_) => emit(Outcome::Err(404, "no_photo".into())),
     }
 }
-
-// ---- appointments -------------------------------------------------------
 
 #[derive(Deserialize)]
 struct ApptReq {
@@ -835,7 +771,6 @@ async fn create_appointment(request: Request) -> Outcome {
         Ok(v) => v,
         Err(e) => return Outcome::Bad(format!("bad json: {e}")),
     };
-    // the pet must exist; the booking owner is the pet's owner.
     let pet = match records::get("pets", &req.pet) {
         Ok(e) => e,
         Err(_) => return Outcome::Err(404, "pet_not_found".into()),
@@ -857,11 +792,8 @@ async fn create_appointment(request: Request) -> Outcome {
         Ok(e) => e,
         Err(e) => return store_err(e),
     };
-    // start its fsm instance (initial "booked"), keyed by the minted id.
     let _ = fsm::create_instance(APPT_MACHINE, &entry.id);
-    // schedule the 24h-before reminder (no-op on unparseable datetime).
     schedule_reminder(&entry.id, &req.datetime);
-    // publish the domain event — reactions consume it via event:bus on their own.
     let payload =
         format!("{{\"id\":{},\"pet\":{},\"owner\":{}}}", js(&entry.id), js(&req.pet), js(&owner));
     let _ = events::publish(APPT_TOPIC, payload.as_bytes());
@@ -956,7 +888,6 @@ async fn transition_appointment(request: Request, appt_id: &str) -> Outcome {
     }
     match fsm::fire(APPT_MACHINE, appt_id, &req.event) {
         Ok(status) => {
-            // mirror the new fsm state onto the appt record.
             let new_data = set_json_field(&appt.data, "status", &status.state);
             let _ = records::update("appointments", appt_id, &new_data, 0);
             if status.state == "cancelled" || status.state == "completed" {
@@ -981,8 +912,6 @@ async fn transition_appointment(request: Request, appt_id: &str) -> Outcome {
     }
 }
 
-// ---- invoices (money:amount) --------------------------------------------
-
 #[derive(Deserialize)]
 struct LineItem {
     description: String,
@@ -993,7 +922,6 @@ struct InvoiceReq {
     items: Vec<LineItem>,
 }
 
-/// Set/replace the invoice for an appointment (doctor/admin); money:amount totals.
 async fn put_invoice(request: Request, appt_id: &str) -> Outcome {
     let principal = match require(&request, "appointments", "write") {
         Ok(p) => p,
@@ -1035,7 +963,6 @@ async fn put_invoice(request: Request, appt_id: &str) -> Outcome {
         js(&total_formatted),
         js(CURRENCY)
     );
-    // 1:1 with the appointment — drop any prior invoice, then create fresh.
     for e in records::find_by("invoices", "appointment", &js(appt_id)).unwrap_or_default() {
         let _ = records::delete("invoices", &e.id);
     }
@@ -1043,7 +970,6 @@ async fn put_invoice(request: Request, appt_id: &str) -> Outcome {
     Outcome::Json(201, invoice)
 }
 
-/// Read an appointment's invoice (owner of it, or doctor/admin).
 fn get_invoice(request: &Request, appt_id: &str) -> Outcome {
     let principal = match require(request, "appointments", "read") {
         Ok(p) => p,
@@ -1063,8 +989,6 @@ fn get_invoice(request: &Request, appt_id: &str) -> Outcome {
         None => Outcome::Err(404, "no_invoice".into()),
     }
 }
-
-// ---- visit notes --------------------------------------------------------
 
 #[derive(Deserialize)]
 struct NoteReq {
@@ -1102,8 +1026,7 @@ async fn add_note(request: Request, appt_id: &str) -> Outcome {
     }
 }
 
-/// Notes for an appointment — owner of the appointment, or doctor/admin. Each
-/// note's raw markdown is rendered to safe HTML via md:render.
+///
 fn list_notes(request: &Request, appt_id: &str) -> Outcome {
     let principal = match require(request, "appointments", "read") {
         Ok(p) => p,
@@ -1120,8 +1043,7 @@ fn list_notes(request: &Request, appt_id: &str) -> Outcome {
     Outcome::Json(200, format!("{{\"notes\":[{}]}}", notes_for(appt_id).join(",")))
 }
 
-/// Notes for an appointment as a Vec of JSON strings, each with `textHtml`
-/// (md:render of the raw markdown text added on read), matching the TS.
+///
 fn notes_for(appt_id: &str) -> Vec<String> {
     records::find_by("notes", "appointment", &js(appt_id))
         .unwrap_or_default()
@@ -1134,7 +1056,6 @@ fn notes_for(appt_id: &str) -> Vec<String> {
         .collect()
 }
 
-/// Render markdown to safe HTML via md:render; fall back to raw text on error.
 fn render_markdown(text: &str) -> String {
     // md:render's to_html never returns a Result; it sanitizes raw HTML inline.
     markdown::to_html(text)
@@ -1167,8 +1088,6 @@ fn assign_doctor(appt_id: &str, doctor: &str) {
     let _ = lock::release(&key, &lease.token);
 }
 
-// ---- AI clinical summary (ai:inference + cache:store) -------------------
-
 fn aisum_key(appt_id: &str) -> String {
     format!("aisum_{appt_id}")
 }
@@ -1197,7 +1116,6 @@ fn post_summary(request: &Request, appt_id: &str, query: &str) -> Outcome {
     Outcome::Json(200, result)
 }
 
-/// Read a cached AI summary (owner of the appointment, or doctor/admin).
 fn get_summary(request: &Request, appt_id: &str) -> Outcome {
     let principal = match require(request, "appointments", "read") {
         Ok(p) => p,
@@ -1224,7 +1142,6 @@ fn read_summary(appt_id: &str) -> Option<String> {
     }
 }
 
-/// Build the source text for an appointment's summary from the pet + its notes.
 fn summary_source(appt_id: &str) -> Option<(String, String)> {
     let appt = records::get("appointments", appt_id).ok()?;
     let pet_id = json_field(&appt.data, "pet")?;
@@ -1254,8 +1171,6 @@ fn summary_source(appt_id: &str) -> Option<(String, String)> {
     }
     Some((lines.join("\n"), pet_name))
 }
-
-// ---- domain events + reminders ------------------------------------------
 
 fn schedule_reminder(appt_id: &str, datetime: &str) {
     if let Some(when) = datetime::parse_unix_seconds(datetime) {
@@ -1307,8 +1222,7 @@ fn admin_run_reminders(request: &Request, query: &str) -> Outcome {
     Outcome::Json(200, format!("{{\"now\":{},\"fired\":[{}]}}", now, fired.join(",")))
 }
 
-/// Drain the appointment.booked topic into the projection group, ack, and report
-/// the running booked count. Admin-triggered. Proves the event:bus fan-out.
+///
 fn admin_run_projection(request: &Request) -> Outcome {
     let _principal = match require(request, "audit", "read") {
         Ok(p) => p,
@@ -1337,14 +1251,11 @@ fn read_booked_count() -> u64 {
 
 fn write_booked_count(count: u64) {
     let data = format!("{{\"name\":\"booked-counter\",\"count\":\"{count}\"}}");
-    // single-row collection: drop the prior, write fresh.
     for e in records::find_by("projections", "name", &js("booked-counter")).unwrap_or_default() {
         let _ = records::delete("projections", &e.id);
     }
     let _ = records::create("projections", &data, &["name".to_string()]);
 }
-
-// ---- admin: audit + CSV export ------------------------------------------
 
 /// PII-redacted audit trail (admin-only). The composed auth-guard's recorder
 /// writes events to the shared KV under `al_*` keys; we read them straight from
@@ -1370,7 +1281,6 @@ struct AuditEvent {
     detail: String,
 }
 
-/// Read raw `al_*` audit keys from the shared KV bucket, newest-first.
 fn read_audit_events(max: usize) -> Vec<AuditEvent> {
     let bucket = match kv::open("default") {
         Ok(b) => b,
@@ -1427,7 +1337,6 @@ fn read_audit_trail_redacted(max: usize) -> Vec<String> {
         .collect()
 }
 
-/// CSV export (admin): `appointments` or `audit`, formatted by csv:codec.
 fn admin_export_csv(request: &Request, what: &str) -> Outcome {
     let _principal = match require(request, "audit", "read") {
         Ok(p) => p,
@@ -1493,8 +1402,6 @@ fn admin_export_csv(request: &Request, what: &str) -> Outcome {
     Outcome::Raw(200, "text/csv; charset=utf-8".into(), csv_text.into_bytes())
 }
 
-// ---- staff 2FA (otp:totp + secrets:vault) -------------------------------
-
 fn otp_secret_name(subject: &str) -> String {
     format!("otp/{subject}")
 }
@@ -1547,9 +1454,6 @@ fn twofa_status(request: &Request) -> Outcome {
     Outcome::Json(200, format!("{{\"enrolled\":{enrolled}}}"))
 }
 
-// ---- i18n (i18n:catalog) ------------------------------------------------
-
-/// The full UI bundle for a locale (negotiated against what we seeded).
 fn i18n_bundle(locale: &str) -> Outcome {
     ensure_seeded(); // catalog must exist before negotiate/translate
     let available = vec!["en".to_string(), "es".to_string()];
@@ -1567,25 +1471,16 @@ fn i18n_bundle(locale: &str) -> Outcome {
     )
 }
 
-// ---- helpers: request ---------------------------------------------------
-
 async fn parse<T: for<'de> Deserialize<'de>>(request: Request) -> Result<T, String> {
     let body = read_body(request).await.map_err(|_| "could not read body".to_string())?;
     serde_json::from_slice(&body).map_err(|e| format!("bad json: {e}"))
 }
 
-/// The most a request body may be, before the component stops reading it.
-///
-/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
-/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
-/// per-store memory cap and TRAPPED, which reaches the caller as a closed
-/// connection saying nothing about a size.
-/// A component that answers JSON has no business reading sixteen megabytes, and
-/// the ones that legitimately handle uploads police it themselves with a 413 and a
-/// granted max-size — those are left alone.
-///
-/// Generous on purpose. This is a backstop against an unbounded read, not a
-/// content policy; an API that needs a real limit should state its own and say 413.
+/// The most a request body may be before the component stops reading it. Without a ceiling,
+/// components accumulated input until the guest hit wasmtime's 64 MiB per-store cap and TRAPPED,
+/// which reaches the caller as a closed connection.
+/// A backstop against an unbounded read, not a content policy; uploads police their own size with
+/// a 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
@@ -1593,7 +1488,6 @@ guestio::guest_p3_respond!();
 
 guestio::guest_p3_bearer!();
 
-/// First value of a request header as a UTF-8 string.
 fn header(request: &Request, name: &str) -> Option<String> {
     let headers = request.get_headers();
     for v in headers.get(name) {
@@ -1617,13 +1511,10 @@ fn query_param(query: &str, key: &str) -> Option<String> {
 
 use guestfmt::percent_decode as url_decode;
 
-/// Host wall-clock "now" in unix seconds.
 fn now_seconds() -> i64 {
     let now = system_clock::now();
     now.seconds
 }
-
-// ---- helpers: validation rules ------------------------------------------
 
 fn text_rule(field: &str, required: bool, min_len: u32, max_len: u32) -> Rule {
     Rule {
@@ -1637,8 +1528,6 @@ fn text_rule(field: &str, required: bool, min_len: u32, max_len: u32) -> Rule {
         one_of: vec![],
     }
 }
-
-// ---- helpers: JSON ------------------------------------------------------
 
 fn js(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
@@ -1720,8 +1609,6 @@ fn json_str_array(items: &[String]) -> String {
     format!("[{}]", inner.join(","))
 }
 
-// ---- helpers: errors ----------------------------------------------------
-
 fn auth_error(e: &AuthError) -> (u16, &'static str) {
     match e {
         AuthError::InvalidCredentials => (401, "invalid_credentials"),
@@ -1743,10 +1630,8 @@ fn store_err(e: StoreError) -> Outcome {
     match e {
         StoreError::NotFound => Outcome::NotFound,
         StoreError::InvalidJson(m) => Outcome::Bad(format!("invalid_json: {m}")),
-        // 409, not 400. `Outcome::Bad` answers 400, and a client that re-reads and
-        // retries on a conflict — which is the entire point of the compare-and-set in
-        // ADR-0065 — does not retry a 400, because 400 says the request itself is
-        // wrong and sending it again cannot help. Every other component answers 409.
+        // 409, not 400: a client retrying on a compare-and-set conflict (ADR-0065) does not retry
+        // a 400.
         StoreError::RevisionConflict(_) => Outcome::Err(409, "revision_conflict".into()),
         StoreError::BackendUnavailable(m) => {
             Outcome::Json(503, format!("{{\"error\":\"backend: {}\"}}", esc(&m)))
@@ -1754,7 +1639,6 @@ fn store_err(e: StoreError) -> Outcome {
     }
 }
 
-/// Map upload:policy errors to the HTTP shapes the TS app used.
 fn policy_err(e: upload::PolicyError) -> Outcome {
     match e {
         upload::PolicyError::TypeNotAllowed(_) => Outcome::Err(415, "type_not_allowed".into()),
@@ -1765,8 +1649,6 @@ fn policy_err(e: upload::PolicyError) -> Outcome {
         }
     }
 }
-
-// ---- responses ----------------------------------------------------------
 
 fn respond_json(status: u16, body: &str) -> Result<Response, ErrorCode> {
     respond(status, "application/json", body)

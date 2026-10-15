@@ -1,9 +1,7 @@
 //! `virt-git` — git's object model over `blob:store`. No disk, no working copy.
 //!
-//! See `wit/git.wit` for why this exists. The short version: agents are
-//! components and components have no filesystem, so a working copy is not
-//! something an agent can ever touch — but a content-addressed object store is,
-//! and that is what git already is.
+//! See `wit/git.wit` for why this exists: components have no filesystem, but a content-addressed
+//! object store is something an agent can touch.
 //!
 //! Two backing stores, for one reason each:
 //!
@@ -32,8 +30,8 @@ use bindings::wasi::keyvalue::store as kv;
 
 struct Component;
 
-/// The container objects live in. One per repository, so two repositories in one
-/// deployment cannot see each other's objects.
+/// The container objects live in. One per repository, so repositories cannot see each other's
+/// objects.
 fn container() -> String {
     config::get("git-container")
         .ok()
@@ -63,13 +61,11 @@ fn valid_id(id: &str) -> Result<(), GitError> {
     }
 }
 
-/// Write a framed object. Returns its id.
 fn put_object(kind: &str, payload: &[u8]) -> Result<String, GitError> {
     let framed = git::frame(kind, payload);
     let id = git::id_of(&framed);
-    // Content-addressed, so a re-write is the same bytes. Skipping the write when
-    // it is already there turns a re-run into a read, which is most of why a
-    // swarm exploring nearby ideas is affordable.
+    // Content-addressed, so a re-write is the same bytes; skipping it when present turns a re-run
+    // into a read.
     match blobstore::exists(&container(), &key(&id)) {
         Ok(true) => return Ok(id),
         Ok(false) => {}
@@ -155,16 +151,11 @@ impl ObjectsGuest for Component {
     }
 }
 
-// ---- refs ------------------------------------------------------------------
-
-/// A ref name that cannot collide with an object key or escape its namespace.
-/// Refs live in the app's own bucket, which the host names — a guest cannot
-/// choose it (ADR-0012, ADR-0023). Opened per call rather than cached: the handle
-/// is cheap and a cached one outlives the reasons it was valid.
+/// A ref name that cannot collide with an object key or escape its namespace. Refs live in the
+/// app's own bucket, which the host names (ADR-0012, ADR-0023); opened per call, not cached.
 fn ref_bucket() -> Result<kv::Bucket, GitError> {
-    // "default" is the name the host maps to this app's own bucket. A guest
-    // cannot choose a bucket — it names one from the host's allow-list and the
-    // host decides what that resolves to (ADR-0012).
+    // "default" is the name the host maps to this app's own bucket; a guest cannot choose one
+    // (ADR-0012).
     kv::open("default").map_err(|e| GitError::Unavailable(format!("opening the ref store: {e:?}")))
 }
 
@@ -236,9 +227,6 @@ impl RefsGuest for Component {
     }
 }
 
-// ---- worktree --------------------------------------------------------------
-
-/// Walk from a commit to the tree entry for `path`.
 fn entry_at(commit: &str, segs: &[String]) -> Result<Option<TreeEntry>, GitError> {
     let info = <Component as ObjectsGuest>::read_commit(commit.to_string())?;
     let mut tree = info.tree;
@@ -285,9 +273,8 @@ fn splice(tree: &str, segs: &[String], want: Option<(String, String)>) -> Result
             .unwrap_or_default();
         let new_sub = splice(&sub, &segs[1..], want)?;
         entries.retain(|e| &e.name != name);
-        // An empty subtree is dropped rather than written. Git has no empty
-        // directories, and keeping one would make our tree ids disagree with
-        // what git would produce for the same content.
+        // An empty subtree is dropped rather than written: git has no empty directories, and
+        // keeping one would make our tree ids disagree with git's.
         if !new_sub.is_empty() {
             entries.push(TreeEntry { mode: "40000".into(), name: name.clone(), id: new_sub });
         }
@@ -311,7 +298,6 @@ fn walk(tree: &str, prefix: &str, out: &mut Vec<String>) -> Result<(), GitError>
     Ok(())
 }
 
-/// Every (path, blob id) in a tree, for diffing.
 fn flatten(tree: &str, prefix: &str, out: &mut Vec<(String, String)>) -> Result<(), GitError> {
     for e in <Component as ObjectsGuest>::read_tree(tree.to_string())? {
         let path = if prefix.is_empty() { e.name.clone() } else { format!("{prefix}/{}", e.name) };
@@ -375,10 +361,8 @@ impl WorktreeGuest for Component {
         }
 
         if tree.is_empty() {
-            // Deleting everything is legal in git; writing the empty tree keeps
-            // that representable rather than erroring on a valid intent.
+            // Deleting everything is legal in git; writing the empty tree keeps that representable.
             tree = <Component as ObjectsGuest>::write_tree(Vec::new()).unwrap_or_else(|_| {
-                // The empty tree's id is a constant git knows by heart.
                 "4b825dc642cb6eb9a060e54bf8d69288fbee4904".to_string()
             });
         }

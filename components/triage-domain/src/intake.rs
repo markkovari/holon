@@ -3,25 +3,19 @@
 //! `body` is stored MASKED, via `pii:redact` — the raw text never reaches the
 //! store, because the digest is readable by anyone.
 //!
-//! Everything that reads reports here goes through ONE store call, `query`:
-//! it takes a list of filters, ANDs them, and re-checks each candidate against
-//! every filter — so the `state`+`component` list filter, the "no filter at all"
-//! list, and the duplicate lookup (`component` + `title`, and `title` is not even
-//! indexed) are the same three lines with a different filter vector. `find_by`
-//! would have needed two calls and a hand-written intersection for the list, and a
-//! second pass for the duplicate.
-//!
-//! `query` indexes and compares the JSON ENCODING of a value, so a string field
-//! `billing` is `"billing"`, quotes included — `filter()` does that encoding, and
-//! nothing here passes a bare string.
+//! Every read goes through ONE store call, `query`: it ANDs a list of filters and re-checks each
+//! candidate against all of them, so the list filters and the duplicate lookup (`component` +
+//! `title`, and `title` is not indexed) differ only in the filter vector. `query` indexes the
+//! JSON ENCODING of a value (`"billing"`, quotes included); `filter()` does that encoding and
+//! nothing passes a bare string.
 use crate::bindings::p3::http::types::Method;
 use crate::bindings::pii::redact::redactor as pii;
 use crate::bindings::records::store::store as records;
 use crate::{Reply, Route};
 use serde_json::{json, Map, Value};
 
-/// A ceiling far above any test collection; `query` applies no cap of its own and
-/// a limit of 0 would silently mean "50".
+/// A ceiling far above any test collection: `query` applies no cap of its own and a limit of 0
+/// would silently mean "50".
 const LIMIT: u32 = 10_000;
 
 const INDEXES: [&str; 2] = ["component", "state"];
@@ -34,14 +28,12 @@ fn filter(field: &str, value: &str) -> records::Filter {
     }
 }
 
-/// The stored document with the store's id merged in.
 fn doc(entry: &records::Entry) -> Value {
     let mut map: Map<String, Value> = serde_json::from_str(&entry.data).unwrap_or_default();
     map.insert("id".to_string(), json!(entry.entry_id()));
     Value::Object(map)
 }
 
-/// `Entry` has no method for this; a named helper keeps `doc` honest about it.
 trait EntryId {
     fn entry_id(&self) -> &str;
 }
@@ -59,7 +51,6 @@ fn field(v: &Value, key: &str) -> Option<String> {
 /// comes from the store's own `created` on the record it just wrote.
 fn rfc3339(secs: u64) -> String {
     let (days, tod) = ((secs / 86400) as i64, secs % 86400);
-    // civil-from-days: era arithmetic, no lookup tables, no leap-year special case.
     let z = days + 719468;
     let era = z.div_euclid(146097);
     let doe = z.rem_euclid(146097);
@@ -124,8 +115,6 @@ fn create(body: &str) -> Reply {
         return Reply::err(500, "store_error");
     };
 
-    // `reported_at` can only be filled in once the record exists: its timestamp is
-    // the store's `created`, and this world imports no wall clock.
     document["reported_at"] = json!(rfc3339(entry.created));
     if records::update("reports", &entry.id, &document.to_string(), entry.revision).is_err() {
         return Reply::err(500, "store_error");
