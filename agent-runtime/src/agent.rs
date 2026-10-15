@@ -123,6 +123,10 @@ pub trait Host: Sync {
     fn google(&self) -> Option<&crate::google::Google> {
         None
     }
+    /// Jev, for reading pictures, when this host has a key for it.
+    fn jev(&self) -> Option<&dyn crate::jev::Jev> {
+        None
+    }
     fn add_to_project(&self, _project: &str, _agent: &str) -> Result<(), String> {
         Err("agent management is not available".into())
     }
@@ -315,6 +319,24 @@ const TOOLS: &[ToolDef] = &[
         sensitive: true,
     },
     ToolDef {
+        name: "food_photo",
+        args: r#"{"file": "<photo name, default: the photo sent with this message>", "user": "mark"}"#,
+        about: "Read a photo of food with Jev, which looks at the picture itself. If the dish is already in the user's pool of known foods it is counted again; if not, its kind and kcal are estimated and it is ADDED to the pool, so the next photo of it is recognised. Either way the meal is logged. Returns what it is, its kcal, whether that is only an estimate, and the last 24 hours. Use this for every food photo instead of describing the photo yourself.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "food_pool",
+        args: r#"{"user": "mark"}"#,
+        about: "The user's pool of known foods (name, id, kind, kcal, whether the kcal is only an estimate, how often seen) and the kcal eaten in the last 24 hours.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "food_correct",
+        args: r#"{"name": "f3", "kcal": 640, "new_name": "carbonara", "variety": "pasta"}"#,
+        about: "Replace an estimated food in the pool with what the user says it is: its real `kcal`, a better name, or its kind. `name` is the food's name or id (f3). Use it when the user tells you what a dish is or how much it holds.",
+        sensitive: false,
+    },
+    ToolDef {
         name: "gcal_calendars",
         args: "{}",
         about: "The calendars on Mark's Google account, and which of them may be changed. Use these names for `calendar` in the other gcal_ tools.",
@@ -382,6 +404,7 @@ fn required(name: &str) -> &'static [&'static str] {
         | "agent_pause"
         | "agent_remove_schedule"
         | "agent_restore" => &["name"],
+        "food_correct" => &["name"],
         "gcal_list" => &["from"],
         "gcal_add" => &["title", "start"],
         "gcal_update" | "gcal_delete" => &["id"],
@@ -977,6 +1000,21 @@ fn exec(
             ))
         }
         "agent_restore" => host.restore_agent(&arg(args, "name")),
+        "food_photo" => {
+            let jev = host.jev().ok_or("Jev is not configured here (no HOLON_JEV_KEY_FILE)")?;
+            let file = match arg(args, "file") {
+                f if f.is_empty() => cause
+                    .attachments
+                    .first()
+                    .cloned()
+                    .ok_or("no photo came with this message; name one with `file`")?,
+                f => f,
+            };
+            let photo = crate::attach::jpeg_of(store, &spec.name, &file, crate::food::QUERY_PX)?;
+            crate::food::identify(host, jev, &spec.name, &arg(args, "user"), &photo, cause)
+        }
+        "food_pool" => crate::food::list(host, &arg(args, "user")),
+        "food_correct" => crate::food::correct(host, &spec.name, &arg(args, "user"), args, cause),
         "gcal_calendars" | "gcal_list" | "gcal_add" | "gcal_update" | "gcal_delete" => {
             let g = host.google().ok_or("Google Calendar is not available here")?;
             match name {
