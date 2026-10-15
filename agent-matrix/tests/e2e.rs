@@ -333,7 +333,6 @@ fn world_with(speech: SpeechConfig) -> Option<World> {
     let base = format!("http://127.0.0.1:{syn_port}");
     let down = Synapse { project: project.clone(), dir: syn_dir.clone() };
 
-    // ---- an agent runtime with scripted agents -----------------------------
     let mut rt_cfg = RtConfig::new(work.path().join("runtime"));
     rt_cfg.speech = speech;
     let rt = Runtime::new(rt_cfg).unwrap();
@@ -356,7 +355,6 @@ fn world_with(speech: SpeechConfig) -> Option<World> {
     let token_file = work.path().join("rt-token");
     std::fs::write(&token_file, "rt-admin-token").unwrap();
 
-    // ---- Synapse, then the owner, then the bridge's setup --------------------
     deploy(&project, &syn_dir, syn_port, None);
     let container = format!("{project}-synapse-1");
     let reg = Command::new("docker")
@@ -415,7 +413,6 @@ fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
     let Some(World { rt, bridge, owner, base, container, _work, _down, _lock }) = world() else {
         return;
     };
-    // ---- 1. every agent is a user with a room the owner is already in ---------
     let dm = |a: &str| {
         bridge.state.read(|d| d.dms.get(a).cloned()).unwrap_or_else(|| panic!("no room for {a}"))
     };
@@ -439,17 +436,14 @@ fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
         "the owner was placed in the control room, no invite to accept"
     );
 
-    // ---- 2. chatting with an agent ----------------------------------------
     owner.say(&rower_room, "how was my last row?");
     let a = wait_for("rower's answer", 40, || {
         Some(owner.texts_from(&rower_room, &ghost("rower"))).filter(|t| !t.is_empty())
     });
     assert_eq!(a[0], "Your last row was 12,108m.");
-    // it was a real run in the runtime, and its input was the message
     let runs = rt.store().runs("rower", 5);
     assert_eq!(runs[0].input, "how was my last row?");
 
-    // ---- 3. a project is a Space, made from the control room ------------------
     owner.say(&control, "!project new rowing weekly training");
     let rooms = wait_for("the project's rooms", 40, || {
         bridge.state.read(|d| d.projects.get("rowing").cloned())
@@ -471,7 +465,6 @@ fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
     });
     assert!(reply.iter().any(|x| x.contains("Project rowing created")));
 
-    // ---- 4. adding agents: the registry changes, the rooms follow ---------------
     owner.say(&control, "!project add rowing rower coach");
     wait_for("both agents in the project room", 40, || {
         let j = owner.joined(&rooms.general);
@@ -490,7 +483,6 @@ fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
     );
     let rooms = bridge.state.read(|d| d.projects.get("rowing").cloned()).unwrap();
 
-    // ---- 5. who answers in a project room ---------------------------------------
     owner.say(&rooms.general, "good morning everyone"); // no mention, no lead: silence
     std::thread::sleep(Duration::from_secs(4));
     assert!(
@@ -522,7 +514,6 @@ fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
     });
     assert_eq!(advice[0], "Keep the pace steady.");
 
-    // ---- 6. membership is mutual: invite from Matrix adds to the project ----------
     let invite = owner.call(
         reqwest::Method::POST,
         &format!("/_matrix/client/v3/rooms/{}/invite", enc(&rooms.general)),
@@ -542,7 +533,6 @@ fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
         &[],
     );
     assert_eq!(eff.store.write, ["project.rowing"]);
-    // kicking it takes the membership away again
     let kick = owner.call(
         reqwest::Method::POST,
         &format!("/_matrix/client/v3/rooms/{}/kick", enc(&rooms.general)),
@@ -553,7 +543,6 @@ fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
         rt.store().get_project("rowing").filter(|p| !p.agents.iter().any(|a| a == "chef"))
     });
 
-    // ---- 7. an approval is a poll, and the vote answers it -------------------------
     let scout_room = dm("scout");
     owner.say(&scout_room, "write the file");
     let poll = wait_for("the approval poll", 40, || {
@@ -588,7 +577,6 @@ fn agents_are_matrix_users_projects_are_spaces_and_approvals_are_polls() {
         "the approved write happened"
     );
 
-    // ---- 8. only the owner can talk to the agents ---------------------------------
     // A second account that IS in the agent's room (the owner invited it) is ignored.
     let reg = Command::new("docker")
         .args([
@@ -1031,12 +1019,9 @@ fn you_can_talk_to_an_agent_and_it_talks_back() {
     );
     assert!(c["info"]["duration"].as_u64().unwrap() > 500);
 
-    // The spoken answer really says it: download it and listen.
     let audio = owner.download(c["url"].as_str().unwrap());
     assert_eq!(&audio[..4], b"OggS");
     let back = rt.speech().transcribe(&audio, None).expect("transcribing the reply").to_lowercase();
     assert!(back.contains("last row"), "the voice reply says the answer: {back}");
 
-    // Without speech set up, a voice message gets a clear note instead of silence
-    // (covered by the unit-level wording; the runtime used here has it configured).
 }

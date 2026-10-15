@@ -73,7 +73,6 @@ pub enum Trigger {
 }
 
 impl Trigger {
-    /// The bus topic this trigger listens on, if it is bus-driven.
     pub fn topic(&self) -> Option<String> {
         match self {
             Trigger::Event { topic, .. } => Some(topic.clone()),
@@ -214,7 +213,6 @@ pub struct AgentSpec {
     /// is something a spec grants, not a side effect of having the tool.
     #[serde(default)]
     pub topics_out: Vec<String>,
-    /// Shared store namespaces this agent may read/write.
     #[serde(default)]
     pub store: StoreAccess,
     /// Runs this agent will start per rolling minute, whatever woke it; 0 =

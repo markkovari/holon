@@ -531,7 +531,6 @@ impl Store {
         Ok(file)
     }
 
-    // ---- memory -----------------------------------------------------------
 
     pub fn remember(&self, agent: &str, text: &str, now: u64) -> Result<(), String> {
         append(
@@ -620,7 +619,6 @@ impl Store {
         kept.into_iter().take(k).map(|s| s.1.clone()).collect()
     }
 
-    // ---- runs -------------------------------------------------------------
 
     pub fn record_run(&self, r: &RunRecord) -> Result<(), String> {
         append(&self.path("runs", &r.agent, "jsonl")?, r)
