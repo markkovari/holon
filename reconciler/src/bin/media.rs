@@ -14,17 +14,17 @@
 //! ## What it does
 //!
 //! - **Signs**, never carries ([`routes`]). `POST /uploads` plans a presigned multipart upload; the
-//! browser `PUT`s each part and reports the ETags; `POST /uploads/complete` stitches them; `POST
+//!   browser `PUT`s each part and reports the ETags; `POST /uploads/complete` stitches them; `POST
 //! /sign` hands out a time-limited GET for a rendition. rusty-s3 is sans-IO ([`store`]), so there is
-//! no S3 SDK here.
+//!   no S3 SDK here.
 //! - **Queues** ([`routes::submit`]). `POST /jobs` publishes to the JetStream work-queue stream
-//! `MEDIA_JOBS` with `Nats-Msg-Id: <job_id>`, so a double submit is one job. A guest cannot publish
-//! to NATS (comp-host offers no messaging), which is why the queue is the daemon's.
+//!   `MEDIA_JOBS` with `Nats-Msg-Id: <job_id>`, so a double submit is one job. A guest cannot publish
+//!   to NATS (comp-host offers no messaging), which is why the queue is the daemon's.
 //! - **Evaluates** ([`job_worker`]), one photo at a time (the GPU is the bottleneck): download to a
-//! temp file hashing as it streams, decode with `rawler` ([`decode`]), take the half-resolution
-//! green plane from the Bayer data, then run the Swift helper ([`apple_helper`]) or the CPU path
-//! ([`develop`], [`sharpness`], no Vision). Upload three renditions, POST a signed result to the
-//! job's callback.
+//!   temp file hashing as it streams, decode with `rawler` ([`decode`]), take the half-resolution
+//!   green plane from the Bayer data, then run the Swift helper ([`apple_helper`]) or the CPU path
+//!   ([`develop`], [`sharpness`], no Vision). Upload three renditions, POST a signed result to the
+//!   job's callback.
 //!
 //! ## Keys
 //!

@@ -14,11 +14,11 @@
 //!
 //! * the same three components, links and request;
 //! * two host processes in BOTH arms (the baseline pins all three components to the web node and
-//! leaves the data node idle), so the difference is not "one process versus two";
+//!   leaves the data node idle), so the difference is not "one process versus two";
 //! * `--kv memory`, because JetStream round trips dominate the request path (ADR-0057) and hide a hop;
 //! * `/api/ratelimit` with a DISTINCT KEY per request: one call into `shaper` plus local storage (ADR-0070),
-//! but only when uncontended, since the rate limit is a compare-and-set retry loop that calls
-//! `shaper` per retry, and one hot key would price contention amplification instead.
+//!   but only when uncontended, since the rate limit is a compare-and-set retry loop that calls
+//!   `shaper` per retry, and one hot key would price contention amplification instead.
 //!
 //! ```
 //! cargo run --release --bin comp-hopcost -- --secs 10 --threads 20

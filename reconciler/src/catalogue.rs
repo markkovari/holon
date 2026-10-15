@@ -14,9 +14,9 @@ use std::path::Path;
 /// disagreed with the component **33 times, in both directions**:
 ///
 /// * 30 were advertised as reusable while exporting nothing but `wasi:http/incoming-handler`
-/// (nothing can plug a door), including the five parts of `eshop-*`;
+///   (nothing can plug a door), including the five parts of `eshop-*`;
 /// * 3 were hidden from search while exporting a real contract (`login-app`, `reddit-domain`,
-/// `power-domain`).
+///   `power-domain`).
 ///
 /// There is no "APPLICATION" category: it existed to stop a showcase outranking the capability it is
 /// built from, which needs a property, not a category. A component exporting only WASI offers no

@@ -4,9 +4,9 @@
 //! answer from memory at 150 components and 93 exported interfaces:
 //!
 //! * **May I change this interface?** `records:store/store` has 37 consumers, `slug:generate/generator`
-//! has one.
+//!   has one.
 //! * **Does this capability already exist?** The first question a goal should ask before generating
-//! an implementation (ADR-0089).
+//!   an implementation (ADR-0089).
 //! * **What breaks if this component goes?** Its export list, crossed with who imports those.
 //!
 //! Derived from the BUILT artifacts every time, never maintained by hand: a component's real imports
