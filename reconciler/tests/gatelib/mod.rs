@@ -1,27 +1,11 @@
-//! The gate harness, in Rust — what `components/gate-lib.sh` is, without the tools.
+//! The gate harness in Rust: a gate judges a composed application over real HTTP against a real
+//! host, needing only `comp-host` and a composed `.wasm` (artifacts this repository builds).
 //!
-//! A gate judges a composed application over real HTTP against a real host. That part
-//! is unchanged. What changes is what a machine must have installed to run one.
+//! Failure messages are preserved verbatim from the shell gates: ADR-0088 makes a gate's output the
+//! next prompt a repair reads, so rewording changes what the loop reads.
 //!
-//! The shell harness needs THIRTEEN external tools — `curl`, `python3`, `grep`, `sed`,
-//! `awk`, `mktemp`, `base64`, `date`, `wasm-tools`, `cargo`, `go`, `MailHog`, `docker`
-//! — each at a compatible version, on every worker. This needs `comp-host` and a
-//! composed `.wasm`, both artifacts this repository builds, so a scheduler ships them
-//! rather than provisioning them.
-//!
-//! ## What is deliberately preserved
-//!
-//! Failure messages, verbatim. ADR-0088 makes a gate's output the next prompt a repair
-//! reads, and the sentences in these gates were written with that in mind — one of them
-//! records a round where a gate guessed a cause, reported the guess as a finding, and
-//! sent a repair to fix a query that was working. A port that rewords them changes what
-//! the loop reads.
-//!
-//! ## Ports
-//!
-//! Each gate binds its own, derived from its name, because `cargo test` runs integration
-//! binaries in parallel and two gates sharing a port fail only under load — the failure
-//! `harness/mod.rs` already documents for the control plane.
+//! Each gate binds its own port because `cargo test` runs integration binaries in parallel (see
+//! `harness/mod.rs`).
 
 #![allow(dead_code)]
 
@@ -37,16 +21,9 @@ pub fn repo_root() -> PathBuf {
 
 /// Where the components were built, from `$CARGO_TARGET_DIR` when something set it.
 ///
-/// The second half of the bug `host_bin` documents, and the more dangerous half. A
-/// goal run gives every check a SHARED cargo target dir (`goalrun/setup.rs` sets
-/// `CARGO_TARGET_DIR`) because a fresh one per candidate makes a cargo gate
-/// unaffordable. `repo_root()` is `CARGO_MANIFEST_DIR` — baked in at compile time,
-/// pointing at the developer's checkout — so a gate that resolves artifacts through
-/// it judges the artifacts on THIS machine no matter what the candidate wrote. It
-/// passes, every time, for every branch, including one that changed nothing.
-///
-/// `components/gate-lib.sh` read `${CARGO_TARGET_DIR:-components/target}` and this is
-/// the same line in Rust.
+/// A goal run gives every check a SHARED cargo target dir (`goalrun/setup.rs`). `repo_root()` is
+/// `CARGO_MANIFEST_DIR`, baked in at compile time, so resolving artifacts through it would judge
+/// THIS machine's artifacts whatever the candidate wrote and pass for every branch.
 pub fn components_target() -> PathBuf {
     match std::env::var("CARGO_TARGET_DIR") {
         Ok(p) if !p.trim().is_empty() => PathBuf::from(p),
@@ -54,22 +31,13 @@ pub fn components_target() -> PathBuf {
     }
 }
 
-/// The host binary, from `$COMP_HOST` when something set it and from the checkout
-/// otherwise.
+/// The host binary, from `$COMP_HOST` when something set it and from the checkout otherwise.
 ///
-/// This is the whole reason a ported gate could not gate a GOAL RUN, which is what
-/// the ports were for. `holon goal run` materialises a candidate in a sandbox that
-/// holds the base tree and nothing else, and passes the two binaries it cannot
-/// contain as `$COMP_HOST` and `$COMP_PLUG` — `components/gate-lib.sh` says so in as
-/// many words, and the shell gates read them. The Rust harness resolved the host by
-/// path instead, so under a goal every ported gate found no binary, SKIPPED, and a
-/// skip returns `None`, which every gate turns into `return` — a pass. Thirty-one
-/// gates that pass because nothing was there to judge with is the empty-corpus
-/// candidate wearing a different hat, and it is why every goal spec in `.comp/goals/`
-/// still points at the shell copies of gates that were ported months ago.
+/// `holon goal run` materialises a candidate in a sandbox holding only the base tree and passes the
+/// host binary as `$COMP_HOST`. Resolving by path instead made every ported gate find no binary,
+/// SKIP, and (a skip returns `None`, which gates turn into `return`) pass.
 ///
-/// `$COMP_PLUG` is deliberately NOT read: composition is a library call here
-/// (ADR-0087), so this harness needs no plug binary at all.
+/// `$COMP_PLUG` is deliberately NOT read: composition is a library call here (ADR-0087).
 pub fn host_bin() -> PathBuf {
     match std::env::var("COMP_HOST") {
         Ok(p) if !p.trim().is_empty() => PathBuf::from(p),
@@ -77,23 +45,17 @@ pub fn host_bin() -> PathBuf {
     }
 }
 
-/// Whether a caller STATED where the host binary is.
-///
-/// The distinction this turns on is not "goal run or not", it is whether anybody
-/// promised the binary exists. A cold checkout promised nothing and a skip is the
-/// kind thing to do. A goal run passes `$COMP_HOST` and CI sets it, and in both of
-/// those a missing binary is the harness being wrong — answering it with a skip
-/// reports a pass for a component nothing executed.
+/// Whether a caller STATED where the host binary is. A cold checkout promised nothing and a skip is
+/// kind; a goal run passes `$COMP_HOST` and CI sets it, and there a missing binary is the harness
+/// being wrong and a skip would report a pass for something nothing executed.
 pub fn host_was_stated() -> bool {
     std::env::var("COMP_HOST").is_ok_and(|p| !p.trim().is_empty())
 }
 
 /// No host binary: a skip in a cold checkout, a panic when someone stated the path.
 ///
-/// The asymmetry is the point. In a checkout, nothing has been broken by not having
-/// built yet, and a gate that fails for a missing file trains people to ignore gate
-/// failures. When a caller stated the path there is a score being written down, and
-/// "nothing ran" must not arrive at the selector, or at CI, as a pass.
+/// A gate that fails on a missing file in a checkout trains people to ignore gate failures, but
+/// when a caller stated the path "nothing ran" must not reach the selector or CI as a pass.
 fn no_host(app: &str, host: &std::path::Path) {
     if host_was_stated() {
         panic!(
@@ -112,21 +74,10 @@ fn no_host(app: &str, host: &std::path::Path) {
 
 /// A port the OS says is free.
 ///
-/// Two earlier versions of this were wrong, and the second failed in CI as
-/// `Error: Address already in use (os error 98)` — which is only visible because this
-/// harness keeps the host's stderr and prints it, where the shell printed `tail -3` and
-/// showed three lines of stack trace.
-///
-///   1. a hash of the APP name. `cargo test` runs the tests in one binary on parallel
-///      threads, so three triage gates named one port, started three hosts on it, and
-///      two failed while the third passed.
-///   2. that hash plus a per-process counter. Better, and still a guess: twenty-one
-///      test binaries each pick a base from 18000 slots and count up from it, so two
-///      bases landing within a few of each other collide.
-///
-/// Asking the OS removes the guess. The listener is dropped before the host binds, so
-/// there is a window — hence `serve_with` retries when the host dies of it, which is a
-/// race that closes rather than a hash that does not.
+/// A hash of the app name collided across parallel test threads, and hash plus a counter still
+/// collided across test binaries (`Address already in use` in CI). Asking the OS removes the guess.
+/// The listener is dropped before the host binds, so there is a window; `serve_with` retries when
+/// the host dies of it.
 fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
         .expect("the OS has no free port")
@@ -149,24 +100,16 @@ impl Drop for Gate {
     }
 }
 
-/// Compose the crate against what it imports, in this process.
-///
-/// `gate_compose` in the shell harness shelled to `comp-plug`. `plug::compose_to` is
-/// the library that binary is a shim over — ADR-0087 says so in as many words — so a
-/// gate calls it directly and `comp-plug` leaves the list of things a worker needs.
-///
-/// Keyed by content, so a rerun against an unchanged tree reuses the artifact rather
-/// than composing again.
+/// Compose the crate against what it imports, in this process, via `plug::compose_to` (ADR-0087).
+/// Keyed by content, so a rerun against an unchanged tree reuses the artifact.
 pub fn compose(crate_name: &str) -> Option<PathBuf> {
     use comp_reconciler::plug::{compose_to, Catalog};
     let target = components_target();
     let dirs: Vec<PathBuf> =
         ["wasm32-wasip2/release", "wasm32-wasip2/debug"].iter().map(|d| target.join(d)).collect();
     let catalog = Catalog::scan(&dirs);
-    // Same asymmetry as `no_host`, and for the same reason: under a goal run the
-    // check command has already built what it needs, so an empty catalogue here is
-    // the harness being wrong rather than a checkout being cold — and a skip would
-    // reach the selector as a candidate that passed.
+    // Same asymmetry as `no_host`: under a goal run an empty catalogue is the harness being wrong,
+    // and a skip would reach the selector as a passing candidate.
     if catalog.is_empty() {
         assert!(
             !host_was_stated(),
@@ -192,11 +135,7 @@ pub fn compose(crate_name: &str) -> Option<PathBuf> {
     }
 }
 
-/// What a gate needs before it can run, or a reason it cannot.
-///
-/// A loud skip rather than a failure: a checkout that has not built the artifacts has
-/// not broken anything, and a gate that fails for a missing file trains people to
-/// ignore gate failures.
+/// What a gate needs before it can run, or a reason it cannot. A loud skip rather than a failure.
 pub fn artifacts(app: &str, composed: &str) -> Option<(PathBuf, PathBuf)> {
     let host = host_bin();
     let wasm = components_target().join(composed);
@@ -214,13 +153,11 @@ pub fn artifacts(app: &str, composed: &str) -> Option<(PathBuf, PathBuf)> {
 impl Gate {
     /// Start the app on its own port and wait for it to answer.
     ///
-    /// `config` is the `--config key=value` pairs the app needs; the two every gate
-    /// sets are added here so no gate has to remember them.
+    /// `config` is the `--config key=value` pairs the app needs; the two every gate sets are added here.
     /// As `compose_and_start`, plus the authorities the component may reach.
     ///
-    /// `wasi:http` is DEFAULT-DENY by name and refuses loopback twice over, so a gate
-    /// that runs its own receiver has to say where it is — which is the point of the
-    /// deny rather than an inconvenience of it.
+    /// `wasi:http` is DEFAULT-DENY by name and refuses loopback, so a gate that runs its own receiver
+    /// has to say where it is.
     pub fn compose_and_start_with_egress(
         app: &str,
         crate_name: &str,
@@ -236,8 +173,7 @@ impl Gate {
         Some(Self::serve_with(app, &host, &wasm, config, egress))
     }
 
-    /// Compose `crate_name` here and serve it as `app`. The shape every gate wants:
-    /// nothing has to have run `cargo xtask compose …` first.
+    /// Compose `crate_name` here and serve it as `app`.
     pub fn compose_and_start(app: &str, crate_name: &str, config: &[&str]) -> Option<Self> {
         let wasm = compose(crate_name)?;
         let host = host_bin();
@@ -264,9 +200,8 @@ impl Gate {
         config: &[&str],
         egress: &[&str],
     ) -> Self {
-        // Three tries. The window between the OS naming a free port and the host
-        // binding it is small and real; a second attempt on a fresh port closes it,
-        // and a third says the machine is out of ports rather than this being flaky.
+        // Three tries: a fresh port closes the small window between the OS naming a port and the host
+        // binding it, and a third says the machine is out of ports.
         for attempt in 1..=3 {
             match Self::serve_once(app, host, wasm, config, egress) {
                 Ok(gate) => return gate,
@@ -291,12 +226,9 @@ impl Gate {
         let port = free_port();
         let addr = format!("127.0.0.1:{port}");
 
-        // `default-tenant` only. `allow-test-routes` is NOT added here even though every
-        // gate uses `/test/…`: only `events-domain`'s shell lib sets it, the others reach
-        // their fixtures without it, and adding it universally changed behaviour — the
-        // moderation rate limiter stopped limiting, so a gate that asserts a subject is
-        // locked out after three submissions passed a fourth. A harness that turns a flag
-        // on for everyone is a harness that tests a configuration nothing ships.
+        // `default-tenant` only. `allow-test-routes` is NOT added for everyone: adding it universally
+        // stopped the moderation rate limiter limiting, so a gate asserting lock-out after three
+        // submissions passed a fourth. Turning a flag on for everyone tests a configuration nothing ships.
         let mut args: Vec<String> =
             vec!["--app".into(), app.into(), "--config".into(), format!("default-tenant={app}")];
         for c in config {
@@ -322,9 +254,8 @@ impl Gate {
 
         let child = Command::new(host)
             .args(&args)
-            // Kept, not discarded. The shell harness sends the host's output to a temp
-            // file and prints `tail -3` of it on failure — which, when a host actually
-            // failed in CI, was three lines of stack trace with the cause above them.
+            // Kept, not discarded: a `tail -3` of host output in CI was three lines of stack trace
+            // with the cause above them.
             .stdout(Stdio::null())
             .stderr(log.try_clone().expect("clone the host log"))
             .spawn()
@@ -333,39 +264,31 @@ impl Gate {
         let mut gate = Gate {
             child,
             base: format!("http://{addr}"),
-            // TEN MINUTES, and not because a gate is slow. A route that calls a model
-            // holds the connection while the model thinks, and the shell gates pass
-            // `anthropic:timeout=540` for exactly that. Fifteen seconds — what this was
-            // — dropped the reply gate mid-answer and reported it as a transport error,
-            // which reads as the app being broken rather than the client giving up.
+            // TEN MINUTES: a route that calls a model holds the connection while it thinks (shell
+            // gates pass `anthropic:timeout=540`). Fifteen seconds dropped the reply gate mid-answer
+            // and reported a transport error.
             client: reqwest::blocking::Client::builder()
                 .timeout(Duration::from_secs(600))
                 .build()
                 .unwrap(),
         };
-        // SIXTY SECONDS, and the number is measured rather than picked. A host on a
-        // loaded two-core runner can take a while to come up, and both CI failures this
-        // shape produced were the shell harness's THIRTY-second wait expiring, in the
-        // gate that happened to run right after the heaviest one. Ten seconds — what
-        // this waited first — would have been worse.
+        // SIXTY SECONDS, measured: a host on a loaded two-core runner can be slow, and both CI
+        // failures were the shell harness's thirty-second wait expiring right after the heaviest gate.
         for _ in 0..1200 {
             if gate.client.get(format!("{}/health", gate.base)).send().is_ok() {
                 return Ok(gate);
             }
-            // A host that has already exited will never answer; do not wait out the
-            // full minute for one that is gone.
+            // A host that has already exited will never answer.
             if let Ok(Some(_)) = gate.child.try_wait() {
                 break;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        // What the host said, not the last three lines of it.
         let said = std::fs::read_to_string(&log_path).unwrap_or_default();
         Err(if said.trim().is_empty() { format!("(nothing) on {addr}") } else { said })
     }
 
-    /// (status, body). A non-2xx is a VALUE: most of a gate is asserting that a
-    /// particular request is refused with a particular code.
+    /// (status, body). A non-2xx is a VALUE: most of a gate asserts a request is refused with a code.
     pub fn send(
         &self,
         method: &str,
@@ -385,9 +308,8 @@ impl Gate {
         (resp.status().as_u16(), resp.text().unwrap_or_default())
     }
 
-    /// Extra headers, for the routes that take one. `Idempotency-Key` is the reason
-    /// this exists: three treasury routes refuse a request without it, and a gate that
-    /// cannot send one cannot judge them.
+    /// Extra headers, for routes that take one (`Idempotency-Key`: three treasury routes refuse a
+    /// request without it).
     pub fn with_headers(
         &self,
         method: &str,
@@ -438,14 +360,12 @@ impl Gate {
         self.json("DELETE", path, token, None)
     }
 
-    /// `stored` in the shell harness: read a document back through the test route, to
-    /// assert the SHAPE that was written rather than what a handler chose to return.
+    /// Read a document back through the test route, to assert the SHAPE that was written.
     pub fn stored(&self, kind: &str, id: &str) -> String {
         self.get(&format!("/test/{kind}/{id}"), None).1
     }
 
-    /// The fixture. Returns the parsed body, because every gate reaches into it
-    /// differently and a typed struct per app would be a second contract to keep.
+    /// The fixture. Returns the parsed body: a typed struct per app would be a second contract.
     pub fn seed(&self) -> Value {
         let (_, raw) = self.post("/test/seed", None, serde_json::json!({}));
         serde_json::from_str(&raw)
@@ -470,8 +390,7 @@ impl Gate {
     }
 }
 
-/// One top-level key out of a JSON body, empty when absent — `field` in the shell
-/// harness, and the same emptiness every caller there compares against.
+/// One top-level key out of a JSON body, empty when absent.
 pub fn field(body: &str, key: &str) -> String {
     serde_json::from_str::<Value>(body)
         .ok()
@@ -484,9 +403,8 @@ pub fn field(body: &str, key: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Every gate asserts this: a route behind auth refuses an anonymous caller. It is one
-/// line per gate and it catches the part that read the contract's routes and skipped
-/// its authorisation table.
+/// Every gate asserts this: a route behind auth refuses an anonymous caller. It catches the part
+/// that skipped the contract's authorisation table.
 pub fn assert_unauthenticated(gate: &Gate, method: &str, path: &str, body: Option<Value>) {
     let (code, _) = gate.json(method, path, None, body);
     assert!(
@@ -497,18 +415,9 @@ pub fn assert_unauthenticated(gate: &Gate, method: &str, path: &str, body: Optio
 
 /// The component must IMPORT the capability the contract says it delegates to.
 ///
-/// `gate_requires_capability` in the shell harness, which shelled to `wasm-tools`. The
-/// reconciler already parses a component's surface, so this removes one more tool from
-/// the list a worker must have.
-///
-/// Reads the UNCOMPOSED artifact, and that is the whole subtlety: composition
-/// SATISFIES an import, so the composed `.wasm` no longer names it. Asserting on the
-/// composed one reports "does not import quota:meter" about a component that imports
-/// it correctly and has already been plugged.
-///
-/// The message matters more than the assertion: a part that hand-rolls authorisation
-/// instead of calling `auth:identity/authorizer` passes every behavioural check and
-/// has done the thing the contract exists to prevent.
+/// Reads the UNCOMPOSED artifact: composition SATISFIES an import, so the composed `.wasm` no
+/// longer names it. The message matters: a part that hand-rolls authorisation instead of calling
+/// `auth:identity/authorizer` passes every behavioural check.
 pub fn requires_capability(crate_name: &str, interface: &str, why: &str) {
     let path = components_target()
         .join("wasm32-wasip2/release")
@@ -530,18 +439,9 @@ pub fn requires_capability(crate_name: &str, interface: &str, why: &str) {
 
 /// A recording HTTP receiver the gate runs itself, which can be broken on purpose.
 ///
-/// Delivery is the whole subject of some of these apps and none of it is observable
-/// against a far end that always works: an app that sends inline, one that acks a
-/// refusal, and one that retries something already delivered all look identical on the
-/// happy path. So a gate runs its own receiver, records every arrival, and answers 500
-/// while it is `break`n — which is how "the far end refused" becomes a thing a test can
-/// arrange.
-///
-/// The shell version is twenty lines of `python3 -m http.server` in a heredoc, writing
-/// JSON lines to a temp file that the gate then re-reads and re-parses. Here the
-/// arrivals are a `Vec` behind a mutex, which is the same thing without the file, the
-/// interpreter, or the "grep -c prints 0 AND exits 1 on an empty file" footnote the
-/// shell needed.
+/// Delivery is not observable against a far end that always works (inline send, acked refusal and
+/// retry of something delivered all look the same on the happy path), so the receiver records every
+/// arrival and answers 500 while `break`n.
 pub struct Sink {
     port: u16,
     arrivals: std::sync::Arc<std::sync::Mutex<Vec<Arrival>>>,
@@ -554,8 +454,7 @@ pub struct Sink {
 pub struct Arrival {
     pub path: String,
     pub body: String,
-    /// Recorded even when refused: "how many times did this arrive" is the question
-    /// at-least-once delivery is about, and a refusal still arrived.
+    /// Recorded even when refused: a refusal still arrived, and at-least-once delivery counts arrivals.
     pub refused: bool,
 }
 
@@ -587,7 +486,6 @@ impl Sink {
                 let Ok(mut stream) = stream else { continue };
                 let mut reader = BufReader::new(stream.try_clone().expect("clone the stream"));
 
-                // Request line, then headers, then exactly content-length bytes.
                 let mut line = String::new();
                 if reader.read_line(&mut line).is_err() {
                     continue;
@@ -629,8 +527,8 @@ impl Sink {
     pub fn url(&self) -> String {
         format!("http://127.0.0.1:{}/hook", self.port)
     }
-    /// The authority a component must be granted to reach this. `wasi:http` is
-    /// default-deny by name and refuses loopback twice over.
+    /// The authority a component must be granted to reach this (`wasi:http` is default-deny and
+    /// refuses loopback).
     pub fn egress(&self) -> String {
         format!("127.0.0.1:{}", self.port)
     }
@@ -651,12 +549,8 @@ impl Sink {
     }
 }
 
-/// The TOTP code for a base32 secret, right now — RFC 6238 with the defaults every
-/// authenticator app uses: SHA-1, thirty-second steps, six digits.
-///
-/// The shell gate does this with `python3`'s `hmac` and `hashlib.sha1`. SHA-1 is not a
-/// choice here: RFC 6238 fixes it, and a code computed any other way is not one the
-/// component will accept.
+/// The TOTP code for a base32 secret, right now: RFC 6238 with the usual defaults (SHA-1,
+/// thirty-second steps, six digits). SHA-1 is fixed by the RFC; any other code would be refused.
 pub fn totp_now(secret_base32: &str) -> String {
     use hmac::{Mac, SimpleHmac};
     let key = base32_decode(secret_base32);
@@ -679,7 +573,7 @@ pub fn totp_now(secret_base32: &str) -> String {
     format!("{code:06}")
 }
 
-/// RFC 4648 base32, upper-cased, padding optional — what an `otpauth://` secret is.
+/// RFC 4648 base32, upper-cased, padding optional (what an `otpauth://` secret is).
 fn base32_decode(s: &str) -> Vec<u8> {
     const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     let (mut out, mut buf, mut bits) = (Vec::new(), 0u32, 0u32);
@@ -697,19 +591,10 @@ fn base32_decode(s: &str) -> Vec<u8> {
 
 /// An SMTP receiver that keeps what it was sent.
 ///
-/// The shell gate runs MailHog for this, and CI cannot: `go install
-/// github.com/mailhog/MailHog@latest` fails on the runner — the project is archived
-/// and predates modules — so `e2e-reminders.sh` is skipped there and the notification
-/// fan-out, the one thing in that app that talks to the outside, has no coverage.
-///
-/// SMTP is small enough to receive directly: greet, accept the envelope, read until a
-/// lone dot, keep the message. Only what `comp-mailrelay` sends, which is the same
-/// principle as `guestfmt` — a receiver that needs a mail server to state its claim is
-/// testing the mail server.
-///
-/// The chain is unchanged: the component posts to `mail:gateway-url`, `comp-mailrelay`
-/// turns that into SMTP, and this is what listens. Two of those three are already
-/// artifacts this repository builds; this makes it three.
+/// MailHog cannot be installed on the CI runner (archived, predates modules), so the notification
+/// fan-out had no coverage. SMTP is small enough to receive directly: greet, accept the envelope,
+/// read until a lone dot, keep the message. The chain is component -> `mail:gateway-url` ->
+/// `comp-mailrelay` -> this.
 pub struct MailSink {
     port: u16,
     messages: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
@@ -763,8 +648,7 @@ impl MailSink {
                             "DATA" => {
                                 let _ = write!(stream, "354 send it\r\n");
                                 let _ = stream.flush();
-                                // Until a line that is exactly a dot. Dot-stuffing is
-                                // undone the way the sender applied it.
+                                // Until a line that is exactly a dot; undo dot-stuffing as the sender applied it.
                                 let mut body = String::new();
                                 loop {
                                     let mut l = String::new();
@@ -800,19 +684,14 @@ impl MailSink {
     pub fn addr(&self) -> String {
         format!("127.0.0.1:{}", self.port)
     }
-    /// How many delivered messages contain `needle` — `mail_count_containing` in the
-    /// shell, which asked MailHog's HTTP API and counted with `python3`.
+    /// How many delivered messages contain `needle`.
     pub fn count_containing(&self, needle: &str) -> usize {
         self.messages.lock().expect("the mailbox").iter().filter(|m| m.contains(needle)).count()
     }
 
-    /// The delivered messages that contain `needle`, whole.
-    ///
-    /// `count_containing` answers "did one arrive"; this answers "and was it the right
-    /// one". Two separate counts cannot: `count_containing(address) > 0` and
-    /// `count_containing(subject) > 0` both pass when the address is in one message
-    /// and the subject in another, which is exactly the mix-up a fan-out produces.
-    /// `mail_find` in the shell returned the matching message for the same reason.
+    /// The delivered messages that contain `needle`, whole. Two separate counts cannot tell an
+    /// address in one message and a subject in another from the right message, which is the mix-up a
+    /// fan-out produces.
     pub fn messages_containing(&self, needle: &str) -> Vec<String> {
         self.messages
             .lock()
@@ -846,8 +725,7 @@ impl MailRelay {
             eprintln!("SKIPPED: no comp-mailrelay — cargo build --release --bin comp-mailrelay");
             return None;
         }
-        // Ask the OS for a free port, then hand the number over: the relay takes an
-        // address rather than binding one it reports back.
+        // Ask the OS for a free port: the relay takes an address rather than binding one.
         let port = std::net::TcpListener::bind("127.0.0.1:0").ok()?.local_addr().ok()?.port();
         let child = Command::new(&bin)
             .arg(format!("127.0.0.1:{port}"))
@@ -867,11 +745,8 @@ impl MailRelay {
     }
 }
 
-/// Unix seconds as RFC 3339 UTC.
-///
-/// `guestfmt::rfc3339` is the same arithmetic, and is a WASM-guest crate rather than a
-/// dependency of the reconciler; twenty lines of Howard Hinnant here is cheaper than a
-/// dependency edge from a native workspace to a guest one.
+/// Unix seconds as RFC 3339 UTC. `guestfmt::rfc3339` is a WASM-guest crate, not a dependency of the
+/// reconciler; twenty lines here is cheaper than a native-to-guest dependency edge.
 pub fn rfc3339(secs: u64) -> String {
     let days = (secs / 86_400) as i64;
     let tod = secs % 86_400;
@@ -890,38 +765,24 @@ pub fn rfc3339(secs: u64) -> String {
 
 /// The model endpoint a gate needs, or a loud skip.
 ///
-/// Five gates judge behaviour that only exists when a real model answered: whether the
-/// reply is about the question, whether a verdict cites the rule it applied. Pointing
-/// them at `mock-provider` would prove the app plumbed a canned string through, which
-/// is a different test wearing the same name — so the REQUIREMENT is ported, not
-/// removed, and these skip without one exactly as the shell gates do.
+/// Five gates judge behaviour that only exists when a real model answered; `mock-provider` would
+/// prove only that a canned string was plumbed through. So the REQUIREMENT is kept and these skip
+/// without one, as the shell gates do.
 ///
-/// A GET, which the shim answers 404 without spawning anything. Probing `/v1/messages`
-/// for real would spend a completion on liveness.
-///
-/// `SHIM_URL` overrides, and `.comp/csatapaci.env` documents the two ways to have one:
-/// `node tools/openai-shim.mjs` in front of a local mlx server, or
-/// `node tools/claude-shim.mjs` in front of a subscription.
+/// A GET, which the shim answers 404 without spawning anything (probing `/v1/messages` would spend
+/// a completion). `SHIM_URL` overrides; `.comp/csatapaci.env` documents the ways to have one.
 pub struct Shim {
     url: String,
 }
 
 impl Shim {
-    /// The shim, or a loud skip — and a PANIC when somebody named one that is not there.
+    /// The shim, or a loud skip, and a PANIC when somebody named one that is not there.
     ///
-    /// Same asymmetry as `host_bin`/`no_host`, for the same reason. Nobody promised a
-    /// model on the default port, so a machine without one has broken nothing and a
-    /// skip is right. But `SHIM_URL` is a statement: someone started a shim, or told
-    /// CI where one is. If that address does not answer, the honest outcome is a
-    /// failure, because the alternative is what this repository keeps rediscovering —
-    /// a gate that returns `None`, which every caller turns into `return`, which
-    /// `cargo test` prints as `ok`.
+    /// Same asymmetry as `host_bin`/`no_host`: nobody promised a model on the default port, but
+    /// `SHIM_URL` is a statement, and an address that does not answer must fail rather than return
+    /// `None` and print `ok`.
     ///
-    /// This does NOT make the model gates run in CI. The runner has no shim and sets
-    /// no `SHIM_URL`, so they still skip and still report `ok`; real coverage there
-    /// wants a service container. What it fixes is the case that bit a person rather
-    /// than a runner: a shim that was started and died, or a typo'd `SHIM_URL`, now
-    /// says so instead of quietly buying five green ticks.
+    /// This does NOT make the model gates run in CI (no shim there; they still skip).
     pub fn probe(gate_name: &str) -> Option<Self> {
         let stated = std::env::var("SHIM_URL").ok().filter(|u| !u.trim().is_empty());
         let url = stated.clone().unwrap_or_else(|| "http://127.0.0.1:8787".into());
@@ -950,8 +811,7 @@ impl Shim {
         Some(Self { url })
     }
 
-    /// `anthropic:base-url` and a long timeout: a thinking model on a local box takes
-    /// minutes, and 540 is what the shell gates pass.
+    /// `anthropic:base-url` and a long timeout: a thinking model on a local box takes minutes.
     pub fn config(&self) -> Vec<String> {
         vec![format!("anthropic:base-url={}", self.url), "anthropic:timeout=540".into()]
     }

@@ -1,19 +1,13 @@
 //! `git:forge` end to end: a component opens a pull request.
 //!
-//! Six HTTP calls in a fixed order, and the order is a claim: the branch is
-//! created LAST, so a failure partway through cannot leave an empty branch in
-//! somebody's repository. Unreferenced blobs and trees are invisible and get
-//! collected; a stray branch is litter a person has to explain.
+//! Six HTTP calls in a fixed order, and the order is a claim: the branch is created LAST, so a failure
+//! partway cannot leave an empty branch in somebody's repository (unreferenced blobs and trees are
+//! invisible and collected; a stray branch is litter).
 //!
-//! Nothing about that is checkable without a forge that records what it was
-//! asked. So the forge here is a stand-in speaking GitHub's JSON, and the
-//! assertions are about the SEQUENCE, the `base_tree` (without which the commit
-//! deletes every file nobody touched), the base64 encoding, and the token — which
-//! must arrive from the vault and can push code if it leaks.
-//!
-//! A real repository is deliberately not used. It costs a token with write
-//! access, it leaves branches behind, and it cannot be asked what headers it
-//! received — which is the assertion that matters most here.
+//! That needs a forge that records what it was asked, so the forge is a stand-in speaking GitHub's JSON.
+//! Asserted: the SEQUENCE, the `base_tree` (without which the commit deletes every untouched file), the
+//! base64 encoding, and the token, which must arrive from the vault and can push code if it leaks. A real
+//! repository costs a write token, leaves branches, and cannot be asked what headers it received.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -71,9 +65,8 @@ fn stand_in_forge(port: u16) -> Log {
                 if line == "\r\n" || line == "\n" {
                     break;
                 }
-                // The NAME is matched case-insensitively; the VALUE is kept as
-                // sent. Lowercasing the value would also lowercase the token and
-                // let a mangled one compare equal to the real one.
+                // The NAME is matched case-insensitively; the VALUE is kept as sent (lowercasing it
+                // would let a mangled token compare equal to the real one).
                 if let Some((n, v)) = line.split_once(':') {
                     let (n, v) = (n.trim().to_ascii_lowercase(), v.trim().to_string());
                     match n.as_str() {
@@ -98,8 +91,7 @@ fn stand_in_forge(port: u16) -> Log {
             let (status, answer) = if method == "GET" && path.contains("/git/ref/heads/") {
                 (200, json!({ "object": { "sha": BASE_SHA, "type": "commit" } }))
             } else if path.ends_with("/git/blobs") {
-                // A distinct sha per blob, so the tree call can be checked for
-                // having sent the right number of distinct entries.
+                // A distinct sha per blob, so the tree call can be checked for the right number of entries.
                 let n = sink.lock().unwrap().len();
                 (201, json!({ "sha": format!("b{n:039}") }))
             } else if path.ends_with("/git/trees") {
@@ -220,7 +212,6 @@ fn a_component_opens_a_pull_request_in_an_order_that_leaves_no_litter() {
     let r = probe.call(reqwest::Method::GET, "/base", String::new());
     assert_eq!(r["base"], json!(BASE_SHA), "reading the base ref failed: {r}");
 
-    // --- the proposal -------------------------------------------------------
     let r = probe.call(
         reqwest::Method::POST,
         "/propose",
@@ -242,8 +233,7 @@ fn a_component_opens_a_pull_request_in_an_order_that_leaves_no_litter() {
 
     let calls = seen.lock().unwrap().clone();
 
-    // Every call carried the vault's token, and a user-agent — GitHub refuses a
-    // request without one outright, which would be a confusing 403 to debug.
+    // Every call carried the vault's token and a user-agent (GitHub refuses a request without one).
     for c in &calls {
         assert_eq!(
             c.authorization,
@@ -255,7 +245,7 @@ fn a_component_opens_a_pull_request_in_an_order_that_leaves_no_litter() {
         assert!(!c.user_agent.is_empty(), "{} {} sent no user-agent", c.method, c.path);
     }
 
-    // --- the order, which is the claim --------------------------------------
+    // --- the order, which is the claim ---
     let order: Vec<String> = calls
         .iter()
         .skip(1) // the /base call above
@@ -297,8 +287,7 @@ fn a_component_opens_a_pull_request_in_an_order_that_leaves_no_litter() {
     .expect("blob is utf-8");
     assert_eq!(decoded, "fn main() { /* \"quoted\" */ }\n", "the file content did not survive");
 
-    // The tree is laid OVER the base tree. Without this the commit deletes every
-    // file nobody touched — the single most destructive way to get this wrong.
+    // The tree is laid OVER the base tree: without it the commit deletes every untouched file.
     let tree = body_of("/git/trees");
     assert_eq!(
         tree["base_tree"],
@@ -310,8 +299,7 @@ fn a_component_opens_a_pull_request_in_an_order_that_leaves_no_litter() {
     assert_eq!(entries[0]["mode"], json!("100644"));
     assert_eq!(entries[0]["path"], json!("src/lib.rs"));
 
-    // The commit is parented on the base that was read, not on whatever the
-    // branch happens to point at now.
+    // The commit is parented on the base that was read, not on whatever the branch points at now.
     let commit = body_of("/git/commits");
     assert_eq!(commit["parents"], json!([BASE_SHA]), "wrong parent: {commit}");
     assert_eq!(commit["message"], json!("perf: cache the thing"));
@@ -325,7 +313,6 @@ fn a_component_opens_a_pull_request_in_an_order_that_leaves_no_litter() {
     assert_eq!(pull["base"], json!("main"), "base came from config");
     assert_eq!(pull["title"], json!("Cache the thing"));
 
-    // --- an empty proposal is refused before anything is written ------------
     let before = seen.lock().unwrap().len();
     let r = probe.call(
         reqwest::Method::POST,

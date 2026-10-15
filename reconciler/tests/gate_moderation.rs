@@ -1,9 +1,6 @@
-//! The two portable `moderation:queue` gates, ported from
-//! `components/moderation-domain/e2e-*.sh`. `e2e-verdict.sh` wants a model on :8787
-//! and stays a shell gate.
-//!
-//! Assertions and failure sentences unchanged — ADR-0088 makes a gate's output the
-//! next prompt a repair reads.
+//! The two portable `moderation:queue` gates, ported from `components/moderation-domain/e2e-*.sh`.
+//! `e2e-verdict.sh` wants a model on :8787 and stays a shell gate. Assertions and failure sentences are
+//! unchanged (ADR-0088).
 
 mod gatelib;
 use gatelib::{field, Gate};
@@ -11,10 +8,9 @@ use serde_json::{json, Value};
 
 const CRATE: &str = "moderation-domain";
 
-/// Per-GATE config, not per-app: the shell gates set `GATE_CONFIG` in the script
-/// rather than the lib, and `e2e-intake.sh` sets the limiter to three attempts. A
-/// harness that only read the libs missed it, and the fourth submission — which the
-/// gate exists to see refused — was accepted.
+/// Per-GATE config, not per-app: the shell gates set `GATE_CONFIG` in the script, and `e2e-intake.sh` sets
+/// the limiter to three attempts. A harness reading only the libs accepted the fourth submission the gate
+/// exists to see refused.
 fn start(config: &[&str]) -> Option<Gate> {
     Gate::compose_and_start("moderation", CRATE, config)
 }
@@ -40,7 +36,6 @@ fn intake_stores_the_principal_and_honours_the_limit() {
     let w = token(&gate, "ada", None);
     let item = json!({"text":"has anyone tried the new deploy flow?"});
 
-    // --- the refusals, none of which spends an attempt -----------------------------
     let (c, _) = gate.post("/api/items", None, item.clone());
     assert_eq!(c, 401, "submitting with no bearer must be 401");
     let ro = token(&gate, "reader", Some(json!(["items:read"])));
@@ -49,7 +44,6 @@ fn intake_stores_the_principal_and_honours_the_limit() {
     let (c, _) = gate.post("/api/items", Some(&w), json!({"text":""}));
     assert_eq!(c, 400, "empty text must be 400 invalid_item");
 
-    // --- an item goes in ------------------------------------------------------------
     let (_, created) = gate.post("/api/items", Some(&w), item);
     let id = field(&created, "id");
     assert!(!id.is_empty(), "POST /api/items returned no id");
@@ -81,7 +75,6 @@ fn intake_stores_the_principal_and_honours_the_limit() {
     let (c, _) = gate.get("/api/items/nope", Some(&w));
     assert_eq!(c, 404, "an unknown item id must be 404");
 
-    // --- and the limit, which counts what was accepted -----------------------------
     let burst = token(&gate, "burst", None);
     for i in 1..=3 {
         let (c, _) = gate.post("/api/items", Some(&burst), json!({"text": format!("burst {i}")}));
@@ -117,14 +110,12 @@ fn queue_reads_the_engine_and_does_not_consume_the_bus() {
         "the fixture produced no items — the scaffold is broken, not the part"
     );
 
-    // --- the refusals ---------------------------------------------------------------
     let (c, _) = gate.get("/api/queue", None);
     assert_eq!(c, 401, "reading the queue with no bearer must be 401");
     let ro = token(&gate, "reader", Some(json!(["items:read"])));
     let (c, _) = gate.post("/api/rules", Some(&ro), json!({"rules":[]}));
     assert_eq!(c, 403, "writing rules needs items:moderate — a read-only token must be 403");
 
-    // --- what is waiting ------------------------------------------------------------
     let (_, q) = gate.get("/api/queue", Some(&t));
     assert!(
         !q.trim().is_empty(),
@@ -158,7 +149,6 @@ fn queue_reads_the_engine_and_does_not_consume_the_bus() {
         "nothing is blocked yet and the queue said otherwise"
     );
 
-    // --- the rules go in through the engine, and come back out of it ---------------
     let rules = json!({"rules":[{"id":"deny-shouting","action":"publish","effect":"deny","priority":5,
         "conditions":[{"left":"resource.model_label","op":"eq","right":"block"}]}]});
     let (c, _) = gate.post("/api/rules", Some(&t), rules);
@@ -177,9 +167,8 @@ fn queue_reads_the_engine_and_does_not_consume_the_bus() {
         "{r}"
     );
 
-    // The fixture writes a DIFFERENT rule set straight through the engine. A part
-    // answering from its own copy still says `deny-shouting`; a part reading the engine
-    // says `no-links`.
+    // The fixture writes a DIFFERENT rule set straight through the engine: a part answering from its own
+    // copy still says `deny-shouting`; one reading the engine says `no-links`.
     gate.post("/test/rules", None, json!({}));
     let back = parse(&gate.get("/api/rules", Some(&t)).1);
     let ids: Vec<&str> = back["rules"]
@@ -194,8 +183,7 @@ fn queue_reads_the_engine_and_does_not_consume_the_bus() {
          not the rules any decision used."
     );
 
-    // An invalid rule is refused here, because a rule the engine rejects later is a rule
-    // nobody wrote down.
+    // An invalid rule is refused here, since one the engine rejects later is a rule nobody wrote down.
     for (body, why) in [
         (
             json!({"rules":[{"id":"x","action":"publish","effect":"maybe","priority":1,"conditions":[]}]}),
@@ -211,12 +199,9 @@ fn queue_reads_the_engine_and_does_not_consume_the_bus() {
         assert_eq!(c, 400, "{why}");
     }
 
-    // --- what has left the system --------------------------------------------------
-    //
-    // `verdict` is a stub here, so nothing has published a decision. The bus is empty
-    // and this route must say so — the check is that it READS the bus rather than
-    // inventing a list, and that reading twice gives the same answer, which an `ack`
-    // would not.
+    // --- what has left the system ---
+    // `verdict` is a stub, so nothing has published a decision: the bus is empty and this route must
+    // say so, READ the bus rather than invent a list, and answer the same twice (an `ack` would not).
     let (_, one) = gate.get("/api/events", Some(&t));
     assert!(
         !one.trim().is_empty(),

@@ -1,21 +1,13 @@
 //! A scripted provider behind `llm:inference`: correctness without a bill.
 //!
-//! Testing a graph loop against a real model is impossible in the strict sense —
-//! not merely expensive. A swarm test asserts things like "twelve branches
-//! explore, branch seven wins, a pull request opens against the right base", and
-//! a non-deterministic oracle makes that assertion meaningless: the run that
-//! passes and the run that fails differ for reasons the test cannot see. Money is
-//! the second problem. Determinism is the first.
+//! A swarm test asserts "twelve branches explore, branch seven wins, a pull request opens against the
+//! right base", which a non-deterministic oracle makes meaningless; money is the second problem. So the
+//! probe used against `openai-provider` in `inference.rs` is pointed at `mock-provider` with nothing
+//! else changed (the swap point working).
 //!
-//! So the same probe used against `openai-provider` in `inference.rs` is pointed
-//! at `mock-provider` instead, with nothing else changed. That is the swap point
-//! working: the caller is identical and cannot tell.
-//!
-//! The strongest property here is not in any assertion below — it is in the
-//! fixture. `mock-provider` declares no `wasi:http/outgoing-handler` and no
-//! secret, so this test COULD NOT reach a provider or authenticate to one if it
-//! tried. That is a guarantee from the manifest, not from remembering to point a
-//! base URL somewhere harmless.
+//! The strongest property is in the fixture: `mock-provider` declares no `wasi:http/outgoing-handler`
+//! and no secret, so this test COULD NOT reach or authenticate to a provider, a guarantee from the
+//! manifest rather than a harmless base URL.
 
 use std::time::Duration;
 
@@ -71,9 +63,8 @@ fn wait_for_probe(fleet: &Fleet) -> Probe {
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
     let mut last = Value::Null;
     while std::time::Instant::now() < deadline {
-        // Readiness crosses the LINK, not just the gate: `/describe` calls the
-        // provider. The root route touches no capability and would answer before
-        // the link is usable.
+        // Readiness crosses the LINK: `/describe` calls the provider, while the root route answers
+        // before the link is usable.
         let r = probe.get("/describe");
         if r["provider"].is_string() {
             return probe;
@@ -98,9 +89,8 @@ fn a_scripted_provider_makes_a_swarm_reproducible_and_free() {
     let d = probe.get("/describe");
     assert_eq!(d["provider"], json!("mock-swarm-1"), "config should name the model: {d}");
 
-    // --- three branches, one question, three candidates ----------------------
-    // This is a generation of a swarm, simulated. The seed already exists in the
-    // contract for reproducibility; here it is what makes branches differ.
+    // --- three branches, one question, three candidates ---
+    // A generation of a swarm, simulated; the seed is what makes branches differ.
     let one = probe.ask("add a cache", 1);
     let two = probe.ask("add a cache", 2);
     let three = probe.ask("add a cache", 3);
@@ -109,12 +99,10 @@ fn a_scripted_provider_makes_a_swarm_reproducible_and_free() {
     assert_eq!(three["text"], json!("CANDIDATE THREE: cache at the edge"), "{three}");
     assert_ne!(one["text"], two["text"], "branches must be able to differ");
 
-    // A seed with no rule of its own falls through, so a swarm of nineteen does
-    // not need nineteen rules written for it.
+    // A seed with no rule of its own falls through, so a swarm of nineteen needs no nineteen rules.
     let far = probe.ask("add a cache", 99);
     assert_eq!(far["text"], json!("CANDIDATE FALLBACK: do nothing clever"), "{far}");
 
-    // --- the property that makes assertions possible at all ------------------
     for _ in 0..3 {
         let again = probe.ask("add a cache", 2);
         assert_eq!(
@@ -124,9 +112,7 @@ fn a_scripted_provider_makes_a_swarm_reproducible_and_free() {
         );
     }
 
-    // --- failure modes, which a real provider will not produce on demand -----
-    // These are the interesting paths through a loop, and they are exactly the
-    // ones that are expensive or impossible to trigger deliberately upstream.
+    // --- failure modes, which a real provider will not produce on demand ---
     let denied = probe.ask("rate limit me", 0);
     assert_eq!(
         denied["error"],
@@ -145,11 +131,9 @@ fn a_scripted_provider_makes_a_swarm_reproducible_and_free() {
         "an empty completion is its own case, distinct from a refusal: {empty}"
     );
 
-    // --- a prompt the script never anticipated -------------------------------
-    // It answers rather than erroring, because the script has a `*` rule. The
-    // point is that this is the SCRIPT's decision: a script without the catch-all
-    // fails loudly instead, so a test whose prompt drifted cannot keep passing
-    // while silently testing nothing.
+    // --- a prompt the script never anticipated ---
+    // It answers rather than erroring because the script has a `*` rule: a script without the
+    // catch-all fails loudly, so a drifted prompt cannot keep passing while testing nothing.
     let unknown = probe.ask("something else entirely", 0);
     assert_eq!(unknown["text"], json!("I have no rule for that."), "{unknown}");
 

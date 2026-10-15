@@ -1,17 +1,12 @@
 //! `llm:inference` end to end, and the API key coming from the vault.
 //!
-//! `openai-provider` has been in the catalogue since it was built and had never
-//! been deployed, linked or called by anything. Every claim about it was
-//! therefore untested — that the host lets it dial out, that the composer links
-//! it, that a caller gets an answer back, and above all that the API key arrives
-//! from the SECRET vault rather than from a config map (ADR-0010). It read the
-//! key from `wasi:config` until this test existed.
+//! `openai-provider` had never been deployed, linked or called, so every claim was untested: that the
+//! host lets it dial out, that the composer links it, that a caller gets an answer, and above all that
+//! the API key arrives from the SECRET vault rather than a config map (ADR-0010).
 //!
-//! The provider on the other end is a stand-in that speaks the OpenAI JSON
-//! contract and records what it was sent. That is deliberate: a real provider
-//! costs money, needs a key nobody should put in a repository, and — the part
-//! that matters — cannot be asked what Authorization header it received. The
-//! assertion this test exists for is exactly that one.
+//! The provider is a stand-in speaking the OpenAI JSON contract and recording what it was sent: a real
+//! one costs money, needs a key nobody should commit, and cannot be asked what Authorization header it
+//! received, which is the assertion this exists for.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -24,9 +19,8 @@ use serde_json::Value;
 mod harness;
 use harness::read_chunked;
 
-/// The token the vault holds. It appears in no manifest and no config map, and
-/// the test asserts the provider sent exactly this — so a key smuggled in
-/// through config could not produce a pass.
+/// The token the vault holds. It is in no manifest or config map, and the provider must send exactly
+/// this, so a key smuggled in through config could not pass.
 const API_KEY: &str = "sk-test-only-from-the-vault";
 
 /// What the stand-in provider saw.
@@ -35,11 +29,8 @@ struct Seen {
     body: String,
 }
 
-/// An OpenAI-compatible endpoint that answers one request and reports it.
-///
-/// Hand-rolled over `TcpListener` rather than pulled from a crate: it has to
-/// answer exactly one shape and report exactly one header, and a mock framework
-/// would be more machinery than the thing under test.
+/// An OpenAI-compatible endpoint that answers one request and reports it. Hand-rolled over
+/// `TcpListener`: a mock framework would be more machinery than the thing under test.
 fn stand_in_provider(port: u16) -> mpsc::Receiver<Seen> {
     let (tx, rx) = mpsc::channel();
     let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind the stand-in provider");
@@ -55,9 +46,8 @@ fn stand_in_provider(port: u16) -> mpsc::Receiver<Seen> {
                 if reader.read_line(&mut line).unwrap_or(0) == 0 {
                     break;
                 }
-                // Match on a lowercased copy, but keep the VALUE as it was sent —
-                // lowercasing the header value would also lowercase the token and
-                // make a mangled key compare equal to the real one.
+                // Match on a lowercased copy, but keep the VALUE as sent (lowercasing the token would
+                // let a mangled key compare equal).
                 let (name, value) = match line.split_once(':') {
                     Some((n, v)) => (n.trim().to_ascii_lowercase(), v.trim().to_string()),
                     None => (String::new(), String::new()),
@@ -72,9 +62,8 @@ fn stand_in_provider(port: u16) -> mpsc::Receiver<Seen> {
                     break;
                 }
             }
-            // wasmtime's outgoing body is chunked when the guest streams it, which
-            // is what `openai-provider` does — so content-length is absent and a
-            // reader that only understands it sees an empty request.
+            // wasmtime's outgoing body is chunked when the guest streams it (as `openai-provider`
+            // does), so content-length is absent and a reader needing it sees an empty request.
             let body = if chunked {
                 read_chunked(&mut reader)
             } else {
@@ -180,7 +169,6 @@ fn a_completion_comes_back_and_the_key_came_from_the_vault() {
     );
     assert_eq!(r["finish"], Value::String("stop".into()), "finish reason lost: {r}");
 
-    // --- the assertion this test exists for ---------------------------------
     let call = seen.recv_timeout(Duration::from_secs(5)).expect("the provider was never called");
     assert_eq!(
         call.authorization,
@@ -190,8 +178,7 @@ fn a_completion_comes_back_and_the_key_came_from_the_vault() {
          place for a bearer token (ADR-0010)"
     );
 
-    // And the request was the one the caller asked for, so a pass cannot come
-    // from a provider that answered without being told anything.
+    // And the request was the one the caller asked for, so a provider that answered unprompted cannot pass.
     let body: Value = serde_json::from_str(&call.body).expect("the provider sent JSON");
     assert_eq!(
         body["model"],

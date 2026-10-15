@@ -1,6 +1,5 @@
-//! The fake `comp-media` and the helpers every photoquest gate shares — moved out
-//! of `gate_photoquest.rs` so the game's gates (quests, competitions, moderation)
-//! judge against the same daemon. See `gate_photoquest.rs` for why it is fake.
+//! The fake `comp-media` and the helpers every photoquest gate shares. See `gate_photoquest.rs` for
+//! why it is fake.
 #![allow(dead_code)]
 
 use super::gatelib::Gate;
@@ -18,7 +17,6 @@ pub const CALLBACK_BASE: &str = "http://photoquest.test";
 pub const MAX_BYTES: u64 = 512 * 1024 * 1024;
 pub const PART: u64 = 16 * 1024 * 1024;
 
-/// One request the fake daemon received.
 #[derive(Clone, Debug)]
 pub struct Call {
     pub path: String,
@@ -26,7 +24,6 @@ pub struct Call {
     pub body: Value,
 }
 
-/// `comp-media`, minus the store, the queue and the GPU.
 pub struct FakeMedia {
     pub port: u16,
     pub calls: Arc<Mutex<Vec<Call>>>,
@@ -136,8 +133,8 @@ pub fn serve(stream: std::net::TcpStream, log: &Arc<Mutex<Vec<Call>>>) {
     }
 }
 
-/// CONTRACT.md's answers, canned. Refusals are 200s with an `error`, as the
-/// contract says, so the component's mapping of them is what is under test.
+/// CONTRACT.md's answers, canned. Refusals are 200s with an `error`, so the component's mapping of
+/// them is what is under test.
 pub fn answer_for(path: &str, body: &Value) -> Value {
     let s = |k: &str| body[k].as_str().unwrap_or_default().to_string();
     match path {

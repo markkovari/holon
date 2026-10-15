@@ -1,34 +1,16 @@
-//! One app's graph split over two machines, so every call between its components
-//! crosses the bus.
+//! One app's graph split over two machines, so every call between its components crosses the bus.
 //!
-//! ADR-0032 measured this working and put the hop at ~4%, which is one of the
-//! load-bearing claims in this repo: it is what makes "decompose an app into
-//! components" affordable, and `CURRENT.md` leans on it. The script that proved
-//! it — `bench/adversarial/split-graph.sh` — was deleted when other scenarios
-//! became Rust tests, and nothing replaced it. `fixtures/split-graph.yaml` has
-//! been sitting there since as the input to a test that did not exist.
+//! ADR-0032 measured the hop at ~4%, the load-bearing claim that makes "decompose an app into
+//! components" affordable. The script that proved it (`bench/adversarial/split-graph.sh`) was deleted
+//! and nothing replaced it; `fixtures/split-graph.yaml` has sat there as input to a test that did not
+//! exist. Claimed capabilities here have a record of being unverified (ADR-0061, ADR-0068), so: check it.
 //!
-//! That is a claimed capability with no verification, which in this repo has a
-//! track record: the secret reader was never linked (ADR-0061), `list-keys`
-//! corrupted every key it returned (ADR-0068), and the conformance runner pointed
-//! at a binary that had not existed for months. So: check it.
-//!
-//! ## What makes this a real cross-node test
-//!
-//! Placement has to be FORCED apart. `gate` is constrained to a node labelled
-//! `role=web` and `record-store` to one labelled `role=data`; without labels the
-//! planner is free to put all three on one node, and the test would pass while
-//! proving nothing — every call would be an in-process call.
-//!
-//! Three things are asserted, and the first two are what make the third mean
-//! something:
+//! Placement has to be FORCED apart: `gate` is constrained to `role=web` and `record-store` to
+//! `role=data`, or the planner may put all three on one node and every call would be in-process.
 //!
 //! 1. the components really are on different nodes (from inventory);
-//! 2. `gate`'s host says it linked its imports **over wrpc**, so they resolved to
-//!    remote instances rather than local ones;
-//! 3. a real request through the ingress succeeds — which it cannot do unless the
-//!    cross-node call works, since `gate` cannot rate-limit without `shaper` or
-//!    persist without `record-store`.
+//! 2. `gate`'s host says it linked its imports **over wrpc**, resolving to remote instances;
+//! 3. a real request through the ingress succeeds, which it cannot unless the cross-node call works.
 
 use std::time::Duration;
 
@@ -36,9 +18,8 @@ use comp_reconciler::fleet::{repo_root, Fleet};
 
 fn artifacts() -> Vec<String> {
     let raw = repo_root().join("components/target/wasm32-wasip2/release");
-    // The RAW gate, not the composed one. `gate_domain.composed.wasm` already has
-    // records and shaper inside it, so it has no imports left to satisfy — and a
-    // "split graph" built from it would be one component in a trench coat.
+    // The RAW gate, not the composed one: `gate_domain.composed.wasm` has records and shaper inside, so
+    // a "split graph" built from it would be one component in a trench coat.
     let parts = [
         ("gate", raw.join("gate_domain.wasm")),
         ("record-store", raw.join("record_store.wasm")),
@@ -68,8 +49,7 @@ fn one_apps_graph_spans_two_nodes_and_still_serves() {
         fleet.reconciler_log()
     );
 
-    // 1. Actually split. `role=web` is n1 and `role=data` is n2, so a placement
-    //    that ignored constraints would put record-store on n1 and this passes
+    // 1. Actually split: a placement ignoring constraints would put record-store on n1 and pass
     //    for the wrong reason.
     let (n1, n2) = (fleet.node_log("n1"), fleet.node_log("n2"));
     assert!(n1.contains("started alice/split/gate"), "gate is not on the web node:\n{n1}");
@@ -83,20 +63,16 @@ fn one_apps_graph_spans_two_nodes_and_still_serves() {
          local copy and nothing crosses the bus:\n{n1}"
     );
 
-    // 2. gate's imports resolved to remote instances. Without this the test cannot
-    //    tell a cross-node call from a co-located one.
-    // BOTH of them, not just one. `gate` imports `records:store` and
-    // `shaper:limit`; a run where only one resolved remotely would still contain
-    // "over wrpc" and would still be half an in-process call.
+    // 2. gate's imports resolved to remote instances, which tells a cross-node call from a co-located
+    // one. BOTH `records:store` and `shaper:limit`: one resolving remotely would still contain "over wrpc".
     assert!(
         n1.contains("links 2 interface(s) over wrpc"),
         "gate did not link BOTH imports over wrpc — at least one was satisfied \
          locally, so that half never crossed a machine boundary:\n{n1}"
     );
 
-    // 3. And it works: serving that request took a call to shaper and a call to
-    //    record-store, both on the other node.
-    // Printed so a reader can see WHAT matched, not just that something did.
+    // 3. And it works: serving took a call to shaper and to record-store, both on the other node.
+    // Printed so a reader can see WHAT matched.
     for line in n1.lines().chain(n2.lines()) {
         if line.contains("started alice/split") || line.contains("over wrpc") {
             println!("    {}", line.trim());

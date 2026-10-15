@@ -1,6 +1,5 @@
-//! photo-critic, live on the lattice: deploy the component, serve the UI, and
-//! POST an image to /evaluate — which reaches Claude's vision API by egress with
-//! the key from the vault, and returns a real critique over the lattice.
+//! photo-critic, live on the lattice: deploy the component, serve the UI, and POST an image to /evaluate,
+//! which reaches Claude's vision API by egress with the key from the vault.
 //!
 //! Ignored by default: it spends money and needs a real key. Run explicitly:
 //!   cargo test --release --test photo_critic_live -- --ignored --nocapture

@@ -6,31 +6,25 @@ pub struct Wallet {
 }
 
 impl Wallet {
-    /// Create a new wallet with the given cap in cents.
     /// A cap of 0 means unbounded.
     pub fn new(cap: u64) -> Self {
         Wallet { cap, spent: 0 }
     }
 
-    /// Get the cap in cents. 0 means unbounded.
+    /// The cap in cents. 0 means unbounded.
     pub fn cap(&self) -> u64 {
         self.cap
     }
 
-    /// Get the amount spent so far in cents.
     pub fn spent(&self) -> u64 {
         self.spent
     }
 
-    /// Charge a completion with the given cost_cents value.
-    /// Accumulates the cost into the spent amount.
     pub fn charge(&mut self, cost_cents_value: u64) {
         self.spent += cost_cents_value;
     }
 
-    /// Get the remaining budget in cents.
-    /// Returns None if the cap is unbounded (0).
-    /// Never returns a negative value; returns 0 if over budget.
+    /// Remaining budget in cents; `None` if unbounded. Never negative.
     pub fn remaining(&self) -> Option<u64> {
         if self.cap == 0 {
             None
@@ -41,16 +35,12 @@ impl Wallet {
         }
     }
 
-    /// Check if spending is strictly over the cap.
-    /// Returns false if the cap is unbounded (0).
-    /// Equal to cap is not over.
+    /// Strictly over the cap. Equal to the cap is not over; unbounded is never over.
     pub fn over(&self) -> bool {
         self.cap != 0 && self.spent > self.cap
     }
 
-    /// Check if we can afford to spend the given amount in cents.
-    /// Returns true if the cap is unbounded (0).
-    /// Returns true if spent + cents does not exceed the cap.
+    /// Whether spending `cents` more stays within the cap; always true when unbounded.
     pub fn can_afford(&self, cents: u64) -> bool {
         if self.cap == 0 {
             true
@@ -104,7 +94,7 @@ mod tests {
         let mut wallet = Wallet::new(1000);
         assert!(!wallet.over());
         wallet.charge(1000);
-        assert!(!wallet.over()); // equal is not over
+        assert!(!wallet.over());
         wallet.charge(1);
         assert!(wallet.over());
     }

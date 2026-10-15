@@ -1,44 +1,27 @@
 //! What a component may ask of its HOST, pinned.
 //!
-//! ADR-0023 says isolation is a linker boundary: a component can reach exactly
-//! what its import section names and nothing else. That is only a guarantee if
-//! somebody notices when the boundary moves — and until this test, nothing did.
-//! `wit/SURFACES.md` snapshots what the repository's own interfaces look like;
-//! this is the other half, the interfaces it does not define and cannot change.
+//! ADR-0023 says isolation is a linker boundary: a component reaches exactly what its import section
+//! names. That is a guarantee only if somebody notices when the boundary moves. `wit/SURFACES.md`
+//! snapshots the repository's own interfaces; this is the other half, the ones it does not define.
 //!
-//! ## The floor is fourteen, and it is not a leak
-//!
-//! Measured, not assumed: 205 of 207 built components import the SAME fourteen
-//! WASI interfaces, whatever they do. `resilience` and `shaper` import nothing at
-//! all, which is the useful control — it means the linker really does drop what
-//! nothing reaches, so those fourteen are reached. They come from `std`: the
-//! allocator's out-of-memory path and the panic handler need somewhere to write
-//! and a way to stop, and on `wasm32-wasip2` that is `wasi:cli`.
-//!
-//! `panic = "abort"` does not remove them (tried). Nothing short of `no_std`
-//! would, and 205 components using `String` and `serde` are not going `no_std`.
-//! So the floor is a fact to KNOW rather than a defect to fix, and what is worth
+//! **The floor is fourteen, and it is not a leak.** 205 of 207 components import the SAME fourteen WASI
+//! interfaces; `resilience` and `shaper` import nothing, proving the linker drops what nothing reaches.
+//! They come from `std` (the allocator's OOM path and panic handler need `wasi:cli`). `panic = "abort"`
+//! does not remove them; only `no_std` would. So the floor is a fact to KNOW, and what is worth
 //! guarding is the line above it.
 //!
-//! ## What this actually catches
-//!
-//! A component that starts importing `wasi:sockets` or `wasi:filesystem` has been
-//! handed a capability nobody reviewed, and it will read as a routine dependency
-//! bump in the diff. Here it reads as a failing test that names the component and
-//! the interface. Widening the list is then a deliberate edit with a reason next
-//! to it, which is the whole point.
+//! A component that starts importing `wasi:sockets` or `wasi:filesystem` has been handed an unreviewed
+//! capability that reads as a routine dependency bump in the diff. Here it is a failing test naming the
+//! component and interface, so widening the list is a deliberate edit with a reason.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use comp_reconciler::fleet::repo_root;
 use comp_reconciler::plug::Catalog;
 
-/// Every host interface a component in this repository is allowed to import.
-///
-/// The first group is the `std` floor described above — present in all but the two
-/// components that import nothing. The rest are asked for on purpose, and the
-/// count beside each is what it was when the line was written: a number that only
-/// goes up quietly is the thing this test exists to make loud.
+/// Every host interface a component in this repository is allowed to import. The first group is the
+/// `std` floor; the rest are asked for on purpose, the count beside each being what it was when the
+/// line was written (a number that quietly only goes up is what this makes loud).
 const ALLOWED: &[&str] = &[
     // The std floor. Nothing in this group is called by any component's own code.
     "wasi:cli/environment",
@@ -56,7 +39,6 @@ const ALLOWED: &[&str] = &[
     "wasi:io/error",
     "wasi:io/poll",
     "wasi:io/streams",
-    // Asked for deliberately.
     "wasi:blobstore/blobstore",   //   1 — blob-store, the only one
     "wasi:blobstore/container",   //   1
     "wasi:blobstore/types",       //   1
@@ -71,18 +53,16 @@ const ALLOWED: &[&str] = &[
     "wasi:keyvalue/store",        //  57
     "wasi:random/insecure-seed",  // 10
     "wasi:random/random",         //  15
-    // This repository's own host interfaces. `comp:` is in HOST_NAMESPACES
-    // because a host provides it, not another component — so it belongs here
-    // rather than in the composable half, and it is a capability grant like any
-    // other: `comp:secrets/reader` reads secrets.
+    // This repository's own host interfaces. `comp:` is in HOST_NAMESPACES because a host provides it,
+    // so it belongs here, and is a capability grant like any other.
     "comp:secrets/reader", //   8
     "comp:store/cas",      //   5
     // The one interface a wasmCloud release host provides beyond standard WASI.
     "wasmcloud:messaging/types", // 1 — event-pusher
 ];
 
-/// An import is `wasi:http/types@0.2.0`; the version is upstream's business and
-/// moves on its own schedule, so the claim is about the INTERFACE.
+/// An import is `wasi:http/types@0.2.0`; the version is upstream's business, so the claim is about
+/// the INTERFACE.
 fn without_version(iface: &str) -> &str {
     iface.split('@').next().unwrap_or(iface)
 }
@@ -100,9 +80,7 @@ fn no_component_reaches_for_a_host_capability_nobody_granted() {
     );
 
     let allowed: BTreeSet<&str> = ALLOWED.iter().copied().collect();
-    // Grouped by interface rather than by component: one new import usually
-    // arrives in several components at once, and a list of forty lines that all
-    // say the same thing buries which interface it is.
+    // Grouped by interface, not component: one new import usually arrives in several at once.
     let mut unexpected: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
 

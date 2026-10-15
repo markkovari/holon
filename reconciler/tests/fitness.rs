@@ -1,17 +1,10 @@
 //! The gate, end to end: a component judges a candidate by running real commands.
 //!
-//! This is the seam the whole design of the gate rests on. All of the JUDGEMENT
-//! is in a component — what is required, what a score means, what `need-base`
-//! implies — and all of the PROCESS SPAWNING is in a native runner, because a
-//! component cannot spawn a process and should not pretend to. The component
-//! reaches it exactly the way it reaches a database or a model provider: over
-//! HTTP, through an egress allow-list it did not write.
-//!
-//! What the unit tests on either side cannot reach is whether the seam holds:
-//! whether the host lets it dial out, whether the composer links a non-`wasi`
-//! interface, whether a whole base tree survives a chunked write through the
-//! sandbox, and whether `need-base` comes back as its own answer rather than as a
-//! rejection of the candidate.
+//! All JUDGEMENT (what is required, what a score means, what `need-base` implies) is in a component;
+//! all PROCESS SPAWNING is in a native runner, reached over HTTP through an egress allow-list the
+//! component did not write. The unit tests cannot reach whether the seam holds: the host letting it
+//! dial out, the composer linking a non-`wasi` interface, a whole base tree surviving a chunked write
+//! through the sandbox, and `need-base` coming back as its own answer rather than a rejection.
 
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -19,7 +12,6 @@ use std::time::{Duration, Instant};
 use comp_reconciler::fleet::{bin_path, free_port, repo_root, Fleet};
 use serde_json::{json, Value};
 
-/// A native check runner that dies with the test.
 struct Checks {
     child: Child,
     port: u16,
@@ -34,8 +26,7 @@ impl Drop for Checks {
 }
 
 impl Checks {
-    /// Started with NO checkout: the tree arrives from whoever is asking, which
-    /// is the shape that is not pinned to a machine holding the repository.
+    /// Started with NO checkout: the tree arrives from whoever is asking, not pinned to a machine.
     fn start() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let port = free_port();
@@ -59,7 +50,6 @@ impl Checks {
         panic!("comp-checks never listened");
     }
 
-    /// The same runner, behind a bearer token.
     fn with_token(token_file: &std::path::Path) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let port = free_port();
@@ -101,13 +91,9 @@ fn spec_for(port: u16) -> std::path::PathBuf {
     spec_pointing_at(&format!("127.0.0.1:{port}"))
 }
 
-/// The manifest, pointed at any `host:port`.
-///
-/// Split out so a remote runner can be driven by the same test that drives a
-/// local one. The authority lands in TWO places and both matter: `checks-url`,
-/// which is where the component dials, and `egress`, which is what the host will
-/// LET it dial. Getting only the first right is the failure that looks like the
-/// runner being down (ADR-0008).
+/// The manifest, pointed at any `host:port`, so a remote runner can be driven by the same test. The
+/// authority lands in TWO places: `checks-url` (where the component dials) and `egress` (what the host
+/// LETS it dial). Getting only the first right looks like the runner being down (ADR-0008).
 fn spec_pointing_at(authority: &str) -> std::path::PathBuf {
     let src = repo_root().join("fixtures/fitness.yaml");
     let yaml = std::fs::read_to_string(&src).unwrap().replace("127.0.0.1:CHECKS_PORT", authority);
@@ -140,15 +126,9 @@ impl Probe {
     }
 }
 
-/// The first real evaluation, retried until it works.
-///
-/// NOT a separate readiness probe — see `Fleet::until`. An empty check list is
-/// refused by the evaluator before any HTTP happens, so polling THAT proved the
-/// component was reachable and said nothing about the runner behind it: it went
-/// green while the egress was still unusable and the next call timed out.
-///
-/// A real check against a base nobody has posted comes back `need-base`, which
-/// can only be known by asking the runner.
+/// The first real evaluation, retried until it works. NOT a separate readiness probe (see
+/// `Fleet::until`): an empty check list is refused before any HTTP, so polling it proved nothing about
+/// the runner. A real check against a base nobody posted comes back `need-base`, known only by asking.
 fn wait_for_probe(fleet: &Fleet) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
@@ -186,10 +166,8 @@ fn a_component_judges_a_candidate_by_running_real_commands() {
     let checks = Checks::start();
     std::env::set_var("COMP_FLEET_ALLOW_PRIVATE_EGRESS", "1");
     let spec = spec_for(checks.port);
-    // An EMPTY grant: this runner wants no token, and that is spelled as a secret
-    // with nothing in it rather than as a second manifest. The component filters
-    // an empty value out and sends no header, which is what this whole test then
-    // exercises — so "no token" stays a covered path rather than a missing one.
+    // An EMPTY grant: this runner wants no token, spelled as a secret with nothing in it. The component
+    // sends no header, keeping "no token" a covered path.
     let dir = tempfile::tempdir().unwrap();
     let none = dir.path().join("no-token");
     std::fs::write(&none, "").unwrap();
@@ -203,10 +181,8 @@ fn a_component_judges_a_candidate_by_running_real_commands() {
 
     let commit = "1111111111111111111111111111111111111111";
 
-    // --- the runner asks for a base it has not seen --------------------------
-    // Its own answer, not a rejection: a cold cache is not a bad candidate, and
-    // collapsing the two would make the first evaluation of every run look like a
-    // failure.
+    // --- the runner asks for a base it has not seen ---
+    // Its own answer, not a rejection: a cold cache is not a bad candidate.
     let r = probe.call(
         "/evaluate",
         json!({
@@ -220,9 +196,8 @@ fn a_component_judges_a_candidate_by_running_real_commands() {
         "an unknown base must come back as need-base, not as a rejected candidate: {r}"
     );
 
-    // --- a candidate that passes everything ----------------------------------
-    // The base tree travels through the sandbox and a chunked write on the way to
-    // the runner, which is a thing only this test exercises.
+    // --- a candidate that passes everything ---
+    // The base tree travels through the sandbox and a chunked write, which only this test exercises.
     let base_tree = json!([
         { "path": "README", "content": "a project\n" },
         { "path": "src/lib.rs", "content": "pub fn answer() -> u32 { 41 }\n" },
@@ -241,9 +216,8 @@ fn a_component_judges_a_candidate_by_running_real_commands() {
     assert_eq!(good["accepted"], json!(true), "a candidate that fixes it should pass: {good}");
     assert_eq!(good["score"], json!(1000), "and score full marks: {good}");
 
-    // --- a candidate that does not, and is still ranked ----------------------
-    // The base is cached now, so this one sends only its diff — which is what
-    // every candidate after the first does in a real generation.
+    // --- a candidate that does not, and is still ranked ---
+    // The base is cached now, so this one sends only its diff, as every later candidate does.
     let partial = probe.call(
         "/evaluate",
         json!({
@@ -259,7 +233,6 @@ fn a_component_judges_a_candidate_by_running_real_commands() {
     let mid = partial["score"].as_u64().unwrap();
     assert!(mid > 0 && mid < 1000, "half the checks is half the score: {partial}");
 
-    // --- and one that does nothing at all ------------------------------------
     let worst = probe.call(
         "/evaluate",
         json!({
@@ -281,18 +254,13 @@ fn a_component_judges_a_candidate_by_running_real_commands() {
         worst["score"]
     );
 
-    // --- the base was reused CLEAN -------------------------------------------
-    // `half-way` wrote 41 over the base and `nothing` did not touch src/lib.rs.
-    // If the cached base had accumulated the previous candidate's file, `the-fix`
-    // would have found 42 here.
+    // --- the base was reused CLEAN ---
+    // `half-way` wrote 41 over the base and `nothing` did not touch src/lib.rs; an accumulating cache
+    // would have shown 42 to `the-fix`.
     let outcomes = worst["outcomes"].as_array().cloned().unwrap_or_default();
     let fix = outcomes.iter().find(|o| o["id"] == json!("the-fix")).unwrap();
-    // `state`, not `passed`. The COMPONENT answers `graph:fitness`, whose outcome
-    // is a three-way state — passed / failed / not-attempted — because a check
-    // that never ran because its dependency failed is a different fact from one
-    // that ran and failed. `passed` is `comp-checks`'s own wire shape, one layer
-    // down, and reading it here got `null`, which is not `false` and failed this
-    // assertion for a candidate that behaved correctly.
+    // `state`, not `passed`: the COMPONENT answers `graph:fitness`, a three-way state (passed / failed /
+    // not-attempted). `passed` is `comp-checks`'s own wire shape one layer down and reads `null` here.
     assert_eq!(
         fix["state"],
         json!("failed"),
@@ -300,9 +268,8 @@ fn a_component_judges_a_candidate_by_running_real_commands() {
          every later score wrong: {worst}"
     );
 
-    // --- an empty gate is refused rather than passed -------------------------
-    // The arithmetic would call it accepted, vacuously, since no required check
-    // failed. That is how a swarm accepts everything.
+    // --- an empty gate is refused rather than passed ---
+    // The arithmetic would accept it vacuously, since no required check failed.
     let empty =
         probe.call("/evaluate", json!({ "name": "x", "base_commit": commit, "checks": [] }));
     assert_eq!(empty["error"], json!("invalid"), "an empty check list must be refused: {empty}");
@@ -310,19 +277,13 @@ fn a_component_judges_a_candidate_by_running_real_commands() {
     println!("    judged three candidates through a real runner: 1000, {mid}, {}", worst["score"]);
 }
 
-/// A runner behind a bearer token, reached through the component that was granted
-/// one — and the same runner refusing the component that was granted the wrong one.
+/// A runner behind a bearer token, reached through the component that was granted one, and refusing
+/// the component granted the wrong one.
 ///
-/// This is the seam that makes the gate a SECOND MACHINE's job. `comp-checks`
-/// refuses to listen anywhere but loopback without `--token-file`, because
-/// `--allow` bounds the command and not the tree it runs over. So every remote
-/// gate is an authenticated one, and the credential has to survive the whole path
-/// this test covers and nothing else does: a manifest grant, the host's vault,
-/// `comp:secrets/reader` inside the sandbox, and an `authorization` header on a
-/// `wasi:http` request the component builds itself.
-///
-/// Loopback here on purpose. What is under test is the CREDENTIAL, not the bind
-/// guard — and a test that needed a routable address would not run in CI.
+/// `comp-checks` refuses to listen beyond loopback without `--token-file`, so every remote gate is
+/// authenticated. The credential must survive the whole path only this test covers: a manifest grant,
+/// the host's vault, `comp:secrets/reader`, and an `authorization` header on a `wasi:http` request.
+/// Loopback on purpose: the CREDENTIAL is under test, not the bind guard.
 #[test]
 fn a_gate_behind_a_token_is_reached_with_it_and_refused_without_it() {
     std::env::set_var("COMP_FLEET_ALLOW_PRIVATE_EGRESS", "1");
@@ -340,7 +301,6 @@ fn a_gate_behind_a_token_is_reached_with_it_and_refused_without_it() {
         "checks": [check("base", true, 1, &["test", "-f", "README"])],
     });
 
-    // --- granted the token the runner wants ----------------------------------
     {
         let fleet = Fleet::start_with_secrets(
             "fittoken",
@@ -358,10 +318,9 @@ fn a_gate_behind_a_token_is_reached_with_it_and_refused_without_it() {
         );
     }
 
-    // --- granted the wrong one -----------------------------------------------
-    // The message matters more than the status. A rotated token looks exactly
-    // like a broken gate from the outside, and `unavailable` would send whoever
-    // reads it to look at the network — the wrong half of the system.
+    // --- granted the wrong one ---
+    // The message matters more than the status: a rotated token looks like a broken gate, and
+    // `unavailable` would send the reader to the network.
     {
         let fleet = Fleet::start_with_secrets(
             "fitnotoken",
@@ -369,9 +328,8 @@ fn a_gate_behind_a_token_is_reached_with_it_and_refused_without_it() {
             &artifacts(),
             &[format!("vault://acme/checkstoken=@{}", wrong.display())],
         );
-        // `wait_for_probe` asks for a base the runner does not have and expects
-        // `need-base`; with a bad token it never gets that far, so this waits on
-        // the refusal itself.
+        // `wait_for_probe` expects `need-base`; with a bad token it never gets that far, so this waits
+        // on the refusal itself.
         let probe = Probe {
             port: fleet.ingress_port,
             http: reqwest::blocking::Client::builder()
@@ -403,11 +361,9 @@ fn a_gate_behind_a_token_is_reached_with_it_and_refused_without_it() {
 
 /// The gate on ANOTHER MACHINE, judged through the component that dials it.
 ///
-/// Ignored by default: it needs a `comp-checks` already listening somewhere this
-/// machine can reach, which CI has not got. It is here because it is the only
-/// thing that exercises the last untested hop — a `wasi:http` call out of the
-/// sandbox to a host that is not loopback, through an egress allow-list naming
-/// a real machine.
+/// Ignored by default: it needs a `comp-checks` listening somewhere reachable, which CI has not. It
+/// exercises the last untested hop: a `wasi:http` call to a non-loopback host through an egress
+/// allow-list naming a real machine.
 ///
 ///   COMP_REMOTE_CHECKS=100.64.0.1:8199 \
 ///   COMP_REMOTE_TOKEN=~/.comp-secrets/checks \
@@ -421,9 +377,7 @@ fn a_gate_on_another_machine_judges_a_candidate() {
         .expect("set COMP_REMOTE_TOKEN to the FILE holding that runner's token");
     let token = shellexpand(&token);
 
-    // A tailnet address is a PRIVATE address, and egress refuses those by default
-    // — which is the correct default and the reason this is one line rather than
-    // a surprise.
+    // A tailnet address is PRIVATE and egress refuses those by default, hence this one line.
     std::env::set_var("COMP_FLEET_ALLOW_PRIVATE_EGRESS", "1");
     let spec = spec_pointing_at(&authority);
     let fleet = Fleet::start_with_secrets(
@@ -461,8 +415,7 @@ fn a_gate_on_another_machine_judges_a_candidate() {
          proved nothing about where the work happened: {r}"
     );
 
-    // The fix, with NO tree: the other machine cached it by commit, which is what
-    // stops a generation from sending the same repository once per candidate.
+    // The fix, with NO tree: the other machine cached it by commit, so a generation need not resend the repo.
     let r = probe.call(
         "/evaluate",
         json!({ "name": "the-fix", "base_commit": commit,
@@ -473,8 +426,7 @@ fn a_gate_on_another_machine_judges_a_candidate() {
     assert_eq!(r["score"], json!(1000), "{r}");
 }
 
-/// `~` is not expanded by anything here, and a token path is exactly where
-/// somebody writes one.
+/// `~` is not expanded by anything here, and a token path is where somebody writes one.
 fn shellexpand(p: &str) -> String {
     match p.strip_prefix("~/") {
         Some(rest) => format!("{}/{rest}", std::env::var("HOME").unwrap_or_default()),

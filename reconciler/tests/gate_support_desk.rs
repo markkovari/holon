@@ -1,8 +1,5 @@
-//! The `support:desk` tickets gate, ported from
-//! `components/support-desk-domain/e2e-tickets.sh`.
-//!
-//! `e2e-reply.sh` wants a model on :8787 and `e2e-courier.sh` wants a webhook sink it
-//! starts itself; both stay shell gates for now.
+//! The `support:desk` tickets gate, ported from `components/support-desk-domain/e2e-tickets.sh`.
+//! `e2e-reply.sh` and `e2e-courier.sh` stay shell gates.
 
 mod gatelib;
 use gatelib::{field, Gate};
@@ -47,8 +44,7 @@ fn tickets_open_validate_their_address_and_list_oldest_first() {
     );
     assert_eq!(c, 400, "an empty subject must be 400 invalid_ticket");
 
-    // The address check. `mailto:` is a real scheme and still not something this desk
-    // delivers.
+    // The address check: `mailto:` is a real scheme and still not something this desk delivers.
     for bad in ["ada@example.test", "mailto:ada@example.test", "https://acme.test/hooks/ada", ""] {
         let (c, _) =
             gate.post("/api/tickets", Some(&w), json!({"subject":"s","body":"b","customer":bad}));

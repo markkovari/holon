@@ -1,13 +1,8 @@
 //! The `tickets` gate: claimed, rendered, kept private, capacity held by `quota:meter`.
 //!
-//! Ported from `components/events-domain/e2e-tickets.sh`. Assertions and failure
-//! sentences are unchanged — ADR-0088 makes a gate's output the next prompt, so the
-//! wording is part of the gate.
-//!
-//! The contested-pair section is where the shell version cost the most: it wrote two
-//! results into a `mktemp -d`, backgrounded two subshells, and read the files back.
-//! Two threads and a channel say the same thing without a temporary directory, and
-//! without the `python3` the shell used to pull a token out of a fresh fixture.
+//! Ported from `components/events-domain/e2e-tickets.sh`; assertions and failure sentences unchanged
+//! (ADR-0088). The contested pair uses two threads and a channel instead of the shell's `mktemp -d`,
+//! backgrounded subshells and `python3`.
 
 mod gatelib;
 use gatelib::{assert_unauthenticated, field, requires_capability, Gate};
@@ -48,7 +43,6 @@ fn tickets_claimed_rendered_private_and_capped() {
         Some(json!({})),
     );
 
-    // --- one attendee claims one place ---------------------------------------------
     let (_, t) = gate.post(&format!("/api/events/{event_id}/tickets"), Some(&attendee), json!({}));
     let (tid, code, qr) = (field(&t, "id"), field(&t, "code"), field(&t, "qr"));
     assert!(!tid.is_empty(), "claiming a ticket returned no id: {t}");
@@ -71,14 +65,12 @@ fn tickets_claimed_rendered_private_and_capped() {
         "a new ticket is state=issued: {doc}"
     );
 
-    // --- the same person may not hold two --------------------------------------------
     let (c, _) = gate.post(&format!("/api/events/{event_id}/tickets"), Some(&attendee), json!({}));
     assert_eq!(
         c, 409,
         "a subject already holding a live ticket for this event gets 409 already_holding"
     );
 
-    // --- a ticket is private ----------------------------------------------------------
     let (_, mine) = gate.get("/api/tickets", Some(&attendee));
     assert!(mine.contains(&tid), "GET /api/tickets must list the caller's own ticket: {mine}");
     let (c, _) = gate.get(&format!("/api/tickets/{tid}"), Some(&other));
@@ -92,10 +84,9 @@ fn tickets_claimed_rendered_private_and_capped() {
     let (c, _) = gate.post("/api/events/no-such-event/tickets", Some(&attendee), json!({}));
     assert_eq!(c, 404, "claiming against an unknown event is a 404");
 
-    // --- the last place, claimed twice at once ----------------------------------------
-    //
-    // Capacity is 3 and one is taken. `other` takes the second. Then TWO requests for
-    // the third go out together and the results are compared after both return.
+    // --- the last place, claimed twice at once ---
+    // Capacity is 3 and one is taken. `other` takes the second; then TWO requests for the third go out
+    // together and the results are compared after both return.
     let (_, o) = gate.post(&format!("/api/events/{event_id}/tickets"), Some(&other), json!({}));
     assert!(!field(&o, "id").is_empty(), "the second place could not be claimed: {o}");
 
@@ -115,8 +106,7 @@ fn tickets_claimed_rendered_private_and_capped() {
         handles.into_iter().map(|h| h.join().expect("a contesting request panicked")).collect()
     });
 
-    // Both are the same already-holding attendee, so both must be refused — the point
-    // of this pair is that the component answered both without a 500 and without
+    // Both are the same already-holding attendee, so both must be refused, without a 500 and without
     // issuing a fourth ticket past capacity.
     assert!(
         contested.iter().all(|c| *c != 500),
@@ -129,8 +119,8 @@ fn tickets_claimed_rendered_private_and_capped() {
         "after two claims the event reports claimed={claimed}, not 2 — claimed must come from quota:meter's peek"
     );
 
-    // The real capacity test: a third DISTINCT holder takes the last place, a fourth
-    // is refused. `organizer` is a person too and may hold a ticket.
+    // The real capacity test: a third DISTINCT holder takes the last place, a fourth is refused.
+    // `organizer` is a person too and may hold a ticket.
     let (last, _) =
         gate.post(&format!("/api/events/{event_id}/tickets"), Some(&organizer), json!({}));
     assert_eq!(last, 201, "the third and final place must be claimable");

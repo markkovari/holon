@@ -1,16 +1,9 @@
-//! The `events` reminders gate, ported from
-//! `components/events-domain/e2e-reminders.sh`.
+//! The `events` reminders gate, ported from `components/events-domain/e2e-reminders.sh`.
 //!
-//! THIS ONE GAINS COVERAGE RATHER THAN SPEED. The shell gate needs MailHog, CI cannot
-//! install it — `go install github.com/mailhog/MailHog@latest` fails on the runner,
-//! the project being archived and older than modules — so the gate is skipped there and
-//! the notification fan-out, the one thing in this app that talks to the outside, has
-//! no coverage at all on a pull request.
-//!
-//! `gatelib::MailSink` receives the SMTP directly. The chain is otherwise unchanged:
-//! the component posts to `mail:gateway-url`, `comp-mailrelay` turns that into SMTP.
-//! Two of those three were already artifacts this repository builds; now it is three,
-//! and the gate runs anywhere `cargo test` does.
+//! THIS ONE GAINS COVERAGE RATHER THAN SPEED: the shell gate needs MailHog, which CI cannot install, so
+//! the notification fan-out had no coverage on a pull request. `gatelib::MailSink` receives the SMTP
+//! directly; the chain is otherwise unchanged (the component posts to `mail:gateway-url`,
+//! `comp-mailrelay` turns that into SMTP).
 
 mod gatelib;
 use gatelib::{field, Gate, MailRelay, MailSink};
@@ -20,8 +13,7 @@ fn parse(t: &str) -> Value {
     serde_json::from_str(t.trim()).unwrap_or(Value::Null)
 }
 
-/// `starts_at` two hours out, RFC 3339 UTC. The shell tried `date -v` then `date -d`
-/// because the first is BSD and the second GNU; the clock is the clock here.
+/// `starts_at` two hours out, RFC 3339 UTC.
 fn in_two_hours() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -58,7 +50,6 @@ fn a_reminder_is_scheduled_fired_once_and_reaches_a_real_mailbox() {
     // A per-run marker, as the shell used `$$`: the mailbox is asserted by content.
     let run = format!("r{}", std::process::id());
 
-    // --- an event far away schedules a reminder for later ------------------------------
     let (_, far) = gate.post(
         "/api/events",
         Some(&organizer),
@@ -80,7 +71,6 @@ fn a_reminder_is_scheduled_fired_once_and_reaches_a_real_mailbox() {
     let (_, r) = gate.post("/api/reminders/run", Some(&organizer), json!({}));
     assert_eq!(field(&r, "fired"), "0", "a reminder that is not due yet must not fire");
 
-    // --- an event SOON has a reminder that is already due --------------------------------
     let soon = in_two_hours();
     let (_, ev) = gate.post(
         "/api/events",
@@ -90,7 +80,6 @@ fn a_reminder_is_scheduled_fired_once_and_reaches_a_real_mailbox() {
     let eid = field(&ev, "id");
     assert!(!eid.is_empty(), "could not create the soon event: {ev}");
 
-    // --- somebody holds a ticket, and wants both channels ----------------------------------
     let (_, t) = gate.post(&format!("/api/events/{eid}/tickets"), Some(&attendee), json!({}));
     assert!(!field(&t, "id").is_empty(), "no ticket: {t}");
 
@@ -107,7 +96,6 @@ fn a_reminder_is_scheduled_fired_once_and_reaches_a_real_mailbox() {
 
     let before_mail = mail.count_containing(&format!("Tonight {run}"));
 
-    // --- the clock ticks -------------------------------------------------------------------
     let (_, run_out) = gate.post("/api/reminders/run", Some(&organizer), json!({}));
     let fired = field(&run_out, "fired");
     assert_ne!(fired, "0", "a reminder that is due must fire: {run_out}");
@@ -122,7 +110,6 @@ fn a_reminder_is_scheduled_fired_once_and_reaches_a_real_mailbox() {
         "the reminder does not name the event: {notes}"
     );
 
-    // --- and a REAL email arrived ---------------------------------------------------------------
     std::thread::sleep(std::time::Duration::from_millis(500));
     let after_mail = mail.count_containing(&format!("Tonight {run}"));
     assert!(
@@ -130,10 +117,8 @@ fn a_reminder_is_scheduled_fired_once_and_reaches_a_real_mailbox() {
         "the mailbox holds no reminder for this event — the fan-out reported success and nothing arrived"
     );
 
-    // --- firing twice does not remind twice -------------------------------------------------------
-    //
-    // `ack` is what makes that true. A reminder that repeats every time a scheduler
-    // ticks is worse than one that never comes.
+    // --- firing twice does not remind twice ---
+    // `ack` is what makes that true: a reminder repeating on every scheduler tick is worse than none.
     let (_, again) = gate.post("/api/reminders/run", Some(&organizer), json!({}));
     assert_eq!(
         field(&again, "fired"),
@@ -141,9 +126,8 @@ fn a_reminder_is_scheduled_fired_once_and_reaches_a_real_mailbox() {
         "an acked reminder fired again — it would repeat on every tick"
     );
 
-    // --- moving the event moves its reminder ---------------------------------------------
-    // The reminder is scheduled at create; a PATCH that changes `starts_at` must
-    // re-schedule it, or it goes out a day before a start that is no longer the start.
+    // --- moving the event moves its reminder ---
+    // A PATCH changing `starts_at` must re-schedule it, or it goes out a day before a start that is no more.
     let (_, mv) = gate.post(
         "/api/events",
         Some(&organizer),
@@ -183,7 +167,6 @@ fn a_reminder_is_scheduled_fired_once_and_reaches_a_real_mailbox() {
         "a PATCH that does not touch `starts_at` must leave the reminder where it is: {rem2}"
     );
 
-    // --- cancelling the event cancels the reminder --------------------------------------------------
     let (_, c) = gate.post(
         "/api/events",
         Some(&organizer),

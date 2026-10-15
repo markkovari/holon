@@ -20,8 +20,8 @@ use serde_json::{json, Value};
 
 const PASSWORD: &str = "correct horse";
 
-/// A photo taken through the whole pipeline to `evaluated`, with the callback body
-/// shaped by `tweak`. Returns the photo id.
+/// A photo taken through the whole pipeline to `evaluated`, with the callback body shaped by `tweak`.
+/// Returns the photo id.
 fn evaluated_photo(
     gate: &Gate,
     token: &str,
@@ -56,7 +56,7 @@ fn evaluated_photo(
     id
 }
 
-/// `YYYY-MM-DDTHH:MM:SS` — the camera clock, no zone, as `captured_at` carries it.
+/// `YYYY-MM-DDTHH:MM:SS`: the camera clock, no zone, as `captured_at` carries it.
 fn camera_clock(secs: u64) -> String {
     gatelib::rfc3339(secs).trim_end_matches('Z').to_string()
 }
@@ -119,7 +119,6 @@ fn a_journey_of_quests_is_built_submitted_to_and_levelled_through() {
         return;
     };
 
-    // --- accounts ---------------------------------------------------------------
     let register = |who: &str| -> (String, String) {
         let email = if who == "root" {
             admin_email.clone()
@@ -145,7 +144,6 @@ fn a_journey_of_quests_is_built_submitted_to_and_levelled_through() {
     gatelib::assert_unauthenticated(&gate, "GET", "/api/journeys", None);
     gatelib::assert_unauthenticated(&gate, "GET", "/api/curator/journeys", None);
 
-    // --- curator routes need the curator role -------------------------------------
     let journey_body = json!({
         "title": "Into the park", "description": "Green things, sharp.",
         "levels": [{"level": 1, "xp": 0}, {"level": 2, "xp": 100}, {"level": 3, "xp": 250}],
@@ -174,7 +172,6 @@ fn a_journey_of_quests_is_built_submitted_to_and_levelled_through() {
     assert_eq!(code, 200, "the bootstrap admin grants curator (needs moderation.rs): {out}");
     let cora = login(&cora_email);
 
-    // --- the curator builds a journey ---------------------------------------------
     for bad in [
         json!([{"level": 1, "xp": 10}]),
         json!([{"level": 1, "xp": 0}, {"level": 2, "xp": 100}, {"level": 3, "xp": 50}]),
@@ -255,7 +252,6 @@ fn a_journey_of_quests_is_built_submitted_to_and_levelled_through() {
     assert_eq!(code, 200, "{out}");
     assert!(parse(&out)["quests"].as_array().map(Vec::len).unwrap_or(0) >= 2, "{out}");
 
-    // --- published requirements are fixed --------------------------------------------
     let (code, out) = gate.json(
         "PUT",
         &format!("/api/curator/quests/{q1}"),
@@ -279,7 +275,6 @@ fn a_journey_of_quests_is_built_submitted_to_and_levelled_through() {
     );
     assert_eq!((code, error_of(&out)), (403, "forbidden_role".into()), "{out}");
 
-    // --- the photographer sees the journey --------------------------------------------
     let (code, out) = gate.get(&format!("/api/journeys/{jid}"), Some(&pat));
     assert_eq!(code, 200, "{out}");
     let j = parse(&out);
@@ -298,7 +293,6 @@ fn a_journey_of_quests_is_built_submitted_to_and_levelled_through() {
         "a published journey is listed: {out}"
     );
 
-    // --- photos -------------------------------------------------------------------------
     let after = Some(camera_clock(now - 3600));
     let grass = json!([{"id": "grass", "confidence": 0.9}]);
     let shot =
@@ -484,7 +478,6 @@ fn a_journey_of_quests_is_built_submitted_to_and_levelled_through() {
     assert_eq!(v["xp_awarded"], 0, "a quest pays once per photographer: {out}");
     assert!(v["badge"].is_null(), "the badge is granted once: {out}");
 
-    // --- my progress ----------------------------------------------------------------------
     let (code, out) = gate.get("/api/me/progress", Some(&pat));
     assert_eq!(code, 200, "{out}");
     let p = parse(&out);
@@ -521,7 +514,6 @@ fn a_journey_of_quests_is_built_submitted_to_and_levelled_through() {
     assert_eq!(p["total_xp"], 0, "sam's copy of pat's bytes earned nothing: {out}");
     assert_eq!(p["ledger"].as_array().map(Vec::len), Some(0), "{out}");
 
-    // --- archiving --------------------------------------------------------------------------
     let (code, out) =
         gate.post(&format!("/api/curator/quests/{q2}/archive"), Some(&cora), json!({}));
     assert_eq!(code, 200, "{out}");

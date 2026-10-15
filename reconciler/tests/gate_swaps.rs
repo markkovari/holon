@@ -1,8 +1,6 @@
 //! The `swaps` gate: offered, refused to its owner, accepted by another, capacity unmoved.
 //!
-//! Ported from `components/events-domain/e2e-swaps.sh`. The shell version reached for
-//! `python3` twice — once to pull a token out of the fixture, once for the acceptor's
-//! SUBJECT — and both are ordinary field reads here.
+//! Ported from `components/events-domain/e2e-swaps.sh`.
 
 mod gatelib;
 use gatelib::{assert_unauthenticated, field, Gate};
@@ -35,7 +33,6 @@ fn swaps_offered_accepted_and_capacity_unmoved() {
 
     assert_unauthenticated(&gate, "POST", "/api/swaps", Some(json!({"ticket_id": tid})));
 
-    // --- only the holder may offer -------------------------------------------------
     let (c, _) = gate.post("/api/swaps", Some(&other), json!({"ticket_id": tid}));
     assert_eq!(c, 403, "a swap may only be offered by the ticket's holder");
 
@@ -49,11 +46,9 @@ fn swaps_offered_accepted_and_capacity_unmoved() {
     let (_, list) = gate.get("/api/swaps", Some(&other));
     assert!(list.contains(&sid), "GET /api/swaps must list the offered swap: {list}");
 
-    // --- you may not accept your own -------------------------------------------------
     let (c, _) = gate.post(&format!("/api/swaps/{sid}/accept"), Some(&attendee), json!({}));
     assert_eq!(c, 403, "the person who offered a swap may not accept it");
 
-    // --- somebody else takes it --------------------------------------------------------
     let (ok, _) = gate.post(&format!("/api/swaps/{sid}/accept"), Some(&other), json!({}));
     assert_eq!(ok, 200, "another attendee must be able to accept the offer");
 
@@ -72,7 +67,6 @@ fn swaps_offered_accepted_and_capacity_unmoved() {
     let (c, _) = gate.post(&format!("/api/swaps/{sid}/accept"), Some(&other), json!({}));
     assert_eq!(c, 409, "an accepted swap cannot be accepted again");
 
-    // --- the house is no fuller ----------------------------------------------------------
     let (_, ev) = gate.get(&format!("/api/events/{event_id}"), Some(&organizer));
     let after = field(&ev, "remaining");
     assert_eq!(

@@ -1,22 +1,16 @@
 //! A generation, end to end: one goal, four branches at once, one pull request.
 //!
-//! This is the whole loop with nothing stubbed between its parts. A goal fans out
-//! to four branches that run CONCURRENTLY; each writes a candidate with a model,
-//! is judged by real commands, and repairs from what those commands actually
-//! said; the four results are compared; the winner — and only the winner — is
-//! proposed to a forge that records what it was asked.
-//!
-//! What each piece is:
+//! The whole loop with nothing stubbed between its parts: four CONCURRENT branches each write a candidate
+//! with a model, are judged by real commands and repair from what they said; the results are compared and
+//! only the winner is proposed to a forge that records what it was asked.
 //!
 //! | the model | scripted, so a generation has a reproducible answer |
 //! | the checks | real commands, so the feedback is not planted |
 //! | the forge | a stand-in, so it can be asked what it received |
 //! | the fan-out | real threads against a real fleet, because sequence is not parallelism |
 //!
-//! The branches are written to DISAGREE, which a single-run test cannot show:
-//! one wins outright, one is hopeless, and two arrive at the same answer by
-//! different routes — so the generation's `distinct` count is legitimately lower
-//! than its branch count with nothing having gone wrong.
+//! The branches DISAGREE: one wins outright, one is hopeless, two reach the same answer by different
+//! routes, so `distinct` is legitimately lower than the branch count.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -195,9 +189,8 @@ fn specs(checks_port: u16, forge_port: u16) -> Vec<std::path::PathBuf> {
     .collect()
 }
 
-/// The goal every branch is given. Three checks: two required, one optional —
-/// so branches that all pass the gate can still be ordered, which is the whole
-/// reason the score exists alongside it.
+/// The goal every branch is given. Three checks, two required and one optional, so branches that all
+/// pass the gate can still be ordered by score.
 fn plan() -> Value {
     json!({
         "text": "make the answer 42",
@@ -238,8 +231,7 @@ fn one_goal_four_branches_at_once_and_one_pull_request() {
     let select_url = format!("http://127.0.0.1:{}/land", fleet.ingress_port);
     let timeout = Duration::from_secs(120);
 
-    // Both apps up, proven by the first real call to each — not by a readiness
-    // signal, which has gone green over a broken deployment in this repo before.
+    // Both apps up, proven by the first real call to each, not a readiness signal.
     fleet.until("both apps serving", Duration::from_secs(180), || {
         let mut warm = plan();
         warm["seed"] = json!(100);
@@ -258,7 +250,6 @@ fn one_goal_four_branches_at_once_and_one_pull_request() {
         }
     });
 
-    // --- FOUR BRANCHES, AT ONCE ---------------------------------------------
     let started = Instant::now();
     let entries = fan_out(&driver_url, "gendrive.acme.test", &plan(), 4, 100, timeout);
     let wall = started.elapsed();
@@ -273,8 +264,7 @@ fn one_goal_four_branches_at_once_and_one_pull_request() {
     assert_eq!(entries.len(), 4);
     assert!(entries.iter().all(|e| e.note.is_empty()), "a branch never ran: {entries:?}");
 
-    // Branch 3 is scripted to be hopeless, and a generation in which every branch
-    // succeeds would not be testing selection at all.
+    // Branch 3 is scripted to be hopeless: all-succeed would not test selection.
     assert_eq!(
         entries.iter().filter(|e| e.accepted).count(),
         3,
@@ -282,12 +272,9 @@ fn one_goal_four_branches_at_once_and_one_pull_request() {
     );
     assert_eq!(entries[3].stopped, "exhausted", "the hopeless branch should spend its budget");
 
-    // --- AT ONCE, not one after another --------------------------------------
-    // Concurrency is the entire reason to have branches, and the first version of
-    // this assertion compared ATTEMPT COUNTS — which a deliberately sequential
-    // `fan_out` passed, with an identical wall clock. The only thing that
-    // distinguishes them is time: in parallel the wall clock is about the slowest
-    // branch, in sequence it is about the sum.
+    // --- AT ONCE, not one after another ---
+    // Comparing ATTEMPT COUNTS passed a deliberately sequential `fan_out`; only time tells them apart
+    // (parallel is about the slowest branch, sequential about the sum).
     let total_attempts: u64 = entries.iter().map(|e| e.attempts).sum();
     let sum_alone: u64 = entries.iter().map(|e| e.elapsed_ms).sum();
     let slowest: u64 = entries.iter().map(|e| e.elapsed_ms).max().unwrap_or(0);
@@ -303,10 +290,9 @@ fn one_goal_four_branches_at_once_and_one_pull_request() {
          of branch time (slowest alone {slowest}ms)"
     );
 
-    // --- TWO BRANCHES AGREED, WITHOUT ANYTHING GOING WRONG ------------------
-    // Branch 0 writes 42 outright; branch 2 writes 41, fails `be-42`, and repairs
-    // to the same 42. Identical candidates by different routes — which is what
-    // makes `distinct` legitimately lower than the branch count.
+    // --- TWO BRANCHES AGREED, WITHOUT ANYTHING GOING WRONG ---
+    // Branch 0 writes 42; branch 2 writes 41, fails `be-42`, and repairs to 42: identical candidates by
+    // different routes.
     assert_eq!(
         entries[0].digest, entries[2].digest,
         "these two were scripted to converge, and if they did not the `distinct` assertion \
@@ -314,7 +300,6 @@ fn one_goal_four_branches_at_once_and_one_pull_request() {
     );
     assert_eq!(entries[2].attempts, 2, "branch 2 should have needed a repair: {entries:?}");
 
-    // --- THE WINNER, AND ONLY THE WINNER, REACHES THE FORGE -----------------
     log.lock().unwrap().clear();
     let opened = land(
         &select_url,

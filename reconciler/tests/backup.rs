@@ -102,14 +102,13 @@ async fn populate(js: &jetstream::Context) -> Vec<u8> {
         .create_key_value(kv::Config { bucket: "b-acme".into(), history: 2, ..Default::default() })
         .await
         .unwrap();
-    // Three writes into a history of two: the first is dropped, so the stream
-    // has a gap and a restore renumbers what follows it.
+    // Three writes into a history of two: the first is dropped, so the stream has a gap and a restore
+    // renumbers what follows.
     kv.put("a", "1".into()).await.unwrap();
     kv.put("a", "2".into()).await.unwrap();
     let rev = kv.put("a", "2b".into()).await.unwrap();
-    // A guarded write: its stored message carries
-    // Nats-Expected-Last-Subject-Sequence = the ORIGINAL sequence, which after
-    // the renumbering is not the restored one — replayed, it would be refused.
+    // A guarded write: its stored message carries Nats-Expected-Last-Subject-Sequence = the ORIGINAL
+    // sequence, not the restored one after renumbering, so replayed it would be refused.
     kv.update("a", "3".into(), rev).await.unwrap();
     kv.put("b", "x".into()).await.unwrap();
     kv.put("c", "gone".into()).await.unwrap();
@@ -191,8 +190,8 @@ async fn check(js: &jetstream::Context, big: &[u8]) {
 
 #[test]
 fn a_backup_restores_into_fresh_servers_and_refuses_what_it_should() {
-    // A plain test with a runtime of its own: the harness's S3 client is
-    // blocking, and a blocking client inside an async test panics on drop.
+    // A plain test with a runtime of its own: the harness's S3 client is blocking, and a blocking
+    // client inside an async test panics on drop.
     let rt = tokio::runtime::Runtime::new().unwrap();
     let Some(s3) = RustFs::start() else {
         eprintln!("SKIPPED: docker could not start {}", harness::RUSTFS_IMAGE);
@@ -240,7 +239,6 @@ fn a_backup_restores_into_fresh_servers_and_refuses_what_it_should() {
     };
     let run = |args: Vec<String>| backup(&args.iter().map(String::as_str).collect::<Vec<_>>());
 
-    // --- the state -----------------------------------------------------------
     let big = rt.block_on(async { populate(&src.js().await).await });
     rt.block_on(async {
         sql(db_src.port, "DEFINE NAMESPACE holon; USE NS holon; DEFINE DATABASE graph;").await;
@@ -248,11 +246,9 @@ fn a_backup_restores_into_fresh_servers_and_refuses_what_it_should() {
             .await;
     });
 
-    // --- refusing to write plaintext nobody asked for ------------------------
     let err = refused(run(with(&["run", "--nats-url", &src.url], &[])));
     assert!(err.contains("--plaintext"), "{err}");
 
-    // --- the backup ----------------------------------------------------------
     let surreal_url = format!("http://127.0.0.1:{}", db_src.port);
     let log = ok(run(with(
         &["run", "--nats-url", &src.url, "--encrypt-key-file", &p(&key_file)],
@@ -282,7 +278,6 @@ fn a_backup_restores_into_fresh_servers_and_refuses_what_it_should() {
         assert_eq!(&s3.get(BUCKET, k).unwrap()[..8], b"HOLONBK1", "{k} is not sealed");
     }
 
-    // --- restored into servers that have never seen any of it ----------------
     let dst_surreal = format!("http://127.0.0.1:{}", db_dst.port);
     let surreal_dst_args: Vec<String> =
         vec!["--surreal-url".into(), dst_surreal, "--surreal-pass-file".into(), p(&pass_file)];
@@ -295,7 +290,6 @@ fn a_backup_restores_into_fresh_servers_and_refuses_what_it_should() {
     let rows = rt.block_on(sql(db_dst.port, "SELECT name FROM symbol ORDER BY name;"));
     assert_eq!(rows[0]["result"].as_array().map(|r| r.len()), Some(2), "surreal rows: {rows}");
 
-    // --- the refusals ---------------------------------------------------------
     // A restore does not merge into what is there.
     let err = refused(run(with(
         &[
@@ -350,7 +344,6 @@ fn a_backup_restores_into_fresh_servers_and_refuses_what_it_should() {
     )));
     assert!(err.contains("does not match its manifest"), "{err}");
 
-    // --- retention -------------------------------------------------------------
     for _ in 0..2 {
         ok(run(with(
             &[

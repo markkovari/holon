@@ -1,23 +1,15 @@
-//! A lesson reaches a goal that shares an INTERFACE but shares no wording.
+//! A lesson reaches a goal that shares an INTERFACE but shares no wording (ADR-0090).
 //!
-//! This is the claim of ADR-0090, and it is arranged so that nothing else can
-//! produce the result. Two goals are written to be textually as unlike each other
-//! as two software goals can be — a veterinary clinic and a payroll exporter —
-//! while touching the same capability, `csv:codec/codec`. The lesson is a fact
-//! about that capability and about nothing else:
+//! Two goals are as textually unlike as software goals can be (a veterinary clinic and a payroll
+//! exporter) while touching the same capability, `csv:codec/codec`. The lesson is a fact about that
+//! capability alone: `Dialect.delimiter is a String, not a char.` The second goal reads twice:
 //!
-//!     Dialect.delimiter is a String, not a char.
+//!   * **with tags**: it must find the lesson.
+//!   * **text only**: it must NOT. This arm is the whole test: if similarity already connects a clinic
+//!     to a payroll exporter, tags buy nothing and ADR-0090 is wrong.
 //!
-//! Then the second goal reads twice:
-//!
-//!   * **with tags** — it must find the lesson.
-//!   * **text only** — it must NOT. This arm is the whole test. If similarity
-//!     already connects a clinic to a payroll exporter, tags buy nothing and
-//!     ADR-0090 is wrong, and this test is how that would be discovered rather
-//!     than assumed.
-//!
-//! No AI calls: a real SurrealDB, the real components, and a mock provider whose
-//! embeddings are deterministic. Skipped, loudly, when Docker cannot start.
+//! No AI calls: a real SurrealDB, the real components, and a mock provider with deterministic
+//! embeddings. Skipped, loudly, when Docker cannot start.
 
 use std::time::Duration;
 
@@ -27,11 +19,8 @@ use serde_json::Value;
 mod harness;
 use harness::{Surreal, SURREAL_IMAGE, SURREAL_PASSWORD};
 
-/// The two goals, and the point of the test in one place.
-///
-/// If these two ever start looking alike, the control arm will begin to pass and
-/// the test will stop meaning anything — so they are stated here together where a
-/// reader can see how little they share.
+/// The two goals, and the point of the test in one place. If they start looking alike the control arm
+/// begins to pass and the test stops meaning anything.
 const CLINIC_GOAL: &str = "export the day's veterinary visits for a clinic, one row per pet";
 const PAYROLL_GOAL: &str = "produce a monthly payroll remittance file for the finance team";
 const SHARED_TAG: &str = "csv:codec/codec@0.1.0";
@@ -138,10 +127,9 @@ fn a_lesson_crosses_two_goals_that_share_an_interface_and_nothing_else() {
             .build()
             .unwrap(),
     };
-    // The readiness check is a real recall, not a ping: the ingress answers
-    // "no replica ... is currently placed" as plain text long before the pool can
-    // serve, and that parses into a perfectly good `Value::String`. Requiring the
-    // `hits` array is what distinguishes "up" from "answering with an excuse".
+    // The readiness check is a real recall, not a ping: the ingress answers "no replica ... is
+    // currently placed" as plain text (a good `Value::String`) long before the pool can serve, so
+    // requiring the `hits` array distinguishes "up" from "answering with an excuse".
     fleet.until("the pool answering a recall", Duration::from_secs(180), || {
         let r = pool.get("/recall?goal=anything&k=1");
         if r.get("hits").is_some() {
@@ -151,7 +139,6 @@ fn a_lesson_crosses_two_goals_that_share_an_interface_and_nothing_else() {
         }
     });
 
-    // --- the clinic learns something about csv:codec ---------------------------
     let wrote = pool.post(
         &format!(
             "/observe?ns=errors&goal={}&env=clinic&attempt=1&tags={}",
@@ -165,18 +152,15 @@ fn a_lesson_crosses_two_goals_that_share_an_interface_and_nothing_else() {
         "the tagged lesson did not land: {wrote}"
     );
 
-    // --- the payroll exporter asks, by TEXT only -------------------------------
-    //
-    // The control arm, and the only thing that makes the next assertion mean
-    // anything. These two goals have no words in common that matter, so if this
-    // finds the lesson then tags are not what connected them.
+    // --- the payroll exporter asks, by TEXT only ---
+    // The control arm: the goals share no words that matter, so finding the lesson here means tags
+    // were not what connected them.
     let text_only = pool.get(&format!("/recall?goal={}&k=5&min=0.55", enc(PAYROLL_GOAL)));
     let found_by_text = texts(&text_only).iter().any(|t| t.contains("Dialect.delimiter"));
 
-    // --- and again, carrying the interface it imports --------------------------
-    // `min=0.55` on every arm, so the dense pass cannot supply the lesson to any
-    // of them — the clinic text scores 0.42 against a payroll goal. What is left is
-    // the tag, which is the only variable in this experiment.
+    // --- and again, carrying the interface it imports ---
+    // `min=0.55` on every arm, so the dense pass cannot supply the lesson (the clinic text scores 0.42
+    // against a payroll goal); the tag is the only variable.
     let tagged = pool.get(&format!(
         "/recall?goal={}&k=5&min=0.55&tags={}",
         enc(PAYROLL_GOAL),
@@ -197,10 +181,8 @@ fn a_lesson_crosses_two_goals_that_share_an_interface_and_nothing_else() {
         texts(&text_only)
     );
 
-    // --- a tag that nothing was written against returns nothing ----------------
-    //
-    // Otherwise the assertion above could be satisfied by a query that returns the
-    // whole pool regardless of what was asked for.
+    // --- a tag that nothing was written against returns nothing ---
+    // Otherwise a query returning the whole pool would satisfy the assertion above.
     let other = pool.get(&format!(
         "/recall?goal={}&k=5&min=0.55&tags={}",
         enc(PAYROLL_GOAL),

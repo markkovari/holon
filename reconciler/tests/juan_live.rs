@@ -1,32 +1,15 @@
-//! "Chat message spins up a new agent, live" — but on THIS platform's own
-//! native lattice (platform-domain's CRUD API + comp-reconciler's continuous
-//! convergence loop), not wasmCloud/wadm/Kubernetes.
+//! "Chat message spins up a new agent, live", on THIS platform's own native lattice (platform-domain's
+//! CRUD API + comp-reconciler's convergence loop), not wasmCloud/wadm/Kubernetes.
 //!
-//! A wasmCloud-based prototype of this idea (chat-agent + a custom "builder"
-//! capability provider driving wadm over NATS) turned out to need a full
-//! wasmCloud 1.x host + wadm (2.x dropped both), and even then hit a self-reply
-//! amplification bug. This is the from-scratch equivalent on infrastructure
-//! this repo already ships and already runs on hardware as small as a
-//! Raspberry Pi: no wadm, no wasmCloud host, no Kubernetes.
+//! Nothing about the agent exists in this repo beforehand. The chat trigger carries the agent's name
+//! and joke; `scaffold_agent` renders a fresh component directory from a template at that point (the
+//! same shape as every component, so `cargo component build` needs no special-casing) and deletes it
+//! when the test is done (`ScratchComponent`'s `Drop`).
 //!
-//! Nothing about the agent this test creates exists in this repo beforehand.
-//! The chat trigger carries the agent's name and its joke; `scaffold_agent`
-//! renders a fresh component directory from a template at THAT point — the
-//! same shape every other component under `components/` has (its own
-//! `Cargo.toml`, `wit/world.wit`, `src/lib.rs`), so `cargo component build`
-//! needs no special-casing — and the directory is deleted again once the test
-//! is done with it (`ScratchComponent`'s `Drop`). An earlier version of this
-//! test shipped a hand-written `components/juan-live/` fixture and just
-//! rebuilt that on every run, which only proved "deploy a pre-existing
-//! artifact live" — not "create one". This version creates the source too.
-//!
-//! The "chat message" is a real NATS publish on the fleet's own lattice NATS,
-//! to `holon.chat.main` — standing in for a future component's own trigger
-//! path (wiring that into an actual component is a separate, later step).
-//! Receiving it drives the real CRUD sequence: render the agent's source from
-//! the trigger, build it, POST its bytes to `/api/components`, POST a
-//! deployment graph naming it, then poll until comp-reconciler has converged
-//! and the capability answers over the lattice's own HTTP ingress.
+//! The "chat message" is a real NATS publish on the fleet's lattice NATS, to `holon.chat.main`,
+//! standing in for a future component's trigger path. Receiving it drives render, build, POST bytes to
+//! `/api/components`, POST a deployment graph, then poll until comp-reconciler has converged and the
+//! capability answers over the lattice's HTTP ingress.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -42,16 +25,14 @@ struct AgentSpec {
     joke: String,
 }
 
-/// The chat trigger is free text; this is the "understanding" step a real
-/// chat-driven orchestrator would do with an LLM. Kept to a fixed pattern
-/// here on purpose — proving an LLM call is a different, separate concern
-/// from proving the CRUD/convergence mechanism this test is actually about.
+/// The chat trigger is free text; this is the "understanding" step a real orchestrator would do with
+/// an LLM, kept to a fixed pattern since an LLM call is a separate concern.
 fn parse_trigger(payload: &str) -> Option<AgentSpec> {
     let lower = payload.to_lowercase();
     if !(lower.contains("create an agent") && lower.contains("joke")) {
         return None;
     }
-    // "call it <name>" — the name the trigger asked for.
+    // "call it <name>": the name the trigger asked for.
     let name = lower
         .split("call it ")
         .nth(1)?
@@ -68,11 +49,8 @@ fn parse_trigger(payload: &str) -> Option<AgentSpec> {
     })
 }
 
-/// A component directory rendered fresh under `components/`, and removed
-/// again on drop — win or lose, nothing it creates survives the test. Lives
-/// as a sibling of every other component so its WIT path deps
-/// (`../../wit/deps/...`) and `guestio` dep (`../guestio`) resolve exactly
-/// the way theirs do, with no special-casing in `cargo component build`.
+/// A component directory rendered fresh under `components/`, removed on drop. A sibling of every other
+/// component so its WIT path deps and `guestio` dep resolve as theirs do.
 struct ScratchComponent {
     dir: PathBuf,
 }
@@ -84,9 +62,8 @@ impl Drop for ScratchComponent {
 }
 
 impl ScratchComponent {
-    /// Render the agent's source from the spec the chat trigger carried —
-    /// the "create it live" half of the claim — and return a handle that
-    /// deletes the directory again once dropped.
+    /// Render the agent's source from the spec the chat trigger carried, returning a handle that
+    /// deletes the directory on drop.
     fn scaffold(spec: &AgentSpec) -> Self {
         let dir = repo_root().join("components").join(&spec.name);
         assert!(
@@ -205,9 +182,8 @@ bindings::export!(Component with_types_in bindings);
     )
 }
 
-/// Register + log in + upload + deploy, against the fleet's REAL
-/// platform-domain control plane (`Fleet::start_with_platform`) — same shape
-/// as `slug_live.rs`'s `Api`.
+/// Register + log in + upload + deploy, against the fleet's REAL platform-domain control plane
+/// (`Fleet::start_with_platform`), like `slug_live.rs`'s `Api`.
 struct Api {
     base: String,
     http: reqwest::blocking::Client,
@@ -269,12 +245,9 @@ fn answer_over_lattice(fleet: &Fleet, host: &str) -> Option<String> {
     r.text().ok().filter(|t| !t.is_empty())
 }
 
-/// Subscribe to `subject` over the fleet's own lattice NATS — standing in for
-/// a component's future "chat" trigger path — and return a handle whose
-/// `recv` blocks for the first message. Subscribing happens SYNCHRONOUSLY
-/// before returning, so a caller that publishes right after `subscribe`
-/// returns cannot race core NATS's fire-and-forget delivery (no subscriber
-/// attached yet => the message is simply gone, nothing redelivers it).
+/// Subscribe to `subject` over the fleet's lattice NATS and return a handle whose `recv` blocks for the
+/// first message. Subscribes SYNCHRONOUSLY before returning, so a publish right after cannot race core
+/// NATS's fire-and-forget delivery.
 struct ChatTrigger {
     rx: mpsc::Receiver<String>,
 }
@@ -309,15 +282,12 @@ fn subscribe_chat_trigger(nats_url: &str, subject: &str) -> ChatTrigger {
 fn a_chat_message_spins_up_a_live_agent_via_platform_domain_and_the_reconciler() {
     let fleet = Fleet::start_with_platform("juanlive", 1);
 
-    // Subscribe FIRST — synchronously, before anything about the agent
-    // exists — so the publish below cannot race core NATS's fire-and-forget
-    // delivery.
+    // Subscribe FIRST, synchronously, so the publish below cannot race core NATS's fire-and-forget delivery.
     let nats_url = fleet.nats_url.clone();
     let chat = subscribe_chat_trigger(&nats_url, "holon.chat.main");
     std::thread::sleep(Duration::from_millis(200));
 
-    // The "chat message" — published on the fleet's own lattice NATS, exactly
-    // as a real trigger would be.
+    // The "chat message", published on the fleet's lattice NATS as a real trigger would be.
     let trigger = {
         let nats_url = nats_url.clone();
         std::thread::spawn(move || {
@@ -331,8 +301,7 @@ fn a_chat_message_spins_up_a_live_agent_via_platform_domain_and_the_reconciler()
                     )
                     .await
                     .expect("publish chat trigger");
-                // `publish` only queues the frame; without an explicit flush it can
-                // sit unsent when this connection drops at the end of the thread.
+                // `publish` only queues the frame; without a flush it can sit unsent when the thread's connection drops.
                 client.flush().await.expect("flush chat trigger to the server");
             });
         })
@@ -347,9 +316,7 @@ fn a_chat_message_spins_up_a_live_agent_via_platform_domain_and_the_reconciler()
     });
     assert_eq!(spec.name, "juan");
 
-    // On the trigger: render, build, upload, and deploy the agent — nothing
-    // about it exists in this repo before this point. The real CRUD calls
-    // against platform-domain's actual HTTP API.
+    // On the trigger: render, build, upload, deploy, via platform-domain's actual HTTP API.
     let agent = ScratchComponent::scaffold(&spec);
     let wasm = agent.build();
     println!("    rendered + built {}.wasm ({} bytes)", spec.name, wasm.len());
@@ -364,8 +331,7 @@ fn a_chat_message_spins_up_a_live_agent_via_platform_domain_and_the_reconciler()
     let id = dep["id"].as_str().unwrap().to_string();
     println!("    deployment created: {id}");
 
-    // Save until comp-reconciler has converged and the agent answers over the
-    // lattice — no restart, no re-render, no scp, no systemctl.
+    // Save until comp-reconciler has converged and the agent answers over the lattice.
     let host = format!("{}.chat.test", spec.name);
     let started = Instant::now();
     let deadline = started + Duration::from_secs(180);

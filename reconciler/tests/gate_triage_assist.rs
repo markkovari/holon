@@ -1,11 +1,8 @@
-//! The two portable `triage:assist` gates, ported from
-//! `components/triage-assist-domain/e2e-*.sh`. `e2e-assist.sh` wants a model on :8787
-//! and stays a shell gate.
+//! The two portable `triage:assist` gates, ported from `components/triage-assist-domain/e2e-*.sh`.
+//! `e2e-assist.sh` wants a model on :8787 and stays a shell gate.
 //!
-//! `e2e-intake.sh` is also the gate that went flaky in CI — "the component never
-//! served /health" once, passing on a rerun, with the cause invisible because the
-//! shell reports only `tail -3` of the host log and got three lines of stack trace.
-//! A Rust gate that fails prints the assertion that failed.
+//! `e2e-intake.sh` went flaky in CI ("the component never served /health") with the cause invisible,
+//! since the shell reports only `tail -3` of the host log. A Rust gate that fails prints the assertion.
 
 mod gatelib;
 use gatelib::{field, Gate};
@@ -38,7 +35,6 @@ fn intake_masks_records_the_reporter_and_limits_per_subject() {
     let Some(gate) = start(&["max-attempts=3", "lockout-window=60"]) else { return };
     let report = json!({"title":"Search returns nothing","body":"contact me at ada@example.test","component":"search"});
 
-    // --- the three refusals, none of which spends an attempt -----------------------
     let (c, _) = gate.post("/api/reports", None, report.clone());
     assert_eq!(c, 401, "a report with no bearer token must be 401 unauthenticated");
     let ro = token(&gate, "reader", Some(json!(["reports:read"])));
@@ -52,7 +48,6 @@ fn intake_masks_records_the_reporter_and_limits_per_subject() {
         gate.post("/api/reports", Some(&writer), json!({"title":"","body":"x","component":"web"}));
     assert_eq!(c, 400, "an empty title must be 400 invalid_report");
 
-    // --- a report goes in, and what is stored is masked ---------------------------
     let (_, resp) = gate.post("/api/reports", Some(&writer), report);
     let id = field(&resp, "id");
     assert!(!id.is_empty(), "POST /api/reports returned no id: {resp}");
@@ -84,7 +79,6 @@ fn intake_masks_records_the_reporter_and_limits_per_subject() {
         d["reported_at"]
     );
 
-    // --- reading it back, through the part's own route ---------------------------
     let (_, read) = gate.get(&format!("/api/reports/{id}"), Some(&writer));
     assert_eq!(
         parse(&read)["title"],
@@ -96,7 +90,6 @@ fn intake_masks_records_the_reporter_and_limits_per_subject() {
     let (c, _) = gate.get(&format!("/api/reports/{id}"), None);
     assert_eq!(c, 401, "reading a report with no bearer must be 401");
 
-    // --- the filter, which is an index lookup and not a scan ----------------------
     let (_, list) = gate.get("/api/reports?component=search", Some(&writer));
     let parsed = parse(&list);
     let ids: Vec<&str> = parsed["reports"]
@@ -111,11 +104,9 @@ fn intake_masks_records_the_reporter_and_limits_per_subject() {
         "a filter matching nothing must answer an empty list, not everything"
     );
 
-    // --- and the limit, which counts what was accepted ---------------------------
-    //
-    // A subject of its own: the key is the principal's subject, so counting `burst`
-    // cannot be disturbed by what `ada` did above — and if a part keys the limiter on
-    // something else (a path, a tenant, nothing at all), this is where that shows.
+    // --- and the limit, which counts what was accepted ---
+    // A subject of its own, so counting `burst` is not disturbed by `ada`; a limiter keyed on something
+    // else (a path, a tenant, nothing) shows here.
     let burst = token(&gate, "burst", None);
     for i in 1..=3 {
         let (c, _) = gate.post(
@@ -143,9 +134,7 @@ fn intake_masks_records_the_reporter_and_limits_per_subject() {
         "retry_after must be the seconds the limiter reported: {d}"
     );
 
-    // The other subject is unaffected — a limiter keyed on the wrong thing locks
-    // everyone out at once, and a gate that only ever used one subject would call that
-    // a pass.
+    // The other subject is unaffected: a limiter keyed on the wrong thing locks everyone out at once.
     let (c, _) = gate.post(
         "/api/reports",
         Some(&writer),
@@ -159,9 +148,8 @@ fn the_audit_ledger_is_by_trace_capped_and_not_public() {
     let Some(gate) = start(&[]) else { return };
     let t = token(&gate, "ada", None);
 
-    // Two traces: one to write under, one to ask under. Asking under the trace being
-    // asked about would make the answer include the question, and the count race that
-    // follows would be nobody's fault.
+    // Two traces: one to write under, one to ask under (asking under the trace asked about would make
+    // the answer include the question).
     const TRACE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1";
     const OTHER: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2";
 
@@ -216,8 +204,8 @@ fn the_audit_ledger_is_by_trace_capped_and_not_public() {
         );
     }
 
-    // A trace nobody used is an empty list, not everything. `by-trace` returning the
-    // whole log looks like a working filter until the first real incident.
+    // A trace nobody used is an empty list, not everything (`by-trace` returning the whole log looks
+    // like a working filter until the first real incident).
     let unused = "c".repeat(32);
     let (_, raw) = gate.get(&format!("/api/audit?trace={unused}"), Some(&t));
     assert!(

@@ -1,10 +1,5 @@
-//! The `docsearch:agent` library gate, ported from
-//! `components/doc-search-domain/e2e-library.sh`.
-//!
-//! `e2e-answer.sh` wants a model on :8787. `e2e-stepup.sh` needs a TOTP code computed
-//! from the secret the part provisions, which the shell gate does with `python3`'s
-//! `hmac`+`hashlib.sha1`; the reconciler has `sha2` and not `sha1`, so that one stays
-//! a shell gate until somebody decides whether an HMAC-SHA1 dependency is worth it.
+//! The `docsearch:agent` library gate, ported from `components/doc-search-domain/e2e-library.sh`.
+//! `e2e-answer.sh` wants a model on :8787.
 
 mod gatelib;
 use gatelib::{field, Gate};
@@ -37,7 +32,6 @@ fn a_document_is_findable_by_its_body_and_the_tag_filter_is_the_index() {
         "text":"The webhook signer keeps two keys so an in-flight request signed with the old one still verifies during the overlap window.",
         "tag":"security"});
 
-    // --- the refusals ---------------------------------------------------------------
     let (c, _) = gate.post("/api/docs", None, doc.clone());
     assert_eq!(c, 401, "filing a document with no bearer must be 401");
     let ro = token(&gate, "reader", Some(json!(["docs:read"])));
@@ -46,7 +40,6 @@ fn a_document_is_findable_by_its_body_and_the_tag_filter_is_the_index() {
     let (c, _) = gate.post("/api/docs", Some(&w), json!({"title":"","text":"x","tag":"y"}));
     assert_eq!(c, 400, "an empty title must be 400 invalid_doc");
 
-    // --- a document goes in, and is findable by its BODY ---------------------------
     let (_, created) = gate.post("/api/docs", Some(&w), doc);
     let id = field(&created, "id");
     assert!(!id.is_empty(), "POST /api/docs returned no id");
@@ -97,8 +90,7 @@ fn a_document_is_findable_by_its_body_and_the_tag_filter_is_the_index() {
     );
     assert_eq!(parse(&raw)["hits"], json!([]), "tag=ops must not match a security document: {raw}");
 
-    // A question the library cannot answer is an empty list, not an error: an empty
-    // library and a bad question are the same shape to a caller.
+    // A question the library cannot answer is an empty list, not an error.
     let (_, raw) = gate.get("/api/search?q=sourdough", Some(&w));
     assert_eq!(parse(&raw)["hits"], json!([]), "a query matching nothing answered hits");
 

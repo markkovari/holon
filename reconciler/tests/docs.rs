@@ -1,25 +1,12 @@
 //! Every relative link in the repository's markdown points at something.
 //!
-//! Written after moving 35 files out of the repository root, which rewrote 121
-//! files' references and 53 links inside the moved documents. That went fine, but
-//! nothing would have caught it if it had not: the one broken link found in the
-//! process — ADR-0057 pointing at ADR-0032 under a name it lost long ago — had
-//! been broken for as long as the rename, silently.
+//! Documentation is load-bearing: ADRs are the method (recorded, superseded in place,
+//! cross-referenced), so a dead link breaks the chain that makes one readable, and `docs/apps/` is
+//! how anybody finds a showcase.
 //!
-//! Documentation here is load-bearing in an unusual way. The ADRs are the method:
-//! a decision is recorded, superseded in place and cross-referenced, so a link
-//! that goes nowhere breaks the chain that makes an ADR readable at all. And the
-//! `docs/apps/` index is how anybody finds a showcase now.
-//!
-//! Scope is deliberately narrow: links between files in the repo, and the section
-//! anchors on them. Not URLs — a test that fails because a website moved is a test
-//! that gets disabled.
-//!
-//! Anchors were out of scope until `CONTEXT.md` was found linking the word
-//! "interface" at `#capability`, a heading that exists and is the wrong one. That
-//! is worse than a dead link: it lands somewhere plausible, so nobody reports it.
-//! The URL argument for skipping them never applied — a heading in a file in this
-//! repository is exactly as checkable as a path to it.
+//! Scope: links between files in the repo, and the section anchors on them. Not URLs (a test failing
+//! because a website moved gets disabled). Anchors are included because a link to a heading that
+//! exists but is the wrong one lands somewhere plausible, so nobody reports it.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -51,7 +38,7 @@ fn markdown_files(root: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// `[text](target)` — targets only, and only the ones that name a file.
+/// `[text](target)`: targets only, and only the ones that name a file.
 fn links(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let bytes: Vec<char> = text.chars().collect();
@@ -86,8 +73,8 @@ fn links(text: &str) -> Vec<String> {
     out
 }
 
-/// GitHub's heading slug: lowercase, drop everything that is not alphanumeric,
-/// space or hyphen, then spaces to hyphens.
+/// GitHub's heading slug: lowercase, drop everything but alphanumerics, spaces and hyphens, then
+/// spaces to hyphens.
 fn slug(heading: &str) -> String {
     heading
         .trim()
@@ -99,8 +86,7 @@ fn slug(heading: &str) -> String {
         .replace(' ', "-")
 }
 
-/// Every anchor a reader could land on in one file: its headings, plus any
-/// explicit `id="…"`/`name="…"` a hand-written HTML anchor declares.
+/// Every anchor a reader could land on in one file: its headings, plus explicit `id="…"`/`name="…"`.
 fn anchors(text: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     let mut fenced = false;
@@ -141,8 +127,7 @@ fn every_relative_markdown_link_resolves() {
     let mut checked = 0usize;
     let mut anchors_checked = 0usize;
 
-    // Read once. Anchor checking needs the TARGET file's headings, and the docs
-    // tree is crossed by enough links that re-reading per link is wasteful.
+    // Read once: anchor checking needs the TARGET file's headings, and re-reading per link is wasteful.
     let files = markdown_files(&root);
     let anchors_of: std::collections::BTreeMap<PathBuf, BTreeSet<String>> = files
         .iter()
@@ -154,9 +139,8 @@ fn every_relative_markdown_link_resolves() {
         let dir = file.parent().unwrap_or(&root);
         let from = file.strip_prefix(&root).unwrap_or(file).display().to_string();
         for target in links(&text) {
-            // Not ours to check: the web and mail. `javascript:` appears inside a
-            // document ABOUT sanitising it, in link syntax on purpose. Schemes are
-            // not paths.
+            // Not ours to check: the web and mail. `javascript:` appears in a document ABOUT
+            // sanitising it. Schemes are not paths.
             if target.starts_with("http")
                 || target.starts_with("mailto:")
                 || target.starts_with("javascript:")
@@ -168,7 +152,6 @@ fn every_relative_markdown_link_resolves() {
                 None => (target.trim(), None),
             };
 
-            // Where the anchor, if there is one, has to exist.
             let target_file = if path_part.is_empty() {
                 file.clone()
             } else {
@@ -182,8 +165,7 @@ fn every_relative_markdown_link_resolves() {
             };
 
             let Some(anchor) = anchor.filter(|a| !a.is_empty()) else { continue };
-            // Only markdown has headings we can read. A `#L42` into source, or an
-            // anchor on anything else, is not ours to resolve.
+            // Only markdown has headings we can read; a `#L42` into source is not ours to resolve.
             let Some(have) = anchors_of.get(&target_file) else { continue };
             anchors_checked += 1;
             if !have.contains(&anchor.to_lowercase()) {
@@ -202,31 +184,18 @@ fn every_relative_markdown_link_resolves() {
     println!("  {checked} relative links and {anchors_checked} anchors, all of them resolve");
 }
 
-/// Every `just <recipe>` a document tells you to run is a recipe that exists.
+/// Every `just <recipe>` a document tells you to run is a recipe that exists. A missing recipe fails
+/// with `Justfile does not contain recipe`, which reads as "your checkout is wrong" rather than "this
+/// document is."
 ///
-/// Four did not. `just k8s-eshop`, `just k8s-jobs`, `just k8s-collapse` and
-/// `just host-platform-live` all went with the Kubernetes lane when this
-/// repository stopped being connected to wasmCloud, and four documents kept
-/// telling people to run them — including a showcase page's own "Run it" block.
-///
-/// Not the same failure as a broken link, which at least announces itself. A
-/// missing recipe fails with `Justfile does not contain recipe`, which reads as
-/// "your checkout is wrong" rather than "this document is."
-///
-/// ADR BODIES are exempt. An ADR is a record of what was decided when it was
-/// decided, and rewriting one so its commands still run would falsify the record;
-/// the index and the operational docs are the ones a person acts on today.
+/// ADR BODIES are exempt: an ADR records what was decided when, and rewriting it so its commands
+/// still run would falsify the record.
 #[test]
 fn every_just_recipe_a_document_names_exists() {
     let root = repo_root();
-    // The Justfile AND everything it imports. `import` splices a file in, so a
-    // recipe in `just/host.just` is reached as `just host-serve` exactly as it was
-    // when it lived here — and a parser that reads only the root file concludes
-    // that two thirds of the documented commands do not exist.
-    //
-    // Read off the `import` lines rather than by globbing `just/`: a fragment
-    // nobody imports is not part of the interface, and finding it here would make
-    // this test agree with a file that `just` itself ignores.
+    // The Justfile AND everything it imports (`import` splices a file in, so `just/host.just` recipes
+    // are reached as `just host-serve`). Read off the `import` lines, not by globbing `just/`: a
+    // fragment nobody imports is not part of the interface.
     let Ok(justfile) = std::fs::read_to_string(root.join("Justfile")) else {
         // Justfile was eliminated in favor of programmatic build system (cargo xtask / build.zig)
         return;
@@ -241,7 +210,6 @@ fn every_just_recipe_a_document_names_exists() {
         all.push_str(&text);
     }
 
-    // A recipe is a line starting at column zero with `name:` or `name arg:`.
     let recipes: BTreeSet<String> = all
         .lines()
         .filter(|l| !l.starts_with(char::is_whitespace) && !l.starts_with('#'))
@@ -273,13 +241,12 @@ fn every_just_recipe_a_document_names_exists() {
                 hay = &hay[at + 5..];
                 let word: String =
                     hay.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
-                // `just <app>-ui` style placeholders and ordinary English after the
-                // word "just" are not recipe names; a hyphen or a known prefix is
-                // what distinguishes an instruction from a sentence.
+                // `just <app>-ui` placeholders and English after "just" are not recipe names; a hyphen
+                // or known prefix distinguishes an instruction from a sentence.
                 if word.len() < 3
                     || !word.contains('-')
                     || word.ends_with('-')
-                    // `just --list` is a flag. A recipe name never starts with one.
+                                        // `just --list` is a flag; a recipe name never starts with one.
                     || word.starts_with('-')
                 {
                     continue;
@@ -301,19 +268,11 @@ fn every_just_recipe_a_document_names_exists() {
 
 /// Nothing in this repository is pinned to one machine's filesystem.
 ///
-/// Three scripts were. `goal-demo.sh` — offered in `README.md` as *the* one
-/// command that takes a goal to a pull request — named one person's home
-/// directory, so it was one command that worked for exactly one person.
-///
-/// The other two were worse than broken. `bench/adversarial/run.sh` and
-/// `bench/idle/run.sh` began with `cd /Users/…/experiments/comp`: a SIBLING
-/// checkout of this repository. `just adversarial` therefore built artifacts here
-/// and measured the ones over there, and reported a number. A benchmark reading
-/// the wrong tree is worse than one that fails, because it produces a result
-/// somebody will quote.
-///
-/// `bench/idle/run.sh` also wrote to a scratch directory belonging to a single
-/// editor session on a single machine, which stopped existing when it ended.
+/// `goal-demo.sh`, offered in `README.md` as *the* one command from goal to pull request, named one
+/// person's home directory. `bench/adversarial/run.sh` and `bench/idle/run.sh` began with
+/// `cd /Users/…/experiments/comp`, a SIBLING checkout, so benchmarks built here and measured there and
+/// reported a number somebody would quote. `bench/idle/run.sh` also wrote to one editor session's
+/// scratch directory.
 #[test]
 fn no_script_is_pinned_to_one_machine() {
     let root = repo_root();
@@ -335,10 +294,8 @@ fn no_script_is_pinned_to_one_machine() {
             }
             let is_script =
                 path.extension().is_some_and(|x| x == "sh" || x == "mjs" || x == "py" || x == "rs");
-            // `just/*.just` too: the Justfile was split by concern, and a hard-coded
-            // path in a fragment is pinned to one machine exactly as much as one in
-            // the root file. Matching on the extension rather than listing the four
-            // fragments, so a fifth is covered the day it is added.
+            // `just/*.just` too: a hard-coded path in a fragment is pinned to one machine as much as
+            // one in the root. Matched on the extension so a fifth fragment is covered.
             let is_just = rel == "Justfile" || rel.ends_with(".just");
             if !(is_script || is_just) {
                 continue;
@@ -351,12 +308,12 @@ fn no_script_is_pinned_to_one_machine() {
             checked += 1;
             for (i, line) in text.lines().enumerate() {
                 let t = line.trim();
-                // A comment may quote one — that is how the reason gets recorded.
+                // A comment may quote one; that is how the reason gets recorded.
                 if t.starts_with("//") || t.starts_with('#') || t.starts_with("///") {
                     continue;
                 }
-                // `/Users/` and `/home/` are somebody's machine. `/private/tmp/claude-…`
-                // is one editor session's scratch directory.
+                // `/Users/` and `/home/` are somebody's machine; `/private/tmp/claude-…` is one
+                // editor session's scratch directory.
                 for needle in ["/Users/", "/home/", "/private/tmp/claude-"] {
                     if line.contains(needle) {
                         pinned.push(format!(

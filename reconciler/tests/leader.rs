@@ -1,15 +1,9 @@
-//! Two reconcilers, one lattice. Exactly one acts, and when it dies the other
-//! takes over.
+//! Two reconcilers, one lattice. Exactly one acts, and when it dies the other takes over.
 //!
-//! The reconciler was the last control component with no standby — the ingress
-//! has had one since ADR-0029, and `tests/ha.rs` asserts it. If this process
-//! died, the fleet kept serving whatever it already ran and silently stopped
-//! adapting: no scale-up, no re-placement after a node loss, no distribution.
-//!
-//! Running two was not a workaround, because scale-DOWN waits for a surplus to
-//! persist across `settle_passes` consecutive passes and that counter lives in
-//! each process's `Hysteresis`. Two loops count separately, disagree about when
-//! the cooldown elapsed, and both then issue stops.
+//! The reconciler was the last control component with no standby (the ingress has one since ADR-0029): a
+//! dead one left the fleet serving but silently not adapting. Running two was not a workaround, because
+//! scale-DOWN waits for a surplus to persist across `settle_passes` and that counter lives per process, so
+//! two loops would disagree about when the cooldown elapsed and both issue stops.
 
 use std::time::Duration;
 
@@ -41,8 +35,7 @@ fn a_second_reconciler_stands_by_and_takes_over_when_the_first_dies() {
         "the only reconciler never took the lease:\n{first}"
     );
 
-    // A second one must NOT reconcile. It says who it is waiting for, which is
-    // the difference between a standby and a process that is merely broken.
+    // A second one must NOT reconcile. It says who it is waiting for (a standby, not a broken process).
     fleet.second_reconciler("b");
     let standby =
         wait_for(|| fleet.reconciler_log_named("b"), "standing by", Duration::from_secs(30));
@@ -57,8 +50,8 @@ fn a_second_reconciler_stands_by_and_takes_over_when_the_first_dies() {
         "the standby sent commands while another process held the lease:\n{standby}"
     );
 
-    // Kill the leader. The lease is 6s here (30s in production), so the standby
-    // should take over within that plus one interval.
+    // Kill the leader. The lease is 6s here (30s in production), so the standby takes over within that
+    // plus one interval.
     fleet.kill_first_reconciler();
     let promoted =
         wait_for(|| fleet.reconciler_log_named("b"), "is now the leader", Duration::from_secs(45));
@@ -68,8 +61,7 @@ fn a_second_reconciler_stands_by_and_takes_over_when_the_first_dies() {
          unreconciled, which is exactly what this exists to prevent:\n{promoted}"
     );
 
-    // And it is a working reconciler, not just a process holding a lease: the
-    // fleet still answers, which means the app it re-derived is still placed.
+    // And it is a working reconciler, not just a lease holder: the fleet still answers.
     assert!(
         fleet.serves("shop.eve.test", Duration::from_secs(60)),
         "the fleet stopped serving after failover"

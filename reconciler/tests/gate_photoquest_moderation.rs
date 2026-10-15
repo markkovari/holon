@@ -11,10 +11,8 @@
 //!   entered in a published competition. Reporting a photo you cannot see is a 404,
 //!   the same answer as a photo that does not exist.
 //!
-//! The report lifecycle needs a photo somebody else can see, which only
-//! `competitions.rs` can arrange. While that module still answers 501 the
-//! assertions that depend on it are skipped LOUDLY (see `competition_entry`), and
-//! everything else still runs.
+//! The report lifecycle needs a photo somebody else can see, which only `competitions.rs` can arrange.
+//! While that module answers 501 the dependent assertions are skipped LOUDLY (see `competition_entry`).
 
 mod gatelib;
 mod photoquest_support;
@@ -22,8 +20,8 @@ use gatelib::{field, Gate};
 use photoquest_support::*;
 use serde_json::{json, Value};
 
-/// Plan, complete and evaluate one photo for `token`; its id. `sha` makes each
-/// file distinct, so a competition's same-bytes rule never trips.
+/// Plan, complete and evaluate one photo for `token`; its id. `sha` makes each file distinct, so a
+/// competition's same-bytes rule never trips.
 fn evaluated_photo(gate: &Gate, token: &str, sha: &str) -> String {
     let (code, out) = gate.post(
         "/api/photos",
@@ -51,8 +49,8 @@ fn evaluated_photo(gate: &Gate, token: &str, sha: &str) -> String {
     id
 }
 
-/// A published competition, open now, created by `curator`, with `photo` entered
-/// by `entrant`. `None` while `competitions.rs` cannot do that yet.
+/// A published competition, open now, created by `curator`, with `photo` entered by `entrant`. `None`
+/// while `competitions.rs` cannot do that yet.
 fn competition_entry(gate: &Gate, curator: &str, entrant: &str, photo: &str) -> Option<String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -118,7 +116,6 @@ fn admins_moderate_photos_reports_accounts_and_roles() {
         return;
     };
 
-    // --- accounts: the bootstrap admin, and nobody can ask for a role --------------
     let mut subjects = std::collections::HashMap::new();
     let mut account = |who: &str, email: &str, body_role: Option<&str>| -> String {
         let mut body = json!({"email": email, "password": "correct horse"});
@@ -146,7 +143,6 @@ fn admins_moderate_photos_reports_accounts_and_roles() {
     assert!(!r.contains(&"admin".into()), "register handed out admin on request: {r:?}");
     assert!(r.contains(&"photographer".into()), "everyone is a photographer: {r:?}");
 
-    // --- only admins reach /api/admin ----------------------------------------------
     gatelib::assert_unauthenticated(&gate, "GET", "/api/admin/users", None);
     for (method, path, body) in [
         ("GET", "/api/admin/users".to_string(), None),
@@ -171,7 +167,6 @@ fn admins_moderate_photos_reports_accounts_and_roles() {
     assert_eq!(ada_row["suspended"], false, "{ada_row}");
     assert!(ada_row["roles"].as_array().is_some(), "{ada_row}");
 
-    // --- roles: grants reach the grantee's existing session -------------------------
     let roles_path = |who: &str| format!("/api/admin/users/{}/roles", sub(who));
     let (code, out) = gate.post(&roles_path("ada"), Some(&root), json!({"grant": "curator"}));
     assert_eq!(code, 200, "{out}");
@@ -206,7 +201,6 @@ fn admins_moderate_photos_reports_accounts_and_roles() {
     assert_eq!(code, 200);
     assert!(!roles_of(&gate, &bob).contains(&"admin".into()));
 
-    // --- suspension --------------------------------------------------------------------
     let cats_photo = evaluated_photo(&gate, &cat, &"c1".repeat(32));
     let suspend = |who: &str| format!("/api/admin/users/{}/suspend", sub(who));
     let (code, out) = gate.post(&suspend("cat"), Some(&root), json!({}));
@@ -260,7 +254,6 @@ fn admins_moderate_photos_reports_accounts_and_roles() {
     );
     assert_eq!(code, 201, "unsuspending must restore uploads: {out}");
 
-    // --- reports: own photo, and a photo nobody else can see ---------------------------
     let bobs = evaluated_photo(&gate, &bob, &"b1".repeat(32));
     let report = |token: &str, reason: &str| {
         gate.post(&format!("/api/photos/{bobs}/reports"), Some(token), json!({"reason": reason}))
@@ -274,7 +267,6 @@ fn admins_moderate_photos_reports_accounts_and_roles() {
         gate.post(&format!("/api/photos/NOPE{run}/reports"), Some(&ada), json!({"reason": "spam"}));
     assert_eq!(code, 404, "{out}");
 
-    // --- reports lifecycle (needs competitions.rs) --------------------------------------
     let entered = competition_entry(&gate, &ada, &bob, &bobs);
     let mut open_reports = Vec::new();
     if entered.is_some() {
@@ -330,7 +322,6 @@ fn admins_moderate_photos_reports_accounts_and_roles() {
         open_reports = vec![cats, field(&out, "id")];
     }
 
-    // --- hide / unhide ----------------------------------------------------------------
     let hide = format!("/api/admin/photos/{bobs}/hide");
     let (code, out) = gate.post(&hide, Some(&root), json!({}));
     assert_eq!(code, 400, "hiding needs a reason: {out}");

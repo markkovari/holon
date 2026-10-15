@@ -1,14 +1,9 @@
-//! `compose_to` writes into a content-addressed cache. Several callers may want the
-//! same artifact at once — `tests/publish.rs` has three tests that each start a
-//! control plane, and `cargo test` runs them as threads in one process.
+//! `compose_to` writes into a content-addressed cache that several callers may want at once
+//! (`tests/publish.rs` has three tests each starting a control plane, as threads in one process).
 //!
-//! CI caught the consequence, once the harness started reporting why a host died:
-//!
-//!     Error: expected at least one module field
-//!          --> components/target/composed/platform-domain.8bad9a2a41a087f0.wasm:1:1
-//!
-//! An EMPTY artifact. `fs::write` creates the file and then fills it, so a caller
-//! checking `is_file()` in that window is handed a path to nothing.
+//! CI caught the consequence as `Error: expected at least one module field` on an EMPTY artifact:
+//! `fs::write` creates the file and then fills it, so a caller checking `is_file()` in that window is
+//! handed a path to nothing.
 
 use std::sync::{Arc, Barrier};
 
@@ -25,8 +20,7 @@ fn composing_the_same_thing_from_several_threads_never_yields_a_partial_file() {
         return;
     }
 
-    // A fresh directory, so every thread races for the FIRST write rather than
-    // finding the answer already there.
+    // A fresh directory, so every thread races for the FIRST write.
     let dir = tempfile::tempdir().unwrap();
     let threads = 8;
     let barrier = Arc::new(Barrier::new(threads));
@@ -58,8 +52,7 @@ fn composing_the_same_thing_from_several_threads_never_yields_a_partial_file() {
         assert_eq!(bytes[6], 0x01, "{} is not a component", path.display());
     }
 
-    // And nothing is left behind: a temporary file in the cache directory would be
-    // mistaken for an artifact by anything that globs it.
+    // And nothing is left behind: a temporary file in the cache directory would be mistaken for an artifact.
     let strays: Vec<String> = std::fs::read_dir(dir.path())
         .unwrap()
         .filter_map(|e| e.ok())

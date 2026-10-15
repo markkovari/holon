@@ -1,36 +1,20 @@
 //! Nobody writes an unbounded payload in one call again.
 //!
-//! `wasi:io`'s `blocking-write-and-flush` accepts at most 4096 bytes and TRAPS
-//! above that instead of returning an error. A component that hands it a whole
-//! response body dies mid-write, and what the caller sees is a closed connection:
-//! `hyper::Error(IncompleteMessage)` at the host, `connection closed before
-//! message completed` at the ingress, and — three layers up — a JSON parse error
-//! about an empty string. Nothing in that chain mentions a size or a write.
+//! `wasi:io`'s `blocking-write-and-flush` accepts at most 4096 bytes and TRAPS above that instead of
+//! returning an error, so a component writing a whole response body dies mid-write and the caller
+//! sees only a closed connection. Small payloads never hit it, so it waited for a contract file to
+//! grow past 4096 bytes.
 //!
-//! It cost four failed starts of a real run to find, and it was in the repository
-//! from the beginning: 30 of 91 write sites, including the router of the app the
-//! run was building. Small payloads never hit it, so it waited for a contract file
-//! to grow from 3645 bytes to 4573.
+//! Accepted shapes: `write_all(&stream, bytes)` (asks `check-write`, flushes once; for new code), a
+//! `.chunks(4096)` loop, or an `ALLOWED` entry for a short literal that cannot grow.
 //!
-//! Two shapes are accepted, and a third is tolerated by name:
-//!
-//!   * `write_all(&stream, bytes)` — the helper, which asks `check-write` how much
-//!     the stream will take and flushes once. This is what new code should use.
-//!   * a `.chunks(4096)` loop — older, correct, more flushes than it needs.
-//!   * anything in `ALLOWED`, for a payload that is a short literal and cannot grow.
-//!
-//! This is a lint, not a law: if a write is provably small, add it to `ALLOWED`
-//! with the reason. What must not happen is a new unbounded write appearing by
-//! accident, which is exactly how the last one arrived.
+//! This is a lint, not a law: add provably small writes to `ALLOWED` with the reason.
 
 use std::path::PathBuf;
 
 use comp_reconciler::fleet::repo_root;
 
-/// Write sites that may stay as they are, with why. `<crate>/<file>:<payload>`.
-///
-/// Empty today. It exists so that a genuinely bounded write — a fixed protocol
-/// preamble, say — has somewhere to go other than a workaround.
+/// Write sites that may stay as they are, with why. `<crate>/<file>:<payload>`. Empty today.
 const ALLOWED: &[(&str, &str)] = &[];
 
 /// Read loops that may keep treating a failed read as the end of the body.
@@ -86,8 +70,7 @@ fn no_component_writes_an_unbounded_payload_in_one_call() {
             if trimmed.starts_with("//") || trimmed.starts_with("///") {
                 continue;
             }
-            // A chunking loop can be a few lines above the call itself, so the
-            // window looks back rather than at the line alone.
+            // A chunking loop can be a few lines above the call, so the window looks back.
             let from = i.saturating_sub(4);
             if lines[from..=i].iter().any(|l| l.contains("chunks(")) {
                 continue;
@@ -115,32 +98,21 @@ fn no_component_writes_an_unbounded_payload_in_one_call() {
 
 /// A failed read is not the end of the body.
 ///
-/// `wasi:io`'s `blocking-read` signals end-of-body with `Err(StreamError::Closed)`
-/// and a genuine failure with `Err(StreamError::LastOperationFailed)`. Collapsing
-/// both into `break` — which 53 of 55 `read_body` copies did — returns a TRUNCATED
-/// body as if it were complete. For a handler that parses, that is a confusing
-/// 400; for `upload-drop` or `artifact-probe`, which store what they read, it is a
-/// half a file accepted as whole.
-///
-/// It is the same silent truncation as the write side, in the other direction, and
-/// it was found by asking the question that fixed the write side: the 55 copies of
-/// this function — do they agree? Two already distinguished the cases
-/// (`platform-domain`, `studio-domain`), which is how we know the shape is right
-/// rather than invented here.
+/// `wasi:io`'s `blocking-read` signals end-of-body with `Err(StreamError::Closed)` and a failure with
+/// `Err(StreamError::LastOperationFailed)`. Collapsing both into `break` (53 of 55 `read_body` copies
+/// did) returns a TRUNCATED body as complete: for `upload-drop` or `artifact-probe`, half a file
+/// accepted as whole. `platform-domain` and `studio-domain` already distinguished them.
 #[test]
 fn a_read_loop_tells_end_of_body_from_a_failed_read() {
     let mut sloppy = Vec::new();
 
-    // The definition, first and by name. 47 components expand it, so scanning it
-    // only because `components/guestio` happens to be a guest source would make the
-    // guard depend on a coincidence — the same reasoning as the write side.
+    // The definition, first and by name: scanning it only because `components/guestio` is a guest
+    // source would depend on a coincidence.
     let macro_src = repo_root().join("components/guestio/src/lib.rs");
     match std::fs::read_to_string(&macro_src) {
         Ok(text) => {
-            // `_named`, not `guest_read_body`: that one is a thin alias now, so the
-            // loop this checks lives one macro further down. A lint pointed at the
-            // alias reads its two-line body, finds no `StreamError::Closed`, and
-            // fails for the wrong reason — which is how this was found.
+            // `_named`, not `guest_read_body`: that is a thin alias, and a lint pointed at it finds no
+            // `StreamError::Closed` and fails for the wrong reason.
             let body: String = text
                 .split("macro_rules! guest_read_body_named")
                 .nth(1)
@@ -160,8 +132,8 @@ fn a_read_loop_tells_end_of_body_from_a_failed_read() {
                     "  components/guestio: the macro does not bound what it reads".to_string(),
                 );
             }
-            // The p3 loop has no `StreamError`: a transfer that failed partway is
-            // reported on the trailers future, so that is what it must check.
+            // The p3 loop has no `StreamError`: a transfer that failed partway is reported on the
+            // trailers future, so that is what it must check.
             let p3: String = text
                 .split("macro_rules! guest_p3_read_body_named")
                 .nth(1)
@@ -225,17 +197,11 @@ fn a_read_loop_tells_end_of_body_from_a_failed_read() {
     );
 }
 
-/// The helper itself, wherever it appears, has to be the real one.
+/// The helper itself, wherever it appears, has to be the real one: a `write_all` looping on a
+/// constant would reintroduce flush-per-4KB, and one forgetting `Ok(0)` would spin.
 ///
-/// A `write_all` that loops on a constant would pass the test above while
-/// reintroducing the flush-per-4KB it was written to avoid — and one that forgets
-/// the `Ok(0)` case would spin instead of waiting.
-///
-/// Most components no longer write their own: `guestio::guest_write_all!()` expands
-/// it, and 49 byte-identical copies collapsed into that one definition. So the
-/// definition is checked FIRST and by name — without this, a file that stopped
-/// containing `fn write_all(` would simply stop being checked, and the guard would
-/// have lapsed at exactly the moment it became load-bearing for fifty crates.
+/// `guestio::guest_write_all!()` expands it for most components, so the definition is checked FIRST
+/// and by name, or the guard would lapse the moment a file stopped containing `fn write_all(`.
 #[test]
 fn every_write_all_asks_the_stream_how_much_it_will_take() {
     let mut wrong = Vec::new();
@@ -260,8 +226,7 @@ fn every_write_all_asks_the_stream_how_much_it_will_take() {
                 );
             }
         }
-        // Not "no macro, nothing to check": fifty components expand it, so its
-        // absence is a broken tree rather than a component that opted out.
+        // Not "no macro, nothing to check": its absence is a broken tree, not an opt-out.
         Err(e) => wrong.push(format!("  components/guestio/src/lib.rs is unreadable ({e})")),
     }
 
@@ -283,11 +248,8 @@ fn every_write_all_asks_the_stream_how_much_it_will_take() {
     assert!(wrong.is_empty(), "write_all is not the real one in:\n{}", wrong.join("\n"));
 }
 
-/// Components whose `read_body` may grow without a ceiling, and why.
-///
-/// Much shorter than `READS_ALLOWED`, because "a truncated body is harmless here"
-/// is a claim about one handler's data and "an unbounded body is harmless here" is
-/// a claim about the whole process's memory.
+/// Components whose `read_body` may grow without a ceiling, and why. Shorter than `READS_ALLOWED`:
+/// "unbounded is harmless" is a claim about the whole process's memory.
 const UNBOUNDED_ALLOWED: &[(&str, &str)] = &[
     (
         "agent-probe",
@@ -303,27 +265,16 @@ const UNBOUNDED_ALLOWED: &[(&str, &str)] = &[
 
 /// A request body is read into memory, so something has to say how much.
 ///
-/// 38 components declared a `MAX_BODY_BYTES` and 17 did not, which is an
-/// inconsistency rather than a decision: `comp-host` does not bound request bodies
-/// either, so an uncapped read grows until the store's memory cap traps the
-/// component and the connection closes with no status at all. `upload-drop` — an
-/// app whose entire purpose is accepting files — was one of the 17.
-///
-/// The capped ones already say it best in their own comment: *a ceiling, not a
-/// policy*. 16 MiB is not a considered limit on what any particular handler should
-/// accept; it is the difference between refusing a body and dying of one.
+/// `comp-host` does not bound request bodies, so an uncapped read grows until the store's memory cap
+/// traps the component and the connection closes with no status (`upload-drop` was uncapped). The
+/// ceiling is *a ceiling, not a policy*: the difference between refusing a body and dying of one.
 #[test]
 fn a_body_read_into_memory_has_a_ceiling() {
     let mut unbounded = Vec::new();
     for path in guest_sources() {
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        // Both spellings. 47 components stopped containing the literal when the
-        // body moved into `guestio::guest_read_body!`, and a check keyed only on
-        // the definition would have dropped them out of scope at exactly the
-        // moment one definition started serving all of them.
-        // `guest_read_body` without the `!` on purpose: it matches both the bytes
-        // macro and `guest_read_body_text!`, and a check that named only the first
-        // would skip every component using the second.
+        // Both spellings: the body moved into `guestio::guest_read_body!`. `guest_read_body` has no
+        // `!` on purpose, so it matches both the bytes macro and `guest_read_body_text!`.
         if !text.contains("fn read_body") && !text.contains("guest_read_body") {
             continue;
         }
@@ -352,24 +303,12 @@ fn a_body_read_into_memory_has_a_ceiling() {
 
 /// A percent escape is a BYTE, and nothing may decode one straight into a `char`.
 ///
-/// 28 decoders existed across the pool under six names, and seven of them were the
-/// one-pass shape: `out.push(b as char)`, which reads a decoded byte as a Unicode
-/// code point. Two separate bugs came out of it, and only the first is obvious:
-///
-///   * every multi-byte UTF-8 sequence came back as its bytes reinterpreted as
-///     Latin-1 — `caf%C3%A9` decoded to `cafÃ©`.
-///
-///   * `u8::from_str_radix` accepts a leading sign, so `%+a` parsed as `+0x0a` and
-///     emitted a NEWLINE where the correct shape leaves the literal text `% a`.
-///     That is a caller injecting a control byte, not a display glitch. Found by
-///     fuzzing the two shapes against each other — 200 000 inputs, 699 divergences
-///     on pure ASCII, all of this form.
-///
-/// ASCII text decodes identically under both, which is exactly why it survived: it
-/// is correct for the inputs a test written in English would use.
-///
-/// `guestfmt::percent_decode` is the byte-correct one, and replacing `+` before the
-/// radix call is what closes the second hole rather than only the first.
+/// Seven of 28 decoders used `out.push(b as char)`, which reads a decoded byte as a code point:
+///   * multi-byte UTF-8 came back as Latin-1 (`caf%C3%A9` decoded to `cafÃ©`);
+///   * `u8::from_str_radix` accepts a leading sign, so `%+a` parsed as `+0x0a` and emitted a
+///     NEWLINE (a caller injecting a control byte).
+///     ASCII decodes identically under both, which is why it survived. `guestfmt::percent_decode` is the
+///     byte-correct one; replacing `+` before the radix call closes the second hole.
 #[test]
 fn no_component_decodes_a_percent_escape_into_a_char() {
     let mut wrong = Vec::new();
@@ -403,17 +342,9 @@ fn no_component_decodes_a_percent_escape_into_a_char() {
     );
 }
 
-/// An `Authorization` scheme name is matched case-insensitively.
-///
-/// RFC 7235 §2.1 says the scheme name is case-insensitive, and 22 of 24 hand-written
-/// copies matched the literal `"Bearer "`. A client sending `authorization: bearer
-/// <token>` — which is legal, and which some HTTP libraries normalise to — got a 401
-/// with nothing to explain it. Sixteen also left whitespace attached to the
-/// credential, so one trailing space authenticated against some components and not
-/// others.
-///
-/// `guestio::guest_bearer!()` finds the header and `guestfmt::bearer_token` parses
-/// the value, which is where the unit tests for all of this live. This catches a
+/// An `Authorization` scheme name is matched case-insensitively (RFC 7235 §2.1). 22 of 24 hand-written
+/// copies matched the literal `"Bearer "`, and sixteen left whitespace on the credential.
+/// `guestio::guest_bearer!()` and `guestfmt::bearer_token` are the shared path; this catches a
 /// component going back to doing it by hand.
 #[test]
 fn no_component_matches_a_bearer_scheme_case_sensitively() {
@@ -425,8 +356,7 @@ fn no_component_matches_a_bearer_scheme_case_sensitively() {
             if trimmed.starts_with("//") {
                 continue;
             }
-            // The literal, in either casing — matching ONE casing is the bug, whichever
-            // one it is.
+            // The literal, in either casing: matching ONE casing is the bug.
             if !trimmed.contains(r#"strip_prefix("Bearer "#)
                 && !trimmed.contains(r#"strip_prefix("bearer "#)
             {
@@ -470,24 +400,14 @@ const BEARER_ALLOWED: &[(&str, &str)] = &[
 
 /// A revision conflict answers 409, everywhere it answers at all.
 ///
-/// This is the one guard here that is NOT backed by a shared helper, and
-/// deliberately so. 30 components map `records::StoreError` to their own response
-/// type, and those types are genuinely different — as are the choices, because 422
-/// versus 400 for a malformed body is an API decision each one is entitled to make.
-/// Collapsing them would impose one component's answer on nine others.
+/// Not backed by a shared helper, deliberately: components map `records::StoreError` to their own
+/// response types, and e.g. 422 vs 400 for a malformed body is each API's decision. But
+/// `RevisionConflict` means the caller is out of date and should re-read and retry (ADR-0065); a
+/// client retries on 409 and not on 400, so answering 400 makes a recoverable conflict a dead end
+/// (`vet-domain` did, via `Outcome::Bad`).
 ///
-/// The conflict arm is not that kind of choice. `RevisionConflict` means the caller
-/// is holding something out of date and should re-read and retry, which is the whole
-/// point of the compare-and-set ADR-0065 added. A client that retries on 409 does
-/// NOT retry a 400, because 400 says the request itself is wrong and sending it
-/// again cannot help — so answering 400 turns a recoverable conflict into a dead
-/// end. 31 of 32 already answered 409; `vet-domain` answered 400 through an
-/// `Outcome::Bad`, and nothing said so.
-///
-/// Scoped to `store_err`, which is where a conflict becomes a RESPONSE. A component
-/// that handles the conflict instead — `=> continue` inside a retry loop, which
-/// several do — is doing something better than reporting it, and an earlier version
-/// of this test flagged all ten of them.
+/// Scoped to `store_err`, where a conflict becomes a RESPONSE; `=> continue` inside a retry loop
+/// does something better.
 #[test]
 fn a_revision_conflict_answers_409() {
     let mut wrong = Vec::new();
@@ -497,8 +417,8 @@ fn a_revision_conflict_answers_409() {
         while let Some(at) = text[from..].find("fn store_err(") {
             let at = from + at;
             from = at + 1;
-            // The signature says whether this produces a response at all:
-            // `csv-report` has one returning the message text, which chooses nothing.
+            // The signature says whether this produces a response at all (`csv-report` has one
+            // returning message text, which chooses nothing).
             let sig: String = text[at..].chars().take_while(|c| *c != '{').collect();
             if sig.contains("-> String") || sig.contains("-> &str") {
                 continue;

@@ -1,18 +1,14 @@
-//! A decomposed goal, end to end: two parts, a contract, a negotiation, and one
-//! joined tree judged by the same gate that judged the halves (ADR-0086).
+//! A decomposed goal, end to end: two parts, a contract, a negotiation, and one joined tree judged by
+//! the same gate that judged the halves (ADR-0086).
 //!
-//! Eleven components across three apps, a real SurrealDB, a real native checks
-//! runner, and a scripted model — so what is asserted is the ORCHESTRATION and not
-//! a language model's mood.
+//! Eleven components across three apps, a real SurrealDB, a real native checks runner and a scripted
+//! model, so ORCHESTRATION is asserted and not a model's mood.
 //!
-//! The test is arranged so that **the frontend cannot go green unless the
-//! negotiation actually happened**. Its script has exactly two rules: one that
-//! writes a request when it is told to render results, and one that writes working
-//! code when it sees `total_pages`. `total_pages` is not in the first contract. So
-//! a passing frontend means the request was read out of its candidate, answered by
-//! a second model call, written to the registry, ratified by the backend's own
-//! passing gate, and laid back into the next generation's prompt as `CONTRACT.md`.
-//! Nothing else in this test could have produced it.
+//! **The frontend cannot go green unless the negotiation actually happened.** Its script has two
+//! rules: one writes a request when told to render results, one writes working code when it sees
+//! `total_pages`, which is not in the first contract. A passing frontend means the request was read
+//! from its candidate, answered by a second model call, written to the registry, ratified by the
+//! backend's gate, and laid into the next prompt as `CONTRACT.md`.
 //!
 //! Skipped, loudly, when Docker cannot start the database.
 
@@ -28,12 +24,8 @@ use serde_json::{json, Value};
 mod harness;
 use harness::{Surreal, SURREAL_IMAGE, SURREAL_PASSWORD};
 
-/// The commit the base tree is cached under.
-///
-/// Not empty: the runner caches a posted tree by commit and refuses to guess when
-/// it has neither ("this runner has not seen that commit"). An empty one made
-/// every check fail before a single candidate was judged, which reads in the log
-/// as `need the tree for (no commit given)`.
+/// The commit the base tree is cached under. Not empty: the runner caches a posted tree by commit and
+/// refuses to guess, and an empty one made every check fail with `need the tree for (no commit given)`.
 const BASE: &str = "compose-base-1";
 
 /// The interface the human wrote. Note what is NOT in it: `total_pages`.
@@ -44,20 +36,16 @@ fn artifacts() -> Vec<String> {
     let dir = repo_root().join("components/target/wasm32-wasip2/release");
     let mut out = Vec::new();
     for (id, file) in [
-        // the driver stack
         ("probe", "driver_probe.wasm"),
         ("driver", "agent_driver.wasm"),
         ("agent", "agent_writer.wasm"),
         ("llm", "mock_provider.wasm"),
         ("gate", "checks_runner.wasm"),
-        // the registry
         ("cprobe", "contract_probe.wasm"),
         ("registry", "contract_registry.wasm"),
         ("cgraph", "knowledge_graph.wasm"),
-        // the model that answers a request
         ("lprobe", "llm_probe.wasm"),
         ("allm", "mock_provider.wasm"),
-        // the pool the parts read from and write to
         ("mprobe", "memory_probe.wasm"),
         ("memory", "knowledge_memory.wasm"),
         ("graph", "knowledge_graph.wasm"),
@@ -71,9 +59,8 @@ fn artifacts() -> Vec<String> {
     out
 }
 
-/// The gate, as a real process. The same runner the branches are judged by is the
-/// one the composition is judged by — a join judged by different machinery is a
-/// join whose failures are arguments about the harness.
+/// The gate, as a real process: the runner that judges the branches also judges the composition, or
+/// failures of the join become arguments about the harness.
 struct Checks {
     child: Child,
     port: u16,
@@ -142,8 +129,7 @@ fn check(id: &str, command: &[&str]) -> Value {
     json!({ "id": id, "required": true, "weight": 1, "command": command })
 }
 
-/// A part's plan. `writable` is disjoint per part on purpose — that is most of
-/// what makes them separate parts, and `compose::merge` refuses an overlap.
+/// A part's plan. `writable` is disjoint per part on purpose (`compose::merge` refuses an overlap).
 fn part(name: &str, text: &str, writable: &[&str], checks: Value) -> Part {
     Part {
         name: name.into(),
@@ -199,11 +185,9 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
         timeout: Duration::from_secs(60),
     };
 
-    // --- the human's contract -------------------------------------------------
-    //
-    // Retried until it lands: this is the first call that touches SurrealDB
-    // through two components, so it is also the readiness check — what is retried
-    // is what is measured.
+    // --- the human's contract ---
+    // Retried until it lands: the first call touching SurrealDB through two components is also the
+    // readiness check.
     let mut published = 0;
     fleet.until("publishing the first contract", Duration::from_secs(180), || {
         match registry.publish(CONTRACT_V1) {
@@ -219,7 +203,6 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
     assert!(v1.canonical, "the human's contract is canonical on arrival");
     assert!(!v1.body.contains("total_pages"), "the thing being negotiated is not in it yet");
 
-    // --- the two parts --------------------------------------------------------
     let parts = vec![
         part(
             "backend",
@@ -231,22 +214,16 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
             "frontend",
             "render the results with a pager",
             &["ui/app.ts", compose::REQUEST_PATH],
-            // Neither the id NOR THE COMMAND may contain the trigger string. A
-            // repair prompt carries the failing check's command, so
-            // `grep -q total_pages` quoted the answer back at the model and the
-            // frontend passed in round one without asking anybody anything. The
-            // scripted model matches on everything the caller said — the same leak
-            // a real model would read, which is why this is a comment and not a
-            // quiet edit.
+            // Neither the id NOR THE COMMAND may contain the trigger string: a repair prompt carries
+            // the failing check's command, so `grep -q total_pages` leaked the answer and the frontend
+            // passed in round one. The scripted model matches on everything the caller said, as a real
+            // model would read it.
             json!([check("pager-renders", &["grep", "-q", "pager", "ui/app.ts"])]),
         ),
     ];
 
-    // --- the run, through the SAME code `comp goal run` uses -------------------
-    //
-    // Not a re-spelling of it. `compose::run_parts` is the orchestration, and the
-    // binary is a caller that prints and lands — so what this asserts is what a
-    // real run does, minus argument parsing and a forge.
+    // --- the run, through the SAME code `comp goal run` uses ---
+    // `compose::run_parts` is the orchestration; the binary only prints and lands.
     let run = compose::run_parts(
         &compose::Wiring {
             driver_url: &format!("http://127.0.0.1:{port}/run"),
@@ -256,8 +233,7 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
             checks_token: None,
             registry: &registry,
             answerer: Some(&answerer),
-            // The parts read, write and attribute against a real pool here too, so
-            // the decomposed path is covered by the same claim the ordinary one is.
+            // The parts read, write and attribute against a real pool, covering the decomposed path.
             memory: Some(&pool),
         },
         &parts,
@@ -268,8 +244,8 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
         Duration::from_secs(120),
         BASE,
         &base_tree(),
-        // The goal's own checks, which belong to neither part: the frontend reads a
-        // field the backend serves, and only the joined tree can show it.
+        // The goal's own checks, belonging to neither part: the frontend reads a field the backend
+        // serves, which only the joined tree can show.
         &json!([
             check("both-halves-present", &["test", "-f", "src/api.rs"]),
             check("the-join", &["grep", "-q", "total_pages", "ui/app.ts"]),
@@ -291,7 +267,6 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
         );
     }
 
-    // --- the negotiation happened ---------------------------------------------
     assert!(
         run.log.iter().any(|l| l.contains("asked") && l.contains("total_pages")),
         "the frontend never asked for anything — the request channel is broken: {:?}",
@@ -317,7 +292,6 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
     );
     assert!(latest.canonical, "what the parts build against is always ratified");
 
-    // --- and both halves are green --------------------------------------------
     assert!(
         run.composition.blocked.is_empty(),
         "a decomposed run needs every part: {:?}",
@@ -325,7 +299,6 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
     );
     assert_eq!(run.composition.winners().len(), 2);
 
-    // --- one joined tree, judged by the same gate -----------------------------
     assert!(run.landable(), "nothing to land: {:?}", run.blocked);
     let changes = run.changes.as_ref().expect("landable means there is a tree");
     let paths: Vec<&str> =
@@ -337,12 +310,10 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
         "a question must not land in the pull request: {paths:?}"
     );
 
-    // --- the parts learned, and not from each other's pool ---------------------
-    //
-    // The frontend failed twice before the contract moved, so it has something to
-    // say; the pool is keyed by the goal that was ASKED, and a part asks about its
-    // own. Asserted rather than assumed: wiring a pool in and having it quietly do
-    // nothing is the failure mode this whole session kept finding.
+    // --- the parts learned, and not from each other's pool ---
+    // The frontend failed twice before the contract moved, so it has something to say; the pool is
+    // keyed by the goal that was ASKED. Asserted, since a pool that quietly does nothing is the
+    // failure mode.
     let fe_goal = "Render the results with a pager, against the fixtures in .contract-mocks.";
     let learned = pool
         .recall(

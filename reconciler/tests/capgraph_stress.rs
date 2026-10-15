@@ -1,39 +1,17 @@
-//! What the merged graph costs, at sizes this repository has not reached yet.
+//! What the merged graph costs, at sizes this repository has not reached yet (ADR-0091).
 //!
-//! ADR-0091 put the capability graph and the knowledge pool in one database and
-//! justified it with one query: *the lessons about the interfaces this app
-//! imports*. That query is a three-hop traversal — `app -> carries -> artifact ->
-//! imports -> interface` — feeding a `CONTAINSANY` over the lesson pool. Both
-//! halves grow: the graph grows with the catalogue, the pool grows with every run
-//! that ever finished. Nothing so far has measured what happens when they do.
+//! The justifying query is a three-hop traversal (`app -> carries -> artifact -> imports -> interface`)
+//! feeding a `CONTAINSANY` over the lesson pool; both halves grow. This reports a table of insert and
+//! query times against node and edge counts, at the real size and three synthetic multiples.
 //!
-//! This is that measurement. It reports a table of insert and query times against
-//! node and edge counts, at the real size and at three synthetic multiples of it.
+//! **Correctness at scale is asserted:** the join must return exactly the right lessons when the graph
+//! is 20x and the pool 100x larger.
+//! **Scaling SHAPE is asserted, loosely** (see `SUPERLINEAR_ALLOWANCE`): the thing to catch is an
+//! accidental full scan per hop, an order of magnitude and not thirty percent.
+//! **Absolute times are reported, never asserted:** they describe the machine (ADR-0019, ADR-0020).
 //!
-//! ## What is asserted, and what is only reported
-//!
-//! **Correctness at scale is asserted.** The join must still return exactly the
-//! lessons it should when the graph is twenty times larger and the pool is a
-//! hundred times larger. A query that gets fast by returning less is not faster.
-//!
-//! **Scaling SHAPE is asserted, loosely.** Query time is allowed to grow with the
-//! data — it must not grow like the square of it. The bound is deliberately slack
-//! (see `SUPERLINEAR_ALLOWANCE`) because the thing worth catching is an accidental
-//! full scan per hop, which shows up as an order of magnitude, not as thirty
-//! percent.
-//!
-//! **Absolute times are reported, never asserted.** A millisecond figure is a fact
-//! about the machine that ran it, and a test that fails because somebody's laptop
-//! was busy teaches people to rerun tests until they pass. ADR-0019 and ADR-0020
-//! make the same split for the density number.
-//!
-//! ## Running it
-//!
-//!   cargo test -p comp-reconciler --release --test capgraph_stress -- --ignored --nocapture
-//!
-//! Scales are tunable, for probing past the defaults without editing this file:
-//!
-//!   COMP_STRESS_SCALES=1,5,20,50 COMP_STRESS_LESSONS=50000 cargo test ... -- --ignored --nocapture
+//! Run: `cargo test -p comp-reconciler --release --test capgraph_stress -- --ignored --nocapture`
+//! Scales are tunable: `COMP_STRESS_SCALES=1,5,20,50 COMP_STRESS_LESSONS=50000 cargo test ...`
 //!
 //! `#[ignore]`d: it writes hundreds of thousands of rows and takes a minute or two.
 
@@ -43,9 +21,7 @@ use std::time::Duration;
 mod harness;
 use harness::{Store, SURREAL_IMAGE};
 
-/// How much bigger than the real catalogue each round is. `1` is not synthetic at
-/// all — it is the repository as it stands, which anchors the synthetic rows to
-/// something real.
+/// How much bigger than the real catalogue each round is. `1` is the repository as it stands.
 fn scales() -> Vec<usize> {
     std::env::var("COMP_STRESS_SCALES")
         .ok()
@@ -54,27 +30,20 @@ fn scales() -> Vec<usize> {
         .unwrap_or_else(|| vec![1, 5, 20])
 }
 
-/// How many lessons sit in the pool the join filters. The pool grows with every
-/// run that ever finished, so it outgrows the graph rather than tracking it.
+/// How many lessons sit in the pool the join filters. The pool outgrows the graph.
 fn lessons() -> usize {
     std::env::var("COMP_STRESS_LESSONS").ok().and_then(|v| v.parse().ok()).unwrap_or(20_000)
 }
 
-/// How much worse than linear the join may scale before this fails.
-///
-/// Slack on purpose. Between the smallest and largest round the graph grows 20x,
-/// and a traversal that has quietly become a scan per hop would land somewhere
-/// past 400x — an order of magnitude clear of this bound. Tightening it to
-/// something that looks rigorous would buy nothing and cost a flaky test on a
-/// loaded machine.
+/// How much worse than linear the join may scale before this fails. Slack on purpose: a scan per hop
+/// would land past 400x against 20x graph growth, an order of magnitude clear of this bound.
 const SUPERLINEAR_ALLOWANCE: f64 = 8.0;
 
-/// The interface the asserted lessons are tagged with. Real, and imported by a
-/// real app, so the assertion survives the synthetic rows being removed.
+/// The interface the asserted lessons are tagged with. Real, so the assertion survives the synthetic
+/// rows being removed.
 const TAGGED: &str = "csv:codec/codec@0.1.0";
 const APP: &str = "vet";
 
-/// The real projection, as the tool emits it.
 fn real_projection(generation: u64) -> String {
     let out = Command::new(env!("CARGO_BIN_EXE_comp-capgraph"))
         .args(["--format", "surql", "--gen", &generation.to_string()])
@@ -84,21 +53,14 @@ fn real_projection(generation: u64) -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
-/// Synthetic rows in the same SHAPE as the projection, at `copies` times the size.
-///
-/// Copies rather than random graphs: the traversal cost this is measuring depends
-/// on fan-out — how many parts an app carries, how many interfaces a part imports
-/// — and a copy of the real catalogue has the real fan-out. A random graph with
-/// the same node count and a different shape would produce a number that looks
-/// like a measurement and answers a different question.
-///
-/// `copies - 1` extra copies are written, because copy zero is the real one.
+/// Synthetic rows in the same SHAPE as the projection, at `copies` times the size. Copies, not random
+/// graphs, because traversal cost depends on fan-out and a copy of the real catalogue has the real
+/// one. `copies - 1` extra copies are written; copy zero is the real one.
 fn synthetic(copies: usize, generation: u64) -> String {
     let mut out = String::new();
     for c in 1..copies {
-        // One app, its parts and their interfaces, per copy. Suffixed rather than
-        // renamed so the real names stay unique and the asserted join cannot
-        // accidentally match a synthetic row.
+        // One app, its parts and their interfaces, per copy. Suffixed so the asserted join cannot
+        // match a synthetic row.
         for a in 0..47 {
             out.push_str(&format!(
                 "UPSERT app:⟨syn-{c}-{a}⟩ SET name = 'syn-{c}-{a}', root = 'syn-part-{c}-{a}-0', \
@@ -115,9 +77,8 @@ fn synthetic(copies: usize, generation: u64) -> String {
                      artifact:⟨{part}⟩ SET gen = {generation};\n"
                 ));
                 for i in 0..3 {
-                    // Interfaces are shared across the copy, like the real ones:
-                    // `records:store/store` has 37 consumers, and a graph where
-                    // every part has a private interface has no fan-in to traverse.
+                    // Interfaces are shared across the copy, like the real ones (`records:store/store`
+                    // has 37 consumers); private interfaces would have no fan-in to traverse.
                     let iface = format!("syn:pkg-{c}-{}/thing@0.1.0", i + p % 5);
                     out.push_str(&format!(
                         "UPSERT interface:⟨{iface}⟩ SET name = '{iface}', exporter = '', \
@@ -134,8 +95,7 @@ fn synthetic(copies: usize, generation: u64) -> String {
     out
 }
 
-/// The lesson pool. One in every `TAGGED_EVERY` is tagged with the real interface
-/// the assertion looks for; the rest are noise the `CONTAINSANY` has to reject.
+/// The lesson pool. One in every `TAGGED_EVERY` is tagged with the real interface; the rest are noise.
 const TAGGED_EVERY: usize = 500;
 
 fn lesson_rows(n: usize) -> String {
@@ -154,8 +114,7 @@ fn lesson_rows(n: usize) -> String {
     out
 }
 
-/// Statements are posted in chunks. One 300,000-statement body would measure the
-/// HTTP layer's appetite for a large upload rather than the database's write path.
+/// Statements are posted in chunks: one huge body would measure HTTP upload, not the write path.
 const CHUNK: usize = 2_000;
 
 fn post_in_chunks(db: &Store, sql: &str) -> Duration {
@@ -200,9 +159,8 @@ fn the_join_under_load() {
         return;
     };
 
-    // The pool first, and once: it does not change between rounds, so every round
-    // measures a graph growing against a pool that is already large. That is the
-    // real shape — the pool outlives every rebuild of the graph.
+    // The pool first, and once: every round measures a graph growing against an already large pool,
+    // the real shape.
     let n = lessons();
     let pool_write = post_in_chunks(&db, &lesson_rows(n));
     let expected_hits = n.div_ceil(TAGGED_EVERY);
@@ -237,10 +195,7 @@ fn the_join_under_load() {
         let edges = db.count("imports") + db.count("exports") + db.count("carries");
         let (join, hits) = median_query(&db, APP);
 
-        // CORRECTNESS, every round. The real app's answer must not change because
-        // the database got bigger — a traversal that starts matching synthetic
-        // interfaces, or stops finding real ones, is the failure this whole test
-        // exists to catch.
+        // CORRECTNESS, every round: the real app's answer must not change because the database grew.
         assert_eq!(
             hits, expected_hits,
             "at scale {scale} the join returned {hits} lessons, expected {expected_hits} — \
@@ -259,9 +214,7 @@ fn the_join_under_load() {
         }
     }
 
-    // SCALING SHAPE. Compared against the first round rather than round-to-round,
-    // so the ratio is over the whole range and one slow middle round cannot hide
-    // between two fast ones.
+    // SCALING SHAPE, compared against the first round so one slow middle round cannot hide.
     if let Some((first_size, first_time)) = first {
         let size_now = (db.count("interface") + db.count("artifact") + db.count("app")) as f64
             + (db.count("imports") + db.count("exports") + db.count("carries")) as f64;
@@ -288,25 +241,13 @@ fn the_join_under_load() {
     );
 }
 
-/// What the lesson half of the join actually costs, and what a graph edge would
-/// cost instead.
+/// What the lesson half of the join costs, and what a graph edge would cost instead.
 ///
-/// The measurement above shows the graph is nearly free — 30x the nodes and edges
-/// costs 1.2x the time — and that the pool is where the time goes. This says why.
-///
-/// `tags CONTAINSANY [...]` is a **full table scan of the lesson pool, every
-/// time**. Not a missing index: an index on `tags` was defined and measured and
-/// changed nothing, and `EXPLAIN` reports `TableScan` either way on
-/// `surrealdb:v3.1.3`. So the cost of retrieving lessons grows with everything the
-/// swarm has ever learned, whether or not it is relevant.
-///
-/// The alternative is the schema ADR-0091 sketched and the implementation did not
-/// take: `lesson -about-> interface` as a real edge, because `knowledge-memory`
-/// already writes `tags` as strings and the projection had no reason to duplicate
-/// them. Traversing that edge is O(hits); scanning is O(pool).
-///
-/// This test asserts only that the two agree — a faster query that returns a
-/// different answer is not an optimisation. The times are the finding.
+/// The graph is nearly free (30x the nodes costs 1.2x the time); the pool is where the time goes.
+/// `tags CONTAINSANY [...]` is a **full table scan of the lesson pool, every time** (an index was
+/// measured and changed nothing; `EXPLAIN` reports `TableScan` on `surrealdb:v3.1.3`). The alternative
+/// ADR-0091 sketched is `lesson -about-> interface` as a real edge: O(hits) instead of O(pool).
+/// Asserts only that the two agree; the times are the finding.
 #[test]
 #[ignore = "writes hundreds of thousands of rows; run with --ignored --nocapture"]
 fn what_an_edge_would_buy_over_a_tag_scan() {
@@ -319,8 +260,7 @@ fn what_an_edge_would_buy_over_a_tag_scan() {
     post_in_chunks(&db, &lesson_rows(n));
     let expected = n.div_ceil(TAGGED_EVERY);
 
-    // The interface node, and one `about` edge per tagged lesson — what the
-    // projection would write if lessons were joined structurally.
+    // The interface node, and one `about` edge per tagged lesson.
     db.last(&format!(
         "UPSERT interface:⟨{TAGGED}⟩ SET name = '{TAGGED}', exporter = '', consumers = 0, gen = 1;"
     ));

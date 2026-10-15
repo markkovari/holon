@@ -36,7 +36,6 @@ ingress:
 
     let client = reqwest::blocking::Client::new();
 
-    // Test the ping query
     let body = json!({
         "query": "{ ping }"
     });

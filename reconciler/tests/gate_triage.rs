@@ -1,18 +1,9 @@
 //! The three `triage` gates, ported from `components/triage-domain/e2e-*.sh`.
 //!
-//! Assertions and failure sentences unchanged — ADR-0088 makes a gate's output the
-//! next prompt a repair reads.
-//!
-//! Two shell hazards disappear rather than being translated, and both are recorded in
-//! the scripts because both cost a run:
-//!
-//!   * the fixture's two ids were read with `sed -n 1p` / `2p` because `mapfile` is
-//!     bash 4 and macOS ships 3.2 — a gate that used it failed every branch with
-//!     `mapfile: command not found`, three lines before anything was judged.
-//!   * the CSV was passed to `python3 -` as an ARGUMENT, because `python3 -` reads its
-//!     PROGRAM from stdin, so a heredoc and a pipe are the same channel: the heredoc
-//!     wins, `csv.reader(sys.stdin)` reads nothing, and a correct candidate fails with
-//!     "no rows at all".
+//! Assertions and failure sentences unchanged: ADR-0088 makes a gate's output the next prompt a repair
+//! reads. Two shell hazards disappear rather than being translated: `mapfile` (bash 4; macOS ships
+//! 3.2) and passing the CSV to `python3 -` as an ARGUMENT (its program is read from stdin, so a heredoc
+//! and a pipe share one channel and the CSV read nothing).
 
 mod gatelib;
 use gatelib::{field, requires_capability, Gate};
@@ -42,8 +33,7 @@ fn parse(text: &str) -> Value {
     serde_json::from_str(text).unwrap_or(Value::Null)
 }
 
-/// The CSV reader from `gate_clinic`, for the same reason: a test that needs a parser
-/// to state its claim is testing the parser.
+/// The CSV reader from `gate_clinic`: a test needing a parser to state its claim tests the parser.
 fn rows(text: &str) -> Vec<Vec<String>> {
     let mut out = Vec::new();
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
@@ -70,8 +60,7 @@ fn rows(text: &str) -> Vec<Vec<String>> {
 fn intake_masks_validates_and_deduplicates() {
     let Some(gate) = start() else { return };
 
-    // The body carries an email, which is the point: the contract says what is STORED
-    // is masked, so the raw address must not come back out.
+    // The body carries an email: what is STORED is masked, so the raw address must not come back.
     let body = json!({"title":"Search returns nothing","body":"contact me at ada@example.test","component":"search"});
     let (_, resp) = gate.post("/api/reports", None, body.clone());
     let id = field(&resp, "id");
@@ -94,7 +83,6 @@ fn intake_masks_validates_and_deduplicates() {
         "a new report must be open with no severity: {stored}"
     );
 
-    // --- what a bad request is ----------------------------------------------------
     for (b, why) in [
         (json!({"title":"","body":"b","component":"c"}), "an empty title is a 400"),
         (json!({"title":"t","component":"c"}), "a missing body is a 400"),
@@ -113,7 +101,6 @@ fn intake_masks_validates_and_deduplicates() {
     let (c, _) = gate.get("/api/reports/nope", None);
     assert_eq!(c, 404, "an unknown report is a 404");
 
-    // --- the duplicate rule -------------------------------------------------------
     let (c, dup) = gate.post("/api/reports", None, body);
     assert_eq!(c, 409, "the same title in the same component is a duplicate");
     let existing = field(&dup, "existing");
@@ -128,7 +115,6 @@ fn intake_masks_validates_and_deduplicates() {
     );
     assert_eq!(c, 201, "the same title in a DIFFERENT component is not a duplicate");
 
-    // --- listing and filtering ----------------------------------------------------
     gate.seed();
     let all = parse(&gate.get("/api/reports", None).1);
     assert!(
@@ -164,7 +150,6 @@ fn workflow_is_a_machine_not_a_ladder_of_comparisons() {
     let (c, _) = gate.post("/api/reports/nope/transition", None, json!({"event":"close"}));
     assert_eq!(c, 404, "an unknown report is a 404");
 
-    // --- triage requires a severity ------------------------------------------------
     let (c, _) =
         gate.post(&format!("/api/reports/{a}/transition"), None, json!({"event":"triage"}));
     assert_eq!(c, 400, "the triage event requires a severity");
@@ -175,7 +160,6 @@ fn workflow_is_a_machine_not_a_ladder_of_comparisons() {
     );
     assert_eq!(c, 400, "a severity outside low/medium/high is a 400");
 
-    // --- the legal path ------------------------------------------------------------
     let (_, resp) = gate.post(
         &format!("/api/reports/{a}/transition"),
         None,
@@ -191,11 +175,9 @@ fn workflow_is_a_machine_not_a_ladder_of_comparisons() {
         "triage must answer with the new state and the severity: {resp}"
     );
 
-    // The DOCUMENT must have moved too, not just the fsm instance. Read through the
-    // SCAFFOLD's `/test/report/{id}`, not `GET /api/reports/{id}` — that route belongs
-    // to `intake`, which is a stub while this part is judged alone. This gate once
-    // asked intake for the document, got `{"error":"not_implemented"}`, and reported it
-    // as `workflow` having failed to move it.
+    // The DOCUMENT must have moved too, not just the fsm instance. Read through the SCAFFOLD's
+    // `/test/report/{id}`, not `GET /api/reports/{id}` (`intake` is a stub while this part is judged
+    // alone, and returns `not_implemented`).
     let doc = parse(&gate.stored("report", &a));
     assert_eq!(doc["state"], "triaged", "the report document did not follow the fsm: {doc}");
     assert_eq!(doc["severity"], "high", "the report document did not follow the fsm: {doc}");
@@ -204,7 +186,6 @@ fn workflow_is_a_machine_not_a_ladder_of_comparisons() {
     let (c, _) = gate.post(&format!("/api/reports/{b}/transition"), None, json!({"event":"fix"}));
     assert_eq!(c, 409, "open cannot jump straight to fixed");
 
-    // --- terminal really is terminal ------------------------------------------------
     let (c, _) = gate.post(&format!("/api/reports/{b}/transition"), None, json!({"event":"close"}));
     assert_eq!(c, 200, "open can be closed (not a bug)");
     let (c, _) = gate.post(
@@ -214,10 +195,9 @@ fn workflow_is_a_machine_not_a_ladder_of_comparisons() {
     );
     assert_eq!(c, 409, "a closed report is terminal and accepts nothing");
 
-    // --- the queue -----------------------------------------------------------------
-    //
-    // Ordering is the whole check: severity first, no-severity last, older first
-    // inside a severity. And a closed report is not in the queue at all.
+    // --- the queue ---
+    // Ordering is the check: severity first, no-severity last, older first inside a severity, and a
+    // closed report is not in the queue.
     gate.post(&format!("/api/reports/{a}/transition"), None, json!({"event":"fix"}));
     let q = parse(&gate.get("/api/queue", None).1);
     let queue = q["queue"].as_array().cloned().unwrap_or_default();
@@ -265,7 +245,7 @@ fn digest_counts_only_what_occurs() {
     let (bs, bc) = (&d["by_state"], &d["by_component"]);
     assert!(bs.is_object() && bc.is_object(), "the JSON digest is wrong: {d}");
     assert!(bs["open"].as_u64().unwrap_or(0) >= 2, "both seeded reports are open: {bs}");
-    // Only states/components that OCCUR are present — no zero-filled keys.
+    // Only states/components that OCCUR are present: no zero-filled keys.
     for m in [bs, bc] {
         assert!(
             m.as_object().unwrap().values().all(|v| v.as_u64().unwrap_or(0) > 0),
@@ -283,10 +263,7 @@ fn digest_counts_only_what_occurs() {
     assert_eq!(e["by_state"], json!({}), "an empty day must still be a digest: {e}");
     assert_eq!(e["by_component"], json!({}), "an empty day must still be a digest: {e}");
 
-    // --- the CSV -------------------------------------------------------------------
-    //
-    // `Login fails, silently` is seeded precisely so that joining with commas produces
-    // a row with six fields.
+    // `Login fails, silently` is seeded so that joining with commas produces a row with six fields.
     let (_, csv) = gate.get("/api/digest.csv?day=2026-08-17", None);
     let r = rows(&csv);
     assert!(!r.is_empty(), "the CSV is wrong: no rows at all");
@@ -322,38 +299,23 @@ fn digest_counts_only_what_occurs() {
     assert!(r.len() == 1 && r[0][0] == "id", "an empty day is the header alone: {r:?}");
 }
 
-// ---------------------------------------------------------------------------
-// the composition — the gate no single part can pass
-// ---------------------------------------------------------------------------
+// the composition: the gate no single part can pass
 
 /// One report driven the whole way through all three parts.
 ///
-/// Ported from `components/triage-domain/e2e.sh`, the last of this app's four gates
-/// to move. The three part gates came over in #180-#189; the nine COMPOSITION gates
-/// did not, and nothing noticed because CI globbed `components/*/e2e-*.sh` — with a
-/// hyphen — which matches the part gates and none of the `e2e.sh` files. #201 widened
-/// the glob and found this one had been failing since the day after it was written.
+/// Ported from `components/triage-domain/e2e.sh`. The chain is intake writes it -> workflow moves it
+/// and assigns severity -> digest counts it; `digest` is right only if `intake` stored the contract's
+/// shape and `workflow` updated the document, not just the fsm instance.
 ///
-/// The chain is why this goal has three parts and not two:
-///
-///   intake writes it -> workflow moves it and assigns severity -> digest counts it
-///
-/// `digest` can only be right if `intake` stored the contract's shape and `workflow`
-/// updated the document rather than only the fsm instance. Each of those is a
-/// plausible local success that shows up nowhere until the halves meet.
-///
-/// THE DAY COMES FROM THE COMPONENT. The shell version hardcoded `DAY=2026-08-17`,
-/// its authoring date, while `intake` stamps `reported_at` from the store's own
-/// `created` because the world imports no wall clock. It agreed with the app for one
-/// day. The part gate never caught it: `e2e-digest.sh` reads the FIXTURE, whose
-/// `reported_at` is a literal that never moves, so only the composition went through
-/// the clock. Asking the component keeps that fixed by construction here.
+/// THE DAY COMES FROM THE COMPONENT: the shell version hardcoded `DAY=2026-08-17` while `intake`
+/// stamps `reported_at` from the store's `created` (the world imports no wall clock). The part gate
+/// reads a FIXTURE with a literal date, so only the composition went through the clock.
 #[test]
 fn the_whole_triage_api_works() {
     let Some(gate) = start() else { return };
 
-    // All three capabilities, in one place: a candidate that dropped one fails here
-    // even if the part that owns it was never the one judged.
+    // All three capabilities in one place: a candidate that dropped one fails here even if its part
+    // was never the one judged.
     requires_capability(CRATE, "pii:redact/redactor", "intake must mask the body with pii:redact");
     requires_capability(
         CRATE,
@@ -380,12 +342,8 @@ fn the_whole_triage_api_works() {
     let day: String = reported.chars().take(10).collect();
     assert_eq!(day.len(), 10, "intake did not stamp a usable reported_at: {doc}");
 
-    // A phone number is PII too, so intake masks more than emails.
-    //
-    // ELEVEN digits with a `+`, not `555-0100`. The scanner wants 10-15 digits and
-    // either a leading `+` or a NANP-looking span, so a 7-digit local number is not a
-    // phone number by its definition — asserting on one would have this gate "prove"
-    // that masking was broken when it was working exactly as specified.
+    // A phone number is PII too. ELEVEN digits with a `+`, not `555-0100`: the scanner wants 10-15
+    // digits and a leading `+` or NANP-looking span, so a 7-digit number is not a phone number.
     assert!(!doc.contains("0199"), "the reporter's phone number was stored verbatim: {doc}");
     assert!(
         doc.contains("[PHONE]"),
@@ -412,11 +370,9 @@ fn the_whole_triage_api_works() {
         .unwrap_or_else(|| panic!("workflow's queue is missing intake's report: {queue}"));
     assert_eq!(entry["severity"], "high", "the queue lost the severity workflow assigned: {queue}");
 
-    // --- digest sees what the other two did --------------------------------
-    //
-    // The assertion that needs all three parts to agree. `open_high` counts reports
-    // with severity high that are not closed — a number that exists only because
-    // intake wrote the document, workflow put `high` on it, and digest read it back.
+    // --- digest sees what the other two did ---
+    // `open_high` counts non-closed high-severity reports: it exists only because intake wrote the
+    // document, workflow set `high`, and digest read it back.
     let (_, body) = gate.get(&format!("/api/digest?day={day}"), None);
     let d = parse(&body);
     assert!(
@@ -454,7 +410,7 @@ fn the_whole_triage_api_works() {
         "a comma in a title must be quoted, not split: {titles:?}"
     );
 
-    // --- closing takes it out of the queue, and the digest agrees ----------
+    // --- closing takes it out of the queue, and the digest agrees ---
     for event in ["fix", "close"] {
         let (status, out) =
             gate.post(&format!("/api/reports/{id}/transition"), None, json!({"event": event}));
@@ -478,9 +434,8 @@ fn the_whole_triage_api_works() {
         "the digest still counts the closed report as open_high: {body}"
     );
 
-    // A closed report no longer blocks a new one with the same title+component: the
-    // bug came back. Intake's rule, checked here because it depends on workflow
-    // having closed it — neither part can assert this alone.
+    // A closed report no longer blocks a new one with the same title+component. Intake's rule,
+    // checked here because it depends on workflow having closed it.
     let (status, again) = gate.post(
         "/api/reports",
         None,

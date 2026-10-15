@@ -1,15 +1,9 @@
 //! Selection, end to end: which branch won, and what the forge was told.
 //!
-//! The assertion this test exists for is a NEGATIVE one. When no branch passed
-//! its gate, the forge must see **no request at all** — not a rejected one, not a
-//! branch created and abandoned. That is only checkable against a forge that
-//! records what it was asked, behind a selector that would really have called it:
-//! a component that never dialled out is indistinguishable from one that was
-//! never asked to.
-//!
-//! The rest of the loop is scripted elsewhere. Here the branch results are
-//! supplied directly, because what is under test is the RULE — and a rule fed by
-//! a model would be a rule tested against whatever the model happened to produce.
+//! This exists for a NEGATIVE assertion: when no branch passed its gate the forge must see **no request
+//! at all**, not a rejected one or a branch created and abandoned. That is only checkable against a forge
+//! that records what it was asked, behind a selector that would really have called it. Branch results are
+//! supplied directly, since a rule fed by a model is tested against whatever the model produced.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -170,8 +164,7 @@ fn file(path: &str, content: &str) -> Value {
     json!({ "path": path, "content": content })
 }
 
-/// The first real selection, retried — not a separate readiness probe
-/// (`Fleet::until`).
+/// The first real selection, retried, not a separate readiness probe (`Fleet::until`).
 fn wait_for_probe(fleet: &Fleet) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
@@ -208,11 +201,9 @@ fn the_gate_is_the_only_way_to_a_pull_request() {
     );
     let probe = wait_for_probe(&fleet);
 
-    // --- the forge is REACHABLE, so an empty log means something -------------
-    // Asserted before the negative test rather than after. A forge that failed to
-    // start — a missing secret, a denied egress — produces the same empty log as
-    // a gate that held, and the first draft of this test passed for exactly that
-    // reason.
+    // --- the forge is REACHABLE, so an empty log means something ---
+    // Asserted before the negative test: a forge that failed to start (missing secret, denied egress)
+    // produces the same empty log as a gate that held.
     let alive = probe.call(
         "/land",
         json!({
@@ -228,11 +219,9 @@ fn the_gate_is_the_only_way_to_a_pull_request() {
         );
     }
 
-    // --- NOTHING PASSED THE GATE: the forge must not be touched --------------
-    // The whole reason a swarm can be left running is that nothing it produces
-    // reaches a repository without passing checks somebody wrote. A rejected
-    // request would prove the rule was applied by the FORGE; an empty log proves
-    // it was applied before anything was dialled.
+    // --- NOTHING PASSED THE GATE: the forge must not be touched ---
+    // Nothing a swarm produces reaches a repository without passing checks. A rejected request would
+    // prove the FORGE applied the rule; an empty log proves it was applied before anything was dialled.
     log.lock().unwrap().clear();
     let refused = probe.call(
         "/land",
@@ -256,14 +245,12 @@ fn the_gate_is_the_only_way_to_a_pull_request() {
         log.lock().unwrap()
     );
 
-    // --- A WINNER: the forge gets the WINNER'S files, and nobody else's ------
     log.lock().unwrap().clear();
     let landed = probe.call(
         "/land",
         json!({
             "entries": [
-                // Highest score of all — and it failed the gate, so it is not
-                // a candidate on any other axis.
+                                // Highest score of all, but it failed the gate, so it is no candidate on any axis.
                 branch("reckless", false, 1000, json!([file("src/lib.rs", "RECKLESS")]), 50),
                 branch("sprawling", true, 800, json!([
                     file("src/lib.rs", "SPRAWLING"), file("src/b.rs", "x"), file("src/c.rs", "y"),
@@ -301,9 +288,8 @@ fn the_gate_is_the_only_way_to_a_pull_request() {
          {blobs:?}"
     );
 
-    // --- WHY IT WON TRAVELS WITH THE PULL REQUEST ---------------------------
-    // A reviewer looking at one pull request cannot otherwise see that two other
-    // branches tried, or what they scored.
+    // --- WHY IT WON TRAVELS WITH THE PULL REQUEST ---
+    // A reviewer cannot otherwise see that two other branches tried, or what they scored.
     let pull = seen.iter().find(|s| s.path.ends_with("/pulls")).expect("no pull request opened");
     let body = pull.body["body"].as_str().unwrap_or_default().to_string();
     assert!(
@@ -315,21 +301,17 @@ fn the_gate_is_the_only_way_to_a_pull_request() {
         "nor why that branch won, which makes the selection unarguable after the fact: {body}"
     );
 
-    // --- THE JEV ADVISORY IS A NOTE, NOT A VETO ------------------------------
-    // The mock is scripted to a flat 5% concern regardless of content (see
-    // fixtures/select.yaml), so this proves the advisory call actually ran and
-    // landed in the body — the winner is still `tight`, decided before this
-    // call ever happens.
+    // --- THE JEV ADVISORY IS A NOTE, NOT A VETO ---
+    // The mock is scripted to a flat 5% concern (see fixtures/select.yaml), so this proves the advisory
+    // call ran and landed in the body; the winner is still `tight`.
     assert!(
         body.contains("Jev advisory"),
         "the advisory never reached the pull request it was supposed to annotate: {body}"
     );
     assert!(!body.contains('⚠'), "a 5% concern score must not read as a warning: {body}");
 
-    // --- HERDING, WHICH NOTHING ELSE CAN SEE --------------------------------
-    // Three branches that agreed look exactly like three that explored: same
-    // count, same acceptance, a healthy-looking generation whose parallelism
-    // bought nothing.
+    // --- HERDING, WHICH NOTHING ELSE CAN SEE ---
+    // Three branches that agreed look exactly like three that explored: same count, same acceptance.
     let herd = probe.call(
         "/select",
         json!({

@@ -1,9 +1,5 @@
-//! Every fixture in the repo must parse.
-//!
-//! Fixtures are used by scripts that take a minute to reach the point where a bad one
-//! would show up, and the failure there looks like "the benchmark is broken" rather
-//! than "line 12 has a typo". This turns that into a sub-second test that names the
-//! file — which is the whole reason the specs are typed rather than hand-built JSON.
+//! Every fixture in the repo must parse. Fixtures are used by scripts that take a minute to reach a bad
+//! one, where the failure reads "the benchmark is broken"; this makes it a sub-second test naming the file.
 
 use std::path::PathBuf;
 
@@ -36,16 +32,15 @@ fn every_fixture_parses_and_resolves() {
         let name = path.file_name().unwrap().to_string_lossy().to_string();
         let text = std::fs::read_to_string(&path).unwrap();
         let spec = AppSpec::parse(&text).unwrap_or_else(|e| panic!("{name}: {e:#}"));
-        // Resolving is where a link naming a missing component, or a tenant nobody
-        // supplied, would surface — so parse alone is not enough.
+        // Resolving is where a link naming a missing component or an unsupplied tenant surfaces.
         let m = spec
             .to_manifest(Some("test-tenant"))
             .unwrap_or_else(|e| panic!("{name}: resolving: {e:#}"));
 
         assert!(!m.components.is_empty(), "{name}: no components");
         for c in &m.components {
-            // The platform stamps this from the uploaded artifact. A fixture carrying
-            // one would be pinning a digest nobody can reproduce.
+            // The platform stamps this from the uploaded artifact; a fixture carrying one pins an
+            // unreproducible digest.
             assert!(c.digest.is_empty(), "{name}: `{}` carries a digest", c.id);
         }
         // Every link must name components that exist, or the app deploys half-wired.
@@ -59,8 +54,8 @@ fn every_fixture_parses_and_resolves() {
 
 #[test]
 fn the_caller_s_tenant_always_wins() {
-    // Fixtures carry `tenant:` so they can run without a control plane. That must
-    // never let a file override the org a real request is acting on.
+    // Fixtures carry `tenant:` so they run without a control plane; that must never let a file
+    // override the org a real request is acting on.
     for path in every_spec() {
         let text = std::fs::read_to_string(&path).unwrap();
         let spec = AppSpec::parse(&text).unwrap();

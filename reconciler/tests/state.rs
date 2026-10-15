@@ -1,12 +1,8 @@
-//! One app, two replicas, two nodes. Does the second replica CONTINUE the first
-//! one's count, or start its own?
+//! One app, two replicas, two nodes. Does the second replica CONTINUE the first one's count, or start
+//! its own?
 //!
-//! With node-local stores it starts its own — silently — which is the bug this keeps
-//! fixed. Both halves matter: the reconciler must REFUSE that arrangement, and a
-//! shared store must actually work, or the refusal is just an outage with a reason.
-//!
-//! This was `bench/adversarial/shared-state.sh`, which shelled out to Python to read
-//! a JSON field. Nothing about it needed shell — it is two assertions about a counter.
+//! With node-local stores it starts its own, silently. Both halves matter: the reconciler must REFUSE
+//! that arrangement, and a shared store must actually work, or the refusal is an outage with a reason.
 
 use std::time::Duration;
 
@@ -25,10 +21,8 @@ fn remaining(fleet: &Fleet, host: &str, key: &str) -> Option<f64> {
     let status = r.status();
     let body = r.text().ok()?;
     let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
-    // A denial still carries the count, and the count is the whole point — reading
-    // only 200s would stop looking exactly when the budget runs out.
-    // A denial still carries the count, and the count is the whole point — reading
-    // only 200s would stop looking exactly when the budget runs out.
+    // A denial still carries the count, and reading only 200s would stop looking exactly when the
+    // budget runs out.
     let n = v["remaining"].as_f64();
     if n.is_none() {
         eprintln!("    unreadable: {status} {body}");
@@ -38,17 +32,13 @@ fn remaining(fleet: &Fleet, host: &str, key: &str) -> Option<f64> {
 
 #[test]
 fn a_shared_store_lets_two_replicas_continue_one_count() {
-    // `--kv nats` is the default for a lattice node, so both replicas address the
-    // same JetStream bucket and the counter is one counter.
+    // `--kv nats` is the default for a lattice node, so both replicas share one JetStream bucket.
     let fleet = Fleet::start("sharedstate", &["fixtures/spread-stateful.yaml"], 2, None);
-    // 150s, not 90: this spins up TWO full replicas rather than one, and a loaded
-    // CI runner has genuinely taken 94s here before — see commit d99ebb7c ("a
-    // slow host is not a dead one") for the same reasoning applied elsewhere.
+    // 150s, not 90: this spins up TWO full replicas, and a loaded CI runner has taken 94s.
     assert!(fleet.serves("shop.eve.test", Duration::from_secs(150)), "never served");
 
-    // Spend the budget through the ingress, which spreads across both replicas. The
-    // property is that the count keeps FALLING: if each node kept its own store the
-    // sequence would jump back up whenever the other one answered.
+    // Spend the budget through the ingress, which spreads across both replicas: the count must keep
+    // FALLING (per-node stores would jump back up whenever the other node answered).
     let mut seen = Vec::new();
     for _ in 0..6 {
         if let Some(v) = remaining(&fleet, "shop.eve.test", "customer-1") {
@@ -58,13 +48,9 @@ fn a_shared_store_lets_two_replicas_continue_one_count() {
     assert!(seen.len() >= 4, "expected several answers, got {seen:?}");
     println!("    remaining, in order: {seen:?}");
 
-    // NOT "it decreases monotonically". A token bucket REFILLS, so the last reading
-    // ticks up by a fraction and a strict test fails on a working system — the same
-    // refill that was once read as data loss (ADR-0032's list of measurements that
-    // meant something else).
-    //
-    // The split-brain signature is different in kind: a replica with its own store
-    // answers from a FULL bucket, so the count jumps back to roughly capacity.
+    // NOT "it decreases monotonically": a token bucket REFILLS, so a strict test fails on a working
+    // system (ADR-0032). The split-brain signature is a replica answering from a FULL bucket, so the
+    // count jumps back to roughly capacity.
     let start = seen[0];
     let worst = seen[1..].iter().cloned().fold(f64::MIN, f64::max);
     assert!(
@@ -80,9 +66,8 @@ fn a_shared_store_lets_two_replicas_continue_one_count() {
 
 #[test]
 fn spreading_a_stateful_app_over_node_local_stores_is_refused() {
-    // The other half. With `--kv sqlite` each node has its own file, so two replicas
-    // under one bucket name would diverge in silence — nothing errors, the counter
-    // just counts wrong and a failover moves the placement without the data.
+    // The other half: with `--kv sqlite` each node has its own file, so two replicas under one bucket
+    // name diverge in silence and a failover moves the placement without the data.
     let fleet = Fleet::start_with_kv(
         "localstate",
         &["fixtures/spread-stateful.yaml"],

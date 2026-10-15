@@ -1,47 +1,28 @@
 //! The capability graph as a projection, against a real database (ADR-0091).
 //!
-//! The unit tests in `capgraph.rs` check the SurrealQL the tool *writes*. This
-//! checks what the database *answers*, which is the half this repository has got
-//! wrong before (ADR-0061, ADR-0080) and the half ADR-0091's two load-bearing
-//! claims actually live in:
+//! The unit tests in `capgraph.rs` check the SurrealQL the tool *writes*; this checks what the
+//! database *answers*, where two load-bearing claims live:
 //!
-//!   1. **The join works.** An app's lessons can be reached from the app, through
-//!      the parts it carries and the interfaces those parts import — with nothing
-//!      in the query mentioning the app's subject matter. This is what was not
-//!      possible while the two graphs were separate stores, and it is the reason
-//!      the stores merged.
-//!   2. **The rebuild cannot reach the accumulated half.** Both halves now share
-//!      one database and the only thing between a rebuild and the one table that
-//!      cannot be recomputed is a generation stamp. That is a claim about
-//!      behaviour, so it is tested by rebuilding on top of real lessons rather
-//!      than by reading the emitted statements.
+//!   1. **The join works.** An app's lessons are reachable from the app through its parts and the
+//!      interfaces they import, with nothing in the query naming the app's subject matter.
+//!   2. **The rebuild cannot reach the accumulated half.** Only a generation stamp separates a
+//!      rebuild from the one table that cannot be recomputed.
 //!
-//! No model is involved anywhere in here, so there is nothing to mock: the query
-//! is SurrealQL over interface names, which are identifiers. The embedding side of
-//! `knowledge:memory` is a different path with its own tests.
-//!
-//! Driven through the real binary rather than by calling the generator directly —
-//! `--format surql` piped into `/sql` is exactly how the projection is stored,
-//! so a break in the wiring fails here too.
-//!
-//! Skipped, loudly, when Docker cannot start the database. A skipped test that
-//! says so is honest; one that passes because it did nothing is not.
+//! No model is involved, so nothing is mocked. Driven through the real binary (`--format surql`
+//! piped into `/sql`, as the projection is stored). Skipped, loudly, when Docker cannot start the
+//! database.
 
 use std::process::Command;
 
 mod harness;
 use harness::{Store, SURREAL_IMAGE};
 
-/// The app the join is asserted against. It reaches `csv:codec/codec` through a
-/// part rather than through its own root, so a pass cannot be explained by the app
-/// node alone.
+/// The app the join is asserted against. It reaches `csv:codec/codec` through a part rather than
+/// its own root, so a pass cannot be explained by the app node alone.
 const APP: &str = "vet";
 
-/// Write one generation of the projection, exactly as storing it by hand
-/// does: the tool's stdout, unedited, posted to `/sql`.
-///
-/// Not on `harness::Store` because it is the one capgraph-specific thing here —
-/// the harness owns talking to SurrealDB, this owns what capgraph writes into it.
+/// Write one generation of the projection, exactly as storing it by hand does: the tool's stdout,
+/// unedited, posted to `/sql`. Not on `harness::Store` because it is capgraph-specific.
 fn project(db: &Store, generation: u64) {
     let out = Command::new(env!("CARGO_BIN_EXE_comp-capgraph"))
         .args(["--format", "surql", "--gen", &generation.to_string()])
@@ -55,30 +36,22 @@ fn project(db: &Store, generation: u64) {
 
 /// The projection is aimed at the database the lessons are in.
 ///
-/// Every other test in this file starts its own container and writes both halves
-/// of the join into it, so all of them passed while production had the capability
-/// graph in `holon`/`holon` and the knowledge pool in `comp`/`goalmemory`. The join
-/// was correct; the two halves were in different rooms.
-///
-/// So this asserts the COORDINATES rather than the query, by reading the places
-/// that declare them. It needs no database, which is the point — the bug it guards
-/// is a mismatch between files, and a test that has to boot Docker to notice is a
-/// test nobody runs before shipping the mismatch.
+/// Other tests start their own container and write both halves of the join into it, so all passed
+/// while production had the capability graph in `holon`/`holon` and the pool in `comp`/`goalmemory`.
+/// So this asserts the COORDINATES by reading the files that declare them; no database needed.
 #[test]
 fn the_projection_targets_the_database_the_pool_lives_in() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let read = |p: &str| std::fs::read_to_string(root.join(p)).unwrap();
 
-    // What the component falls back to when `surreal-ns` is unset, and what the
-    // driver rewrites the memory app's database to.
+    // What the component falls back to when `surreal-ns` is unset, and what the driver rewrites the
+    // memory app's database to.
     assert!(
         read("components/knowledge-graph/src/lib.rs").contains(r#"cfg("surreal-ns", "comp")"#),
         "knowledge-graph's default namespace moved — the Justfile recipes need to move with it"
     );
-    // `goalrun.rs` AND its submodules: the coordinate is declared where the memory
-    // app's fixture is rendered, and that moved into `goalrun/setup.rs`. Reading
-    // one file makes this go red for a refactor that changed no coordinate at all
-    // — which is the opposite of what it guards.
+    // `goalrun.rs` AND its submodules: the coordinate moved into `goalrun/setup.rs`, and reading one
+    // file would go red for a refactor that changed no coordinate.
     let goalrun = {
         let mut all = read("reconciler/src/bin/goalrun.rs");
         if let Ok(dir) = std::fs::read_dir(root.join("reconciler/src/bin/goalrun")) {
@@ -93,14 +66,10 @@ fn the_projection_targets_the_database_the_pool_lives_in() {
         "comp-goalrun no longer points the pool at `goalmemory` — the projection is aimed elsewhere"
     );
 
-    // Both recipes, because `lessons-for` reading a database `capgraph-store` never
-    // wrote is the same bug wearing the other half's clothes.
-    // The root file AND everything it imports: `host-console` and `capgraph-store`
-    // live in `just/host.just` now, and a reader that stops at the root panics
-    // with "the recipe is gone from the Justfile" about a recipe `just` runs fine.
+    // Both recipes, because `lessons-for` reading a database `capgraph-store` never wrote is the same
+    // bug. The root file AND everything it imports (recipes live in `just/host.just`).
     let justfile = {
         let Ok(root) = std::fs::read_to_string(root.join("Justfile")) else {
-            // Justfile was replaced by programmatic build system (cargo xtask / build.zig)
             return;
         };
         let mut all = root.clone();
@@ -113,14 +82,8 @@ fn the_projection_targets_the_database_the_pool_lives_in() {
         all
     };
 
-    // By RECIPE, not by counting lines. The first version of this counted every
-    // line holding `SURREAL_NS:-` and expected exactly two, so it went red the day
-    // `host-console` gained a namespace — a recipe that is not wrong and is not
-    // what this guards. It then went red again on `SURREAL_DB:-`, because that
-    // recipe sets both, as separate `--config` flags rather than one shell line.
-    //
-    // What the test means is narrower: the two recipes that READ AND WRITE the pool
-    // have to agree on where it is.
+    // By RECIPE, not by counting lines (counting `SURREAL_NS:-` went red when `host-console` gained a
+    // namespace): the two recipes that READ AND WRITE the pool have to agree on where it is.
     let recipe = |name: &str| -> String {
         let at = justfile
             .find(&format!("\n{name}"))
@@ -144,8 +107,7 @@ fn the_projection_targets_the_database_the_pool_lives_in() {
         );
     }
 
-    // And nothing anywhere may default to somewhere else — a third recipe reading
-    // another room is the same bug wearing different clothes.
+    // And nothing anywhere may default to somewhere else.
     for line in justfile.lines() {
         if line.contains("SURREAL_NS:-") {
             assert!(line.contains("SURREAL_NS:-comp"), "wrong namespace default: {}", line.trim());
@@ -160,13 +122,8 @@ fn the_projection_targets_the_database_the_pool_lives_in() {
     }
 }
 
-/// The connections survive being written to the database.
-///
-/// `capgraph_edges.rs` asserts the graph is right in the tool. This asserts that
-/// projecting it loses nothing: every edge lands on a node that exists, every app
-/// carries its own root, and the counts the tool computed match the edges the
-/// database actually holds. A projection that silently drops edges would leave the
-/// join in the other test still passing on whatever survived.
+/// The connections survive being written to the database: every edge lands on a node that exists,
+/// every app carries its own root, and the tool's counts match the edges the database holds.
 #[test]
 fn the_projection_preserves_the_app_and_component_connections() {
     let Some(db) = Store::start() else {
@@ -177,9 +134,7 @@ fn the_projection_preserves_the_app_and_component_connections() {
     };
     project(&db, 1);
 
-    // 1. No edge points at a node that is not there. `out.name = NONE` is how a
-    //    dangling record link reads, and it is exactly what a partial write or a
-    //    mismatched id would produce.
+    // 1. No edge points at a node that is not there (`out.name = NONE` is a dangling record link).
     for edge in ["carries", "imports", "exports"] {
         let dangling =
             db.last(&format!("SELECT count() FROM {edge} WHERE out.name = NONE GROUP ALL;"));
@@ -190,8 +145,7 @@ fn the_projection_preserves_the_app_and_component_connections() {
         );
     }
 
-    // 2. Every app carries its own root — the fix ADR-0091's query depends on, and
-    //    the one place the projection deliberately differs from `--format json`.
+    // 2. Every app carries its own root (the one place the projection differs from `--format json`).
     let rootless =
         db.last("SELECT VALUE name FROM app WHERE root NOT IN ->carries->artifact.name;");
     assert_eq!(
@@ -201,10 +155,8 @@ fn the_projection_preserves_the_app_and_component_connections() {
          imports are invisible to the join: {rootless:?}"
     );
 
-    // 3. The consumer count the tool wrote on each interface agrees with the number
-    //    of import edges the database holds. These are computed by different code
-    //    paths — one counts in Rust, the other is the edges themselves — so a
-    //    disagreement means one of them is wrong.
+    // 3. The consumer count on each interface agrees with the import edges held; computed by
+    //    different code paths, so a disagreement means one is wrong.
     let mismatched =
         db.last("SELECT VALUE name FROM interface WHERE consumers != array::len(<-imports);");
     assert_eq!(
@@ -213,8 +165,7 @@ fn the_projection_preserves_the_app_and_component_connections() {
         "consumer counts disagree with the import edges for: {mismatched:?}"
     );
 
-    // 4. Named compositions, so a wholesale collapse cannot pass the invariants
-    //    above by being uniformly empty.
+    // 4. Named compositions, so a wholesale collapse cannot pass by being uniformly empty.
     for (app, part) in
         [("conduit", "auth-guard"), ("saga", "fsm-workflow"), ("helpdesk", "record-store")]
     {
@@ -236,9 +187,8 @@ fn the_projection_preserves_the_app_and_component_connections() {
     );
 }
 
-/// The lessons the projection must never be able to touch. Deliberately tagged
-/// with an interface `vet` imports and one nothing does, so the join below is
-/// asserted to be selective rather than merely non-empty.
+/// The lessons the projection must never be able to touch. Tagged with an interface `vet` imports
+/// and one nothing does, so the join is asserted to be selective rather than merely non-empty.
 const SEED: &str = r#"
 UPSERT memory:⟨probe-csv⟩ SET ns = 'errors',
   text = 'Dialect.delimiter is a String, not a char',
@@ -260,14 +210,11 @@ fn the_join_works_and_a_rebuild_cannot_reach_the_lessons() {
 
     project(&db, 1);
 
-    // The derived half arrived. Exact counts are not asserted — they move every
-    // time somebody adds a component, and a test that has to be edited for that is
-    // a test people learn to edit without reading.
+    // The derived half arrived. Exact counts are not asserted: they move with every new component.
     for table in ["interface", "artifact", "app", "imports", "exports", "carries"] {
         assert!(db.count(table) > 0, "the projection wrote no {table} rows");
     }
 
-    // 1. THE JOIN. Nothing in this query names CSV, or anything veterinary.
     let query = format!(
         "LET $ifaces = (SELECT VALUE array::distinct(array::flatten(\
            ->carries->artifact->imports->interface.name)) FROM ONLY app:⟨{APP}⟩);\n\
@@ -290,7 +237,6 @@ fn the_join_works_and_a_rebuild_cannot_reach_the_lessons() {
          matching everything, which would pass this test for the wrong reason"
     );
 
-    // 2. THE ISOLATION. A second generation lands on top of a live pool.
     let before = db.count("memory");
     project(&db, 2);
     assert_eq!(
@@ -301,8 +247,7 @@ fn the_join_works_and_a_rebuild_cannot_reach_the_lessons() {
          the half that gets recomputed constantly"
     );
 
-    // And the old generation is gone rather than doubled, or the projection grows
-    // without bound and `consumers` counts read twice.
+    // And the old generation is gone rather than doubled, or the projection grows without bound.
     let gens = db.last("SELECT VALUE array::distinct(gen) FROM interface GROUP ALL;");
     assert_eq!(
         gens[0].as_array().map(|a| a.len()),
@@ -310,28 +255,17 @@ fn the_join_works_and_a_rebuild_cannot_reach_the_lessons() {
         "more than one generation of derived rows survived: {gens:?}"
     );
 
-    // The join still answers after a rebuild — node ids are stable across
-    // generations, so nothing that pointed at them dangles.
+    // The join still answers after a rebuild: node ids are stable across generations.
     let after = db.last(&query);
     assert_eq!(after, hits, "the join gave a different answer after a rebuild");
 }
 
 /// The lesson is reached by TRAVERSING an edge, not by scanning the pool.
 ///
-/// ADR-0090 established that a lesson is about an interface rather than about a
-/// goal's wording, and paid for it twice. ADR-0091 kept the title, merged the
-/// stores, drafted `lesson -about-> interface` as a real edge — and deferred it,
-/// leaving retrieval as `memory WHERE tags CONTAINSANY`, which is a full table
-/// scan of the one half it measured as not scaling.
-///
-/// So the claim under test is narrow and checkable: the traversal finds exactly
-/// what the scan finds. If it finds less, the index is lossy and the scan has to
-/// stay. If it finds more, it is matching things the tags do not say.
-///
-/// The second half is the one that would be expensive to get wrong: `about` is a
-/// DERIVED row, aged out by generation like every other edge here, and a rebuild
-/// that reached a lesson while dropping its index would be the thing ADR-0091's
-/// generation stamping exists to prevent.
+/// ADR-0091 left retrieval as `memory WHERE tags CONTAINSANY`, a full scan of the half that does not
+/// scale. The claim: the traversal finds exactly what the scan finds (less means a lossy index,
+/// more means matching what the tags do not say). And `about` is a DERIVED row aged out by
+/// generation, so a rebuild must not reach a lesson while dropping its index.
 #[test]
 fn a_lesson_is_reached_through_the_interface_it_is_about() {
     let Some(db) = Store::start() else {
@@ -346,14 +280,14 @@ fn a_lesson_is_reached_through_the_interface_it_is_about() {
     project(&db, 1);
     assert!(db.count("about") > 0, "the projection wrote no `about` edges");
 
-    // What the SCAN finds — the old path, kept here as the reference answer.
+    // What the SCAN finds: the old path, kept as the reference answer.
     let scanned = db.last(&format!(
         "LET $ifaces = (SELECT VALUE array::distinct(array::flatten(\
            ->carries->artifact->imports->interface.name)) FROM ONLY app:⟨{APP}⟩);\n\
          SELECT VALUE text FROM memory WHERE tags CONTAINSANY $ifaces ORDER BY text;"
     ));
 
-    // What the TRAVERSAL finds — the new path. Nothing in it mentions a tag.
+    // What the TRAVERSAL finds. Nothing in it mentions a tag.
     let traversed = db.last(&format!(
         "LET $ls = (SELECT VALUE array::distinct(array::flatten(\
            ->carries->artifact->imports->interface<-about<-memory)) FROM ONLY app:⟨{APP}⟩);\n\
@@ -372,8 +306,8 @@ fn a_lesson_is_reached_through_the_interface_it_is_about() {
          seeds a lesson tagged with an interface {APP} imports"
     );
 
-    // Rebuilding drops every edge of the old generation and rebuilds it. The
-    // lessons themselves must be untouched: the index is recomputable, they are not.
+    // Rebuilding drops every edge of the old generation; the lessons are untouched (the index is
+    // recomputable, they are not).
     project(&db, 2);
     assert_eq!(
         db.count("memory"),
@@ -395,19 +329,10 @@ fn a_lesson_is_reached_through_the_interface_it_is_about() {
     );
 }
 
-/// The index survives a pool with nothing in it, and a lesson about nothing.
-///
-/// Both of these broke the first two versions of the `about` projection, and
-/// neither would have been caught by a test that seeded a lesson which matches:
-///
-///   * a database where no lesson has ever been written — every fresh install —
-///     failed on `NONE` before the loop ran at all;
-///   * a lesson tagged with an interface that no longer exists — which is the
-///     NORMAL state under append-only interfaces (ADR-0091), since a retired
-///     interface leaves its lessons behind — failed on an empty relate target.
-///
-/// The projection runs on every build. A statement in it that only works when the
-/// data is agreeable is a statement that breaks on somebody else's machine.
+/// The index survives a pool with nothing in it, and a lesson about nothing. Both broke early
+/// versions of the `about` projection, which runs on every build and must not depend on agreeable
+/// data: a fresh install (no lesson ever written) failed on `NONE`, and a lesson tagged with a
+/// retired interface (normal under append-only interfaces, ADR-0091) failed on an empty relate target.
 #[test]
 fn the_index_survives_an_empty_pool_and_a_lesson_about_nothing() {
     let Some(db) = Store::start() else {
@@ -417,13 +342,10 @@ fn the_index_survives_an_empty_pool_and_a_lesson_about_nothing() {
         return;
     };
 
-    // 1. Nothing has ever been learned.
     project(&db, 1);
     assert_eq!(db.count("about"), 0, "an empty pool produced edges out of nowhere");
 
-    // 2. A lesson about an interface this repository does not have. Under
-    //    append-only interfaces this is not an error state — it is what a lesson
-    //    about a superseded interface looks like once the last consumer has gone.
+    // 2. A lesson about an interface this repository does not have: normal after a retirement.
     db.last(
         "CREATE memory SET ns = 'patterns', text = 'about something retired', \
          tags = ['gone:forever/interface@0.1.0'];",
@@ -437,8 +359,7 @@ fn the_index_survives_an_empty_pool_and_a_lesson_about_nothing() {
     );
     assert_eq!(db.count("about"), 0, "a lesson about no known interface was given an edge");
 
-    // 3. And a real one still lands, so the two above are not passing because the
-    //    projection quietly stopped writing edges at all.
+    // 3. A real one still lands, so the above are not passing because the projection stopped writing edges.
     db.last(SEED);
     project(&db, 3);
     assert!(
@@ -450,15 +371,9 @@ fn the_index_survives_an_empty_pool_and_a_lesson_about_nothing() {
 
 /// A rebuild adds a generation and takes none away.
 ///
-/// The derived tables answer "what is the graph"; they are rewritten whole and
-/// aged out, so nothing in them can answer "did it move". `generation` is the one
-/// row a projection leaves behind, and the whole claim is that the NEXT projection
-/// does not take it back — which is a claim about a `DELETE` that runs seven times
-/// against seven other tables and must miss this one.
-///
-/// Asserted against a real database rather than against the emitted SQL, because
-/// the emitted SQL is where it already looks right: the unit test reads the
-/// statements, and this reads what survives them.
+/// The derived tables are rewritten whole and aged out; `generation` is the one row a projection
+/// leaves behind, and the claim is that a `DELETE` running against seven other tables misses it.
+/// Asserted against a real database, since the emitted SQL already looks right.
 #[test]
 fn a_rebuild_adds_a_generation_and_removes_none() {
     let Some(db) = Store::start() else {
@@ -481,10 +396,8 @@ fn a_rebuild_adds_a_generation_and_removes_none() {
          (each build overwriting the last) or the age-out is reaching this table"
     );
 
-    // The other half, and the reason this is not just an append test: the DERIVED
-    // tables must NOT have grown. If they did, the age-out stopped working and the
-    // store now answers every unfiltered query with three graphs stacked on top of
-    // each other — which returns more rows rather than an error, and so looks fine.
+    // The DERIVED tables must NOT have grown, or the age-out stopped working and unfiltered queries
+    // return three graphs stacked (more rows, not an error).
     assert_eq!(
         db.count("artifact"),
         derived_after_one,
@@ -492,8 +405,7 @@ fn a_rebuild_adds_a_generation_and_removes_none() {
          every query that does not filter on `gen` is now silently wrong"
     );
 
-    // The oldest row still says what it said. An UPSERT keyed by generation can
-    // only reach its own row; this is that claim, after two later builds.
+    // The oldest row still says what it said: an UPSERT keyed by generation only reaches its own row.
     let first = db.last("SELECT gen, artifacts FROM generation WHERE gen = 1;");
     let row = first.as_array().and_then(|a| a.first().cloned()).unwrap_or_default();
     assert_eq!(

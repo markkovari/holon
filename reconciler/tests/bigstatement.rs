@@ -1,19 +1,12 @@
 //! A statement larger than 4096 bytes, through the graph's escape hatch.
 //!
-//! Both halves of this test exist because of one real run.
+//! `wasi:io`'s `blocking-write-and-flush` accepts at most 4096 bytes and TRAPS above that, and
+//! `knowledge-graph` wrote every statement in one call. Nothing noticed until a contract file grew from
+//! 3645 to 4573 bytes and `comp-goalrun` died with `every replica of "goalcontract.acme.test" failed; n1
+//! refused`, naming no size or write.
 //!
-//! `wasi:io`'s `blocking-write-and-flush` accepts at most 4096 bytes and TRAPS
-//! above that rather than returning an error, so a component that writes a big
-//! payload in one call simply dies. `knowledge-graph` wrote every statement that
-//! way. Nothing noticed for as long as every statement was small — and then a
-//! contract file grew from 3645 bytes to 4573, and `comp-goalrun` died with
-//! `every replica of "goalcontract.acme.test" failed; n1 refused`: no size, no
-//! component, no mention of a write, three links from the cause.
-//!
-//! It survived that long because it can only be reached through `query`, the raw
-//! SurrealQL hatch, and `graph-probe` exposed every typed verb EXCEPT that one.
-//! `contract-registry` does all of its reads and writes through it. So the fix
-//! came with a route, and this is the test that route exists for.
+//! It can only be reached through `query`, the raw SurrealQL hatch, which `graph-probe` did not expose
+//! (`contract-registry` does all its reads and writes through it), so the fix came with a route.
 //!
 //! Skipped, loudly, when Docker cannot start the database.
 
@@ -81,8 +74,7 @@ fn a_statement_over_four_kilobytes_round_trips() {
     );
     let port = fleet.ingress_port;
 
-    // The readiness check IS a `query`, so the hatch is what gets waited on rather
-    // than something adjacent to it.
+    // The readiness check IS a `query`, so the hatch is what gets waited on.
     fleet.until("a small query through the escape hatch", Duration::from_secs(180), || match post(
         port,
         "/query",
@@ -92,8 +84,7 @@ fn a_statement_over_four_kilobytes_round_trips() {
         _ => Ok(()),
     });
 
-    // Comfortably over the limit, and a size a contract really reaches: the file
-    // that broke the run was 4573 bytes.
+    // Comfortably over the limit, at a size a contract really reaches (the file that broke the run was 4573 bytes).
     let big = "x".repeat(12_000);
     let statement = format!("UPSERT big:1 SET body = '{big}';");
     assert!(statement.len() > 4096, "the point of the test is a statement over the limit");
@@ -104,8 +95,7 @@ fn a_statement_over_four_kilobytes_round_trips() {
         statement.len()
     );
 
-    // Written is not enough: the whole body has to have arrived, because a partial
-    // write would also "succeed".
+    // Written is not enough: the whole body has to have arrived, since a partial write also "succeeds".
     let read = post(port, "/query", "SELECT body FROM big:1;");
     let text = read.to_string();
     assert!(

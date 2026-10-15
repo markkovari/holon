@@ -1,16 +1,11 @@
 //! End to end: authored YAML, a real fleet, real requests.
 //!
-//! Six apps go to ONE fleet at once — three that must serve traffic, three that must
-//! be refused with a reason a human can act on. Deploying them together is the point:
-//! a refusal that also stops the other five from being placed is a bug this catches
-//! and a single-app test cannot.
+//! Six apps go to ONE fleet at once: three that must serve traffic, three that must be refused with a
+//! reason a human can act on. Deploying together catches a refusal that also stops the other five from
+//! being placed, which a single-app test cannot.
 //!
-//! Run with `cargo nextest run --release -E 'test(e2e)'` after `cargo build
-//! --release` in `host/`. It needs `nats-server` on PATH and the built `comp-host`.
-//!
-//! Everything is Rust: the control plane below is an axum stub in-process rather than
-//! a script, so the fixtures, the conversion, the assertions and the harness are one
-//! language and one test runner.
+//! Run with `cargo nextest run --release -E 'test(e2e)'` after `cargo build --release` in `host/`. It
+//! needs `nats-server` on PATH and the built `comp-host`. The control plane is an in-process axum stub.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -28,16 +23,13 @@ use serde_json::{json, Value};
 const SECRET: &str = "test-secret";
 const LATTICE: &str = "e2e";
 
-/// Ports are fixed rather than searched: nextest gives this test its own process, and
-/// a fixed set makes a leaked child obvious instead of silently moving elsewhere.
+/// Ports are fixed rather than searched: nextest gives this test its own process, and a fixed set makes
+/// a leaked child obvious.
 const PLATFORM_PORT: u16 = 8399;
 const NATS_PORT: u16 = 4332;
 const INGRESS_PORT: u16 = 8394;
 
 /// Kills the child on drop, so a failed assertion cannot leave a fleet running.
-///
-/// The process name is not carried: it is only ever used in the panic message at
-/// spawn time, and a field nobody reads is a field that goes stale.
 struct Kill(Child);
 
 impl Drop for Kill {
@@ -67,8 +59,8 @@ fn spawn(name: &'static str, mut cmd: Command) -> Kill {
     Kill(child)
 }
 
-/// The state the stub control plane keeps: the manifests it serves, and the digest
-/// each component has been given once its artifact was distributed.
+/// The state the stub control plane keeps: the manifests it serves, and the digest each component has
+/// been given once its artifact was distributed.
 #[derive(Default)]
 struct Platform {
     manifests: Vec<Value>,
@@ -79,9 +71,8 @@ struct Platform {
 
 type Shared = Arc<Mutex<Platform>>;
 
-/// A control plane that does exactly what the reconciler needs and nothing else:
-/// hand out revisions, hand over artifact bytes, accept the digest that comes back,
-/// and record what could not be scheduled.
+/// A control plane that does exactly what the reconciler needs: hand out revisions and artifact bytes,
+/// accept the digest that comes back, and record what could not be scheduled.
 async fn serve_platform(state: Shared) {
     let app = Router::new()
         .route(
@@ -92,8 +83,7 @@ async fn serve_platform(state: Shared) {
                     let state = state.clone();
                     async move {
                         let p = state.lock().unwrap();
-                        // A component with no digest yet is one the reconciler must
-                        // push first; that queue is what `pushed` below closes.
+                        // A component with no digest yet is one the reconciler must push first.
                         let out: Vec<Value> = p
                             .manifests
                             .iter()
@@ -228,9 +218,8 @@ fn post_json(host: &str) -> Result<u16, String> {
     String::from_utf8_lossy(&out.stdout).trim().parse().map_err(|e| format!("{e}"))
 }
 
-/// Poll, do not sleep on a number. Inventory is a heartbeat behind reality and a
-/// parked app has to be activated first, so a snapshot taken at the wrong moment
-/// fails on a working system — a mistake already made twice here (ADR-0042, 0045).
+/// Poll, do not sleep on a number: inventory is a heartbeat behind reality and a parked app has to be
+/// activated first (ADR-0042, 0045).
 fn serves(host: &str, within: Duration) -> Result<(), String> {
     let deadline = Instant::now() + within;
     let mut last = String::from("never answered");
@@ -254,10 +243,8 @@ fn six_manifests_one_fleet() {
     {
         assert!(f.exists(), "missing {} — run `cargo xtask build --force`", f.display());
     }
-    // Composed here rather than by `cargo xtask compose gate`, which is the whole point of
-    // `plug`: the fused artifact is derived from what `gate-domain` imports, so this
-    // test needs no second manual step and cannot run against a stale composition
-    // someone built by hand three commits ago.
+    // Composed here rather than by `cargo xtask compose gate`: the fused artifact is derived from what
+    // `gate-domain` imports, so there is no second manual step and no stale hand-built composition.
     let catalog = plug::Catalog::scan(&plug::default_dirs(&root));
     let composed =
         plug::compose_to("gate-domain", &catalog, &root.join("components/target/composed"))
@@ -270,8 +257,7 @@ fn six_manifests_one_fleet() {
 
     let state: Shared = Arc::new(Mutex::new(Platform {
         manifests: load_fixtures(),
-        // The fused app gets the composed artifact; the linked one gets the three raw
-        // components. That difference IS the two strategies (ADR-0005).
+        // The fused app gets the composed artifact; the linked one the three raw components (ADR-0005).
         artifacts: HashMap::from([
             ("gate".into(), std::fs::read(&composed).unwrap()),
             ("record-store".into(), std::fs::read(raw.join("record_store.wasm")).unwrap()),
@@ -330,8 +316,8 @@ fn six_manifests_one_fleet() {
     ]);
     let _ing = spawn("comp-ingress", ing);
 
-    // Serving is checked by INVOKING, never by reading inventory: an app that is
-    // placed but does not answer is exactly the failure a status check misses.
+    // Serving is checked by INVOKING, never inventory: a placed app that does not answer is what a
+    // status check misses.
     let mut failures: Vec<String> = Vec::new();
     for (host, what) in [
         ("fused.e2e.test", "a fused artifact serves over HTTP"),
@@ -347,9 +333,8 @@ fn six_manifests_one_fleet() {
         }
     }
 
-    // Refusals are checked by their REASON. "It was refused" would pass for a refusal
-    // with the wrong reason, and a reason nobody can act on is barely better than a
-    // crash — so each names what an operator would need in order to fix it.
+    // Refusals are checked by their REASON: "it was refused" would pass for the wrong reason, and each
+    // must name what an operator needs to fix it.
     let deadline = Instant::now() + Duration::from_secs(30);
     let expected: [(&str, &[&str]); 3] = [
         ("conflict", &["records:store/store", "record-store", "shaper"]),
@@ -388,8 +373,7 @@ fn six_manifests_one_fleet() {
         std::thread::sleep(Duration::from_millis(500));
     }
 
-    // Only a shared fleet can show this: a broken manifest must not take healthy apps
-    // down with it.
+    // Only a shared fleet shows this: a broken manifest must not take healthy apps down with it.
     let still = ["fused.e2e.test", "linked.e2e.test", "zero.e2e.test"]
         .iter()
         .filter(|h| serves(h, Duration::from_secs(10)).is_ok())

@@ -1,12 +1,8 @@
 //! What a run may ship, and that both ends agree about it.
 //!
-//! The base tree travels to the driver as ONE message. NATS refuses one past
-//! `max_payload`, and the failure at this end is opaque — so `comp-goalrun`
-//! refuses it first, with a message that says what to do.
-//!
-//! The bug this exists to prevent is the two numbers drifting. The guard was
-//! `900_000` written into `goalrun`, and the server was started with NATS's own
-//! 1 MB default; raise one and the other silently keeps refusing. So the ceiling
+//! The base tree travels to the driver as ONE message. NATS refuses one past `max_payload` with an
+//! opaque failure, so `comp-goalrun` refuses it first with an actionable message. The bug to prevent is
+//! the two numbers drifting (a hardcoded `900_000` guard against NATS's 1 MB default), so the ceiling
 //! lives in `fleet`, the server is configured FROM it, and the guard reads it.
 
 use std::io::{Read, Write};
@@ -15,11 +11,8 @@ use std::time::Duration;
 
 use comp_reconciler::fleet::{max_tree_payload, Fleet, MAX_TREE_BYTES};
 
-/// The guard sits below the ceiling it is derived from.
-///
-/// A guard set AT the ceiling passes a tree that then makes the message carrying
-/// it too large — the contract, the goal text and the framing ride with it. That
-/// failure lands on the server, where the reason is not visible from here.
+/// The guard sits below the ceiling it is derived from: one AT the ceiling passes a tree whose message
+/// (contract, goal text, framing) is then too large, failing on the server where the reason is not visible.
 #[test]
 fn the_guard_sits_below_the_ceiling_it_is_derived_from() {
     assert!(
@@ -27,8 +20,7 @@ fn the_guard_sits_below_the_ceiling_it_is_derived_from() {
         "the guard must leave room for the envelope: {} vs {MAX_TREE_BYTES}",
         max_tree_payload()
     );
-    // And well above what the old hardcoded 900_000 allowed, or this bought
-    // nothing. The largest goal in `.comp/goals` ships 504 KB — 57% of that guard.
+    // And well above the old hardcoded 900_000 (the largest goal in `.comp/goals` ships 504 KB).
     assert!(
         max_tree_payload() > 4 * 1024 * 1024,
         "8 MB was the point; the guard is {}",
@@ -36,15 +28,9 @@ fn the_guard_sits_below_the_ceiling_it_is_derived_from() {
     );
 }
 
-/// The SERVER advertises the ceiling this code believes in.
-///
-/// The number that binds is the one the server was started with, not the one this
-/// crate holds — and those were different until the constant moved into `fleet`.
-/// Read off the wire rather than from the config the fleet wrote, because a
-/// config `nats-server` rejected or ignored still sits on disk looking correct.
-///
-/// NATS sends `INFO {json}` as the first line on connect, before anything is
-/// sent to it, so this needs no client library and no protocol beyond `read`.
+/// The SERVER advertises the ceiling this code believes in. Read off the wire, not from the config the
+/// fleet wrote, since a config `nats-server` rejected or ignored still sits on disk looking correct.
+/// NATS sends `INFO {json}` first on connect, so no client library is needed.
 #[test]
 fn the_server_the_fleet_starts_advertises_that_ceiling() {
     let fleet = Fleet::start("treesize", &[], 1, None);
@@ -54,8 +40,7 @@ fn the_server_the_fleet_starts_advertises_that_ceiling() {
     s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
-    // Until the end of the INFO line, not until EOF: the server holds the
-    // connection open waiting for CONNECT, so reading to the end never returns.
+    // Until the end of the INFO line, not EOF: the server holds the connection open waiting for CONNECT.
     while !buf.windows(2).any(|w| w == b"\r\n") {
         match s.read(&mut chunk) {
             Ok(0) => break,
@@ -77,20 +62,16 @@ fn the_server_the_fleet_starts_advertises_that_ceiling() {
         "the fleet started a server whose ceiling is not the one the guard reads — \
          which is the drift this file exists to catch. INFO said {advertised}."
     );
-    // Named explicitly, because passing this while still on the default is the
-    // one way this test could be green and worthless.
+    // Named explicitly, since passing while still on the default would be green and worthless.
     assert!(
         advertised > 1024 * 1024,
         "still on NATS's 1 MB default: the config the fleet wrote was not applied"
     );
 }
 
-/// Seeding the runner is what lets every plan afterwards carry no tree.
-///
-/// The claim is not that `seed_base` returns Ok — it is that a candidate judged
-/// AFTERWARDS, sending no tree at all, is judged against the real base. That is
-/// the property every plan in `goalrun` now depends on, and the one that was
-/// previously a side effect of a critic which is allowed to fail.
+/// Seeding the runner is what lets every plan afterwards carry no tree. The claim is that a candidate
+/// judged AFTERWARDS, sending no tree, is judged against the real base (once a side effect of a critic
+/// that is allowed to fail).
 #[test]
 fn a_seeded_runner_judges_a_candidate_that_carries_no_tree() {
     use comp_reconciler::compose;
@@ -136,7 +117,7 @@ fn a_seeded_runner_judges_a_candidate_that_carries_no_tree() {
     compose::seed_base(&url, None, commit, &tree, Duration::from_secs(60))
         .expect("seeding the base");
 
-    // The candidate, with NO tree — exactly what a plan now carries.
+    // The candidate, with NO tree, as a plan now carries.
     let report = compose::gate(
         &url,
         None,
@@ -153,8 +134,7 @@ fn a_seeded_runner_judges_a_candidate_that_carries_no_tree() {
         report.failures
     );
 
-    // An UNSEEDED commit still asks, so the seed is doing the work rather than
-    // the runner having quietly fallen back to something.
+    // An UNSEEDED commit still asks, so the seed is doing the work.
     let other = compose::gate(
         &url,
         None,
