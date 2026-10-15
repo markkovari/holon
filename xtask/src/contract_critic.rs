@@ -1,14 +1,8 @@
-//! `cargo xtask contract-critic` — was tools/contract-critic.py.
-//!
-//! The cheap, deterministic half of what a branch used to do by hand: read a
-//! goal's contract, find a claim the components do not support, before a
-//! generation was spent on it. Two shapes, no model call:
+//! `cargo xtask contract-critic` — the cheap, deterministic check of a goal's
+//! contract before a generation is spent on it. Two shapes, no model call:
 //!   - a context file that does not resolve;
 //!   - a capability a part's world imports whose signature the contract never
 //!     quotes, so the part has to guess it.
-//!
-//! Ported from Python because it's a dev-tooling script with no component tie
-//! — this repo's own convention keeps those in Rust alongside xtask.
 
 use anyhow::{Context, Result};
 use std::collections::BTreeSet;

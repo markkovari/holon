@@ -30,8 +30,6 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-// ---- identity --------------------------------------------------------------
-
 /// The real name of a store, as chosen by the host.
 ///
 /// The inner field is deliberately private. Nothing outside this module can build
@@ -113,8 +111,6 @@ pub fn instance_id(tenant: &str, app: &str, component: &str) -> InstanceId {
     format!("{tenant}/{app}/{component}")
 }
 
-// ---- naming (salvaged from the renderer) -----------------------------------
-
 pub fn dns_label(s: &str) -> String {
     let out: String = s
         .chars()
@@ -126,20 +122,12 @@ pub fn dns_label(s: &str) -> String {
 /// One application's identity across the fleet. Derived from tenant + app, never
 /// supplied — a tenant able to set this would be a tenant able to name someone
 /// else's storage.
-/// One application's identity across the fleet. Derived from tenant + app, never
-/// supplied — a tenant able to set this would be a tenant able to name someone
-/// else's storage.
 ///
 /// The 53-character cap is a real constraint, and plain truncation was a silent
-/// isolation break. Environments nest (`shop-env-a-env-b`, ADR-0078), so names
-/// grow by six characters per level, and past the cap two SIBLINGS differing only
-/// in their last segment truncate to the same string — one store, two
-/// environments, each reading the other's writes. With single-character names it
-/// happens at depth seven, and nothing anywhere would have said so.
-///
-/// So an over-long name keeps a readable prefix and earns a suffix derived from
-/// the WHOLE name. Names that fit are untouched, which keeps the common case
-/// legible and every case distinct.
+/// isolation break: environments nest (`shop-env-a-env-b`, ADR-0078), and past the
+/// cap two SIBLINGS differing only in their last segment would share one store.
+/// So an over-long name keeps a readable prefix plus a suffix derived from the WHOLE
+/// name; names that fit are untouched.
 pub fn env_for(tenant: &str, app: &str) -> String {
     const CAP: usize = 53;
     /// 8 hex characters plus the separator.
@@ -157,8 +145,6 @@ pub fn env_for(tenant: &str, app: &str) -> String {
     format!("{}-{tag}", head.trim_end_matches('-'))
 }
 
-// ---- egress ----------------------------------------------------------------
-
 /// What one app may dial.
 ///
 /// Two independent checks, on purpose. The allow-list is on **names**, because
@@ -175,12 +161,8 @@ pub struct EgressPolicy {
     /// Sockets this node knows are dangerous regardless of range — its own
     /// listener and the NATS it is joined to, which may be public.
     ///
-    /// A SOCKET, not an address: the danger is the port this host serves on, and
-    /// denying the whole IP would also deny every unrelated service that happens
-    /// to share it. On a lattice node that distinction is invisible, because the
-    /// IP is private and denied by range anyway — it only shows up under
-    /// `--allow-private-egress`, where it made a database on loopback
-    /// unreachable while claiming to protect the listener.
+    /// A SOCKET, not an address: denying the whole IP would also deny every
+    /// unrelated service sharing it, which only shows under `--allow-private-egress`.
     denied: BTreeSet<SocketAddr>,
 }
 
@@ -293,14 +275,11 @@ fn expand_egress(egress: &[String]) -> Vec<String> {
     out.into_iter().collect()
 }
 
-// ---- the scope -------------------------------------------------------------
-
 /// Everything one instance is allowed to see, built once from a start command and
 /// immutable thereafter.
 ///
-/// Never from guest input. Never from process environment — in a shared process
-/// `std::env` is a cross-tenant read by construction, which is why the old
-/// `build_config()` is gone rather than scoped.
+/// Never from guest input, and never from process environment: in a shared process
+/// `std::env` is a cross-tenant read by construction.
 #[derive(Debug, Clone)]
 pub struct Scope {
     pub tenant: String,
@@ -410,14 +389,11 @@ pub struct Limits {
 
 impl StartCommand {
     pub fn into_scope(self, limits: &Limits) -> Scope {
-        // The seeded name is `default` because that is what every component in the
-        // catalog hardcodes. Seeding it means the ADR-0012 fix needs zero catalog
-        // changes — which is precisely what killed the fix proposed there.
+        // The seeded name is `default` because every component in the catalog
+        // hardcodes it, so the ADR-0012 fix needs zero catalog changes.
         //
-        // `blobs` is the second and last: object bytes, which `blob-store` keeps
-        // apart from its index so a host with `--blob s3` can put them in an
-        // object store while everything else stays on the KV backend. Without
-        // that flag both land on the one backend, under two names.
+        // `blobs` is the second and last: object bytes, kept apart from
+        // `blob-store`'s index so `--blob s3` can put them in an object store.
         let env = env_for(&self.tenant, &self.app);
         let buckets = BTreeMap::from([
             ("default".to_string(), BucketId(format!("b-{env}"), StoreClass::Kv)),

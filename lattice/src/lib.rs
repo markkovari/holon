@@ -1,29 +1,20 @@
 //! What a node and the reconciler need from the fabric between them.
 //!
-//! Three traits, deliberately, because they are three different requirements that
-//! one technology currently happens to satisfy:
+//! Three traits, because they are three different requirements that one technology
+//! currently happens to satisfy:
 //!
 //!   [`Inventory`]  — nodes say what they are running; it expires on its own.
 //!   [`CommandBus`] — the reconciler tells a node to start or stop something.
 //!   [`Artifacts`]  — bulk bytes, addressed by digest.
 //!
-//! Writing those down as one dependency is how a system ends up unable to change
-//! any of them. They are not the same: coordination wants low latency and a TTL,
-//! bulk bytes want durability and cheap storage, and `--oci-mirror` in the
-//! reconciler is already most of a second [`Artifacts`] implementation.
+//! [`nats`] and [`memory`] implement all three (the latter so an interface with one
+//! implementation is shown to be one, and the reconciler loop is testable without a
+//! broker).
 //!
-//! [`nats`] implements all three. [`memory`] implements all three too — not as a
-//! toy, but because an interface with exactly one implementation has never been
-//! shown to be an interface at all, and because it lets the reconciler's loop be
-//! tested without a broker.
-//!
-//! ## The TTL is the design
-//!
-//! [`Inventory::publish`] takes a time-to-live and entries expire without anyone
-//! deleting them. That is what makes a departed node disappear on its own, and it
-//! is the single property that deleted ADR-0016's orphan-reaping apparatus. An
-//! implementation that cannot expire entries has to emulate it, and should say so
-//! rather than quietly keep the dead.
+//! The TTL is the design: [`Inventory::publish`] takes a time-to-live and entries
+//! expire without anyone deleting them, which is what makes a departed node
+//! disappear and deleted ADR-0016's orphan-reaping apparatus. An implementation that
+//! cannot expire entries should say so rather than quietly keep the dead.
 
 pub mod lease;
 pub mod memory;
@@ -104,20 +95,12 @@ pub trait Artifacts: Send + Sync {
 /// this module IS the wire contract. It lives here rather than in either of them
 /// so that changing it is one edit rather than two that can disagree.
 pub mod wire {
-    /// The wire contract version, carried in every subject.
-    ///
-    /// Not decoration. A fleet is upgraded one machine at a time, so mixed versions
-    /// are the NORMAL state during any rollout, and a payload that changes shape
-    /// without changing its subject is misparsed in silence by whichever side is
-    /// older. We watched exactly that on wasmCloud (ADR-0039): a 2.3.0 host against a
-    /// 2.5.2 control plane reported `Placement: True` and then never ran the
-    /// workload, with nothing in either log naming a version mismatch.
-    ///
-    /// With the version in the subject, an old node simply does not receive commands
-    /// from a new reconciler — it goes quiet, its inventory expires, and the fleet
-    /// treats it as absent (ADR-0022). "Absent" is a state this platform already
-    /// handles correctly and can be seen from the outside; "present but silently
-    /// misparsing" is neither.
+    /// The wire contract version, carried in every subject. A fleet is upgraded one
+    /// machine at a time, so mixed versions are NORMAL during a rollout, and a payload
+    /// that changes shape under the same subject is misparsed in silence by the older
+    /// side (seen on wasmCloud, ADR-0039). With the version in the subject, an old node
+    /// goes quiet and expires from inventory, which the platform already handles
+    /// (ADR-0022).
     ///
     /// Bump this when the shape of a command or an inventory entry changes
     /// incompatibly — not for additive fields, which serde already tolerates.
@@ -205,17 +188,11 @@ mod tests {
 
 /// A node's inventory snapshot, on the wire.
 ///
-/// Snapshots are the largest and most frequent message the platform sends: every
-/// node, every heartbeat, the whole truth about what it runs. At two thousand
-/// instances that is 360 KiB of JSON per node per beat — a thousand nodes on a
-/// five-second heartbeat is 72 MB/s of bus traffic, and NATS refuses a single
-/// message over 1 MiB, which caps a node at roughly 5 500 instances (ADR-0058).
-///
-/// It is JSON with the same six field names repeated per instance and a 71-byte
-/// digest string that is usually one of a handful, so it compresses about ten to
-/// one and the ceiling moves with it. Compressing the payload was preferred over
-/// designing a delta protocol because it is transparent: no sequence numbers, no
-/// resync, no way for the two sides to disagree about what they have seen.
+/// Snapshots are the largest and most frequent message: at two thousand instances
+/// that is 360 KiB of JSON per node per beat, and NATS refuses a message over 1 MiB,
+/// capping a node at roughly 5 500 instances (ADR-0058). The JSON compresses about
+/// ten to one; compressing the payload was preferred over a delta protocol because
+/// it needs no sequence numbers or resync.
 pub mod snapshot {
     /// zstd's frame magic. JSON always starts `{`, so the two can never be
     /// confused — which is what lets a fleet run mixed versions during a rollout

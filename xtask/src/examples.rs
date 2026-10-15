@@ -1,16 +1,10 @@
-//! `cargo xtask stage-examples` — was `just examples-stage`.
+//! `cargo xtask stage-examples` — writes the jco examples' `.wasm` inputs from the
+//! build. They used to be tracked and had drifted from their components, so a green
+//! example said nothing about the component it claimed to demonstrate; they are
+//! build outputs now (`**/*.wasm` in .gitignore, and reconciler/tests/derived.rs
+//! refuses a tracked one).
 //!
-//! 58 of the jco examples' `.wasm` inputs were TRACKED, and all 50 with a
-//! same-named component had drifted from it — not by a metadata stamp, by
-//! thousands of bytes. So ~40 examples were exercising frozen components that no
-//! longer existed anywhere else, and a green example said nothing about the
-//! component it claimed to demonstrate. They are build outputs now (`**/*.wasm`
-//! in .gitignore, and reconciler/tests/derived.rs refuses a tracked one), and
-//! this is what writes them.
-//!
-//! Derived from each example's own `package.json` rather than listed here: a
-//! hand-kept list of 58 is wrong the first time somebody adds an example, and
-//! wrong silently.
+//! Derived from each example's own `package.json` rather than a hand-kept list.
 
 use anyhow::{Context, Result};
 use colored::Colorize;

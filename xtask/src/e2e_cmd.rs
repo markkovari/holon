@@ -1,12 +1,9 @@
-//! `cargo xtask e2e` — was the `e2e-<app>` recipes (just/e2e.just).
+//! `cargo xtask e2e` — drives a real fleet (a host, a composed artifact) and asserts
+//! what it serves. Almost every app is the same three lines (compose, build
+//! comp-host, `cargo test --release` in the example), so they are one rule here; the
+//! scripted ones are named.
 //!
-//! These drive a real fleet — a host, a composed artifact — and assert what it
-//! serves. Almost every one was the same three lines (compose, build comp-host,
-//! `cargo test --release` in the example), so they are one rule here; the
-//! handful that ran a script instead are named.
-//!
-//! (Named `e2e_cmd` rather than `e2e`: a module and a function share Rust's
-//! item namespace, and this one exports a function called `e2e`.)
+//! (Named `e2e_cmd`: a module and a function share Rust's item namespace.)
 
 use anyhow::Result;
 use std::path::PathBuf;
@@ -95,9 +92,8 @@ fn e2e_app(app: &str, args: &[String]) -> Result<()> {
     comp_host()?;
 
     if cargo_suite {
-        // mesh's suite spawns its own flaky upstream from `target/release/flaky`,
-        // and the old recipe built it first — any example with a binary gets the
-        // same, so the test never finds it missing.
+        // mesh's suite spawns its own flaky upstream from `target/release/flaky`, so any
+        // example with a binary gets it built first.
         if dir.join("src/bin").is_dir() || dir.join("src/main.rs").is_file() {
             let mut bins = Command::new("cargo");
             bins.args(["build", "--release", "--bins"]).current_dir(&dir);

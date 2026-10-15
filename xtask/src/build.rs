@@ -161,12 +161,10 @@ pub(crate) fn build_components(force: bool) -> Result<()> {
                     continue;
                 }
 
-                // Stale by CONTENT, not mtime. cargo uplifts `release/<x>.wasm`
-                // from `deps/` (a hard link or copy), so any later `cargo build`
-                // that touches the crate puts the UNNAMED artifact back — with the
-                // deps file's old mtime, older than the stamp. An mtime check then
-                // skipped it, and the studio saw a component named "". The stamp
-                // holds a hash of the file as stamped; anything else is re-stamped.
+                // Stale by CONTENT, not mtime: cargo uplifts `release/<x>.wasm` from
+                // `deps/`, so a later `cargo build` puts the UNNAMED artifact back with
+                // the deps file's old mtime, older than the stamp. The stamp holds a
+                // hash of the file as stamped; anything else is re-stamped.
                 let bytes = fs::read(&file_path)
                     .with_context(|| format!("reading {}", file_path.display()))?;
                 if !force
@@ -176,7 +174,6 @@ pub(crate) fn build_components(force: bool) -> Result<()> {
                     continue;
                 }
 
-                // Stamp metadata
                 let named_path = file_path.with_extension("named");
                 let mut stamp_cmd = Command::new("wasm-tools");
                 stamp_cmd.args([

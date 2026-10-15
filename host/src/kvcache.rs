@@ -1,37 +1,16 @@
-//! `--kv-cache-ms` — a per-node read cache whose only correctness argument is a
-//! clock.
+//! `--kv-cache-ms` — a per-node read cache whose only correctness argument is a clock.
 //!
-//! ## Why this shape, and not the one ADR-0059 rejected
+//! No coherence protocol: an entry lives for `ttl` and is then gone — no watch, no
+//! invalidation message, nothing whose cost scales with anyone else's write rate. The
+//! read mirror ADR-0059 rejected paid for a NATS `watch()` on every write in the
+//! fleet; ADR-0062 measured a real app at 264 reads per write.
 //!
-//! The read mirror kept a node's copy of a bucket fresh with a NATS `watch()`. It
-//! lost by 2.3× for a structural reason: the watch delivers every write to every
-//! node, so upkeep scales with the FLEET'S write rate, and the benchmark component
-//! wrote on every request.
-//!
-//! ADR-0062 measured a real application instead: 264 reads per write, and the
-//! hottest key in the run took 399 697 reads against 1 write. At that ratio the
-//! expensive half of the mirror — knowing immediately when someone else writes —
-//! is buying protection against something that almost never happens, and paying
-//! for it on every write in the fleet.
-//!
-//! So this has **no coherence protocol at all**. An entry lives for `ttl` and then
-//! it is gone. There is no watch, no invalidation message, no subscription, and
-//! nothing whose cost scales with anyone else's write rate. The staleness bound is
-//! the TTL and nothing else.
-//!
-//! ## What that costs, stated plainly
-//!
-//! **A write on another node is invisible here until the entry expires.** Within
-//! one node writes invalidate their own key immediately, so read-your-own-writes
-//! holds locally; across nodes it does not, and a read can be up to `ttl` stale.
-//!
-//! That is a real semantic change and it is why this is **off by default**. It is
-//! sound for an app whose reads tolerate a bounded lag and unsound for one that
-//! does not, and no amount of tuning changes which of those an app is.
+//! Cost: a write on another node is invisible here until the entry expires. Writes
+//! invalidate their own key immediately, so read-your-own-writes holds locally but a
+//! cross-node read can be up to `ttl` stale. That is why it is **off by default**.
 //!
 //! `increment` is never served from cache and always invalidates: a cached
-//! read-modify-write is a lost update rather than a stale read, which is the same
-//! exclusion the mirror made and the one line of it worth keeping.
+//! read-modify-write is a lost update rather than a stale read.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -153,26 +132,14 @@ impl KvBackend for CacheKv {
         self.inner.increment(bucket, key, delta)
     }
 
-    /// **Never served from cache**, and this is the line that makes the cache safe
-    /// to turn on at all.
+    /// **Never served from cache** — this is what makes the cache safe to turn on.
+    /// It is the read half of a compare-and-set, so it must report the revision the
+    /// store is actually at; a cached one would let the guard agree with itself about
+    /// state that no longer exists, the lost update ADR-0065 measured.
     ///
-    /// This is the read half of a compare-and-set: its whole job is to report the
-    /// revision the store is actually at. Answering it from a copy would hand back a
-    /// revision that was true once, the guarded write would then be built on it, and
-    /// the guard would agree with itself about state that no longer exists — which
-    /// is precisely the lost update ADR-0065 measured.
-    ///
-    /// A cached plain `get` can still be stale, and that is the documented,
-    /// TTL-bounded trade (ADR-0064). It can no longer cost a write.
-    /// It also REFRESHES the cache, which is what makes a losing writer able to
-    /// make progress.
-    ///
-    /// Without it, a component that re-reads through the cache to build its retry
-    /// keeps offering the same stale revision, is refused again, and cannot
-    /// converge until the entry expires — the lost update becomes a failed request
-    /// for up to the TTL, which is better and still wrong. This read is
-    /// authoritative and already in hand, so putting it in the cache costs nothing
-    /// and replaces exactly the entry that was causing the refusals.
+    /// It also REFRESHES the cache: otherwise a losing writer that re-reads through
+    /// the cache keeps offering the same stale revision and cannot converge until
+    /// the entry expires.
     fn get_revision(&self, bucket: &BucketId, key: &str) -> Result<Option<(u64, Vec<u8>)>> {
         let got = self.inner.get_revision(bucket, key)?;
         self.store(id(bucket, key), got.as_ref().map(|(_, v)| v.clone()));

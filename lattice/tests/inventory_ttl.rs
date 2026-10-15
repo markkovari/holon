@@ -1,16 +1,12 @@
 //! The inventory bucket's TTL is whatever the bucket says, and a mismatch is noticed.
 //!
-//! `docs/CURRENT.md` carried this as a gap for as long as it did because it cannot be
-//! reasoned about from one process: three of them call `create_key_value` on the same
-//! bucket with their own `max_age` — a host asks for `heartbeat_secs * 3`, the
-//! reconciler for `--inventory-ttl`, the ingress for its own — and whoever creates it
-//! first decides. They agree today only because three defaults coincide at 15s.
+//! Host, reconciler and ingress each call `create_key_value` on the same bucket with
+//! their own `max_age`, and whoever creates it first decides; they agree only because
+//! three defaults coincide at 15s. That cannot be reasoned about from one process, so
+//! this spawns a real `nats-server`, creates the bucket at one TTL, connects again
+//! asking for another, and asserts the second reports the FIRST one's value.
 //!
-//! So this spawns a real `nats-server` and does what no single process can: creates
-//! the bucket at one TTL, connects again asking for a different one, and asserts the
-//! second connection reports the FIRST one's value rather than its own request.
-//!
-//! Skips when `nats-server` is not on PATH — a machine without it has broken nothing.
+//! Skips when `nats-server` is not on PATH.
 
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -92,14 +88,9 @@ async fn the_first_process_to_create_the_bucket_decides_the_ttl() {
         "the process that CREATED the bucket must get what it asked for"
     );
 
-    // Second process: 60s, as a host with `--heartbeat-secs 20` would ask for. It
-    // does not get it, and this is the assertion the gap was about — before
-    // `effective_ttl` existed, this process went on to size its refresh against 60.
-    //
-    // 60 rather than 45 on purpose: 45/3 is exactly 15, and a test whose claim rests
-    // on `15 > 15` is testing a boundary instead of the phenomenon. A refresh equal
-    // to the whole TTL is already broken, but saying so needs a different assertion
-    // than "exceeds", so the numbers are chosen to make the gap unambiguous.
+    // Second process: 60s, as a host with `--heartbeat-secs 20` would ask for. It does
+    // not get it. 60 rather than 45 so the numbers are unambiguous (45/3 is exactly
+    // 15, which would test a boundary instead of the phenomenon).
     let second = NatsLattice::connect(&nats.url, lattice, Duration::from_secs(60))
         .await
         .expect("second connect");
@@ -110,12 +101,9 @@ async fn the_first_process_to_create_the_bucket_decides_the_ttl() {
          it has 15s, not handed back its own request"
     );
 
-    // And the arithmetic that actually broke: a third of the ttl.
-    //
-    // Against the request it is 20s, against reality 5s — so an ingress that trusted
-    // its own number would re-read a 15s bucket every 20s and routinely read a bucket
-    // that had already expired everything in it. From the outside that is
-    // `no app answers`.
+    // The arithmetic that actually broke: a third of the ttl. Against the request it
+    // is 20s, against reality 5s, so an ingress trusting its own number would re-read
+    // a bucket that had already expired everything in it.
     let refresh_from_request = 60 / 3;
     let refresh_from_reality = second.effective_ttl().as_secs() / 3;
     assert_eq!(refresh_from_reality, 5);

@@ -1,20 +1,11 @@
-//! The non-UI half: boots a local dev lattice plus the agent runtime, and
-//! talks to both.
+//! The non-UI half: boots a local dev lattice plus the agent runtime, and talks to both.
 //!
-//! An agent is two things that are deliberately separate:
-//!
-//! * a **spec + brain** in `agent_runtime` — name, description, capabilities,
-//!   triggers, model, memory, run log. Edited by writing a JSON file; the next
-//!   run uses it. Nothing is rebuilt. Schedule and event triggers fire from
-//!   here, whether or not anyone has the console open on that agent.
-//! * a **front door** on the lattice — one generic `agent-gateway` component,
-//!   uploaded once per agent under the agent's name, which forwards HTTP to the
-//!   runtime. This is what makes `<name>.<tenant>.test` answer, through the
-//!   real ingress -> lattice -> component path.
-//!
-//! The UI's transcript is driven by the runtime's event stream, not by what
-//! the UI itself sent, so a run triggered by a cron schedule or another agent
-//! shows up in that agent's conversation exactly like one typed here.
+//! An agent is two deliberately separate things: a spec + brain in `agent_runtime`
+//! (edited as a JSON file, nothing rebuilt; schedule and event triggers fire from
+//! there whether or not the console is open), and a front door on the lattice (one
+//! generic `agent-gateway` component per agent name, forwarding HTTP to the runtime).
+//! The UI transcript follows the runtime's event stream, so runs triggered by cron
+//! or another agent appear like typed ones.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -248,7 +239,6 @@ impl Lattice {
         self.agents.iter_mut().find(|a| a.name == name)
     }
 
-    // ---- runtime events -> transcript ------------------------------------
 
     fn on_event(&mut self, ev: Event, cx: &mut Context<Self>) {
         match ev {
@@ -302,7 +292,6 @@ impl Lattice {
         cx.notify();
     }
 
-    // ---- refresh ----------------------------------------------------------
 
     /// Re-reads the agent list from the runtime (the source of truth for what
     /// exists) and each agent's gateway status from platform-domain, keeping
@@ -367,7 +356,6 @@ impl Lattice {
         .detach();
     }
 
-    // ---- chat -------------------------------------------------------------
 
     /// Sends `text` to the agent over the real HTTP ingress (ingress ->
     /// lattice -> gateway -> runtime). The transcript fills from the runtime's
@@ -393,7 +381,6 @@ impl Lattice {
         .detach();
     }
 
-    // ---- lifecycle --------------------------------------------------------
 
     pub fn validate_name(&self, name: &str) -> Result<(), String> {
         validate_name(name)?;
@@ -649,7 +636,6 @@ pub fn trace_lines(runs: &[RunRecord], trace_id: &str) -> Vec<String> {
     lines
 }
 
-// ---- transcript rendering of runtime data ----------------------------------
 
 fn short(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
@@ -733,7 +719,6 @@ fn row_from(spec: &AgentSpec, rt: &Runtime) -> AgentRow {
     }
 }
 
-// ---- turning the new-agent form's text into a spec -------------------------
 
 /// What the "+ new agent" form collects, as raw text.
 #[derive(Default, Clone)]
@@ -872,7 +857,6 @@ pub fn spec_from_form(f: &FormInput) -> Result<AgentSpec, String> {
     Ok(spec)
 }
 
-// ---- blocking HTTP helpers, run on the background executor -----------------
 
 fn client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().unwrap()
@@ -1112,15 +1096,12 @@ mod tests {
             if ns == "rowing" && key_prefix == "latest"));
         assert!(matches!(&s.triggers[1], Trigger::StoreChange { ns, key_prefix }
             if ns == "inbox" && key_prefix.is_empty()));
-        // read-only access does not grant writing
         let mut ro = form("reader");
         ro.stores = "notes:r".into();
         let r = spec_from_form(&ro).unwrap();
         assert!(r.has_capability("store_get") && !r.has_capability("store_put"));
-        // and nothing is granted unless asked
         let plain = spec_from_form(&form("plain")).unwrap();
         assert!(plain.topics_out.is_empty() && !plain.has_capability("emit_event"));
-        // a bad namespace is refused with a reason
         let mut bad = form("bad");
         bad.stores = "../x".into();
         assert!(spec_from_form(&bad).is_err());
@@ -1262,7 +1243,6 @@ mod tests {
             );
             std::thread::sleep(Duration::from_secs(2));
         }
-        // /ping cost nothing: no run yet.
         assert!(
             rt.store().runs("echoer", 5).is_empty()
                 || rt.store().runs("echoer", 5).iter().all(|r| r.trigger != "http")
@@ -1304,14 +1284,12 @@ mod tests {
         );
         assert_eq!(http_runs[1].input, "traced call");
 
-        // Schedule: fired without any request.
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
         while !rt.store().runs("echoer", 20).iter().any(|r| r.trigger.starts_with("schedule")) {
             assert!(std::time::Instant::now() < deadline, "the @every trigger never fired");
             std::thread::sleep(Duration::from_millis(500));
         }
 
-        // Pausing closes the front door too.
         rt.set_paused("echoer", true).unwrap();
         assert!(ping(fleet.ingress_port, host, Some("x"), Duration::from_secs(10)).is_err());
 
@@ -1490,7 +1468,6 @@ mod tests {
                 std::thread::sleep(left);
             }
         }
-        // Every ask, concurrently, over the real ingress, while schedules fire.
         let ingress = fleet.ingress_port;
         let askers: Vec<_> = plan["asks"]
             .as_object()
@@ -1528,7 +1505,6 @@ mod tests {
             }
         }
 
-        // Let the scheduled agents work out the rest of the window.
         if let Some(left) = window.checked_sub(started.elapsed()) {
             std::thread::sleep(left);
         }
