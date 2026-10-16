@@ -10,7 +10,9 @@ use std::future::Future;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::model::{Agent, CallResult, OutboundCall, SessionId, TicketId, TurnStatus};
+use crate::model::{
+    Agent, CallResult, Interruption, OutboundCall, SessionId, TicketId, TurnStatus,
+};
 
 /// [`TurnStatus`] without `expired`, which is only computed at read time from a
 /// `parked` record's `call.deadline`; keeping it out of this type means a match
@@ -20,6 +22,8 @@ use crate::model::{Agent, CallResult, OutboundCall, SessionId, TicketId, TurnSta
 pub enum StoredStatus {
     Parked,
     Ready,
+    /// Given up on without an answer (ADR-0106). Taken exactly like `Ready`.
+    Interrupted,
     Resumed,
     Cancelled,
 }
@@ -29,6 +33,7 @@ impl From<StoredStatus> for TurnStatus {
         match s {
             StoredStatus::Parked => TurnStatus::Parked,
             StoredStatus::Ready => TurnStatus::Ready,
+            StoredStatus::Interrupted => TurnStatus::Interrupted,
             StoredStatus::Resumed => TurnStatus::Resumed,
             StoredStatus::Cancelled => TurnStatus::Cancelled,
         }
@@ -63,6 +68,19 @@ pub struct Record {
     pub cancelled_by: Option<Agent>,
     pub cancelled_at: Option<u64>,
     pub result: Option<CallResult>,
+    // Written by ADR-0106. A record from before it reads these as their
+    // defaults, which is what "nothing has happened to this ticket" means.
+    /// Re-dispatches a recovery pass has granted so far.
+    #[serde(default)]
+    pub redispatches: u32,
+    /// Set exactly when `status` is `Interrupted`.
+    #[serde(default)]
+    pub interruption: Option<Interruption>,
+    /// When a recovery pass last re-announced this ticket on `PARK_WAKE`
+    /// because its answer sat untaken; keeps a down sink from being re-announced
+    /// on every pass.
+    #[serde(default)]
+    pub announced_at: Option<u64>,
 }
 
 /// What the engine needs from storage: one CAS'd record per ticket, and two
@@ -110,4 +128,39 @@ pub trait ParkStore: Send + Sync {
     /// Every ticket ever parked for `session`, in no particular order — the
     /// engine sorts by `parked_at` after reading each one.
     fn list_session(&self, session: &str) -> impl Future<Output = Result<Vec<TicketId>>> + Send;
+
+    /// Every ticket in the store, any session, any state, in no particular
+    /// order. Only a recovery pass reads this, and nothing deletes a ticket, so
+    /// it grows with every call ever parked.
+    // ponytail: a full scan per pass. Fine while tickets number in the
+    // thousands; an index of the still-open ones (or of deadlines) is the
+    // change if a bucket ever holds millions.
+    fn list_tickets(&self) -> impl Future<Output = Result<Vec<TicketId>>> + Send;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::ReplayPolicy;
+
+    /// What a bucket written before ADR-0106 holds. Reading it must mean "nothing
+    /// has happened to this ticket", or deploying the new daemon over an old
+    /// bucket strands every outstanding call.
+    #[test]
+    fn a_record_written_before_adr_0106_reads_as_untouched() {
+        let old = r#"{
+            "ticket": "t", "session": "s",
+            "call": {"correlation": "c", "description": "d", "deadline": 5, "poll": null},
+            "by": {"id": "a", "goal": null, "model": null},
+            "status": "ready",
+            "parked_at": 1, "woken_at": 2, "resumed_at": null,
+            "cancelled_by": null, "cancelled_at": null,
+            "result": {"ok": true, "body": [1], "detail": null}
+        }"#;
+        let r: Record = serde_json::from_str(old).unwrap();
+        assert_eq!(r.status, StoredStatus::Ready);
+        assert_eq!(r.call.replay, ReplayPolicy::Unsafe);
+        assert_eq!((r.redispatches, r.interruption, r.announced_at), (0, None, None));
+        assert_eq!(r.result.unwrap().body, [1]);
+    }
 }

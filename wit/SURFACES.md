@@ -1472,11 +1472,11 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
-## `holon:park/lot@0.1.0`
+## `holon:park/lot@0.2.0`
 
 ```wit
   interface lot {
-    use types.{agent, call-result, outbound-call, park-error, park-result, session-id, ticket-entry, ticket-id};
+    use types.{agent, call-result, outbound-call, park-error, park-result, resolution, session-id, ticket-entry, ticket-id, turn-status};
 
     park: func(session: session-id, call: outbound-call, by: agent) -> result<park-result, park-error>;
 
@@ -1484,7 +1484,9 @@ Adding a *function* to an interface is compatible; adding a case to a
 
     pending: func(session: session-id) -> result<list<ticket-entry>, park-error>;
 
-    take-ready: func(ticket: ticket-id) -> result<call-result, park-error>;
+    take-ready: func(ticket: ticket-id) -> result<resolution, park-error>;
+
+    interrupt: func(ticket: ticket-id, reason: string, by: agent) -> result<turn-status, park-error>;
 
     cancel: func(ticket: ticket-id, by: agent) -> result<_, park-error>;
 

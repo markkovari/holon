@@ -270,10 +270,16 @@ name = "comp-vcs"
 path = "src/bin/vcs.rs"
 
 # A durable record of an outstanding call, instead of a thread blocked on its
-# answer (ADR-0100), for `components/park-store` (not built yet).
+# answer (ADR-0100), for `components/park-store`.
 [[bin]]
 name = "comp-park"
 path = "src/bin/park.rs"
+
+# The resumer ADR-0100 left unbuilt (ADR-0106): delivers resolved tickets to
+# whatever drives the turn, and gives up on the calls that never answered.
+[[bin]]
+name = "comp-resume"
+path = "src/bin/resume.rs"
 
 [[bin]]
 name = "comp-agentd"

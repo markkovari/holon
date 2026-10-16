@@ -86,12 +86,27 @@ macro_rules! variant {
 
 record!(Agent { id, goal, model });
 record!(PollSpec { url, interval_secs });
-record!(OutboundCall { correlation, description, deadline, poll });
+variant!(ReplayPolicy { Safe, Unsafe, Abandon });
+record!(OutboundCall { correlation, description, deadline, poll, replay });
 record!(CallResult { ok, body, detail });
+record!(Interruption { reason, at, by });
+variant!(Resolution { Answered(x), Interrupted(x) });
 variant!(ParkOutcome { Parked, AlreadyParked, AlreadyWoken });
 record!(ParkResult { ticket, outcome });
-variant!(TurnStatus { Parked, Ready, Resumed, Cancelled, Expired });
-record!(TicketEntry { ticket, session, status, parked_at, woken_at, resumed_at });
+variant!(TurnStatus { Parked, Ready, Resumed, Cancelled, Expired, Interrupted });
+record!(TicketEntry {
+    ticket,
+    session,
+    status,
+    parked_at,
+    woken_at,
+    resumed_at,
+    correlation,
+    replay,
+    deadline,
+    redispatches,
+    interrupted_at
+});
 
 impl ToWit for ParkError {
     type Out = t::ParkError;
