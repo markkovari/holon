@@ -134,6 +134,8 @@ tells you what is true now rather than what was once believed.
 | [0103](0103-components-move-to-wasi-p3.md) | Components move to WASI p3, on the rc WIT until wrpc moves: one live instance serves many requests | **accepted**, in progress — comp-host serves p2 and p3; HTTP components are being ported |
 | [0104](0104-agents-share-what-they-know-per-project.md) | Agents share what they know, per project: three scopes, scope enforced in agent-runtime, `knowledge-memory` reused, promotion is a person | **proposed** — nothing built |
 | [0105](0105-agents-live-in-spaces.md) | Agents live in Spaces (a project's, or a Matrix-only Agents Space that grants nothing); a schedule belongs to an agent and a project, deleting an agent retires its Matrix side (and is soft in the runtime), archiving a project pauses its agents and leaves its rooms | **accepted** — slices 0–4 built (#332–#336), slice 5 not |
+| [0107](0107-a-client-catches-up-from-a-snapshot-then-tails.md) | A client catches up from a snapshot, then tails: `getSessionState` folds the event log into a transcript and a cursor, so a reconnecting client reads once and resumes at `seq` | **accepted**, and built — `comp-agentd`, REST and gRPC; extends [0102](0102-an-agent-session-is-a-contract-first.md) |
+| [0108](0108-a-running-task-takes-input-at-a-boundary.md) | A running task takes input at a boundary: `steerTask` adds a message the model reads at its next call, applied or refused and never dropped; queueing stays the client's | **accepted**, and built — `comp-agentd`, REST and gRPC; extends [0102](0102-an-agent-session-is-a-contract-first.md) |
 
 ## History: superseded, and kept
 

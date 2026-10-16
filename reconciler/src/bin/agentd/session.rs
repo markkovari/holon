@@ -9,7 +9,7 @@
 //! ends). Everything else — spend, task states — is derived from the log on
 //! load, so there is one truth and nothing to keep in step.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -64,11 +64,27 @@ struct Active {
     task_id: String,
     usage: Usage,
     handle: Option<tokio::task::JoinHandle<()>>,
+    /// `(steer_id, message)`, accepted and not yet applied (ADR-0107). They live
+    /// and die with the task: a restart ends the task, so nothing here is saved.
+    steers: VecDeque<(String, String)>,
+    /// The loop has decided to end the task with its final answer; a steer that
+    /// arrives now would be accepted and never read, so it is refused instead.
+    finishing: bool,
+    /// Steer idempotency keys, for the same reason: they only matter while the task runs.
+    steer_keys: HashMap<String, String>,
 }
 
 pub enum Refusal {
     Closed,
     Busy,
+}
+
+pub enum SteerRefusal {
+    Closed,
+    /// There is no running task with that id: it ended, or never ran.
+    NotRunning,
+    /// The task is writing its final answer. Send a new task.
+    Finishing,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -223,6 +239,25 @@ impl Session {
 
     pub fn view(&self) -> wire::Session {
         let s = self.lock();
+        self.view_of(&s)
+    }
+
+    /// The session and the log it is read from, under one lock, so the cursor
+    /// (`seq`) is exactly the last event the rest reflects: a client that tails
+    /// from it misses nothing and sees nothing twice.
+    pub fn state(&self) -> wire::SessionState {
+        let s = self.lock();
+        let f = super::state::fold(&s.events);
+        wire::SessionState {
+            session: self.view_of(&s),
+            seq: f.seq,
+            transcript: f.transcript,
+            pending_approvals: f.pending_approvals,
+            pending_steers: f.pending_steers,
+        }
+    }
+
+    fn view_of(&self, s: &State) -> wire::Session {
         let status = if s.closed {
             SessionStatus::Closed
         } else if !s.pending.is_empty() {
@@ -301,7 +336,14 @@ impl Session {
             status: TaskStatus::Running,
             created_at: wire::now(),
         };
-        s.active = Some(Active { task_id: task.id.clone(), usage: Usage::default(), handle: None });
+        s.active = Some(Active {
+            task_id: task.id.clone(),
+            usage: Usage::default(),
+            handle: None,
+            steers: VecDeque::new(),
+            finishing: false,
+            steer_keys: HashMap::new(),
+        });
         s.tasks.insert(task.id.clone(), task.clone());
         if let Some(k) = key {
             s.by_key.insert(k, task.id.clone());
@@ -311,6 +353,67 @@ impl Session {
         }
         self.push(&mut s, &task.id, Payload::TaskStarted { prompt: prompt.to_string() });
         Ok((task, true))
+    }
+
+    /// Accept a steer for the running task `task_id`; it joins the conversation at
+    /// the task's next model-call boundary (`take_steers`, `finishing`). With a
+    /// `key`, a repeat is accepted and queues nothing: whoever retried a steer
+    /// that did get through does not say it twice.
+    pub fn steer(
+        &self,
+        task_id: &str,
+        message: &str,
+        key: Option<String>,
+    ) -> Result<(), SteerRefusal> {
+        let mut s = self.lock();
+        if s.closed {
+            return Err(SteerRefusal::Closed);
+        }
+        let Some(a) = s.active.as_mut().filter(|a| a.task_id == task_id) else {
+            return Err(SteerRefusal::NotRunning);
+        };
+        if key.as_ref().is_some_and(|k| a.steer_keys.contains_key(k)) {
+            return Ok(());
+        }
+        if a.finishing {
+            return Err(SteerRefusal::Finishing);
+        }
+        let id = wire::new_id("steer");
+        if let Some(k) = key {
+            a.steer_keys.insert(k, id.clone());
+        }
+        a.steers.push_back((id.clone(), message.to_string()));
+        let payload = Payload::TaskSteerQueued { steer_id: id, message: message.to_string() };
+        self.push(&mut s, task_id, payload);
+        Ok(())
+    }
+
+    /// The steers accepted since the loop last looked, oldest first. Taken under
+    /// the lock, so each is applied once.
+    pub fn take_steers(&self, task_id: &str) -> Vec<(String, String)> {
+        let mut s = self.lock();
+        match s.active.as_mut().filter(|a| a.task_id == task_id) {
+            Some(a) => a.steers.drain(..).collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// The loop has the model's final answer and is about to end the task. Steers
+    /// that arrived since its last boundary come back instead — the task is not
+    /// finishing, it has new input — and with none, no more are accepted. One
+    /// lock orders this against `steer`, so a steer is either applied or refused,
+    /// never accepted and then dropped on the floor.
+    pub fn finishing(&self, task_id: &str) -> Vec<(String, String)> {
+        let mut s = self.lock();
+        let Some(a) = s.active.as_mut().filter(|a| a.task_id == task_id) else {
+            return Vec::new();
+        };
+        if a.steers.is_empty() {
+            a.finishing = true;
+            Vec::new()
+        } else {
+            a.steers.drain(..).collect()
+        }
     }
 
     pub fn attach(&self, task_id: &str, handle: tokio::task::JoinHandle<()>) {
@@ -354,6 +457,10 @@ impl Session {
         }
         s.pending.clear();
         self.push(&mut s, task_id, payload);
+    }
+
+    pub fn task(&self, task_id: &str) -> Option<wire::Task> {
+        self.lock().tasks.get(task_id).cloned()
     }
 
     /// Stop `task_id` if it is the one running. Returns the task as it now
