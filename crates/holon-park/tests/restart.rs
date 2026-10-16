@@ -76,6 +76,8 @@ fn call(correlation: &str, replay: ReplayPolicy) -> OutboundCall {
         deadline: None,
         poll: None,
         replay,
+        parent: None,
+        group: None,
     }
 }
 

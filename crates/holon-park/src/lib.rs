@@ -23,6 +23,7 @@
 
 pub mod engine;
 pub mod error;
+pub mod group;
 pub mod mem;
 pub mod model;
 pub mod recover;

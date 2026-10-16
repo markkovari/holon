@@ -1472,7 +1472,7 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
-## `holon:park/lot@0.2.0`
+## `holon:park/lot@0.3.0`
 
 ```wit
   interface lot {

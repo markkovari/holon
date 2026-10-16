@@ -25,7 +25,8 @@ use serde::{Deserialize, Serialize};
 use crate::engine::Engine;
 use crate::error::{ParkError, Result};
 use crate::model::{
-    Agent, CallResult, Interruption, Resolution, SessionId, TicketId, WakeKind, WakeMessage,
+    Agent, CallResult, Interruption, JoinResult, Resolution, SessionId, TicketId, WakeKind,
+    WakeMessage,
 };
 use crate::recover::{Recovered, RecoveryPolicy, Repaired};
 use crate::store::{ParkStore, StoredStatus};
@@ -40,6 +41,9 @@ use crate::store::{ParkStore, StoredStatus};
 ///  "interruption": {"reason": "…", "at": 1700000000000, "by": {"id": "comp-resume"}}}
 /// {"ticket": "…", "session": "…", "correlation": "…", "event": "redispatch",
 ///  "attempt": 2, "description": "…"}
+/// {"ticket": "…", "session": "…", "correlation": "…", "event": "joined",
+///  "joined": {"outcome": "all-answered", "missing": 0, "children": [
+///    {"ticket": "…", "correlation": "…", "ended": {"answered": {"ok": true, "body": [], "detail": null}}}]}}
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -63,6 +67,9 @@ pub enum Event {
     /// A `safe` call went unanswered past its deadline: send it again. The turn
     /// owns the payload; this crate only ever held a description of it.
     Redispatch { attempt: u32, description: String },
+    /// A group resolved (ADR-0109): how every child ended, and why the group stopped waiting.
+    /// The children are not delivered on their own.
+    Joined { joined: JoinResult },
 }
 
 impl Delivery {
@@ -74,6 +81,7 @@ impl Delivery {
             Event::Answered { .. } => format!("{}:answered", self.ticket),
             Event::Interrupted { .. } => format!("{}:interrupted", self.ticket),
             Event::Redispatch { attempt, .. } => format!("{}:redispatch:{attempt}", self.ticket),
+            Event::Joined { .. } => format!("{}:joined", self.ticket),
         }
     }
 }
@@ -147,10 +155,18 @@ pub async fn handle<S: ParkStore, K: Sink>(
         {
             Event::Redispatch { attempt: *attempt, description: record.call.description.clone() }
         }
+        // A child is consumed by its group and never delivered on its own, so a message that
+        // names one is a leftover.
+        (WakeKind::Resolved, StoredStatus::Ready | StoredStatus::Interrupted)
+            if record.call.parent.is_some() =>
+        {
+            return Ok(Handled::Stale)
+        }
         (WakeKind::Resolved, StoredStatus::Ready | StoredStatus::Interrupted) => {
             match engine.resolution(&msg.ticket).await? {
                 Resolution::Answered(answer) => Event::Answered { answer },
                 Resolution::Interrupted(interruption) => Event::Interrupted { interruption },
+                Resolution::Joined(joined) => Event::Joined { joined },
             }
         }
         _ => return Ok(Handled::Stale),

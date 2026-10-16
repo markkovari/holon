@@ -18,6 +18,8 @@ fn call(correlation: &str) -> OutboundCall {
         deadline: None,
         poll: None,
         replay: ReplayPolicy::Unsafe,
+        parent: None,
+        group: None,
     }
 }
 
@@ -28,6 +30,8 @@ fn call_with_deadline(correlation: &str, deadline: u64) -> OutboundCall {
         deadline: Some(deadline),
         poll: None,
         replay: ReplayPolicy::Unsafe,
+        parent: None,
+        group: None,
     }
 }
 
