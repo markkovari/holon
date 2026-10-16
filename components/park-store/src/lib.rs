@@ -184,6 +184,19 @@ impl Lot for Component {
         call::<_, m::Resolution>("take-ready", &wire::Ticket { ticket })
     }
 
+    fn commit(
+        session: String,
+        effects: Vec<t::Effect>,
+        by: t::Agent,
+    ) -> Result<t::CommitResult, t::ParkError> {
+        let req = wire::CommitRequest {
+            session,
+            effects: effects.into_iter().map(ToModel::to_model).collect(),
+            by: by.to_model(),
+        };
+        call::<_, m::CommitResult>("commit", &req)
+    }
+
     fn interrupt(
         ticket: String,
         reason: String,
@@ -287,6 +300,39 @@ mod tests {
             group: Some(m::GroupSpec { policy: m::JoinPolicy::AllSettled, children: 2 }),
         };
         assert_eq!(entry.clone().to_wit().to_model(), entry);
+    }
+
+    /// A commit's effects, every kind, survive the component boundary and come back equal.
+    #[test]
+    fn a_commits_effects_survive_model_to_wit_and_back() {
+        let effects = vec![
+            m::Effect::Park(m::OutboundCall {
+                correlation: "c".into(),
+                description: "d".into(),
+                deadline: None,
+                poll: None,
+                replay: m::ReplayPolicy::Unsafe,
+                parent: None,
+                group: None,
+            }),
+            m::Effect::Wake(m::WakeEffect {
+                correlation: "w".into(),
+                answer: m::CallResult { ok: true, body: vec![1], detail: None },
+            }),
+            m::Effect::Interrupt(m::InterruptEffect {
+                correlation: "i".into(),
+                reason: "r".into(),
+            }),
+            m::Effect::Cancel("x".into()),
+        ];
+        for e in effects {
+            assert_eq!(e.clone().to_wit().to_model(), e);
+        }
+        let result = m::CommitResult {
+            batch: "b".into(),
+            parked: vec![m::ParkResult { ticket: "t".into(), outcome: m::ParkOutcome::Parked }],
+        };
+        assert_eq!(result.clone().to_wit().to_model(), result);
     }
 
     /// A group's resolution, with every way a child can end, survives the component boundary.

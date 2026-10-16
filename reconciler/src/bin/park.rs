@@ -14,7 +14,7 @@
 //! ## Routes
 //!
 //! `POST /v1/<wit function>` (`park`, `wake`, `pending`, `take-ready`,
-//! `interrupt`, `cancel`, `oplog`), JSON in and out as `holon_park::wire`
+//! `interrupt`, `cancel`, `oplog`, `commit`), JSON in and out as `holon_park::wire`
 //! defines, errors as
 //! `{error, detail, message}` with a status by kind (`wire::status_of`).
 //! `GET /health` is open; everything else takes `Authorization: Bearer
@@ -207,6 +207,19 @@ impl Daemon {
                             self.announce(msg).await;
                         }
                         (200, Value::Null)
+                    }
+                    Err(e) => refusal(&e),
+                }
+            }
+            "commit" => {
+                let req: wire::CommitRequest = parse(body)?;
+                match on!(self, |e| e.commit(&req.session, req.effects, req.by, now_ms()).await) {
+                    Ok(committed) => {
+                        // What the commit's effects resolved: a group, never a child.
+                        for msg in &committed.announce {
+                            self.announce(msg).await;
+                        }
+                        (200, json_of(&committed.result))
                     }
                     Err(e) => refusal(&e),
                 }

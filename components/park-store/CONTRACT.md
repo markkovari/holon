@@ -6,11 +6,13 @@ implements every call as ONE HTTP request to `comp-park` (native,
 JetStream. Why the split: [ADR-0100](../../docs/adr/0100-a-parked-turn-is-a-record-not-a-held-thread.md)
 and [ADR-0095](../../docs/adr/0095-what-is-allowed-to-be-native.md).
 `park-gateway` serves the same routes, with the same JSON, to agents over
-`comp-host`; this file is the wire for both. The contract is `holon:park@0.3.0`
+`comp-host`; this file is the wire for both. The contract is `holon:park@0.4.0`
 ([ADR-0106](../../docs/adr/0106-a-resumed-turn-knows-what-it-may-repeat.md) added
 `replay` and `interrupted`, [ADR-0109](../../docs/adr/0109-a-call-may-fan-out.md) added
-groups). Callers of 0.1.0 break in two places, marked **0.2.0** below, and callers of 0.2.0
-in one more, marked **0.3.0**: `take-ready` can now return `joined`.
+groups, [ADR-0110](../../docs/adr/0110-several-calls-register-together-or-not-at-all.md) added
+`commit`). Callers of 0.1.0 break in two places, marked **0.2.0** below, and callers of 0.2.0
+in one more, marked **0.3.0**: `take-ready` can now return `joined`. 0.4.0 adds a function and
+types and breaks nobody.
 
 The JSON is defined once, in `crates/holon-park/src/wire.rs`, and every side —
 daemon, store component, gateway — uses that definition.
@@ -40,6 +42,7 @@ Records are the WIT's, field for field, kebab-case (`holon_park::model`): an
 | `POST /v1/pending` | `{session}` | `[ticket-entry]` |
 | `POST /v1/take-ready` | `{ticket}` | `resolution` — **0.2.0**, was a bare `call-result` |
 | `POST /v1/interrupt` | `{ticket, reason, by: agent}` | `turn-status` (a bare string) — **0.2.0**, new |
+| `POST /v1/commit` | `{session, effects: [effect], by: agent}` | `commit-result` — **0.4.0**, new |
 | `POST /v1/cancel` | `{ticket, by: agent}` | `null` |
 | `POST /v1/oplog` | `{session, after?: u64, limit}` | `[ticket-entry]` |
 | `GET /health` | — | `{ok, backend, bucket, wake-stream}` |
@@ -181,6 +184,46 @@ another session's, or has already resolved; a child past the `N` declared; a gro
 a child (groups do not nest); `children` of 0 or over 1024; `wake` or `interrupt` on a group;
 `take-ready` or `resolution` on a child ("take the group"); re-parking a child under a different
 parent. `replay` on a group is ignored: each child has its own, and is recovered on its own.
+
+## Commits (ADR-0110)
+
+`commit` applies several effects together, or not at all. An effect is one of four, each what
+the call of that name does:
+
+```json
+{ "park":      { "correlation": "c1", "description": "…", "deadline": null, "poll": null, "replay": "unsafe", "parent": "g" } }
+{ "wake":      { "correlation": "c1", "answer": { "ok": true, "body": [], "detail": null } } }
+{ "interrupt": { "correlation": "c1", "reason": "…" } }
+{ "cancel":    "c1" }
+```
+
+and the answer is `{"batch": "<id>", "parked": [park-result, …]}`, one entry per `park`, in the
+order listed.
+
+- **Admission is all or nothing.** Every effect is checked before anything is written; a list with
+  one bad effect (`invalid`, `400`) registers none of them. Checked: at least one effect and at
+  most 256; no correlation parked twice; every `park` valid as `park` is, a child's group parked
+  earlier in the same list or already there and open, and no group given more children than it
+  was declared with; no correlation another session owns; every `wake`, `interrupt` and `cancel`
+  naming a call the list parks or one that exists, and none `wake`-ing or `interrupt`-ing a group.
+- **Then the intent is written**, as one record holding the whole list, and from there the effects
+  are all applied or all undone: by this call, and if it dies by `comp-resume`'s sweep once the
+  intent has sat for `--batch-lease-secs`.
+- **Parks first, in order**; then `wake`, `interrupt` and `cancel`, in order. A `park` is the one
+  effect that can still be refused after the intent exists (another session may have taken a
+  correlation in the meantime), and the one that can be undone, so if one is refused every ticket
+  *this commit* made is cancelled (last first, so a group's children go before the group) and the
+  commit is **aborted**: `invalid` with the reason. A ticket that was already there is never
+  cancelled by it. The other three cannot be undone, so none is applied until every `park` has
+  succeeded.
+- **Idempotent.** The identical list is the same commit (`batch` is a hash of the session and the
+  effects in order). Again, it is found done and each park reports `already-parked`, or it is
+  finished from where it stopped. A `wake`, `interrupt` or `cancel` that finds its call already
+  closed is the effect already done.
+- **Not isolated.** While a commit is pending a reader may see some of its tickets and not others.
+  It is atomic in what lasts, not in what is seen on the way.
+- What the effects resolve is announced: a `wake`, `interrupt` or `cancel` of a child that resolves
+  its group puts the group on `PARK_WAKE`, as it would outside a commit.
 
 ## `PARK_WAKE`, and `comp-resume`
 

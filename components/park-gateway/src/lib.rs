@@ -115,6 +115,11 @@ fn route(func: &str, body: &[u8]) -> Result<Answer, Answer> {
             let r: wire::Ticket = parse(body)?;
             answer(store::take_ready(&r.ticket))
         }
+        "commit" => {
+            let r: wire::CommitRequest = parse(body)?;
+            let effects: Vec<_> = r.effects.into_iter().map(ToWit::to_wit).collect();
+            answer(store::commit(&r.session, &effects, &r.by.to_wit()))
+        }
         "interrupt" => {
             let r: wire::InterruptRequest = parse(body)?;
             answer(store::interrupt(&r.ticket, &r.reason, &r.by.to_wit()))
