@@ -12,7 +12,8 @@
 //! it holds the provider's messages rather than what a client shows.
 
 use super::wire::{
-    CallStatus, Entry, Event, Outcome, Payload, PendingApproval, PendingSteer, TranscriptEntry,
+    CallStatus, Entry, Event, Outcome, Payload, PendingApproval, PendingSteer, QueuedTask,
+    TranscriptEntry,
 };
 
 pub struct Folded {
@@ -21,6 +22,7 @@ pub struct Folded {
     pub transcript: Vec<TranscriptEntry>,
     pub pending_approvals: Vec<PendingApproval>,
     pub pending_steers: Vec<PendingSteer>,
+    pub queued_tasks: Vec<QueuedTask>,
 }
 
 fn at(e: &Event, entry: Entry) -> TranscriptEntry {
@@ -39,10 +41,16 @@ fn call_mut<'a>(t: &'a mut [TranscriptEntry], id: &str) -> Option<&'a mut Entry>
 pub fn fold(events: &[Event]) -> Folded {
     let mut t: Vec<TranscriptEntry> = Vec::new();
     let mut steers: Vec<PendingSteer> = Vec::new();
+    let mut queued: Vec<QueuedTask> = Vec::new();
 
     for e in events {
         match &e.payload {
+            // A queued prompt is not in the conversation yet: it joins it when it starts.
+            Payload::TaskQueued { prompt } => {
+                queued.push(QueuedTask { task_id: e.task_id.clone(), prompt: prompt.clone() });
+            }
             Payload::TaskStarted { prompt } => {
+                queued.retain(|q| q.task_id != e.task_id);
                 t.push(at(e, Entry::UserMessage { text: prompt.clone(), steered: false }));
             }
             Payload::TextDelta { message_id, text } => match t.last_mut() {
@@ -105,7 +113,7 @@ pub fn fold(events: &[Event]) -> Folded {
             }
             Payload::UsageUpdated { .. } => {}
             Payload::TaskCompleted { result, task_usage } => {
-                end_task(&mut t, &mut steers, &e.task_id);
+                end_task(&mut t, &mut steers, &mut queued, &e.task_id);
                 t.push(at(
                     e,
                     Entry::TaskEnded {
@@ -118,7 +126,7 @@ pub fn fold(events: &[Event]) -> Folded {
                 ));
             }
             Payload::TaskFailed { code, message, task_usage } => {
-                end_task(&mut t, &mut steers, &e.task_id);
+                end_task(&mut t, &mut steers, &mut queued, &e.task_id);
                 t.push(at(
                     e,
                     Entry::TaskEnded {
@@ -181,12 +189,19 @@ pub fn fold(events: &[Event]) -> Folded {
         transcript: t,
         pending_approvals,
         pending_steers: steers,
+        queued_tasks: queued,
     }
 }
 
 /// A task is over: whatever of it was still waiting or running never will be,
-/// and a steer it never applied is gone with it.
-fn end_task(t: &mut [TranscriptEntry], steers: &mut Vec<PendingSteer>, task: &str) {
+/// and a steer it never applied is gone with it. One that ends while still queued
+/// (cancelled, or cut off by a restart) leaves the queue without ever having started.
+fn end_task(
+    t: &mut [TranscriptEntry],
+    steers: &mut Vec<PendingSteer>,
+    queued: &mut Vec<QueuedTask>,
+    task: &str,
+) {
     for x in t.iter_mut().filter(|x| x.task_id == task) {
         if let Entry::ToolCall { status, .. } = &mut x.entry {
             if matches!(status, CallStatus::AwaitingApproval | CallStatus::Running) {
@@ -195,6 +210,7 @@ fn end_task(t: &mut [TranscriptEntry], steers: &mut Vec<PendingSteer>, task: &st
         }
     }
     steers.retain(|s| s.task_id != task);
+    queued.retain(|q| q.task_id != task);
 }
 
 #[cfg(test)]

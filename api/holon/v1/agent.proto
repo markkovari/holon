@@ -18,15 +18,21 @@ service AgentService {
   // Open a session: model, workspace and budget are fixed for its lifetime.
   rpc CreateSession(CreateSessionRequest) returns (Session);
   rpc GetSession(GetSessionRequest) returns (Session);
-  // Stops any running task (it ends with TaskFailed{CANCELLED}) and closes the session.
+  // Stops any running task and every queued one (each ends with
+  // TaskFailed{CANCELLED}) and closes the session.
   rpc CloseSession(CloseSessionRequest) returns (Session);
 
-  // Queue a task. Returns at once; progress arrives on StreamEvents.
-  // A session runs one task at a time: FAILED_PRECONDITION while one is running.
+  // Start a task. Returns at once; progress arrives on StreamEvents.
+  // A session runs one task at a time. While one is running the default is
+  // FAILED_PRECONDITION; with when_busy = WHEN_BUSY_QUEUE the task is accepted
+  // as QUEUED and starts when the ones before it have ended (ADR-0112).
+  // RESOURCE_EXHAUSTED if that queue is full.
   rpc SendTask(SendTaskRequest) returns (Task);
 
-  // Stop a running task; it ends with TaskFailed{CANCELLED} and the session
-  // stays open. On a task that already ended, returns it unchanged.
+  // Stop a running task, or a queued one (which leaves the queue without
+  // having started); it ends with TaskFailed{CANCELLED} and the session stays
+  // open. Stopping the running task starts the next queued one. On a task that
+  // already ended, returns it unchanged.
   rpc CancelTask(CancelTaskRequest) returns (Task);
 
   // Server stream of every event in the session, in `seq` order. Pass the
@@ -109,6 +115,15 @@ message SendTaskRequest {
   // Optional caller-chosen id. Resending the same key returns the original
   // Task instead of starting a second one (safe retries from bots).
   string idempotency_key = 3;
+  // What to do if the session already has a task running. Unspecified is
+  // REJECT, which is what every client before this field got.
+  WhenBusy when_busy = 4;
+}
+
+enum WhenBusy {
+  WHEN_BUSY_UNSPECIFIED = 0;  // same as REJECT
+  WHEN_BUSY_REJECT = 1;       // FAILED_PRECONDITION: one task at a time
+  WHEN_BUSY_QUEUE = 2;        // accept it as QUEUED, to start after the ones before it
 }
 
 message CancelTaskRequest {
@@ -136,10 +151,14 @@ message Task {
 
 enum TaskStatus {
   TASK_STATUS_UNSPECIFIED = 0;
-  reserved 1; // was QUEUED: a task starts the moment it is accepted
+  // Was QUEUED, removed when every task started the moment it was accepted.
+  // QUEUED is back as 5 (ADR-0112) under a new number, so nothing that knew
+  // the old one can read it as something else.
+  reserved 1;
   TASK_STATUS_RUNNING = 2;
   TASK_STATUS_COMPLETED = 3;
   TASK_STATUS_FAILED = 4;
+  TASK_STATUS_QUEUED = 5;  // accepted onto a busy session; has not started
 }
 
 // ---- Usage and cost ----
@@ -186,7 +205,16 @@ message AgentEvent {
     TaskFailed task_failed = 18;
     TaskSteerQueued task_steer_queued = 19;
     TaskSteered task_steered = 20;
+    TaskQueued task_queued = 21;
   }
+}
+
+// A task was accepted onto a busy session (SendTask with WHEN_BUSY_QUEUE) and
+// waits for the ones before it. TaskStarted follows when it begins; if it never
+// does, TaskFailed says how it ended (CANCELLED, or INTERNAL if the daemon
+// restarted first). Its prompt joins the conversation when it starts, not now.
+message TaskQueued {
+  string prompt = 1;
 }
 
 message TaskStarted {
@@ -297,6 +325,8 @@ message SessionState {
   repeated PendingApproval pending_approvals = 4;
   // Steers accepted and not yet read by the model, for the running task.
   repeated PendingSteer pending_steers = 5;
+  // Tasks accepted and not yet started, in the order they will start.
+  repeated QueuedTask queued_tasks = 6;
 }
 
 message TranscriptEntry {
@@ -376,6 +406,11 @@ message PendingSteer {
   string task_id = 1;
   string steer_id = 2;
   string message = 3;
+}
+
+message QueuedTask {
+  string task_id = 1;
+  string prompt = 2;
 }
 
 // ---- Human in the loop ----

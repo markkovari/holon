@@ -32,6 +32,7 @@ fn status(f: Fail) -> Status {
         Fail::NotFound(d) => Status::not_found(d),
         Fail::Invalid(_, d) => Status::invalid_argument(d),
         Fail::Conflict(_, d) => Status::failed_precondition(d),
+        Fail::Exhausted(_, d) => Status::resource_exhausted(d),
         Fail::Internal(d) => Status::internal(d),
     }
 }
@@ -74,6 +75,7 @@ fn session(s: wire::Session) -> pb::Session {
 
 fn task(t: wire::Task) -> pb::Task {
     let status = match t.status {
+        wire::TaskStatus::Queued => pb::TaskStatus::Queued,
         wire::TaskStatus::Running => pb::TaskStatus::Running,
         wire::TaskStatus::Completed => pb::TaskStatus::Completed,
         wire::TaskStatus::Failed => pb::TaskStatus::Failed,
@@ -121,6 +123,7 @@ fn to_value(v: Value) -> prost_types::Value {
 pub fn event(e: wire::Event) -> pb::AgentEvent {
     use wire::Payload as W;
     let payload = match e.payload {
+        W::TaskQueued { prompt } => P::TaskQueued(pb::TaskQueued { prompt }),
         W::TaskStarted { prompt } => P::TaskStarted(pb::TaskStarted { prompt }),
         W::TextDelta { message_id, text } => P::TextDelta(pb::TextDelta { message_id, text }),
         W::ToolCallStarted { call_id, tool_name, input } => {
@@ -275,6 +278,11 @@ fn state(s: wire::SessionState) -> pb::SessionState {
                 message: p.message,
             })
             .collect(),
+        queued_tasks: s
+            .queued_tasks
+            .into_iter()
+            .map(|q| pb::QueuedTask { task_id: q.task_id, prompt: q.prompt })
+            .collect(),
     }
 }
 
@@ -321,8 +329,13 @@ impl AgentService for Grpc {
     ) -> Result<Response<pb::Task>, Status> {
         let r = r.into_inner();
         let key = Some(r.idempotency_key);
+        // Unspecified is what a client that never heard of the field sends: refuse, as before.
+        let when_busy = match pb::WhenBusy::try_from(r.when_busy) {
+            Ok(pb::WhenBusy::Queue) => wire::WhenBusy::Queue,
+            _ => wire::WhenBusy::Reject,
+        };
         self.0
-            .send_task(&r.session_id, r.prompt, key)
+            .send_task(&r.session_id, r.prompt, key, when_busy)
             .map(|t| Response::new(task(t)))
             .map_err(status)
     }
