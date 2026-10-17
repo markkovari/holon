@@ -215,6 +215,7 @@ CHECKOUT=~/src/widgets REPO=acme/widgets bash goal-demo.sh real     # goal → P
 
 | | |
 |---|---|
+| how the whole system fits, one system at a time, and what each says to the others | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and [interactively](docs/architecture/index.html) |
 | the decisions, some superseded and kept | [`docs/adr/`](docs/adr/) |
 | the one rule everything else applies | [`docs/CURRENT.md`](docs/CURRENT.md#the-one-rule-everything-else-is-an-application-of) |
 

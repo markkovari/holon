@@ -17,6 +17,9 @@ since delivered goals as pull requests — decomposed ones in #220 and #273, a
 single-part ones in #275 and #279 — with `comp-goald` draining the queue (#274). Its
 machinery below runs and is measured.
 
+For the whole repository, system by system, including what was added after ADR-0099
+(park, the code store, the agent services), see [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
 ## Shape
 
 Bare metal joined by NATS — no Kubernetes anywhere on the runtime path.

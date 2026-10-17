@@ -9,6 +9,7 @@ reasoning rather than their accuracy.
 
 | you want to | read |
 |---|---|
+| see **how the parts fit**: every system on its own, and what each says to the others | [`ARCHITECTURE.md`](ARCHITECTURE.md), and the interactive [`architecture/index.html`](architecture/index.html) |
 | know **what runs today**, and what is honestly missing | [`CURRENT.md`](CURRENT.md) |
 | know **why any of this exists**, with the numbers | [`WHY.md`](WHY.md) |
 | **find a component** — its package, deps, size, whether it is reusable | `comp-catalog` (JSON, from the components' sources), or `comp-capgraph --find <text>` |
@@ -28,6 +29,7 @@ tests notice.
 | file | from | regenerate |
 |---|---|---|
 | `wit/SURFACES.md` | every interface this repo defines, as rendered out of the built wasm | `WIT_SURFACES=write cargo test --test witsurface` in `reconciler/` |
+| `ARCHITECTURE.md` and `architecture/index.html` | the map in [`architecture/map.mjs`](architecture/map.mjs), the one file a person edits there | `node docs/architecture/build.mjs`; the docs test runs it with `--check` |
 | `knowledge-graph` schema | `components/*/` and built wasm | `comp-capgraph --format surql`, projected into SurrealDB (replaces the deleted `CATALOG.md` / `CAPABILITY-GRAPH.md`) |
 
 ## Historical, and kept on purpose
