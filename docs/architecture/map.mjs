@@ -81,7 +81,7 @@ export const SYS = [
             'The one mutable pointer is which commit of apps.lock is current, a branch in git whose history is the deploy history. Nothing references a tag (ADR-0006).',
             'A generated file never makes an app public: access = "tailnet" is the default and is left alone on purpose.',
             'comp-agent only updates apps the box already has a unit for; adding an app stays a deliberate operator step.'],
-  code:['apps/*.toml','cli/src/{selfhost,fleet,wadm}.rs','reconciler/src/bin/agent.rs','.github/workflows/publish-apps.yml','docs/SELFHOST.md']},
+  code:['apps/*.toml','cli/src/{selfhost,fleet,wadm}.rs','reconciler/daemons/agent/','.github/workflows/publish-apps.yml','docs/SELFHOST.md']},
 
  {id:'control', name:'Control plane & lattice', short:'decide, reconcile, route',
   purpose:'platform-domain decides, comp-reconciler makes the fleet match, comp-ingress is the door.',
@@ -93,7 +93,7 @@ export const SYS = [
             'The ingress needs no platform credential: its routing table comes from inventory, so it keeps routing while the control plane is down.',
             'Admission fails closed: 429 above max-placement-lag, 503 when the reconciler’s report goes stale.',
             'Only one reconciler acts at a time, decided by a lease in the store; a standby takes over within the TTL plus one interval.'],
-  code:['components/platform-domain','components/console-domain','reconciler/src/{main,plan}.rs','reconciler/src/bin/{ingress,relay}.rs','reconciler/daemons/backup/','lattice/src/']},
+  code:['components/platform-domain','components/console-domain','reconciler/src/{main,plan}.rs','reconciler/src/bin/ingress.rs','reconciler/daemons/{relay,backup}/','lattice/src/']},
 
  {id:'runtime', name:'Runtime', short:'comp-host, one process per node',
   purpose:'comp-host: one process per node runs every tenant’s components over wasmtime.',

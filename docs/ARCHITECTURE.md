@@ -227,7 +227,7 @@ flowchart LR
 - A generated file never makes an app public: access = "tailnet" is the default and is left alone on purpose.
 - comp-agent only updates apps the box already has a unit for; adding an app stays a deliberate operator step.
 
-**Where it lives** [`apps/*.toml`](../apps/) · [`cli/src/selfhost.rs`](../cli/src/selfhost.rs) · [`cli/src/fleet.rs`](../cli/src/fleet.rs) · [`cli/src/wadm.rs`](../cli/src/wadm.rs) · [`reconciler/src/bin/agent.rs`](../reconciler/src/bin/agent.rs) · [`.github/workflows/publish-apps.yml`](../.github/workflows/publish-apps.yml) · [`docs/SELFHOST.md`](../docs/SELFHOST.md)
+**Where it lives** [`apps/*.toml`](../apps/) · [`cli/src/selfhost.rs`](../cli/src/selfhost.rs) · [`cli/src/fleet.rs`](../cli/src/fleet.rs) · [`cli/src/wadm.rs`](../cli/src/wadm.rs) · [`reconciler/daemons/agent/`](../reconciler/daemons/agent/) · [`.github/workflows/publish-apps.yml`](../.github/workflows/publish-apps.yml) · [`docs/SELFHOST.md`](../docs/SELFHOST.md)
 
 ### Control plane & lattice
 
@@ -305,7 +305,7 @@ flowchart LR
 - Admission fails closed: 429 above max-placement-lag, 503 when the reconciler’s report goes stale.
 - Only one reconciler acts at a time, decided by a lease in the store; a standby takes over within the TTL plus one interval.
 
-**Where it lives** [`components/platform-domain`](../components/platform-domain) · [`components/console-domain`](../components/console-domain) · [`reconciler/src/main.rs`](../reconciler/src/main.rs) · [`reconciler/src/plan.rs`](../reconciler/src/plan.rs) · [`reconciler/src/bin/ingress.rs`](../reconciler/src/bin/ingress.rs) · [`reconciler/src/bin/relay.rs`](../reconciler/src/bin/relay.rs) · [`reconciler/daemons/backup/`](../reconciler/daemons/backup/) · [`lattice/src/`](../lattice/src/)
+**Where it lives** [`components/platform-domain`](../components/platform-domain) · [`components/console-domain`](../components/console-domain) · [`reconciler/src/main.rs`](../reconciler/src/main.rs) · [`reconciler/src/plan.rs`](../reconciler/src/plan.rs) · [`reconciler/src/bin/ingress.rs`](../reconciler/src/bin/ingress.rs) · [`reconciler/daemons/relay/`](../reconciler/daemons/relay/) · [`reconciler/daemons/backup/`](../reconciler/daemons/backup/) · [`lattice/src/`](../lattice/src/)
 
 ### Runtime
 
