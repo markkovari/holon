@@ -27,28 +27,17 @@
 //! `GET /health` is open; everything else, gRPC included, takes
 //! `Authorization: Bearer <token>` when `--token`/`--token-file` is set.
 
-#[path = "agentd/agent.rs"]
 mod agent;
-#[path = "agentd/grpc.rs"]
 mod grpc;
-#[path = "agentd/model.rs"]
 mod model;
-#[path = "agentd/park.rs"]
 mod park;
-#[path = "agentd/rest.rs"]
 mod rest;
-#[path = "agentd/service.rs"]
 mod service;
-#[path = "agentd/session.rs"]
 mod session;
-#[path = "agentd/state.rs"]
 mod state;
 #[cfg(test)]
-#[path = "agentd/tests.rs"]
 mod tests;
-#[path = "agentd/tools.rs"]
 mod tools;
-#[path = "agentd/wire.rs"]
 mod wire;
 
 use std::path::PathBuf;
@@ -184,7 +173,7 @@ fn off_peak_now() -> bool {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    comp_reconciler::offpeak::deepseek_off_peak(now, &[])
+    comp_fuel::offpeak::deepseek_off_peak(now, &[])
 }
 
 fn provider(args: &Args) -> Result<model::Provider> {

@@ -1,0 +1,34 @@
+[package]
+name = "comp-agentd"
+description = "The agent session daemon (docs/adr/0102): a contract-first agent API over REST and gRPC on one port, whose sessions a restart does not end (docs/adr/0113) and whose approvals can reach beyond one call (docs/adr/0114)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+comp-daemon-kit.workspace = true
+comp-fuel.workspace = true
+holon-park.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+futures.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+jiff.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+# The gRPC half of api/holon/v1/agent.proto, served on the same port as the REST half.
+tonic = "0.14"
+tonic-prost = "0.14"
+prost = "0.14"
+prost-types = "0.14"
+tonic-web = "0.14"
+
+[build-dependencies]
+# build.rs: agent.proto -> Rust, with protox standing in for protoc.
+tonic-prost-build = "0.14"
+protox = "0.9"

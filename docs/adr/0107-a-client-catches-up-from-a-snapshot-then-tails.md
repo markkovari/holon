@@ -6,7 +6,7 @@ log has everything, and reading all of it is the wrong way to find out.*
 **Status: accepted, and built.** `GET /v1/sessions/{id}/state` in
 [`api/openapi.yaml`](../../api/openapi.yaml) and `GetSessionState` in
 [`api/holon/v1/agent.proto`](../../api/holon/v1/agent.proto), served by `comp-agentd`;
-the fold is [`reconciler/src/bin/agentd/state.rs`](../../reconciler/src/bin/agentd/state.rs).
+the fold is [`reconciler/src/bin/agentd/state.rs`](../../reconciler/daemons/agentd/src/state.rs).
 Extends [ADR-0102](0102-an-agent-session-is-a-contract-first.md); additive, so no client
 of that contract changes.
 
@@ -84,11 +84,11 @@ snapshot client cannot see is one a reconnecting client silently misses.
 
 ## Proof
 
-[`state.rs`](../../reconciler/src/bin/agentd/state.rs) folds synthetic logs: deltas of one
+[`state.rs`](../../reconciler/daemons/agentd/src/state.rs) folds synthetic logs: deltas of one
 message join and only the last is in progress, a call waiting on a person is pending until
 answered, and a task that ends — a cancel mid-approval — abandons its waiting call and its
 unapplied steer so a bot does not ask about a ghost. Through a real router
-([`agentd/tests.rs`](../../reconciler/src/bin/agentd/tests.rs)): the state mid-task
+([`agentd/tests.rs`](../../reconciler/daemons/agentd/src/tests.rs)): the state mid-task
 (waiting on an approval) and at the end, with `seq` equal to the number of events the
 stream delivered; the stream opened at that cursor starts at `seq + 1` with the next
 task's `task_started`; the same state, at the same cursor, from a second daemon over the

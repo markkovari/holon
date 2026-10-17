@@ -98,7 +98,7 @@ exercised.
 
 ## Proof
 
-[`agentd/tests.rs`](../../reconciler/src/bin/agentd/tests.rs), through a real router with the scripted
+[`agentd/tests.rs`](../../reconciler/daemons/agentd/src/tests.rs), through a real router with the scripted
 model: a busy session refusing by default and queuing when asked, in order, with the next task's
 start the very next event and the state's cursor continuing exactly through the drain; an idle
 session starting whatever `when_busy` says; a queued task cancelled and skipped; the running task

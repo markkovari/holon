@@ -82,7 +82,7 @@ it counts against `max_turns`.
 
 ## Proof
 
-[`agentd/tests.rs`](../../reconciler/src/bin/agentd/tests.rs), through a real router with
+[`agentd/tests.rs`](../../reconciler/daemons/agentd/src/tests.rs), through a real router with
 the scripted model: a steer sent while a task waits on an approval is accepted as the
 running task, queued, visible as pending beside the approval in the state at the stream's
 cursor, read only after the approved tool's result, and answered by the model's next turn;

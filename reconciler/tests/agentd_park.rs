@@ -6,9 +6,9 @@
 //! agentd's sink, and the thing it proves is what no stand-in can, that a task waiting on a person
 //! survives `kill -9` of the daemon that asked.
 //!
-//! Needs `nats-server` on `PATH`; without it every test prints `SKIPPED` and returns. And needs
-//! `comp-park` and `comp-resume` built, which are another package's (docs/adr/0115):
-//! `cargo build --bin comp-park --bin comp-resume` first, in the profile this runs in.
+//! Needs `nats-server` on `PATH`; without it every test prints `SKIPPED` and returns. And needs the
+//! three daemons built, which are two other packages' (docs/adr/0115): `cargo build --bin comp-agentd
+//! --bin comp-park --bin comp-resume` first, in the profile this runs in.
 
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -210,7 +210,7 @@ impl Stack {
         }
         args.extend(extra.iter().map(|x| x.to_string()));
         self.agentd = Proc::start(
-            env!("CARGO_BIN_EXE_comp-agentd"),
+            comp_fleet::fleet::built_bin("comp-agentd"),
             &args,
             self.dir.join(format!("agentd-{n}.log")),
         );
