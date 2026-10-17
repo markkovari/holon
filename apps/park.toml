@@ -27,6 +27,13 @@ park-url = "http://127.0.0.1:8015"
 # `extra_args`: the compose NATS (`docker compose -f infra/compose.yaml up -d
 # nats`, or any `nats-server -js`) — no SurrealDB, unlike vcs: a ticket is one
 # mutable record, not a graph.
+#
+# On a NATS cluster, list every server (a daemon told about one cannot start
+# while it is down) and keep three copies, so that a node going down does not
+# take every ticket out of reach (ADR-0111; a bucket that already exists with
+# fewer is refused, with the command that raises it):
+#
+#   extra_args = ["--nats-url nats://a:4222,nats://b:4222,nats://c:4222 --replicas 3"]
 [[daemon]]
 name = "park"
 addr = "127.0.0.1:8015"
