@@ -1,0 +1,276 @@
+<title>Holon System Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* The page template: styles and markup. build.mjs adds the map and the scripts around it and
+   writes index.html, so edit this file and map.mjs, never the output.
+   Layout concept: a reference sheet. One wide drawing per view, set on a quiet panel;
+   colour carries one fact only — what a box is made of (wasm guest, native process,
+   store, client, written spec) — so "what is sandboxed" reads at a glance.
+   Lines carry the other: solid = request/response, dashed = NATS, dash-dot = artifact flow. */
+:root{
+  --bg:#f3f5f8; --panel:#ffffff; --panel-2:#eceff4; --ink:#11151b; --ink-2:#38424f; --muted:#647082;
+  --rule:#d8dee6; --rule-2:#bfc8d3; --halo:#ffffff;
+  --wasm:#0a6a5f; --wasm-bg:#dff2ee; --wasm-line:#7dc2b8;
+  --native:#954709; --native-bg:#fbecdc; --native-line:#e0b07a;
+  --store:#4a3fb0; --store-bg:#eae7fa; --store-line:#b3aaea;
+  --actor:#2a4977; --actor-bg:#e4ebf7; --actor-line:#9cb3d8;
+  --spec:#465160; --spec-bg:#eef1f5; --spec-line:#b6beca;
+  --ext:#667180; --ext-line:#a9b2be;
+  --edge:#3a4554; --focus:#1d5cdc; --focus-bg:rgba(29,92,220,.08);
+  --font:'IBM Plex Sans',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0d1116; --panel:#141a21; --panel-2:#1a222b; --ink:#e8ecf1; --ink-2:#c1cad5; --muted:#8c98a8;
+    --rule:#28323e; --rule-2:#3a4756; --halo:#141a21;
+    --wasm:#62d6c6; --wasm-bg:#0f2e2b; --wasm-line:#1f6a61;
+    --native:#f1b66d; --native-bg:#33230f; --native-line:#7b5521;
+    --store:#b6adff; --store-bg:#221e44; --store-line:#4c4595;
+    --actor:#a2c2f3; --actor-bg:#15243b; --actor-line:#34517d;
+    --spec:#adb6c3; --spec-bg:#1c242d; --spec-line:#3b4655;
+    --ext:#8c98a8; --ext-line:#445163;
+    --edge:#a9b5c4; --focus:#79a6ff; --focus-bg:rgba(121,166,255,.12);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0d1116; --panel:#141a21; --panel-2:#1a222b; --ink:#e8ecf1; --ink-2:#c1cad5; --muted:#8c98a8;
+  --rule:#28323e; --rule-2:#3a4756; --halo:#141a21;
+  --wasm:#62d6c6; --wasm-bg:#0f2e2b; --wasm-line:#1f6a61;
+  --native:#f1b66d; --native-bg:#33230f; --native-line:#7b5521;
+  --store:#b6adff; --store-bg:#221e44; --store-line:#4c4595;
+  --actor:#a2c2f3; --actor-bg:#15243b; --actor-line:#34517d;
+  --spec:#adb6c3; --spec-bg:#1c242d; --spec-line:#3b4655;
+  --ext:#8c98a8; --ext-line:#445163;
+  --edge:#a9b5c4; --focus:#79a6ff; --focus-bg:rgba(121,166,255,.12);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.5;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:22px 48px}
+.wrap{max-width:1320px;margin:0 auto;min-width:0}
+a{color:var(--focus)}
+code,.mono{font-family:var(--mono);font-size:.92em}
+button{font:inherit;color:inherit}
+
+/* ---- header ---- */
+.top{display:flex;flex-wrap:wrap;gap:6px 28px;align-items:flex-end;justify-content:space-between;padding-bottom:14px}
+.mark{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 6px}
+h1{font-size:30px;line-height:1.15;font-weight:600;letter-spacing:-.015em;margin:0;text-wrap:balance}
+.lede{margin:8px 0 0;max-width:68ch;color:var(--ink-2);font-size:15px;text-wrap:pretty}
+
+/* ---- tabs ---- */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--rule);margin:8px 0 18px;overflow-x:auto;scrollbar-width:thin}
+.tab{appearance:none;background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:10px 14px;cursor:pointer;color:var(--muted);font-weight:500;white-space:nowrap}
+.tab:hover{color:var(--ink)}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--focus)}
+.tab:focus-visible,.chip-btn:focus-visible,.sys-btn:focus-visible,.row-link:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
+.view[hidden]{display:none!important}
+
+/* ---- figure + legend ---- */
+.fig{background:var(--panel);border:1px solid var(--rule);border-radius:12px;overflow-x:auto;position:relative}
+.fig svg{display:block;width:100%;height:auto;min-width:980px}
+.legend{display:flex;flex-wrap:wrap;gap:8px 22px;align-items:center;margin:0 0 12px;padding:0;list-style:none;font-size:12px;color:var(--ink-2)}
+.legend li{display:flex;align-items:center;gap:8px}
+.sw{width:14px;height:14px;border-radius:4px;border:1.5px solid;flex:none}
+.sw.wasm{background:var(--wasm-bg);border-color:var(--wasm)} .sw.native{background:var(--native-bg);border-color:var(--native)}
+.sw.store{background:var(--store-bg);border-color:var(--store)} .sw.actor{background:var(--actor-bg);border-color:var(--actor)}
+.sw.spec{background:var(--spec-bg);border-color:var(--spec)} .sw.ext{background:transparent;border-color:var(--ext);border-style:dashed}
+.ln{width:34px;height:8px;flex:none}
+.ln line{stroke:var(--edge);stroke-width:1.6}
+.hint{margin:10px 2px 0;font-size:12.5px;color:var(--muted);max-width:90ch}
+
+/* ---- svg diagram ---- */
+svg text{font-family:var(--font)}
+.node rect.body{fill:var(--k-bg);stroke:var(--k-line);stroke-width:1.2}
+.node .stripe{fill:var(--k)}
+.node .t{font-size:13px;font-weight:600;fill:var(--ink)}
+.node .t.m{font-family:var(--mono);font-size:12.5px;font-weight:500}
+.node .s{font-size:11.5px;fill:var(--ink-2)}
+.k-wasm{--k:var(--wasm);--k-bg:var(--wasm-bg);--k-line:var(--wasm-line)}
+.k-native{--k:var(--native);--k-bg:var(--native-bg);--k-line:var(--native-line)}
+.k-store{--k:var(--store);--k-bg:var(--store-bg);--k-line:var(--store-line)}
+.k-actor{--k:var(--actor);--k-bg:var(--actor-bg);--k-line:var(--actor-line)}
+.k-spec{--k:var(--spec);--k-bg:var(--spec-bg);--k-line:var(--spec-line)}
+.k-ext{--k:var(--ext);--k-bg:transparent;--k-line:var(--ext-line)}
+.node.ghost rect.body{fill:var(--panel);stroke:var(--ext-line);stroke-dasharray:5 4}
+.node.ghost .stripe{fill:var(--ext-line)}
+.node.ghost .t{font-size:12.5px;fill:var(--ink-2)}
+.node.ghost .s{font-size:11px;fill:var(--muted)}
+.node.ghost.go{cursor:pointer}
+.node.ghost.go:hover rect.body,.node.ghost.go:focus-visible rect.body{stroke:var(--focus);stroke-dasharray:none;fill:var(--focus-bg)}
+.node.ghost .open{font-size:10.5px;fill:var(--muted);font-family:var(--mono)}
+.node.ghost.go:hover .open{fill:var(--focus)}
+.node:focus{outline:none}
+.group rect{fill:none;stroke:var(--rule-2);stroke-dasharray:2 4;stroke-width:1.2}
+.group text{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;fill:var(--muted)}
+.edge path.ln{fill:none;stroke:var(--edge);stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+.edge .head{fill:var(--edge);stroke:none}
+.edge.p-nats path.ln{stroke-dasharray:7 4}
+.edge.p-art path.ln{stroke-dasharray:9 3 2 3}
+.edge.p-call path.ln{stroke-width:1.2;opacity:.8}
+.edge .lab{font-family:var(--mono);font-size:10.5px;font-weight:500;fill:var(--ink-2)}
+.edge .lbg{fill:var(--halo)}
+.edge .bd{fill:var(--ink);}
+.edge .bn{font-family:var(--mono);font-size:10px;font-weight:500;fill:var(--panel);text-anchor:middle}
+.edge .hit{fill:none;stroke:transparent;stroke-width:14}
+svg[data-focus] .edge{opacity:.12;transition:opacity .12s}
+svg[data-focus] .edge.on{opacity:1}
+.edge.on path.ln{stroke:var(--focus);stroke-width:2.2}
+.edge.on .head{fill:var(--focus)}
+.edge.on .bd{fill:var(--focus)}
+.edge.on .lab{fill:var(--focus)}
+svg[data-focus] .card,svg[data-focus] .sub-node{opacity:.38;transition:opacity .12s}
+svg[data-focus] .card.rel,svg[data-focus] .sub-node.rel{opacity:1}
+
+/* overview cards */
+.card{cursor:pointer}
+.card rect.frame{fill:var(--panel);stroke:var(--rule-2);stroke-width:1.2}
+.card:hover rect.frame,.card:focus-visible rect.frame,.card.rel rect.frame{stroke:var(--focus);stroke-width:1.8}
+.card:focus{outline:none}
+.card .ct{font-size:15px;font-weight:600;fill:var(--ink)}
+.card .cp{font-size:12px;fill:var(--ink-2)}
+.card .go{font-family:var(--mono);font-size:10.5px;fill:var(--muted)}
+.card:hover .go,.card:focus-visible .go{fill:var(--focus)}
+.chip rect{fill:var(--k-bg);stroke:var(--k-line);stroke-width:1}
+.chip text{font-family:var(--mono);font-size:10.5px;font-weight:500;fill:var(--k)}
+.use rect{fill:var(--store-bg);stroke:var(--store-line);stroke-width:1}
+.use text{font-family:var(--mono);font-size:9.5px;font-weight:500;fill:var(--store)}
+.lbl-uses{font-family:var(--mono);font-size:9.5px;fill:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.band{fill:var(--panel-2);stroke:none}
+.band-t{font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;fill:var(--muted)}
+.sub-node{cursor:default}
+.sub-node.sub-on rect.body{stroke:var(--focus);stroke-width:1.8}
+
+/* ---- isolation view ---- */
+.iso{display:flex;flex-direction:column;gap:18px}
+.rail{display:flex;flex-wrap:wrap;gap:6px}
+.rail h3{display:none}
+.sys-btn{appearance:none;background:var(--panel);border:1px solid var(--rule);border-radius:999px;padding:6px 13px;cursor:pointer;color:var(--ink-2);font-weight:500;font-size:13px;white-space:nowrap}
+.sys-btn b{font-weight:500;color:inherit}
+.sys-btn span{display:none}
+.sys-btn:hover{border-color:var(--ink-2);color:var(--ink)}
+.sys-btn[aria-current="true"]{background:var(--ink);border-color:var(--ink);color:var(--panel)}
+.iso-main{min-width:0;display:flex;flex-direction:column;gap:18px}
+.iso-head h2{margin:0;font-size:22px;font-weight:600;letter-spacing:-.01em}
+.iso-head p{margin:6px 0 0;max-width:76ch;color:var(--ink-2);font-size:14.5px;text-wrap:pretty}
+.entry{margin:10px 0 0;font-size:12.5px;color:var(--muted)}
+.entry b{color:var(--ink-2);font-weight:500}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.box{background:var(--panel);border:1px solid var(--rule);border-radius:12px;padding:14px 16px;min-width:0}
+.box h3{margin:0 0 8px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500}
+.box ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--ink-2)}
+.box li::marker{color:var(--rule-2)}
+.sec{margin:0 0 8px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500}
+.codes{display:flex;flex-wrap:wrap;gap:6px}
+.codes code{background:var(--panel-2);border-radius:5px;padding:2px 7px;font-size:11.5px;color:var(--ink-2);max-width:100%;overflow-wrap:anywhere}
+
+/* ---- tables ---- */
+.tbl-wrap{background:var(--panel);border:1px solid var(--rule);border-radius:12px;overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13px;min-width:820px}
+th{position:sticky;top:0;background:var(--panel-2);text-align:left;font-family:var(--mono);font-size:10.5px;font-weight:500;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);padding:9px 12px;border-bottom:1px solid var(--rule)}
+td{padding:10px 12px;border-bottom:1px solid var(--rule);vertical-align:top;color:var(--ink-2)}
+tr:last-child td{border-bottom:0}
+tbody tr:hover td,tbody tr.on td{background:var(--focus-bg)}
+td.n{width:34px;font-family:var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+td .who{display:flex;flex-direction:column;gap:2px}
+td .who b{font-weight:600;color:var(--ink);font-size:13px}
+td .who span{font-family:var(--mono);font-size:11px;color:var(--muted)}
+td .arrow{color:var(--muted);padding:0 2px}
+.row-link{appearance:none;background:none;border:0;padding:0;cursor:pointer;text-align:left;color:inherit}
+.row-link b{border-bottom:1px dotted var(--rule-2)}
+.row-link:hover b{color:var(--focus);border-bottom-color:var(--focus)}
+.pb{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10.5px;color:var(--ink-2);background:var(--panel-2);border-radius:5px;padding:2px 7px 2px 6px;white-space:nowrap}
+.pb svg{width:22px;height:6px}
+.pb svg line{stroke:var(--edge);stroke-width:1.6}
+.adr{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
+.bdg{display:inline-flex;align-items:center;justify-content:center;min-width:19px;height:19px;border-radius:10px;background:var(--ink);color:var(--panel);font-family:var(--mono);font-size:10.5px;font-weight:500;padding:0 5px;font-variant-numeric:tabular-nums}
+tr.on .bdg{background:var(--focus)}
+
+/* ---- filters ---- */
+.filters{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:0 0 12px}
+.filters label{font-family:var(--mono);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.chip-btn{appearance:none;border:1px solid var(--rule-2);background:var(--panel);border-radius:999px;padding:4px 11px;font-size:12px;cursor:pointer;color:var(--ink-2)}
+.chip-btn[aria-pressed="true"]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.chip-btn:hover{border-color:var(--ink-2)}
+.search{appearance:none;border:1px solid var(--rule-2);background:var(--panel);color:var(--ink);border-radius:8px;padding:6px 10px;font:inherit;font-size:13px;min-width:210px}
+.search:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+.count{font-size:12px;color:var(--muted);margin-left:auto}
+
+/* ---- boundaries ---- */
+.zones{display:flex;flex-direction:column;gap:0}
+.zone{border:1.5px solid var(--z-line);border-radius:14px;background:var(--z-bg);padding:12px 14px 14px;min-width:0}
+.zone>.zh{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;justify-content:space-between;margin-bottom:10px}
+.zone>.zh h3{margin:0;font-size:14px;font-weight:600;color:var(--z-ink)}
+.zone>.zh p{margin:0;font-size:12.5px;color:var(--ink-2);max-width:72ch}
+.z1{--z-line:var(--rule-2);--z-bg:var(--panel-2);--z-ink:var(--ink)}
+.z2{--z-line:var(--actor-line);--z-bg:color-mix(in srgb,var(--actor-bg) 55%,var(--panel));--z-ink:var(--actor)}
+.z3{--z-line:var(--native-line);--z-bg:color-mix(in srgb,var(--native-bg) 55%,var(--panel));--z-ink:var(--native)}
+.z4{--z-line:var(--store-line);--z-bg:color-mix(in srgb,var(--store-bg) 55%,var(--panel));--z-ink:var(--store)}
+.z5{--z-line:var(--wasm-line);--z-bg:color-mix(in srgb,var(--wasm-bg) 70%,var(--panel));--z-ink:var(--wasm)}
+.items{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+.items span{font-family:var(--mono);font-size:11px;background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:2px 8px;color:var(--ink-2)}
+.tenants{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.tenant{border:1.5px dashed var(--wasm-line);border-radius:10px;background:var(--panel);padding:10px 12px;min-width:0}
+.tenant h4{margin:0 0 4px;font-size:12.5px;font-weight:600;color:var(--wasm)}
+.tenant p{margin:0;font-size:12px;color:var(--ink-2)}
+.split table{min-width:0}
+.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-top:18px}
+@media (max-width:900px){.split{grid-template-columns:minmax(0,1fr)}}
+.rule-box{border-left:3px solid var(--focus);background:var(--panel);border-radius:0 10px 10px 0;padding:12px 16px;margin:0 0 18px;font-size:14px;color:var(--ink);max-width:90ch}
+.rule-box small{display:block;margin-top:4px;color:var(--muted);font-size:12px}
+
+footer{margin-top:30px;padding-top:14px;border-top:1px solid var(--rule);font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px 24px;justify-content:space-between}
+footer p{margin:0;max-width:92ch}
+
+@media (max-width:900px){h1{font-size:25px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<!-- body -->
+<div class="wrap">
+  <header class="top">
+    <div>
+      <p class="mark">holon · what runs, and what talks to what</p>
+      <h1>Holon System Map</h1>
+      <p class="lede">The systems, each shown on its own and then in conversation with the others. A box is coloured by what it is made of, so the line between sandboxed guest code and native processes is visible everywhere.</p>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Views">
+    <button class="tab" role="tab" id="tab-map" data-view="map" aria-selected="true">System map</button>
+    <button class="tab" role="tab" id="tab-iso" data-view="iso" aria-selected="false">Systems in isolation</button>
+    <button class="tab" role="tab" id="tab-cor" data-view="cor" aria-selected="false">Correspondences</button>
+    <button class="tab" role="tab" id="tab-bnd" data-view="bnd" aria-selected="false">Boundaries</button>
+  </nav>
+
+  <section class="view" id="view-map" aria-labelledby="tab-map">
+    <ul class="legend" id="legend-map"></ul>
+    <div class="fig" id="fig-map"></div>
+    <p class="hint">Hover or focus a system to light up everything it talks to; open it to see it alone, with each correspondence numbered. The map draws the primary correspondences only. The Correspondences tab lists all of them.</p>
+  </section>
+
+  <section class="view" id="view-iso" aria-labelledby="tab-iso" hidden>
+    <div class="iso">
+      <nav class="rail" id="rail" aria-label="Systems"><h3>System</h3></nav>
+      <div class="iso-main" id="iso-main"></div>
+    </div>
+  </section>
+
+  <section class="view" id="view-cor" aria-labelledby="tab-cor" hidden>
+    <div class="filters" id="cor-filters"></div>
+    <div class="tbl-wrap"><table id="cor-table"></table></div>
+  </section>
+
+  <section class="view" id="view-bnd" aria-labelledby="tab-bnd" hidden></section>
+
+  <noscript><p class="hint">This page draws its diagrams with JavaScript. The same map, as Mermaid diagrams and tables, is in <a href="../ARCHITECTURE.md">docs/ARCHITECTURE.md</a>.</p></noscript>
+
+  <footer>
+    <p id="prov"></p>
+    <p>Boxes name the file or binary they stand for; the code is the reference and this page is a map of it. Edit docs/architecture/map.mjs, not this file.</p>
+  </footer>
+</div>
