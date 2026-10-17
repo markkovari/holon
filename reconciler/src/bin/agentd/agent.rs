@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use comp_reconciler::cost::{cost_usd_micros, micros_at};
 
 use super::model::{Msg, Provider, ToolResult};
-use super::session::{Answer, Session};
+use super::session::{Answer, Session, Started};
 use super::tools;
 use super::wire::{new_id, Decision, FailCode, Payload, Usage};
 
@@ -25,6 +25,16 @@ pub struct Ctx {
     pub off_peak: fn() -> bool,
 }
 
+/// Run a task that has just become the running one: one `begin` started on an idle session,
+/// or one promoted from the queue by the end of the task before it (`run`'s tail, or a cancel).
+/// A plain function that spawns, not an `async fn`: `run` calls it when it ends, and `run`
+/// spawning `run` directly would make its own future a type that contains itself.
+pub fn launch(sess: Arc<Session>, ctx: Arc<Ctx>, started: Started) {
+    let id = started.task.id.clone();
+    let handle = tokio::spawn(run(sess.clone(), ctx, id.clone(), started.prompt));
+    sess.attach(&id, handle);
+}
+
 pub async fn run(sess: Arc<Session>, ctx: Arc<Ctx>, task_id: String, prompt: String) {
     use futures::FutureExt;
     // A panic must still end the task, or the session stays busy forever.
@@ -33,7 +43,11 @@ pub async fn run(sess: Arc<Session>, ctx: Arc<Ctx>, task_id: String, prompt: Str
         .await
         .unwrap_or_else(|_| Err((FailCode::Internal, "the agent loop panicked".into())));
     sess.save_history(&sess.history.lock().await);
-    sess.finish(&task_id, outcome);
+    // The next queued task starts in the breath this one ends: `finish` hands it back
+    // under the same lock, and it is launched here (ADR-0112).
+    if let Some(next) = sess.finish(&task_id, outcome) {
+        launch(sess, ctx, next);
+    }
 }
 
 async fn turns(

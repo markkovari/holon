@@ -45,6 +45,12 @@ pub enum FailCode {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Payload {
+    /// A task was accepted onto a busy session with `when_busy: queue` and waits its turn
+    /// (ADR-0112). `task_started` follows when it becomes the running task; if it never does,
+    /// `task_failed` says how it ended.
+    TaskQueued {
+        prompt: String,
+    },
     TaskStarted {
         prompt: String,
     },
@@ -103,6 +109,7 @@ pub enum Payload {
 impl Payload {
     pub fn kind(&self) -> &'static str {
         match self {
+            Payload::TaskQueued { .. } => "task_queued",
             Payload::TaskStarted { .. } => "task_started",
             Payload::TextDelta { .. } => "text_delta",
             Payload::ToolCallStarted { .. } => "tool_call_started",
@@ -140,6 +147,8 @@ pub enum SessionStatus {
 #[derive(Serialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
+    /// Accepted onto a busy session and not started (ADR-0112).
+    Queued,
     Running,
     Completed,
     Failed,
@@ -170,9 +179,22 @@ pub struct Session {
     pub active_task_id: Option<String>,
 }
 
+/// What `SendTask` does when the session already has a task running.
+#[derive(Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum WhenBusy {
+    /// Refuse it: `409 task-running`. What a client that does not say gets.
+    #[default]
+    Reject,
+    /// Accept it, to start when the ones before it have ended (ADR-0112).
+    Queue,
+}
+
 #[derive(Deserialize)]
 pub struct SendTask {
     pub prompt: String,
+    #[serde(default)]
+    pub when_busy: WhenBusy,
 }
 
 #[derive(Deserialize)]
@@ -275,6 +297,13 @@ pub struct PendingApproval {
     pub expires_at: Option<String>,
 }
 
+/// A task accepted and not yet started, in the order it will start.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct QueuedTask {
+    pub task_id: String,
+    pub prompt: String,
+}
+
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct PendingSteer {
     pub task_id: String,
@@ -292,6 +321,7 @@ pub struct SessionState {
     pub transcript: Vec<TranscriptEntry>,
     pub pending_approvals: Vec<PendingApproval>,
     pub pending_steers: Vec<PendingSteer>,
+    pub queued_tasks: Vec<QueuedTask>,
 }
 
 /// RFC 9457 problem details.

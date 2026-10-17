@@ -109,6 +109,11 @@ struct Args {
     /// Unset: wait forever.
     #[arg(long)]
     approval_timeout_secs: Option<u64>,
+    /// Tasks one session may have waiting behind its running one, for a `SendTask` that asks
+    /// for `when_busy: queue` (ADR-0112). One more is refused (`429`). 0 turns queueing off:
+    /// a busy session refuses every task, as it did before.
+    #[arg(long, default_value_t = 16)]
+    max_queued: usize,
 }
 
 fn parse_price(s: &str) -> std::result::Result<(String, u64, u64), String> {
@@ -203,6 +208,7 @@ async fn main() -> Result<()> {
         roots,
         state_dir: args.state_dir.clone(),
         ctx: Arc::new(ctx),
+        max_queued: args.max_queued,
     });
     let listener = tokio::net::TcpListener::bind(&args.addr)
         .await

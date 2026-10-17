@@ -37,6 +37,7 @@ fn fail(f: Fail) -> Response {
         Fail::NotFound(d) => problem(StatusCode::NOT_FOUND, "not-found", d),
         Fail::Invalid(kind, d) => problem(StatusCode::BAD_REQUEST, kind, d),
         Fail::Conflict(kind, d) => problem(StatusCode::CONFLICT, kind, d),
+        Fail::Exhausted(kind, d) => problem(StatusCode::TOO_MANY_REQUESTS, kind, d),
         Fail::Internal(d) => problem(StatusCode::INTERNAL_SERVER_ERROR, "internal", d),
     }
 }
@@ -71,7 +72,8 @@ async fn send_task(
     body: axum::body::Bytes,
 ) -> Response {
     let key = headers.get("idempotency-key").and_then(|v| v.to_str().ok()).map(String::from);
-    let r = parse::<wire::SendTask>(&body).and_then(|t| d.send_task(&id, t.prompt, key));
+    let r =
+        parse::<wire::SendTask>(&body).and_then(|t| d.send_task(&id, t.prompt, key, t.when_busy));
     reply(StatusCode::ACCEPTED, r)
 }
 

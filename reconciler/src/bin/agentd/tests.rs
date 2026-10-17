@@ -19,6 +19,7 @@ struct Opts {
     prices: Vec<(String, u64, u64)>,
     approval_timeout: Option<Duration>,
     state_dir: Option<PathBuf>,
+    max_queued: usize,
 }
 
 impl Default for Opts {
@@ -29,6 +30,7 @@ impl Default for Opts {
             prices: vec![],
             approval_timeout: None,
             state_dir: None,
+            max_queued: 16,
         }
     }
 }
@@ -66,6 +68,7 @@ async fn serve(o: Opts, root: Arc<tempfile::TempDir>) -> Harness {
         roots: vec![rootp.clone()],
         state_dir: o.state_dir,
         ctx: Arc::new(ctx),
+        max_queued: o.max_queued,
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
@@ -430,6 +433,7 @@ async fn grpc_runs_the_same_session_end_to_end() {
             session_id: s.id.clone(),
             prompt: "look".into(),
             idempotency_key: String::new(),
+            when_busy: pb::WhenBusy::Unspecified as i32,
         })
         .await
         .unwrap()
@@ -440,6 +444,7 @@ async fn grpc_runs_the_same_session_end_to_end() {
             session_id: s.id.clone(),
             prompt: "x".into(),
             idempotency_key: String::new(),
+            when_busy: pb::WhenBusy::Unspecified as i32, // what a client that never heard of it sends
         })
         .await
         .unwrap_err();
@@ -780,8 +785,11 @@ fn bare_session() -> (tempfile::TempDir, session::Session, super::wire::Task) {
         None,
     )
     .unwrap();
-    let Ok((task, _)) = s.begin("p", None) else { panic!("a fresh session accepts a task") };
-    (dir, s, task)
+    let Ok(session::Begun::Started(started)) = s.begin("p", None, super::wire::WhenBusy::Reject, 0)
+    else {
+        panic!("a fresh session accepts a task")
+    };
+    (dir, s, started.task)
 }
 
 #[test]
@@ -976,6 +984,7 @@ async fn grpc_steers_a_running_task_and_reads_its_state() {
             session_id: s.id.clone(),
             prompt: "look".into(),
             idempotency_key: String::new(),
+            when_busy: pb::WhenBusy::Unspecified as i32,
         })
         .await
         .unwrap()
@@ -1057,4 +1066,662 @@ async fn grpc_steers_a_running_task_and_reads_its_state() {
     assert!(matches!(&entries[3], E::UserMessage(u) if u.text == "steer: be brief" && u.steered));
     assert!(matches!(entries.last().unwrap(), E::TaskEnded(e)
         if e.outcome == pb::TaskOutcome::Completed as i32 && e.result == "Noted: steer: be brief"));
+}
+
+// ---- queueing a task behind the running one (ADR-0112) ----
+
+impl Harness {
+    /// `SendTask` asking to wait its turn if the session is busy.
+    async fn queue(&self, sid: &str, prompt: &str, key: Option<&str>) -> (u16, Value) {
+        let mut req = self
+            .http
+            .post(format!("{}/v1/sessions/{sid}/tasks", self.base))
+            .json(&json!({"prompt": prompt, "when_busy": "queue"}));
+        if let Some(k) = key {
+            req = req.header("Idempotency-Key", k);
+        }
+        let r = req.send().await.unwrap();
+        (r.status().as_u16(), r.json().await.unwrap_or(Value::Null))
+    }
+
+    async fn cancel(&self, sid: &str, tid: &str) -> (u16, Value) {
+        self.post(&format!("/v1/sessions/{sid}/tasks/{tid}/cancel"), json!({})).await
+    }
+
+    /// The task the session is running, if any.
+    async fn active(&self, sid: &str) -> Option<String> {
+        self.get(&format!("/v1/sessions/{sid}")).await["active_task_id"].as_str().map(String::from)
+    }
+}
+
+/// The task ids in a state's queue, in order.
+fn queued_ids(state: &Value) -> Vec<&str> {
+    state["queued_tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|q| q["task_id"].as_str().unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_busy_session_queues_a_task_when_asked_and_starts_it_the_moment_the_one_before_it_ends() {
+    let h = harness(Opts::default()).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    let a = h.task(&sid, "look a").await;
+    let (_, req_a) = ev.until("tool_approval_required").await;
+
+    // Said nothing about a busy session: refused, as it always was.
+    let (s, refused) = h.post(&format!("/v1/sessions/{sid}/tasks"), json!({"prompt": "x"})).await;
+    assert_eq!(s, 409);
+    assert_eq!(refused["type"], "https://holon.dev/errors/task-running");
+
+    // Asked to wait: accepted, as queued, and the log says so.
+    let (s, b) = h.queue(&sid, "look b", None).await;
+    assert_eq!((s, b["status"].as_str()), (202, Some("queued")), "{b}");
+    let (s, c) = h.queue(&sid, "look c", None).await;
+    assert_eq!((s, c["status"].as_str()), (202, Some("queued")), "{c}");
+    let (_, qb) = ev.until("task_queued").await;
+    let (_, qc) = ev.until("task_queued").await;
+    assert_eq!((qb["task_id"].as_str(), qb["prompt"].as_str()), (b["id"].as_str(), Some("look b")));
+    assert_eq!((qc["task_id"].as_str(), qc["prompt"].as_str()), (c["id"].as_str(), Some("look c")));
+
+    // The state shows the queue in order, and the queued prompts are not in the conversation yet.
+    let st = h.state(&sid).await;
+    assert_eq!(queued_ids(&st), [b["id"].as_str().unwrap(), c["id"].as_str().unwrap()]);
+    assert_eq!(st["queued_tasks"][0]["prompt"], "look b");
+    assert_eq!(st["seq"], qc["seq"]);
+    let said: Vec<&str> = st["transcript"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["type"] == "user_message")
+        .map(|e| e["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(said, ["look a"]);
+    assert_eq!(h.active(&sid).await.as_deref(), a["id"].as_str(), "still a's");
+    let cursor = st["seq"].as_u64().unwrap();
+
+    // `a` ends, and `b` starts in the very next event: nothing is in between at which the session
+    // is idle with a task waiting.
+    assert_eq!(h.approve(&sid, &req_a["call_id"], "approve").await, 200);
+    let (_, done_a) = ev.until("task_completed").await;
+    assert_eq!(done_a["task_id"], a["id"]);
+    let started_b = ev.next().await;
+    assert_eq!(
+        (started_b["type"].as_str(), started_b["task_id"].as_str(), started_b["prompt"].as_str()),
+        (Some("task_started"), b["id"].as_str(), Some("look b"))
+    );
+    assert_eq!(started_b["seq"].as_u64(), Some(done_a["seq"].as_u64().unwrap() + 1));
+    assert_eq!(h.active(&sid).await.as_deref(), b["id"].as_str());
+    let st = h.state(&sid).await;
+    assert_eq!(queued_ids(&st), [c["id"].as_str().unwrap()], "b left the queue as it started");
+
+    // A client that read the state at `cursor` and tailed from there misses nothing and sees
+    // nothing twice, through the queue draining.
+    let mut tail = h.stream(&sid, cursor).await;
+    let first = tail.next().await;
+    assert_eq!(first["seq"].as_u64(), Some(cursor + 1));
+
+    // b, then c, in the order they were accepted.
+    let (_, req_b) = ev.until("tool_approval_required").await;
+    assert_eq!(h.approve(&sid, &req_b["call_id"], "approve").await, 200);
+    let (_, done_b) = ev.until("task_completed").await;
+    assert_eq!(done_b["task_id"], b["id"]);
+    let started_c = ev.next().await;
+    assert_eq!(
+        (started_c["type"].as_str(), started_c["task_id"].as_str()),
+        (Some("task_started"), c["id"].as_str())
+    );
+    let (_, req_c) = ev.until("tool_approval_required").await;
+    assert_eq!(h.approve(&sid, &req_c["call_id"], "approve").await, 200);
+    let (_, done_c) = ev.until("task_completed").await;
+    assert_eq!(done_c["task_id"], c["id"]);
+
+    let v = h.get(&format!("/v1/sessions/{sid}")).await;
+    assert_eq!(v["status"], "idle");
+    assert!(h.state(&sid).await["queued_tasks"].as_array().unwrap().is_empty());
+    // And each ran on the conversation the one before it left: three listings, one conversation.
+    let st = h.state(&sid).await;
+    let said: Vec<&str> = st["transcript"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["type"] == "user_message")
+        .map(|e| e["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(said, ["look a", "look b", "look c"]);
+}
+
+#[tokio::test]
+async fn a_task_sent_to_an_idle_session_starts_whatever_it_says_about_a_busy_one() {
+    let h = harness(Opts::default()).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    let (s, t) = h.queue(&sid, "look", None).await;
+    assert_eq!((s, t["status"].as_str()), (202, Some("running")), "{t}");
+    let (kinds, _) = ev.until("tool_approval_required").await;
+    assert_eq!(kinds[0], "task_started");
+    assert!(!kinds.contains(&"task_queued".to_string()), "never queued: {kinds:?}");
+}
+
+#[tokio::test]
+async fn a_queued_task_can_be_cancelled_and_never_starts() {
+    let h = harness(Opts::default()).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    let a = h.task(&sid, "look a").await;
+    let (_, req_a) = ev.until("tool_approval_required").await;
+    let (_, b) = h.queue(&sid, "look b", None).await;
+    let (_, c) = h.queue(&sid, "look c", None).await;
+    let (bid, cid) = (b["id"].as_str().unwrap(), c["id"].as_str().unwrap());
+
+    let (s, cancelled) = h.cancel(&sid, bid).await;
+    assert_eq!((s, cancelled["status"].as_str()), (200, Some("failed")), "{cancelled}");
+    let (_, failed) = ev.until("task_failed").await;
+    assert_eq!(
+        (failed["task_id"].as_str(), failed["code"].as_str()),
+        (Some(bid), Some("cancelled"))
+    );
+    assert_eq!(failed["task_usage"]["cost_usd_micros"], 0, "it never ran");
+    assert_eq!(queued_ids(&h.state(&sid).await), [cid]);
+    // Again is harmless, as for any task that ended.
+    assert_eq!(h.cancel(&sid, bid).await.0, 200);
+
+    // `a` ends and `c` starts: `b` is skipped, not run and not left in the way.
+    h.approve(&sid, &req_a["call_id"], "approve").await;
+    let (_, done_a) = ev.until("task_completed").await;
+    assert_eq!(done_a["task_id"], a["id"]);
+    let next = ev.next().await;
+    assert_eq!(
+        (next["type"].as_str(), next["task_id"].as_str()),
+        (Some("task_started"), Some(cid))
+    );
+}
+
+#[tokio::test]
+async fn cancelling_the_running_task_starts_the_next_queued_one_and_it_runs_to_the_end() {
+    let h = harness(Opts::default()).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    let a = h.task(&sid, "look a").await;
+    ev.until("tool_approval_required").await;
+    let (_, b) = h.queue(&sid, "look b", None).await;
+    let (_, c) = h.queue(&sid, "look c", None).await;
+
+    // The running task's loop is aborted by the cancel; that must not take the chain with it.
+    let (s, cancelled) = h.cancel(&sid, a["id"].as_str().unwrap()).await;
+    assert_eq!((s, cancelled["status"].as_str()), (200, Some("failed")));
+    let (_, failed) = ev.until("task_failed").await;
+    assert_eq!(failed["task_id"], a["id"]);
+    let next = ev.next().await;
+    assert_eq!(
+        (next["type"].as_str(), next["task_id"].as_str()),
+        (Some("task_started"), b["id"].as_str())
+    );
+    assert_eq!(next["seq"].as_u64(), Some(failed["seq"].as_u64().unwrap() + 1));
+
+    // And b runs to its end on its own loop, then c after it.
+    for t in [&b, &c] {
+        let (_, req) = ev.until("tool_approval_required").await;
+        assert_eq!(req["task_id"], t["id"]);
+        assert_eq!(h.approve(&sid, &req["call_id"], "approve").await, 200);
+        let (_, done) = ev.until("task_completed").await;
+        assert_eq!(done["task_id"], t["id"]);
+    }
+    assert_eq!(h.get(&format!("/v1/sessions/{sid}")).await["status"], "idle");
+}
+
+#[tokio::test]
+async fn closing_a_session_ends_the_running_task_and_every_queued_one() {
+    let h = harness(Opts::default()).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    let a = h.task(&sid, "look a").await;
+    ev.until("tool_approval_required").await;
+    let (_, b) = h.queue(&sid, "look b", None).await;
+    let (_, c) = h.queue(&sid, "look c", None).await;
+
+    let r = h.http.delete(format!("{}/v1/sessions/{sid}", h.base)).send().await.unwrap();
+    assert_eq!(r.json::<Value>().await.unwrap()["status"], "closed");
+
+    // The running one, then the queued ones in order: each ends, none starts.
+    let mut ended = Vec::new();
+    for _ in 0..3 {
+        let (_, failed) = ev.until("task_failed").await;
+        assert_eq!(failed["code"], "cancelled");
+        ended.push(failed["task_id"].as_str().unwrap().to_string());
+    }
+    assert_eq!(
+        ended,
+        [a["id"].as_str().unwrap(), b["id"].as_str().unwrap(), c["id"].as_str().unwrap()]
+    );
+    assert!(h.state(&sid).await["queued_tasks"].as_array().unwrap().is_empty());
+    let (s, _) = h.queue(&sid, "x", None).await;
+    assert_eq!(s, 409, "a closed session accepts nothing");
+    // Nothing started after the close: the log ends at the third failure.
+    let log = h.state(&sid).await["seq"].as_u64().unwrap();
+    let after =
+        tokio::time::timeout(Duration::from_millis(300), h.stream(&sid, log).await.next()).await;
+    assert!(after.is_err(), "no event after the last cancellation");
+}
+
+#[tokio::test]
+async fn the_queue_is_bounded_and_can_be_switched_off() {
+    let h = harness(Opts { max_queued: 2, ..Opts::default() }).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look a").await;
+    ev.until("tool_approval_required").await;
+    assert_eq!(h.queue(&sid, "b", None).await.0, 202);
+    assert_eq!(h.queue(&sid, "c", None).await.0, 202);
+    let (s, full) = h.queue(&sid, "d", None).await;
+    assert_eq!(s, 429, "{full}");
+    assert_eq!(full["type"], "https://holon.dev/errors/queue-full");
+    assert_eq!(
+        h.state(&sid).await["queued_tasks"].as_array().unwrap().len(),
+        2,
+        "nothing was added"
+    );
+    // Not asking to queue is still the 409 it always was, full queue or not.
+    assert_eq!(h.post(&format!("/v1/sessions/{sid}/tasks"), json!({"prompt": "x"})).await.0, 409);
+
+    // 0 turns it off: a busy session is busy, and says why.
+    let h = harness(Opts { max_queued: 0, ..Opts::default() }).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look a").await;
+    ev.until("tool_approval_required").await;
+    let (s, off) = h.queue(&sid, "b", None).await;
+    assert_eq!(s, 409, "{off}");
+    assert_eq!(off["type"], "https://holon.dev/errors/task-running");
+    assert!(off["detail"].as_str().unwrap().contains("does not queue"), "{off}");
+}
+
+#[tokio::test]
+async fn a_retried_queue_request_with_the_same_key_queues_once_and_always_finds_its_task() {
+    let h = harness(Opts::default()).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    let a = h.task(&sid, "look a").await;
+    let (_, req_a) = ev.until("tool_approval_required").await;
+
+    let (_, b1) = h.queue(&sid, "look b", Some("kb")).await;
+    let (s, b2) = h.queue(&sid, "look b", Some("kb")).await;
+    assert_eq!((s, &b2["id"], b2["status"].as_str()), (202, &b1["id"], Some("queued")));
+    assert_eq!(h.state(&sid).await["queued_tasks"].as_array().unwrap().len(), 1, "said once");
+
+    // Once it has started, the same key still finds the same task and starts nothing more.
+    h.approve(&sid, &req_a["call_id"], "approve").await;
+    ev.until("task_completed").await;
+    let started = ev.next().await;
+    assert_eq!(started["task_id"], b1["id"]);
+    let (s, b3) = h.queue(&sid, "look b", Some("kb")).await;
+    assert_eq!((s, &b3["id"], b3["status"].as_str()), (202, &b1["id"], Some("running")));
+    assert!(h.state(&sid).await["queued_tasks"].as_array().unwrap().is_empty());
+    assert_ne!(a["id"], b1["id"]);
+}
+
+#[tokio::test]
+async fn a_queued_task_cannot_be_steered_until_it_runs() {
+    let h = harness(Opts::default()).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look a").await;
+    ev.until("tool_approval_required").await;
+    let (_, b) = h.queue(&sid, "look b", None).await;
+    let (s, refused) = h.steer(&sid, b["id"].as_str().unwrap(), "steer: be brief", None).await;
+    assert_eq!(s, 409, "{refused}");
+    assert_eq!(refused["type"], "https://holon.dev/errors/task-not-running");
+    assert!(refused["detail"].as_str().unwrap().contains("queued"), "{refused}");
+}
+
+#[tokio::test]
+async fn a_restart_ends_a_task_that_was_accepted_and_never_started_and_the_caller_finds_out() {
+    let state = tempfile::tempdir().unwrap();
+    let root = Arc::new(tempfile::tempdir().unwrap());
+    let opts = || Opts { state_dir: Some(state.path().to_path_buf()), ..Opts::default() };
+
+    let h = serve(opts(), root.clone()).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    let a = h.task(&sid, "look a").await;
+    ev.until("tool_approval_required").await;
+    let (_, b) = h.queue(&sid, "look b", Some("kb")).await;
+    let (_, c) = h.queue(&sid, "look c", None).await;
+    let (_, d) = h.queue(&sid, "look d", None).await;
+    // One of them is cancelled while `a` still runs. That is a task ending in the log in the
+    // middle of another's run, which the rebuild must not mistake for the running task's end.
+    assert_eq!(h.cancel(&sid, c["id"].as_str().unwrap()).await.0, 200);
+    ev.until("task_failed").await;
+    let before = h.state(&sid).await;
+    assert_eq!(queued_ids(&before), [b["id"].as_str().unwrap(), d["id"].as_str().unwrap()]);
+
+    // The "restart": a second daemon over the same directory. It does not run the queue, on a
+    // prompt a process that is gone accepted. It ends it, in the log, where every reader sees.
+    let h2 = serve(opts(), root).await;
+    let mut ev2 = h2.stream(&sid, 0).await;
+    let mut ended = Vec::new();
+    loop {
+        let (_, failed) = ev2.until("task_failed").await;
+        ended.push((
+            failed["task_id"].as_str().unwrap().to_string(),
+            failed["code"].as_str().unwrap().to_string(),
+            failed["message"].as_str().unwrap().to_string(),
+        ));
+        if ended.len() == 4 {
+            break;
+        }
+    }
+    // `c` was cancelled before the restart and is in the log as that; what the restart ended is
+    // the running task, then the two still waiting, in order.
+    assert_eq!(ended[0].1, "cancelled");
+    assert_eq!(ended[0].0, c["id"].as_str().unwrap());
+    assert_eq!(ended[1].0, a["id"].as_str().unwrap());
+    assert!(ended[1].2.contains("while this task ran"), "{}", ended[1].2);
+    assert_eq!((ended[2].0.as_str(), ended[2].1.as_str()), (b["id"].as_str().unwrap(), "internal"));
+    assert_eq!((ended[3].0.as_str(), ended[3].1.as_str()), (d["id"].as_str().unwrap(), "internal"));
+    assert!(ended[2].2.contains("before this task started"), "{}", ended[2].2);
+
+    // Nothing is queued or running after it, and the state says the same.
+    let after = h2.state(&sid).await;
+    assert!(after["queued_tasks"].as_array().unwrap().is_empty());
+    assert_eq!(after["session"]["status"], "idle");
+    assert_eq!(h2.active(&sid).await, None);
+    // The key that was said for b still finds b, and starts nothing: a retry after the restart
+    // is told how it ended, not given a second copy.
+    let (s, again) = h2.queue(&sid, "look b", Some("kb")).await;
+    assert_eq!((s, &again["id"], again["status"].as_str()), (202, &b["id"], Some("failed")));
+    // And the session works: a new task runs.
+    h2.task(&sid, "look d").await;
+    let (_, req) = ev2.until("tool_approval_required").await;
+    h2.approve(&sid, &req["call_id"], "approve").await;
+    ev2.until("task_completed").await;
+}
+
+#[tokio::test]
+async fn grpc_queues_a_task_and_says_so_in_the_event_the_state_and_the_status() {
+    use pb::agent_event::Payload as P;
+    let h = harness(Opts { max_queued: 1, ..Opts::default() }).await;
+    let mut c =
+        pb::agent_service_client::AgentServiceClient::connect(h.base.clone()).await.unwrap();
+    let s = c
+        .create_session(pb::CreateSessionRequest {
+            model: "mock".into(),
+            workspace_dir: h.ws.clone(),
+            max_budget_usd_micros: 1_000_000,
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    let mut events = c
+        .stream_events(pb::StreamEventsRequest { session_id: s.id.clone(), after_seq: 0 })
+        .await
+        .unwrap()
+        .into_inner();
+    let send = |prompt: &str, when_busy: pb::WhenBusy| pb::SendTaskRequest {
+        session_id: s.id.clone(),
+        prompt: prompt.into(),
+        idempotency_key: String::new(),
+        when_busy: when_busy as i32,
+    };
+    let a = c.send_task(send("look a", pb::WhenBusy::Unspecified)).await.unwrap().into_inner();
+    assert_eq!(a.status, pb::TaskStatus::Running as i32);
+    let call_id = loop {
+        if let Some(P::ToolApprovalRequired(r)) = next(&mut events).await.payload {
+            break r.call_id;
+        }
+    };
+
+    // Unspecified is what a client that never heard of the field sends: refused, as before.
+    let busy = c.send_task(send("x", pb::WhenBusy::Unspecified)).await.unwrap_err();
+    assert_eq!(busy.code(), tonic::Code::FailedPrecondition);
+    let busy = c.send_task(send("x", pb::WhenBusy::Reject)).await.unwrap_err();
+    assert_eq!(busy.code(), tonic::Code::FailedPrecondition);
+
+    let b = c.send_task(send("look b", pb::WhenBusy::Queue)).await.unwrap().into_inner();
+    assert_eq!(b.status, pb::TaskStatus::Queued as i32);
+    let queued = loop {
+        let e = next(&mut events).await;
+        if let Some(P::TaskQueued(q)) = e.payload {
+            assert_eq!((e.task_id.as_str(), q.prompt.as_str()), (b.id.as_str(), "look b"));
+            break e.seq;
+        }
+    };
+    let full = c.send_task(send("look c", pb::WhenBusy::Queue)).await.unwrap_err();
+    assert_eq!(full.code(), tonic::Code::ResourceExhausted);
+
+    let st = c
+        .get_session_state(pb::GetSessionStateRequest { session_id: s.id.clone() })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(st.seq, queued);
+    assert_eq!(st.queued_tasks.len(), 1);
+    assert_eq!(
+        (st.queued_tasks[0].task_id.as_str(), st.queued_tasks[0].prompt.as_str()),
+        (b.id.as_str(), "look b")
+    );
+
+    // A queued task is not the running one: it cannot be steered, and it can be cancelled.
+    let steer = c
+        .steer_task(pb::SteerTaskRequest {
+            session_id: s.id.clone(),
+            task_id: b.id.clone(),
+            message: "steer: x".into(),
+            idempotency_key: String::new(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(steer.code(), tonic::Code::FailedPrecondition);
+    let cancelled = c
+        .cancel_task(pb::CancelTaskRequest { session_id: s.id.clone(), task_id: b.id.clone() })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(cancelled.status, pb::TaskStatus::Failed as i32);
+
+    // The running task is untouched by all of that, and the queue took the slot back.
+    c.submit_approval(pb::SubmitApprovalRequest {
+        session_id: s.id.clone(),
+        call_id,
+        decision: pb::ApprovalDecision::Approve as i32,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    loop {
+        if let Some(P::TaskCompleted(_)) = next(&mut events).await.payload {
+            break;
+        }
+    }
+    let st = c
+        .get_session_state(pb::GetSessionStateRequest { session_id: s.id.clone() })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(st.queued_tasks.is_empty());
+}
+
+/// The property the lock exists for, with threads: whatever order accepts, endings and cancels
+/// arrive in, every task a session accepted is started at most once and ends exactly once, in the
+/// log, and the queued ones start in the order they were accepted. Nothing is accepted into a
+/// queue that nothing will drain.
+#[test]
+fn a_task_accepted_onto_a_session_always_starts_or_ends_in_the_log_whatever_races_with_it() {
+    use super::wire::{Payload, WhenBusy};
+    use session::{Begun, Refusal};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+
+    for round in 0..40 {
+        let (_dir, s, first) = bare_session();
+        let s = Arc::new(s);
+        let accepted = Arc::new(Mutex::new(vec![first.id.clone()]));
+        let producing = Arc::new(AtomicBool::new(true));
+
+        let producers: Vec<_> = (0..4)
+            .map(|p| {
+                let (s, accepted) = (s.clone(), accepted.clone());
+                std::thread::spawn(move || {
+                    for i in 0..25 {
+                        match s.begin(&format!("{p}-{i}"), None, WhenBusy::Queue, usize::MAX) {
+                            Ok(Begun::Started(st)) => accepted.lock().unwrap().push(st.task.id),
+                            Ok(Begun::Queued(t)) => accepted.lock().unwrap().push(t.id),
+                            Ok(Begun::Repeat(_)) | Err(Refusal::Busy | Refusal::QueueFull(_)) => {
+                                panic!("a queueing send is neither a repeat nor refused here")
+                            }
+                            Err(Refusal::Closed) => panic!("not closed"),
+                        }
+                        if i % 5 == 0 {
+                            std::thread::yield_now();
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        // Someone cancels tasks of their choosing, running or queued, while it happens.
+        let canceller = {
+            let (s, accepted, producing) = (s.clone(), accepted.clone(), producing.clone());
+            std::thread::spawn(move || {
+                let mut n = round;
+                while producing.load(Ordering::SeqCst) {
+                    let id = {
+                        let a = accepted.lock().unwrap();
+                        a[n % a.len()].clone()
+                    };
+                    n += 3;
+                    let _ = s.cancel(&id, "test");
+                    std::thread::yield_now();
+                }
+            })
+        };
+
+        // The loops: end whatever is running, which promotes the next, until nothing is left.
+        let driver = {
+            let (s, producing) = (s.clone(), producing.clone());
+            std::thread::spawn(move || loop {
+                match s.view().active_task_id {
+                    Some(id) => {
+                        let _ = s.finish(&id, Ok("done".into()));
+                    }
+                    None if producing.load(Ordering::SeqCst) => std::thread::yield_now(),
+                    None => break,
+                }
+            })
+        };
+        for p in producers {
+            p.join().unwrap();
+        }
+        producing.store(false, Ordering::SeqCst);
+        canceller.join().unwrap();
+        driver.join().unwrap();
+
+        let ids = accepted.lock().unwrap().clone();
+        assert_eq!(ids.len(), 101, "round {round}: every send was accepted");
+        let log = s.events_after(0);
+        let (mut started, mut queued_order, mut start_order) = (Vec::new(), Vec::new(), Vec::new());
+        for e in &log {
+            match &e.payload {
+                Payload::TaskQueued { .. } => queued_order.push(e.task_id.clone()),
+                Payload::TaskStarted { .. } => {
+                    started.push(e.task_id.clone());
+                    start_order.push(e.task_id.clone());
+                }
+                _ => {}
+            }
+        }
+        for id in &ids {
+            let starts = log
+                .iter()
+                .filter(|e| &e.task_id == id && matches!(e.payload, Payload::TaskStarted { .. }))
+                .count();
+            let ends = log
+                .iter()
+                .filter(|e| {
+                    &e.task_id == id
+                        && matches!(
+                            e.payload,
+                            Payload::TaskCompleted { .. } | Payload::TaskFailed { .. }
+                        )
+                })
+                .count();
+            assert!(starts <= 1, "round {round}: {id} started {starts} times");
+            assert_eq!(
+                ends, 1,
+                "round {round}: {id} ended {ends} times, so it was dropped or ended twice"
+            );
+        }
+        // The queued ones started in the order they were accepted: of those that started at all.
+        let queued_that_started: Vec<&String> =
+            queued_order.iter().filter(|id| started.contains(id)).collect();
+        let started_that_were_queued: Vec<&String> =
+            start_order.iter().filter(|id| queued_order.contains(id)).collect();
+        assert_eq!(
+            queued_that_started, started_that_were_queued,
+            "round {round}: not first in, first out"
+        );
+        assert_eq!(s.view().active_task_id, None, "round {round}: nothing is left running");
+        assert!(s.state().queued_tasks.is_empty(), "round {round}: nothing is left waiting");
+    }
+}
+
+#[test]
+fn a_queued_task_keeps_the_time_it_was_accepted_when_it_starts() {
+    use super::wire::{TaskStatus, WhenBusy};
+    use session::Begun;
+    let (_dir, s, first) = bare_session();
+    let Ok(Begun::Queued(queued)) = s.begin("next", None, WhenBusy::Queue, 4) else {
+        panic!("a busy session queues when asked")
+    };
+    assert_eq!(queued.status, TaskStatus::Queued);
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let started = s.finish(&first.id, Ok("done".into())).expect("the queued task starts");
+    assert_eq!(started.task.id, queued.id);
+    assert_eq!(started.task.status, TaskStatus::Running);
+    assert_eq!(
+        started.task.created_at, queued.created_at,
+        "created when accepted, not when started"
+    );
+    assert_eq!(s.task(&queued.id).map(|t| t.status), Some(TaskStatus::Running));
+}
+
+#[tokio::test]
+async fn a_queued_task_meets_the_budget_when_it_starts_not_when_it_is_queued() {
+    // One model turn costs TURN. This budget affords the first turn of a task and not the second.
+    let h = harness(Opts::default()).await;
+    let sid = h.session(TURN + TURN / 2).await;
+    let mut ev = h.stream(&sid, 0).await;
+    let a = h.task(&sid, "look a").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+    let (s, b) = h.queue(&sid, "look b", None).await;
+    assert_eq!(
+        (s, b["status"].as_str()),
+        (202, Some("queued")),
+        "there is budget left to queue on"
+    );
+
+    // a's second turn crosses the ceiling and fails it; b starts, finds the budget spent, and
+    // fails at once: it was accepted, it started, and it ended. It was not left waiting.
+    h.approve(&sid, &req["call_id"], "approve").await;
+    let (_, failed_a) = ev.until("task_failed").await;
+    assert_eq!(
+        (failed_a["task_id"].as_str(), failed_a["code"].as_str()),
+        (a["id"].as_str(), Some("budget_exceeded"))
+    );
+    let started_b = ev.next().await;
+    assert_eq!(
+        (started_b["type"].as_str(), started_b["task_id"].as_str()),
+        (Some("task_started"), b["id"].as_str())
+    );
+    let (_, failed_b) = ev.until("task_failed").await;
+    assert_eq!(
+        (failed_b["task_id"].as_str(), failed_b["code"].as_str()),
+        (b["id"].as_str(), Some("budget_exceeded"))
+    );
+    assert!(failed_b["message"].as_str().unwrap().contains("spent"), "{failed_b}");
+    assert_eq!(h.get(&format!("/v1/sessions/{sid}")).await["status"], "idle");
 }
