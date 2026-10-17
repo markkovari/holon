@@ -38,3 +38,24 @@ park-url = "http://127.0.0.1:8015"
 name = "park"
 addr = "127.0.0.1:8015"
 extra_args = ["--nats-url nats://127.0.0.1:4222"]
+
+# `comp-resume` (ADR-0106): the other half of park. Every `--sweep-secs` it runs the recovery
+# pass — a call past its deadline is interrupted, cancelled or re-dispatched as its `replay`
+# says, an answer nobody took is announced again, and a commit whose caller died halfway is
+# finished or rolled back (ADR-0110) — and it hands each resolved ticket to whatever drives the
+# turn. Without it none of that runs.
+#
+# A WORKER: no `addr`, so it is rendered without `--addr`, nothing is told where it is, and the
+# app is given no egress to it. It reads and writes the same NATS and bucket as `comp-park`, so
+# it takes the same `--nats-url` (and `--replicas`, if one is set above).
+#
+# `--sink-url` is required, and nothing in this repository serves it yet: `comp-agentd` parks
+# nothing (ADR-0106). The address below is where it is meant to be. Until something answers
+# there, a delivery is retried with backoff and the ticket stays `ready`, which a turn that polls
+# `pending` still finds, and the recovery pass runs regardless.
+[[daemon]]
+name = "resume"
+extra_args = [
+  "--nats-url nats://127.0.0.1:4222",
+  "--sink-url http://127.0.0.1:8016/park/deliver",
+]
