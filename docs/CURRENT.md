@@ -248,7 +248,7 @@ claim about a distributed system without one is a hope.
   they agree through, and one pull request (ADR-0086). Run against this repository:
   both halves green, the join gate passed, PR opened.
 - **A composition is derived, not written**, and by a library call rather than a
-  subprocess. `reconciler/src/plug.rs` wraps `wac_graph` — `wac` is a crate before
+  subprocess. `reconciler/fleet/src/plug.rs` wraps `wac_graph` — `wac` is a crate before
   it is a command — so the loop can compose a candidate in-process with the wiring,
   the gaps and the failure as values instead of as stderr to be parsed. It reads a
   component's imports out of the BINARY (the compiler drops what nothing calls),

@@ -2,6 +2,11 @@
 //! runs. That is the whole reason this crate is `[lib]` + `[[bin]]`: a dry run that
 //! is only *nearly* the real logic is worse than no dry run at all.
 
+/// Starting a fleet, driving it, reading it — and composition as a library call. They live in
+/// `comp-fleet` (docs/adr/0115) so that a daemon's own end-to-end test can start a fleet without
+/// depending on the control plane; the paths everything already used are re-exported here.
+pub use comp_fleet::{fleet, plug};
+
 pub mod bucket;
 pub mod budget;
 /// "Do we already have something for this?", asked of the catalogue (ADR-0089).
@@ -12,10 +17,6 @@ pub mod compose;
 /// The interface two parts of a decomposed goal build against (ADR-0086).
 pub mod contract;
 pub mod cost;
-/// Starting a fleet, driving it, reading it.
-///
-/// Library, not test-only: the benchmark matrix needs the same fleet start as the tests, so its numbers stay comparable.
-pub mod fleet;
 pub mod gate;
 pub mod generation;
 /// Which queued goals one batch-start starts, and in what order — the pure
@@ -29,8 +30,6 @@ pub mod money;
 pub mod oci;
 pub mod offpeak;
 pub mod plan;
-/// Composition as a library call — wrap `wac`, do not run it.
-pub mod plug;
 pub mod router;
 pub mod settings;
 pub mod spec;

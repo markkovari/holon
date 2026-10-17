@@ -697,7 +697,7 @@ jobs:
             test-args: >-
               --lib --bins
               --test docs --test fixtures --test guestio
-              --test stress_env --test stress_tree --test uideps
+              --test stress_env --test stress_tree --test uideps --test workspace
           # `surrealkv_test` is a goal's GATE, committed deliberately red: it
           # describes a `--kv surreal` backend that does not exist yet, and it
           # dials a real SurrealDB on :8000. The loop runs it through

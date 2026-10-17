@@ -10,20 +10,21 @@ description = "Diffs desired manifests against observed lattice inventory and is
 # needs a held subscription and a timer. Same reason `applier` existed (ADR-0003),
 # different dangerous credential.
 #
-# This directory is a workspace of single-purpose packages, not one crate with forty
-# bins (docs/adr/0115): a package's `[dependencies]` are built for ANY of its targets,
-# so `cargo build --bin comp-mailrelay` — std only — used to compile bollard, image,
-# headless_chrome and the rest first. A daemon now lives in `daemons/<name>/` with its
-# one heavy crate, and what several of them share is a package of its own.
+# This directory is a workspace of single-purpose packages, not one crate with a long
+# list of bins (docs/adr/0115): a package's `[dependencies]` are built for ANY of its
+# targets, so `cargo build --bin comp-mailrelay` — std only — used to compile bollard,
+# image, headless_chrome and the rest first. A daemon now lives in `daemons/<name>/`
+# with its one heavy crate, and what several of them share is a package of its own.
 #
-# `default-members` lists every package, so everything that says `cd reconciler &&
-# cargo build --bin comp-x`, `--test x` or `clippy` — CI, the release and Docker builds,
-# the e2e scripts, xtask — means what it always did. One lockfile, and one `target/` here:
-# the 100-odd paths to `reconciler/target/release/comp-*` are unchanged.
+# `default-members` lists every package (tests/workspace.rs fails when one is missing),
+# so everything that says `cd reconciler && cargo build --bin comp-x`, `--test x` or
+# `clippy` — CI, the release and Docker builds, the e2e scripts, xtask — means what it
+# always did. One lockfile, and one `target/` here: the paths to
+# `reconciler/target/release/comp-*` that scripts, gates and docs spell are unchanged.
 [workspace]
 resolver = "2"
-members = ["daemons/*"]
-default-members = [".", "daemons/*"]
+members = ["daemons/*", "fleet"]
+default-members = [".", "daemons/*", "fleet"]
 
 [workspace.package]
 version = "0.1.0"
@@ -42,6 +43,10 @@ clap = { version = "4", features = ["derive", "env"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 image = "0.25"
 comp-daemon-kit = { path = "daemons/kit" }
+comp-fleet = { path = "fleet" }
+comp-lattice = { path = "../lattice" }
+sha2 = "0.10"
+tempfile = "3"
 
 [lib]
 name = "comp_reconciler"
@@ -55,7 +60,7 @@ path = "src/main.rs"
 name = "comp-ingress"
 path = "src/bin/ingress.rs"
 
-# A shim over src/plug.rs, for gates — which are shell scripts and cannot call a
+# A shim over fleet/src/plug.rs, for gates — which are shell scripts and cannot call a
 # Rust function. The composition itself is the library.
 [[bin]]
 name = "comp-oci"
@@ -122,12 +127,12 @@ comp-daemon-kit.workspace = true
 tokio.workspace = true
 # The fabric, as traits. The reconciler holds `Arc<dyn ...>` and never names a
 # broker; `--nats-url` selects the one implementation that ships.
-comp-lattice = { path = "../lattice" }
+comp-lattice.workspace = true
 futures.workspace = true
 serde.workspace = true
 toml = "0.8"
 serde_norway = "0.9"
-tempfile = "3"
+tempfile.workspace = true
 # comp-stub serves HTTP; the OCI test also stands up a fake registry with it.
 axum.workspace = true
 serde_json.workspace = true
@@ -140,17 +145,15 @@ clap.workspace = true
 reqwest.workspace = true
 # For content addressing. The optional OCI mirror push is four HTTP calls on the
 # reqwest client we already have, so it needs no registry crate — see src/oci.rs.
-sha2 = "0.10"
+sha2.workspace = true
 # HMAC-SHA1, for the one gate that computes a TOTP code from the secret the part
 # provisions. RFC 6238 fixes the algorithm; there is no newer one to prefer.
 sha1 = "0.10"
 hmac = "0.12"
-# Composition as a library call (src/plug.rs): `wac` is a crate before it is a
-# command. Pinned to the pair `components/wit-reflect` uses — wac-graph carries
-# its own wasmparser, and two versions of the component model in one graph is a
-# type error waiting to happen.
-wac-graph = "0.10"
-wasmparser = "0.244"
+# The fleet harness and composition as a library call (fleet/): `comp_reconciler::fleet`
+# and `comp_reconciler::plug` are its modules, re-exported. wac-graph and wasmparser
+# live there with the pin that explains them.
+comp-fleet.workspace = true
 
 # comp-ingress: terminates HTTP and spreads it across an app's replicas. A second
 # binary here rather than a sixth crate, because it needs exactly two things this

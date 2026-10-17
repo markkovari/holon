@@ -57,7 +57,10 @@ belongs to that daemon.
 **Nothing that runs the workspace changes.** `default-members` lists every package, so `cd
 reconciler && cargo build --bin comp-x`, `cargo test --test x`, `cargo nextest run -E 'test(x)'` and
 `cargo clippy --all-targets` mean what they meant — CI, the release workflow, the Docker build, the
-e2e scripts and `xtask` all keep their commands. There is one `target/`, here, so the many
+e2e scripts and `xtask` all keep their commands. A package left out of that list still compiles, as a
+dependency, and stops being tested, built by name and linted with nothing red; so
+[`reconciler/tests/workspace.rs`](../../reconciler/tests/workspace.rs) fails when a member is not a
+default member. There is one `target/`, here, so the many
 `reconciler/target/release/comp-*` paths in scripts, gates and docs stay true, and binary names do
 not change. (There is no committed `Cargo.lock` here, and the split does not add one.)
 
@@ -79,14 +82,16 @@ only thing that may differ is the package a test is in.
 
 **The order is leaves first**, because each slice teaches the next what it forgot:
 
-1. the workspace and the kit (this slice);
+1. the workspace and the kit (the first slice);
 2. the daemons nothing tests, each with its one heavy crate;
-3. the daemons that have a test of their own, which move with it (`comp-backup`, `comp-media`,
+3. the harness, as `comp-fleet` (`fleet` and `plug`): everything after it that starts a process needs
+   it, and it is re-exported from where it was (`comp_reconciler::fleet`), so nothing that named it
+   changes;
+4. the daemons that have a test of their own, which move with it (`comp-backup`, `comp-media`,
    `comp-vcs`, and `comp-park`, `comp-resume`, `comp-agentd`, which one test starts together and so
    share a package);
-4. the tools that start a fleet (the benchmarks and `comp-stub`), after `fleet` and `plug` have a
-   package they can depend on without depending on the control plane;
-5. the goal loop's tools last, because they share the most.
+5. the tools that start a fleet (the benchmarks and `comp-stub`);
+6. the goal loop's tools last, because they share the most.
 
 ## What this does not do
 
