@@ -7,8 +7,10 @@
 /// depending on the control plane; the paths everything already used are re-exported here.
 pub use comp_fleet::{fleet, plug};
 
-pub mod bucket;
-pub mod budget;
+/// What a run costs and what it may spend. They live in `comp-fuel` (docs/adr/0115), so that
+/// comp-agentd can price a model call without the control plane; the paths are re-exported here.
+pub use comp_fuel::{bucket, budget, cost, money, offpeak, router, wallet};
+
 /// "Do we already have something for this?", asked of the catalogue (ADR-0089).
 pub mod capsearch;
 pub mod catalogue;
@@ -16,7 +18,6 @@ pub mod catalogue;
 pub mod compose;
 /// The interface two parts of a decomposed goal build against (ADR-0086).
 pub mod contract;
-pub mod cost;
 pub mod gate;
 pub mod generation;
 /// Which queued goals one batch-start starts, and in what order — the pure
@@ -26,13 +27,9 @@ pub mod goalbatch;
 pub mod goalexit;
 /// Skipping work already done, and recording every verdict so the next run can.
 pub mod memory;
-pub mod money;
 pub mod oci;
-pub mod offpeak;
 pub mod plan;
-pub mod router;
 pub mod settings;
 pub mod spec;
 /// What a run leaves behind (ADR-0092).
 pub mod trace;
-pub mod wallet;
