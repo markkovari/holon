@@ -82,6 +82,21 @@ async fn cancel(
     reply(StatusCode::OK, d.cancel_task(&id, &task))
 }
 
+async fn steer(
+    State(d): State<Shared>,
+    UrlPath((id, task)): UrlPath<(String, String)>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let key = headers.get("idempotency-key").and_then(|v| v.to_str().ok()).map(String::from);
+    let r = parse::<wire::SteerTask>(&body).and_then(|t| d.steer_task(&id, &task, t.message, key));
+    reply(StatusCode::ACCEPTED, r)
+}
+
+async fn state(State(d): State<Shared>, UrlPath(id): UrlPath<String>) -> Response {
+    reply(StatusCode::OK, d.session_state(&id))
+}
+
 async fn approve(
     State(d): State<Shared>,
     UrlPath((id, call_id)): UrlPath<(String, String)>,
@@ -131,6 +146,8 @@ pub fn routes(d: Shared) -> Router {
         .route("/v1/sessions/{id}", get(show).delete(close))
         .route("/v1/sessions/{id}/tasks", post(send_task))
         .route("/v1/sessions/{id}/tasks/{task_id}/cancel", post(cancel))
+        .route("/v1/sessions/{id}/tasks/{task_id}/steer", post(steer))
+        .route("/v1/sessions/{id}/state", get(state))
         .route("/v1/sessions/{id}/events", get(events))
         .route("/v1/sessions/{id}/tool-calls/{call_id}/approval", post(approve))
         .with_state(d)

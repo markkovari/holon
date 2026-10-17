@@ -36,6 +36,21 @@ service AgentService {
   // Approve or deny a tool call announced by ToolApprovalRequired.
   // FAILED_PRECONDITION if the call is not pending (already decided, or gone).
   rpc SubmitApproval(SubmitApprovalRequest) returns (SubmitApprovalResponse);
+
+  // Everything needed to draw a session you were not watching, and the cursor
+  // to keep watching it from: `seq` is the last event the state reflects, so
+  // StreamEvents with after_seq = seq has no gap and no repeat. Read it, then
+  // tail, instead of replaying the whole log from 0.
+  rpc GetSessionState(GetSessionStateRequest) returns (SessionState);
+
+  // Add a message to the running task. It joins the conversation as a user
+  // message at the task's next model-call boundary: after the tool calls in
+  // flight have finished (a tool that is executing is never interrupted), or
+  // after the model's final answer, in which case the task takes another turn
+  // on it. Not a new task: it does not get around one task at a time.
+  // FAILED_PRECONDITION if the task is not the running one, the session is
+  // closed, or the task is already writing its final answer (send a task).
+  rpc SteerTask(SteerTaskRequest) returns (Task);
 }
 
 // ---- Sessions ----
@@ -101,6 +116,17 @@ message CancelTaskRequest {
   string task_id = 2;
 }
 
+message SteerTaskRequest {
+  string session_id = 1;
+  // The running task, as returned by SendTask or Session.active_task_id.
+  string task_id = 2;
+  // Plain text, handed to the model as a user message. Must not be blank.
+  string message = 3;
+  // Optional caller-chosen id. Resending the same key while the task runs
+  // accepts again and queues nothing: safe retries from bots.
+  string idempotency_key = 4;
+}
+
 message Task {
   string id = 1;
   string session_id = 2;
@@ -158,6 +184,8 @@ message AgentEvent {
     UsageUpdated usage_updated = 16;
     TaskCompleted task_completed = 17;
     TaskFailed task_failed = 18;
+    TaskSteerQueued task_steer_queued = 19;
+    TaskSteered task_steered = 20;
   }
 }
 
@@ -238,6 +266,116 @@ enum TaskFailureCode {
   TASK_FAILURE_CODE_MODEL_ERROR = 3;  // provider refused, errored or timed out
   TASK_FAILURE_CODE_MAX_TURNS = 4;    // agent loop hit its step limit
   TASK_FAILURE_CODE_INTERNAL = 5;
+}
+
+// A SteerTask was accepted. It is read by the model at the next boundary.
+message TaskSteerQueued {
+  string steer_id = 1;
+  string message = 2;
+}
+
+// The steer joined the conversation: the next model call sees it as a user
+// message. If the task ends first the steer is never applied, and no event says so.
+message TaskSteered {
+  string steer_id = 1;
+}
+
+// ---- Session state ----
+
+message GetSessionStateRequest {
+  string session_id = 1;
+}
+
+message SessionState {
+  Session session = 1;
+  // The last event this state reflects. Resume StreamEvents after it.
+  uint64 seq = 2;
+  // The conversation as a client draws it, oldest first, folded from the events.
+  repeated TranscriptEntry transcript = 3;
+  // Tool calls waiting for SubmitApproval; also in the transcript, as
+  // TOOL_CALL_STATUS_AWAITING_APPROVAL.
+  repeated PendingApproval pending_approvals = 4;
+  // Steers accepted and not yet read by the model, for the running task.
+  repeated PendingSteer pending_steers = 5;
+}
+
+message TranscriptEntry {
+  // The seq of the event that began this entry.
+  uint64 seq = 1;
+  string task_id = 2;
+  oneof entry {
+    UserMessage user_message = 10;
+    AssistantMessage assistant_message = 11;
+    ToolCall tool_call = 12;
+    TaskEnded task_ended = 13;
+  }
+}
+
+// A prompt, or a steer that joined the conversation.
+message UserMessage {
+  string text = 1;
+  bool steered = 2;
+}
+
+// What the model said in one turn.
+message AssistantMessage {
+  string message_id = 1;
+  string text = 2;
+  // True while its TextDelta events are still arriving.
+  bool in_progress = 3;
+}
+
+message ToolCall {
+  string call_id = 1;
+  string tool_name = 2;
+  google.protobuf.Struct input = 3;
+  ToolCallStatus status = 4;
+  // UNSPECIFIED until someone decides.
+  ApprovalDecision decision = 5;
+  string decided_by = 6;
+  google.protobuf.Timestamp expires_at = 7;
+  // The three below are meaningful once the call is FINISHED.
+  string output = 8;
+  bool is_error = 9;
+  uint64 duration_ms = 10;
+}
+
+enum ToolCallStatus {
+  TOOL_CALL_STATUS_UNSPECIFIED = 0;
+  TOOL_CALL_STATUS_AWAITING_APPROVAL = 1; // blocked on SubmitApproval
+  TOOL_CALL_STATUS_RUNNING = 2;           // approved or auto-approved, executing
+  TOOL_CALL_STATUS_FINISHED = 3;          // returned, or was denied
+  TOOL_CALL_STATUS_CANCELLED = 4;         // the task ended while it waited or ran
+}
+
+message TaskEnded {
+  TaskOutcome outcome = 1;
+  // COMPLETED: the agent's final answer.
+  string result = 2;
+  // FAILED: why.
+  TaskFailureCode code = 3;
+  string message = 4;
+  Usage usage = 5;
+}
+
+enum TaskOutcome {
+  TASK_OUTCOME_UNSPECIFIED = 0;
+  TASK_OUTCOME_COMPLETED = 1;
+  TASK_OUTCOME_FAILED = 2;
+}
+
+message PendingApproval {
+  string task_id = 1;
+  string call_id = 2;
+  string tool_name = 3;
+  google.protobuf.Struct input = 4;
+  google.protobuf.Timestamp expires_at = 5;
+}
+
+message PendingSteer {
+  string task_id = 1;
+  string steer_id = 2;
+  string message = 3;
 }
 
 // ---- Human in the loop ----

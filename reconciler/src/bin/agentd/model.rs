@@ -360,6 +360,8 @@ fn parse_args(json: &str) -> Value {
 
 /// Lists the workspace, then answers with what it found. Deterministic, so a
 /// test (or a bot author) sees the whole event vocabulary without a model.
+/// A user message that begins `steer:` is what a steered task is handed: it is
+/// answered, with no tool call, by repeating it, so a test can see the model read it.
 fn mock(msgs: &[Msg], on_text: &mut (dyn FnMut(&str) + Send)) -> Turn {
     let tokens = Tokens { input: 1000, output: 50, cache_read: 0, cache_write: 0 };
     let say = |on_text: &mut (dyn FnMut(&str) + Send), parts: &[&str]| {
@@ -367,6 +369,10 @@ fn mock(msgs: &[Msg], on_text: &mut (dyn FnMut(&str) + Send)) -> Turn {
         parts.concat()
     };
     match msgs.last() {
+        Some(Msg::User(t)) if t.starts_with("steer:") => {
+            let text = say(on_text, &["Noted: ", t]);
+            Turn { text, calls: vec![], tokens }
+        }
         Some(Msg::ToolResults(rs)) => {
             let listing = rs.first().map(|r| r.output.replace('\n', ", ")).unwrap_or_default();
             let text = say(on_text, &["The workspace holds: ", &listing, "."]);

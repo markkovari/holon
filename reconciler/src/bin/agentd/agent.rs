@@ -108,7 +108,16 @@ async fn turns(
             return Err((FailCode::BudgetExceeded, "this call crossed the session budget".into()));
         }
         if turn.calls.is_empty() {
-            return Ok(turn.text);
+            // The model has answered. A steer that arrived while it was writing is new
+            // input, not an interruption of an answer already given, so the task takes
+            // another turn on it rather than finishing past it; with none, steers are
+            // refused from here on (ADR-0107).
+            let steers = sess.finishing(task);
+            if steers.is_empty() {
+                return Ok(turn.text);
+            }
+            apply_steers(sess, task, &mut history, steers);
+            continue;
         }
 
         let mut results = Vec::new();
@@ -154,8 +163,20 @@ async fn turns(
             });
         }
         history.push(Msg::ToolResults(results));
+        // The tool-round boundary: every call the model asked for has an answer, and the
+        // next model call has not begun. A steer is read here, never mid-tool.
+        apply_steers(sess, task, &mut history, sess.take_steers(task));
     }
     Err((FailCode::MaxTurns, format!("no answer after {} model turns", ctx.max_turns)))
+}
+
+/// Each steer joins the conversation as a user message, in the order it arrived, and the
+/// log says where: that is the point a replay of the stream sees it enter.
+fn apply_steers(sess: &Session, task: &str, history: &mut Vec<Msg>, steers: Vec<(String, String)>) {
+    for (steer_id, text) in steers {
+        history.push(Msg::User(text));
+        sess.emit(task, Payload::TaskSteered { steer_id });
+    }
 }
 
 /// Pause for a human. A timeout is a denial, decided by "timeout".

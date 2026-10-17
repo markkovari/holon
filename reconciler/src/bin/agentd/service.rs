@@ -8,7 +8,7 @@ use std::sync::Arc;
 use futures::Stream;
 
 use super::agent;
-use super::session::{Answer, Refusal, Registry, Session};
+use super::session::{Answer, Refusal, Registry, Session, SteerRefusal};
 use super::wire;
 
 pub struct Daemon {
@@ -98,6 +98,47 @@ impl Daemon {
                 Err(Fail::Conflict("session-closed", "the session is closed".into()))
             }
         }
+    }
+
+    /// Add `message` to the running task `task_id`: it joins the conversation as a user
+    /// message at the task's next model-call boundary (ADR-0107). Not a new task, and
+    /// not a way past "one task at a time": it is input to the one that is running.
+    pub fn steer_task(
+        &self,
+        id: &str,
+        task_id: &str,
+        message: String,
+        key: Option<String>,
+    ) -> R<wire::Task> {
+        let sess = self.get(id)?;
+        if message.trim().is_empty() {
+            return Err(Fail::Invalid("bad-request", "message is required".into()));
+        }
+        match sess.steer(task_id, &message, key.filter(|k| !k.is_empty())) {
+            Ok(()) => sess
+                .task(task_id)
+                .ok_or_else(|| Fail::NotFound(format!("no task {task_id} in session {id}"))),
+            Err(SteerRefusal::Closed) => {
+                Err(Fail::Conflict("session-closed", "the session is closed".into()))
+            }
+            Err(SteerRefusal::NotRunning) => match sess.task(task_id) {
+                Some(_) => Err(Fail::Conflict(
+                    "task-not-running",
+                    format!("{task_id} is not the running task; send a new task"),
+                )),
+                None => Err(Fail::NotFound(format!("no task {task_id} in session {id}"))),
+            },
+            Err(SteerRefusal::Finishing) => Err(Fail::Conflict(
+                "task-finishing",
+                format!("{task_id} is writing its final answer; send a new task"),
+            )),
+        }
+    }
+
+    /// What a client needs to draw a session it was not watching, and the cursor to
+    /// keep watching it from (ADR-0107).
+    pub fn session_state(&self, id: &str) -> R<wire::SessionState> {
+        Ok(self.get(id)?.state())
     }
 
     /// Cancel a running task. Cancelling one that already ended is not an

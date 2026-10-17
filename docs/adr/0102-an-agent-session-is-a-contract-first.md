@@ -7,7 +7,10 @@ drive the same agent, and none of them should have to parse a CLI's output.*
 (gRPC) and its REST twin `api/openapi.yaml` (JSON + Server-Sent Events).
 `comp-agentd` (`reconciler/src/bin/agentd.rs`) serves both on one port: REST,
 gRPC over HTTP/2, and gRPC-web. A Connect client reaches it through its gRPC
-or gRPC-web transport; Connect's own protocol is not served.
+or gRPC-web transport; Connect's own protocol is not served. Extended since by
+[ADR-0107](0107-a-client-catches-up-from-a-snapshot-then-tails.md) (a state snapshot with
+a resume cursor) and [ADR-0108](0108-a-running-task-takes-input-at-a-boundary.md)
+(steering a running task).
 
 ## The problem
 
