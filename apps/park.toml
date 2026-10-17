@@ -49,10 +49,11 @@ extra_args = ["--nats-url nats://127.0.0.1:4222"]
 # app is given no egress to it. It reads and writes the same NATS and bucket as `comp-park`, so
 # it takes the same `--nats-url` (and `--replicas`, if one is set above).
 #
-# `--sink-url` is required, and nothing in this repository serves it yet: `comp-agentd` parks
-# nothing (ADR-0106). The address below is where it is meant to be. Until something answers
-# there, a delivery is retried with backoff and the ticket stays `ready`, which a turn that polls
-# `pending` still finds, and the recovery pass runs regardless.
+# `--sink-url` is required. The address below is `comp-agentd`'s, which serves `POST /park/deliver`
+# when it is started with `--park-url` pointing at `comp-park` (ADR-0113); give `comp-resume` its
+# `--sink-token`, the token `comp-agentd` was given, if it has one. Nothing else in this repository
+# serves it. Until something answers there, a delivery is retried with backoff and the ticket stays
+# `ready`, which a turn that polls `pending` still finds, and the recovery pass runs regardless.
 [[daemon]]
 name = "resume"
 extra_args = [

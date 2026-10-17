@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use super::grpc::pb;
 use super::service::Daemon;
 use super::session::{self, Registry};
-use super::{agent, app, model};
+use super::{agent, app, model, park};
 
 struct Opts {
     token: Option<&'static str>,
@@ -20,6 +20,8 @@ struct Opts {
     approval_timeout: Option<Duration>,
     state_dir: Option<PathBuf>,
     max_queued: usize,
+    /// A `comp-park` to park approvals with (ADR-0113).
+    park: Option<String>,
 }
 
 impl Default for Opts {
@@ -31,6 +33,7 @@ impl Default for Opts {
             approval_timeout: None,
             state_dir: None,
             max_queued: 16,
+            park: None,
         }
     }
 }
@@ -51,6 +54,7 @@ async fn harness(o: Opts) -> Harness {
 async fn serve(o: Opts, root: Arc<tempfile::TempDir>) -> Harness {
     let rootp = root.path().canonicalize().unwrap();
     std::fs::write(rootp.join("README.md"), "hi").unwrap();
+    let parking = o.park.is_some();
     let ctx = agent::Ctx {
         provider: o.provider,
         http: reqwest::Client::new(),
@@ -58,9 +62,14 @@ async fn serve(o: Opts, root: Arc<tempfile::TempDir>) -> Harness {
         approval_timeout: o.approval_timeout,
         prices: o.prices,
         off_peak: || false,
+        park: o.park.map(|url| {
+            // Quick retries, so a test of a park that is down does not wait seconds for nothing.
+            let retry = vec![Duration::from_millis(20), Duration::from_millis(20)];
+            park::Park::new(reqwest::Client::new(), url, None).with_retry(retry)
+        }),
     };
     let sessions = match &o.state_dir {
-        Some(d) => session::load_all(d).unwrap(),
+        Some(d) => session::load_all(d, parking).unwrap(),
         None => Default::default(),
     };
     let d = Arc::new(Daemon {
@@ -70,6 +79,9 @@ async fn serve(o: Opts, root: Arc<tempfile::TempDir>) -> Harness {
         ctx: Arc::new(ctx),
         max_queued: o.max_queued,
     });
+    // What `main` does once the daemon is built: tasks parked when the last one went down get
+    // their tickets again.
+    d.reassert_parks();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let app = app(d, o.token.map(String::from));
@@ -1724,4 +1736,792 @@ async fn a_queued_task_meets_the_budget_when_it_starts_not_when_it_is_queued() {
     );
     assert!(failed_b["message"].as_str().unwrap().contains("spent"), "{failed_b}");
     assert_eq!(h.get(&format!("/v1/sessions/{sid}")).await["status"], "idle");
+}
+
+// ---- parking an approval (ADR-0113) ----
+
+/// A `comp-park` that keeps what it is told, for the tests of a daemon that parks. The tests play
+/// `comp-resume` themselves, by posting what it would deliver to the daemon's sink.
+struct FakePark {
+    base: String,
+    st: Arc<std::sync::Mutex<FakeParkState>>,
+}
+
+#[derive(Default)]
+struct FakeParkState {
+    calls: Vec<(String, Value)>,
+    tickets: std::collections::HashMap<String, String>,
+    down: bool,
+}
+
+impl FakePark {
+    async fn start() -> FakePark {
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse;
+        let st = Arc::new(std::sync::Mutex::new(FakeParkState::default()));
+        let s2 = st.clone();
+        let app = axum::Router::new().route(
+            "/v1/{func}",
+            axum::routing::post(
+                move |axum::extract::Path(func): axum::extract::Path<String>,
+                      body: axum::Json<Value>| {
+                    let st = s2.clone();
+                    async move {
+                        let mut g = st.lock().unwrap();
+                        g.calls.push((func.clone(), body.0.clone()));
+                        if g.down {
+                            return (StatusCode::SERVICE_UNAVAILABLE, "down").into_response();
+                        }
+                        let ok = |v: Value| (StatusCode::OK, axum::Json(v)).into_response();
+                        match func.as_str() {
+                            "park" => {
+                                let corr = body.0["call"]["correlation"].as_str().unwrap().to_string();
+                                let existed = g.tickets.contains_key(&corr);
+                                let ticket = g
+                                    .tickets
+                                    .entry(corr.clone())
+                                    .or_insert_with(|| format!("tkt-{corr}"))
+                                    .clone();
+                                ok(json!({"ticket": ticket,
+                                          "outcome": if existed { "already-parked" } else { "parked" }}))
+                            }
+                            "wake" => match g.tickets.get(body.0["correlation"].as_str().unwrap()) {
+                                Some(t) => ok(json!(t)),
+                                None => (
+                                    StatusCode::NOT_FOUND,
+                                    axum::Json(json!({"error": "not-found",
+                                        "detail": "no such ticket",
+                                        "message": "not-found: no such ticket"})),
+                                )
+                                    .into_response(),
+                            },
+                            "cancel" => ok(Value::Null),
+                            _ => StatusCode::NOT_FOUND.into_response(),
+                        }
+                    }
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        FakePark { base, st }
+    }
+
+    fn calls(&self, func: &str) -> Vec<Value> {
+        let g = self.st.lock().unwrap();
+        g.calls.iter().filter(|(f, _)| f == func).map(|(_, b)| b.clone()).collect()
+    }
+
+    fn set_down(&self, down: bool) {
+        self.st.lock().unwrap().down = down;
+    }
+
+    /// The store loses every ticket it had.
+    fn forget_tickets(&self) {
+        self.st.lock().unwrap().tickets.clear();
+    }
+
+    /// Wait for the `n`th call to `func`, which a daemon makes off the request's path.
+    async fn wait_for(&self, func: &str, n: usize) -> Vec<Value> {
+        for _ in 0..100 {
+            let c = self.calls(func);
+            if c.len() >= n {
+                return c;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("comp-park never saw {n} `{func}` calls: {:?}", self.calls(func));
+    }
+}
+
+impl Harness {
+    /// What `comp-resume` does with a ticket that has ended: POST it to the daemon's sink.
+    async fn deliver(&self, sid: &str, correlation: &str, event: Value) -> (u16, Value) {
+        let mut body = json!({"ticket": format!("tkt-{correlation}"), "session": sid,
+                              "correlation": correlation});
+        body.as_object_mut().unwrap().extend(event.as_object().unwrap().clone());
+        self.post("/park/deliver", body).await
+    }
+
+    /// The delivery of the answer `comp-park` was given by the last `wake`.
+    async fn deliver_answer(&self, park: &FakePark, sid: &str, call_id: &str) -> (u16, Value) {
+        let wake = park.calls("wake").pop().expect("a wake");
+        self.deliver(sid, call_id, json!({"event": "answered", "answer": wake["answer"]})).await
+    }
+}
+
+fn interrupted() -> Value {
+    json!({"event": "interrupted", "interruption": {"reason": "no answer arrived by the deadline",
+           "at": 1700000000000u64, "by": {"id": "comp-resume", "goal": null, "model": null}}})
+}
+
+/// Wait until a daemon that is parking has finished: the ticket is in the checkpoint, so nothing
+/// of its own is left to write there.
+async fn parked_for_good(checkpoint: &std::path::Path) {
+    for _ in 0..100 {
+        let ticket = std::fs::read(checkpoint)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+            .map(|cp| cp["ticket"].is_string());
+        if ticket == Some(true) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("the ticket never reached {}", checkpoint.display());
+}
+
+async fn quiet(ev: &mut Events) -> bool {
+    tokio::time::timeout(Duration::from_millis(300), ev.next()).await.is_err()
+}
+
+#[tokio::test]
+async fn a_parked_approval_waits_in_comp_park_and_its_delivered_answer_resumes_the_task() {
+    let park = FakePark::start().await;
+    let h = harness(Opts { park: Some(park.base.clone()), ..Opts::default() }).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+    let call_id = req["call_id"].as_str().unwrap();
+
+    // The wait is a ticket, not a future: parked once, for this call, in this session, and past
+    // no deadline because there is no approval timeout.
+    let parks = park.wait_for("park", 1).await;
+    assert_eq!(parks.len(), 1, "{parks:?}");
+    assert_eq!(parks[0]["session"], sid);
+    assert_eq!(parks[0]["call"]["correlation"], call_id);
+    assert_eq!(parks[0]["call"]["replay"], "unsafe");
+    assert!(parks[0]["call"]["deadline"].is_null(), "{}", parks[0]);
+    assert!(parks[0]["call"]["description"].as_str().unwrap().contains("list_dir"));
+    assert_eq!(h.get(&format!("/v1/sessions/{sid}")).await["status"], "awaiting_approval");
+
+    // An answer goes to the ticket and nowhere else: the task does not move until it is delivered.
+    assert_eq!(h.approve(&sid, &req["call_id"], "approve").await, 200);
+    let wakes = park.calls("wake");
+    assert_eq!((wakes.len(), &wakes[0]["correlation"]), (1, &req["call_id"]));
+    assert!(quiet(&mut ev).await, "nothing moves until the answer is delivered");
+    // A second answer is refused, as it is for a wait held in memory.
+    assert_eq!(h.approve(&sid, &req["call_id"], "deny").await, 409);
+
+    // `comp-resume` delivers it, and the task goes on from where it stood.
+    assert_eq!(h.deliver_answer(&park, &sid, call_id).await.0, 200);
+    let (kinds, resolved) = ev.until("tool_approval_resolved").await;
+    assert!(kinds.len() == 1, "the very next event: {kinds:?}");
+    assert_eq!(
+        (resolved["decision"].as_str(), resolved["decided_by"].as_str()),
+        (Some("approve"), Some("test"))
+    );
+    let (kinds, done) = ev.until("task_completed").await;
+    assert_eq!(kinds[0], "tool_call_finished");
+    assert_eq!(done["result"], "The workspace holds: README.md.");
+    assert_eq!(
+        done["task_usage"]["cost_usd_micros"],
+        2 * TURN,
+        "the turn before the park and the one after"
+    );
+    assert_eq!(h.get(&format!("/v1/sessions/{sid}")).await["status"], "idle");
+
+    // A delivery that comes twice is taken and moves nothing.
+    assert_eq!(h.deliver_answer(&park, &sid, call_id).await.0, 200);
+    assert!(quiet(&mut ev).await, "a repeat resumes nothing");
+}
+
+#[tokio::test]
+async fn a_tool_that_needs_no_approval_does_not_park() {
+    let park = FakePark::start().await;
+    let h = harness(Opts { park: Some(park.base.clone()), ..Opts::default() }).await;
+    let sid = h.session_with(json!({"auto_approve_tools": ["list_dir"]})).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look").await;
+    let (kinds, done) = ev.until("task_completed").await;
+    assert!(!kinds.contains(&"tool_approval_required".to_string()), "{kinds:?}");
+    assert_eq!(done["result"], "The workspace holds: README.md.");
+    assert!(park.calls("park").is_empty(), "nothing was waiting on a human");
+}
+
+#[tokio::test]
+async fn an_interrupted_ticket_is_a_denial_by_timeout_and_the_model_is_told() {
+    let park = FakePark::start().await;
+    let h = harness(Opts { park: Some(park.base.clone()), ..Opts::default() }).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+
+    assert_eq!(h.deliver(&sid, req["call_id"].as_str().unwrap(), interrupted()).await.0, 200);
+    let (_, resolved) = ev.until("tool_approval_resolved").await;
+    assert_eq!(
+        (resolved["decision"].as_str(), resolved["decided_by"].as_str()),
+        (Some("deny"), Some("timeout"))
+    );
+    let (_, done) = ev.until("task_completed").await;
+    assert_eq!(done["result"], "The workspace holds: denied by a human: nobody answered in time.");
+}
+
+#[tokio::test]
+async fn an_approval_timeout_is_the_tickets_deadline() {
+    let park = FakePark::start().await;
+    let h = harness(Opts {
+        park: Some(park.base.clone()),
+        approval_timeout: Some(Duration::from_secs(60)),
+        ..Opts::default()
+    })
+    .await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+    assert!(req["expires_at"].is_string(), "{req}");
+    let deadline = park.wait_for("park", 1).await[0]["call"]["deadline"].as_u64().unwrap();
+    let now =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
+            as u64;
+    assert!((now + 55_000..now + 65_000).contains(&deadline), "{deadline} vs {now}");
+}
+
+#[tokio::test]
+async fn a_parked_task_survives_a_restart_and_the_new_process_takes_the_answer() {
+    let park = FakePark::start().await;
+    let state = tempfile::tempdir().unwrap();
+    let root = Arc::new(tempfile::tempdir().unwrap());
+    let opts = || Opts {
+        state_dir: Some(state.path().to_path_buf()),
+        park: Some(park.base.clone()),
+        ..Opts::default()
+    };
+
+    let h = serve(opts(), root.clone()).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+    let call_id = req["call_id"].as_str().unwrap().to_string();
+    let checkpoint = state.path().join(&sid).join("checkpoint.json");
+    parked_for_good(&checkpoint).await;
+    let before = h.state(&sid).await;
+
+    // The "restart": a second daemon over the same directory.
+    let h2 = serve(opts(), root).await;
+    let after = h2.state(&sid).await;
+    assert_eq!(after["session"]["status"], "awaiting_approval");
+    assert_eq!(after["pending_approvals"][0]["call_id"], call_id.as_str());
+    assert_eq!(
+        after["seq"], before["seq"],
+        "nothing was added to the log: the task was not cut off"
+    );
+    // It parked the approval again by itself, which is idempotent, and costs nothing if the
+    // ticket was there.
+    assert_eq!(park.wait_for("park", 2).await.len(), 2);
+
+    // A person answers the new process, and the delivery goes to it.
+    assert_eq!(h2.approve(&sid, &req["call_id"], "approve").await, 200);
+    assert_eq!(h2.deliver_answer(&park, &sid, &call_id).await.0, 200);
+    let mut ev2 = h2.stream(&sid, 0).await;
+    let (kinds, done) = ev2.until("task_completed").await;
+    assert!(!kinds.contains(&"task_failed".to_string()), "{kinds:?}");
+    assert_eq!(done["result"], "The workspace holds: README.md.");
+    assert_eq!(
+        done["task_usage"]["cost_usd_micros"],
+        2 * TURN,
+        "the turn before the restart counts too"
+    );
+    assert!(!checkpoint.exists(), "gone when the task moved on");
+    let history = std::fs::read_to_string(state.path().join(&sid).join("history.json")).unwrap();
+    assert!(history.contains("\"look\"") && history.contains("README.md"), "{history}");
+}
+
+#[tokio::test]
+async fn a_restart_that_cannot_park_or_cannot_trust_the_checkpoint_fails_the_task_as_before() {
+    for how in [
+        "without a park",
+        "a corrupt checkpoint",
+        "a checkpoint for another task",
+        "a checkpoint for a call the log shows decided",
+    ] {
+        let park = FakePark::start().await;
+        let state = tempfile::tempdir().unwrap();
+        let root = Arc::new(tempfile::tempdir().unwrap());
+        let parked = || Opts {
+            state_dir: Some(state.path().to_path_buf()),
+            park: Some(park.base.clone()),
+            ..Opts::default()
+        };
+        let h = serve(parked(), root.clone()).await;
+        let sid = h.session(1_000_000).await;
+        let mut ev = h.stream(&sid, 0).await;
+        h.task(&sid, "look").await;
+        ev.until("tool_approval_required").await;
+        let checkpoint = state.path().join(&sid).join("checkpoint.json");
+        parked_for_good(&checkpoint).await;
+        let next = match how {
+            "without a park" => {
+                Opts { state_dir: Some(state.path().to_path_buf()), ..Opts::default() }
+            }
+            "a corrupt checkpoint" => {
+                std::fs::write(&checkpoint, "{ not json").unwrap();
+                parked()
+            }
+            "a checkpoint for another task" => {
+                let mut cp: Value =
+                    serde_json::from_slice(&std::fs::read(&checkpoint).unwrap()).unwrap();
+                cp["task_id"] = json!("task_someone_else");
+                std::fs::write(&checkpoint, serde_json::to_vec(&cp).unwrap()).unwrap();
+                parked()
+            }
+            // The log says decided and the file says waiting: resuming from it would run a tool
+            // that may already have run.
+            _ => {
+                let events = state.path().join(&sid).join("events.jsonl");
+                let text = std::fs::read_to_string(&events).unwrap();
+                let asked: Value = text
+                    .lines()
+                    .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+                    .rfind(|e| e["type"] == "tool_approval_required")
+                    .unwrap();
+                let decided = json!({"seq": text.lines().count() + 1, "session_id": sid,
+                    "task_id": asked["task_id"], "time": "2026-01-01T00:00:00Z",
+                    "type": "tool_approval_resolved", "call_id": asked["call_id"],
+                    "decision": "approve", "decided_by": "someone"});
+                let mut f = std::fs::OpenOptions::new().append(true).open(&events).unwrap();
+                std::io::Write::write_all(&mut f, format!("{decided}\n").as_bytes()).unwrap();
+                parked()
+            }
+        };
+        let h2 = serve(next, root).await;
+        let mut ev2 = h2.stream(&sid, 0).await;
+        let (_, failed) = ev2.until("task_failed").await;
+        assert_eq!(failed["code"], "internal", "{how}");
+        assert!(
+            failed["message"].as_str().unwrap().contains("restarted while this task ran"),
+            "{how}"
+        );
+        assert_eq!(h2.get(&format!("/v1/sessions/{sid}")).await["status"], "idle", "{how}");
+        assert!(!checkpoint.exists(), "{how}: a checkpoint nothing will use is not kept");
+    }
+}
+
+#[tokio::test]
+async fn cancelling_a_parked_task_cancels_its_ticket_and_a_late_delivery_is_gone() {
+    let park = FakePark::start().await;
+    let state = tempfile::tempdir().unwrap();
+    let h = harness(Opts {
+        park: Some(park.base.clone()),
+        state_dir: Some(state.path().to_path_buf()),
+        ..Opts::default()
+    })
+    .await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    let task = h.task(&sid, "look").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+    let call_id = req["call_id"].as_str().unwrap();
+    park.wait_for("park", 1).await;
+
+    let (s, c) = h.cancel(&sid, task["id"].as_str().unwrap()).await;
+    assert_eq!((s, c["status"].as_str()), (200, Some("failed")));
+    let cancels = park.wait_for("cancel", 1).await;
+    assert_eq!(cancels[0]["ticket"], format!("tkt-{call_id}"));
+    let (_, failed) = ev.until("task_failed").await;
+    assert_eq!(failed["code"], "cancelled");
+    assert!(!state.path().join(&sid).join("checkpoint.json").exists());
+    assert_eq!(h.get(&format!("/v1/sessions/{sid}")).await["status"], "idle");
+
+    // An answer that was already on its way finds nobody, which is how comp-resume learns to stop.
+    let (s, gone) = h
+        .deliver(
+            &sid,
+            call_id,
+            json!({"event": "answered", "answer": {"ok": true, "body": [], "detail": null}}),
+        )
+        .await;
+    assert_eq!((s, gone["type"].as_str()), (410, Some("https://holon.dev/errors/gone")));
+    // And the human who answers late is told there is nothing to answer.
+    assert_eq!(h.approve(&sid, &req["call_id"], "approve").await, 409);
+}
+
+#[tokio::test]
+async fn closing_a_session_cancels_the_ticket_it_was_parked_on() {
+    let park = FakePark::start().await;
+    let h = harness(Opts { park: Some(park.base.clone()), ..Opts::default() }).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+    park.wait_for("park", 1).await;
+    let r = h.http.delete(format!("{}/v1/sessions/{sid}", h.base)).send().await.unwrap();
+    assert_eq!(r.json::<Value>().await.unwrap()["status"], "closed");
+    let cancels = park.wait_for("cancel", 1).await;
+    assert_eq!(cancels[0]["ticket"], format!("tkt-{}", req["call_id"].as_str().unwrap()));
+}
+
+#[tokio::test]
+async fn a_delivery_for_a_session_that_is_not_here_is_gone() {
+    let h = harness(Opts { park: Some("http://127.0.0.1:1".into()), ..Opts::default() }).await;
+    let (s, gone) = h
+        .deliver(
+            "ses_nope",
+            "call_x",
+            json!({"event": "answered", "answer": {"ok": true, "body": [], "detail": null}}),
+        )
+        .await;
+    assert_eq!((s, gone["type"].as_str()), (410, Some("https://holon.dev/errors/gone")));
+}
+
+#[tokio::test]
+async fn an_answer_that_cannot_reach_comp_park_is_a_503_and_can_be_sent_again() {
+    let park = FakePark::start().await;
+    let h = harness(Opts { park: Some(park.base.clone()), ..Opts::default() }).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+    park.wait_for("park", 1).await;
+
+    park.set_down(true);
+    let call = req["call_id"].as_str().unwrap();
+    let (s, refused) = h
+        .post(
+            &format!("/v1/sessions/{sid}/tool-calls/{call}/approval"),
+            json!({"decision": "approve"}),
+        )
+        .await;
+    assert_eq!(
+        (s, refused["type"].as_str()),
+        (503, Some("https://holon.dev/errors/park-unavailable"))
+    );
+    // Nothing happened, so the same answer may be sent again, and takes.
+    park.set_down(false);
+    assert_eq!(h.approve(&sid, &req["call_id"], "approve").await, 200);
+    assert_eq!(h.deliver_answer(&park, &sid, call).await.0, 200);
+    ev.until("task_completed").await;
+}
+
+#[tokio::test]
+async fn a_ticket_comp_park_lost_is_made_again_when_the_answer_comes() {
+    let park = FakePark::start().await;
+    let h = harness(Opts { park: Some(park.base.clone()), ..Opts::default() }).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+    park.wait_for("park", 1).await;
+
+    park.forget_tickets();
+    assert_eq!(
+        h.approve(&sid, &req["call_id"], "approve").await,
+        200,
+        "the answer is not refused for a store that lost the ticket"
+    );
+    assert_eq!(park.calls("park").len(), 2, "made again");
+    assert_eq!(park.calls("wake").len(), 2, "the first found nothing, the second took");
+    assert_eq!(h.deliver_answer(&park, &sid, req["call_id"].as_str().unwrap()).await.0, 200);
+    ev.until("task_completed").await;
+}
+
+#[tokio::test]
+async fn an_approval_that_cannot_be_parked_fails_the_task_after_a_few_tries() {
+    let park = FakePark::start().await;
+    let state = tempfile::tempdir().unwrap();
+    let h = harness(Opts {
+        park: Some(park.base.clone()),
+        state_dir: Some(state.path().to_path_buf()),
+        ..Opts::default()
+    })
+    .await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    park.set_down(true);
+    h.task(&sid, "look").await;
+    let (_, failed) = ev.until("task_failed").await;
+    assert_eq!(failed["code"], "internal");
+    assert!(
+        failed["message"].as_str().unwrap().contains("could not park the approval of list_dir"),
+        "{failed}"
+    );
+    assert_eq!(park.calls("park").len(), 3, "once, and twice more");
+    assert_eq!(h.get(&format!("/v1/sessions/{sid}")).await["status"], "idle");
+    assert!(!state.path().join(&sid).join("checkpoint.json").exists());
+    assert!(h.state(&sid).await["pending_approvals"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_steer_sent_to_a_parked_task_is_read_when_it_resumes() {
+    let park = FakePark::start().await;
+    let h = harness(Opts { park: Some(park.base.clone()), ..Opts::default() }).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    let task = h.task(&sid, "look").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+    park.wait_for("park", 1).await;
+
+    let (s, _) = h.steer(&sid, task["id"].as_str().unwrap(), "steer: be brief", None).await;
+    assert_eq!(s, 202);
+    ev.until("task_steer_queued").await;
+    assert_eq!(h.approve(&sid, &req["call_id"], "approve").await, 200);
+    assert_eq!(h.deliver_answer(&park, &sid, req["call_id"].as_str().unwrap()).await.0, 200);
+    let (kinds, _) = ev.until("task_steered").await;
+    assert_eq!(kinds, ["tool_approval_resolved", "tool_call_finished", "task_steered"]);
+    let (_, done) = ev.until("task_completed").await;
+    assert_eq!(done["result"], "Noted: steer: be brief");
+}
+
+#[tokio::test]
+async fn a_task_queued_behind_a_parked_one_waits_for_it_and_then_parks_in_its_turn() {
+    let park = FakePark::start().await;
+    let h = harness(Opts { park: Some(park.base.clone()), ..Opts::default() }).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look a").await;
+    let (_, req_a) = ev.until("tool_approval_required").await;
+    let (s, b) = h.queue(&sid, "look b", None).await;
+    assert_eq!((s, b["status"].as_str()), (202, Some("queued")));
+
+    assert_eq!(h.approve(&sid, &req_a["call_id"], "approve").await, 200);
+    assert_eq!(h.deliver_answer(&park, &sid, req_a["call_id"].as_str().unwrap()).await.0, 200);
+    let (_, done_a) = ev.until("task_completed").await;
+    let started_b = ev.next().await;
+    assert_eq!(
+        (started_b["type"].as_str(), started_b["task_id"].as_str()),
+        (Some("task_started"), b["id"].as_str())
+    );
+    assert_eq!(started_b["seq"].as_u64(), Some(done_a["seq"].as_u64().unwrap() + 1));
+
+    // And b needs a human too: a second ticket, for a second call.
+    let (_, req_b) = ev.until("tool_approval_required").await;
+    assert_ne!(req_a["call_id"], req_b["call_id"]);
+    assert_eq!(park.wait_for("park", 2).await.len(), 2);
+    assert_eq!(h.approve(&sid, &req_b["call_id"], "approve").await, 200);
+    assert_eq!(h.deliver_answer(&park, &sid, req_b["call_id"].as_str().unwrap()).await.0, 200);
+    let (_, done_b) = ev.until("task_completed").await;
+    assert_eq!(done_b["task_id"], b["id"]);
+}
+
+#[tokio::test]
+async fn a_step_with_two_calls_parks_on_each_in_turn_and_the_model_gets_both_results_in_order() {
+    let park = FakePark::start().await;
+    let (base, seen) = fake_model(
+        "/v1/chat/completions",
+        vec![
+            frames(&[
+                json!({"choices":[{"delta":{"tool_calls":[
+                    {"index":0,"id":"c1","type":"function","function":{"name":"list_dir","arguments":"{\"path\":\".\"}"}},
+                    {"index":1,"id":"c2","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\"}"}}]}}]}),
+                json!({"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":10}}),
+            ])
+            .into_iter()
+            .chain(["[DONE]".to_string()])
+            .collect(),
+            frames(&[
+                json!({"choices":[{"delta":{"content":"Both done."}}]}),
+                json!({"choices":[],"usage":{"prompt_tokens":150,"completion_tokens":4}}),
+            ]),
+        ],
+    )
+    .await;
+    let provider = model::Provider::OpenAi { base: format!("{base}/v1"), key: "k".into() };
+    let h = harness(Opts { provider, park: Some(park.base.clone()), ..Opts::default() }).await;
+    let sid = h.session_with(json!({"model": "claude-sonnet-5"})).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look at both").await;
+
+    // The first call parks; the second has not been announced.
+    let (kinds, first) = ev.until("tool_approval_required").await;
+    assert_eq!(
+        (first["call_id"].as_str(), kinds.last().map(String::as_str)),
+        (Some("c1"), Some("tool_approval_required"))
+    );
+    assert_eq!(kinds.iter().filter(|k| *k == "tool_call_started").count(), 1, "{kinds:?}");
+    assert_eq!(h.approve(&sid, &first["call_id"], "approve").await, 200);
+    assert_eq!(h.deliver_answer(&park, &sid, "c1").await.0, 200);
+
+    // It goes on to the second, with the first's result in hand, and parks on that.
+    let (kinds, second) = ev.until("tool_approval_required").await;
+    assert_eq!(second["call_id"], "c2");
+    assert_eq!(
+        kinds,
+        [
+            "tool_approval_resolved",
+            "tool_call_finished",
+            "tool_call_started",
+            "tool_approval_required"
+        ]
+    );
+    assert_eq!(park.wait_for("park", 2).await.len(), 2);
+    assert_eq!(h.approve(&sid, &second["call_id"], "approve").await, 200);
+    assert_eq!(h.deliver_answer(&park, &sid, "c2").await.0, 200);
+    let (_, done) = ev.until("task_completed").await;
+    assert_eq!(done["result"], "Both done.");
+
+    // The model asked twice, and the second time was handed both results, in the order it asked.
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2, "one request before the parks and one after, not one per resume");
+    let msgs = seen[1]["messages"].as_array().unwrap();
+    let tool: Vec<(&str, &str)> = msgs
+        .iter()
+        .filter(|m| m["role"] == "tool")
+        .map(|m| (m["tool_call_id"].as_str().unwrap(), m["content"].as_str().unwrap()))
+        .collect();
+    assert_eq!(tool, [("c1", "README.md"), ("c2", "hi")]);
+}
+
+#[tokio::test]
+async fn grpc_answers_a_parked_approval_through_the_ticket_and_says_unavailable_when_it_cannot() {
+    use pb::agent_event::Payload as P;
+    let park = FakePark::start().await;
+    let h = harness(Opts { park: Some(park.base.clone()), ..Opts::default() }).await;
+    let mut c =
+        pb::agent_service_client::AgentServiceClient::connect(h.base.clone()).await.unwrap();
+    let s = c
+        .create_session(pb::CreateSessionRequest {
+            model: "mock".into(),
+            workspace_dir: h.ws.clone(),
+            max_budget_usd_micros: 1_000_000,
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    let mut events = c
+        .stream_events(pb::StreamEventsRequest { session_id: s.id.clone(), after_seq: 0 })
+        .await
+        .unwrap()
+        .into_inner();
+    c.send_task(pb::SendTaskRequest {
+        session_id: s.id.clone(),
+        prompt: "look".into(),
+        idempotency_key: String::new(),
+        when_busy: pb::WhenBusy::Unspecified as i32,
+    })
+    .await
+    .unwrap();
+    let call_id = loop {
+        if let Some(P::ToolApprovalRequired(r)) = next(&mut events).await.payload {
+            break r.call_id;
+        }
+    };
+    park.wait_for("park", 1).await;
+    let submit = || pb::SubmitApprovalRequest {
+        session_id: s.id.clone(),
+        call_id: call_id.clone(),
+        decision: pb::ApprovalDecision::Approve as i32,
+        ..Default::default()
+    };
+    park.set_down(true);
+    assert_eq!(c.submit_approval(submit()).await.unwrap_err().code(), tonic::Code::Unavailable);
+    park.set_down(false);
+    c.submit_approval(submit()).await.unwrap();
+    assert_eq!(h.deliver_answer(&park, &s.id, &call_id).await.0, 200);
+    loop {
+        if let Some(P::TaskCompleted(d)) = next(&mut events).await.payload {
+            assert_eq!(d.result, "The workspace holds: README.md.");
+            break;
+        }
+    }
+}
+
+/// The delivery is at-least-once and a task may be cancelled while one is in flight. However
+/// they race, a parked call is resumed at most once, the log says it was decided once, and a
+/// task that was cancelled is never resumed.
+#[test]
+fn deliveries_racing_each_other_and_a_cancel_resume_a_parked_call_at_most_once() {
+    use super::wire::{Decision, Payload};
+    use session::{BeginPark, Checkpoint, Resume};
+
+    for round in 0..40 {
+        let (_dir, s, task) = bare_session();
+        let s = Arc::new(s);
+        let call = model::Call {
+            id: "call_1".into(),
+            name: "list_dir".into(),
+            input: json!({"path": "."}),
+        };
+        let cp = Checkpoint {
+            task_id: task.id.clone(),
+            turn: 0,
+            calls: vec![call],
+            next: 0,
+            results: vec![],
+            deadline: None,
+            ticket: Some("tkt-call_1".into()),
+        };
+        assert!(matches!(s.begin_park(cp), BeginPark::Parked));
+        let answer = session::Answer {
+            decision: Decision::Approve,
+            reason: String::new(),
+            decided_by: "t".into(),
+        };
+
+        let resumed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut threads: Vec<_> = (0..6)
+            .map(|_| {
+                let (s, answer, resumed) = (s.clone(), answer.clone(), resumed.clone());
+                std::thread::spawn(move || match s.resume_parked("call_1", &answer) {
+                    Resume::Resumed(_) => {
+                        resumed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    Resume::Duplicate | Resume::Gone => {}
+                })
+            })
+            .collect();
+        let cancelled = round % 2 == 0;
+        if cancelled {
+            let (s, id) = (s.clone(), task.id.clone());
+            threads.push(std::thread::spawn(move || {
+                let _ = s.cancel(&id, "test");
+            }));
+        }
+        for t in threads {
+            t.join().unwrap();
+        }
+
+        let n = resumed.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(n <= 1, "round {round}: resumed {n} times");
+        let decided = s
+            .events_after(0)
+            .iter()
+            .filter(|e| matches!(e.payload, Payload::ToolApprovalResolved { .. }))
+            .count();
+        assert_eq!(decided, n, "round {round}: the log says decided {decided} times, resumed {n}");
+        if !cancelled {
+            assert_eq!(n, 1, "round {round}: nobody cancelled, so exactly one delivery moves it");
+        }
+        // A cancelled task has nothing left parked, and a late delivery finds nobody.
+        if cancelled {
+            let late = s.resume_parked("call_1", &answer);
+            assert!(matches!(late, Resume::Duplicate | Resume::Gone), "round {round}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_steer_sent_before_a_restart_is_still_read_when_the_parked_task_resumes() {
+    let park = FakePark::start().await;
+    let state = tempfile::tempdir().unwrap();
+    let root = Arc::new(tempfile::tempdir().unwrap());
+    let opts = || Opts {
+        state_dir: Some(state.path().to_path_buf()),
+        park: Some(park.base.clone()),
+        ..Opts::default()
+    };
+    let h = serve(opts(), root.clone()).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    let task = h.task(&sid, "look").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+    let call_id = req["call_id"].as_str().unwrap().to_string();
+    assert_eq!(h.steer(&sid, task["id"].as_str().unwrap(), "steer: be brief", None).await.0, 202);
+    ev.until("task_steer_queued").await;
+    parked_for_good(&state.path().join(&sid).join("checkpoint.json")).await;
+
+    // The steer was accepted by a process that is gone. It is in the log, so the new one has it.
+    let h2 = serve(opts(), root).await;
+    let st = h2.state(&sid).await;
+    assert_eq!(st["pending_steers"][0]["message"], "steer: be brief");
+    assert_eq!(h2.approve(&sid, &req["call_id"], "approve").await, 200);
+    assert_eq!(h2.deliver_answer(&park, &sid, &call_id).await.0, 200);
+    let mut ev2 = h2.stream(&sid, 0).await;
+    let (_, done) = ev2.until("task_completed").await;
+    assert_eq!(done["result"], "Noted: steer: be brief");
 }

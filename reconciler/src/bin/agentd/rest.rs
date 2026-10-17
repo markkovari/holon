@@ -38,6 +38,8 @@ fn fail(f: Fail) -> Response {
         Fail::Invalid(kind, d) => problem(StatusCode::BAD_REQUEST, kind, d),
         Fail::Conflict(kind, d) => problem(StatusCode::CONFLICT, kind, d),
         Fail::Exhausted(kind, d) => problem(StatusCode::TOO_MANY_REQUESTS, kind, d),
+        Fail::Gone(d) => problem(StatusCode::GONE, "gone", d),
+        Fail::Unavailable(d) => problem(StatusCode::SERVICE_UNAVAILABLE, "park-unavailable", d),
         Fail::Internal(d) => problem(StatusCode::INTERNAL_SERVER_ERROR, "internal", d),
     }
 }
@@ -104,7 +106,18 @@ async fn approve(
     UrlPath((id, call_id)): UrlPath<(String, String)>,
     body: axum::body::Bytes,
 ) -> Response {
-    reply(StatusCode::OK, parse(&body).and_then(|r| d.submit_approval(&id, &call_id, r)))
+    let r = match parse(&body) {
+        Ok(r) => d.submit_approval(&id, &call_id, r).await,
+        Err(f) => Err(f),
+    };
+    reply(StatusCode::OK, r)
+}
+
+/// The sink `comp-resume` delivers parked approvals to (ADR-0113). Not part of `openapi.yaml`: it
+/// is the other end of `comp-resume --sink-url`, and behind the same token as everything else.
+async fn deliver(State(d): State<Shared>, body: axum::body::Bytes) -> Response {
+    let r = parse(&body).and_then(|delivery| d.deliver(delivery));
+    reply(StatusCode::OK, r.map(|()| serde_json::json!({"ok": true})))
 }
 
 #[derive(Deserialize)]
@@ -152,6 +165,7 @@ pub fn routes(d: Shared) -> Router {
         .route("/v1/sessions/{id}/state", get(state))
         .route("/v1/sessions/{id}/events", get(events))
         .route("/v1/sessions/{id}/tool-calls/{call_id}/approval", post(approve))
+        .route("/park/deliver", post(deliver))
         .with_state(d)
 }
 

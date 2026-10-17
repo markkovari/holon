@@ -150,21 +150,22 @@ turn, which owns the payload, sends it again.
 - **A late answer to an interrupted call is dropped.** A turn told "interrupted"
   and then, later, handed the real answer is a second delivery with its own
   idempotency story. Not built.
-- **`comp-agentd` parks nothing.** Its tools run in-process, its crash handling
-  fails the running task, and the one wait it could park — a human's approval —
-  lives in a channel in memory. Wiring that is a change to agentd's loop
-  (checkpointing the conversation per step, not at the end of a task) and its own
-  ADR. This ADR delivers the contract such a turn would use and a resumer that
-  serves it.
-- **`comp-resume` has no sink to deliver to yet.** `apps/park.toml` runs it, as a
-  *worker*: a `[[daemon]]` with no `addr`, which [`cli/src/selfhost.rs`](../../cli/src/selfhost.rs)
-  renders without `--addr` and without a `<name>-url` to agree with, because it listens on
-  nothing ([SELFHOST.md](../SELFHOST.md)). `--sink-url` is required and nothing in this
-  repository serves it, since `comp-agentd` parks nothing (the next bullet), so the spec points
-  at where `comp-agentd` would serve `/park/deliver`. Until something answers there a delivery
-  is retried with backoff and the ticket stays `ready`, which a turn that polls `pending` still
-  finds; the recovery pass, which needs no sink, runs regardless. Run by hand from the rendered
-  units: an answered call delivered, and an overdue one interrupted by the pass.
+- **`comp-agentd` parks only an approval, and only when told to.** *(Built since, by
+  [ADR-0113](0113-a-task-waiting-for-a-person-is-a-parked-call.md): with `--park-url` the wait
+  for a person is a ticket and a checkpoint, survives a restart, and is resumed by
+  the delivery of the answer. This ADR as first written said it parked nothing.)* Its tools
+  still run in-process and its crash handling still fails a task that was running; the one wait
+  that is long is the one that is parked.
+- **`comp-resume` is run as a worker, and its sink is `comp-agentd`'s.** `apps/park.toml` runs it
+  as a *worker*: a `[[daemon]]` with no `addr`, which
+  [`cli/src/selfhost.rs`](../../cli/src/selfhost.rs) renders without `--addr` and without a
+  `<name>-url` to agree with, because it listens on nothing ([SELFHOST.md](../SELFHOST.md)).
+  `--sink-url` is required: the spec points at `POST /park/deliver` on `comp-agentd`, which
+  serves it when started with `--park-url` (ADR-0113), and nothing else in this repository does.
+  Until something answers there a delivery is retried with backoff and the ticket stays `ready`,
+  which a turn that polls `pending` still finds; the recovery pass, which needs no sink, runs
+  regardless. Run by hand from the rendered units: an answered call delivered, and an overdue
+  one interrupted by the pass.
 - **A recovery pass reads every ticket.** `recover` lists the bucket's keys and
   reads each record, and nothing deletes a ticket, so a pass costs what the bucket
   holds. Fine for thousands; an index of open tickets, or of deadlines, is the
