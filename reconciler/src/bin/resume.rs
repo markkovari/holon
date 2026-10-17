@@ -76,13 +76,20 @@ struct Args {
     #[arg(long, default_value_t = 30)]
     sink_timeout_secs: u64,
 
-    /// The same NATS `comp-park` uses: ticket records (KV) and `PARK_WAKE`.
+    /// The same NATS `comp-park` uses: ticket records (KV) and `PARK_WAKE`. One server, or
+    /// several separated by commas.
     #[arg(long, env = "PARK_NATS_URL", default_value = "nats://127.0.0.1:4222")]
     nats_url: String,
     #[arg(long, default_value = "holon-park")]
     bucket: String,
     #[arg(long, default_value = "PARK_WAKE")]
     wake_stream: String,
+    /// Copies JetStream keeps of the bucket and `PARK_WAKE` if this is the process that
+    /// creates them (ADR-0111): the same number `comp-park` was given. It is a floor, so a
+    /// resumer left on 1 never lowers what `comp-park` asked for, and refuses a bucket that
+    /// keeps fewer than it was told to expect.
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=5))]
+    replicas: u8,
     /// The durable consumer's name. Resumers sharing one share the work; give
     /// two resumers different names and each delivers every message.
     #[arg(long, default_value = "comp-resume")]
@@ -165,14 +172,19 @@ async fn main() -> Result<()> {
     let token =
         comp_reconciler::daemon_auth::resolve_token(args.sink_token.clone(), args.sink_token_file);
 
-    let (store, wake) = nats::connect(&args.nats_url, &args.bucket, &args.wake_stream)
-        .await
-        .with_context(|| {
-            format!(
-                "NATS at {} (bucket {}, stream {})",
-                args.nats_url, args.bucket, args.wake_stream
-            )
-        })?;
+    let (store, wake) = nats::connect_with_replicas(
+        &args.nats_url,
+        &args.bucket,
+        &args.wake_stream,
+        usize::from(args.replicas),
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "NATS at {} (bucket {}, stream {}, {} replicas)",
+            args.nats_url, args.bucket, args.wake_stream, args.replicas
+        )
+    })?;
     let sink = HttpSink {
         http: reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))

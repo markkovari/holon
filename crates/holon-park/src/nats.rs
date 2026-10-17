@@ -66,8 +66,51 @@ fn batch_key(id: &str) -> String {
     format!("batch.{id}")
 }
 
+/// The most copies JetStream keeps of a stream.
+pub const MAX_REPLICAS: usize = 5;
+
+/// What was asked for has to be something a stream can be.
+fn check_asked(replicas: usize) -> Result<()> {
+    if (1..=MAX_REPLICAS).contains(&replicas) {
+        return Ok(());
+    }
+    Err(ParkError::Invalid(format!("replicas is 1 to {MAX_REPLICAS}, not {replicas}")))
+}
+
+/// `get_key_value` and `get_or_create_stream` hand back what is already there, whatever it
+/// was made with, so asking for three copies of a stream that has one would be a flag that
+/// changes nothing while saying it did. It is refused instead, with the command that raises
+/// it. More copies than were asked for is fine: the number is a floor, so a process left on
+/// the default never lowers what another asked for.
+///
+/// This does not raise it for the caller. Going from one copy to three moves the stream's whole
+/// contents across the cluster, which is the operator's to schedule and not a side effect of
+/// whichever process happened to start first.
+fn check_kept(what: &str, have: usize, want: usize, remedy: &str) -> Result<()> {
+    if have >= want {
+        return Ok(());
+    }
+    let copies = if have == 1 { "copy" } else { "copies" };
+    Err(ParkError::Storage(format!(
+        "{what} is kept in {have} {copies} and {want} were asked for; raise it first, with \
+         `{remedy}`"
+    )))
+}
+
+/// One server or several, comma-separated. A stray comma is refused: `async-nats` accepts an
+/// empty address (an empty host, port 4222) as a server like any other, so a typo in a list
+/// would become a server nobody named and not an error.
+fn server_list(url: &str) -> Result<Vec<async_nats::ServerAddr>> {
+    url.split(',')
+        .map(|one| match one.trim() {
+            "" => Err(ParkError::Invalid(format!("NATS url `{url}` has an empty address in it"))),
+            one => one.parse().map_err(|e| ParkError::Invalid(format!("NATS url `{url}`: {e}"))),
+        })
+        .collect()
+}
+
 /// Connect and open (creating if needed) the KV bucket and the `PARK_WAKE`
-/// stream.
+/// stream, each kept in one copy.
 ///
 /// Callers go through this and never import `async-nats` themselves: two crates
 /// pinning different `async-nats` versions make `jetstream::Context` two
@@ -78,10 +121,26 @@ pub async fn connect(
     bucket: &str,
     wake_stream_name: &str,
 ) -> Result<(NatsParkStore, WakeStream)> {
-    let client = async_nats::connect(url).await.map_err(ParkError::storage)?;
+    connect_with_replicas(url, bucket, wake_stream_name, 1).await
+}
+
+/// [`connect`], with the bucket and the stream kept in `replicas` copies (ADR-0111).
+///
+/// `url` is one server or several, comma-separated: a client that was only told about one
+/// cannot start while that one is down, however many copies there are of what it would read.
+/// A client given all of them reconnects to whichever is up when the one it was talking to dies.
+pub async fn connect_with_replicas(
+    url: &str,
+    bucket: &str,
+    wake_stream_name: &str,
+    replicas: usize,
+) -> Result<(NatsParkStore, WakeStream)> {
+    check_asked(replicas)?;
+    let servers = server_list(url)?;
+    let client = async_nats::connect(servers).await.map_err(ParkError::storage)?;
     let js = jetstream::new(client);
-    let store = NatsParkStore::open(&js, bucket).await?;
-    let wake = WakeStream::open(&js, wake_stream_name).await?;
+    let store = NatsParkStore::open_with_replicas(&js, bucket, replicas).await?;
+    let wake = WakeStream::open_with_replicas(&js, wake_stream_name, replicas).await?;
     Ok((store, wake))
 }
 
@@ -91,19 +150,48 @@ pub struct NatsParkStore {
 
 impl NatsParkStore {
     /// Open `bucket`, creating it (history 1: a ticket's past is the oplog) if
-    /// missing.
+    /// missing, in one copy.
     pub async fn open(js: &jetstream::Context, bucket: &str) -> Result<Self> {
+        Self::open_with_replicas(js, bucket, 1).await
+    }
+
+    /// [`open`](Self::open), creating the bucket in `replicas` copies. A bucket that already
+    /// exists is used as it is, and is refused if it keeps fewer copies than that (see
+    /// `check_kept`).
+    pub async fn open_with_replicas(
+        js: &jetstream::Context,
+        bucket: &str,
+        replicas: usize,
+    ) -> Result<Self> {
+        check_asked(replicas)?;
         let kv = match js.get_key_value(bucket).await {
             Ok(store) => store,
             Err(_) => {
-                let cfg =
-                    kv::Config { bucket: bucket.to_string(), history: 1, ..Default::default() };
+                let cfg = kv::Config {
+                    bucket: bucket.to_string(),
+                    history: 1,
+                    num_replicas: replicas,
+                    ..Default::default()
+                };
                 match js.create_key_value(cfg).await {
                     Ok(store) => store,
-                    Err(e) => js.get_key_value(bucket).await.map_err(|_| ParkError::storage(e))?,
+                    Err(e) => js.get_key_value(bucket).await.map_err(|_| {
+                        ParkError::storage(format!(
+                            "creating bucket `{bucket}` in {replicas} {}: {e}",
+                            if replicas == 1 { "copy" } else { "copies" }
+                        ))
+                    })?,
                 }
             }
         };
+        // A bucket's own stream is edited through `kv edit`: `stream edit` asks for a
+        // confirmation that `--force` does not skip, and so fails where there is no terminal.
+        check_kept(
+            &format!("bucket `{bucket}`"),
+            kv.stream.cached_info().config.num_replicas,
+            replicas,
+            &format!("nats kv edit {bucket} --replicas {replicas}"),
+        )?;
         Ok(NatsParkStore { kv })
     }
 
@@ -287,19 +375,49 @@ pub struct WakeStream {
 }
 
 impl WakeStream {
-    /// Open `name` as a `WorkQueue` stream, creating it if missing. Its one
+    /// Open `name` as a `WorkQueue` stream, creating it if missing, in one copy. Its one
     /// subject is `<name>.ticket`, the `filter_subject` of a resumer's durable
     /// pull consumer.
     pub async fn open(js: &jetstream::Context, name: &str) -> Result<Self> {
+        Self::open_with_replicas(js, name, 1).await
+    }
+
+    /// [`open`](Self::open), creating the stream in `replicas` copies. A stream that already
+    /// exists is used as it is, and is refused if it keeps fewer copies than that.
+    ///
+    /// The stream is only a nudge — the record is the answer, and a recovery pass finds a ticket
+    /// whose announcement was lost — so losing it costs latency, not tickets. It is kept in the
+    /// same number of copies anyway: with one, the node holding it going down stops every
+    /// announcement and delivery until it is back, and the copies of the bucket would protect
+    /// the tickets and not the service.
+    pub async fn open_with_replicas(
+        js: &jetstream::Context,
+        name: &str,
+        replicas: usize,
+    ) -> Result<Self> {
+        check_asked(replicas)?;
         let subject = format!("{name}.ticket");
-        js.get_or_create_stream(stream::Config {
-            name: name.to_string(),
-            subjects: vec![subject.clone()],
-            retention: stream::RetentionPolicy::WorkQueue,
-            ..Default::default()
-        })
-        .await
-        .map_err(ParkError::storage)?;
+        let stream = js
+            .get_or_create_stream(stream::Config {
+                name: name.to_string(),
+                subjects: vec![subject.clone()],
+                retention: stream::RetentionPolicy::WorkQueue,
+                num_replicas: replicas,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| {
+                ParkError::storage(format!(
+                    "opening stream `{name}` in {replicas} {}: {e}",
+                    if replicas == 1 { "copy" } else { "copies" }
+                ))
+            })?;
+        check_kept(
+            &format!("stream `{name}`"),
+            stream.cached_info().config.num_replicas,
+            replicas,
+            &format!("nats stream edit {name} --replicas {replicas} --force"),
+        )?;
         Ok(WakeStream { js: js.clone(), name: name.to_string(), subject })
     }
 
