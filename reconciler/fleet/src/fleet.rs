@@ -213,6 +213,22 @@ pub fn bin_path(name: &str) -> std::path::PathBuf {
     repo_root().join(format!("reconciler/target/release/{name}"))
 }
 
+/// `bin_path` for a binary that another package owns, and an assertion that says how to build it.
+/// `CARGO_BIN_EXE_<name>` exists only for the integration tests of the package that owns the binary,
+/// so a suite that starts the binaries of two packages (docs/adr/0115) cannot have cargo build them
+/// for it: the job, or the person, builds them first.
+pub fn built_bin(name: &str) -> std::path::PathBuf {
+    let p = bin_path(name);
+    assert!(
+        p.exists(),
+        "{name} is not built: {} does not exist. It belongs to another package than this suite, so \
+         `cargo test` does not build it for you: `cd reconciler && cargo build --bin {name}` (with \
+         `--release` when this suite runs with it)",
+        p.display()
+    );
+    p
+}
+
 /// Where the specs and artifacts live.
 /// `CARGO_MANIFEST_DIR` is baked in at COMPILE time, useless for a benchmark cross-compiled to another
 /// machine; the override is what lets `bench/` drive a second box.

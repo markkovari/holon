@@ -13,6 +13,8 @@
 //! The resumer tests (ADR-0106) add a real `comp-resume` process and a stub sink it delivers to, and
 //! kill the resumer outright mid-delivery.
 
+// The gate harness the root's suites share, included rather than copied (docs/adr/0115).
+#[path = "../../../tests/gatelib/mod.rs"]
 mod gatelib;
 
 use std::io::{Read, Write};

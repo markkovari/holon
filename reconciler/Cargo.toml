@@ -53,6 +53,7 @@ jiff = "0.2"
 hex = "0.4"
 comp-daemon-kit = { path = "daemons/kit" }
 comp-fleet = { path = "fleet" }
+holon-park = { path = "../crates/holon-park", features = ["native"] }
 comp-lattice = { path = "../lattice" }
 sha2 = "0.10"
 tempfile = "3"
@@ -174,19 +175,17 @@ bytes.workspace = true
 
 async-trait = "0.1"
 
-# The daemons that have not moved out yet (docs/adr/0115); each of the others has a
-# package of its own in daemons/. What is below is used by comp-park, comp-resume and
-# comp-agentd, and by the suites that talk to JetStream and S3.
+# The daemon that has not moved out yet (docs/adr/0115); each of the others has a
+# package of its own in daemons/. What is below is used by comp-agentd, and by the
+# suites that talk to JetStream and S3.
 async-nats.workspace = true
 rusty-s3.workspace = true
 # comp-agentd's ids and timestamps; it stays in this package until docs/adr/0115 gets to it.
 getrandom.workspace = true
 jiff.workspace = true
 hex.workspace = true
-# comp-park (ADR-0100): a durable record of an outstanding call, over JetStream
-# KV and the PARK_WAKE work-queue stream. No SurrealDB — unlike vcs, there is
-# no graph here, one ticket is one mutable record.
-holon-park = { path = "../crates/holon-park", features = ["native"] }
+# comp-agentd parks its approvals in comp-park (docs/adr/0113), through the engine's own types.
+holon-park.workspace = true
 # comp-agentd (ADR-0102): the gRPC half of api/holon/v1/agent.proto, served on
 # the same port as the REST half. tonic is already in the tree (surrealdb).
 tonic = "0.14"
@@ -249,18 +248,6 @@ path = "src/bin/photoserve.rs"
 [[bin]]
 name = "comp-contrastserve"
 path = "src/bin/contrastserve.rs"
-
-# A durable record of an outstanding call, instead of a thread blocked on its
-# answer (ADR-0100), for `components/park-store`.
-[[bin]]
-name = "comp-park"
-path = "src/bin/park.rs"
-
-# The resumer ADR-0100 left unbuilt (ADR-0106): delivers resolved tickets to
-# whatever drives the turn, and gives up on the calls that never answered.
-[[bin]]
-name = "comp-resume"
-path = "src/bin/resume.rs"
 
 [[bin]]
 name = "comp-agentd"

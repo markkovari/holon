@@ -525,7 +525,7 @@ flowchart LR
 - The gateways keep nothing; every byte of state is in the daemon (kv = "memory" in the app spec).
 - A bucket that already exists with fewer copies than --replicas is refused, with the command that raises it ([ADR-0111](adr/0111-park-keeps-as-many-copies-as-it-is-told.md)).
 
-**Where it lives** [`crates/holon-park`](../crates/holon-park) · [`crates/holon-vcs`](../crates/holon-vcs) · [`components/park-store`](../components/park-store) · [`components/park-gateway`](../components/park-gateway) · [`components/vcs-store`](../components/vcs-store) · [`components/vcs-gateway`](../components/vcs-gateway) · [`reconciler/src/bin/park.rs`](../reconciler/src/bin/park.rs) · [`reconciler/src/bin/resume.rs`](../reconciler/src/bin/resume.rs) · [`reconciler/daemons/vcs/`](../reconciler/daemons/vcs/) · [`apps/park.toml`](../apps/park.toml) · [`apps/vcs.toml`](../apps/vcs.toml)
+**Where it lives** [`crates/holon-park`](../crates/holon-park) · [`crates/holon-vcs`](../crates/holon-vcs) · [`components/park-store`](../components/park-store) · [`components/park-gateway`](../components/park-gateway) · [`components/vcs-store`](../components/vcs-store) · [`components/vcs-gateway`](../components/vcs-gateway) · [`reconciler/daemons/park/`](../reconciler/daemons/park/) · [`reconciler/daemons/vcs/`](../reconciler/daemons/vcs/) · [`apps/park.toml`](../apps/park.toml) · [`apps/vcs.toml`](../apps/vcs.toml)
 
 ### Agent services
 

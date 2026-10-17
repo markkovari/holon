@@ -16,9 +16,8 @@
 //! [`recover`] is the pass a resumer runs on a timer, [`resume`] is what it does
 //! with the result, and [`wire`] is the JSON `comp-park` speaks.
 //!
-//! The service around the engine is `comp-park` (`reconciler/src/bin/park.rs`,
-//! with the `native` adapter in `nats`) and `comp-resume`
-//! (`reconciler/src/bin/resume.rs`); `components/park-store` and
+//! The service around the engine is `comp-park` (with the `native` adapter in
+//! `nats`) and `comp-resume`, both in `reconciler/daemons/park/`; `components/park-store` and
 //! `components/park-gateway` put the contract in front of it.
 
 pub mod batch;

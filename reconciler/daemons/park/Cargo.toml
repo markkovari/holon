@@ -1,0 +1,38 @@
+[package]
+name = "comp-park"
+description = "A durable record of an outstanding call instead of a thread blocked on its answer (docs/adr/0100), and the resumer that delivers what resolved and gives up on what never will (docs/adr/0106): two daemons over the holon-park engine, for components/park-store."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# One package for both because their end-to-end tests start the pair, and CARGO_BIN_EXE_<name>
+# only exists for the binaries of the package a test is in (docs/adr/0115).
+[[bin]]
+name = "comp-park"
+path = "src/bin/park.rs"
+
+[[bin]]
+name = "comp-resume"
+path = "src/bin/resume.rs"
+
+# The engine, over JetStream KV and the PARK_WAKE work-queue stream. No SurrealDB — unlike vcs,
+# there is no graph here, one ticket is one mutable record.
+[dependencies]
+comp-daemon-kit.workspace = true
+holon-park.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+# tests/e2e_park.rs drives both daemons through comp-host, with the gate harness the root's
+# suites share (tests/gatelib/mod.rs, included by path), which signs a TOTP code with hmac and
+# sha1; tests/park_replicas.rs starts them over a private NATS.
+[dev-dependencies]
+comp-fleet.workspace = true
+hmac.workspace = true
+sha1.workspace = true
+tempfile.workspace = true

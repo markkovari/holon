@@ -128,7 +128,7 @@ export const SYS = [
   boundary:['Both gateways are tailnet-only on purpose: whoever reaches the park gateway can park, wake or cancel any session’s ticket, and whoever reaches vcs can edit every workspace.',
             'The gateways keep nothing; every byte of state is in the daemon (kv = "memory" in the app spec).',
             'A bucket that already exists with fewer copies than --replicas is refused, with the command that raises it (ADR-0111).'],
-  code:['crates/holon-park','crates/holon-vcs','components/{park,vcs}-{store,gateway}','reconciler/src/bin/{park,resume}.rs','reconciler/daemons/vcs/','apps/{park,vcs}.toml']},
+  code:['crates/holon-park','crates/holon-vcs','components/{park,vcs}-{store,gateway}','reconciler/daemons/{park,vcs}/','apps/{park,vcs}.toml']},
 
  {id:'agents', name:'Agent services', short:'comp-agentd and the agent-runtime stack',
   purpose:'comp-agentd sessions with approvals, and the agent-runtime stack with its Matrix and desktop fronts.',
