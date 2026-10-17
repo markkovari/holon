@@ -1,0 +1,32 @@
+[package]
+name = "comp-media"
+description = "Uploads, evaluates and renders large photos by key, for components/media-pipeline (docs/adr/0098). The only daemon with a queue of its own: the Mac's GPU is the bottleneck, one photo at a time."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Decodes camera raw, signs S3 requests, holds the MEDIA_JOBS work queue. rusty-s3 is
+# sans-IO — it signs, the reqwest client we already have sends — so there is no second
+# HTTP stack and no SDK. async-nats is pinned to lattice's version so the two never
+# disagree about the protocol.
+[dependencies]
+comp-daemon-kit.workspace = true
+anyhow.workspace = true
+async-nats.workspace = true
+axum.workspace = true
+base64.workspace = true
+bytes.workspace = true
+clap.workspace = true
+futures.workspace = true
+hmac.workspace = true
+image.workspace = true
+reqwest.workspace = true
+rusty-s3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+rawler = "0.8"
+md-5 = "0.10"          # PutBucketCors requires a Content-MD5
+kamadak-exif = "0.6"   # EXIF of a JPEG original (bounds-checked; rawler's TIFF reader is not)

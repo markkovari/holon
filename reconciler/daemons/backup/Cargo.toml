@@ -1,0 +1,32 @@
+[package]
+name = "comp-backup"
+description = "Backs up JetStream streams (KV buckets, object stores, queues) and SurrealDB databases to an S3-compatible bucket, gzip'd and sealed, and restores them."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# ChaCha20-Poly1305 because `secrets-vault` already trusts it; jiff is already in the tree
+# through rusty-s3 and names each backup by its UTC time.
+[dependencies]
+anyhow.workspace = true
+async-nats.workspace = true
+base64.workspace = true
+clap.workspace = true
+futures.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+jiff.workspace = true
+reqwest.workspace = true
+rusty-s3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+flate2 = "1"
+chacha20poly1305 = "0.10"
+
+# tests/backup.rs drives the real binary against real NATS, SurrealDB and S3 (RustFS),
+# through the harness the root's suites share (tests/harness/mod.rs, included by path).
+[dev-dependencies]
+comp-fleet.workspace = true

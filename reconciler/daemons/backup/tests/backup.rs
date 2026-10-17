@@ -10,6 +10,8 @@
 //! wrong key, a tampered part, an existing stream, an unsealed run nobody asked
 //! for.
 
+// The harness the root's suites share, included rather than copied (docs/adr/0115).
+#[path = "../../../tests/harness/mod.rs"]
 mod harness;
 
 use std::path::Path;
@@ -17,7 +19,7 @@ use std::process::{Child, Command, Output, Stdio};
 use std::time::Duration;
 
 use async_nats::jetstream::{self, kv, object_store, stream};
-use comp_reconciler::fleet::free_port;
+use comp_fleet::fleet::free_port;
 use futures::StreamExt;
 use harness::{RustFs, Surreal, SURREAL_PASSWORD};
 use tokio::io::AsyncReadExt;

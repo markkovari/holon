@@ -1,7 +1,7 @@
 # media-pipeline ↔ comp-media contract
 
 `media-pipeline` (this component) exports `media:pipeline/jobs` and implements every
-call as one HTTP request to `comp-media` (native, `reconciler/src/bin/media.rs`).
+call as one HTTP request to `comp-media` (native, `reconciler/daemons/media/`).
 Why the split exists: [ADR-0098](../../docs/adr/0098-photos-live-in-object-storage.md).
 
 ## Config the component reads (`wasi:config`)

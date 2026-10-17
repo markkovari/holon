@@ -223,9 +223,13 @@ pub fn repo_root() -> std::path::PathBuf {
     root_from_manifest()
 }
 
+/// The repository this crate was COMPILED from, whatever `COMP_REPO_ROOT` says. A goal run gives its
+/// checks a sandbox of their own and the gates must judge that checkout, not the machine's
+/// (`tests/gatelib`), so the suites that include the shared test harnesses read the root from here.
+///
 /// This package is `reconciler/fleet/`, so the repository is two directories above it. It was one
 /// when the harness was part of `reconciler/` itself; the depth is the thing a move changes.
-fn root_from_manifest() -> std::path::PathBuf {
+pub fn root_from_manifest() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(std::path::Path::parent)

@@ -37,23 +37,14 @@
 //!     --nats-url nats://127.0.0.1:4222 --callback-secret-file ... \
 //!     --callback-allow 127.0.0.1:3941 --apple-helper /usr/local/bin/comp-media-apple
 
-#[path = "media/apple_helper.rs"]
 mod apple_helper;
-#[path = "media/decode.rs"]
 mod decode;
-#[path = "media/develop.rs"]
 mod develop;
-#[path = "media/errors.rs"]
 mod errors;
-#[path = "media/job_worker.rs"]
 mod job_worker;
-#[path = "media/keys.rs"]
 mod keys;
-#[path = "media/routes.rs"]
 mod routes;
-#[path = "media/sharpness.rs"]
 mod sharpness;
-#[path = "media/store.rs"]
 mod store;
 
 use std::path::PathBuf;
