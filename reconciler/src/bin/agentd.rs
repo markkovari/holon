@@ -39,6 +39,8 @@ mod rest;
 mod service;
 #[path = "agentd/session.rs"]
 mod session;
+#[path = "agentd/state.rs"]
+mod state;
 #[cfg(test)]
 #[path = "agentd/tests.rs"]
 mod tests;

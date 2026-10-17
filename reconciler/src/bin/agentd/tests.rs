@@ -636,3 +636,425 @@ async fn a_model_that_cannot_be_reached_fails_the_task() {
     let (_, failed) = ev.until("task_failed").await;
     assert_eq!(failed["code"], "model_error");
 }
+
+// ---- steering a running task, and reading a session's state (ADR-0107) ----
+
+impl Harness {
+    async fn steer(&self, sid: &str, tid: &str, message: &str, key: Option<&str>) -> (u16, Value) {
+        let mut req = self
+            .http
+            .post(format!("{}/v1/sessions/{sid}/tasks/{tid}/steer", self.base))
+            .json(&json!({ "message": message }));
+        if let Some(k) = key {
+            req = req.header("Idempotency-Key", k);
+        }
+        let r = req.send().await.unwrap();
+        (r.status().as_u16(), r.json().await.unwrap_or(Value::Null))
+    }
+
+    async fn state(&self, sid: &str) -> Value {
+        self.get(&format!("/v1/sessions/{sid}/state")).await
+    }
+}
+
+fn kinds_of(state: &Value) -> Vec<&str> {
+    state["transcript"].as_array().unwrap().iter().map(|e| e["type"].as_str().unwrap()).collect()
+}
+
+#[tokio::test]
+async fn a_steer_joins_the_running_task_at_its_next_boundary_and_the_model_reads_it() {
+    let h = harness(Opts::default()).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    let task = h.task(&sid, "look").await;
+    let tid = task["id"].as_str().unwrap();
+    let (_, req) = ev.until("tool_approval_required").await;
+
+    // Not a new task: the one that is running, unchanged.
+    let (s, t) = h.steer(&sid, tid, "steer: be brief", None).await;
+    assert_eq!(s, 202, "{t}");
+    assert_eq!((t["id"].as_str(), t["status"].as_str()), (Some(tid), Some("running")));
+    let (_, queued) = ev.until("task_steer_queued").await;
+    assert_eq!(queued["message"], "steer: be brief");
+    assert_eq!(queued["task_id"], task["id"]);
+
+    // While the task waits on a person the state shows both things waiting, at the cursor the
+    // stream is at.
+    let st = h.state(&sid).await;
+    assert_eq!(st["seq"], queued["seq"]);
+    assert_eq!(st["pending_steers"][0]["steer_id"], queued["steer_id"]);
+    assert_eq!(st["pending_approvals"][0]["call_id"], req["call_id"]);
+    assert_eq!(st["session"]["status"], "awaiting_approval");
+
+    // A tool is never interrupted: the steer is read after its result, before the next model call.
+    h.approve(&sid, &req["call_id"], "approve").await;
+    let (kinds, steered) = ev.until("task_steered").await;
+    assert_eq!(kinds, ["tool_approval_resolved", "tool_call_finished", "task_steered"]);
+    assert_eq!(steered["steer_id"], queued["steer_id"]);
+
+    // And the model's next turn saw it: it answered the steer, not the listing.
+    let (kinds, done) = ev.until("task_completed").await;
+    assert_eq!(kinds, ["text_delta", "text_delta", "usage_updated", "task_completed"]);
+    assert_eq!(done["result"], "Noted: steer: be brief");
+    assert_eq!(done["task_usage"]["cost_usd_micros"], 2 * TURN, "two model turns, no more");
+
+    let st = h.state(&sid).await;
+    assert!(st["pending_steers"].as_array().unwrap().is_empty());
+    assert!(
+        st["transcript"].as_array().unwrap().iter().any(|e| e["type"] == "user_message"
+            && e["steered"] == true
+            && e["text"] == "steer: be brief"),
+        "{st}"
+    );
+}
+
+#[tokio::test]
+async fn a_steer_is_refused_when_there_is_nothing_running_to_steer() {
+    let h = harness(Opts::default()).await;
+    let sid = h.session(1_000_000).await;
+    let problem =
+        |v: &Value| v["type"].as_str().unwrap_or_default().rsplit('/').next().unwrap().to_string();
+
+    let (s, _) = h.steer("nope", "task_x", "hi", None).await;
+    assert_eq!(s, 404, "no such session");
+
+    let mut ev = h.stream(&sid, 0).await;
+    let task = h.task(&sid, "look").await;
+    let tid = task["id"].as_str().unwrap().to_string();
+    let (_, req) = ev.until("tool_approval_required").await;
+
+    let (s, _) = h.steer(&sid, &tid, "   ", None).await;
+    assert_eq!(s, 400, "a blank steer says nothing");
+    let (s, _) = h.steer(&sid, "task_nope", "hi", None).await;
+    assert_eq!(s, 404, "no such task");
+
+    h.approve(&sid, &req["call_id"], "approve").await;
+    ev.until("task_completed").await;
+    let (s, v) = h.steer(&sid, &tid, "too late", None).await;
+    assert_eq!((s, problem(&v).as_str()), (409, "task-not-running"), "{v}");
+
+    // A session that is closed refuses too.
+    h.http.delete(format!("{}/v1/sessions/{sid}", h.base)).send().await.unwrap();
+    let (s, v) = h.steer(&sid, &tid, "hi", None).await;
+    assert_eq!((s, problem(&v).as_str()), (409, "session-closed"), "{v}");
+}
+
+#[tokio::test]
+async fn a_retried_steer_with_the_same_key_is_said_once() {
+    let h = harness(Opts::default()).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    let task = h.task(&sid, "look").await;
+    let tid = task["id"].as_str().unwrap();
+    let (_, req) = ev.until("tool_approval_required").await;
+
+    for _ in 0..3 {
+        let (s, _) = h.steer(&sid, tid, "steer: once", Some("k1")).await;
+        assert_eq!(s, 202);
+    }
+    assert_eq!(h.state(&sid).await["pending_steers"].as_array().unwrap().len(), 1);
+
+    h.approve(&sid, &req["call_id"], "approve").await;
+    ev.until("task_completed").await;
+    let st = h.state(&sid).await;
+    let said = st["transcript"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["type"] == "user_message" && e["steered"] == true)
+        .count();
+    assert_eq!(said, 1);
+}
+
+fn bare_session() -> (tempfile::TempDir, session::Session, super::wire::Task) {
+    let dir = tempfile::tempdir().unwrap();
+    let s = session::Session::new(
+        super::wire::CreateSession {
+            model: "mock".into(),
+            workspace_dir: dir.path().display().to_string(),
+            max_budget_usd_micros: 1,
+            auto_approve_tools: vec![],
+            labels: Default::default(),
+        },
+        dir.path().to_path_buf(),
+        None,
+    )
+    .unwrap();
+    let Ok((task, _)) = s.begin("p", None) else { panic!("a fresh session accepts a task") };
+    (dir, s, task)
+}
+
+#[test]
+fn a_steer_is_applied_or_refused_never_accepted_and_dropped() {
+    use session::SteerRefusal;
+    let (_dir, s, task) = bare_session();
+    let texts = |v: Vec<(String, String)>| v.into_iter().map(|(_, m)| m).collect::<Vec<_>>();
+
+    assert!(s.take_steers(&task.id).is_empty());
+    assert!(s.steer(&task.id, "a", None).is_ok());
+    assert!(s.steer(&task.id, "b", Some("k".into())).is_ok());
+    assert!(s.steer(&task.id, "b again", Some("k".into())).is_ok(), "a retry is accepted, once");
+
+    // The model has answered, and two steers arrived while it wrote: it is not finishing, it has
+    // new input, and gets them in the order they came.
+    assert_eq!(texts(s.finishing(&task.id)), ["a", "b"]);
+    // It answers again, and nothing arrived: now it is finishing, and says so to whoever steers.
+    assert!(s.finishing(&task.id).is_empty());
+    assert!(matches!(s.steer(&task.id, "late", None), Err(SteerRefusal::Finishing)));
+    // But a retry of a steer that did get through is still fine.
+    assert!(s.steer(&task.id, "b again", Some("k".into())).is_ok());
+    // And a task that is not the running one has nothing to steer.
+    assert!(matches!(s.steer("task_other", "x", None), Err(SteerRefusal::NotRunning)));
+}
+
+/// The race the `finishing` guard exists for: producers steering while the loop decides to finish.
+/// Every steer that was accepted has to have been handed to the loop; none may fall between its
+/// last look and the task ending.
+#[test]
+fn steers_racing_a_task_that_is_finishing_are_each_applied_or_refused() {
+    use session::SteerRefusal;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    for round in 0..50 {
+        let (_dir, s, task) = bare_session();
+        let s = Arc::new(s);
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let refused = Arc::new(AtomicUsize::new(0));
+
+        let producers: Vec<_> = (0..4)
+            .map(|p| {
+                let (s, id, ok, no) =
+                    (s.clone(), task.id.clone(), accepted.clone(), refused.clone());
+                std::thread::spawn(move || {
+                    for i in 0..100 {
+                        match s.steer(&id, &format!("{p}-{i}"), None) {
+                            Ok(()) => ok.fetch_add(1, Ordering::SeqCst),
+                            Err(SteerRefusal::Finishing) => {
+                                no.fetch_add(1, Ordering::SeqCst);
+                                break;
+                            }
+                            Err(_) => panic!("neither closed nor not running"),
+                        };
+                        if i % 7 == 0 {
+                            std::thread::yield_now();
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        // The loop: a boundary now and then, then the final answer, repeated until nothing new.
+        let mut applied = 0;
+        for _ in 0..round % 5 {
+            applied += s.take_steers(&task.id).len();
+            std::thread::yield_now();
+        }
+        loop {
+            let batch = s.finishing(&task.id);
+            if batch.is_empty() {
+                break;
+            }
+            applied += batch.len();
+        }
+        for p in producers {
+            p.join().unwrap();
+        }
+        assert_eq!(
+            accepted.load(Ordering::SeqCst),
+            applied,
+            "round {round}: a steer was accepted that the loop never read ({} refused)",
+            refused.load(Ordering::SeqCst)
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_state_is_a_snapshot_that_the_stream_continues_exactly() {
+    let h = harness(Opts::default()).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    assert_eq!(h.state(&sid).await["seq"], 0, "an empty session is at the start");
+
+    h.task(&sid, "look").await;
+    let (mut seen, req) = ev.until("tool_approval_required").await;
+    // Mid-task, waiting on a person: the call is the thing to ask about.
+    let st = h.state(&sid).await;
+    assert_eq!(st["seq"], seen.len());
+    assert_eq!(st["pending_approvals"].as_array().unwrap().len(), 1);
+    assert_eq!(kinds_of(&st), ["user_message", "assistant_message", "tool_call"]);
+    assert_eq!(st["transcript"][2]["status"], "awaiting_approval");
+
+    h.approve(&sid, &req["call_id"], "approve").await;
+    let (more, _) = ev.until("task_completed").await;
+    seen.extend(more);
+
+    // Done: the whole conversation, as a client draws it.
+    let st = h.state(&sid).await;
+    assert_eq!(st["seq"], seen.len(), "the cursor is the last event the state reflects");
+    assert_eq!(
+        kinds_of(&st),
+        ["user_message", "assistant_message", "tool_call", "assistant_message", "task_ended"]
+    );
+    let t = st["transcript"].as_array().unwrap();
+    assert_eq!(t[0]["text"], "look");
+    assert_eq!(t[1]["text"], "Let me look at the workspace.");
+    assert_eq!(t[1]["in_progress"], false);
+    assert_eq!(
+        (t[2]["status"].as_str(), t[2]["output"].as_str()),
+        (Some("finished"), Some("README.md"))
+    );
+    assert_eq!(t[3]["text"], "The workspace holds: README.md.");
+    assert_eq!(
+        (t[4]["outcome"].as_str(), t[4]["result"].as_str()),
+        (Some("completed"), Some("The workspace holds: README.md."))
+    );
+    assert!(st["pending_approvals"].as_array().unwrap().is_empty());
+    assert_eq!(st["session"]["status"], "idle");
+    assert_eq!(st["session"]["usage"]["cost_usd_micros"], 2 * TURN);
+
+    // Snapshot, then tail: the next event after the cursor is the very next one the log makes,
+    // with no gap and nothing repeated.
+    let cursor = st["seq"].as_u64().unwrap();
+    let next_task = h.task(&sid, "look again").await;
+    let mut tail = h.stream(&sid, cursor).await;
+    let first = tail.next().await;
+    assert_eq!(first["seq"], cursor + 1);
+    assert_eq!(
+        (first["type"].as_str(), first["task_id"].as_str()),
+        (Some("task_started"), next_task["id"].as_str())
+    );
+}
+
+#[tokio::test]
+async fn the_state_of_a_session_comes_back_with_it_after_a_restart() {
+    let state = tempfile::tempdir().unwrap();
+    let root = Arc::new(tempfile::tempdir().unwrap());
+    let opts = || Opts { state_dir: Some(state.path().to_path_buf()), ..Opts::default() };
+
+    let h = serve(opts(), root.clone()).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+    h.approve(&sid, &req["call_id"], "approve").await;
+    ev.until("task_completed").await;
+    let before = h.state(&sid).await;
+
+    // A restart rebuilds it from the log it already trusted, so a client that reconnects to the
+    // new process gets the same conversation at the same cursor.
+    let h2 = serve(opts(), root).await;
+    let after = h2.state(&sid).await;
+    assert_eq!(after["seq"], before["seq"]);
+    assert_eq!(after["transcript"], before["transcript"]);
+    assert_eq!(after["session"]["usage"], before["session"]["usage"]);
+}
+
+#[tokio::test]
+async fn grpc_steers_a_running_task_and_reads_its_state() {
+    use pb::agent_event::Payload as P;
+    use pb::transcript_entry::Entry as E;
+    let h = harness(Opts::default()).await;
+    let mut c =
+        pb::agent_service_client::AgentServiceClient::connect(h.base.clone()).await.unwrap();
+    let s = c
+        .create_session(pb::CreateSessionRequest {
+            model: "mock".into(),
+            workspace_dir: h.ws.clone(),
+            max_budget_usd_micros: 1_000_000,
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    let mut events = c
+        .stream_events(pb::StreamEventsRequest { session_id: s.id.clone(), after_seq: 0 })
+        .await
+        .unwrap()
+        .into_inner();
+    let t = c
+        .send_task(pb::SendTaskRequest {
+            session_id: s.id.clone(),
+            prompt: "look".into(),
+            idempotency_key: String::new(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    let call_id = loop {
+        if let Some(P::ToolApprovalRequired(r)) = next(&mut events).await.payload {
+            break r.call_id;
+        }
+    };
+
+    let steer = |message: &str, key: &str| pb::SteerTaskRequest {
+        session_id: s.id.clone(),
+        task_id: t.id.clone(),
+        message: message.into(),
+        idempotency_key: key.into(),
+    };
+    let steered = c.steer_task(steer("steer: be brief", "k")).await.unwrap().into_inner();
+    assert_eq!(
+        (steered.id.as_str(), steered.status),
+        (t.id.as_str(), pb::TaskStatus::Running as i32)
+    );
+    c.steer_task(steer("steer: be brief", "k")).await.unwrap(); // a retry: accepted, said once
+    let queued = loop {
+        let e = next(&mut events).await;
+        if let Some(P::TaskSteerQueued(q)) = e.payload {
+            assert_eq!(q.message, "steer: be brief");
+            break e.seq;
+        }
+    };
+    let blank = c.steer_task(steer("  ", "")).await.unwrap_err();
+    assert_eq!(blank.code(), tonic::Code::InvalidArgument);
+    let missing = c
+        .steer_task(pb::SteerTaskRequest { task_id: "task_nope".into(), ..steer("x", "") })
+        .await
+        .unwrap_err();
+    assert_eq!(missing.code(), tonic::Code::NotFound);
+
+    let st = c
+        .get_session_state(pb::GetSessionStateRequest { session_id: s.id.clone() })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(st.seq, queued);
+    assert_eq!(st.pending_approvals.len(), 1);
+    assert_eq!(st.pending_approvals[0].call_id, call_id);
+    assert_eq!(st.pending_steers.len(), 1);
+    assert_eq!(st.session.unwrap().status, pb::SessionStatus::AwaitingApproval as i32);
+
+    c.submit_approval(pb::SubmitApprovalRequest {
+        session_id: s.id.clone(),
+        call_id,
+        decision: pb::ApprovalDecision::Approve as i32,
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    let done = loop {
+        if let Some(P::TaskCompleted(d)) = next(&mut events).await.payload {
+            break d;
+        }
+    };
+    assert_eq!(done.result, "Noted: steer: be brief");
+    let late = c.steer_task(steer("again", "")).await.unwrap_err();
+    assert_eq!(late.code(), tonic::Code::FailedPrecondition, "the task has ended");
+
+    let st = c
+        .get_session_state(pb::GetSessionStateRequest { session_id: s.id.clone() })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(st.pending_steers.is_empty() && st.pending_approvals.is_empty());
+    let entries: Vec<_> = st.transcript.iter().map(|e| e.entry.clone().unwrap()).collect();
+    // user, assistant, tool call, steered user, assistant (the answer to it), task ended
+    assert!(matches!(&entries[0], E::UserMessage(u) if u.text == "look" && !u.steered));
+    assert!(matches!(&entries[2], E::ToolCall(c)
+        if c.status == pb::ToolCallStatus::Finished as i32
+            && c.decision == pb::ApprovalDecision::Approve as i32
+            && c.output == "README.md"));
+    assert!(matches!(&entries[3], E::UserMessage(u) if u.text == "steer: be brief" && u.steered));
+    assert!(matches!(entries.last().unwrap(), E::TaskEnded(e)
+        if e.outcome == pb::TaskOutcome::Completed as i32 && e.result == "Noted: steer: be brief"));
+}

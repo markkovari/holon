@@ -172,6 +172,10 @@ pub fn event(e: wire::Event) -> pb::AgentEvent {
                 task_usage: Some(usage(task_usage)),
             })
         }
+        W::TaskSteerQueued { steer_id, message } => {
+            P::TaskSteerQueued(pb::TaskSteerQueued { steer_id, message })
+        }
+        W::TaskSteered { steer_id } => P::TaskSteered(pb::TaskSteered { steer_id }),
     };
     pb::AgentEvent {
         seq: e.seq,
@@ -179,6 +183,98 @@ pub fn event(e: wire::Event) -> pb::AgentEvent {
         task_id: e.task_id,
         time: ts(&e.time),
         payload: Some(payload),
+    }
+}
+
+fn fail_code(c: wire::FailCode) -> i32 {
+    let code = match c {
+        wire::FailCode::BudgetExceeded => pb::TaskFailureCode::BudgetExceeded,
+        wire::FailCode::Cancelled => pb::TaskFailureCode::Cancelled,
+        wire::FailCode::ModelError => pb::TaskFailureCode::ModelError,
+        wire::FailCode::MaxTurns => pb::TaskFailureCode::MaxTurns,
+        wire::FailCode::Internal => pb::TaskFailureCode::Internal,
+    };
+    code as i32
+}
+
+fn entry(x: wire::TranscriptEntry) -> pb::TranscriptEntry {
+    use pb::transcript_entry::Entry as E;
+    let e = match x.entry {
+        wire::Entry::UserMessage { text, steered } => {
+            E::UserMessage(pb::UserMessage { text, steered })
+        }
+        wire::Entry::AssistantMessage { message_id, text, in_progress } => {
+            E::AssistantMessage(pb::AssistantMessage { message_id, text, in_progress })
+        }
+        wire::Entry::ToolCall {
+            call_id,
+            tool_name,
+            input,
+            status,
+            decision: d,
+            decided_by,
+            expires_at,
+            output,
+            is_error,
+            duration_ms,
+        } => E::ToolCall(pb::ToolCall {
+            call_id,
+            tool_name,
+            input: Some(to_struct(input)),
+            status: (match status {
+                wire::CallStatus::AwaitingApproval => pb::ToolCallStatus::AwaitingApproval,
+                wire::CallStatus::Running => pb::ToolCallStatus::Running,
+                wire::CallStatus::Finished => pb::ToolCallStatus::Finished,
+                wire::CallStatus::Cancelled => pb::ToolCallStatus::Cancelled,
+            }) as i32,
+            decision: d.map(decision).unwrap_or(pb::ApprovalDecision::Unspecified as i32),
+            decided_by: decided_by.unwrap_or_default(),
+            expires_at: expires_at.as_deref().and_then(ts),
+            output: output.unwrap_or_default(),
+            is_error: is_error.unwrap_or_default(),
+            duration_ms: duration_ms.unwrap_or_default(),
+        }),
+        wire::Entry::TaskEnded { outcome, result, code, message, usage: u } => {
+            E::TaskEnded(pb::TaskEnded {
+                outcome: (match outcome {
+                    wire::Outcome::Completed => pb::TaskOutcome::Completed,
+                    wire::Outcome::Failed => pb::TaskOutcome::Failed,
+                }) as i32,
+                result: result.unwrap_or_default(),
+                code: code.map(fail_code).unwrap_or(pb::TaskFailureCode::Unspecified as i32),
+                message: message.unwrap_or_default(),
+                usage: Some(usage(u)),
+            })
+        }
+    };
+    pb::TranscriptEntry { seq: x.seq, task_id: x.task_id, entry: Some(e) }
+}
+
+fn state(s: wire::SessionState) -> pb::SessionState {
+    pb::SessionState {
+        session: Some(session(s.session)),
+        seq: s.seq,
+        transcript: s.transcript.into_iter().map(entry).collect(),
+        pending_approvals: s
+            .pending_approvals
+            .into_iter()
+            .map(|a| pb::PendingApproval {
+                task_id: a.task_id,
+                call_id: a.call_id,
+                tool_name: a.tool_name,
+                input: Some(to_struct(a.input)),
+                expires_at: a.expires_at.as_deref().and_then(ts),
+            })
+            .collect(),
+        pending_steers: s
+            .pending_steers
+            .into_iter()
+            .map(|p| pb::PendingSteer {
+                task_id: p.task_id,
+                steer_id: p.steer_id,
+                message: p.message,
+            })
+            .collect(),
     }
 }
 
@@ -239,6 +335,27 @@ impl AgentService for Grpc {
         self.0
             .cancel_task(&r.session_id, &r.task_id)
             .map(|t| Response::new(task(t)))
+            .map_err(status)
+    }
+
+    async fn steer_task(
+        &self,
+        r: Request<pb::SteerTaskRequest>,
+    ) -> Result<Response<pb::Task>, Status> {
+        let r = r.into_inner();
+        self.0
+            .steer_task(&r.session_id, &r.task_id, r.message, Some(r.idempotency_key))
+            .map(|t| Response::new(task(t)))
+            .map_err(status)
+    }
+
+    async fn get_session_state(
+        &self,
+        r: Request<pb::GetSessionStateRequest>,
+    ) -> Result<Response<pb::SessionState>, Status> {
+        self.0
+            .session_state(&r.into_inner().session_id)
+            .map(|s| Response::new(state(s)))
             .map_err(status)
     }
 

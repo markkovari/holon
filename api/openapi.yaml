@@ -107,6 +107,76 @@ paths:
               schema: { $ref: "#/components/schemas/Task" }
         "404": { $ref: "#/components/responses/Problem" }
 
+  /v1/sessions/{session_id}/tasks/{task_id}/steer:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+      - name: task_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: steerTask
+      summary: Add a message to the running task.
+      description: |
+        The message joins the conversation as a user message at the task's next
+        model-call boundary: after the tool calls in flight have finished (a tool that
+        is executing is never interrupted), or after the model's final answer, in which
+        case the task takes another turn on it. It is not a new task and does not get
+        around one task at a time.
+
+        `task_steer_queued` is emitted when it is accepted and `task_steered` when the
+        model is about to read it. A task that ends first never applies it, and nothing
+        says so beyond the task ending: resend it as a task.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Resending the same key while the task runs accepts again and queues nothing.
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SteerTaskRequest" }
+      responses:
+        "202":
+          description: Accepted. The running task, unchanged.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409":
+          description: |
+            `task-not-running` (it ended, or is not the running task), `session-closed`,
+            or `task-finishing` (it is writing its final answer; send a task instead).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /v1/sessions/{session_id}/state:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: getSessionState
+      summary: A session as a client draws it, and the cursor to keep watching it from.
+      description: |
+        Read this instead of replaying the event log from 0 when a client connects, or
+        reconnects, to a session it was not watching. `seq` is the last event the state
+        reflects, taken under the same lock as the rest, so `streamEvents` with
+        `after_seq` = `seq` delivers exactly the events that came after: no gap, and
+        nothing repeated.
+
+        The transcript is folded from the events, so it includes the message the model
+        is still writing (`in_progress`). It is not the provider's conversation.
+      responses:
+        "200":
+          description: The state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionState" }
+        "404": { $ref: "#/components/responses/Problem" }
+
   /v1/sessions/{session_id}/events:
     parameters:
       - $ref: "#/components/parameters/SessionId"
@@ -259,6 +329,15 @@ components:
           minLength: 1
           description: The instruction for the agent, plain text.
 
+    SteerTaskRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          minLength: 1
+          description: Plain text, handed to the model as a user message. Must not be blank.
+
     Task:
       type: object
       required: [id, session_id, status, created_at]
@@ -303,6 +382,8 @@ components:
         - $ref: "#/components/schemas/UsageUpdatedEvent"
         - $ref: "#/components/schemas/TaskCompletedEvent"
         - $ref: "#/components/schemas/TaskFailedEvent"
+        - $ref: "#/components/schemas/TaskSteerQueuedEvent"
+        - $ref: "#/components/schemas/TaskSteeredEvent"
       discriminator:
         propertyName: type
         mapping:
@@ -315,6 +396,8 @@ components:
           usage_updated: "#/components/schemas/UsageUpdatedEvent"
           task_completed: "#/components/schemas/TaskCompletedEvent"
           task_failed: "#/components/schemas/TaskFailedEvent"
+          task_steer_queued: "#/components/schemas/TaskSteerQueuedEvent"
+          task_steered: "#/components/schemas/TaskSteeredEvent"
 
     EventEnvelope:
       type: object
@@ -444,6 +527,163 @@ components:
               description: Branch on this; message is not stable.
             message: { type: string }
             task_usage: { $ref: "#/components/schemas/Usage" }
+
+    TaskSteerQueuedEvent:
+      description: A steerTask was accepted. The model reads it at the next boundary.
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [steer_id, message]
+          properties:
+            steer_id: { type: string }
+            message: { type: string }
+
+    TaskSteeredEvent:
+      description: |
+        The steer joined the conversation: the next model call sees it as a user message.
+        If the task ends first the steer is never applied, and no event says so.
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [steer_id]
+          properties:
+            steer_id: { type: string }
+
+    # ---- Session state ----
+    SessionState:
+      type: object
+      required: [session, seq, transcript, pending_approvals, pending_steers]
+      properties:
+        session: { $ref: "#/components/schemas/Session" }
+        seq:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The last event this state reflects; 0 for a session with none. Resume streamEvents after it.
+        transcript:
+          type: array
+          description: The conversation as a client draws it, oldest first, folded from the events.
+          items: { $ref: "#/components/schemas/TranscriptEntry" }
+        pending_approvals:
+          type: array
+          description: Tool calls waiting for submitApproval. Also in the transcript, as status awaiting_approval.
+          items: { $ref: "#/components/schemas/PendingApproval" }
+        pending_steers:
+          type: array
+          description: Steers accepted and not yet read by the model, for the running task.
+          items: { $ref: "#/components/schemas/PendingSteer" }
+
+    TranscriptEntry:
+      description: One line of the conversation. `type` selects the shape.
+      oneOf:
+        - $ref: "#/components/schemas/UserMessageEntry"
+        - $ref: "#/components/schemas/AssistantMessageEntry"
+        - $ref: "#/components/schemas/ToolCallEntry"
+        - $ref: "#/components/schemas/TaskEndedEntry"
+      discriminator:
+        propertyName: type
+        mapping:
+          user_message: "#/components/schemas/UserMessageEntry"
+          assistant_message: "#/components/schemas/AssistantMessageEntry"
+          tool_call: "#/components/schemas/ToolCallEntry"
+          task_ended: "#/components/schemas/TaskEndedEntry"
+
+    EntryEnvelope:
+      type: object
+      required: [type, seq, task_id]
+      properties:
+        type: { type: string }
+        seq:
+          type: integer
+          format: int64
+          minimum: 1
+          description: The seq of the event that began this entry.
+        task_id: { type: string }
+
+    UserMessageEntry:
+      description: A prompt, or a steer that joined the conversation.
+      allOf:
+        - $ref: "#/components/schemas/EntryEnvelope"
+        - type: object
+          required: [text, steered]
+          properties:
+            text: { type: string }
+            steered: { type: boolean }
+
+    AssistantMessageEntry:
+      description: What the model said in one turn.
+      allOf:
+        - $ref: "#/components/schemas/EntryEnvelope"
+        - type: object
+          required: [message_id, text, in_progress]
+          properties:
+            message_id: { type: string }
+            text: { type: string }
+            in_progress:
+              type: boolean
+              description: True while its text_delta events are still arriving.
+
+    ToolCallEntry:
+      allOf:
+        - $ref: "#/components/schemas/EntryEnvelope"
+        - type: object
+          required: [call_id, tool_name, input, status]
+          properties:
+            call_id: { type: string }
+            tool_name: { type: string }
+            input: { type: object, additionalProperties: true }
+            status:
+              type: string
+              enum: [awaiting_approval, running, finished, cancelled]
+              description: |
+                `awaiting_approval` is blocked on submitApproval; `running` is approved or
+                auto-approved and executing; `finished` returned, or was denied; `cancelled`
+                means the task ended while it waited or ran.
+            decision:
+              allOf: [{ $ref: "#/components/schemas/ApprovalDecision" }]
+              nullable: true
+              description: Null until someone decides.
+            decided_by: { type: string, nullable: true }
+            expires_at: { type: string, format: date-time, nullable: true }
+            output: { type: string, nullable: true, description: Set once finished. }
+            is_error: { type: boolean, nullable: true }
+            duration_ms: { type: integer, format: int64, minimum: 0, nullable: true }
+
+    TaskEndedEntry:
+      allOf:
+        - $ref: "#/components/schemas/EntryEnvelope"
+        - type: object
+          required: [outcome, usage]
+          properties:
+            outcome:
+              type: string
+              enum: [completed, failed]
+            result: { type: string, nullable: true, description: "completed: the agent's final answer." }
+            code:
+              type: string
+              nullable: true
+              enum: [budget_exceeded, cancelled, model_error, max_turns, internal]
+              description: "failed: why. Branch on this; message is not stable."
+            message: { type: string, nullable: true }
+            usage: { $ref: "#/components/schemas/Usage" }
+
+    PendingApproval:
+      type: object
+      required: [task_id, call_id, tool_name, input]
+      properties:
+        task_id: { type: string }
+        call_id: { type: string }
+        tool_name: { type: string }
+        input: { type: object, additionalProperties: true }
+        expires_at: { type: string, format: date-time, nullable: true }
+
+    PendingSteer:
+      type: object
+      required: [task_id, steer_id, message]
+      properties:
+        task_id: { type: string }
+        steer_id: { type: string }
+        message: { type: string }
 
     # ---- Human in the loop ----
     ApprovalDecision:
