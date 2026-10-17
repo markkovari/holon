@@ -86,6 +86,10 @@ impl ParkStore for MemParkStore {
         Ok(())
     }
 
+    async fn list_tickets(&self) -> Result<Vec<TicketId>> {
+        Ok(self.s.lock().unwrap().tickets.keys().cloned().collect())
+    }
+
     async fn list_session(&self, session: &str) -> Result<Vec<TicketId>> {
         Ok(self
             .s

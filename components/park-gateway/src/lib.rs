@@ -115,6 +115,10 @@ fn route(func: &str, body: &[u8]) -> Result<Answer, Answer> {
             let r: wire::Ticket = parse(body)?;
             answer(store::take_ready(&r.ticket))
         }
+        "interrupt" => {
+            let r: wire::InterruptRequest = parse(body)?;
+            answer(store::interrupt(&r.ticket, &r.reason, &r.by.to_wit()))
+        }
         "cancel" => {
             let r: wire::CancelRequest = parse(body)?;
             answer(store::cancel(&r.ticket, &r.by.to_wit()))

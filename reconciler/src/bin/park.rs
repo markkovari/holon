@@ -14,7 +14,8 @@
 //! ## Routes
 //!
 //! `POST /v1/<wit function>` (`park`, `wake`, `pending`, `take-ready`,
-//! `cancel`, `oplog`), JSON in and out as `holon_park::wire` defines, errors as
+//! `interrupt`, `cancel`, `oplog`), JSON in and out as `holon_park::wire`
+//! defines, errors as
 //! `{error, detail, message}` with a status by kind (`wire::status_of`).
 //! `GET /health` is open; everything else takes `Authorization: Bearer
 //! <token>` when `--token`/`--token-file` is set.
@@ -26,7 +27,9 @@
 //! this was a fresh transition (`WakeOutcome::freshly_woken`), never on an
 //! idempotent redelivery. If the publish itself fails, `wake` still answers
 //! `200`: the record is the truth, the stream is a nudge so a resumer does not
-//! have to poll `pending`.
+//! have to poll `pending`. `interrupt` works the same way
+//! (`InterruptOutcome::fresh`), and a nudge that was lost is found by
+//! `comp-resume`'s recovery pass (ADR-0106).
 //!
 //!   comp-park --addr 127.0.0.1:8015 --nats-url nats://127.0.0.1:4222
 
@@ -44,7 +47,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use holon_park::error::ParkError;
-use holon_park::model::CallResult;
+use holon_park::model::Resolution;
 use holon_park::nats::{self, NatsParkStore, WakeMessage, WakeStream};
 use holon_park::wire;
 use holon_park::{mem_engine, Engine, MemEngine};
@@ -137,6 +140,17 @@ macro_rules! on {
 }
 
 impl Daemon {
+    /// Tell a resumer there is something to take. The record is already
+    /// durable, so a failed nudge is logged, not returned: a resumer that
+    /// misses it still finds the ticket (`pending`, or `comp-resume`'s pass).
+    async fn announce(&self, msg: &WakeMessage) {
+        if let Backend::Live(_, wake) = &self.backend {
+            if let Err(e) = wake.publish(msg).await {
+                eprintln!("comp-park: PARK_WAKE publish for {}: {e:#}", msg.ticket);
+            }
+        }
+    }
+
     /// One WIT function, by name, over a JSON body.
     async fn dispatch(&self, func: &str, body: &[u8]) -> Answer {
         match self.dispatch_inner(func, body).await {
@@ -155,24 +169,13 @@ impl Daemon {
                 match on!(self, |e| e.wake(&req.correlation, req.answer, now_ms()).await) {
                     Ok(outcome) => {
                         if outcome.freshly_woken {
-                            if let Backend::Live(_, wake) = &self.backend {
-                                let msg = WakeMessage {
-                                    session: outcome.session.clone(),
-                                    ticket: outcome.ticket.clone(),
-                                };
-                                if let Err(e) = wake.publish(&msg).await {
-                                    // The record is already durable; a failed nudge is not a failed `wake`: a resumer that misses it
-                                    // still finds the ticket via `pending`, later.
-                                    eprintln!(
-                                        "comp-park: PARK_WAKE publish for {}: {e:#}",
-                                        outcome.ticket
-                                    );
-                                }
-                            }
-                            (200, json_of(&outcome.ticket))
-                        } else {
-                            (200, json_of(&outcome.ticket))
+                            self.announce(&WakeMessage::resolved(
+                                &outcome.session,
+                                &outcome.ticket,
+                            ))
+                            .await;
                         }
+                        (200, json_of(&outcome.ticket))
                     }
                     Err(e) => refusal(&e),
                 }
@@ -183,7 +186,23 @@ impl Daemon {
             }
             "take-ready" => {
                 let req: wire::Ticket = parse(body)?;
-                answer::<CallResult>(on!(self, |e| e.take_ready(&req.ticket, now_ms()).await))
+                answer::<Resolution>(on!(self, |e| e.take_ready(&req.ticket, now_ms()).await))
+            }
+            "interrupt" => {
+                let req: wire::InterruptRequest = parse(body)?;
+                match on!(self, |e| e.interrupt(&req.ticket, &req.reason, req.by, now_ms()).await) {
+                    Ok(outcome) => {
+                        if outcome.fresh {
+                            self.announce(&WakeMessage::resolved(
+                                &outcome.session,
+                                &outcome.ticket,
+                            ))
+                            .await;
+                        }
+                        (200, json_of(&outcome.status))
+                    }
+                    Err(e) => refusal(&e),
+                }
             }
             "cancel" => {
                 let req: wire::CancelRequest = parse(body)?;

@@ -10,11 +10,19 @@
 //! compose: this crate's only dependency is JetStream.
 #![cfg(feature = "native")]
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use holon_park::engine::Engine;
-use holon_park::model::{Agent, CallResult, OutboundCall, ParkOutcome, TurnStatus};
-use holon_park::nats::{NatsParkStore, WakeMessage, WakeStream};
+use holon_park::model::{
+    Agent, CallResult, OutboundCall, ParkOutcome, ReplayPolicy, Resolution, TicketId, TurnStatus,
+    WakeKind, WakeMessage,
+};
+use holon_park::nats::{self, NatsParkStore, WakeStream};
+use holon_park::recover::{RecoveryAction, RecoveryPolicy};
+use holon_park::resume::{run, Delivery, Event, RunConfig, Sink, SinkReply};
 
 fn agent(id: &str) -> Agent {
     Agent::named(id)
@@ -26,6 +34,7 @@ fn call(correlation: &str) -> OutboundCall {
         description: "live test call".into(),
         deadline: None,
         poll: None,
+        replay: ReplayPolicy::Unsafe,
     }
 }
 
@@ -37,10 +46,13 @@ fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
 }
 
-/// This run's own bucket/stream prefix, so parallel `cargo test` runs (and
-/// reruns against a persistent NATS) never see each other's tickets.
+/// This test's own bucket/stream prefix, so parallel `cargo test` threads (and
+/// reruns against a persistent NATS) never see each other's tickets. The counter
+/// is what makes it unique: two tests starting in the same millisecond used to
+/// share a bucket, and then each other's correlations.
 fn tag() -> String {
-    format!("live-{}-{}", std::process::id(), now_ms())
+    static N: AtomicU64 = AtomicU64::new(0);
+    format!("live-{}-{}-{}", std::process::id(), now_ms(), N.fetch_add(1, Ordering::SeqCst))
 }
 
 async fn make(name: &str) -> Option<Engine<NatsParkStore>> {
@@ -69,7 +81,9 @@ async fn park_then_wake_then_take_ready_over_real_nats() {
     assert_eq!(woken.ticket, p.ticket);
     assert!(woken.freshly_woken);
 
-    let r = e.take_ready(&p.ticket, now_ms()).await.unwrap();
+    let Resolution::Answered(r) = e.take_ready(&p.ticket, now_ms()).await.unwrap() else {
+        panic!("expected an answer")
+    };
     assert!(r.ok);
     assert_eq!(r.body, b"42");
 
@@ -127,7 +141,7 @@ async fn wake_stream_round_trips_through_a_durable_pull_consumer() {
     let name = format!("PARK_WAKE_TEST_{}", tag().replace(['-', '.'], "_"));
     let wake = WakeStream::open(&js, &name).await.expect("open wake stream");
 
-    let msg = WakeMessage { session: "s1".into(), ticket: "t1".into() };
+    let msg = WakeMessage::resolved("s1", "t1");
     wake.publish(&msg).await.expect("publish");
 
     let stream = js.get_stream(&name).await.expect("get stream");
@@ -160,4 +174,441 @@ async fn wake_stream_round_trips_through_a_durable_pull_consumer() {
         info.state.messages, 0,
         "the acked message must be removed under WorkQueue retention"
     );
+}
+
+// ---- ADR-0106: recovery and the resumer, over real JetStream -------------------
+
+fn url() -> Option<String> {
+    std::env::var("HOLON_PARK_NATS_URL").ok()
+}
+
+macro_rules! need_nats {
+    ($name:literal) => {
+        match url() {
+            Some(u) => u,
+            None => {
+                eprintln!(
+                    "SKIPPED {}: set HOLON_PARK_NATS_URL to run it against a real NATS JetStream",
+                    $name
+                );
+                return;
+            }
+        }
+    };
+}
+
+struct Stack {
+    engine: Arc<Engine<NatsParkStore>>,
+    wake: Arc<WakeStream>,
+    session: String,
+    stream: String,
+}
+
+async fn stack(url: &str) -> Stack {
+    let t = tag();
+    let stream = format!("PARK_WAKE_{}", t.replace(['-', '.'], "_"));
+    let (store, wake) =
+        nats::connect(url, &format!("holon-park-test-{t}"), &stream).await.expect("connect");
+    Stack {
+        engine: Arc::new(Engine::new(store)),
+        wake: Arc::new(wake),
+        session: format!("s-{t}"),
+        stream,
+    }
+}
+
+fn call_with(correlation: &str, replay: ReplayPolicy, deadline: Option<u64>) -> OutboundCall {
+    OutboundCall {
+        correlation: correlation.into(),
+        description: format!("live {correlation}"),
+        deadline,
+        poll: None,
+        replay,
+    }
+}
+
+/// What a sink saw, and what to answer next (then `Delivered`).
+#[derive(Default)]
+struct Rec {
+    seen: Mutex<Vec<Delivery>>,
+    script: Mutex<VecDeque<SinkReply>>,
+}
+
+impl Rec {
+    fn seen(&self) -> Vec<Delivery> {
+        self.seen.lock().unwrap().clone()
+    }
+}
+
+impl Sink for Rec {
+    async fn deliver(&self, d: &Delivery) -> SinkReply {
+        self.seen.lock().unwrap().push(d.clone());
+        self.script.lock().unwrap().pop_front().unwrap_or(SinkReply::Delivered)
+    }
+}
+
+async fn until(what: &str, secs: u64, mut ok: impl FnMut() -> bool) {
+    let t0 = Instant::now();
+    while !ok() {
+        assert!(t0.elapsed() < Duration::from_secs(secs), "timed out waiting for {what}");
+        tokio::time::sleep(Duration::from_millis(40)).await;
+    }
+}
+
+async fn status_of(s: &Stack, ticket: &TicketId) -> TurnStatus {
+    let log = s.engine.oplog(&s.session, None, 100, now_ms()).await.unwrap();
+    log.into_iter().find(|e| &e.ticket == ticket).expect("ticket in the oplog").status
+}
+
+fn fast_policy() -> RecoveryPolicy {
+    RecoveryPolicy {
+        deadline_grace_ms: 0,
+        max_redispatches: 2,
+        retry_after_ms: 400,
+        reannounce_after_ms: 1_000,
+    }
+}
+
+fn cfg(consumer: &str) -> RunConfig {
+    RunConfig {
+        consumer: consumer.into(),
+        ack_wait: Duration::from_secs(2),
+        concurrency: 2,
+        sweep_every: Duration::from_millis(150),
+        policy: fast_policy(),
+        ..Default::default()
+    }
+}
+
+/// `comp-park`'s `wake` handler, minus HTTP: move the ticket, then announce it.
+async fn wake_and_announce(s: &Stack, correlation: &str, body: &str) {
+    let w = s.engine.wake(correlation, result(true, body), now_ms()).await.unwrap();
+    assert!(w.freshly_woken);
+    s.wake.publish(&WakeMessage::resolved(&w.session, &w.ticket)).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_recovery_pass_over_real_nats_interrupts_an_unsafe_call_and_leaves_the_rest() {
+    let url =
+        need_nats!("a_recovery_pass_over_real_nats_interrupts_an_unsafe_call_and_leaves_the_rest");
+    let s = stack(&url).await;
+    let now = now_ms();
+    let u = s
+        .engine
+        .park(&s.session, call_with("u", ReplayPolicy::Unsafe, Some(now - 1)), agent("a1"), now)
+        .await
+        .unwrap();
+    let a = s
+        .engine
+        .park(&s.session, call_with("a", ReplayPolicy::Abandon, Some(now - 1)), agent("a1"), now)
+        .await
+        .unwrap();
+    let later = s
+        .engine
+        .park(
+            &s.session,
+            call_with("later", ReplayPolicy::Unsafe, Some(now + 3_600_000)),
+            agent("a1"),
+            now,
+        )
+        .await
+        .unwrap();
+    let none = s
+        .engine
+        .park(&s.session, call_with("none", ReplayPolicy::Unsafe, None), agent("a1"), now)
+        .await
+        .unwrap();
+
+    // The bucket is this test's own, so a scan finds exactly these four.
+    let done = s.engine.recover(&agent("sweeper"), &fast_policy(), now_ms()).await.unwrap();
+    let mut got: Vec<_> = done.iter().map(|d| (d.ticket.clone(), d.action.clone())).collect();
+    got.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut want = vec![
+        (u.ticket.clone(), RecoveryAction::Interrupted),
+        (a.ticket.clone(), RecoveryAction::Abandoned),
+    ];
+    want.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(got, want);
+
+    assert_eq!(status_of(&s, &u.ticket).await, TurnStatus::Interrupted);
+    assert_eq!(status_of(&s, &a.ticket).await, TurnStatus::Cancelled);
+    assert_eq!(status_of(&s, &later.ticket).await, TurnStatus::Parked);
+    assert_eq!(status_of(&s, &none.ticket).await, TurnStatus::Parked);
+    assert!(matches!(
+        s.engine.take_ready(&u.ticket, now_ms()).await.unwrap(),
+        Resolution::Interrupted(_)
+    ));
+
+    // A second pass has nothing left to do.
+    assert!(s
+        .engine
+        .recover(&agent("sweeper"), &fast_policy(), now_ms())
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn two_passes_at_once_over_real_nats_act_once_per_ticket() {
+    let url = need_nats!("two_passes_at_once_over_real_nats_act_once_per_ticket");
+    let s = stack(&url).await;
+    let now = now_ms();
+    for i in 0..12 {
+        let replay = if i % 2 == 0 { ReplayPolicy::Unsafe } else { ReplayPolicy::Safe };
+        s.engine
+            .park(&s.session, call_with(&format!("c{i}"), replay, Some(now - 1)), agent("a1"), now)
+            .await
+            .unwrap();
+    }
+    let mut passes = Vec::new();
+    for _ in 0..6 {
+        let e = s.engine.clone();
+        passes.push(tokio::spawn(async move {
+            e.recover(&agent("sweeper"), &fast_policy(), now_ms()).await.unwrap()
+        }));
+    }
+    let (mut interrupted, mut granted) = (0, 0);
+    for p in passes {
+        for r in p.await.unwrap() {
+            match r.action {
+                RecoveryAction::Interrupted => interrupted += 1,
+                RecoveryAction::Redispatch { attempt: 1 } => granted += 1,
+                other => panic!("{other:?}"),
+            }
+        }
+    }
+    assert_eq!(
+        (interrupted, granted),
+        (6, 6),
+        "each ticket acted on exactly once between six passes"
+    );
+}
+
+#[tokio::test]
+async fn announcing_one_thing_twice_queues_it_once() {
+    let url = need_nats!("announcing_one_thing_twice_queues_it_once");
+    let s = stack(&url).await;
+    let js = async_nats::jetstream::new(async_nats::connect(&url).await.unwrap());
+    let msg = WakeMessage::resolved("s1", "t1");
+
+    s.wake.publish(&msg).await.unwrap();
+    s.wake.publish(&msg).await.unwrap(); // a recovery pass and a wake, both announcing the same answer
+    s.wake.publish(&WakeMessage::redispatch("s1", "t1", 1)).await.unwrap();
+    s.wake.publish(&WakeMessage::redispatch("s1", "t1", 2)).await.unwrap();
+    s.wake.publish(&WakeMessage::redispatch("s1", "t1", 2)).await.unwrap();
+
+    let info = js.get_stream(&s.stream).await.unwrap().get_info().await.unwrap();
+    assert_eq!(info.state.messages, 3, "resolved once, and each re-dispatch attempt once");
+}
+
+#[tokio::test]
+async fn a_resumer_delivers_an_answer_and_closes_the_ticket() {
+    let url = need_nats!("a_resumer_delivers_an_answer_and_closes_the_ticket");
+    let s = stack(&url).await;
+    let sink = Arc::new(Rec::default());
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let r = tokio::spawn(run(s.engine.clone(), s.wake.clone(), sink.clone(), cfg("t-resumer"), rx));
+
+    let p = s.engine.park(&s.session, call("req-1"), agent("a1"), now_ms()).await.unwrap();
+    wake_and_announce(&s, "req-1", "42").await;
+
+    until("the sink to be handed the answer", 20, || !sink.seen().is_empty()).await;
+    let d = sink.seen()[0].clone();
+    assert_eq!((d.ticket.as_str(), d.correlation.as_str()), (p.ticket.as_str(), "req-1"));
+    assert_eq!(d.event, Event::Answered { answer: result(true, "42") });
+    for _ in 0..100 {
+        if status_of(&s, &p.ticket).await == TurnStatus::Resumed {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(40)).await;
+    }
+    assert_eq!(status_of(&s, &p.ticket).await, TurnStatus::Resumed);
+
+    stop.send(true).unwrap();
+    r.await.unwrap().unwrap();
+    assert_eq!(sink.seen().len(), 1, "once, not once per announcement");
+}
+
+#[tokio::test]
+async fn a_resumer_tells_the_turn_about_a_call_nobody_answered_and_retries_a_busy_sink() {
+    let url =
+        need_nats!("a_resumer_tells_the_turn_about_a_call_nobody_answered_and_retries_a_busy_sink");
+    let s = stack(&url).await;
+    let sink = Arc::new(Rec::default());
+    // The sink is busy for the first delivery: the message must come back.
+    sink.script.lock().unwrap().push_back(SinkReply::Retry("busy".into()));
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let r = tokio::spawn(run(s.engine.clone(), s.wake.clone(), sink.clone(), cfg("t-resumer"), rx));
+
+    let now = now_ms();
+    let p = s
+        .engine
+        .park(
+            &s.session,
+            call_with("pay-1", ReplayPolicy::Unsafe, Some(now + 300)),
+            agent("a1"),
+            now,
+        )
+        .await
+        .unwrap();
+
+    until("the turn to be told twice (busy, then taken)", 30, || sink.seen().len() >= 2).await;
+    let seen = sink.seen();
+    assert!(matches!(seen[0].event, Event::Interrupted { .. }), "{:?}", seen[0]);
+    assert_eq!(
+        seen[0].idempotency_key(),
+        seen[1].idempotency_key(),
+        "a redelivery is the same delivery"
+    );
+    assert_eq!(seen[1].ticket, p.ticket);
+    for _ in 0..100 {
+        if status_of(&s, &p.ticket).await == TurnStatus::Resumed {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(40)).await;
+    }
+    assert_eq!(status_of(&s, &p.ticket).await, TurnStatus::Resumed);
+
+    stop.send(true).unwrap();
+    r.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_safe_call_is_redispatched_twice_then_the_turn_is_told_it_was_interrupted() {
+    let url =
+        need_nats!("a_safe_call_is_redispatched_twice_then_the_turn_is_told_it_was_interrupted");
+    let s = stack(&url).await;
+    let sink = Arc::new(Rec::default());
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let r = tokio::spawn(run(s.engine.clone(), s.wake.clone(), sink.clone(), cfg("t-resumer"), rx));
+
+    let now = now_ms();
+    s.engine
+        .park(
+            &s.session,
+            call_with("read-1", ReplayPolicy::Safe, Some(now + 200)),
+            agent("a1"),
+            now,
+        )
+        .await
+        .unwrap();
+
+    until("two re-dispatches and an interruption", 30, || sink.seen().len() >= 3).await;
+    let kinds: Vec<String> = sink
+        .seen()
+        .iter()
+        .map(|d| match &d.event {
+            Event::Redispatch { attempt, description } => {
+                format!("redispatch {attempt} {description}")
+            }
+            Event::Interrupted { interruption } => {
+                format!("interrupted: {}", interruption.reason.contains("2 re-dispatches"))
+            }
+            Event::Answered { .. } => "answered".into(),
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        ["redispatch 1 live read-1", "redispatch 2 live read-1", "interrupted: true"]
+    );
+
+    stop.send(true).unwrap();
+    r.await.unwrap().unwrap();
+}
+
+/// The resumer is killed after its sink was handed the answer and before it
+/// closed the ticket. A second resumer picks the message up when the server
+/// gives up waiting for the first, and the sink is handed the same delivery.
+#[tokio::test]
+async fn a_resumer_killed_mid_delivery_is_replaced_without_losing_the_answer() {
+    let url = need_nats!("a_resumer_killed_mid_delivery_is_replaced_without_losing_the_answer");
+    let s = stack(&url).await;
+
+    /// Accepts the delivery in its own words only once released; until then it
+    /// says nothing, which is what a sink looks like to a resumer that dies.
+    struct Hangs(Mutex<Vec<Delivery>>);
+    impl Sink for Hangs {
+        async fn deliver(&self, d: &Delivery) -> SinkReply {
+            self.0.lock().unwrap().push(d.clone());
+            std::future::pending::<()>().await;
+            SinkReply::Delivered
+        }
+    }
+    let hung = Arc::new(Hangs(Mutex::new(Vec::new())));
+
+    let p = s.engine.park(&s.session, call("req-1"), agent("a1"), now_ms()).await.unwrap();
+    wake_and_announce(&s, "req-1", "42").await;
+
+    // Resumer one lives on a runtime of its own, so it can be killed outright.
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (_stop, rx) = tokio::sync::watch::channel(false);
+    rt.spawn(run(s.engine.clone(), s.wake.clone(), hung.clone(), cfg("t-resumer"), rx));
+    until("resumer one to be mid-delivery", 20, || !hung.0.lock().unwrap().is_empty()).await;
+    rt.shutdown_background(); // every task, and its NATS connection, gone at once
+    assert_eq!(status_of(&s, &p.ticket).await, TurnStatus::Ready, "nothing was closed");
+
+    // Resumer two: same consumer name, a sink that answers.
+    let sink = Arc::new(Rec::default());
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let r = tokio::spawn(run(s.engine.clone(), s.wake.clone(), sink.clone(), cfg("t-resumer"), rx));
+
+    until("the answer to reach the replacement", 30, || !sink.seen().is_empty()).await;
+    assert_eq!(sink.seen()[0].idempotency_key(), hung.0.lock().unwrap()[0].idempotency_key());
+    assert_eq!(sink.seen()[0].event, Event::Answered { answer: result(true, "42") });
+    for _ in 0..100 {
+        if status_of(&s, &p.ticket).await == TurnStatus::Resumed {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(40)).await;
+    }
+    assert_eq!(status_of(&s, &p.ticket).await, TurnStatus::Resumed);
+
+    stop.send(true).unwrap();
+    r.await.unwrap().unwrap();
+}
+
+/// `PARK_WAKE` loses a nudge (here: it is never published). The ticket is
+/// `ready` and nobody was told; the recovery pass finds it.
+#[tokio::test]
+async fn an_answer_whose_announcement_was_lost_is_found_by_the_sweep() {
+    let url = need_nats!("an_answer_whose_announcement_was_lost_is_found_by_the_sweep");
+    let s = stack(&url).await;
+    let sink = Arc::new(Rec::default());
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let r = tokio::spawn(run(s.engine.clone(), s.wake.clone(), sink.clone(), cfg("t-resumer"), rx));
+
+    let p = s.engine.park(&s.session, call("req-1"), agent("a1"), now_ms()).await.unwrap();
+    // `comp-park`'s wake, with its publish failing: the record is durable, the nudge is not.
+    s.engine.wake("req-1", result(true, "42"), now_ms()).await.unwrap();
+
+    until("the sweep to re-announce it (reannounce_after_ms = 1s)", 30, || !sink.seen().is_empty())
+        .await;
+    assert_eq!(sink.seen()[0].ticket, p.ticket);
+    assert_eq!(sink.seen()[0].event, Event::Answered { answer: result(true, "42") });
+
+    stop.send(true).unwrap();
+    r.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_message_published_by_the_old_comp_park_is_still_understood() {
+    let url = need_nats!("a_message_published_by_the_old_comp_park_is_still_understood");
+    let s = stack(&url).await;
+    let sink = Arc::new(Rec::default());
+    let p = s.engine.park(&s.session, call("req-1"), agent("a1"), now_ms()).await.unwrap();
+    s.engine.wake("req-1", result(true, "42"), now_ms()).await.unwrap();
+
+    // Before ADR-0106 a wake message was `{session, ticket}` and nothing else.
+    let js = async_nats::jetstream::new(async_nats::connect(&url).await.unwrap());
+    let old = serde_json::json!({"session": s.session, "ticket": p.ticket}).to_string();
+    js.publish(format!("{}.ticket", s.stream), old.into()).await.unwrap().await.unwrap();
+
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let r = tokio::spawn(run(s.engine.clone(), s.wake.clone(), sink.clone(), cfg("t-resumer"), rx));
+    until("the old-format message to be delivered", 20, || !sink.seen().is_empty()).await;
+    assert!(matches!(sink.seen()[0].event, Event::Answered { .. }));
+    assert_eq!(WakeKind::default(), WakeKind::Resolved);
+
+    stop.send(true).unwrap();
+    r.await.unwrap().unwrap();
 }
