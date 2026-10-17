@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use selfhost::{
-    check, check_goald, port_of, render_daemon_unit, render_env, render_goald_launchd,
-    render_goald_unit, render_ingress_route, render_relay_unit, render_route, render_unit,
-    write_secret_file, GoaldFormat, GoaldSpec, Layout, Router, Spec,
+    check, check_goald, daemon_unit_name, port_of, render_daemon_unit, render_env,
+    render_goald_launchd, render_goald_unit, render_ingress_route, render_relay_unit, render_route,
+    render_unit, write_secret_file, GoaldFormat, GoaldSpec, Layout, Router, Spec,
 };
 
 #[derive(Parser)]
@@ -560,7 +560,7 @@ fn main() -> Result<()> {
             // why not one shared runner for all twelve.
             for d in &spec.daemons {
                 std::fs::write(
-                    dir.join(format!("comp-{}.service", d.name)),
+                    dir.join(daemon_unit_name(&spec, d)),
                     render_daemon_unit(&spec, d, &layout),
                 )?;
                 if let Some(token) = &d.token {
@@ -583,7 +583,10 @@ fn main() -> Result<()> {
                 eprintln!("  + relay: POST {} every {}s", t.pump, t.interval);
             }
             for d in &spec.daemons {
-                eprintln!("  + daemon: comp-{} on {}", d.name, d.addr);
+                match &d.addr {
+                    Some(addr) => eprintln!("  + daemon: comp-{} on {}", d.name, addr),
+                    None => eprintln!("  + worker: comp-{} (listens on nothing)", d.name),
+                }
             }
         }
         Cmd::Node(NodeCmd::Validate { specs }) => {

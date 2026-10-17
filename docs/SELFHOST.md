@@ -96,6 +96,27 @@ reasoning as the relay. The app's own unit gains `--egress <addr>` per daemon an
 `--allow-private-egress` — comp-host is default-deny outbound and refuses loopback
 otherwise, so the component could not reach the daemon started beside it.
 
+**A daemon with no `addr` is a worker.** `comp-resume` (ADR-0106) pulls from NATS and pushes
+to a sink, and listens on nothing: no component dials it. Leave `addr` out and it is rendered
+without `--addr`, has no `<name>-url` for `check()` to agree with and no token to require
+(`check()` refuses both: a token on something nothing connects to is a spec that means
+something the unit cannot do), and the app's own unit is given no `--egress` to it. It still
+binds to the app's lifecycle and gets the same hardening. Tier 4 gives it a Deployment and no
+Service. `apps/park.toml` runs its resumer this way, beside `comp-park`:
+
+```toml
+[[daemon]]
+name = "resume"                          # comp-resume: no addr, so a worker
+extra_args = ["--nats-url nats://127.0.0.1:4222", "--sink-url http://127.0.0.1:8016/park/deliver"]
+```
+
+**One unit, one file.** A spec renders `comp-<app>.service`, `comp-<app>-relay.service` if it
+has `[triggers]`, and `comp-<daemon>.service` per daemon — except a daemon named like its own
+app (`park` and `comp-park`, `vcs` and `comp-vcs`), which is `comp-<name>-daemon.service`. Both
+used to be `comp-<name>.service`, so the daemon's text was written over the app's: nothing was
+left to serve the app, and the daemon's unit was `BindsTo` itself. `check()` now refuses any
+spec whose units would share a file, and a test reads every committed spec.
+
 **Tier 4 (wasmCloud 2.x / Kubernetes) has the same wiring now, a Deployment in
 place of a systemd unit.** `holon wadm render --api v2` emits one further
 `Deployment` + `Service` per `[[daemon]]`, built from
@@ -591,7 +612,7 @@ the pure-compute ones automatically and prints which.
 |---|---|
 | `apps/<name>.toml` | the app spec — the only file you write |
 | `cargo xtask list` | every app spec in `apps/` — written by hand; the generator that derived them from Justfile recipes went with the Justfile |
-| `cli/src/selfhost.rs` | tier-1 renderer, pure and tested (46 tests, incl. ones that check the flags it emits actually exist on `comp-host` and on each of the fourteen native daemons). Reached as `holon node render\|validate\|port\|ingress\|render-goald` |
+| `cli/src/selfhost.rs` | tier-1 renderer, pure and tested (56 tests, incl. ones that check the flags it emits actually exist on `comp-host`, on each of the fourteen native daemons and on `comp-park` and `comp-resume` as `apps/park.toml` runs them). Reached as `holon node render\|validate\|port\|ingress\|render-goald` |
 | `cli/src/fleet.rs` | the lattice-lane renderer. Reached as `holon fleet render\|validate` |
 | `host/` | `comp-host` — the runtime for tiers 1 and 2 |
 | `cli/src/wadm.rs` | the wasmCloud renderer (lanes 3 and 4): fused or linked, v1 OAM or a v2 `Workload`. Reached as `holon wadm render\|host` |

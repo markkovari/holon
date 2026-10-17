@@ -156,11 +156,15 @@ turn, which owns the payload, sends it again.
   (checkpointing the conversation per step, not at the end of a task) and its own
   ADR. This ADR delivers the contract such a turn would use and a resumer that
   serves it.
-- **`comp-resume` is not in `apps/park.toml`.** The selfhost `[[daemon]]` kind
-  always renders `--addr` and checks it against a `<name>-url` config key, and
-  `comp-resume` listens on nothing. A worker kind is a change to
-  [`cli/src/selfhost.rs`](../../cli/src/selfhost.rs); until then it runs under any
-  supervisor as `comp-resume --sink-url …`.
+- **`comp-resume` has no sink to deliver to yet.** `apps/park.toml` runs it, as a
+  *worker*: a `[[daemon]]` with no `addr`, which [`cli/src/selfhost.rs`](../../cli/src/selfhost.rs)
+  renders without `--addr` and without a `<name>-url` to agree with, because it listens on
+  nothing ([SELFHOST.md](../SELFHOST.md)). `--sink-url` is required and nothing in this
+  repository serves it, since `comp-agentd` parks nothing (the next bullet), so the spec points
+  at where `comp-agentd` would serve `/park/deliver`. Until something answers there a delivery
+  is retried with backoff and the ticket stays `ready`, which a turn that polls `pending` still
+  finds; the recovery pass, which needs no sink, runs regardless. Run by hand from the rendered
+  units: an answered call delivered, and an overdue one interrupted by the pass.
 - **A recovery pass reads every ticket.** `recover` lists the bucket's keys and
   reads each record, and nothing deletes a ticket, so a pass costs what the bucket
   holds. Fine for thousands; an index of open tickets, or of deadlines, is the
