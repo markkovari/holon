@@ -55,7 +55,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, ImageError> {
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // A shared secret, if the deployment set one (see `comp_reconciler::daemon_auth` for why loopback binding alone is not a boundary). Absent means the daemon runs with no --token.
+    // A shared secret, if the deployment set one (see `comp_daemon_kit` for why loopback binding alone is not a boundary). Absent means the daemon runs with no --token.
     if let Ok(Some(token)) = config::get("imageopt-token") {
         if !token.is_empty() {
             let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);

@@ -12,8 +12,6 @@ pub mod compose;
 /// The interface two parts of a decomposed goal build against (ADR-0086).
 pub mod contract;
 pub mod cost;
-/// Shared-secret auth for the twelve ADR-0095 daemons' loopback HTTP.
-pub mod daemon_auth;
 /// Starting a fleet, driving it, reading it.
 ///
 /// Library, not test-only: the benchmark matrix needs the same fleet start as the tests, so its numbers stay comparable.

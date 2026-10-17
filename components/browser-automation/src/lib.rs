@@ -75,7 +75,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, BrowserError> {
     let headers = Fields::new();
     let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
     // A shared secret, if the deployment set one — see
-    // `comp_reconciler::daemon_auth`'s own doc for why loopback
+    // `comp_daemon_kit`'s own doc for why loopback
     // binding alone is not a boundary. Absent means the daemon was
     // started with no --token, so there is nothing to send.
     if let Ok(Some(token)) = config::get("browser-token") {

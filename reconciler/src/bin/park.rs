@@ -289,7 +289,7 @@ async fn health(State(d): State<Shared>) -> Json<Value> {
 fn app(d: Shared, token: Option<String>) -> Router {
     let api = Router::new()
         .route("/v1/{func}", post(call))
-        .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
+        .layer(axum::middleware::from_fn(comp_daemon_kit::require_token))
         .layer(axum::Extension(std::sync::Arc::new(token)))
         .with_state(d.clone());
     Router::new().route("/health", get(health)).with_state(d).merge(api)
@@ -298,9 +298,8 @@ fn app(d: Shared, token: Option<String>) -> Router {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token =
-        comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-park", &token);
+    let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
+    comp_daemon_kit::warn_if_unauthenticated("comp-park", &token);
 
     let backend = if args.memory {
         eprintln!("comp-park: --memory: nothing is durable, no PARK_WAKE");
