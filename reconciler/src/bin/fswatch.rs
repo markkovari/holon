@@ -53,7 +53,7 @@ use serde_json::{json, Value};
 struct Args {
     /// Shared secret a caller must send as `Authorization: Bearer
     /// <token>`. Loopback binding alone is not a boundary — see
-    /// `comp_reconciler::daemon_auth`'s own doc for why. No token means
+    /// `comp_daemon_kit`'s own doc for why. No token means
     /// no check, logged loudly rather than silently.
     #[arg(long)]
     token: Option<String>,
@@ -195,9 +195,8 @@ async fn poll(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<PollReq>)
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token =
-        comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-fswatch", &token);
+    let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
+    comp_daemon_kit::warn_if_unauthenticated("comp-fswatch", &token);
     if args.allow_path.is_empty() {
         eprintln!(
             "comp-fswatch: no --allow-path given, so every request will be refused. \
@@ -215,7 +214,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/poll", post(poll))
         .with_state(state)
-        .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
+        .layer(axum::middleware::from_fn(comp_daemon_kit::require_token))
         .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     axum::serve(listener, app).await?;

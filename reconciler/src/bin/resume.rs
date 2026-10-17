@@ -169,8 +169,7 @@ async fn main() -> Result<()> {
         args.sink_timeout_secs
     );
     ensure!(args.concurrency > 0, "--concurrency must be at least 1");
-    let token =
-        comp_reconciler::daemon_auth::resolve_token(args.sink_token.clone(), args.sink_token_file);
+    let token = comp_daemon_kit::resolve_token(args.sink_token.clone(), args.sink_token_file);
 
     let (store, wake) = nats::connect_with_replicas(
         &args.nats_url,

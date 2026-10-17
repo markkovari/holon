@@ -23,7 +23,7 @@ daemon, store component, gateway — uses that definition.
 Every route is `POST /v1/<WIT function name>` with one JSON object, and answers
 the function's `ok` value as the JSON body with `200`. Every route except
 `GET /health` requires `Authorization: Bearer <token>` when the daemon has one
-(`comp_reconciler::daemon_auth`); a wrong or missing one is a bare `401`.
+(`comp_daemon_kit`); a wrong or missing one is a bare `401`.
 
 Records are the WIT's, field for field, kebab-case (`holon_vcs::model`): a
 variant is `{"case": payload}` or `"case"` when it has none
