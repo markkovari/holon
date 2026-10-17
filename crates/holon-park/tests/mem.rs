@@ -3,7 +3,9 @@
 
 use holon_park::error::ParkError;
 use holon_park::mem_engine;
-use holon_park::model::{Agent, CallResult, OutboundCall, ParkOutcome, TurnStatus};
+use holon_park::model::{
+    Agent, CallResult, OutboundCall, ParkOutcome, ReplayPolicy, Resolution, TurnStatus,
+};
 
 fn agent(id: &str) -> Agent {
     Agent::named(id)
@@ -15,6 +17,9 @@ fn call(correlation: &str) -> OutboundCall {
         description: "test call".into(),
         deadline: None,
         poll: None,
+        replay: ReplayPolicy::Unsafe,
+        parent: None,
+        group: None,
     }
 }
 
@@ -24,11 +29,23 @@ fn call_with_deadline(correlation: &str, deadline: u64) -> OutboundCall {
         description: "test call".into(),
         deadline: Some(deadline),
         poll: None,
+        replay: ReplayPolicy::Unsafe,
+        parent: None,
+        group: None,
     }
 }
 
 fn result(ok: bool, body: &str) -> CallResult {
     CallResult { ok, body: body.as_bytes().to_vec(), detail: None }
+}
+
+/// The answer a `take-ready` handed over; a test that expects one fails loudly
+/// on an interruption.
+fn answered(r: Resolution) -> CallResult {
+    match r {
+        Resolution::Answered(a) => a,
+        other => panic!("expected an answer, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -44,7 +61,7 @@ async fn park_then_wake_then_take_ready() {
     assert_eq!(woken.ticket, p.ticket);
     assert!(woken.freshly_woken);
 
-    let r = e.take_ready(&p.ticket, 1500).await.unwrap();
+    let r = answered(e.take_ready(&p.ticket, 1500).await.unwrap());
     assert!(r.ok);
     assert_eq!(r.body, b"42");
 
@@ -77,7 +94,7 @@ async fn reparking_after_the_answer_beat_it_reports_already_woken() {
     assert_eq!(retry.ticket, p.ticket);
     assert_eq!(retry.outcome, ParkOutcome::AlreadyWoken);
 
-    let r = e.take_ready(&retry.ticket, 1300).await.unwrap();
+    let r = answered(e.take_ready(&retry.ticket, 1300).await.unwrap());
     assert!(r.ok);
 }
 
@@ -97,7 +114,7 @@ async fn a_redelivered_wake_is_accepted_not_an_error() {
     assert_eq!(again.ticket, p.ticket);
     assert!(!again.freshly_woken, "a redelivery must not report a fresh wake");
 
-    let r = e.take_ready(&p.ticket, 1200).await.unwrap();
+    let r = answered(e.take_ready(&p.ticket, 1200).await.unwrap());
     assert!(r.ok);
 }
 
@@ -155,7 +172,7 @@ async fn a_ticket_past_its_deadline_reads_expired_and_stops_showing_as_pending()
         woken.freshly_woken,
         "a late but real wake against a still-`parked` (only read as expired) ticket must land"
     );
-    let r = e.take_ready(&p.ticket, 2700).await.unwrap();
+    let r = answered(e.take_ready(&p.ticket, 2700).await.unwrap());
     assert!(r.ok);
 }
 
@@ -223,4 +240,160 @@ async fn n_agents_racing_to_park_the_same_call_land_on_one_ticket() {
 
     let pending = e.pending(&"s1".into(), 2000).await.unwrap();
     assert_eq!(pending.len(), 1, "no duplicate record: {pending:?}");
+}
+
+// ---- interrupted (ADR-0106) --------------------------------------------------
+
+fn interruption(r: Resolution) -> holon_park::model::Interruption {
+    match r {
+        Resolution::Interrupted(i) => i,
+        other => panic!("expected an interruption, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn an_interrupted_call_is_taken_like_an_answer_and_says_why() {
+    let e = mem_engine();
+    let p = e.park(&"s1".into(), call("req-1"), agent("a1"), 1000).await.unwrap();
+
+    let out = e.interrupt(&p.ticket, "the box restarted", agent("sweeper"), 1500).await.unwrap();
+    assert!(out.fresh);
+    assert_eq!(out.status, TurnStatus::Interrupted);
+    assert_eq!(out.session, "s1");
+
+    // Surfaced as pending work, with when it was interrupted.
+    let pending = e.pending(&"s1".into(), 1600).await.unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].status, TurnStatus::Interrupted);
+    assert_eq!(pending[0].interrupted_at, Some(1500));
+
+    // Reading it does not consume it; taking it does, once.
+    let peeked = interruption(e.resolution(&p.ticket).await.unwrap());
+    assert_eq!(
+        (peeked.reason.as_str(), peeked.at, peeked.by.id.as_str()),
+        ("the box restarted", 1500, "sweeper")
+    );
+    let taken = interruption(e.take_ready(&p.ticket, 1700).await.unwrap());
+    assert_eq!(taken, peeked);
+
+    let err = e.take_ready(&p.ticket, 1800).await.unwrap_err();
+    assert!(matches!(err, ParkError::AlreadyClosed(_)), "{err:?}");
+    let log = e.oplog(&"s1".into(), None, 10, 1900).await.unwrap();
+    assert_eq!(log[0].status, TurnStatus::Resumed);
+}
+
+#[tokio::test]
+async fn interrupt_is_idempotent_and_keeps_the_first_reason() {
+    let e = mem_engine();
+    let p = e.park(&"s1".into(), call("req-1"), agent("a1"), 1000).await.unwrap();
+    assert!(e.interrupt(&p.ticket, "first", agent("a1"), 1100).await.unwrap().fresh);
+
+    let again = e.interrupt(&p.ticket, "second", agent("a2"), 1200).await.unwrap();
+    assert!(!again.fresh, "a repeat must not report a fresh interruption");
+    assert_eq!(again.status, TurnStatus::Interrupted);
+    assert_eq!(interruption(e.resolution(&p.ticket).await.unwrap()).reason, "first");
+}
+
+#[tokio::test]
+async fn an_answer_that_landed_first_beats_the_interrupt() {
+    let e = mem_engine();
+    let p = e.park(&"s1".into(), call("req-1"), agent("a1"), 1000).await.unwrap();
+    e.wake("req-1", result(true, "42"), 1100).await.unwrap();
+
+    let out = e.interrupt(&p.ticket, "too late", agent("a1"), 1200).await.unwrap();
+    assert!(!out.fresh);
+    assert_eq!(out.status, TurnStatus::Ready, "the answer is still the answer");
+    assert_eq!(answered(e.take_ready(&p.ticket, 1300).await.unwrap()).body, b"42");
+}
+
+#[tokio::test]
+async fn an_answer_after_an_interrupt_is_accepted_and_dropped() {
+    let e = mem_engine();
+    let p = e.park(&"s1".into(), call("req-1"), agent("a1"), 1000).await.unwrap();
+    e.interrupt(&p.ticket, "gave up", agent("a1"), 1100).await.unwrap();
+
+    let woken = e.wake("req-1", result(true, "late"), 1200).await.unwrap();
+    assert!(!woken.freshly_woken, "a late answer is not a fresh wake");
+    interruption(e.take_ready(&p.ticket, 1300).await.unwrap());
+}
+
+#[tokio::test]
+async fn interrupt_refuses_what_it_cannot_mean() {
+    let e = mem_engine();
+    let p = e.park(&"s1".into(), call("req-1"), agent("a1"), 1000).await.unwrap();
+
+    let err = e.interrupt(&p.ticket, "  ", agent("a1"), 1100).await.unwrap_err();
+    assert!(matches!(err, ParkError::Invalid(_)), "a reason is what the turn is told: {err:?}");
+    let err = e.interrupt(&"nope".to_string(), "why", agent("a1"), 1100).await.unwrap_err();
+    assert!(matches!(err, ParkError::NotFound(_)), "{err:?}");
+
+    e.cancel(&p.ticket, agent("a1"), 1200).await.unwrap();
+    let err = e.interrupt(&p.ticket, "why", agent("a1"), 1300).await.unwrap_err();
+    assert!(matches!(err, ParkError::AlreadyClosed(_)), "{err:?}");
+}
+
+#[tokio::test]
+async fn reparking_an_interrupted_call_says_a_resolution_is_waiting() {
+    let e = mem_engine();
+    let p = e.park(&"s1".into(), call("req-1"), agent("a1"), 1000).await.unwrap();
+    e.interrupt(&p.ticket, "gave up", agent("a1"), 1100).await.unwrap();
+
+    // A restarted turn re-runs its own park-then-dispatch: it must learn there is
+    // nothing to dispatch, and something to take.
+    let again = e.park(&"s1".into(), call("req-1"), agent("a1"), 1200).await.unwrap();
+    assert_eq!(again.ticket, p.ticket);
+    assert_eq!(again.outcome, ParkOutcome::AlreadyWoken);
+}
+
+#[tokio::test]
+async fn an_interrupted_ticket_can_still_be_cancelled() {
+    let e = mem_engine();
+    let p = e.park(&"s1".into(), call("req-1"), agent("a1"), 1000).await.unwrap();
+    e.interrupt(&p.ticket, "gave up", agent("a1"), 1100).await.unwrap();
+    e.cancel(&p.ticket, agent("a1"), 1200).await.unwrap();
+
+    assert!(e.pending(&"s1".into(), 1300).await.unwrap().is_empty());
+    let err = e.take_ready(&p.ticket, 1400).await.unwrap_err();
+    assert!(matches!(err, ParkError::AlreadyClosed(_)), "{err:?}");
+}
+
+#[tokio::test]
+async fn resolution_reads_without_consuming_and_refuses_what_take_ready_refuses() {
+    let e = mem_engine();
+    let p = e.park(&"s1".into(), call("req-1"), agent("a1"), 1000).await.unwrap();
+    let err = e.resolution(&p.ticket).await.unwrap_err();
+    assert!(matches!(err, ParkError::NotFound(_)), "nothing to read yet: {err:?}");
+
+    e.wake("req-1", result(true, "42"), 1100).await.unwrap();
+    assert_eq!(answered(e.resolution(&p.ticket).await.unwrap()).body, b"42");
+    assert_eq!(answered(e.resolution(&p.ticket).await.unwrap()).body, b"42", "reading twice");
+    assert_eq!(answered(e.take_ready(&p.ticket, 1200).await.unwrap()).body, b"42");
+
+    let err = e.resolution(&p.ticket).await.unwrap_err();
+    assert!(matches!(err, ParkError::AlreadyClosed(_)), "{err:?}");
+}
+
+#[tokio::test]
+async fn a_ticket_entry_carries_what_a_restarted_turn_needs_to_find_its_call() {
+    let e = mem_engine();
+    let mut c = call_with_deadline("job-7", 5000);
+    c.replay = ReplayPolicy::Safe;
+    e.park(&"s1".into(), c, agent("a1"), 1000).await.unwrap();
+
+    let entry = &e.pending(&"s1".into(), 1100).await.unwrap()[0];
+    assert_eq!(entry.correlation, "job-7");
+    assert_eq!(entry.replay, ReplayPolicy::Safe);
+    assert_eq!(entry.deadline, Some(5000));
+    assert_eq!(entry.redispatches, 0);
+    assert_eq!(entry.interrupted_at, None);
+}
+
+#[tokio::test]
+async fn a_call_that_never_says_how_it_replays_is_unsafe() {
+    // On the wire a caller may leave `replay` out; the cautious reading is the default.
+    let c: OutboundCall = serde_json::from_str(
+        r#"{"correlation":"c","description":"d","deadline":null,"poll":null}"#,
+    )
+    .unwrap();
+    assert_eq!(c.replay, ReplayPolicy::Unsafe);
 }

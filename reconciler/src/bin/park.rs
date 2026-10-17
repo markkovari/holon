@@ -14,7 +14,8 @@
 //! ## Routes
 //!
 //! `POST /v1/<wit function>` (`park`, `wake`, `pending`, `take-ready`,
-//! `cancel`, `oplog`), JSON in and out as `holon_park::wire` defines, errors as
+//! `interrupt`, `cancel`, `oplog`, `commit`), JSON in and out as `holon_park::wire`
+//! defines, errors as
 //! `{error, detail, message}` with a status by kind (`wire::status_of`).
 //! `GET /health` is open; everything else takes `Authorization: Bearer
 //! <token>` when `--token`/`--token-file` is set.
@@ -26,9 +27,15 @@
 //! this was a fresh transition (`WakeOutcome::freshly_woken`), never on an
 //! idempotent redelivery. If the publish itself fails, `wake` still answers
 //! `200`: the record is the truth, the stream is a nudge so a resumer does not
-//! have to poll `pending`.
+//! have to poll `pending`. `interrupt` works the same way
+//! (`InterruptOutcome::fresh`), and a nudge that was lost is found by
+//! `comp-resume`'s recovery pass (ADR-0106).
 //!
 //!   comp-park --addr 127.0.0.1:8015 --nats-url nats://127.0.0.1:4222
+//!
+//! Against a three-node cluster, keeping every ticket on all three (ADR-0111):
+//!
+//!   comp-park --nats-url nats://a:4222,nats://b:4222,nats://c:4222 --replicas 3
 
 use std::path::PathBuf;
 
@@ -44,7 +51,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use holon_park::error::ParkError;
-use holon_park::model::CallResult;
+use holon_park::model::Resolution;
 use holon_park::nats::{self, NatsParkStore, WakeMessage, WakeStream};
 use holon_park::wire;
 use holon_park::{mem_engine, Engine, MemEngine};
@@ -70,7 +77,8 @@ struct Args {
     addr: String,
 
     /// NATS with JetStream: ticket records and indexes (KV), `PARK_WAKE` (a
-    /// work-queue stream).
+    /// work-queue stream). One server, or several separated by commas: a daemon told about
+    /// one cannot start while that one is down.
     #[arg(long, env = "PARK_NATS_URL", default_value = "nats://127.0.0.1:4222")]
     nats_url: String,
     /// The KV bucket ticket records and their indexes live in.
@@ -79,6 +87,17 @@ struct Args {
     /// The `PARK_WAKE`-shaped stream's name.
     #[arg(long, default_value = "PARK_WAKE")]
     wake_stream: String,
+    /// Copies JetStream keeps of the bucket and of `PARK_WAKE` (ADR-0111): with one, the node
+    /// holding them going down takes every ticket out of reach until it is back. Needs a
+    /// cluster of at least that many servers. A bucket or stream that already exists with
+    /// fewer copies is refused, not changed: the error names the `nats` command that raises it.
+    #[arg(
+        long,
+        default_value_t = 1,
+        value_parser = clap::value_parser!(u8).range(1..=5),
+        conflicts_with = "memory"
+    )]
+    replicas: u8,
 
     /// Everything in memory, nothing durable, no `PARK_WAKE`: for trying it
     /// and for tests.
@@ -137,6 +156,17 @@ macro_rules! on {
 }
 
 impl Daemon {
+    /// Tell a resumer there is something to take. The record is already
+    /// durable, so a failed nudge is logged, not returned: a resumer that
+    /// misses it still finds the ticket (`pending`, or `comp-resume`'s pass).
+    async fn announce(&self, msg: &WakeMessage) {
+        if let Backend::Live(_, wake) = &self.backend {
+            if let Err(e) = wake.publish(msg).await {
+                eprintln!("comp-park: PARK_WAKE publish for {}: {e:#}", msg.ticket);
+            }
+        }
+    }
+
     /// One WIT function, by name, over a JSON body.
     async fn dispatch(&self, func: &str, body: &[u8]) -> Answer {
         match self.dispatch_inner(func, body).await {
@@ -154,25 +184,12 @@ impl Daemon {
                 let req: wire::WakeRequest = parse(body)?;
                 match on!(self, |e| e.wake(&req.correlation, req.answer, now_ms()).await) {
                     Ok(outcome) => {
-                        if outcome.freshly_woken {
-                            if let Backend::Live(_, wake) = &self.backend {
-                                let msg = WakeMessage {
-                                    session: outcome.session.clone(),
-                                    ticket: outcome.ticket.clone(),
-                                };
-                                if let Err(e) = wake.publish(&msg).await {
-                                    // The record is already durable; a failed nudge is not a failed `wake`: a resumer that misses it
-                                    // still finds the ticket via `pending`, later.
-                                    eprintln!(
-                                        "comp-park: PARK_WAKE publish for {}: {e:#}",
-                                        outcome.ticket
-                                    );
-                                }
-                            }
-                            (200, json_of(&outcome.ticket))
-                        } else {
-                            (200, json_of(&outcome.ticket))
+                        // What the engine says to announce: the ticket if this woke it, or the
+                        // group this resolved (ADR-0109); never a child on its own.
+                        for msg in &outcome.announce {
+                            self.announce(msg).await;
                         }
+                        (200, json_of(&outcome.ticket))
                     }
                     Err(e) => refusal(&e),
                 }
@@ -183,11 +200,45 @@ impl Daemon {
             }
             "take-ready" => {
                 let req: wire::Ticket = parse(body)?;
-                answer::<CallResult>(on!(self, |e| e.take_ready(&req.ticket, now_ms()).await))
+                answer::<Resolution>(on!(self, |e| e.take_ready(&req.ticket, now_ms()).await))
+            }
+            "interrupt" => {
+                let req: wire::InterruptRequest = parse(body)?;
+                match on!(self, |e| e.interrupt(&req.ticket, &req.reason, req.by, now_ms()).await) {
+                    Ok(outcome) => {
+                        for msg in &outcome.announce {
+                            self.announce(msg).await;
+                        }
+                        (200, json_of(&outcome.status))
+                    }
+                    Err(e) => refusal(&e),
+                }
             }
             "cancel" => {
                 let req: wire::CancelRequest = parse(body)?;
-                answer(on!(self, |e| e.cancel(&req.ticket, req.by, now_ms()).await))
+                // Cancelling a child can resolve its group, which is then what is announced.
+                match on!(self, |e| e.cancel_announcing(&req.ticket, req.by, now_ms()).await) {
+                    Ok(announce) => {
+                        for msg in &announce {
+                            self.announce(msg).await;
+                        }
+                        (200, Value::Null)
+                    }
+                    Err(e) => refusal(&e),
+                }
+            }
+            "commit" => {
+                let req: wire::CommitRequest = parse(body)?;
+                match on!(self, |e| e.commit(&req.session, req.effects, req.by, now_ms()).await) {
+                    Ok(committed) => {
+                        // What the commit's effects resolved: a group, never a child.
+                        for msg in &committed.announce {
+                            self.announce(msg).await;
+                        }
+                        (200, json_of(&committed.result))
+                    }
+                    Err(e) => refusal(&e),
+                }
             }
             "oplog" => {
                 let req: wire::OplogRequest = parse(body)?;
@@ -255,14 +306,19 @@ async fn main() -> Result<()> {
         eprintln!("comp-park: --memory: nothing is durable, no PARK_WAKE");
         Backend::Mem(Box::new(mem_engine()))
     } else {
-        let (store, wake) = nats::connect(&args.nats_url, &args.bucket, &args.wake_stream)
-            .await
-            .with_context(|| {
-                format!(
-                    "NATS at {} (bucket {}, stream {})",
-                    args.nats_url, args.bucket, args.wake_stream
-                )
-            })?;
+        let (store, wake) = nats::connect_with_replicas(
+            &args.nats_url,
+            &args.bucket,
+            &args.wake_stream,
+            usize::from(args.replicas),
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "NATS at {} (bucket {}, stream {}, {} replicas)",
+                args.nats_url, args.bucket, args.wake_stream, args.replicas
+            )
+        })?;
         Backend::Live(Box::new(Engine::new(store)), Box::new(wake))
     };
 
