@@ -258,7 +258,11 @@ pub fn render_workload(
         t.registry,
         dns(&spec.name)
     ));
-    if !spec.daemons.is_empty() {
+    // A worker listens on nothing and no component dials it, so it has no Service to grant
+    // reaching and no `<name>-url` to rewrite.
+    let served: Vec<(&Daemon, &str)> =
+        spec.daemons.iter().filter_map(|d| d.addr.as_deref().map(|a| (d, a))).collect();
+    if !served.is_empty() {
         // Egress is fail-closed here exactly as it is on `comp-host`'s own
         // `--egress` — an app with a `[[daemon]]` needs its own daemon's Service
         // granted explicitly, both to dial it (`allowedHosts`) and to resolve its
@@ -268,11 +272,11 @@ pub fn render_workload(
         // workload.spec.components --recursive` is the source of truth here;
         // the CRD's own doc comments describe the fields but not their parent.
         y.push_str("      localResources:\n        allowedHosts:\n");
-        for d in &spec.daemons {
-            y.push_str(&format!("          - {}\n", daemon_service_host(namespace, d)));
+        for (d, addr) in &served {
+            y.push_str(&format!("          - {}\n", daemon_service_host(namespace, d, addr)));
         }
         y.push_str("        allowedIpNameLookups:\n");
-        for d in &spec.daemons {
+        for (d, _) in &served {
             y.push_str(&format!("          - {}\n", daemon_fqdn(namespace, d)));
         }
     }
@@ -323,11 +327,10 @@ pub fn render_workload(
             // makes the tier-1 agreement true here is wrong — override it with
             // where the daemon's Service actually answers, same key, different
             // address, exactly as the daemon's own image differs per lane.
-            let value = spec
-                .daemons
+            let value = served
                 .iter()
-                .find(|d| *k == format!("{}-url", d.name))
-                .map(|d| format!("http://{}", daemon_service_host(namespace, d)))
+                .find(|(d, _)| *k == format!("{}-url", d.name))
+                .map(|(d, addr)| format!("http://{}", daemon_service_host(namespace, d, addr)))
                 .unwrap_or_else(|| v.clone());
             y.push_str(&format!("        {k}: \"{value}\"\n"));
         }
@@ -358,12 +361,13 @@ fn daemon_fqdn(namespace: &str, d: &Daemon) -> String {
 
 /// Where this daemon's Deployment answers inside the cluster: the FQDN above,
 /// port carried over from the spec's own `addr` (`check()` already enforces
-/// that this is the port the daemon binds).
-fn daemon_service_host(namespace: &str, d: &Daemon) -> String {
-    format!("{}:{}", daemon_fqdn(namespace, d), addr_port(&d.addr))
+/// that this is the port the daemon binds). Only a daemon that has an `addr`.
+fn daemon_service_host(namespace: &str, d: &Daemon, addr: &str) -> String {
+    format!("{}:{}", daemon_fqdn(namespace, d), addr_port(addr))
 }
 
-/// A `[[daemon]]`'s own Deployment + Service — the missing half of the
+/// A `[[daemon]]`'s own Deployment + Service (a worker, which listens on nothing, gets the
+/// Deployment alone: no `--addr` and no Service) — the missing half of the
 /// wasmCloud/Kubernetes lane's daemon story (`docs/SELFHOST.md`: "There is no
 /// equivalent yet for the wasmCloud/Kubernetes lanes — a daemon a component in
 /// those lanes needs is still a manual step"). Built from
@@ -378,8 +382,11 @@ fn daemon_service_host(namespace: &str, d: &Daemon) -> String {
 /// 1's `LoadCredential`) before this is more than a demo.
 fn render_daemon_deployment(d: &Daemon, namespace: &str, registry: &str) -> String {
     let name = daemon_service_name(d);
-    let port = addr_port(&d.addr);
-    let mut args = format!("            - --addr\n            - \"0.0.0.0:{port}\"\n");
+    let mut args = String::new();
+    if let Some(addr) = &d.addr {
+        let port = addr_port(addr);
+        args.push_str(&format!("            - --addr\n            - \"0.0.0.0:{port}\"\n"));
+    }
     if let Some(flag) = &d.allow_flag {
         for v in &d.allow {
             args.push_str(&format!("            - --{flag}\n            - \"{v}\"\n"));
@@ -390,7 +397,7 @@ fn render_daemon_deployment(d: &Daemon, namespace: &str, registry: &str) -> Stri
             args.push_str(&format!("            - \"{part}\"\n"));
         }
     }
-    format!(
+    let deployment = format!(
         "apiVersion: apps/v1\n\
          kind: Deployment\n\
          metadata:\n\
@@ -410,8 +417,13 @@ fn render_daemon_deployment(d: &Daemon, namespace: &str, registry: &str) -> Stri
          \x20       - name: daemon\n\
          \x20         image: {registry}/comp-{dname}:latest\n\
          \x20         args:\n\
-         {args}\
-         ---\n\
+         {args}",
+        dname = dns(&d.name),
+    );
+    let Some(addr) = &d.addr else { return deployment };
+    let port = addr_port(addr);
+    format!(
+        "{deployment}---\n\
          apiVersion: v1\n\
          kind: Service\n\
          metadata:\n\
@@ -422,8 +434,7 @@ fn render_daemon_deployment(d: &Daemon, namespace: &str, registry: &str) -> Stri
          \x20   app: {name}\n\
          \x20 ports:\n\
          \x20   - port: {port}\n\
-         \x20     targetPort: {port}\n",
-        dname = dns(&d.name),
+         \x20     targetPort: {port}\n"
     )
 }
 
@@ -906,6 +917,50 @@ mod tests {
         assert!(y.contains("- --allow-path\n            - \"/var/log\""), "{y}");
         assert!(y.contains("kind: Service"), "{y}");
         assert!(y.contains("port: 8000"), "{y}");
+    }
+
+    #[test]
+    fn a_worker_gets_a_deployment_and_no_service_and_no_egress() {
+        // `comp-resume` pulls from NATS and pushes to a sink and listens on nothing: nothing
+        // dials it, so there is no Service to grant reaching, no name to resolve and no
+        // `<name>-url` to rewrite — and no `--addr` to give it.
+        let s = spec(
+            "components = [\"park-gateway\"]\n\
+             [config]\n\
+             park-url = \"http://127.0.0.1:8015\"\n\
+             [[daemon]]\n\
+             name = \"park\"\n\
+             addr = \"127.0.0.1:8015\"\n\
+             [[daemon]]\n\
+             name = \"resume\"\n\
+             extra_args = [\"--sink-url http://sink.ns.svc:8016/park/deliver\"]\n",
+        );
+        let y = render_workload(&s, "ns", &Target::default(), None, true).unwrap();
+
+        // The component may reach the daemon that listens, and nothing else.
+        assert!(
+            y.contains("allowedHosts:\n          - park-daemon.ns.svc.cluster.local:8015\n"),
+            "{y}"
+        );
+        assert!(!y.contains("resume-daemon.ns.svc"), "no grant to reach a worker: {y}");
+        assert!(y.contains("park-url: \"http://park-daemon.ns.svc.cluster.local:8015\""), "{y}");
+
+        // Its own Deployment, with its own flags and without `--addr`...
+        assert!(y.contains("name: resume-daemon"), "{y}");
+        assert!(
+            y.contains("image: registry.wasmcloud.svc.cluster.local:5000/comp-resume:latest"),
+            "{y}"
+        );
+        assert!(
+            y.contains("- \"--sink-url\"")
+                && y.contains("- \"http://sink.ns.svc:8016/park/deliver\""),
+            "{y}"
+        );
+        let resume = y.split("---\n").find(|d| d.contains("name: resume-daemon")).unwrap();
+        assert!(!resume.contains("--addr") && !resume.contains("kind: Service"), "{resume}");
+        // ...while the daemon that listens still has its Service, and there is only the one.
+        assert_eq!(y.matches("kind: Service").count(), 1, "{y}");
+        assert_eq!(y.matches("kind: Deployment").count(), 2, "{y}");
     }
 
     #[test]

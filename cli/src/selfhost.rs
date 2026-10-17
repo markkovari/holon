@@ -6,7 +6,7 @@
 //! substrate needs, so port collisions, unescaped values and misrouted proxies are
 //! caught by tests rather than on a box.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
@@ -115,7 +115,13 @@ pub struct Daemon {
     /// on purpose (one is "where a process listens", the other is "what a
     /// wasm guest was told"), and nothing stops them drifting apart by hand.
     pub name: String,
-    pub addr: String,
+    /// Where it listens. Absent makes it a WORKER: a daemon that listens on nothing and that
+    /// no component dials (`comp-resume`, ADR-0106, which pulls from NATS and pushes to a
+    /// sink). A worker is rendered without `--addr`, has no `<name>-url` for `check()` to
+    /// agree with and no token to require, and is not something the app's own unit is
+    /// given egress to: there is nothing there to reach.
+    #[serde(default)]
+    pub addr: Option<String>,
     /// The flag name for this daemon's own allow-list, if it has one —
     /// `allow-path`, `allow-host`, `allow-cidr`, `allow-interface`. Named
     /// rather than inferred: only the caller knows which one its daemon
@@ -135,6 +141,29 @@ pub struct Daemon {
     /// `[config]`'s `<name>-token` as `addr` has with `<name>-url`.
     #[serde(default)]
     pub token: Option<String>,
+}
+
+/// The unit file for a daemon: `comp-<name>.service`, except when the daemon is named like its
+/// own app (`park` and `comp-park`, `vcs` and `comp-vcs`). The app's unit is already
+/// `comp-<app>.service`, and writing both under that name put the daemon's text over the app's:
+/// a deployment with nothing serving the app, and a daemon unit that was `BindsTo` itself.
+pub fn daemon_unit_name(spec: &Spec, d: &Daemon) -> String {
+    if d.name == spec.name {
+        format!("comp-{}-daemon.service", d.name)
+    } else {
+        format!("comp-{}.service", d.name)
+    }
+}
+
+/// Every unit file one spec renders: the app's, the relay's if it has `[triggers]`, and one per
+/// daemon.
+pub fn unit_names(spec: &Spec) -> Vec<String> {
+    let mut v = vec![format!("comp-{}.service", spec.name)];
+    if spec.triggers.is_some() {
+        v.push(format!("comp-{}-relay.service", spec.name));
+    }
+    v.extend(spec.daemons.iter().map(|d| daemon_unit_name(spec, d)));
+    v
 }
 
 /// The relay's half of an app spec.
@@ -273,9 +302,6 @@ pub fn check(spec: &Spec) -> Result<()> {
         }
     }
     for d in &spec.daemons {
-        if !d.addr.contains(':') {
-            bail!("daemon {:?} addr {:?} is not host:port", d.name, d.addr);
-        }
         // `render_daemon_unit` interpolates these straight into `ExecStart=`.
         // Operator-authored today, not attacker input — but `%` is a systemd
         // specifier and a newline would inject a second directive, so a spec
@@ -288,18 +314,42 @@ pub fn check(spec: &Spec) -> Result<()> {
         {
             bail!("daemon {:?}: name/allow/extra_args may not contain '%' or a newline", d.name);
         }
-        // The unit binds `d.addr`; the component reads `<name>-url` from
+        let Some(addr) = &d.addr else {
+            // A worker listens on nothing: no component is told where it is, and there is
+            // no request for it to authenticate. Either would be a spec that means
+            // something the unit cannot do, so it is refused rather than half-honoured.
+            if d.token.is_some() {
+                bail!(
+                    "daemon {:?} has no addr, so nothing connects to it and there is no token \
+                     for it to require — give it the credentials it uses itself in extra_args",
+                    d.name
+                );
+            }
+            let key = format!("{}-url", d.name);
+            if spec.config.contains_key(&key) {
+                bail!(
+                    "[config] {key} points a component at daemon {:?}, which has no addr and \
+                     listens on nothing",
+                    d.name
+                );
+            }
+            continue;
+        };
+        if !addr.contains(':') {
+            bail!("daemon {:?} addr {:?} is not host:port", d.name, addr);
+        }
+        // The unit binds `addr`; the component reads `<name>-url` from
         // `[config]` to find it. Nothing enforces those agree by construction
         // — they are written in two different tables for two different
         // readers — so this is the one check standing between "the daemon is
         // up" and "the component was never told where".
         let key = format!("{}-url", d.name);
         match spec.config.get(&key) {
-            Some(v) if *v == format!("http://{}", d.addr) => {}
+            Some(v) if *v == format!("http://{addr}") => {}
             Some(v) => bail!(
                 "daemon {:?} binds {:?} but [config] {key} = {v:?} — they must agree",
                 d.name,
-                d.addr
+                addr
             ),
             None => bail!("daemon {:?} has no matching [config] {key}", d.name),
         }
@@ -324,6 +374,17 @@ pub fn check(spec: &Spec) -> Result<()> {
                     bail!("daemon {:?} sets a token but has no matching [config] {key}", d.name)
                 }
             }
+        }
+    }
+    // Units are files with one name each, and writing two under the same name keeps the last:
+    // quietly, and with nothing left to start for the one that lost.
+    let mut seen = BTreeSet::new();
+    for u in unit_names(spec) {
+        if !seen.insert(u.clone()) {
+            bail!(
+                "two units of {:?} would both be {u}, and one would be written over the other",
+                spec.name
+            );
         }
     }
     Ok(())
@@ -385,10 +446,12 @@ pub fn render_unit(spec: &Spec, layout: &Layout) -> String {
     // still answered `unavailable` without these. The allow-list is only the
     // daemon addresses (IP literals, `check()` insists on host:port), so
     // `--allow-private-egress` opens nothing a name could resolve into.
-    for d in &spec.daemons {
-        args.push_str(&format!(" --egress {}", d.addr));
+    // Only the daemons that listen: a worker has nothing for the component to dial.
+    let reachable: Vec<&str> = spec.daemons.iter().filter_map(|d| d.addr.as_deref()).collect();
+    for addr in &reachable {
+        args.push_str(&format!(" --egress {addr}"));
     }
-    if !spec.daemons.is_empty() {
+    if !reachable.is_empty() {
         args.push_str(" --allow-private-egress");
     }
 
@@ -529,7 +592,8 @@ pub fn render_relay_unit(spec: &Spec, t: &Triggers, l: &Layout) -> String {
     s
 }
 
-/// The unit for one native daemon behind ADR-0095 (see `Daemon`'s own doc).
+/// The unit for one native daemon behind ADR-0095 (see `Daemon`'s own doc), or for a worker,
+/// which differs in one respect: it is rendered without `--addr`, because it listens on nothing.
 ///
 /// A SECOND unit per daemon, same reasoning as the relay: `container-docker`
 /// and `ui-notifier` do not deserve the same blast radius, and one shared
@@ -539,30 +603,35 @@ pub fn render_relay_unit(spec: &Spec, t: &Triggers, l: &Layout) -> String {
 pub fn render_daemon_unit(spec: &Spec, d: &Daemon, l: &Layout) -> String {
     let bin_dir =
         l.bin.parent().map(|p| p.display().to_string()).unwrap_or_else(|| "/usr/local/bin".into());
-    let mut args = format!("--addr {}", d.addr);
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(addr) = &d.addr {
+        parts.push(format!("--addr {addr}"));
+    }
     if let Some(flag) = &d.allow_flag {
         for v in &d.allow {
-            args.push_str(&format!(" --{flag} {v}"));
+            parts.push(format!("--{flag} {v}"));
         }
     }
-    for a in &d.extra_args {
-        args.push_str(&format!(" {a}"));
-    }
+    parts.extend(d.extra_args.iter().cloned());
     // `--token-file %d/token`, not `--token <value>`: the same reason
     // `comp-host`'s own unit reads its config through `LoadCredential` rather
     // than argv — a value on the command line is `ps`-readable by any local
     // user, which is most of what a token exists to close.
     if d.token.is_some() {
-        args.push_str(" --token-file %d/token");
+        parts.push("--token-file %d/token".into());
     }
+    let args = parts.join(" ");
+    let what = match &d.addr {
+        Some(_) => format!("native daemon behind {} (ADR-0095)", spec.name),
+        None => format!("native worker beside {}, listening on nothing", spec.name),
+    };
 
     let mut s =
         String::from("# Generated by selfhost — do not edit; edit the app spec and re-deploy.\n");
     s.push_str(&format!(
-        "[Unit]\nDescription=comp-{}: native daemon behind {} (ADR-0095)\n\
+        "[Unit]\nDescription=comp-{}: {what}\n\
          After={unit}\nBindsTo={unit}\n\n[Service]\nType=simple\n",
         d.name,
-        spec.name,
         unit = format!("comp-{}.service", spec.name)
     ));
     if d.token.is_some() {
@@ -1196,6 +1265,185 @@ routes = "upstream=http://127.0.0.1:9000"
         assert!(!none.contains("--egress") && !none.contains("--allow-private-egress"), "{none}");
     }
 
+    /// ADR-0106's resumer: it pulls from NATS and pushes to a sink, and listens on nothing.
+    const WITH_WORKER: &str = "name = \"park\"\ndomain = \"p.example.com\"\nartifact = \"a.wasm\"\n\
+         [config]\npark-url = \"http://127.0.0.1:8015\"\n\
+         [[daemon]]\nname = \"park\"\naddr = \"127.0.0.1:8015\"\n\
+         [[daemon]]\nname = \"resume\"\n\
+         extra_args = [\"--nats-url nats://127.0.0.1:4222\", \"--sink-url http://127.0.0.1:8016/x\"]\n";
+
+    #[test]
+    fn a_daemon_with_no_addr_is_a_worker_and_needs_nothing_a_listener_needs() {
+        // No `<name>-url` in `[config]`, no address, no token: it is valid as it stands.
+        let s = spec(WITH_WORKER);
+        assert_eq!(s.daemons[1].addr, None);
+        assert_eq!(s.daemons[0].addr.as_deref(), Some("127.0.0.1:8015"));
+    }
+
+    #[test]
+    fn a_workers_unit_has_no_addr_and_binds_to_the_app() {
+        let s = spec(WITH_WORKER);
+        let u = render_daemon_unit(&s, &s.daemons[1], &Layout::default());
+        assert!(
+            u.contains(
+                "ExecStart=/usr/local/bin/comp-resume --nats-url nats://127.0.0.1:4222 \
+                 --sink-url http://127.0.0.1:8016/x\n"
+            ),
+            "{u}"
+        );
+        assert!(!u.contains("--addr"), "it listens on nothing: {u}");
+        assert!(u.contains("native worker beside park, listening on nothing"), "{u}");
+        // Same lifecycle as the app it serves, and the same hardening as any daemon.
+        assert!(u.contains("BindsTo=comp-park.service"), "{u}");
+        assert!(u.contains("MemoryDenyWriteExecute=yes") && u.contains("Restart=always"), "{u}");
+        // A daemon that does listen is rendered as it always was.
+        let d = render_daemon_unit(&s, &s.daemons[0], &Layout::default());
+        assert!(d.contains("ExecStart=/usr/local/bin/comp-park --addr 127.0.0.1:8015\n"), "{d}");
+    }
+
+    #[test]
+    fn the_apps_unit_is_given_egress_to_what_listens_and_not_to_a_worker() {
+        let unit = render_unit(&spec(WITH_WORKER), &Layout::default());
+        assert!(unit.contains("--egress 127.0.0.1:8015 --allow-private-egress"), "{unit}");
+        assert_eq!(unit.matches("--egress").count(), 1, "nothing to reach at a worker: {unit}");
+        // A spec with only a worker has nothing for the component to dial at all.
+        let only = spec(
+            "name = \"park\"\ndomain = \"p.example.com\"\nartifact = \"a.wasm\"\n\
+             [[daemon]]\nname = \"resume\"\nextra_args = [\"--sink-url http://127.0.0.1:1/x\"]\n",
+        );
+        let u = render_unit(&only, &Layout::default());
+        assert!(!u.contains("--egress") && !u.contains("--allow-private-egress"), "{u}");
+    }
+
+    #[test]
+    fn a_worker_cannot_have_a_token_or_a_url_a_component_is_told() {
+        let token = "name = \"park\"\ndomain = \"p.example.com\"\nartifact = \"a.wasm\"\n\
+             [config]\nresume-token = \"t\"\n\
+             [[daemon]]\nname = \"resume\"\ntoken = \"t\"\n";
+        let err = toml::from_str::<Spec>(token).map(|s| check(&s)).expect("parses").unwrap_err();
+        assert!(err.to_string().contains("no token for it to require"), "{err}");
+
+        let url = "name = \"park\"\ndomain = \"p.example.com\"\nartifact = \"a.wasm\"\n\
+             [config]\nresume-url = \"http://127.0.0.1:1\"\n\
+             [[daemon]]\nname = \"resume\"\n";
+        let err = toml::from_str::<Spec>(url).map(|s| check(&s)).expect("parses").unwrap_err();
+        assert!(err.to_string().contains("listens on nothing"), "{err}");
+    }
+
+    #[test]
+    fn a_daemon_named_like_its_app_gets_a_unit_of_its_own() {
+        // `park` and `vcs` each name their app and their daemon alike, and both were rendered to
+        // `comp-<name>.service`: the daemon's text over the app's, which left nothing serving the
+        // app and a unit `BindsTo` itself.
+        let s = spec(WITH_WORKER);
+        assert_eq!(daemon_unit_name(&s, &s.daemons[0]), "comp-park-daemon.service");
+        assert_eq!(daemon_unit_name(&s, &s.daemons[1]), "comp-resume.service");
+        assert_eq!(
+            unit_names(&s),
+            ["comp-park.service", "comp-park-daemon.service", "comp-resume.service"]
+        );
+        let d = render_daemon_unit(&s, &s.daemons[0], &Layout::default());
+        assert!(d.contains("BindsTo=comp-park.service") && d.contains("comp-park --addr"), "{d}");
+        // A daemon with a name of its own is named as it always was.
+        let fs = spec(
+            "name = \"fs-watcher\"\ndomain = \"f.example.com\"\nartifact = \"a.wasm\"\n\
+             [config]\nfswatch-url = \"http://127.0.0.1:8000\"\n\
+             [[daemon]]\nname = \"fswatch\"\naddr = \"127.0.0.1:8000\"\n",
+        );
+        assert_eq!(daemon_unit_name(&fs, &fs.daemons[0]), "comp-fswatch.service");
+    }
+
+    #[test]
+    fn two_units_that_would_share_a_file_are_refused() {
+        // Two daemons of one name, and a daemon named like the relay's unit.
+        let twice = "name = \"park\"\ndomain = \"p.example.com\"\nartifact = \"a.wasm\"\n\
+             [[daemon]]\nname = \"resume\"\n[[daemon]]\nname = \"resume\"\n";
+        let err = toml::from_str::<Spec>(twice).map(|s| check(&s)).expect("parses").unwrap_err();
+        assert!(err.to_string().contains("would both be comp-resume.service"), "{err}");
+        let relay = "name = \"park\"\ndomain = \"p.example.com\"\nartifact = \"a.wasm\"\n\
+             [triggers]\n[[daemon]]\nname = \"park-relay\"\n";
+        let err = toml::from_str::<Spec>(relay).map(|s| check(&s)).expect("parses").unwrap_err();
+        assert!(err.to_string().contains("comp-park-relay.service"), "{err}");
+    }
+
+    /// Every committed spec, read as `holon node validate` reads it: no spec writes two units to
+    /// one file. The guard is `check()`'s own; this is what keeps a spec added later honest.
+    #[test]
+    fn no_committed_app_spec_renders_two_units_to_one_file() {
+        let mut n = 0;
+        for entry in std::fs::read_dir("../apps").expect("../apps") {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path).unwrap();
+            let Ok(s) = toml::from_str::<Spec>(&src) else { continue }; // not an app spec
+            check(&s).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let names = unit_names(&s);
+            let unique: BTreeSet<&String> = names.iter().collect();
+            assert_eq!(unique.len(), names.len(), "{}: {names:?}", path.display());
+            n += 1;
+        }
+        assert!(n >= 10, "only {n} app specs read: the directory moved or the parse broke");
+    }
+
+    #[test]
+    fn the_park_spec_renders_its_app_its_daemon_and_its_resumer() {
+        let src = std::fs::read_to_string("../apps/park.toml").expect("../apps/park.toml");
+        let s: Spec = toml::from_str(&src).expect("parses");
+        check(&s).expect("valid");
+        let l = Layout::default();
+        assert_eq!(
+            unit_names(&s),
+            ["comp-park.service", "comp-park-daemon.service", "comp-resume.service"]
+        );
+        // The app is comp-host, and can reach the daemon and only it.
+        let app = render_unit(&s, &l);
+        assert!(app.contains("comp-host") && app.contains("--egress 127.0.0.1:8015"), "{app}");
+        assert_eq!(app.matches("--egress").count(), 1, "{app}");
+        // The resumer is a worker, and is given what it must have: where NATS is and a sink.
+        let resume = s.daemons.iter().find(|d| d.name == "resume").expect("a resume worker");
+        assert_eq!(resume.addr, None);
+        let u = render_daemon_unit(&s, resume, &l);
+        assert!(!u.contains("--addr"), "{u}");
+        assert!(u.contains("--sink-url ") && u.contains("--nats-url "), "{u}");
+        // And it reads the same NATS as the engine.
+        let park = s.daemons.iter().find(|d| d.name == "park").expect("the park daemon");
+        let nats = |d: &Daemon| d.extra_args.iter().find(|a| a.starts_with("--nats-url")).cloned();
+        assert_eq!(nats(park), nats(resume), "comp-park and comp-resume must share a NATS");
+    }
+
+    /// The flags the park spec makes `comp-park` and `comp-resume` take are flags they have. A
+    /// misspelt one is a unit that starts, fails and restarts every two seconds. Skipped where the
+    /// binaries are not built, like its neighbour for the twelve.
+    #[test]
+    fn every_flag_in_the_park_spec_exists_on_its_binaries() {
+        let src = std::fs::read_to_string("../apps/park.toml").expect("../apps/park.toml");
+        let s: Spec = toml::from_str(&src).expect("parses");
+        let mut checked = 0;
+        for d in &s.daemons {
+            let bin =
+                std::path::PathBuf::from(format!("../reconciler/target/release/comp-{}", d.name));
+            if !bin.exists() {
+                eprintln!("skipping {}: no {} built", d.name, bin.display());
+                continue;
+            }
+            let help = std::process::Command::new(&bin).arg("--help").output().expect("--help");
+            let help = String::from_utf8_lossy(&help.stdout).to_string();
+            let unit = render_daemon_unit(&s, d, &Layout::default());
+            let exec = unit.lines().find(|l| l.starts_with("ExecStart=")).expect("an ExecStart");
+            for flag in exec.split_whitespace().filter(|w| w.starts_with("--")) {
+                assert!(help.contains(flag), "comp-{} has no {flag}\n--- help ---\n{help}", d.name);
+            }
+            checked += 1;
+        }
+        if checked == 0 {
+            eprintln!(
+                "skipping entirely: no park binaries built under ../reconciler/target/release"
+            );
+        }
+    }
+
     #[test]
     fn a_daemon_unit_binds_to_the_app_and_carries_its_allow_list() {
         let s = spec(
@@ -1408,7 +1656,7 @@ static_dir = "ui/dist"
 
             let d = Daemon {
                 name: name.into(),
-                addr: "127.0.0.1:9".into(),
+                addr: Some("127.0.0.1:9".into()),
                 allow_flag: allow_flag.map(String::from),
                 allow: allow_flag.map(|_| vec!["x".into()]).unwrap_or_default(),
                 extra_args: vec![],
