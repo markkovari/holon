@@ -93,7 +93,7 @@ export const SYS = [
             'The ingress needs no platform credential: its routing table comes from inventory, so it keeps routing while the control plane is down.',
             'Admission fails closed: 429 above max-placement-lag, 503 when the reconciler’s report goes stale.',
             'Only one reconciler acts at a time, decided by a lease in the store; a standby takes over within the TTL plus one interval.'],
-  code:['components/platform-domain','components/console-domain','reconciler/src/{main,plan}.rs','reconciler/src/bin/{ingress,relay,backup}.rs','lattice/src/']},
+  code:['components/platform-domain','components/console-domain','reconciler/src/{main,plan}.rs','reconciler/src/bin/{ingress,relay}.rs','reconciler/daemons/backup/','lattice/src/']},
 
  {id:'runtime', name:'Runtime', short:'comp-host, one process per node',
   purpose:'comp-host: one process per node runs every tenant’s components over wasmtime.',
@@ -117,7 +117,7 @@ export const SYS = [
             'They bind loopback. comp-checks bounds the command with --allow but not the tree it runs over, so off loopback it refuses to start without a token.',
             'A missing dependency (Docker, Ollama, Chrome, ffmpeg, a desktop session) is reported as unavailable, never answered with a plausible constant.',
             'The twelve ADR-0095 daemons are each their own Cargo package, with one heavy crate and the shared comp-daemon-kit, so building or shipping one compiles none of the others (ADR-0115).'],
-  code:['reconciler/daemons/{kit,fswatch,browser,docker,clipboard}/','reconciler/daemons/{imageopt,lanscan,llmlocal,mdns}/','reconciler/daemons/{cron,uinotify,ffmpeg,wireguard}/','reconciler/src/bin/{media,mailrelay,checks}.rs']},
+  code:['reconciler/daemons/{kit,fswatch,browser,docker,clipboard}/','reconciler/daemons/{imageopt,lanscan,llmlocal,mdns}/','reconciler/daemons/{cron,uinotify,ffmpeg,wireguard,media}/','reconciler/src/bin/{mailrelay,checks}.rs']},
 
  {id:'durable', name:'Durable services', short:'park and vcs on JetStream',
   purpose:'comp-park and comp-vcs: a ticket per outstanding call, and an agent-native code store.',

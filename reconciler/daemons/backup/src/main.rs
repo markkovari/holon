@@ -53,13 +53,9 @@
 //! comp-backup restore --id latest --nats-url nats://new:4222 --encrypt-key-file backup.key ...
 //! ```
 
-#[path = "backup/seal.rs"]
 mod seal;
-#[path = "backup/store.rs"]
 mod store;
-#[path = "backup/streams.rs"]
 mod streams;
-#[path = "backup/surreal.rs"]
 mod surreal;
 
 use std::io::{BufReader, BufWriter, Read, Write};

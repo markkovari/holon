@@ -27,7 +27,7 @@ the measurements.
 |---|---|
 | `photoquest-domain` | accounts, the `photos` records, who may upload or read what, and verifying the evaluator's signed callback ([CONTRACT](../../components/photoquest-domain/CONTRACT.md)) |
 | `media-pipeline` | the `media:pipeline` WIT contract; each call is one loopback HTTP request to `comp-media` ([CONTRACT](../../components/media-pipeline/CONTRACT.md)) |
-| `comp-media` (`reconciler/src/bin/media.rs`) | signs upload and rendition URLs, owns the `MEDIA_JOBS` JetStream work queue, and evaluates one photo at a time (`rawler` decode, `green-stab-v1` sharpness). It POSTs the result to `public-callback-base`, signed with `media-callback-secret`, and only to a `--callback-allow` host:port |
+| `comp-media` (`reconciler/daemons/media/`) | signs upload and rendition URLs, owns the `MEDIA_JOBS` JetStream work queue, and evaluates one photo at a time (`rawler` decode, `green-stab-v1` sharpness). It POSTs the result to `public-callback-base`, signed with `media-callback-secret`, and only to a `--callback-allow` host:port |
 | `comp-media-apple` (`tools/media-apple/main.swift`) | macOS only: Core Image develop, Metal sharpness, Vision. Without it the daemon does the same on the CPU with no Vision stage, and the result says which backend ran |
 | RustFS (`infra/compose.yaml`, profile `media`) | the object store: `originals` and `renditions` buckets |
 
