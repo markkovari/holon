@@ -35,7 +35,7 @@ infrastructure. What is left is narrower than what is done:
       `browser-automation`, `container-docker`, `desktop-clipboard`,
       `image-optimizer`, `lan-scanner`, `llm-local`, `mdns-discovery`, `system-cron`,
       `ui-notifier`, `video-ffmpeg` and `vpn-wireguard` used to return
-      `UNIMPLEMENTED:`; each now has its own daemon in `reconciler/src/bin/` (#233),
+      `UNIMPLEMENTED:`; each now has its own daemon in `reconciler/daemons/` (#233),
       and all twelve apps are wired to them (#235). One daemon each, deliberately —
       `container-docker` and `ui-notifier` do not deserve the same blast radius.
 - [ ] **`comp:` interfaces on wasmCloud 2.x.** Currently impossible: a release host

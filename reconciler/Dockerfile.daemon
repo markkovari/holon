@@ -1,6 +1,8 @@
 # One image, any of the twelve ADR-0095 daemons — `comp-fswatch`, `comp-docker`,
 # `comp-ffmpeg`, ... — picked by build arg rather than one Dockerfile each, since
-# they're all plain Rust binaries in this one crate.
+# the build is the same for each: `cargo build --bin <name>` in `reconciler/`, which
+# compiles that daemon's own package and the shared kit, and nothing else's
+# dependencies (docs/adr/0115).
 #
 # Build (context = the repo root):
 #   docker build -f reconciler/Dockerfile.daemon --build-arg DAEMON=comp-fswatch \
