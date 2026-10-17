@@ -94,12 +94,6 @@ path = "src/bin/traceseed.rs"
 name = "comp-relay"
 path = "src/bin/relay.rs"
 
-# HTTP in, real SMTP out — what lets a wasm component reach MailHog, since the host
-# wires no wasi:sockets and MailHog ingests SMTP only. std-only, no dependencies.
-[[bin]]
-name = "comp-mailrelay"
-path = "src/bin/mailrelay.rs"
-
 # The pull half of continuous deployment: reads a digest lock and updates the apps
 # this box already runs. No inbound port, and no CI credential on this network.
 [[bin]]

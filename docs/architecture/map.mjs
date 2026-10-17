@@ -117,7 +117,7 @@ export const SYS = [
             'They bind loopback. comp-checks bounds the command with --allow but not the tree it runs over, so off loopback it refuses to start without a token.',
             'A missing dependency (Docker, Ollama, Chrome, ffmpeg, a desktop session) is reported as unavailable, never answered with a plausible constant.',
             'The twelve ADR-0095 daemons are each their own Cargo package, with one heavy crate and the shared comp-daemon-kit, so building or shipping one compiles none of the others (ADR-0115).'],
-  code:['reconciler/daemons/{kit,fswatch,browser,docker,clipboard}/','reconciler/daemons/{imageopt,lanscan,llmlocal,mdns}/','reconciler/daemons/{cron,uinotify,ffmpeg,wireguard,media}/','reconciler/src/bin/{mailrelay,checks}.rs']},
+  code:['reconciler/daemons/{kit,fswatch,browser,docker,clipboard}/','reconciler/daemons/{imageopt,lanscan,llmlocal,mdns}/','reconciler/daemons/{cron,uinotify,ffmpeg,wireguard,media,mailrelay}/','reconciler/src/bin/checks.rs']},
 
  {id:'durable', name:'Durable services', short:'park and vcs on JetStream',
   purpose:'comp-park and comp-vcs: a ticket per outstanding call, and an agent-native code store.',
