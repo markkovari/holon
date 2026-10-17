@@ -6,10 +6,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures::Stream;
+use holon_park::resume::{Delivery, Event as DeliveryEvent};
 
 use super::agent;
-use super::session::{Answer, Begun, Refusal, Registry, Session, SteerRefusal};
-use super::wire;
+use super::park::Answered;
+use super::session::{Answer, Begun, Refusal, Registry, Resume, Session, SteerRefusal};
+use super::wire::{self, Decision};
 
 pub struct Daemon {
     pub sessions: Registry,
@@ -28,6 +30,11 @@ pub enum Fail {
     Conflict(&'static str, String),
     /// A limit the caller can wait out: REST `429`, gRPC `RESOURCE_EXHAUSTED`.
     Exhausted(&'static str, String),
+    /// What a delivery was for is gone, and will not come back: REST `410`, which is what tells
+    /// `comp-resume` to cancel the ticket and stop (ADR-0113).
+    Gone(String),
+    /// Something this call needs is down and may not be soon: REST `503`, gRPC `UNAVAILABLE`.
+    Unavailable(String),
     Internal(String),
 }
 
@@ -77,8 +84,27 @@ impl Daemon {
 
     pub fn close_session(&self, id: &str) -> R<wire::Session> {
         let s = self.get(id)?;
-        s.close();
+        let tickets = s.close();
+        self.cancel_tickets(tickets);
         Ok(s.view())
+    }
+
+    /// Give up, in `comp-park`, on the approvals of tasks that are over. Best effort and off the
+    /// caller's path: one that is missed is answered `410` when it is delivered, which cancels it
+    /// from the other side.
+    fn cancel_tickets(&self, tickets: Vec<String>) {
+        if tickets.is_empty() || self.ctx.park.is_none() {
+            return;
+        }
+        let ctx = self.ctx.clone();
+        tokio::spawn(async move {
+            let Some(park) = &ctx.park else { return };
+            for ticket in tickets {
+                if let Err(e) = park.cancel(&ticket).await {
+                    eprintln!("comp-agentd: cancelling ticket {ticket}: {e}");
+                }
+            }
+        });
     }
 
     /// Start a task, or on a busy session refuse it or queue it as `when_busy` says. A queued
@@ -171,30 +197,131 @@ impl Daemon {
     /// lets the next queued one start, and it is launched here.
     pub fn cancel_task(&self, id: &str, task_id: &str) -> R<wire::Task> {
         let sess = self.get(id)?;
-        let (task, next) = sess.cancel(task_id, "cancelled by the caller");
-        if let Some(started) = next {
+        let cancelled = sess.cancel(task_id, "cancelled by the caller");
+        self.cancel_tickets(cancelled.tickets);
+        if let Some(started) = cancelled.next {
             agent::launch(sess, self.ctx.clone(), started);
         }
-        task.ok_or_else(|| Fail::NotFound(format!("no task {task_id} in session {id}")))
+        cancelled.task.ok_or_else(|| Fail::NotFound(format!("no task {task_id} in session {id}")))
     }
 
-    pub fn submit_approval(
+    pub async fn submit_approval(
         &self,
         id: &str,
         call_id: &str,
         req: wire::SubmitApproval,
     ) -> R<wire::ApprovalAnswer> {
         let sess = self.get(id)?;
+        let decision = req.decision;
         let decided_by =
             if req.approver.is_empty() { "anonymous".to_string() } else { req.approver };
-        let answer = Answer { decision: req.decision, reason: req.reason, decided_by };
-        if !sess.answer(call_id, answer) {
-            return Err(Fail::Conflict(
-                "not-pending",
-                format!("{call_id} is not waiting for approval"),
-            ));
+        let answer = Answer { decision, reason: req.reason, decided_by };
+        let done = || wire::ApprovalAnswer { call_id: call_id.to_string(), decision };
+        // A wait held in memory is answered in memory.
+        if sess.answer(call_id, answer.clone()) {
+            return Ok(done());
         }
-        Ok(wire::ApprovalAnswer { call_id: call_id.to_string(), decision: req.decision })
+        let not_pending =
+            || Fail::Conflict("not-pending", format!("{call_id} is not waiting for approval"));
+        // A wait that is parked is answered through its ticket, and it is the delivery of that
+        // answer, here or in the process that replaces this one, that moves the task on
+        // (ADR-0113). The first to give an answer may; a second is refused, as it is in memory.
+        let Some(park) = &self.ctx.park else { return Err(not_pending()) };
+        let Some(waiting) = sess.claim_parked_answer(call_id) else { return Err(not_pending()) };
+        let what = format!("approve {} in session {}", waiting.tool, sess.id);
+        let body = Answered {
+            decision: answer.decision,
+            reason: answer.reason,
+            decided_by: answer.decided_by,
+        };
+        match park.answer(&sess.id, call_id, &what, waiting.deadline, &body).await {
+            Ok(()) => Ok(done()),
+            Err(e) => {
+                sess.unclaim_parked_answer(call_id);
+                Err(Fail::Unavailable(format!(
+                    "the answer did not reach comp-park, so nothing has happened ({e}); send it again"
+                )))
+            }
+        }
+    }
+
+    /// What `comp-resume` hands this daemon as its sink (ADR-0113): the end of a wait a task
+    /// parked on. An answer is the human's decision; an interruption is nobody's, which is a
+    /// denial, as a timeout always was. Every reply is one `comp-resume` understands: `2xx` for
+    /// "taken, now or before", `410` for "there is nobody to take it", which cancels the ticket.
+    pub fn deliver(&self, d: Delivery) -> R<()> {
+        let sess = {
+            let map = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+            map.get(&d.session).cloned()
+        };
+        let sess = sess.ok_or_else(|| Fail::Gone(format!("no session {}", d.session)))?;
+        let answer = match d.event {
+            DeliveryEvent::Answered { answer } => {
+                match serde_json::from_slice::<Answered>(&answer.body) {
+                    Ok(a) => {
+                        Answer { decision: a.decision, reason: a.reason, decided_by: a.decided_by }
+                    }
+                    // This daemon wrote it, so it cannot be unreadable; if it is, a denial is the safe
+                    // reading, and refusing would only have the answer redelivered for ever.
+                    Err(e) => Answer {
+                        decision: Decision::Deny,
+                        reason: format!("the answer could not be read: {e}"),
+                        decided_by: "comp-agentd".into(),
+                    },
+                }
+            }
+            DeliveryEvent::Interrupted { .. } => Answer {
+                decision: Decision::Deny,
+                reason: "nobody answered in time".into(),
+                decided_by: "timeout".into(),
+            },
+            // Nothing an approval ticket produces. Taken, so that it is not retried for ever.
+            DeliveryEvent::Redispatch { .. } | DeliveryEvent::Joined { .. } => return Ok(()),
+        };
+        match sess.resume_parked(&d.correlation, &answer) {
+            Resume::Resumed(cp) => {
+                agent::resume(sess, self.ctx.clone(), cp, answer);
+                Ok(())
+            }
+            Resume::Duplicate => Ok(()),
+            Resume::Gone => Err(Fail::Gone(format!(
+                "{} in session {} is not waiting for anyone",
+                d.correlation, d.session
+            ))),
+        }
+    }
+
+    /// A task that was parked when this daemon started has a ticket for its approval if all went
+    /// well; if the process died between writing the checkpoint and parking, or the store lost
+    /// it, it has none. Parking is idempotent by correlation, so every approval found parked is
+    /// parked again, and until `comp-park` is there to take it, tried again.
+    pub fn reassert_parks(&self) {
+        if self.ctx.park.is_none() {
+            return;
+        }
+        let parked: Vec<Arc<Session>> = {
+            let map = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+            map.values().filter(|s| s.parked().is_some()).cloned().collect()
+        };
+        for sess in parked {
+            let ctx = self.ctx.clone();
+            tokio::spawn(async move {
+                let Some(park) = &ctx.park else { return };
+                while let Some(w) = sess.parked() {
+                    let what = format!("approve {} in session {}", w.tool, sess.id);
+                    match park.park(&sess.id, &w.call_id, &what, w.deadline).await {
+                        Ok(ticket) => {
+                            sess.set_ticket(&w.call_id, &ticket);
+                            return;
+                        }
+                        Err(e) => {
+                            eprintln!("comp-agentd: {}: parking {} again: {e}", sess.id, w.call_id);
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        }
+                    }
+                }
+            });
+        }
     }
 
     /// Every event after `after`, then each new one as it is appended. Never

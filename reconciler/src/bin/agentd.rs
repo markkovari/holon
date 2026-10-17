@@ -33,6 +33,8 @@ mod agent;
 mod grpc;
 #[path = "agentd/model.rs"]
 mod model;
+#[path = "agentd/park.rs"]
+mod park;
 #[path = "agentd/rest.rs"]
 mod rest;
 #[path = "agentd/service.rs"]
@@ -114,6 +116,22 @@ struct Args {
     /// a busy session refuses every task, as it did before.
     #[arg(long, default_value_t = 16)]
     max_queued: usize,
+
+    /// `comp-park`'s base URL (ADR-0113). With it, a task that needs a human's approval parks
+    /// instead of waiting here: it writes down where it stands, parks the approval and lets go,
+    /// and goes on when the answer is delivered, by `comp-resume` to `POST /park/deliver` on
+    /// this daemon, in this process or in the one that replaced it. A restart no longer ends a
+    /// task that was waiting on a person. Needs `comp-park` and a `comp-resume` whose
+    /// `--sink-url` is this daemon, and `--state-dir`. Unset: the wait is held here, and a
+    /// restart ends the task, as it always did.
+    #[arg(long, env = "PARK_URL", requires = "state_dir")]
+    park_url: Option<String>,
+    /// Shared secret `comp-park` requires, sent as `Authorization: Bearer <token>`.
+    #[arg(long, requires = "park_url")]
+    park_token: Option<String>,
+    /// Same, read from a file. Wins over `--park-token`.
+    #[arg(long, requires = "park_url")]
+    park_token_file: Option<PathBuf>,
 }
 
 fn parse_price(s: &str) -> std::result::Result<(String, u64, u64), String> {
@@ -190,7 +208,7 @@ async fn main() -> Result<()> {
         Some(dir) => {
             std::fs::create_dir_all(dir)
                 .with_context(|| format!("--state-dir {}", dir.display()))?;
-            session::load_all(dir)?
+            session::load_all(dir, args.park_url.is_some())?
         }
         None => Default::default(),
     };
@@ -201,6 +219,13 @@ async fn main() -> Result<()> {
         approval_timeout: args.approval_timeout_secs.map(Duration::from_secs),
         prices: args.prices.clone(),
         off_peak: off_peak_now,
+        park: args.park_url.clone().map(|url| {
+            let token = comp_reconciler::daemon_auth::resolve_token(
+                args.park_token.clone(),
+                args.park_token_file.clone(),
+            );
+            park::Park::new(reqwest::Client::new(), url, token)
+        }),
     };
     let loaded = sessions.len();
     let d = Arc::new(Daemon {
@@ -210,6 +235,8 @@ async fn main() -> Result<()> {
         ctx: Arc::new(ctx),
         max_queued: args.max_queued,
     });
+    // Tasks that were parked on a person when this daemon went down get their tickets again.
+    d.reassert_parks();
     let listener = tokio::net::TcpListener::bind(&args.addr)
         .await
         .with_context(|| format!("binding {}", args.addr))?;
