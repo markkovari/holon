@@ -76,7 +76,7 @@ existing mechanisms actually run concurrently." That's done.
 compiles (they don't need it) but to distribute the request stream across
 boxes that each keep their own local warm cache. The template already exists
 in this repo, proven at real load: `comp-media`'s `MEDIA_JOBS` JetStream
-work-queue stream (`reconciler/src/bin/media.rs`) — a `RetentionPolicy::WorkQueue`
+work-queue stream (`reconciler/daemons/media/`) — a `RetentionPolicy::WorkQueue`
 stream, a durable pull consumer, N worker processes each handling one job at a
 time. The plan for a second `comp-checks` box, when there is one:
 

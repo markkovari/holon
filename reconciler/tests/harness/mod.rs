@@ -37,8 +37,11 @@ fn tail(path: &std::path::Path) -> String {
     }
 }
 
+/// Through `comp-fleet`, not this file's own `CARGO_MANIFEST_DIR`: the suites that include this
+/// harness are in more than one package now, at different depths (docs/adr/0115). Still the root
+/// this was COMPILED in, as it always was, and not `COMP_REPO_ROOT`.
 pub fn repo_root() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+    comp_fleet::fleet::root_from_manifest()
 }
 
 pub struct Platform {
@@ -60,9 +63,8 @@ impl Platform {
         let component = if legacy.is_file() {
             legacy
         } else {
-            let catalog =
-                comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&root));
-            comp_reconciler::plug::compose_to(
+            let catalog = comp_fleet::plug::Catalog::scan(&comp_fleet::plug::default_dirs(&root));
+            comp_fleet::plug::compose_to(
                 "platform-domain",
                 &catalog,
                 &root.join("components/target/composed"),
@@ -215,7 +217,7 @@ impl Drop for Surreal {
 impl Surreal {
     pub fn start() -> Option<Self> {
         // `free_port` is the harness's, so two concurrent runs do not collide.
-        let port = comp_reconciler::fleet::free_port();
+        let port = comp_fleet::fleet::free_port();
         let name = format!("comp-test-surreal-{port}");
         let status = Command::new("docker")
             .args(["run", "--rm", "-d", "--name", &name])
@@ -356,8 +358,8 @@ pub fn composed_gate() -> Vec<u8> {
     if let Ok(bytes) = std::fs::read(&legacy) {
         return bytes;
     }
-    let catalog = comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&root));
-    comp_reconciler::plug::compose("gate-domain", &catalog)
+    let catalog = comp_fleet::plug::Catalog::scan(&comp_fleet::plug::default_dirs(&root));
+    comp_fleet::plug::compose("gate-domain", &catalog)
         .expect("gate-domain composes with what it imports — `cargo xtask build --force` first")
 }
 
@@ -387,7 +389,7 @@ impl Drop for RustFs {
 impl RustFs {
     /// `None` when Docker cannot start one; the caller prints SKIPPED.
     pub fn start() -> Option<Self> {
-        let port = comp_reconciler::fleet::free_port();
+        let port = comp_fleet::fleet::free_port();
         let name = format!("comp-test-rustfs-{port}");
         let status = Command::new("docker")
             .args(["run", "--rm", "-d", "--name", &name])

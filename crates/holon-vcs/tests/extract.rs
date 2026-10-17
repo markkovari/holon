@@ -41,7 +41,7 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
     out.extend(files_under("crates/holon-vcs/src", ".rs"));
     out.extend(files_under("crates/holon-vcs/tests", ".rs"));
     out.extend(files_under("components/record-store/src", ".rs"));
-    out.extend(files_under("reconciler/src/bin", "media.rs"));
+    out.extend(files_under("reconciler/daemons/media/src", "main.rs"));
     out.extend(files_under("wit", ".wit"));
     let comps = repo().join("components");
     let mut names: Vec<String> = std::fs::read_dir(&comps)

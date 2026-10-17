@@ -69,7 +69,10 @@ cheapest way to be sure the binary the test runs is the one this commit built. A
 binary from another package finds it through `Fleet::bin_path`, which already works from the
 executable's own directory, and the job that runs it builds that binary by name first. That is a
 line in CI for each such binary, and it is why a binary that nothing tests can move at once while one
-that a fleet test starts waits until the line exists.
+that a fleet test starts waits until the line exists. The harness the suites share
+([`tests/harness/mod.rs`](../../reconciler/tests/harness/mod.rs)) is not copied into a package that a test
+moves to but included by `#[path]`; it names `comp-fleet` and not the root package, so it compiles in
+either place, and its `repo_root()` is the one the harness has everywhere.
 
 **Dependencies point one way.** A package may depend on the root (for `fleet`, `plug`, the plan
 types) until those get a package of their own; the root depends on a member only for a leaf such as
