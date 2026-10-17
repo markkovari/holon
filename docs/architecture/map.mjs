@@ -116,7 +116,7 @@ export const SYS = [
   boundary:['Each daemon is its own process with its own allow-list and its own blast radius: no shared daemon, no shared allow-list (ADR-0095).',
             'They bind loopback. comp-checks bounds the command with --allow but not the tree it runs over, so off loopback it refuses to start without a token.',
             'A missing dependency (Docker, Ollama, Chrome, ffmpeg, a desktop session) is reported as unavailable, never answered with a plausible constant.'],
-  code:['reconciler/src/bin/{fswatch,browser,docker,clipboard}.rs','reconciler/src/bin/{imageopt,lanscan,llmlocal,mdns}.rs','reconciler/src/bin/{cron,uinotify,ffmpeg,wireguard}.rs','reconciler/src/bin/{media,mailrelay,checks}.rs']},
+  code:['reconciler/daemons/kit/','reconciler/src/bin/{fswatch,browser,docker,clipboard}.rs','reconciler/src/bin/{imageopt,lanscan,llmlocal,mdns}.rs','reconciler/src/bin/{cron,uinotify,ffmpeg,wireguard}.rs','reconciler/src/bin/{media,mailrelay,checks}.rs']},
 
  {id:'durable', name:'Durable services', short:'park and vcs on JetStream',
   purpose:'comp-park and comp-vcs: a ticket per outstanding call, and an agent-native code store.',

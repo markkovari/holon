@@ -25,7 +25,7 @@ imageopt-url = "http://127.0.0.1:8004"
 # to provision. A real deployment sharing a box with anything else should
 # set `token` here AND the matching `<name>-token` in [config] above (kept
 # in sync by `check()`) — otherwise any local process can reach this daemon
-# with no check at all (see `comp_reconciler::daemon_auth`'s own doc).
+# with no check at all (see `comp_daemon_kit`'s own doc).
 [[daemon]]
 name = "imageopt"
 addr = "127.0.0.1:8004"

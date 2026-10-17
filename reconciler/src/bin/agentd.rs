@@ -174,7 +174,7 @@ fn app(d: Arc<Daemon>, token: Option<String>) -> Router {
         .layer(tonic_web::GrpcWebLayer::new());
     let api = rest::routes(d.clone())
         .merge(grpc)
-        .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
+        .layer(axum::middleware::from_fn(comp_daemon_kit::require_token))
         .layer(axum::Extension(Arc::new(token)));
     rest::health_route(d).merge(api)
 }
@@ -215,9 +215,8 @@ fn provider(args: &Args) -> Result<model::Provider> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token =
-        comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-agentd", &token);
+    let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
+    comp_daemon_kit::warn_if_unauthenticated("comp-agentd", &token);
     let roots = args
         .workspace_roots
         .iter()
@@ -239,7 +238,7 @@ async fn main() -> Result<()> {
         prices: args.prices.clone(),
         off_peak: off_peak_now,
         park: args.park_url.clone().map(|url| {
-            let token = comp_reconciler::daemon_auth::resolve_token(
+            let token = comp_daemon_kit::resolve_token(
                 args.park_token.clone(),
                 args.park_token_file.clone(),
             );

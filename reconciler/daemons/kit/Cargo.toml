@@ -1,0 +1,12 @@
+[package]
+name = "comp-daemon-kit"
+description = "What every native daemon behind a capability shares: the shared-secret check on its loopback HTTP (docs/adr/0095, docs/adr/0115)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Deliberately tiny. A daemon depends on this and on its own one heavy crate (bollard,
+# arboard, headless_chrome, ...), and on nothing that belongs to the control plane —
+# that is the point of the package boundary.
+[dependencies]
+axum.workspace = true

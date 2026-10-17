@@ -65,7 +65,7 @@ fn post(route: &str, body: &Value) -> Result<Value, MediaError> {
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     // Stated, so the request is not sent chunked: every body is small and whole.
     let _ = headers.set("content-length", &[payload.len().to_string().into_bytes()]);
-    // A shared secret, if the deployment set one (see `comp_reconciler::daemon_auth` for why loopback binding alone is not a boundary). Absent means the daemon runs with no --token.
+    // A shared secret, if the deployment set one (see `comp_daemon_kit` for why loopback binding alone is not a boundary). Absent means the daemon runs with no --token.
     if let Ok(Some(token)) = config::get("media-token") {
         if !token.is_empty() {
             let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);

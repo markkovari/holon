@@ -1,15 +1,38 @@
 [package]
 name = "comp-reconciler"
-version = "0.1.0"
-edition = "2021"
-publish = false
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
 description = "Diffs desired manifests against observed lattice inventory and issues start/stop commands over NATS. Holds the lattice credential; holds no business logic (docs/adr/0022)."
 
 # A NATIVE binary, deliberately outside the components/ (wasm32) workspace — same
 # arrangement as host/. It exists because a wasm component has no background: this
 # needs a held subscription and a timer. Same reason `applier` existed (ADR-0003),
 # different dangerous credential.
+#
+# This directory is a workspace of single-purpose packages, not one crate with forty
+# bins (docs/adr/0115): a package's `[dependencies]` are built for ANY of its targets,
+# so `cargo build --bin comp-mailrelay` — std only — used to compile bollard, image,
+# headless_chrome and the rest first. A daemon now lives in `daemons/<name>/` with its
+# one heavy crate, and what several of them share is a package of its own.
+#
+# `default-members` lists every package, so everything that says `cd reconciler &&
+# cargo build --bin comp-x`, `--test x` or `clippy` — CI, the release and Docker builds,
+# the e2e scripts, xtask — means what it always did. One lockfile, and one `target/` here:
+# the 100-odd paths to `reconciler/target/release/comp-*` are unchanged.
 [workspace]
+resolver = "2"
+members = ["daemons/*"]
+default-members = [".", "daemons/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# What more than one package here needs, said once, so the versions cannot drift apart.
+[workspace.dependencies]
+axum = { version = "0.8", features = ["http2"] }
 
 [lib]
 name = "comp_reconciler"
@@ -92,6 +115,8 @@ path = "src/bin/catalog.rs"
 
 [dependencies]
 comp-metadata = { path = "../comp-metadata" }
+# The shared-secret check the ADR-0095 daemons put in front of their loopback HTTP.
+comp-daemon-kit = { path = "daemons/kit" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "process", "sync"] }
 # The fabric, as traits. The reconciler holds `Arc<dyn ...>` and never names a
 # broker; `--nats-url` selects the one implementation that ships.
@@ -102,7 +127,7 @@ toml = "0.8"
 serde_norway = "0.9"
 tempfile = "3"
 # comp-stub serves HTTP; the OCI test also stands up a fake registry with it.
-axum = { version = "0.8", features = ["http2"] }
+axum.workspace = true
 serde_json = "1"
 regex = "1"
 anyhow = "1"

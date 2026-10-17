@@ -77,7 +77,7 @@ use store::Store;
 )]
 struct Args {
     /// Shared secret a caller must send as `Authorization: Bearer <token>`.
-    /// See `comp_reconciler::daemon_auth` for why loopback alone is not a
+    /// See `comp_daemon_kit` for why loopback alone is not a
     /// boundary. No token means no check, logged loudly.
     #[arg(long)]
     token: Option<String>,
@@ -190,9 +190,8 @@ fn secret(direct: Option<String>, file: Option<PathBuf>, name: &str) -> Result<S
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token =
-        comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-media", &token);
+    let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
+    comp_daemon_kit::warn_if_unauthenticated("comp-media", &token);
 
     let creds = Credentials::new(
         secret(args.s3_access_key, args.s3_access_key_file, "s3-access-key")?,
@@ -307,7 +306,7 @@ async fn main() -> Result<()> {
         .route("/jobs", post(submit))
         .route("/sign", post(sign))
         .with_state(d.clone())
-        .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
+        .layer(axum::middleware::from_fn(comp_daemon_kit::require_token))
         .layer(axum::Extension(Arc::new(token)))
         // Outside the auth layer: a liveness probe carries no token.
         .merge(Router::new().route("/health", get(health)).with_state(d));
