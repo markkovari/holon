@@ -19,7 +19,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{oneshot, watch};
 
 use super::model::Msg;
-use super::wire::{self, Decision, Event, FailCode, Payload, SessionStatus, TaskStatus, Usage};
+use super::wire::{
+    self, Decision, Event, FailCode, Payload, SessionStatus, TaskStatus, Usage, WhenBusy,
+};
 
 /// A human's answer to one pending tool call.
 pub struct Answer {
@@ -58,6 +60,16 @@ struct State {
     pending: HashMap<String, oneshot::Sender<Answer>>,
     tasks: HashMap<String, wire::Task>,
     by_key: HashMap<String, String>,
+    /// Tasks accepted onto a busy session, oldest first (ADR-0112). Memory only: it is
+    /// derived from the log on load, where a task that never started is ended.
+    queue: VecDeque<Queued>,
+}
+
+/// A task waiting for the running one to end.
+struct Queued {
+    task_id: String,
+    prompt: String,
+    created_at: String,
 }
 
 struct Active {
@@ -74,9 +86,41 @@ struct Active {
     steer_keys: HashMap<String, String>,
 }
 
+impl Active {
+    fn new(task_id: &str) -> Active {
+        Active {
+            task_id: task_id.to_string(),
+            usage: Usage::default(),
+            handle: None,
+            steers: VecDeque::new(),
+            finishing: false,
+            steer_keys: HashMap::new(),
+        }
+    }
+}
+
 pub enum Refusal {
     Closed,
     Busy,
+    /// Queueing was asked for and this many are already waiting.
+    QueueFull(usize),
+}
+
+/// A task that has just become the running one and has no loop yet. Whoever is handed one
+/// (`begin`, `finish`, `cancel`) must give it to `agent::launch`, or it runs nothing.
+pub struct Started {
+    pub task: wire::Task,
+    pub prompt: String,
+}
+
+/// What `begin` did with a task.
+pub enum Begun {
+    /// The session was idle: it is running now, and needs its loop.
+    Started(Started),
+    /// The session was busy and `when_busy` said queue: it starts when its turn comes.
+    Queued(wire::Task),
+    /// The same `Idempotency-Key` as an earlier task: that one, and nothing was started.
+    Repeat(wire::Task),
 }
 
 pub enum SteerRefusal {
@@ -157,8 +201,22 @@ impl Session {
                 Err(err) => anyhow::bail!("events.jsonl line {}: {err}", n + 1),
             };
             match &e.payload {
+                Payload::TaskQueued { prompt } => {
+                    st.tasks.insert(e.task_id.clone(), task(&meta.id, &e, TaskStatus::Queued));
+                    st.queue.push_back(Queued {
+                        task_id: e.task_id.clone(),
+                        prompt: prompt.clone(),
+                        created_at: e.time.clone(),
+                    });
+                }
                 Payload::TaskStarted { .. } => {
-                    st.tasks.insert(e.task_id.clone(), task(&meta.id, &e, TaskStatus::Running));
+                    st.queue.retain(|q| q.task_id != e.task_id);
+                    let mut t = task(&meta.id, &e, TaskStatus::Running);
+                    // A task that waited was created when it was accepted, not when it started.
+                    if let Some(queued) = st.tasks.get(&e.task_id) {
+                        t.created_at = queued.created_at.clone();
+                    }
+                    st.tasks.insert(e.task_id.clone(), t);
                     open = Some((e.task_id.clone(), Usage::default()));
                 }
                 Payload::UsageUpdated { delta, .. } => {
@@ -172,7 +230,12 @@ impl Session {
                     if let Some(t) = st.tasks.get_mut(&e.task_id) {
                         t.status = if done { TaskStatus::Completed } else { TaskStatus::Failed };
                     }
-                    open = None;
+                    st.queue.retain(|q| q.task_id != e.task_id);
+                    // Only the running task's end closes it: a queued one cancelled while it ran
+                    // ends too, and must not make the running one look finished.
+                    if open.as_ref().is_some_and(|(id, _)| *id == e.task_id) {
+                        open = None;
+                    }
                 }
                 _ => {}
             }
@@ -202,6 +265,24 @@ impl Session {
                 task_usage: usage,
             };
             s.push(&mut st, &task_id, payload);
+        }
+        // The queue was in memory. A task accepted and never started is ended here, in the
+        // log, like the running one: it is not run now, on a prompt from a process that is
+        // gone, and the caller finds out and decides (ADR-0112).
+        {
+            let mut st = s.lock();
+            let waiting: Vec<Queued> = st.queue.drain(..).collect();
+            for q in waiting {
+                if let Some(t) = st.tasks.get_mut(&q.task_id) {
+                    t.status = TaskStatus::Failed;
+                }
+                let payload = Payload::TaskFailed {
+                    code: FailCode::Internal,
+                    message: "comp-agentd restarted before this task started".into(),
+                    task_usage: Usage::default(),
+                };
+                s.push(&mut st, &q.task_id, payload);
+            }
         }
         Ok(s)
     }
@@ -254,6 +335,7 @@ impl Session {
             transcript: f.transcript,
             pending_approvals: f.pending_approvals,
             pending_steers: f.pending_steers,
+            queued_tasks: f.queued_tasks,
         }
     }
 
@@ -317,42 +399,95 @@ impl Session {
         }
     }
 
-    /// Start a task, or say why not. With `key`, a repeat returns the
-    /// original task and starts nothing (the bool is false).
-    pub fn begin(&self, prompt: &str, key: Option<String>) -> Result<(wire::Task, bool), Refusal> {
+    /// Start a task, queue it, or say why not. With `key`, a repeat returns the original
+    /// task and starts nothing.
+    ///
+    /// On a busy session `when_busy` decides: `Reject` is `Refusal::Busy`, `Queue` accepts the
+    /// task behind the others (up to `max_queued`; 0 switches queueing off, and a busy
+    /// session is then busy). On an idle one the task starts, whatever `when_busy` says.
+    pub fn begin(
+        &self,
+        prompt: &str,
+        key: Option<String>,
+        when_busy: WhenBusy,
+        max_queued: usize,
+    ) -> Result<Begun, Refusal> {
         let mut s = self.lock();
         if let Some(t) = key.as_ref().and_then(|k| s.by_key.get(k)).and_then(|id| s.tasks.get(id)) {
-            return Ok((t.clone(), false));
+            return Ok(Begun::Repeat(t.clone()));
         }
         if s.closed {
             return Err(Refusal::Closed);
         }
+        let id = wire::new_id("task");
+        let created_at = wire::now();
         if s.active.is_some() {
-            return Err(Refusal::Busy);
+            if when_busy != WhenBusy::Queue || max_queued == 0 {
+                return Err(Refusal::Busy);
+            }
+            if s.queue.len() >= max_queued {
+                return Err(Refusal::QueueFull(max_queued));
+            }
+            let task = wire::Task {
+                id: id.clone(),
+                session_id: self.id.clone(),
+                status: TaskStatus::Queued,
+                created_at: created_at.clone(),
+            };
+            s.tasks.insert(id.clone(), task.clone());
+            s.queue.push_back(Queued {
+                task_id: id.clone(),
+                prompt: prompt.to_string(),
+                created_at,
+            });
+            self.remember(&mut s, key, &id);
+            self.push(&mut s, &id, Payload::TaskQueued { prompt: prompt.to_string() });
+            return Ok(Begun::Queued(task));
         }
+        debug_assert!(s.queue.is_empty(), "an idle session with tasks waiting");
         let task = wire::Task {
-            id: wire::new_id("task"),
+            id: id.clone(),
             session_id: self.id.clone(),
             status: TaskStatus::Running,
-            created_at: wire::now(),
+            created_at,
         };
-        s.active = Some(Active {
-            task_id: task.id.clone(),
-            usage: Usage::default(),
-            handle: None,
-            steers: VecDeque::new(),
-            finishing: false,
-            steer_keys: HashMap::new(),
-        });
-        s.tasks.insert(task.id.clone(), task.clone());
-        if let Some(k) = key {
-            s.by_key.insert(k, task.id.clone());
-            if let Err(e) = self.save_meta(&s) {
-                eprintln!("comp-agentd: {}: saving idempotency key: {e:#}", self.id);
-            }
+        s.active = Some(Active::new(&id));
+        s.tasks.insert(id.clone(), task.clone());
+        self.remember(&mut s, key, &id);
+        self.push(&mut s, &id, Payload::TaskStarted { prompt: prompt.to_string() });
+        Ok(Begun::Started(Started { task, prompt: prompt.to_string() }))
+    }
+
+    /// Remember `key` for `task_id`, so a retry says it once.
+    fn remember(&self, s: &mut State, key: Option<String>, task_id: &str) {
+        let Some(k) = key else { return };
+        s.by_key.insert(k, task_id.to_string());
+        if let Err(e) = self.save_meta(s) {
+            eprintln!("comp-agentd: {}: saving idempotency key: {e:#}", self.id);
         }
-        self.push(&mut s, &task.id, Payload::TaskStarted { prompt: prompt.to_string() });
-        Ok((task, true))
+    }
+
+    /// The oldest queued task becomes the running one. Called by whatever just ended the
+    /// running task, under the lock it already holds, so there is no instant at which the
+    /// session is idle with a task waiting: a task that was accepted starts, or is ended in
+    /// the log (cancelled, or closed with the session), and is never left in a queue nothing
+    /// will drain. `None` with nothing waiting, or once the session is closed.
+    fn promote(&self, s: &mut State) -> Option<Started> {
+        if s.closed {
+            return None;
+        }
+        let q = s.queue.pop_front()?;
+        debug_assert!(s.active.is_none(), "promoting a queued task over a running one");
+        let task = wire::Task {
+            id: q.task_id.clone(),
+            session_id: self.id.clone(),
+            status: TaskStatus::Running,
+            created_at: q.created_at,
+        };
+        s.tasks.insert(q.task_id.clone(), task.clone());
+        s.active = Some(Active::new(&q.task_id));
+        self.push(s, &q.task_id, Payload::TaskStarted { prompt: q.prompt.clone() });
+        Some(Started { task, prompt: q.prompt })
     }
 
     /// Accept a steer for the running task `task_id`; it joins the conversation at
@@ -439,11 +574,15 @@ impl Session {
         self.max_budget - self.lock().usage.cost_usd_micros
     }
 
-    /// End `task_id` with its result or a failure, and go idle. A no-op if
-    /// it is not the active task any more.
-    pub fn finish(&self, task_id: &str, outcome: Result<String, (FailCode, String)>) {
+    /// End `task_id` with its result or a failure, and go idle, or on to the next queued task,
+    /// which comes back to be launched. A no-op if it is not the active task any more.
+    pub fn finish(
+        &self,
+        task_id: &str,
+        outcome: Result<String, (FailCode, String)>,
+    ) -> Option<Started> {
         let mut s = self.lock();
-        let Some(a) = s.active.take_if(|a| a.task_id == task_id) else { return };
+        let a = s.active.take_if(|a| a.task_id == task_id)?;
         let (status, payload) = match outcome {
             Ok(result) => {
                 (TaskStatus::Completed, Payload::TaskCompleted { result, task_usage: a.usage })
@@ -457,16 +596,19 @@ impl Session {
         }
         s.pending.clear();
         self.push(&mut s, task_id, payload);
+        self.promote(&mut s)
     }
 
     pub fn task(&self, task_id: &str) -> Option<wire::Task> {
         self.lock().tasks.get(task_id).cloned()
     }
 
-    /// Stop `task_id` if it is the one running. Returns the task as it now
-    /// stands, or `None` if there is no such task.
-    pub fn cancel(&self, task_id: &str, why: &str) -> Option<wire::Task> {
+    /// Stop `task_id`: the one running, or one still queued, which leaves the queue without
+    /// ever starting. Returns the task as it now stands, or `None` if there is no such task,
+    /// and the next queued task if stopping the running one let it start.
+    pub fn cancel(&self, task_id: &str, why: &str) -> (Option<wire::Task>, Option<Started>) {
         let mut s = self.lock();
+        let mut next = None;
         if let Some(a) = s.active.take_if(|a| a.task_id == task_id) {
             if let Some(h) = &a.handle {
                 h.abort();
@@ -481,8 +623,20 @@ impl Session {
                 task_usage: a.usage,
             };
             self.push(&mut s, task_id, payload);
+            next = self.promote(&mut s);
+        } else if let Some(i) = s.queue.iter().position(|q| q.task_id == task_id) {
+            s.queue.remove(i);
+            if let Some(t) = s.tasks.get_mut(task_id) {
+                t.status = TaskStatus::Failed;
+            }
+            let payload = Payload::TaskFailed {
+                code: FailCode::Cancelled,
+                message: why.into(),
+                task_usage: Usage::default(),
+            };
+            self.push(&mut s, task_id, payload);
         }
-        s.tasks.get(task_id).cloned()
+        (s.tasks.get(task_id).cloned(), next)
     }
 
     /// Register a pending approval; the receiver resolves when someone answers.
@@ -502,14 +656,39 @@ impl Session {
         tx.is_some_and(|tx| tx.send(a).is_ok())
     }
 
-    /// Close, cancelling the running task if there is one.
+    /// Close, ending the running task and every queued one as cancelled. Closed first, under
+    /// one lock, so nothing is promoted into the gap and nothing new is accepted.
     pub fn close(&self) {
-        let active = self.lock().active.as_ref().map(|a| a.task_id.clone());
-        if let Some(t) = active {
-            self.cancel(&t, "session closed");
-        }
+        let why = "session closed";
         let mut s = self.lock();
         s.closed = true;
+        if let Some(a) = s.active.take() {
+            if let Some(h) = &a.handle {
+                h.abort();
+            }
+            if let Some(t) = s.tasks.get_mut(&a.task_id) {
+                t.status = TaskStatus::Failed;
+            }
+            s.pending.clear();
+            let payload = Payload::TaskFailed {
+                code: FailCode::Cancelled,
+                message: why.into(),
+                task_usage: a.usage,
+            };
+            self.push(&mut s, &a.task_id, payload);
+        }
+        let waiting: Vec<Queued> = s.queue.drain(..).collect();
+        for q in waiting {
+            if let Some(t) = s.tasks.get_mut(&q.task_id) {
+                t.status = TaskStatus::Failed;
+            }
+            let payload = Payload::TaskFailed {
+                code: FailCode::Cancelled,
+                message: why.into(),
+                task_usage: Usage::default(),
+            };
+            self.push(&mut s, &q.task_id, payload);
+        }
         if let Err(e) = self.save_meta(&s) {
             eprintln!("comp-agentd: {}: saving closed state: {e:#}", self.id);
         }

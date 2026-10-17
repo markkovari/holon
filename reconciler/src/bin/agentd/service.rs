@@ -8,7 +8,7 @@ use std::sync::Arc;
 use futures::Stream;
 
 use super::agent;
-use super::session::{Answer, Refusal, Registry, Session, SteerRefusal};
+use super::session::{Answer, Begun, Refusal, Registry, Session, SteerRefusal};
 use super::wire;
 
 pub struct Daemon {
@@ -16,6 +16,8 @@ pub struct Daemon {
     pub roots: Vec<PathBuf>,
     pub state_dir: Option<PathBuf>,
     pub ctx: Arc<agent::Ctx>,
+    /// Tasks a session may have waiting behind its running one (ADR-0112). 0: no queueing.
+    pub max_queued: usize,
 }
 
 /// Why a call was refused, in terms both transports map: REST to a status
@@ -24,6 +26,8 @@ pub enum Fail {
     NotFound(String),
     Invalid(&'static str, String),
     Conflict(&'static str, String),
+    /// A limit the caller can wait out: REST `429`, gRPC `RESOURCE_EXHAUSTED`.
+    Exhausted(&'static str, String),
     Internal(String),
 }
 
@@ -77,22 +81,39 @@ impl Daemon {
         Ok(s.view())
     }
 
-    pub fn send_task(&self, id: &str, prompt: String, key: Option<String>) -> R<wire::Task> {
+    /// Start a task, or on a busy session refuse it or queue it as `when_busy` says. A queued
+    /// task comes back as `queued` and starts when the ones before it have ended (ADR-0112).
+    pub fn send_task(
+        &self,
+        id: &str,
+        prompt: String,
+        key: Option<String>,
+        when_busy: wire::WhenBusy,
+    ) -> R<wire::Task> {
         let sess = self.get(id)?;
         if prompt.trim().is_empty() {
             return Err(Fail::Invalid("bad-request", "prompt is required".into()));
         }
-        match sess.begin(&prompt, key.filter(|k| !k.is_empty())) {
-            Ok((task, fresh)) => {
-                if fresh {
-                    let run = agent::run(sess.clone(), self.ctx.clone(), task.id.clone(), prompt);
-                    sess.attach(&task.id, tokio::spawn(run));
-                }
+        match sess.begin(&prompt, key.filter(|k| !k.is_empty()), when_busy, self.max_queued) {
+            Ok(Begun::Started(started)) => {
+                let task = started.task.clone();
+                agent::launch(sess, self.ctx.clone(), started);
                 Ok(task)
             }
+            Ok(Begun::Queued(task) | Begun::Repeat(task)) => Ok(task),
+            Err(Refusal::Busy) if when_busy == wire::WhenBusy::Queue => Err(Fail::Conflict(
+                "task-running",
+                "a task is already running and this daemon does not queue (--max-queued 0)".into(),
+            )),
             Err(Refusal::Busy) => Err(Fail::Conflict(
                 "task-running",
-                "a task is already running; one at a time per session".into(),
+                "a task is already running; one at a time per session \
+                 (send with when_busy \"queue\" to run this one after it)"
+                    .into(),
+            )),
+            Err(Refusal::QueueFull(n)) => Err(Fail::Exhausted(
+                "queue-full",
+                format!("{n} tasks are already waiting behind the running one"),
             )),
             Err(Refusal::Closed) => {
                 Err(Fail::Conflict("session-closed", "the session is closed".into()))
@@ -122,6 +143,10 @@ impl Daemon {
                 Err(Fail::Conflict("session-closed", "the session is closed".into()))
             }
             Err(SteerRefusal::NotRunning) => match sess.task(task_id) {
+                Some(t) if t.status == wire::TaskStatus::Queued => Err(Fail::Conflict(
+                    "task-not-running",
+                    format!("{task_id} is queued and has not started; steer it once it runs"),
+                )),
                 Some(_) => Err(Fail::Conflict(
                     "task-not-running",
                     format!("{task_id} is not the running task; send a new task"),
@@ -141,12 +166,16 @@ impl Daemon {
         Ok(self.get(id)?.state())
     }
 
-    /// Cancel a running task. Cancelling one that already ended is not an
-    /// error — it answers with how it ended — so a retry is harmless.
+    /// Cancel a running task, or one still queued. Cancelling one that already ended is not an
+    /// error — it answers with how it ended — so a retry is harmless. Stopping the running task
+    /// lets the next queued one start, and it is launched here.
     pub fn cancel_task(&self, id: &str, task_id: &str) -> R<wire::Task> {
-        self.get(id)?
-            .cancel(task_id, "cancelled by the caller")
-            .ok_or_else(|| Fail::NotFound(format!("no task {task_id} in session {id}")))
+        let sess = self.get(id)?;
+        let (task, next) = sess.cancel(task_id, "cancelled by the caller");
+        if let Some(started) = next {
+            agent::launch(sess, self.ctx.clone(), started);
+        }
+        task.ok_or_else(|| Fail::NotFound(format!("no task {task_id} in session {id}")))
     }
 
     pub fn submit_approval(

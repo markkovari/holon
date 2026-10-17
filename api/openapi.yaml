@@ -49,7 +49,7 @@ paths:
         "404": { $ref: "#/components/responses/Problem" }
     delete:
       operationId: closeSession
-      summary: Stop any running task (it ends with task_failed/cancelled) and close the session.
+      summary: Stop any running task and every queued one (each ends with task_failed/cancelled) and close the session.
       responses:
         "200":
           description: The closed session.
@@ -63,7 +63,14 @@ paths:
       - $ref: "#/components/parameters/SessionId"
     post:
       operationId: sendTask
-      summary: Queue a task. Returns at once; progress arrives on the event stream.
+      summary: Start a task, or queue it behind the running one. Returns at once; progress arrives on the event stream.
+      description: |
+        A session runs one task at a time. With one running, the default is `409 task-running`.
+        With `when_busy: queue` the task is accepted with status `queued`, `task_queued` is
+        emitted, and it starts (`task_started`) when the ones before it have ended, oldest
+        first. A task that never starts ends with `task_failed`: `cancelled`, or `internal`
+        if the daemon restarted first, which a client resends if it still wants it.
+        On an idle session a task starts at once, whatever `when_busy` says.
       parameters:
         - name: Idempotency-Key
           in: header
@@ -77,13 +84,22 @@ paths:
             schema: { $ref: "#/components/schemas/SendTaskRequest" }
       responses:
         "202":
-          description: Accepted.
+          description: Accepted. `status` is `running` if it started and `queued` if it is waiting.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Task" }
         "404": { $ref: "#/components/responses/Problem" }
         "409":
-          description: A task is already running, or the session is closed. One task at a time per session.
+          description: |
+            A task is already running and `when_busy` is `reject` (`task-running`), or the
+            session is closed (`session-closed`). One task at a time per session.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "429":
+          description: |
+            `queue-full`: `when_busy: queue`, and as many tasks are already waiting as the
+            daemon allows per session (`--max-queued`). Retry when one has started.
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -97,8 +113,11 @@ paths:
         schema: { type: string }
     post:
       operationId: cancelTask
-      summary: Stop a running task; it ends with task_failed/cancelled and the session stays open.
-      description: On a task that already ended, returns it unchanged, so a retry is harmless.
+      summary: Stop a running task, or a queued one; it ends with task_failed/cancelled and the session stays open.
+      description: |
+        A queued task leaves the queue without having started. Stopping the running task
+        lets the next queued one start. On a task that already ended, returns it unchanged,
+        so a retry is harmless.
       responses:
         "200":
           description: The task as it now stands.
@@ -328,6 +347,14 @@ components:
           type: string
           minLength: 1
           description: The instruction for the agent, plain text.
+        when_busy:
+          type: string
+          enum: [reject, queue]
+          default: reject
+          description: |
+            What to do if the session already has a task running: `reject` (`409`, what a
+            client that does not say gets) or `queue` (accept it, to start after the ones
+            before it). Ignored on an idle session.
 
     SteerTaskRequest:
       type: object
@@ -346,7 +373,8 @@ components:
         session_id: { type: string }
         status:
           type: string
-          enum: [running, completed, failed]
+          enum: [queued, running, completed, failed]
+          description: '`queued` is accepted onto a busy session and has not started.'
         created_at: { type: string, format: date-time }
 
     # ---- Usage and cost ----
@@ -373,6 +401,7 @@ components:
     AgentEvent:
       description: One domain event. `type` selects the payload shape; it is also the SSE `event:` name.
       oneOf:
+        - $ref: "#/components/schemas/TaskQueuedEvent"
         - $ref: "#/components/schemas/TaskStartedEvent"
         - $ref: "#/components/schemas/TextDeltaEvent"
         - $ref: "#/components/schemas/ToolCallStartedEvent"
@@ -387,6 +416,7 @@ components:
       discriminator:
         propertyName: type
         mapping:
+          task_queued: "#/components/schemas/TaskQueuedEvent"
           task_started: "#/components/schemas/TaskStartedEvent"
           text_delta: "#/components/schemas/TextDeltaEvent"
           tool_call_started: "#/components/schemas/ToolCallStartedEvent"
@@ -412,6 +442,19 @@ components:
         session_id: { type: string }
         task_id: { type: string }
         time: { type: string, format: date-time }
+
+    TaskQueuedEvent:
+      description: |
+        A task was accepted onto a busy session (`sendTask` with `when_busy: queue`) and
+        waits for the ones before it. `task_started` follows when it begins; if it never
+        does, `task_failed` says how it ended. Its prompt joins the conversation when it
+        starts, not now.
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [prompt]
+          properties:
+            prompt: { type: string }
 
     TaskStartedEvent:
       allOf:
@@ -552,7 +595,7 @@ components:
     # ---- Session state ----
     SessionState:
       type: object
-      required: [session, seq, transcript, pending_approvals, pending_steers]
+      required: [session, seq, transcript, pending_approvals, pending_steers, queued_tasks]
       properties:
         session: { $ref: "#/components/schemas/Session" }
         seq:
@@ -572,6 +615,10 @@ components:
           type: array
           description: Steers accepted and not yet read by the model, for the running task.
           items: { $ref: "#/components/schemas/PendingSteer" }
+        queued_tasks:
+          type: array
+          description: Tasks accepted and not yet started, in the order they will start.
+          items: { $ref: "#/components/schemas/QueuedTask" }
 
     TranscriptEntry:
       description: One line of the conversation. `type` selects the shape.
@@ -684,6 +731,13 @@ components:
         task_id: { type: string }
         steer_id: { type: string }
         message: { type: string }
+
+    QueuedTask:
+      type: object
+      required: [task_id, prompt]
+      properties:
+        task_id: { type: string }
+        prompt: { type: string }
 
     # ---- Human in the loop ----
     ApprovalDecision:

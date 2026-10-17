@@ -43,6 +43,8 @@ need, named. What was read is the write-up, not the source.
 - `pending_approvals` — calls waiting on `submitApproval`, which are what a bot has to ask a
   person about;
 - `pending_steers` — see [ADR-0108](0108-a-running-task-takes-input-at-a-boundary.md).
+- `queued_tasks` — tasks accepted onto a busy session and not yet started, in the order they
+  will start; see [ADR-0112](0112-a-busy-session-can-queue-a-task.md).
 
 A client reads it once, then opens the stream with `after_seq = seq`. Because the state and
 `seq` are computed under one lock over one log, that stream delivers exactly the events

@@ -7,8 +7,9 @@ mid-task with two choices: wait, or throw the work away.*
 [`api/openapi.yaml`](../../api/openapi.yaml) and `SteerTask` in
 [`api/holon/v1/agent.proto`](../../api/holon/v1/agent.proto), with two new events,
 `task_steer_queued` and `task_steered`. Extends
-[ADR-0102](0102-an-agent-session-is-a-contract-first.md). Queueing is **not** built, on
-purpose: see *What this does not do*.
+[ADR-0102](0102-an-agent-session-is-a-contract-first.md). Queueing is **not** built here,
+on purpose (see *What this does not do*); [ADR-0112](0112-a-busy-session-can-queue-a-task.md)
+builds it, with the `when_busy` and the status this ADR said it would need.
 
 ## The problem
 
