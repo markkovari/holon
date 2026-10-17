@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use crate::error::Result;
 use crate::model::TicketId;
-use crate::store::{ParkStore, Record, Revision};
+use crate::store::{IndexChild, ParkStore, Record, Revision};
 
 #[derive(Default)]
 struct State {
@@ -19,6 +19,7 @@ struct State {
     tickets: HashMap<TicketId, (Record, Revision)>,
     by_correlation: HashMap<String, TicketId>,
     by_session: HashMap<String, HashSet<TicketId>>,
+    by_parent: HashMap<String, Vec<TicketId>>,
 }
 
 #[derive(Default)]
@@ -84,6 +85,23 @@ impl ParkStore for MemParkStore {
             .or_default()
             .insert(ticket.to_string());
         Ok(())
+    }
+
+    async fn index_child(&self, parent: &str, child: &str, max: u32) -> Result<IndexChild> {
+        let mut g = self.s.lock().unwrap();
+        let list = g.by_parent.entry(parent.to_string()).or_default();
+        if list.iter().any(|t| t == child) {
+            return Ok(IndexChild::Present);
+        }
+        if list.len() >= max as usize {
+            return Ok(IndexChild::Full);
+        }
+        list.push(child.to_string());
+        Ok(IndexChild::Added)
+    }
+
+    async fn list_children(&self, parent: &str) -> Result<Vec<TicketId>> {
+        Ok(self.s.lock().unwrap().by_parent.get(parent).cloned().unwrap_or_default())
     }
 
     async fn list_tickets(&self) -> Result<Vec<TicketId>> {

@@ -261,8 +261,16 @@ mod tests {
             deadline: Some(123),
             poll: Some(m::PollSpec { url: "http://x".into(), interval_secs: 5 }),
             replay: m::ReplayPolicy::Safe,
+            parent: Some("g".into()),
+            group: None,
         };
         assert_eq!(call.clone().to_wit().to_model(), call);
+        let group = m::OutboundCall {
+            parent: None,
+            group: Some(m::GroupSpec { policy: m::JoinPolicy::FailFast, children: 3 }),
+            ..call
+        };
+        assert_eq!(group.clone().to_wit().to_model(), group);
         let entry = m::TicketEntry {
             ticket: "t".into(),
             session: "s".into(),
@@ -275,8 +283,54 @@ mod tests {
             deadline: Some(9),
             redispatches: 2,
             interrupted_at: Some(5),
+            parent: Some("gt".into()),
+            group: Some(m::GroupSpec { policy: m::JoinPolicy::AllSettled, children: 2 }),
         };
         assert_eq!(entry.clone().to_wit().to_model(), entry);
+    }
+
+    /// A group's resolution, with every way a child can end, survives the component boundary.
+    #[test]
+    fn a_joined_resolution_survives_model_to_wit_and_back() {
+        let by = m::Agent::named("join");
+        let joined = m::Resolution::Joined(m::JoinResult {
+            outcome: m::JoinOutcome::FailedFast,
+            missing: 1,
+            children: vec![
+                m::ChildOutcome {
+                    ticket: "a".into(),
+                    correlation: "ca".into(),
+                    ended: m::ChildResult::Answered(m::CallResult {
+                        ok: false,
+                        body: vec![1],
+                        detail: Some("no".into()),
+                    }),
+                },
+                m::ChildOutcome {
+                    ticket: "b".into(),
+                    correlation: "cb".into(),
+                    ended: m::ChildResult::Interrupted(m::Interruption {
+                        reason: "r".into(),
+                        at: 3,
+                        by,
+                    }),
+                },
+                m::ChildOutcome {
+                    ticket: "c".into(),
+                    correlation: "cc".into(),
+                    ended: m::ChildResult::Cancelled,
+                },
+            ],
+        });
+        assert_eq!(joined.clone().to_wit().to_model(), joined);
+        for o in [
+            m::JoinOutcome::AllAnswered,
+            m::JoinOutcome::SomeFailed,
+            m::JoinOutcome::FailedFast,
+            m::JoinOutcome::TimedOut,
+        ] {
+            assert_eq!(o.to_wit().to_model(), o);
+        }
     }
 
     /// Both halves of what `take-ready` returns survive the component boundary,

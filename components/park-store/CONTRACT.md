@@ -6,9 +6,11 @@ implements every call as ONE HTTP request to `comp-park` (native,
 JetStream. Why the split: [ADR-0100](../../docs/adr/0100-a-parked-turn-is-a-record-not-a-held-thread.md)
 and [ADR-0095](../../docs/adr/0095-what-is-allowed-to-be-native.md).
 `park-gateway` serves the same routes, with the same JSON, to agents over
-`comp-host`; this file is the wire for both. The contract is `holon:park@0.2.0`
-([ADR-0106](../../docs/adr/0106-a-resumed-turn-knows-what-it-may-repeat.md));
-0.1.0 callers break in two places, marked **0.2.0** below.
+`comp-host`; this file is the wire for both. The contract is `holon:park@0.3.0`
+([ADR-0106](../../docs/adr/0106-a-resumed-turn-knows-what-it-may-repeat.md) added
+`replay` and `interrupted`, [ADR-0109](../../docs/adr/0109-a-call-may-fan-out.md) added
+groups). Callers of 0.1.0 break in two places, marked **0.2.0** below, and callers of 0.2.0
+in one more, marked **0.3.0**: `take-ready` can now return `joined`.
 
 The JSON is defined once, in `crates/holon-park/src/wire.rs`, and every side —
 daemon, store component, gateway — uses that definition.
@@ -50,12 +52,13 @@ Records are the WIT's, field for field, kebab-case (`holon_park::model`): an
 ```
 
 `replay` is `"safe"`, `"unsafe"` or `"abandon"` and is **required** by the WIT
-(**0.2.0**); on this wire a caller that leaves it out is read as `"unsafe"`. What each means, and what
-becomes of a call past its `deadline`, is the table in ADR-0106 and
+(**0.2.0**); on this wire a caller that leaves it out is read as `"unsafe"`. What each
+means, and what becomes of a call past its `deadline`, is the table in ADR-0106 and
 `crates/holon-park/src/recover.rs`. A call with no `deadline` is never given up
-on by anything.
+on by anything. `parent` and `group` (**0.3.0**) are optional and make a call a child or a
+group: see *Groups* below.
 
-`take-ready` answers exactly one of two single-key objects, and a client matches
+`take-ready` answers exactly one single-key object, and a client matches
 on the key rather than on `ok`:
 
 ```json
@@ -64,7 +67,15 @@ on the key rather than on `ok`:
 ```
 
 `interrupted` means no answer will come **and the call may or may not have
-happened**: check on the far side before repeating it.
+happened**: check on the far side before repeating it. A third shape, `joined`
+(**0.3.0**), is what a *group* resolves to:
+
+```json
+{ "joined": { "outcome": "failed-fast", "missing": 0, "children": [
+    { "ticket": "…", "correlation": "c1", "ended": { "answered": { "ok": true, "body": [1], "detail": null } } },
+    { "ticket": "…", "correlation": "c2", "ended": { "interrupted": { "reason": "…", "at": 1700000000000, "by": { "id": "turn" } } } },
+    { "ticket": "…", "correlation": "c3", "ended": "cancelled" } ] } }
+```
 
 `interrupt` answers the status the ticket is in afterwards: `"interrupted"`, or
 `"ready"` if the answer landed first (and then it is the answer that `take-ready`
@@ -73,7 +84,7 @@ once the ticket is `resumed` or `cancelled`; `invalid` with a blank `reason`, wh
 is what the turn is told.
 
 A `ticket-entry` is `{ticket, session, status, parked-at, woken-at, resumed-at,
-correlation, replay, deadline, redispatches, interrupted-at}`, `status` one of
+correlation, replay, deadline, redispatches, interrupted-at, parent, group}`, `status` one of
 `parked`, `ready`, `resumed`, `cancelled`, `expired`, `interrupted`. `correlation`
 is how a restarted turn finds the call in its own journal: a ticket id is a hash.
 `deadline` is the current one, which a re-dispatch pushes out.
@@ -146,12 +157,38 @@ answer".
 | `--wake-stream` | `PARK_WAKE` | the wake-notification stream's name |
 | `--memory` | off | everything in memory, nothing durable, no `PARK_WAKE` — for trying it and for tests |
 
+## Groups (ADR-0109)
+
+A call parked with `"group": {"policy": "all-settled" | "fail-fast", "children": N}` is a
+**group**: it is resolved by its children, not by `wake`. A call parked with
+`"parent": "<the group's correlation>"` is a **child**. Parent and child are in the same
+session, and the group is parked first.
+
+| | |
+|---|---|
+| `all-settled` | resolves when all `N` children have been parked and have settled, however each ended |
+| `fail-fast` | resolves as soon as one child fails (an `ok: false` answer, an interruption, a cancellation); the children still parked are cancelled **first** |
+| the group's own `deadline` | resolves it `timed-out` if it is still waiting: the children still parked are cancelled first, and `missing` counts the ones never parked |
+| `cancel` a group | cancels its children first, then the group: bottom-up |
+| `cancel` a child | counts as a failure to its group, which may resolve it |
+
+`take-ready` on a group returns `joined`: every child in the order it was parked, how each
+ended, and why the group stopped waiting (`all-answered`, `some-failed`, `failed-fast`,
+`timed-out`). The children are consumed with it.
+
+What is refused, all `invalid` (`400`): a child whose group does not exist, is not a group, is
+another session's, or has already resolved; a child past the `N` declared; a group that is also
+a child (groups do not nest); `children` of 0 or over 1024; `wake` or `interrupt` on a group;
+`take-ready` or `resolution` on a child ("take the group"); re-parking a child under a different
+parent. `replay` on a group is ignored: each child has its own, and is recovered on its own.
+
 ## `PARK_WAKE`, and `comp-resume`
 
 `comp-park` announces on `PARK_WAKE` (a work-queue stream, subject
 `<stream>.ticket`) once per real transition to something a turn can take: a
-`wake` that moved a ticket to `ready`, and an `interrupt` that moved one to
-`interrupted`. A message is `{"session", "ticket", "kind"}`, `kind` being
+`wake` that moved a ticket to `ready`, an `interrupt` that moved one to
+`interrupted`, and a call (a `wake`, `interrupt` or `cancel` of a child) that
+resolved a group. A child is never announced on its own: its group is. A message is `{"session", "ticket", "kind"}`, `kind` being
 `"resolved"` (the default, and what a pre-0.2.0 `comp-park` sent) or
 `{"redispatch": {"attempt": n}}`. It is a nudge, not the record: if a publish
 fails the ticket has still moved, and a recovery pass announces it again.

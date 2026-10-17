@@ -29,14 +29,16 @@ use std::sync::{Arc, Mutex};
 use std::future::Future;
 
 use holon_park::error::{ParkError, Result};
+use holon_park::group::{join_decision, Join};
 use holon_park::mem::MemParkStore;
 use holon_park::model::{
-    Agent, CallResult, OutboundCall, ReplayPolicy, Resolution, SessionId, TicketId, TurnStatus,
-    WakeMessage,
+    Agent, CallResult, ChildResult, GroupSpec, JoinOutcome, JoinPolicy, OutboundCall, ReplayPolicy,
+    Resolution, SessionId, TicketId, TurnStatus, WakeMessage,
 };
 use holon_park::recover::RecoveryPolicy;
 use holon_park::resume::{handle, Delivery, Sink, SinkReply};
-use holon_park::store::{ParkStore, Record, Revision, StoredStatus};
+use holon_park::store::{IndexChild, ParkStore, Record, Revision, StoredStatus};
+use holon_park::ticket::ticket_id;
 use holon_park::Engine;
 
 // ---- the fuse ------------------------------------------------------------------
@@ -140,6 +142,10 @@ macro_rules! reads {
             $gate(self)?;
             self.inner().list_tickets().await
         }
+        async fn list_children(&self, p: &str) -> Result<Vec<TicketId>> {
+            $gate(self)?;
+            self.inner().list_children(p).await
+        }
     };
 }
 
@@ -168,6 +174,9 @@ impl<S: ParkStore> ParkStore for Shared<S> {
     }
     async fn index_session(&self, s: &str, t: &str) -> Result<()> {
         self.inner().index_session(s, t).await
+    }
+    async fn index_child(&self, p: &str, c: &str, max: u32) -> Result<IndexChild> {
+        self.inner().index_child(p, c, max).await
     }
 }
 
@@ -198,6 +207,9 @@ impl<S: ParkStore> ParkStore for Crashy<S> {
     }
     async fn index_session(&self, s: &str, t: &str) -> Result<()> {
         write!(self, self.inner().index_session(s, t))
+    }
+    async fn index_child(&self, p: &str, c: &str, max: u32) -> Result<IndexChild> {
+        write!(self, self.inner().index_child(p, c, max))
     }
 }
 
@@ -251,7 +263,50 @@ fn call(correlation: &str, replay: ReplayPolicy, deadline: Option<u64>) -> Outbo
         deadline,
         poll: None,
         replay,
+        parent: None,
+        group: None,
     }
+}
+
+fn tk(correlation: &str) -> TicketId {
+    ticket_id(SESSION, correlation)
+}
+
+fn group_call(policy: JoinPolicy, children: u32, deadline: Option<u64>) -> OutboundCall {
+    OutboundCall {
+        group: Some(GroupSpec { policy, children }),
+        ..call("g", ReplayPolicy::Unsafe, deadline)
+    }
+}
+
+fn child_call(correlation: &str) -> OutboundCall {
+    OutboundCall { parent: Some("g".into()), ..call(correlation, ReplayPolicy::Unsafe, None) }
+}
+
+/// A group, and `children` of its children, each answered or not as the case needs.
+async fn park_group<S: ParkStore>(
+    e: &Engine<S>,
+    policy: JoinPolicy,
+    declared: u32,
+    deadline: Option<u64>,
+    children: &[&str],
+) -> Vec<TicketId> {
+    let turn = || Agent::named("turn");
+    let mut out = vec![
+        e.park(&session(), group_call(policy, declared, deadline), turn(), PARKED_AT)
+            .await
+            .unwrap()
+            .ticket,
+    ];
+    for (i, c) in children.iter().enumerate() {
+        out.push(
+            e.park(&session(), child_call(c), turn(), PARKED_AT + 1 + i as u64)
+                .await
+                .unwrap()
+                .ticket,
+        );
+    }
+    out
 }
 
 fn answer() -> CallResult {
@@ -276,6 +331,16 @@ enum Case {
     Reannounce,
     /// the resumer: deliver to the sink, then take
     Deliver,
+    /// a child: its place in the group, then the record, then three indexes
+    ParkChild,
+    /// the last child answers: its own write, the group's resolution, the children closed
+    JoinAll,
+    /// a failure under fail-fast: the siblings cancelled first, then the group, then the rest
+    FailFast,
+    /// bottom-up: the children, then the group
+    CancelGroup,
+    /// a group's own deadline: the children still parked cancelled, then the group
+    GroupTimeout,
 }
 
 const CASES: &[Case] = &[
@@ -288,6 +353,11 @@ const CASES: &[Case] = &[
     Case::RecoverSafe,
     Case::Reannounce,
     Case::Deliver,
+    Case::ParkChild,
+    Case::JoinAll,
+    Case::FailFast,
+    Case::CancelGroup,
+    Case::GroupTimeout,
 ];
 
 /// What every attempt at a case shares: its sink, which outlives a crash.
@@ -340,6 +410,20 @@ async fn setup<S: ParkStore>(e: &Engine<S>, case: Case) -> Ctx {
                 tickets.push(park_one(e, c, ReplayPolicy::Safe, Some(DEADLINE)).await);
             }
         }
+        Case::ParkChild => {
+            tickets = park_group(e, JoinPolicy::AllSettled, 2, None, &[]).await;
+        }
+        Case::JoinAll | Case::CancelGroup => {
+            tickets = park_group(e, JoinPolicy::AllSettled, 2, None, &["c1", "c2"]).await;
+            e.wake("c1", answer(), PARKED_AT + 10).await.unwrap();
+        }
+        Case::FailFast => {
+            tickets = park_group(e, JoinPolicy::FailFast, 3, None, &["c1", "c2", "c3"]).await;
+        }
+        Case::GroupTimeout => {
+            tickets = park_group(e, JoinPolicy::AllSettled, 3, Some(DEADLINE), &["c1", "c2"]).await;
+            e.wake("c1", answer(), PARKED_AT + 10).await.unwrap();
+        }
     }
     Ctx { tickets, sink: Recorder::default() }
 }
@@ -348,12 +432,16 @@ async fn setup<S: ParkStore>(e: &Engine<S>, case: Case) -> Ctx {
 #[derive(Debug)]
 enum Done {
     Parked,
-    Woken { fresh: bool },
+    Woken {
+        fresh: bool,
+    },
     Interrupted,
     Taken(Resolution),
     Cancelled,
     Recovered,
     Delivered,
+    /// What the call asked to be announced on `PARK_WAKE`.
+    Announced(Vec<WakeMessage>),
 }
 
 async fn run<S: ParkStore>(e: &Engine<S>, case: Case, ctx: &Ctx) -> Result<Done> {
@@ -387,6 +475,22 @@ async fn run<S: ParkStore>(e: &Engine<S>, case: Case, ctx: &Ctx) -> Result<Done>
             handle(e, &ctx.sink, &WakeMessage::resolved(SESSION, &t0), &sweeper(), NOW).await?;
             Done::Delivered
         }
+        Case::ParkChild => {
+            e.park(&session(), child_call("c1"), Agent::named("turn"), PARKED_AT + 1).await?;
+            Done::Parked
+        }
+        Case::JoinAll => Done::Announced(e.wake("c2", answer(), NOW).await?.announce),
+        Case::FailFast => Done::Announced(
+            e.interrupt(&tk("c1"), "restarted mid-call", Agent::named("turn"), NOW).await?.announce,
+        ),
+        Case::CancelGroup => {
+            e.cancel(&tk("g"), Agent::named("turn"), NOW).await?;
+            Done::Cancelled
+        }
+        Case::GroupTimeout => {
+            e.recover(&sweeper(), &policy(), NOW).await?;
+            Done::Recovered
+        }
     })
 }
 
@@ -399,6 +503,28 @@ async fn record_of<S: ParkStore>(w: &World<S>, ticket: &TicketId) -> Record {
 /// The repair pass a restarted process runs.
 async fn heal<S: ParkStore>(e: &Engine<S>) -> Result<()> {
     e.repair().await.map(|_| ())
+}
+
+/// A call that resolved a group says so, and if its attempt that did was the crashed one the
+/// announcement was lost: the re-announce row has to find it.
+async fn check_announced<S: ParkStore>(e: &Engine<S>, retry: &Result<Done>, group: &TicketId) {
+    match retry {
+        Ok(Done::Announced(a)) if a.contains(&WakeMessage::resolved(SESSION, group)) => {}
+        // The call found its work already done: the crashed attempt got as far as consuming the
+        // child, and a retry on a closed child is told so. The announcement it would have made
+        // died with it, which is the same case.
+        Ok(Done::Announced(_)) | Err(ParkError::AlreadyClosed(_)) => {
+            if let Ok(Done::Announced(a)) = retry {
+                assert!(a.is_empty(), "announced something else: {a:?}");
+            }
+            let swept = e.recover(&sweeper(), &policy(), NOW + 10_000).await.unwrap();
+            assert!(
+                swept.iter().any(|r| &r.ticket == group && r.announcement().is_some()),
+                "a resolved group nobody announced must be found: {swept:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
 }
 
 /// The state the operation, done exactly once, leaves.
@@ -469,6 +595,56 @@ async fn check_effect<S: ParkStore>(
             assert_eq!(r.status, StoredStatus::Ready);
             assert_eq!(r.announced_at, Some(NOW));
         }
+        Case::ParkChild => {
+            let r = record_of(w, &tk("c1")).await;
+            assert_eq!(r.call.parent.as_deref(), Some("g"));
+            let kids = Shared(w.inner.clone()).list_children(&tk("g")).await.unwrap();
+            assert_eq!(kids, [tk("c1")], "listed once, however far the crashed attempt got");
+            // The places were counted right: one more fits, and the one after does not.
+            let turn = || Agent::named("turn");
+            e.park(&session(), child_call("c2"), turn(), NOW).await.unwrap();
+            let full = e.park(&session(), child_call("c3"), turn(), NOW).await;
+            assert!(matches!(full, Err(ParkError::Invalid(_))), "{full:?}");
+        }
+        Case::JoinAll => {
+            let g = record_of(w, &tk("g")).await;
+            assert_eq!(g.status, StoredStatus::Ready);
+            let j = g.joined.expect("a resolved group holds its result");
+            assert_eq!((j.outcome, j.children.len(), j.missing), (JoinOutcome::AllAnswered, 2, 0));
+            for c in ["c1", "c2"] {
+                assert_eq!(record_of(w, &tk(c)).await.status, StoredStatus::Resumed, "{c}");
+            }
+            check_announced(e, retry, &tk("g")).await;
+        }
+        Case::FailFast => {
+            let g = record_of(w, &tk("g")).await;
+            assert_eq!(g.status, StoredStatus::Ready);
+            let j = g.joined.expect("a resolved group holds its result");
+            assert_eq!(j.outcome, JoinOutcome::FailedFast);
+            assert!(matches!(&j.children[0].ended, ChildResult::Interrupted(_)), "{j:?}");
+            assert_eq!(j.children[1].ended, ChildResult::Cancelled);
+            assert_eq!(j.children[2].ended, ChildResult::Cancelled);
+            assert_eq!(record_of(w, &tk("c1")).await.status, StoredStatus::Resumed);
+            for c in ["c2", "c3"] {
+                assert_eq!(record_of(w, &tk(c)).await.status, StoredStatus::Cancelled, "{c}");
+            }
+            check_announced(e, retry, &tk("g")).await;
+        }
+        Case::CancelGroup => {
+            for c in ["g", "c1", "c2"] {
+                assert_eq!(record_of(w, &tk(c)).await.status, StoredStatus::Cancelled, "{c}");
+            }
+        }
+        Case::GroupTimeout => {
+            let g = record_of(w, &tk("g")).await;
+            assert_eq!(g.status, StoredStatus::Ready);
+            let j = g.joined.expect("a resolved group holds its result");
+            assert_eq!((j.outcome, j.missing), (JoinOutcome::TimedOut, 1));
+            assert!(matches!(&j.children[0].ended, ChildResult::Answered(_)), "{j:?}");
+            assert_eq!(j.children[1].ended, ChildResult::Cancelled);
+            assert_eq!(record_of(w, &tk("c1")).await.status, StoredStatus::Resumed);
+            assert_eq!(record_of(w, &tk("c2")).await.status, StoredStatus::Cancelled);
+        }
         Case::Deliver => {
             let r = record_of(w, &ctx.tickets[0]).await;
             assert_eq!(r.status, StoredStatus::Resumed);
@@ -493,11 +669,16 @@ async fn assert_consistent<S: ParkStore>(w: &World<S>, e: &Engine<Shared<S>>, wh
             StoredStatus::Parked => {
                 assert!(r.result.is_none() && r.interruption.is_none(), "{ctx}");
             }
-            StoredStatus::Ready => assert!(r.result.is_some() && r.woken_at.is_some(), "{ctx}"),
+            StoredStatus::Ready => {
+                assert!((r.result.is_some() || r.joined.is_some()) && r.woken_at.is_some(), "{ctx}")
+            }
             StoredStatus::Interrupted => assert!(r.interruption.is_some(), "{ctx}"),
             StoredStatus::Resumed => {
                 assert!(r.resumed_at.is_some(), "{ctx}");
-                assert!(r.result.is_some() || r.interruption.is_some(), "{ctx}");
+                assert!(
+                    r.result.is_some() || r.interruption.is_some() || r.joined.is_some(),
+                    "{ctx}"
+                );
             }
             StoredStatus::Cancelled => assert!(r.cancelled_at.is_some(), "{ctx}"),
         }
@@ -515,6 +696,50 @@ async fn assert_consistent<S: ParkStore>(w: &World<S>, e: &Engine<Shared<S>>, wh
     // And nothing the index names is missing.
     for t in store.list_session(&session()).await.unwrap() {
         assert!(tickets.contains(&t), "{what}: the session list names {t}, which does not exist");
+    }
+
+    // Groups (ADR-0109): a child is listed under its group, nothing a group lists is missing,
+    // and a group's state agrees with its children's.
+    for t in &tickets {
+        let (r, _) = store.get(t).await.unwrap().unwrap();
+        let ctx = format!("{what}: ticket {t} ({:?})", r.status);
+        if let Some(parent) = &r.call.parent {
+            let g = ticket_id(&r.session, parent);
+            assert!(tickets.contains(&g), "{ctx}: its group does not exist");
+            assert!(
+                store.list_children(&g).await.unwrap().contains(t),
+                "{ctx}: not listed under its group, so the group's join cannot see it"
+            );
+        }
+        let Some(spec) = r.call.group else { continue };
+        let ids = store.list_children(t).await.unwrap();
+        let mut kids = Vec::new();
+        for k in &ids {
+            assert!(tickets.contains(k), "{ctx}: the group lists {k}, which does not exist");
+            kids.push(store.get(k).await.unwrap().unwrap().0);
+        }
+        let over = |k: &Record| matches!(k.status, StoredStatus::Resumed | StoredStatus::Cancelled);
+        match r.status {
+            StoredStatus::Ready | StoredStatus::Resumed => {
+                assert!(r.joined.is_some(), "{ctx}: resolved without a result");
+                assert!(kids.iter().all(over), "{ctx}: resolved with a child still open: {kids:?}");
+            }
+            StoredStatus::Cancelled => {
+                assert!(
+                    kids.iter().all(over),
+                    "{ctx}: cancelled with a child still open: {kids:?}"
+                );
+            }
+            StoredStatus::Parked => {
+                assert!(r.joined.is_none(), "{ctx}");
+                assert_eq!(
+                    join_decision(&spec, &kids),
+                    Join::Wait,
+                    "{ctx}: its join says resolve and it is still parked"
+                );
+            }
+            StoredStatus::Interrupted => panic!("{ctx}: a group is never interrupted"),
+        }
     }
     let _ = e;
 }

@@ -168,12 +168,10 @@ impl Daemon {
                 let req: wire::WakeRequest = parse(body)?;
                 match on!(self, |e| e.wake(&req.correlation, req.answer, now_ms()).await) {
                     Ok(outcome) => {
-                        if outcome.freshly_woken {
-                            self.announce(&WakeMessage::resolved(
-                                &outcome.session,
-                                &outcome.ticket,
-                            ))
-                            .await;
+                        // What the engine says to announce: the ticket if this woke it, or the
+                        // group this resolved (ADR-0109); never a child on its own.
+                        for msg in &outcome.announce {
+                            self.announce(msg).await;
                         }
                         (200, json_of(&outcome.ticket))
                     }
@@ -192,12 +190,8 @@ impl Daemon {
                 let req: wire::InterruptRequest = parse(body)?;
                 match on!(self, |e| e.interrupt(&req.ticket, &req.reason, req.by, now_ms()).await) {
                     Ok(outcome) => {
-                        if outcome.fresh {
-                            self.announce(&WakeMessage::resolved(
-                                &outcome.session,
-                                &outcome.ticket,
-                            ))
-                            .await;
+                        for msg in &outcome.announce {
+                            self.announce(msg).await;
                         }
                         (200, json_of(&outcome.status))
                     }
@@ -206,7 +200,16 @@ impl Daemon {
             }
             "cancel" => {
                 let req: wire::CancelRequest = parse(body)?;
-                answer(on!(self, |e| e.cancel(&req.ticket, req.by, now_ms()).await))
+                // Cancelling a child can resolve its group, which is then what is announced.
+                match on!(self, |e| e.cancel_announcing(&req.ticket, req.by, now_ms()).await) {
+                    Ok(announce) => {
+                        for msg in &announce {
+                            self.announce(msg).await;
+                        }
+                        (200, Value::Null)
+                    }
+                    Err(e) => refusal(&e),
+                }
             }
             "oplog" => {
                 let req: wire::OplogRequest = parse(body)?;

@@ -11,6 +11,8 @@
 //! * `correlation.<sha256>` — the ticket it was claimed for, UTF-8 bytes.
 //! * `session.<sha256>` — the session's ticket list, JSON, grown by CAS. It is
 //!   the index itself, so [`NatsParkStore::list_session`] is one read, no scan.
+//! * `children.<sha256>` — a group's child list (ADR-0109), the same shape, grown
+//!   by the same loop with a bound on how long it may get.
 //!
 //! # The notification is not the durability boundary
 //!
@@ -30,11 +32,13 @@ use sha2::{Digest, Sha256};
 use crate::error::{ParkError, Result};
 use crate::model::TicketId;
 pub use crate::model::{WakeKind, WakeMessage};
-use crate::store::{ParkStore, Record, Revision};
+use crate::store::{IndexChild, ParkStore, Record, Revision};
 
-/// Retry bound for a session's ticket-list CAS; contention is one session's own
-/// concurrent `park` calls.
-const MAX_INDEX_RETRIES: u32 = 8;
+/// Retry bound for a list's CAS. A session's list is contended by that session's own concurrent
+/// `park` calls, and a group's (ADR-0109) by a fan-out registering its children at once, which
+/// is the point of one: a thousand children may race for one list. Each lost race backs off a
+/// few milliseconds so the racers spread out instead of colliding again together.
+const MAX_INDEX_RETRIES: u32 = 64;
 
 fn sha256_hex(s: &str) -> String {
     hex::encode(Sha256::digest(s.as_bytes()))
@@ -50,6 +54,10 @@ fn correlation_key(correlation: &str) -> String {
 
 fn session_key(session: &str) -> String {
     format!("session.{}", sha256_hex(session))
+}
+
+fn children_key(parent: &str) -> String {
+    format!("children.{}", sha256_hex(parent))
 }
 
 /// Connect and open (creating if needed) the KV bucket and the `PARK_WAKE`
@@ -91,6 +99,56 @@ impl NatsParkStore {
             }
         };
         Ok(NatsParkStore { kv })
+    }
+
+    /// Add `item` to the JSON list at `key`, if it is not there already and, when
+    /// `max` is set, only while the list has room: one read, then a create or a
+    /// compare-and-set, retried when it loses the race. The bound and the write are
+    /// one step, so racers for the last place cannot both have it.
+    async fn grow(
+        &self,
+        key: &str,
+        item: &str,
+        max: Option<usize>,
+        what: impl Fn() -> String,
+    ) -> Result<IndexChild> {
+        for attempt in 0..MAX_INDEX_RETRIES {
+            if attempt > 0 {
+                tokio::time::sleep(Duration::from_millis(u64::from(attempt).min(8))).await;
+            }
+            let entry = self.kv.entry(key).await.map_err(ParkError::storage)?;
+            let (mut list, expected): (Vec<TicketId>, Option<Revision>) = match &entry {
+                Some(e) if e.operation == kv::Operation::Put => (
+                    serde_json::from_slice(&e.value).map_err(ParkError::storage)?,
+                    Some(e.revision),
+                ),
+                _ => (Vec::new(), None),
+            };
+            if list.iter().any(|t| t == item) {
+                return Ok(IndexChild::Present);
+            }
+            if max.is_some_and(|m| list.len() >= m) {
+                return Ok(IndexChild::Full);
+            }
+            list.push(item.to_string());
+            let value = serde_json::to_vec(&list).map_err(ParkError::storage)?;
+            let written = match expected {
+                None => match self.kv.create(key, value.into()).await {
+                    Ok(_) => true,
+                    Err(e) if e.kind() == kv::CreateErrorKind::AlreadyExists => false,
+                    Err(e) => return Err(ParkError::storage(e)),
+                },
+                Some(rev) => match self.kv.update(key, value.into(), rev).await {
+                    Ok(_) => true,
+                    Err(e) if e.kind() == kv::UpdateErrorKind::WrongLastRevision => false,
+                    Err(e) => return Err(ParkError::storage(e)),
+                },
+            };
+            if written {
+                return Ok(IndexChild::Added);
+            }
+        }
+        Err(ParkError::storage(format!("{}: repeated compare-and-set contention", what())))
     }
 }
 
@@ -145,40 +203,25 @@ impl ParkStore for NatsParkStore {
     /// Read-modify-CAS-write loop over the session's ticket list; no `Engine`
     /// sits above to retry it.
     async fn index_session(&self, session: &str, ticket: &str) -> Result<()> {
-        let key = session_key(session);
-        for _ in 0..MAX_INDEX_RETRIES {
-            let entry = self.kv.entry(&key).await.map_err(ParkError::storage)?;
-            let (mut list, expected): (Vec<TicketId>, Option<Revision>) = match &entry {
-                Some(e) if e.operation == kv::Operation::Put => (
-                    serde_json::from_slice(&e.value).map_err(ParkError::storage)?,
-                    Some(e.revision),
-                ),
-                _ => (Vec::new(), None),
-            };
-            if list.iter().any(|t| t == ticket) {
-                return Ok(()); // already indexed
-            }
-            list.push(ticket.to_string());
-            let value = serde_json::to_vec(&list).map_err(ParkError::storage)?;
-            let written = match expected {
-                None => match self.kv.create(&key, value.into()).await {
-                    Ok(_) => true,
-                    Err(e) if e.kind() == kv::CreateErrorKind::AlreadyExists => false,
-                    Err(e) => return Err(ParkError::storage(e)),
-                },
-                Some(rev) => match self.kv.update(&key, value.into(), rev).await {
-                    Ok(_) => true,
-                    Err(e) if e.kind() == kv::UpdateErrorKind::WrongLastRevision => false,
-                    Err(e) => return Err(ParkError::storage(e)),
-                },
-            };
-            if written {
-                return Ok(());
-            }
+        self.grow(&session_key(session), ticket, None, || {
+            format!("session {session:?}'s ticket index")
+        })
+        .await
+        .map(|_| ())
+    }
+
+    async fn index_child(&self, parent: &str, child: &str, max: u32) -> Result<IndexChild> {
+        self.grow(&children_key(parent), child, Some(max as usize), || {
+            format!("group {parent}'s child index")
+        })
+        .await
+    }
+
+    async fn list_children(&self, parent: &str) -> Result<Vec<TicketId>> {
+        match self.kv.get(children_key(parent)).await.map_err(ParkError::storage)? {
+            Some(bytes) => serde_json::from_slice(&bytes).map_err(ParkError::storage),
+            None => Ok(Vec::new()),
         }
-        Err(ParkError::storage(format!(
-            "session {session:?}'s ticket index: repeated compare-and-set contention"
-        )))
     }
 
     async fn list_session(&self, session: &str) -> Result<Vec<TicketId>> {

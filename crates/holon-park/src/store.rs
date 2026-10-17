@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::model::{
-    Agent, CallResult, Interruption, OutboundCall, SessionId, TicketId, TurnStatus,
+    Agent, CallResult, Interruption, JoinResult, OutboundCall, SessionId, TicketId, TurnStatus,
 };
 
 /// [`TurnStatus`] without `expired`, which is only computed at read time from a
@@ -81,6 +81,20 @@ pub struct Record {
     /// on every pass.
     #[serde(default)]
     pub announced_at: Option<u64>,
+    /// What a group was resolved with (ADR-0109). Set exactly when a group is
+    /// `Ready`, or `Resumed` after being `Ready`; a group has no `result`.
+    #[serde(default)]
+    pub joined: Option<JoinResult>,
+}
+
+/// What [`ParkStore::index_child`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexChild {
+    Added,
+    /// Already listed: the identical park, retried.
+    Present,
+    /// The group already has as many children as it was declared with.
+    Full,
 }
 
 /// What the engine needs from storage: one CAS'd record per ticket, and two
@@ -136,6 +150,19 @@ pub trait ParkStore: Send + Sync {
     // thousands; an index of the still-open ones (or of deadlines) is the
     // change if a bucket ever holds millions.
     fn list_tickets(&self) -> impl Future<Output = Result<Vec<TicketId>>> + Send;
+
+    /// Add `child` to `parent`'s list, unless it already has `max` children.
+    /// The bound is checked and the list written as one step, so two children
+    /// racing for the last place cannot both take it.
+    fn index_child(
+        &self,
+        parent: &str,
+        child: &str,
+        max: u32,
+    ) -> impl Future<Output = Result<IndexChild>> + Send;
+
+    /// Every child ever indexed under `parent`, in no particular order.
+    fn list_children(&self, parent: &str) -> impl Future<Output = Result<Vec<TicketId>>> + Send;
 }
 
 #[cfg(test)]

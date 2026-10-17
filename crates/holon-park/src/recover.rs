@@ -12,6 +12,10 @@
 //! | `parked` | `safe` | yes, none left | `interrupted`, like an unsafe one |
 //! | `parked` | any | no, or no deadline | nothing |
 //! | `ready` / `interrupted` | — | untaken for `reannounce_after_ms` | announced again (a lost `PARK_WAKE` nudge) |
+//! | a child of a group (ADR-0109) | any | past its deadline | the same move as any call; never re-announced, its group is what is |
+//! | a `parked` group | — | its join says resolve | resolved (`joined`) |
+//! | a `parked` group | — | past its own deadline, join still waiting | the children still parked cancelled, then resolved `timed-out` |
+//! | a resolved or cancelled group | — | a child not yet closed or cancelled | closed or cancelled: a pass that died between the group and its children is finished |
 //!
 //! "Past its deadline" is the deadline plus [`RecoveryPolicy::deadline_grace_ms`]:
 //! a pass acts irreversibly, and a deadline is a wall-clock instant set by
@@ -29,7 +33,8 @@
 use crate::engine::Engine;
 use crate::error::Result;
 use crate::model::{Agent, Interruption, ReplayPolicy, SessionId, TicketId, WakeMessage};
-use crate::store::{ParkStore, Record, StoredStatus};
+use crate::store::{IndexChild, ParkStore, Record, StoredStatus};
+use crate::ticket::ticket_id;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecoveryPolicy {
@@ -67,6 +72,8 @@ pub enum RecoveryAction {
     Redispatch { attempt: u32 },
     /// A resolved ticket nobody took; no state moved, only `announced_at`.
     Reannounce,
+    /// A group was resolved by this pass: its join said so, or its own deadline passed.
+    Joined,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,6 +82,9 @@ pub struct Recovered {
     pub session: SessionId,
     pub correlation: String,
     pub action: RecoveryAction,
+    /// The ticket is a child of a group: what it settled with is announced, if at all, as its
+    /// group's resolution, never on its own.
+    pub child: bool,
 }
 
 impl Recovered {
@@ -82,7 +92,9 @@ impl Recovered {
     /// has nobody to tell.
     pub fn announcement(&self) -> Option<WakeMessage> {
         match &self.action {
-            RecoveryAction::Interrupted | RecoveryAction::Reannounce => {
+            // A child is consumed by its group: the group's resolution is what gets announced.
+            RecoveryAction::Interrupted | RecoveryAction::Reannounce if self.child => None,
+            RecoveryAction::Interrupted | RecoveryAction::Reannounce | RecoveryAction::Joined => {
                 Some(WakeMessage::resolved(&self.session, &self.ticket))
             }
             RecoveryAction::Redispatch { attempt } => {
@@ -112,6 +124,9 @@ pub fn plan(
     now_ms: u64,
 ) -> Option<(Record, RecoveryAction)> {
     match record.status {
+        // A group is resolved by its join, not by what its own `replay` says: `Engine::recover`
+        // runs it after every call has had its single move.
+        StoredStatus::Parked if record.call.group.is_some() => None,
         StoredStatus::Parked => {
             let deadline = record.call.deadline?;
             if now_ms < deadline.saturating_add(policy.deadline_grace_ms) {
@@ -142,6 +157,8 @@ pub fn plan(
             };
             Some((next, action))
         }
+        // A child is consumed by its group and never announced on its own.
+        StoredStatus::Ready | StoredStatus::Interrupted if record.call.parent.is_some() => None,
         StoredStatus::Ready | StoredStatus::Interrupted => {
             let resolved_at = match record.status {
                 StoredStatus::Ready => record.woken_at,
@@ -174,11 +191,16 @@ pub struct Repaired {
     /// correlation, which is refused by design, and a crash between `create` and
     /// the claim let the second in. Not something a pass can settle.
     pub conflicts: Vec<TicketId>,
+    /// Children added back to their group's list: without it the group's join cannot see them.
+    pub reparented: Vec<TicketId>,
 }
 
 impl Repaired {
     pub fn is_empty(&self) -> bool {
-        self.reindexed.is_empty() && self.reclaimed.is_empty() && self.conflicts.is_empty()
+        self.reindexed.is_empty()
+            && self.reclaimed.is_empty()
+            && self.conflicts.is_empty()
+            && self.reparented.is_empty()
     }
 }
 
@@ -194,21 +216,26 @@ impl<S: ParkStore> Engine<S> {
     pub async fn repair(&self) -> Result<Repaired> {
         let mut tickets = self.store.list_tickets().await?;
         tickets.sort();
-        let mut by_session: std::collections::BTreeMap<SessionId, Vec<Record>> =
-            std::collections::BTreeMap::new();
+        let mut all: Vec<Record> = Vec::with_capacity(tickets.len());
         for ticket in tickets {
             if let Some((record, _)) = self.store.get(&ticket).await? {
-                by_session.entry(record.session.clone()).or_default().push(record);
+                all.push(record);
             }
         }
 
         let mut out = Repaired::default();
+
+        let mut by_session: std::collections::BTreeMap<&SessionId, Vec<&Record>> =
+            std::collections::BTreeMap::new();
+        for record in &all {
+            by_session.entry(&record.session).or_default().push(record);
+        }
         for (session, records) in by_session {
             let listed: std::collections::HashSet<TicketId> =
-                self.store.list_session(&session).await?.into_iter().collect();
+                self.store.list_session(session).await?.into_iter().collect();
             for record in records {
                 if !listed.contains(&record.ticket) {
-                    self.store.index_session(&session, &record.ticket).await?;
+                    self.store.index_session(session, &record.ticket).await?;
                     out.reindexed.push(record.ticket.clone());
                 }
                 match self.store.find_correlation(&record.call.correlation).await? {
@@ -225,6 +252,29 @@ impl<S: ParkStore> Engine<S> {
                             Some(_) => out.conflicts.push(record.ticket.clone()),
                         }
                     }
+                }
+            }
+        }
+
+        // Each child listed under its group, within the size the group was declared with.
+        let mut by_group: std::collections::BTreeMap<TicketId, Vec<&Record>> =
+            std::collections::BTreeMap::new();
+        for record in &all {
+            if let Some(parent) = &record.call.parent {
+                by_group.entry(ticket_id(&record.session, parent)).or_default().push(record);
+            }
+        }
+        for (group, children) in by_group {
+            let Some((g, _)) = self.store.get(&group).await? else { continue };
+            let Some(spec) = g.call.group else { continue };
+            let listed: std::collections::HashSet<TicketId> =
+                self.store.list_children(&group).await?.into_iter().collect();
+            for child in children {
+                if !listed.contains(&child.ticket)
+                    && self.store.index_child(&group, &child.ticket, spec.children).await?
+                        == IndexChild::Added
+                {
+                    out.reparented.push(child.ticket.clone());
                 }
             }
         }
@@ -246,15 +296,49 @@ impl<S: ParkStore> Engine<S> {
         let mut tickets = self.store.list_tickets().await?;
         tickets.sort();
         let mut out = Vec::new();
-        for ticket in tickets {
-            let Some((record, rev)) = self.store.get(&ticket).await? else { continue };
+
+        // Every ticket's own move first, children included, so that the groups below see them.
+        for ticket in &tickets {
+            let Some((record, rev)) = self.store.get(ticket).await? else { continue };
             let Some((next, action)) = plan(&record, by, policy, now_ms) else { continue };
-            if self.store.cas(&ticket, rev, &next).await? {
+            if self.store.cas(ticket, rev, &next).await? {
                 out.push(Recovered {
-                    ticket,
+                    ticket: ticket.clone(),
+                    child: record.call.parent.is_some(),
                     session: record.session,
                     correlation: record.call.correlation,
                     action,
+                });
+            }
+        }
+
+        // Then the groups (ADR-0109): run each join, give up on one whose own deadline has
+        // passed, and finish what a resolved or cancelled group implies for its children.
+        for ticket in &tickets {
+            let Some((record, _)) = self.store.get(ticket).await? else { continue };
+            if record.call.group.is_none() {
+                continue;
+            }
+            if record.status != StoredStatus::Parked {
+                self.finish_children(&record, now_ms).await?;
+                continue;
+            }
+            let timed_out = record
+                .call
+                .deadline
+                .is_some_and(|d| now_ms >= d.saturating_add(policy.deadline_grace_ms));
+            // The join's own answer is the more informative one, so it goes first.
+            let mut resolved = self.settle(ticket, now_ms).await?;
+            if resolved.is_none() && timed_out {
+                resolved = self.settle_with(ticket, now_ms, true).await?;
+            }
+            if resolved.is_some() {
+                out.push(Recovered {
+                    ticket: ticket.clone(),
+                    child: false,
+                    session: record.session,
+                    correlation: record.call.correlation,
+                    action: RecoveryAction::Joined,
                 });
             }
         }

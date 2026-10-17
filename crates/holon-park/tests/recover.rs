@@ -16,7 +16,7 @@ use holon_park::model::{
 };
 use holon_park::recover::{RecoveryAction, RecoveryPolicy, Repaired};
 use holon_park::resume::{handle, sweep, Announcer, Delivery, Event, Handled, Sink, SinkReply};
-use holon_park::store::{ParkStore, Record, Revision};
+use holon_park::store::{IndexChild, ParkStore, Record, Revision};
 use holon_park::ticket::ticket_id;
 use holon_park::{mem_engine, Engine};
 
@@ -42,6 +42,8 @@ fn call(correlation: &str, replay: ReplayPolicy, deadline: Option<u64>) -> Outbo
         deadline,
         poll: None,
         replay,
+        parent: None,
+        group: None,
     }
 }
 
@@ -479,6 +481,12 @@ impl ParkStore for Flaky {
     async fn list_tickets(&self) -> Result<Vec<TicketId>> {
         self.inner.list_tickets().await
     }
+    async fn index_child(&self, p: &str, c: &str, max: u32) -> Result<IndexChild> {
+        self.inner.index_child(p, c, max).await
+    }
+    async fn list_children(&self, p: &str) -> Result<Vec<TicketId>> {
+        self.inner.list_children(p).await
+    }
 }
 
 /// The reason delivery reads before it takes: dying between the sink accepting
@@ -599,6 +607,7 @@ async fn unindexed(store: &MemParkStore, session: &str, correlation: &str) -> Ti
         redispatches: 0,
         interruption: None,
         announced_at: None,
+        joined: None,
     };
     assert!(store.create(&ticket, &record).await.unwrap());
     ticket
