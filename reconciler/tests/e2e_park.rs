@@ -9,10 +9,16 @@
 //! skip that returns `ok` is a green tick for a test that did not run).
 //!
 //! Each test owns its bucket, wake stream, `comp-park` port and `comp-host`, so they run in parallel.
+//!
+//! The resumer tests (ADR-0106) add a real `comp-resume` process and a stub sink it delivers to, and
+//! kill the resumer outright mid-delivery.
 
 mod gatelib;
 
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::process::{Child, Command};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
@@ -44,6 +50,9 @@ struct Stack {
     park: Child,
     logs: tempfile::TempDir,
     gate: gatelib::Gate,
+    nats: String,
+    bucket: String,
+    wake_stream: String,
 }
 
 impl Drop for Stack {
@@ -59,11 +68,13 @@ impl Stack {
         let port = free_port();
         let logs = tempfile::tempdir().unwrap();
         let log = std::fs::File::create(logs.path().join("park.log")).unwrap();
+        let bucket = format!("e2e-park-{tag}");
+        let wake_stream = format!("E2E_PARK_WAKE_{}", tag.replace(['-', '.'], "_"));
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_comp-park"));
         cmd.args(["--addr", &format!("127.0.0.1:{port}")])
             .args(["--nats-url", nats])
-            .args(["--bucket", &format!("e2e-park-{tag}")])
-            .args(["--wake-stream", &format!("E2E_PARK_WAKE_{}", tag.replace(['-', '.'], "_"))])
+            .args(["--bucket", &bucket])
+            .args(["--wake-stream", &wake_stream])
             .stdout(log.try_clone().unwrap())
             .stderr(log);
         let mut child = cmd.spawn().expect("spawn comp-park");
@@ -99,7 +110,15 @@ impl Stack {
             &[&url],
             &[&egress],
         )?;
-        Some(Stack { name: test.to_string(), park: child, logs, gate })
+        Some(Stack {
+            name: test.to_string(),
+            park: child,
+            logs,
+            gate,
+            nats: nats.to_string(),
+            bucket,
+            wake_stream,
+        })
     }
 
     fn call(&self, func: &str, body: Value) -> (u16, Value) {
@@ -127,7 +146,17 @@ fn agent(id: &str) -> Value {
 }
 
 fn call_of(correlation: &str) -> Value {
-    json!({ "correlation": correlation, "description": "e2e call", "deadline": null, "poll": null })
+    json!({ "correlation": correlation, "description": "e2e call", "deadline": null, "poll": null,
+            "replay": "unsafe" })
+}
+
+fn call_replaying(correlation: &str, replay: &str, deadline: Option<u64>) -> Value {
+    json!({ "correlation": correlation, "description": format!("e2e {correlation}"),
+            "deadline": deadline, "poll": null, "replay": replay })
+}
+
+fn now_ms() -> u64 {
+    (nanos() / 1_000_000) as u64
 }
 
 #[test]
@@ -159,8 +188,8 @@ fn park_wake_take_ready_over_the_real_component_chain() {
     assert_eq!(pending[0]["status"], "ready");
 
     let result = s.ok("take-ready", json!({ "ticket": ticket }));
-    assert_eq!(result["ok"], true);
-    assert_eq!(result["body"], json!([42]));
+    assert_eq!(result["answered"]["ok"], true, "{result}");
+    assert_eq!(result["answered"]["body"], json!([42]));
 
     // Exactly once: a second `take-ready` is `already-closed`.
     let (status, refused) = s.call("take-ready", json!({ "ticket": ticket }));
@@ -206,4 +235,360 @@ fn reparking_and_cancelling_over_the_real_component_chain() {
 
     let (status, refused) = s.call("take-ready", json!({ "ticket": ticket }));
     assert_eq!((status, refused["error"].as_str()), (409, Some("already-closed")));
+}
+
+// ---- ADR-0106: interrupted, replay, and the resumer ----------------------------
+
+#[test]
+fn an_interrupted_call_is_taken_as_an_interruption_through_the_component_chain() {
+    let name = "an_interrupted_call_is_taken_as_an_interruption_through_the_component_chain";
+    let Some(nats) = nats_url(name) else { return };
+    let Some(s) = Stack::up(name, &nats) else { return };
+
+    let session = format!("s-{}", nanos());
+    let parked = s.ok(
+        "park",
+        json!({ "session": session, "call": call_replaying("pay-1", "unsafe", None), "by": agent("a1") }),
+    );
+    let ticket = parked["ticket"].as_str().unwrap().to_string();
+
+    // An empty reason is refused: it is what the turn will be told.
+    let (status, refused) =
+        s.call("interrupt", json!({ "ticket": ticket, "reason": " ", "by": agent("a1") }));
+    assert_eq!((status, refused["error"].as_str()), (400, Some("invalid")), "{refused}");
+
+    let said = s.call(
+        "interrupt",
+        json!({ "ticket": ticket, "reason": "the box restarted", "by": agent("a1") }),
+    );
+    assert_eq!(said, (200, json!("interrupted")));
+    // Idempotent, and the first reason stands.
+    let again =
+        s.call("interrupt", json!({ "ticket": ticket, "reason": "second", "by": agent("a1") }));
+    assert_eq!(again, (200, json!("interrupted")));
+
+    let pending = s.ok("pending", json!({ "session": session }));
+    assert_eq!(pending[0]["status"], "interrupted");
+    assert_eq!(pending[0]["correlation"], "pay-1");
+    assert!(pending[0]["interrupted-at"].is_u64(), "{pending}");
+
+    // A late answer is accepted and dropped.
+    let (status, _) = s.call(
+        "wake",
+        json!({ "correlation": "pay-1", "answer": { "ok": true, "body": [], "detail": null } }),
+    );
+    assert_eq!(status, 200);
+
+    let taken = s.ok("take-ready", json!({ "ticket": ticket }));
+    assert_eq!(taken["interrupted"]["reason"], "the box restarted", "{taken}");
+    assert_eq!(taken["interrupted"]["by"]["id"], "a1");
+    assert!(taken.get("answered").is_none());
+
+    let (status, refused) = s.call("take-ready", json!({ "ticket": ticket }));
+    assert_eq!((status, refused["error"].as_str()), (409, Some("already-closed")));
+    let (status, refused) =
+        s.call("interrupt", json!({ "ticket": ticket, "reason": "why", "by": agent("a1") }));
+    assert_eq!((status, refused["error"].as_str()), (409, Some("already-closed")));
+}
+
+#[test]
+fn replay_and_the_entry_fields_survive_the_component_chain() {
+    let name = "replay_and_the_entry_fields_survive_the_component_chain";
+    let Some(nats) = nats_url(name) else { return };
+    let Some(s) = Stack::up(name, &nats) else { return };
+
+    let session = format!("s-{}", nanos());
+    let deadline = now_ms() + 3_600_000;
+    s.ok(
+        "park",
+        json!({ "session": session, "call": call_replaying("read-1", "safe", Some(deadline)),
+                "by": agent("a1") }),
+    );
+    // A caller that leaves `replay` out gets the cautious reading.
+    s.ok(
+        "park",
+        json!({ "session": session, "by": agent("a1"),
+                "call": { "correlation": "old-1", "description": "d", "deadline": null, "poll": null } }),
+    );
+
+    let log = s.ok("oplog", json!({ "session": session, "after": null, "limit": 10 }));
+    let by_corr =
+        |c: &str| log.as_array().unwrap().iter().find(|e| e["correlation"] == c).unwrap().clone();
+    let safe = by_corr("read-1");
+    assert_eq!(safe["replay"], "safe");
+    assert_eq!(safe["deadline"], json!(deadline));
+    assert_eq!(safe["redispatches"], 0);
+    assert_eq!(by_corr("old-1")["replay"], "unsafe");
+}
+
+/// A sink the resumer can deliver to: records what it is handed, and answers
+/// according to its current mode.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Mode {
+    Accept,
+    Hang,
+}
+
+struct StubSink {
+    addr: SocketAddr,
+    mode: Arc<Mutex<Mode>>,
+    seen: Arc<Mutex<Vec<(String, Value)>>>,
+}
+
+impl StubSink {
+    fn start() -> StubSink {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mode = Arc::new(Mutex::new(Mode::Accept));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let (m, sn) = (mode.clone(), seen.clone());
+        std::thread::spawn(move || {
+            for conn in listener.incoming().flatten() {
+                let (m, sn) = (m.clone(), sn.clone());
+                std::thread::spawn(move || serve_one(conn, m, sn));
+            }
+        });
+        StubSink { addr, mode, seen }
+    }
+
+    fn url(&self) -> String {
+        format!("http://{}/deliver", self.addr)
+    }
+
+    fn set(&self, mode: Mode) {
+        *self.mode.lock().unwrap() = mode;
+    }
+
+    fn seen(&self) -> Vec<(String, Value)> {
+        self.seen.lock().unwrap().clone()
+    }
+}
+
+/// One HTTP request, by hand: headers, a `Content-Length` body, a one-line answer.
+fn serve_one(mut conn: TcpStream, mode: Arc<Mutex<Mode>>, seen: Arc<Mutex<Vec<(String, Value)>>>) {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let (head_end, len) = loop {
+        let n = conn.read(&mut chunk).unwrap_or(0);
+        if n == 0 {
+            return;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+            let len = head
+                .lines()
+                .find_map(|l| {
+                    l.strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0))
+                })
+                .unwrap_or(0usize);
+            break (i + 4, len);
+        }
+    };
+    while buf.len() < head_end + len {
+        let n = conn.read(&mut chunk).unwrap_or(0);
+        if n == 0 {
+            return;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+    let key = head
+        .lines()
+        .find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            k.eq_ignore_ascii_case("idempotency-key").then(|| v.trim().to_string())
+        })
+        .unwrap_or_default();
+    let body: Value = serde_json::from_slice(&buf[head_end..head_end + len]).unwrap_or(Value::Null);
+    seen.lock().unwrap().push((key, body));
+
+    if *mode.lock().unwrap() == Mode::Hang {
+        std::thread::sleep(Duration::from_secs(3600));
+        return;
+    }
+    let _ = conn.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+}
+
+fn wait_for(what: &str, secs: u64, mut ok: impl FnMut() -> bool) {
+    let t0 = Instant::now();
+    while !ok() {
+        assert!(t0.elapsed() < Duration::from_secs(secs), "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+struct Resumer {
+    child: Child,
+}
+
+impl Drop for Resumer {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Stack {
+    /// A real `comp-resume` against this stack's NATS, bucket and stream.
+    fn resumer(&self, sink_url: &str) -> Resumer {
+        let log = std::fs::File::create(self.logs.path().join("resume.log")).unwrap();
+        let child = Command::new(env!("CARGO_BIN_EXE_comp-resume"))
+            .args(["--sink-url", sink_url])
+            .args(["--nats-url", &self.nats])
+            .args(["--bucket", &self.bucket])
+            .args(["--wake-stream", &self.wake_stream])
+            .args(["--consumer", "e2e-resume"])
+            .args(["--sink-timeout-secs", "2", "--ack-wait-secs", "3"])
+            .args(["--sweep-secs", "1", "--deadline-grace-secs", "0"])
+            .args(["--max-redispatches", "1", "--retry-after-secs", "1"])
+            .args(["--reannounce-after-secs", "2"])
+            .stdout(log.try_clone().unwrap())
+            .stderr(log)
+            .spawn()
+            .expect("spawn comp-resume");
+        Resumer { child }
+    }
+
+    fn resume_log(&self) -> String {
+        std::fs::read_to_string(self.logs.path().join("resume.log")).unwrap_or_default()
+    }
+
+    fn status_of(&self, session: &str, ticket: &str) -> String {
+        let log = self.ok("oplog", json!({ "session": session, "after": null, "limit": 100 }));
+        log.as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["ticket"] == ticket)
+            .map(|e| e["status"].as_str().unwrap().to_string())
+            .unwrap_or_default()
+    }
+}
+
+/// The whole path, with nothing mocked but the sink: park and wake through the
+/// component chain, `comp-park` announcing on `PARK_WAKE`, a real `comp-resume`
+/// delivering it, and the same resumer finding a call nobody answered.
+#[test]
+fn comp_resume_delivers_an_answer_and_gives_up_on_a_call_nobody_answered() {
+    let name = "comp_resume_delivers_an_answer_and_gives_up_on_a_call_nobody_answered";
+    let Some(nats) = nats_url(name) else { return };
+    let Some(s) = Stack::up(name, &nats) else { return };
+    let sink = StubSink::start();
+    let _resumer = s.resumer(&sink.url());
+
+    let session = format!("s-{}", nanos());
+    let answered = s
+        .ok("park", json!({ "session": session, "call": call_of("req-1"), "by": agent("a1") }))
+        ["ticket"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let unanswered = s.ok(
+        "park",
+        json!({ "session": session, "call": call_replaying("pay-1", "unsafe", Some(now_ms() + 500)),
+                "by": agent("a1") }),
+    )["ticket"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    s.ok(
+        "wake",
+        json!({ "correlation": "req-1", "answer": { "ok": true, "body": [42], "detail": null } }),
+    );
+
+    wait_for("both deliveries", 40, || sink.seen().len() >= 2);
+    let seen = sink.seen();
+    let get = |ticket: &str| seen.iter().find(|(_, b)| b["ticket"] == ticket).cloned().unwrap();
+
+    let (key, body) = get(&answered);
+    assert_eq!(key, format!("{answered}:answered"));
+    assert_eq!(
+        (body["event"].as_str(), body["session"].as_str()),
+        (Some("answered"), Some(session.as_str()))
+    );
+    assert_eq!(body["correlation"], "req-1");
+    assert_eq!(body["answer"], json!({ "ok": true, "body": [42], "detail": null }));
+
+    let (key, body) = get(&unanswered);
+    assert_eq!(key, format!("{unanswered}:interrupted"));
+    assert_eq!(body["event"], "interrupted", "{body}");
+    assert!(body["interruption"]["reason"].as_str().unwrap().contains("not replay-safe"), "{body}");
+    assert_eq!(body["interruption"]["by"]["id"], "comp-resume");
+
+    // Delivered means closed: both are taken, and a take now says so.
+    wait_for("both tickets closed", 20, || {
+        s.status_of(&session, &answered) == "resumed"
+            && s.status_of(&session, &unanswered) == "resumed"
+    });
+    assert_eq!(sink.seen().len(), 2, "each told once: {:?}\n{}", sink.seen(), s.resume_log());
+}
+
+/// The reason delivery is at least once: `comp-resume` is killed outright while
+/// its sink holds the answer, a replacement takes over, and the sink is handed
+/// the same delivery again.
+#[test]
+fn a_comp_resume_killed_mid_delivery_is_replaced_without_losing_the_answer() {
+    let name = "a_comp_resume_killed_mid_delivery_is_replaced_without_losing_the_answer";
+    let Some(nats) = nats_url(name) else { return };
+    let Some(s) = Stack::up(name, &nats) else { return };
+    let sink = StubSink::start();
+    sink.set(Mode::Hang);
+    let mut first = s.resumer(&sink.url());
+
+    let session = format!("s-{}", nanos());
+    let ticket = s
+        .ok("park", json!({ "session": session, "call": call_of("req-1"), "by": agent("a1") }))
+        ["ticket"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    s.ok(
+        "wake",
+        json!({ "correlation": "req-1", "answer": { "ok": true, "body": [7], "detail": null } }),
+    );
+
+    wait_for("the sink to be holding the delivery", 40, || !sink.seen().is_empty());
+    first.child.kill().expect("kill -9 the resumer");
+    let _ = first.child.wait();
+    assert_eq!(s.status_of(&session, &ticket), "ready", "the answer must still be there");
+
+    sink.set(Mode::Accept);
+    let _second = s.resumer(&sink.url());
+    // The server hands the message to the replacement once `ack-wait` (3s) runs out on the dead one.
+    wait_for("the replacement to deliver", 60, || sink.seen().len() >= 2);
+    let seen = sink.seen();
+    assert_eq!(seen[0].0, seen[1].0, "same delivery, same key: {seen:?}");
+    assert_eq!(seen[1].1["answer"]["body"], json!([7]));
+
+    wait_for("the ticket to close", 20, || s.status_of(&session, &ticket) == "resumed");
+}
+
+#[test]
+fn an_interrupt_made_through_the_component_chain_reaches_the_resumer() {
+    let name = "an_interrupt_made_through_the_component_chain_reaches_the_resumer";
+    let Some(nats) = nats_url(name) else { return };
+    let Some(s) = Stack::up(name, &nats) else { return };
+    let sink = StubSink::start();
+    let _resumer = s.resumer(&sink.url());
+
+    // A restarted turn that will not wait for a call it must not repeat says so; `comp-park`
+    // announces it, and the resumer tells the turn — the pi-durable "interrupted result".
+    let session = format!("s-{}", nanos());
+    let ticket = s.ok(
+        "park",
+        json!({ "session": session, "call": call_replaying("pay-1", "unsafe", None), "by": agent("a1") }),
+    )["ticket"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    s.ok(
+        "interrupt",
+        json!({ "ticket": ticket, "reason": "restarted mid-call", "by": agent("turn") }),
+    );
+
+    wait_for("the interruption to be delivered", 40, || !sink.seen().is_empty());
+    let (_, body) = sink.seen()[0].clone();
+    assert_eq!(body["event"], "interrupted");
+    assert_eq!(body["interruption"]["reason"], "restarted mid-call");
+    assert_eq!(body["interruption"]["by"]["id"], "turn");
 }

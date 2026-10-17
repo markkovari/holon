@@ -140,3 +140,5 @@ Applying the three questions:
   parked turn back to life. That is deliberately somebody else's code —
   this ADR's contract does not know what a turn does with its answer, the
   same boundary `holon:vcs/code-store` draws around a patch.
+  *(Built since, as `comp-resume`, and the contract amended to 0.2.0 with what a
+  restarted turn may repeat: [ADR-0106](0106-a-resumed-turn-knows-what-it-may-repeat.md).)*

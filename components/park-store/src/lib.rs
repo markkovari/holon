@@ -180,8 +180,17 @@ impl Lot for Component {
         call::<_, Vec<m::TicketEntry>>("pending", &wire::Session { session })
     }
 
-    fn take_ready(ticket: String) -> Result<t::CallResult, t::ParkError> {
-        call::<_, m::CallResult>("take-ready", &wire::Ticket { ticket })
+    fn take_ready(ticket: String) -> Result<t::Resolution, t::ParkError> {
+        call::<_, m::Resolution>("take-ready", &wire::Ticket { ticket })
+    }
+
+    fn interrupt(
+        ticket: String,
+        reason: String,
+        by: t::Agent,
+    ) -> Result<t::TurnStatus, t::ParkError> {
+        let req = wire::InterruptRequest { ticket, reason, by: by.to_model() };
+        call::<_, m::TurnStatus>("interrupt", &req)
     }
 
     fn cancel(ticket: String, by: t::Agent) -> Result<(), t::ParkError> {
@@ -213,7 +222,7 @@ mod tests {
     fn daemon_refusals_map_back_to_their_park_error_case() {
         let got = decode::<m::ParkResult>(404, &body(&ParkError::NotFound("t1".into())));
         assert!(matches!(got, Err(t::ParkError::NotFound(s)) if s == "t1"));
-        let got = decode::<m::CallResult>(409, &body(&ParkError::AlreadyClosed("t1".into())));
+        let got = decode::<m::Resolution>(409, &body(&ParkError::AlreadyClosed("t1".into())));
         assert!(matches!(got, Err(t::ParkError::AlreadyClosed(s)) if s == "t1"));
         let got = decode::<m::ParkResult>(400, &body(&ParkError::Invalid("bad".into())));
         assert!(matches!(got, Err(t::ParkError::Invalid(s)) if s == "bad"));
@@ -251,16 +260,43 @@ mod tests {
             description: "d".into(),
             deadline: Some(123),
             poll: Some(m::PollSpec { url: "http://x".into(), interval_secs: 5 }),
+            replay: m::ReplayPolicy::Safe,
         };
         assert_eq!(call.clone().to_wit().to_model(), call);
         let entry = m::TicketEntry {
             ticket: "t".into(),
             session: "s".into(),
-            status: m::TurnStatus::Expired,
+            status: m::TurnStatus::Interrupted,
             parked_at: 1,
             woken_at: None,
             resumed_at: None,
+            correlation: "c1".into(),
+            replay: m::ReplayPolicy::Abandon,
+            deadline: Some(9),
+            redispatches: 2,
+            interrupted_at: Some(5),
         };
         assert_eq!(entry.clone().to_wit().to_model(), entry);
+    }
+
+    /// Both halves of what `take-ready` returns survive the component boundary,
+    /// and every replay policy does too.
+    #[test]
+    fn a_resolution_survives_model_to_wit_and_back() {
+        let answered = m::Resolution::Answered(m::CallResult {
+            ok: false,
+            body: vec![1, 2],
+            detail: Some("no".into()),
+        });
+        assert_eq!(answered.clone().to_wit().to_model(), answered);
+        let interrupted = m::Resolution::Interrupted(m::Interruption {
+            reason: "r".into(),
+            at: 7,
+            by: m::Agent::named("sweeper"),
+        });
+        assert_eq!(interrupted.clone().to_wit().to_model(), interrupted);
+        for p in [m::ReplayPolicy::Safe, m::ReplayPolicy::Unsafe, m::ReplayPolicy::Abandon] {
+            assert_eq!(p.to_wit().to_model(), p);
+        }
     }
 }

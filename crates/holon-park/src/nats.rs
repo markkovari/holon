@@ -19,12 +19,17 @@
 //! publish fails. `comp-park` publishes once per real transition
 //! (`WakeOutcome::freshly_woken`), never on a redelivered webhook.
 
+use std::time::Duration;
+
+use async_nats::jetstream::consumer::{pull, AckPolicy};
+use async_nats::jetstream::message::AckKind;
 use async_nats::jetstream::{self, kv, stream};
-use serde::{Deserialize, Serialize};
+use futures::{StreamExt, TryStreamExt};
 use sha2::{Digest, Sha256};
 
 use crate::error::{ParkError, Result};
-use crate::model::{SessionId, TicketId};
+use crate::model::TicketId;
+pub use crate::model::{WakeKind, WakeMessage};
 use crate::store::{ParkStore, Record, Revision};
 
 /// Retry bound for a session's ticket-list CAS; contention is one session's own
@@ -182,18 +187,19 @@ impl ParkStore for NatsParkStore {
             None => Ok(Vec::new()),
         }
     }
-}
 
-/// What lands on `PARK_WAKE`: enough for a resumer to act; the ticket record,
-/// not this message, is the source of truth.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WakeMessage {
-    pub session: SessionId,
-    pub ticket: TicketId,
+    /// One pass over the bucket's keys, keeping the `ticket.` ones. Reads keys
+    /// only, never a value; the engine fetches each record it wants.
+    async fn list_tickets(&self) -> Result<Vec<TicketId>> {
+        let keys = self.kv.keys().await.map_err(ParkError::storage)?;
+        let keys: Vec<String> = keys.try_collect().await.map_err(ParkError::storage)?;
+        Ok(keys.into_iter().filter_map(|k| k.strip_prefix("ticket.").map(str::to_string)).collect())
+    }
 }
 
 pub struct WakeStream {
     js: jetstream::Context,
+    name: String,
     subject: String,
 }
 
@@ -211,19 +217,115 @@ impl WakeStream {
         })
         .await
         .map_err(ParkError::storage)?;
-        Ok(WakeStream { js: js.clone(), subject })
+        Ok(WakeStream { js: js.clone(), name: name.to_string(), subject })
     }
 
-    /// Tell a resumer a ticket is `ready`. Waits for the JetStream ack, so `Ok`
-    /// means durably queued.
+    /// Tell a resumer something about a ticket. Waits for the JetStream ack, so
+    /// `Ok` means durably queued.
+    ///
+    /// The message id (`Nats-Msg-Id`) names the ticket and what is being said,
+    /// so announcing the same thing twice inside the stream's duplicate window
+    /// queues it once: a recovery pass and a `wake` that both announce one
+    /// answer do not hand a resumer two copies.
     pub async fn publish(&self, msg: &WakeMessage) -> Result<()> {
         let payload = serde_json::to_vec(msg).map_err(ParkError::storage)?;
+        let id = match msg.kind {
+            WakeKind::Resolved => format!("{}.resolved", msg.ticket),
+            WakeKind::Redispatch { attempt } => format!("{}.redispatch.{attempt}", msg.ticket),
+        };
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert(async_nats::header::NATS_MESSAGE_ID, id.as_str());
         let ack = self
             .js
-            .publish(self.subject.clone(), payload.into())
+            .publish_with_headers(self.subject.clone(), headers, payload.into())
             .await
             .map_err(ParkError::storage)?;
         ack.await.map_err(ParkError::storage)?;
         Ok(())
+    }
+}
+
+impl WakeStream {
+    /// A durable pull consumer on this stream, created if missing. Every
+    /// resumer that opens the same `name` shares one position in the stream, so
+    /// a message goes to one of them, not all.
+    ///
+    /// `ack_wait` is how long a delivered message may go unanswered before the
+    /// server hands it to someone else: it must outlast one sink call.
+    pub async fn consumer(&self, name: &str, ack_wait: Duration) -> Result<WakeConsumer> {
+        let stream = self.js.get_stream(&self.name).await.map_err(ParkError::storage)?;
+        let consumer = stream
+            .get_or_create_consumer(
+                name,
+                pull::Config {
+                    durable_name: Some(name.to_string()),
+                    ack_policy: AckPolicy::Explicit,
+                    ack_wait,
+                    filter_subject: self.subject.clone(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(ParkError::storage)?;
+        let messages = consumer.messages().await.map_err(ParkError::storage)?;
+        Ok(WakeConsumer { messages })
+    }
+}
+
+impl crate::resume::Announcer for WakeStream {
+    async fn announce(&self, msg: &WakeMessage) -> Result<()> {
+        self.publish(msg).await
+    }
+}
+
+/// A resumer's view of `PARK_WAKE`: messages, one at a time, each to be
+/// acknowledged or sent back.
+pub struct WakeConsumer {
+    messages: pull::Stream,
+}
+
+/// One delivered message. Dropping it without answering lets the server
+/// redeliver it after the consumer's `ack_wait`.
+pub struct WakeDelivery {
+    msg: jetstream::Message,
+    pub wake: WakeMessage,
+    /// Which delivery this is: 1 the first time, 2 the second, and so on.
+    pub delivered: u64,
+}
+
+impl WakeConsumer {
+    /// The next message. `Ok(None)` means the stream ended, which a live
+    /// consumer does not do: treat it as the connection being gone.
+    ///
+    /// A message that is not a [`WakeMessage`] is terminated here (it would
+    /// never become one) and skipped, and a transient fetch error is returned so
+    /// the caller can log it and call again.
+    pub async fn next(&mut self) -> Result<Option<WakeDelivery>> {
+        loop {
+            let Some(item) = self.messages.next().await else { return Ok(None) };
+            let msg = item.map_err(ParkError::storage)?;
+            match serde_json::from_slice::<WakeMessage>(&msg.payload) {
+                Ok(wake) => {
+                    let delivered = msg.info().map(|i| i.delivered.max(1) as u64).unwrap_or(1);
+                    return Ok(Some(WakeDelivery { msg, wake, delivered }));
+                }
+                Err(e) => {
+                    eprintln!("holon-park: terminating an unreadable PARK_WAKE message: {e}");
+                    let _ = msg.ack_with(AckKind::Term).await;
+                }
+            }
+        }
+    }
+}
+
+impl WakeDelivery {
+    /// Finished with: the message leaves the stream.
+    pub async fn ack(self) -> Result<()> {
+        self.msg.ack().await.map_err(ParkError::storage)
+    }
+
+    /// Not finished: send it back, to arrive again after `delay`.
+    pub async fn nak(self, delay: Duration) -> Result<()> {
+        self.msg.ack_with(AckKind::Nak(Some(delay))).await.map_err(ParkError::storage)
     }
 }
