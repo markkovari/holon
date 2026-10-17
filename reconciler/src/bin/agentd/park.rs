@@ -14,7 +14,7 @@ use holon_park::wire::{CancelRequest, ErrorBody, ParkRequest, WakeRequest};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use super::wire::Decision;
+use super::wire::{ApprovalScope, Decision};
 
 pub struct Park {
     http: reqwest::Client,
@@ -34,6 +34,10 @@ pub struct Answered {
     pub reason: String,
     #[serde(default)]
     pub decided_by: String,
+    /// How far an approval reaches (ADR-0114). A ticket answered by a daemon that did not know it
+    /// has none: `once`, which is the safe reading.
+    #[serde(default)]
+    pub scope: ApprovalScope,
 }
 
 impl Park {

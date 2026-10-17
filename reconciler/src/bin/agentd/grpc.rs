@@ -69,6 +69,7 @@ fn session(s: wire::Session) -> pb::Session {
         usage: Some(usage(s.usage)),
         max_budget_usd_micros: s.max_budget_usd_micros,
         auto_approve_tools: s.auto_approve_tools,
+        approved_tools: s.approved_tools,
         labels: s.labels.into_iter().collect(),
         created_at: ts(&s.created_at),
         active_task_id: s.active_task_id.unwrap_or_default(),
@@ -94,6 +95,14 @@ fn decision(d: wire::Decision) -> i32 {
     match d {
         wire::Decision::Approve => pb::ApprovalDecision::Approve as i32,
         wire::Decision::Deny => pb::ApprovalDecision::Deny as i32,
+    }
+}
+
+fn scope(s: wire::ApprovalScope) -> i32 {
+    match s {
+        wire::ApprovalScope::Once => pb::ApprovalScope::Once as i32,
+        wire::ApprovalScope::Task => pb::ApprovalScope::Task as i32,
+        wire::ApprovalScope::Session => pb::ApprovalScope::Session as i32,
     }
 }
 
@@ -143,11 +152,12 @@ pub fn event(e: wire::Event) -> pb::AgentEvent {
                 expires_at: expires_at.as_deref().and_then(ts),
             })
         }
-        W::ToolApprovalResolved { call_id, decision: d, decided_by } => {
+        W::ToolApprovalResolved { call_id, decision: d, decided_by, scope: s } => {
             P::ToolApprovalResolved(pb::ToolApprovalResolved {
                 call_id,
                 decision: decision(d),
                 decided_by,
+                scope: scope(s),
             })
         }
         W::ToolCallFinished { call_id, output, is_error, duration_ms } => {
@@ -395,7 +405,18 @@ impl AgentService for Grpc {
             Ok(pb::ApprovalDecision::Deny) => wire::Decision::Deny,
             _ => return Err(Status::invalid_argument("decision must be APPROVE or DENY")),
         };
-        let req = wire::SubmitApproval { decision: d, reason: r.reason, approver: r.approver };
+        // Unspecified is "did not say", which is `once`. A value this build does not know is
+        // refused: guessing how far to approve is the one guess that cannot be taken back.
+        let s = match pb::ApprovalScope::try_from(r.scope) {
+            Ok(pb::ApprovalScope::Unspecified | pb::ApprovalScope::Once) => {
+                wire::ApprovalScope::Once
+            }
+            Ok(pb::ApprovalScope::Task) => wire::ApprovalScope::Task,
+            Ok(pb::ApprovalScope::Session) => wire::ApprovalScope::Session,
+            Err(_) => return Err(Status::invalid_argument("scope must be ONCE, TASK or SESSION")),
+        };
+        let req =
+            wire::SubmitApproval { decision: d, reason: r.reason, approver: r.approver, scope: s };
         self.0
             .submit_approval(&r.session_id, &r.call_id, req)
             .await
@@ -403,6 +424,7 @@ impl AgentService for Grpc {
                 Response::new(pb::SubmitApprovalResponse {
                     call_id: a.call_id,
                     decision: decision(a.decision),
+                    scope: scope(a.scope),
                 })
             })
             .map_err(status)

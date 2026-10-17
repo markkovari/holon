@@ -325,6 +325,14 @@ components:
         auto_approve_tools:
           type: array
           items: { type: string }
+        approved_tools:
+          type: array
+          items: { type: string }
+          description: >-
+            Tools a person approved beyond one call (submitApproval with scope `task` or
+            `session`): for the session, or, while that task runs, for the task. Apart from
+            `auto_approve_tools`, which is what the session was created with and which no answer
+            changes.
         labels:
           type: object
           additionalProperties: { type: string }
@@ -510,13 +518,16 @@ components:
       allOf:
         - $ref: "#/components/schemas/EventEnvelope"
         - type: object
-          required: [call_id, decision, decided_by]
+          required: [call_id, decision, decided_by, scope]
           properties:
             call_id: { type: string }
             decision: { $ref: "#/components/schemas/ApprovalDecision" }
             decided_by:
               type: string
               description: The approver from submitApproval, or "timeout".
+            scope:
+              allOf: [{ $ref: "#/components/schemas/ApprovalScope" }]
+              description: How far the approval reaches. `once` for a denial, whatever it was sent with.
 
     ToolCallFinishedEvent:
       allOf:
@@ -744,6 +755,16 @@ components:
       type: string
       enum: [approve, deny]
 
+    ApprovalScope:
+      type: string
+      enum: [once, task, session]
+      default: once
+      description: >-
+        How far an approval reaches. It is for a *tool*, not for one call's input: approving `run`
+        for the session approves every command. `once`: this call, and the next call of the tool
+        asks again. `task`: this call and the rest of this task's calls of the tool. `session`:
+        this call and every later call of the tool in this session, in any task.
+
     SubmitApprovalRequest:
       type: object
       required: [decision]
@@ -756,6 +777,11 @@ components:
           type: string
           description: Who is deciding; recorded in tool_approval_resolved.
           example: "telegram:12345"
+        scope:
+          allOf: [{ $ref: "#/components/schemas/ApprovalScope" }]
+          description: >-
+            How far an approval reaches; `once` when absent. A denial is for this call only, so
+            `deny` with `task` or `session` is a 400, not quietly narrowed.
 
     SubmitApprovalResponse:
       type: object
@@ -763,6 +789,11 @@ components:
       properties:
         call_id: { type: string }
         decision: { $ref: "#/components/schemas/ApprovalDecision" }
+        scope:
+          allOf: [{ $ref: "#/components/schemas/ApprovalScope" }]
+          description: >-
+            The scope the server understood. A server that does not know scopes leaves it out,
+            which is how a client finds out its "remember this" did nothing.
 
     Problem:
       type: object

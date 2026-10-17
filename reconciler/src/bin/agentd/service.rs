@@ -11,7 +11,7 @@ use holon_park::resume::{Delivery, Event as DeliveryEvent};
 use super::agent;
 use super::park::Answered;
 use super::session::{Answer, Begun, Refusal, Registry, Resume, Session, SteerRefusal};
-use super::wire::{self, Decision};
+use super::wire::{self, ApprovalScope, Decision};
 
 pub struct Daemon {
     pub sessions: Registry,
@@ -20,6 +20,10 @@ pub struct Daemon {
     pub ctx: Arc<agent::Ctx>,
     /// Tasks a session may have waiting behind its running one (ADR-0112). 0: no queueing.
     pub max_queued: usize,
+    /// Tools every session created here may call without asking (ADR-0114), on top of what the
+    /// caller lists. Added to the session when it is created, so that it is what the session was
+    /// created with, and a later change of this list does not reach sessions that exist.
+    pub auto_approve: Vec<String>,
 }
 
 /// Why a call was refused, in terms both transports map: REST to a status
@@ -46,7 +50,7 @@ impl Daemon {
         map.get(id).cloned().ok_or_else(|| Fail::NotFound(format!("no session {id}")))
     }
 
-    pub fn create_session(&self, req: wire::CreateSession) -> R<wire::Session> {
+    pub fn create_session(&self, mut req: wire::CreateSession) -> R<wire::Session> {
         if req.model.trim().is_empty() {
             return Err(Fail::Invalid("bad-request", "model is required".into()));
         }
@@ -67,6 +71,11 @@ impl Daemon {
                 "bad-workspace",
                 format!("{} is outside every --workspace-root", ws.display()),
             ));
+        }
+        for tool in &self.auto_approve {
+            if !req.auto_approve_tools.contains(tool) {
+                req.auto_approve_tools.push(tool.clone());
+            }
         }
         let sess = Session::new(req, ws, self.state_dir.as_deref())
             .map_err(|e| Fail::Internal(format!("{e:#}")))?;
@@ -212,11 +221,19 @@ impl Daemon {
         req: wire::SubmitApproval,
     ) -> R<wire::ApprovalAnswer> {
         let sess = self.get(id)?;
-        let decision = req.decision;
+        let (decision, scope) = (req.decision, req.scope);
+        // A denial is for the call it answers. Refused rather than quietly narrowed, so that a
+        // client that meant "never this tool" finds out it did not get it (ADR-0114).
+        if decision == Decision::Deny && scope != ApprovalScope::Once {
+            return Err(Fail::Invalid(
+                "bad-request",
+                "a denial is for this call only: its scope must be \"once\"".into(),
+            ));
+        }
         let decided_by =
             if req.approver.is_empty() { "anonymous".to_string() } else { req.approver };
-        let answer = Answer { decision, reason: req.reason, decided_by };
-        let done = || wire::ApprovalAnswer { call_id: call_id.to_string(), decision };
+        let answer = Answer { decision, reason: req.reason, decided_by, scope };
+        let done = || wire::ApprovalAnswer { call_id: call_id.to_string(), decision, scope };
         // A wait held in memory is answered in memory.
         if sess.answer(call_id, answer.clone()) {
             return Ok(done());
@@ -233,6 +250,7 @@ impl Daemon {
             decision: answer.decision,
             reason: answer.reason,
             decided_by: answer.decided_by,
+            scope: answer.scope,
         };
         match park.answer(&sess.id, call_id, &what, waiting.deadline, &body).await {
             Ok(()) => Ok(done()),
@@ -258,15 +276,19 @@ impl Daemon {
         let answer = match d.event {
             DeliveryEvent::Answered { answer } => {
                 match serde_json::from_slice::<Answered>(&answer.body) {
-                    Ok(a) => {
-                        Answer { decision: a.decision, reason: a.reason, decided_by: a.decided_by }
-                    }
+                    Ok(a) => Answer {
+                        decision: a.decision,
+                        reason: a.reason,
+                        decided_by: a.decided_by,
+                        scope: a.scope,
+                    },
                     // This daemon wrote it, so it cannot be unreadable; if it is, a denial is the safe
                     // reading, and refusing would only have the answer redelivered for ever.
                     Err(e) => Answer {
                         decision: Decision::Deny,
                         reason: format!("the answer could not be read: {e}"),
                         decided_by: "comp-agentd".into(),
+                        scope: ApprovalScope::Once,
                     },
                 }
             }
@@ -274,6 +296,7 @@ impl Daemon {
                 decision: Decision::Deny,
                 reason: "nobody answered in time".into(),
                 decided_by: "timeout".into(),
+                scope: ApprovalScope::Once,
             },
             // Nothing an approval ticket produces. Taken, so that it is not retried for ever.
             DeliveryEvent::Redispatch { .. } | DeliveryEvent::Joined { .. } => return Ok(()),
