@@ -92,7 +92,7 @@ pub fn fold(events: &[Event]) -> Folded {
                     *expires_at = exp.clone();
                 }
             }
-            Payload::ToolApprovalResolved { call_id, decision: d, decided_by: by } => {
+            Payload::ToolApprovalResolved { call_id, decision: d, decided_by: by, .. } => {
                 if let Some(Entry::ToolCall { status, decision, decided_by, .. }) =
                     call_mut(&mut t, call_id)
                 {
@@ -312,6 +312,7 @@ mod tests {
                 call_id: "c1".into(),
                 decision: Decision::Approve,
                 decided_by: "ann".into(),
+                scope: Default::default(),
             },
         ));
         let f = fold(&log(answered));

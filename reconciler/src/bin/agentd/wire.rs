@@ -31,6 +31,20 @@ pub enum Decision {
     Deny,
 }
 
+/// How far an approval reaches (ADR-0114). It is for one *tool*, not one call's input: approving
+/// `run` for the session approves every command.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalScope {
+    /// This call, and the next one of the tool asks again. What a client that does not say gets.
+    #[default]
+    Once,
+    /// This call, and the rest of this task's calls of the tool.
+    Task,
+    /// This call, and every later call of the tool in this session, whatever task it is in.
+    Session,
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FailCode {
@@ -73,6 +87,9 @@ pub enum Payload {
         call_id: String,
         decision: Decision,
         decided_by: String,
+        /// How far an approval reaches (ADR-0114). A log written before it has none: `once`.
+        #[serde(default)]
+        scope: ApprovalScope,
     },
     ToolCallFinished {
         call_id: String,
@@ -174,6 +191,10 @@ pub struct Session {
     pub usage: Usage,
     pub max_budget_usd_micros: i64,
     pub auto_approve_tools: Vec<String>,
+    /// Tools a person approved beyond one call (ADR-0114): for the session, or, while that task
+    /// runs, for the task. Apart from `auto_approve_tools`, which is what the session was created
+    /// with and is not changed by anyone's answer.
+    pub approved_tools: Vec<String>,
     pub labels: std::collections::BTreeMap<String, String>,
     pub created_at: String,
     pub active_task_id: Option<String>,
@@ -217,12 +238,17 @@ pub struct SubmitApproval {
     pub reason: String,
     #[serde(default)]
     pub approver: String,
+    /// How far an approval reaches. Only an approval has a reach: a denial is for this call.
+    #[serde(default)]
+    pub scope: ApprovalScope,
 }
 
 #[derive(Serialize)]
 pub struct ApprovalAnswer {
     pub call_id: String,
     pub decision: Decision,
+    /// What this daemon understood: a server that does not know scopes would not say it.
+    pub scope: ApprovalScope,
 }
 
 // ---- The state of a session, as one reads it to catch up (ADR-0107) ----

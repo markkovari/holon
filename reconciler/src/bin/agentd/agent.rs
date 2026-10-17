@@ -16,7 +16,7 @@ use super::model::{Call, Msg, Provider, ToolResult};
 use super::park::Park;
 use super::session::{Answer, BeginPark, Checkpoint, Session, Started};
 use super::tools;
-use super::wire::{new_id, Decision, FailCode, Payload, Usage};
+use super::wire::{new_id, ApprovalScope, Decision, FailCode, Payload, Usage};
 
 pub struct Ctx {
     pub provider: Provider,
@@ -258,7 +258,9 @@ async fn tools_turn(
                         input: call.input.clone(),
                     },
                 );
-                if sess.auto_approve.contains(&call.name) {
+                // Asked at each call, not once for the step: an approval a person gave for the
+                // first call of a tool in this step already covers the second (ADR-0114).
+                if sess.runs_without_asking(task, &call.name) {
                     None
                 } else {
                     match ask(sess, ctx, task, turn, history, step, &call).await {
@@ -406,6 +408,7 @@ async fn approval(
         decision: Decision::Deny,
         reason: "nobody answered in time".into(),
         decided_by: "timeout".into(),
+        scope: ApprovalScope::Once,
     };
     let answer = match ctx.approval_timeout {
         None => rx.await.unwrap_or_else(|_| timed_out()),
@@ -417,13 +420,6 @@ async fn approval(
             }
         },
     };
-    sess.emit(
-        task,
-        Payload::ToolApprovalResolved {
-            call_id: call_id.into(),
-            decision: answer.decision,
-            decided_by: answer.decided_by.clone(),
-        },
-    );
+    sess.resolved(task, call_id, tool_name, &answer);
     answer
 }

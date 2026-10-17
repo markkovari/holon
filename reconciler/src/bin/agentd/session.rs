@@ -9,7 +9,7 @@
 //! ends). Everything else — spend, task states — is derived from the log on
 //! load, so there is one truth and nothing to keep in step.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -20,7 +20,8 @@ use tokio::sync::{oneshot, watch};
 
 use super::model::{Call, Msg, ToolResult};
 use super::wire::{
-    self, Decision, Event, FailCode, Payload, SessionStatus, TaskStatus, Usage, WhenBusy,
+    self, ApprovalScope, Decision, Event, FailCode, Payload, SessionStatus, TaskStatus, Usage,
+    WhenBusy,
 };
 
 /// A human's answer to one pending tool call.
@@ -29,6 +30,8 @@ pub struct Answer {
     pub decision: Decision,
     pub reason: String,
     pub decided_by: String,
+    /// How far an approval reaches (ADR-0114). Only an approval has a reach.
+    pub scope: ApprovalScope,
 }
 
 pub struct Session {
@@ -66,6 +69,10 @@ struct State {
     queue: VecDeque<Queued>,
     /// The running task, if it is waiting on a human with no loop of its own (ADR-0113).
     parked: Option<Parked>,
+    /// Tools a person approved for the rest of the session (ADR-0114). Derived from the log on
+    /// load, like everything else: an `approve` with scope `session`, for the tool of the call
+    /// the log shows it was asked about.
+    approved: BTreeSet<String>,
 }
 
 /// Where a task stood when it parked on a human (ADR-0113): enough to carry on from the answer
@@ -153,6 +160,8 @@ struct Active {
     finishing: bool,
     /// Steer idempotency keys, for the same reason: they only matter while the task runs.
     steer_keys: HashMap<String, String>,
+    /// Tools a person approved for the rest of this task (ADR-0114). It ends with the task.
+    approved: BTreeSet<String>,
 }
 
 impl Active {
@@ -164,6 +173,7 @@ impl Active {
             steers: VecDeque::new(),
             finishing: false,
             steer_keys: HashMap::new(),
+            approved: BTreeSet::new(),
         }
     }
 }
@@ -264,6 +274,10 @@ impl Session {
             Err(e) => return Err(e).context("events.jsonl"),
         };
         let mut open: Option<(String, Usage)> = None;
+        // What a person approved beyond one call (ADR-0114), read back out of the log: the tool
+        // is named by the approval that was asked, and the reach by the answer that decided it.
+        let mut asked: HashMap<String, String> = HashMap::new();
+        let mut for_task: HashMap<String, BTreeSet<String>> = HashMap::new();
         let last = text.lines().count();
         for (n, line) in text.lines().enumerate().filter(|(_, l)| !l.trim().is_empty()) {
             let e: Event = match serde_json::from_str(line) {
@@ -297,6 +311,27 @@ impl Session {
                     st.usage.add(delta);
                     if let Some((_, u)) = open.as_mut() {
                         u.add(delta);
+                    }
+                }
+                Payload::ToolApprovalRequired { call_id, tool_name, .. } => {
+                    asked.insert(call_id.clone(), tool_name.clone());
+                }
+                Payload::ToolApprovalResolved {
+                    call_id,
+                    decision: Decision::Approve,
+                    scope,
+                    ..
+                } => {
+                    if let Some(tool) = asked.get(call_id) {
+                        match scope {
+                            ApprovalScope::Once => {}
+                            ApprovalScope::Task => {
+                                for_task.entry(e.task_id.clone()).or_default().insert(tool.clone());
+                            }
+                            ApprovalScope::Session => {
+                                st.approved.insert(tool.clone());
+                            }
+                        }
                     }
                 }
                 Payload::TaskCompleted { .. } | Payload::TaskFailed { .. } => {
@@ -337,6 +372,7 @@ impl Session {
                     // log, and its spend so far is what the log says.
                     let mut a = Active::new(&task_id);
                     a.usage = usage;
+                    a.approved = for_task.remove(&task_id).unwrap_or_default();
                     a.steers = super::state::fold(&st.events)
                         .pending_steers
                         .into_iter()
@@ -443,6 +479,14 @@ impl Session {
         } else {
             SessionStatus::Idle
         };
+        let approved_tools = s
+            .approved
+            .iter()
+            .chain(s.active.iter().flat_map(|a| a.approved.iter()))
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         wire::Session {
             id: self.id.clone(),
             model: self.model.clone(),
@@ -451,6 +495,7 @@ impl Session {
             usage: s.usage,
             max_budget_usd_micros: self.max_budget,
             auto_approve_tools: self.auto_approve.clone(),
+            approved_tools,
             labels: self.labels.clone(),
             created_at: self.created_at.clone(),
             active_task_id: s.active.as_ref().map(|a| a.task_id.clone()),
@@ -490,6 +535,59 @@ impl Session {
         let mut s = self.lock();
         if s.active.as_ref().is_some_and(|a| a.task_id == task_id) {
             self.push(&mut s, task_id, payload);
+        }
+    }
+
+    /// May `task_id` call `tool` without a person saying so: the session was created to allow it
+    /// (`auto_approve_tools`), or a person approved it for the session or for this task
+    /// (ADR-0114). Asked at each call, so an approval given a moment ago already counts.
+    pub fn runs_without_asking(&self, task_id: &str, tool: &str) -> bool {
+        if self.auto_approve.iter().any(|t| t == tool) {
+            return true;
+        }
+        let s = self.lock();
+        s.approved.contains(tool)
+            || s.active.as_ref().is_some_and(|a| a.task_id == task_id && a.approved.contains(tool))
+    }
+
+    /// A person's answer to the approval of `tool`'s call `call_id` is decided: the log says so,
+    /// and an approval that was given for more than this call is remembered. One lock for both,
+    /// so that what the log says was approved and what runs without asking cannot differ (and
+    /// `load` reads the same two things back out of the log).
+    ///
+    /// A denial is for the call it answers, whatever reach it was sent with, and the log says
+    /// `once`: nothing here ever remembers a refusal.
+    fn decide(&self, s: &mut State, task_id: &str, call_id: &str, tool: &str, answer: &Answer) {
+        let scope = match answer.decision {
+            Decision::Approve => answer.scope,
+            Decision::Deny => ApprovalScope::Once,
+        };
+        match scope {
+            ApprovalScope::Once => {}
+            ApprovalScope::Task => {
+                if let Some(a) = s.active.as_mut().filter(|a| a.task_id == task_id) {
+                    a.approved.insert(tool.to_string());
+                }
+            }
+            ApprovalScope::Session => {
+                s.approved.insert(tool.to_string());
+            }
+        }
+        let payload = Payload::ToolApprovalResolved {
+            call_id: call_id.to_string(),
+            decision: answer.decision,
+            decided_by: answer.decided_by.clone(),
+            scope,
+        };
+        self.push(s, task_id, payload);
+    }
+
+    /// The approval of `tool`'s call `call_id`, which a task held in memory was waiting for, has
+    /// its answer. Dropped, like `emit`, if the task is no longer the running one.
+    pub fn resolved(&self, task_id: &str, call_id: &str, tool: &str, answer: &Answer) {
+        let mut s = self.lock();
+        if s.active.as_ref().is_some_and(|a| a.task_id == task_id) {
+            self.decide(&mut s, task_id, call_id, tool, answer);
         }
     }
 
@@ -834,12 +932,7 @@ impl Session {
             let Some(p) = s.parked.take() else { return Resume::Gone };
             self.remove_checkpoint();
             let task_id = p.cp.task_id.clone();
-            let payload = Payload::ToolApprovalResolved {
-                call_id: call_id.to_string(),
-                decision: answer.decision,
-                decided_by: answer.decided_by.clone(),
-            };
-            self.push(&mut s, &task_id, payload);
+            self.decide(&mut s, &task_id, call_id, &p.cp.call().name, answer);
             return Resume::Resumed(p.cp);
         }
         let decided = s.events.iter().rev().any(|e| {
