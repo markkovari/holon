@@ -338,3 +338,31 @@ fn no_script_is_pinned_to_one_machine() {
     );
     println!("  {checked} scripts, none pinned to a machine");
 }
+
+/// The architecture map is generated from `docs/architecture/map.mjs`, and a generated file nobody
+/// regenerates is a map of something that no longer exists.
+///
+/// `build.mjs --check` fails when `docs/ARCHITECTURE.md` or `docs/architecture/index.html` is stale,
+/// and when the map names a path or an ADR that is not in the tree, so renaming a file the map points
+/// at is a failing test here and not a wrong box there. It needs `node` on PATH; without it this says
+/// so and returns, as the suites that want a NATS server do.
+#[test]
+fn the_architecture_map_is_current_and_names_only_what_exists() {
+    let root = repo_root();
+    if std::process::Command::new("node").arg("--version").output().is_err() {
+        eprintln!("SKIPPED: no `node` on PATH, so docs/ARCHITECTURE.md was not checked");
+        return;
+    }
+    let out = std::process::Command::new("node")
+        .args(["docs/architecture/build.mjs", "--check"])
+        .current_dir(&root)
+        .output()
+        .expect("node answered a moment ago");
+    assert!(
+        out.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    println!("  {}", String::from_utf8_lossy(&out.stdout).trim());
+}
