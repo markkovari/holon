@@ -86,12 +86,39 @@ macro_rules! variant {
 
 record!(Agent { id, goal, model });
 record!(PollSpec { url, interval_secs });
-record!(OutboundCall { correlation, description, deadline, poll });
+variant!(ReplayPolicy { Safe, Unsafe, Abandon });
+variant!(JoinPolicy { AllSettled, FailFast });
+record!(GroupSpec { policy, children });
+record!(OutboundCall { correlation, description, deadline, poll, replay, parent, group });
 record!(CallResult { ok, body, detail });
+record!(Interruption { reason, at, by });
+variant!(JoinOutcome { AllAnswered, SomeFailed, FailedFast, TimedOut });
+variant!(ChildResult { Answered(x), Interrupted(x), Cancelled });
+record!(ChildOutcome { ticket, correlation, ended });
+record!(JoinResult { outcome, children, missing });
+variant!(Resolution { Answered(x), Interrupted(x), Joined(x) });
+record!(WakeEffect { correlation, answer });
+record!(InterruptEffect { correlation, reason });
+variant!(Effect { Park(x), Wake(x), Interrupt(x), Cancel(x) });
 variant!(ParkOutcome { Parked, AlreadyParked, AlreadyWoken });
 record!(ParkResult { ticket, outcome });
-variant!(TurnStatus { Parked, Ready, Resumed, Cancelled, Expired });
-record!(TicketEntry { ticket, session, status, parked_at, woken_at, resumed_at });
+record!(CommitResult { batch, parked });
+variant!(TurnStatus { Parked, Ready, Resumed, Cancelled, Expired, Interrupted });
+record!(TicketEntry {
+    ticket,
+    session,
+    status,
+    parked_at,
+    woken_at,
+    resumed_at,
+    correlation,
+    replay,
+    deadline,
+    redispatches,
+    interrupted_at,
+    parent,
+    group
+});
 
 impl ToWit for ParkError {
     type Out = t::ParkError;

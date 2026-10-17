@@ -180,8 +180,30 @@ impl Lot for Component {
         call::<_, Vec<m::TicketEntry>>("pending", &wire::Session { session })
     }
 
-    fn take_ready(ticket: String) -> Result<t::CallResult, t::ParkError> {
-        call::<_, m::CallResult>("take-ready", &wire::Ticket { ticket })
+    fn take_ready(ticket: String) -> Result<t::Resolution, t::ParkError> {
+        call::<_, m::Resolution>("take-ready", &wire::Ticket { ticket })
+    }
+
+    fn commit(
+        session: String,
+        effects: Vec<t::Effect>,
+        by: t::Agent,
+    ) -> Result<t::CommitResult, t::ParkError> {
+        let req = wire::CommitRequest {
+            session,
+            effects: effects.into_iter().map(ToModel::to_model).collect(),
+            by: by.to_model(),
+        };
+        call::<_, m::CommitResult>("commit", &req)
+    }
+
+    fn interrupt(
+        ticket: String,
+        reason: String,
+        by: t::Agent,
+    ) -> Result<t::TurnStatus, t::ParkError> {
+        let req = wire::InterruptRequest { ticket, reason, by: by.to_model() };
+        call::<_, m::TurnStatus>("interrupt", &req)
     }
 
     fn cancel(ticket: String, by: t::Agent) -> Result<(), t::ParkError> {
@@ -213,7 +235,7 @@ mod tests {
     fn daemon_refusals_map_back_to_their_park_error_case() {
         let got = decode::<m::ParkResult>(404, &body(&ParkError::NotFound("t1".into())));
         assert!(matches!(got, Err(t::ParkError::NotFound(s)) if s == "t1"));
-        let got = decode::<m::CallResult>(409, &body(&ParkError::AlreadyClosed("t1".into())));
+        let got = decode::<m::Resolution>(409, &body(&ParkError::AlreadyClosed("t1".into())));
         assert!(matches!(got, Err(t::ParkError::AlreadyClosed(s)) if s == "t1"));
         let got = decode::<m::ParkResult>(400, &body(&ParkError::Invalid("bad".into())));
         assert!(matches!(got, Err(t::ParkError::Invalid(s)) if s == "bad"));
@@ -251,16 +273,130 @@ mod tests {
             description: "d".into(),
             deadline: Some(123),
             poll: Some(m::PollSpec { url: "http://x".into(), interval_secs: 5 }),
+            replay: m::ReplayPolicy::Safe,
+            parent: Some("g".into()),
+            group: None,
         };
         assert_eq!(call.clone().to_wit().to_model(), call);
+        let group = m::OutboundCall {
+            parent: None,
+            group: Some(m::GroupSpec { policy: m::JoinPolicy::FailFast, children: 3 }),
+            ..call
+        };
+        assert_eq!(group.clone().to_wit().to_model(), group);
         let entry = m::TicketEntry {
             ticket: "t".into(),
             session: "s".into(),
-            status: m::TurnStatus::Expired,
+            status: m::TurnStatus::Interrupted,
             parked_at: 1,
             woken_at: None,
             resumed_at: None,
+            correlation: "c1".into(),
+            replay: m::ReplayPolicy::Abandon,
+            deadline: Some(9),
+            redispatches: 2,
+            interrupted_at: Some(5),
+            parent: Some("gt".into()),
+            group: Some(m::GroupSpec { policy: m::JoinPolicy::AllSettled, children: 2 }),
         };
         assert_eq!(entry.clone().to_wit().to_model(), entry);
+    }
+
+    /// A commit's effects, every kind, survive the component boundary and come back equal.
+    #[test]
+    fn a_commits_effects_survive_model_to_wit_and_back() {
+        let effects = vec![
+            m::Effect::Park(m::OutboundCall {
+                correlation: "c".into(),
+                description: "d".into(),
+                deadline: None,
+                poll: None,
+                replay: m::ReplayPolicy::Unsafe,
+                parent: None,
+                group: None,
+            }),
+            m::Effect::Wake(m::WakeEffect {
+                correlation: "w".into(),
+                answer: m::CallResult { ok: true, body: vec![1], detail: None },
+            }),
+            m::Effect::Interrupt(m::InterruptEffect {
+                correlation: "i".into(),
+                reason: "r".into(),
+            }),
+            m::Effect::Cancel("x".into()),
+        ];
+        for e in effects {
+            assert_eq!(e.clone().to_wit().to_model(), e);
+        }
+        let result = m::CommitResult {
+            batch: "b".into(),
+            parked: vec![m::ParkResult { ticket: "t".into(), outcome: m::ParkOutcome::Parked }],
+        };
+        assert_eq!(result.clone().to_wit().to_model(), result);
+    }
+
+    /// A group's resolution, with every way a child can end, survives the component boundary.
+    #[test]
+    fn a_joined_resolution_survives_model_to_wit_and_back() {
+        let by = m::Agent::named("join");
+        let joined = m::Resolution::Joined(m::JoinResult {
+            outcome: m::JoinOutcome::FailedFast,
+            missing: 1,
+            children: vec![
+                m::ChildOutcome {
+                    ticket: "a".into(),
+                    correlation: "ca".into(),
+                    ended: m::ChildResult::Answered(m::CallResult {
+                        ok: false,
+                        body: vec![1],
+                        detail: Some("no".into()),
+                    }),
+                },
+                m::ChildOutcome {
+                    ticket: "b".into(),
+                    correlation: "cb".into(),
+                    ended: m::ChildResult::Interrupted(m::Interruption {
+                        reason: "r".into(),
+                        at: 3,
+                        by,
+                    }),
+                },
+                m::ChildOutcome {
+                    ticket: "c".into(),
+                    correlation: "cc".into(),
+                    ended: m::ChildResult::Cancelled,
+                },
+            ],
+        });
+        assert_eq!(joined.clone().to_wit().to_model(), joined);
+        for o in [
+            m::JoinOutcome::AllAnswered,
+            m::JoinOutcome::SomeFailed,
+            m::JoinOutcome::FailedFast,
+            m::JoinOutcome::TimedOut,
+        ] {
+            assert_eq!(o.to_wit().to_model(), o);
+        }
+    }
+
+    /// Both halves of what `take-ready` returns survive the component boundary,
+    /// and every replay policy does too.
+    #[test]
+    fn a_resolution_survives_model_to_wit_and_back() {
+        let answered = m::Resolution::Answered(m::CallResult {
+            ok: false,
+            body: vec![1, 2],
+            detail: Some("no".into()),
+        });
+        assert_eq!(answered.clone().to_wit().to_model(), answered);
+        let interrupted = m::Resolution::Interrupted(m::Interruption {
+            reason: "r".into(),
+            at: 7,
+            by: m::Agent::named("sweeper"),
+        });
+        assert_eq!(interrupted.clone().to_wit().to_model(), interrupted);
+        for p in [m::ReplayPolicy::Safe, m::ReplayPolicy::Unsafe, m::ReplayPolicy::Abandon] {
+            assert_eq!(p.to_wit().to_model(), p);
+        }
     }
 }

@@ -10,9 +10,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::ParkError;
-use crate::model::{Agent, CallResult, OutboundCall, SessionId, TicketId};
+use crate::model::{Agent, CallResult, Effect, OutboundCall, SessionId, TicketId};
 
-pub const ROUTES: &[&str] = &["park", "wake", "pending", "take-ready", "cancel", "oplog"];
+pub const ROUTES: &[&str] =
+    &["park", "wake", "pending", "take-ready", "interrupt", "cancel", "oplog", "commit"];
 
 pub fn route(func: &str) -> String {
     format!("/v1/{func}")
@@ -49,6 +50,22 @@ pub struct Ticket {
 #[serde(rename_all = "kebab-case")]
 pub struct CancelRequest {
     pub ticket: TicketId,
+    pub by: Agent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct InterruptRequest {
+    pub ticket: TicketId,
+    pub reason: String,
+    pub by: Agent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct CommitRequest {
+    pub session: SessionId,
+    pub effects: Vec<Effect>,
     pub by: Agent,
 }
 
@@ -132,6 +149,36 @@ pub fn status_of(error: &str) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{CallResult, Interruption, Resolution};
+
+    /// What a caller of `take-ready` reads, spelled out: the variant is the one
+    /// key, and a client that matches on it never has to look at `ok`.
+    #[test]
+    fn a_resolution_is_one_of_two_keys() {
+        let answered = Resolution::Answered(CallResult { ok: false, body: vec![1], detail: None });
+        assert_eq!(
+            serde_json::to_value(&answered).unwrap(),
+            serde_json::json!({"answered": {"ok": false, "body": [1], "detail": null}})
+        );
+        let interrupted = Resolution::Interrupted(Interruption {
+            reason: "r".into(),
+            at: 7,
+            by: Agent::named("a"),
+        });
+        assert_eq!(
+            serde_json::to_value(&interrupted).unwrap(),
+            serde_json::json!({"interrupted": {"reason": "r", "at": 7,
+                "by": {"id": "a", "goal": null, "model": null}}})
+        );
+    }
+
+    #[test]
+    fn every_route_the_contract_names_is_listed() {
+        for f in ["park", "wake", "pending", "take-ready", "interrupt", "cancel", "oplog", "commit"]
+        {
+            assert!(ROUTES.contains(&f), "{f}");
+        }
+    }
 
     #[test]
     fn every_park_error_round_trips_through_its_wire_form() {
