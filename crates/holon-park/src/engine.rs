@@ -97,6 +97,19 @@ impl<S: ParkStore> Engine<S> {
         by: Agent,
         now_ms: u64,
     ) -> Result<ParkResult> {
+        self.park_in(session, call, by, now_ms, None).await
+    }
+
+    /// [`Engine::park`], for a commit: the ticket is stamped with the batch that made it
+    /// (ADR-0110), so rolling that batch back cancels exactly what it created.
+    pub(crate) async fn park_in(
+        &self,
+        session: &SessionId,
+        call: OutboundCall,
+        by: Agent,
+        now_ms: u64,
+        batch: Option<&str>,
+    ) -> Result<ParkResult> {
         check_shape(&call)?;
         let ticket = ticket_id(session, &call.correlation);
 
@@ -159,6 +172,7 @@ impl<S: ParkStore> Engine<S> {
             interruption: None,
             announced_at: None,
             joined: None,
+            batch: batch.map(str::to_string),
         };
 
         if !self.store.create(&ticket, &record).await? {
@@ -206,7 +220,11 @@ impl<S: ParkStore> Engine<S> {
 
     /// The group `parent` names in `session`, and how it is declared: refused unless it exists,
     /// is a group, and is still waiting on its children.
-    async fn open_group(&self, session: &SessionId, parent: &str) -> Result<(TicketId, GroupSpec)> {
+    pub(crate) async fn open_group(
+        &self,
+        session: &SessionId,
+        parent: &str,
+    ) -> Result<(TicketId, GroupSpec)> {
         let ticket = ticket_id(session, parent);
         let Some((g, _)) = self.store.get(&ticket).await? else {
             return Err(ParkError::Invalid(format!(
@@ -607,7 +625,7 @@ fn to_entry(record: &Record, now_ms: u64) -> TicketEntry {
 }
 
 /// What a call may not say about groups, checked before anything is read or written.
-fn check_shape(call: &OutboundCall) -> Result<()> {
+pub(crate) fn check_shape(call: &OutboundCall) -> Result<()> {
     if call.group.is_some() && call.parent.is_some() {
         return Err(ParkError::Invalid(
             "a group cannot be a child of another: groups do not nest".into(),

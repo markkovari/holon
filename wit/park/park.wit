@@ -29,7 +29,11 @@
 // 0.3.0 (ADR-0109) lets a call fan out. A call parked with a `group` is resolved by its
 // children, not by `wake`; its children are calls parked with `parent`. Breaking against
 // 0.2.0: `resolution` gains `joined`, and `outbound-call` and `ticket-entry` gain fields.
-package holon:park@0.3.0;
+//
+// 0.4.0 (ADR-0110) adds `commit`: several effects applied together, or not at all. A function
+// and new types, so compatible with 0.3.0 in what a 0.3.0 caller uses; the version moves with
+// the shape.
+package holon:park@0.4.0;
 
 interface types {
     /// A conversation or task this ticket belongs to. Opaque to this contract;
@@ -126,6 +130,32 @@ interface types {
         ticket: ticket-id,
         correlation: string,
         ended: child-result,
+    }
+
+    /// One thing a `commit` does (ADR-0110): what the call of the same name does, naming by
+    /// `correlation` a call that already exists.
+    variant effect {
+        park(outbound-call),
+        wake(wake-effect),
+        interrupt(interrupt-effect),
+        /// Give up on the call with this correlation, as `cancel`.
+        cancel(string),
+    }
+
+    record wake-effect {
+        correlation: string,
+        answer: call-result,
+    }
+
+    record interrupt-effect {
+        correlation: string,
+        reason: string,
+    }
+
+    /// What a commit returns: its id, and what each `park` in it said, in the order listed.
+    record commit-result {
+        batch: string,
+        parked: list<park-result>,
     }
 
     /// What a group is resolved with: every child, in the order it was parked, and how each
@@ -257,8 +287,8 @@ interface types {
 
 interface lot {
     use types.{
-        agent, call-result, outbound-call, park-error, park-result, resolution,
-        session-id, ticket-entry, ticket-id, turn-status,
+        agent, call-result, commit-result, effect, outbound-call, park-error, park-result,
+        resolution, session-id, ticket-entry, ticket-id, turn-status,
     };
 
     /// Register an outstanding call before dispatching it. Idempotent per
@@ -292,6 +322,22 @@ interface lot {
     /// Give up on a `parked`, `ready` or `interrupted` ticket. A late wake
     /// against a cancelled ticket is logged and dropped, not an error to anyone.
     cancel: func(ticket: ticket-id, by: agent) -> result<_, park-error>;
+
+    /// Apply these effects together, or not at all (ADR-0110). Every effect is checked before
+    /// anything is written, so a list with one bad effect registers none of them
+    /// (`invalid`). Then the whole list is written as one record, an intent, and from there
+    /// the effects will all be applied or all undone, by this call or, if it dies, by a
+    /// recovery pass: parks first, in order, because those can still be refused and can be
+    /// undone (what a commit made is cancelled); then `wake`, `interrupt` and `cancel` in order,
+    /// which cannot be undone and are each idempotent.
+    ///
+    /// Idempotent: the identical list again is the same commit, found done (its parks report
+    /// `already-parked`) or finished from where it stopped. `invalid` if an effect is refused
+    /// after the intent was written, and then what the commit parked has been cancelled.
+    ///
+    /// Atomic in what lasts and not in what is seen on the way: while a commit is pending a
+    /// reader may see some of its tickets and not others.
+    commit: func(session: session-id, effects: list<effect>, by: agent) -> result<commit-result, park-error>;
 
     /// One session's history, oldest first, starting after the given
     /// millisecond timestamp (`none`: from the start).

@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::model::{
-    Agent, CallResult, Interruption, JoinResult, OutboundCall, SessionId, TicketId, TurnStatus,
+    Agent, CallResult, Effect, Interruption, JoinResult, OutboundCall, ParkResult, SessionId,
+    TicketId, TurnStatus,
 };
 
 /// [`TurnStatus`] without `expired`, which is only computed at read time from a
@@ -85,6 +86,40 @@ pub struct Record {
     /// `Ready`, or `Resumed` after being `Ready`; a group has no `result`.
     #[serde(default)]
     pub joined: Option<JoinResult>,
+    /// The commit that created this ticket, if one did (ADR-0110). Stamped with the record, so
+    /// rolling a commit back cancels the tickets it made and never one that was already there.
+    #[serde(default)]
+    pub batch: Option<String>,
+}
+
+/// Where a commit is (ADR-0110).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BatchState {
+    /// The intent is written; its effects are being applied, or will be by a recovery pass.
+    Pending,
+    Done,
+    /// It could not be applied, and what it had parked was cancelled.
+    Aborted,
+}
+
+/// A commit's durable intent: written before any effect is applied, so that once it exists the
+/// effects will all be applied or all be undone, whoever finds it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Batch {
+    /// Content-addressed (`ticket::batch_id`): the identical commit again is the same batch.
+    pub id: String,
+    pub session: SessionId,
+    pub effects: Vec<Effect>,
+    pub by: Agent,
+    pub state: BatchState,
+    pub created_at: u64,
+    pub finished_at: Option<u64>,
+    /// Why it was aborted.
+    pub reason: Option<String>,
+    /// What each `park` said, in order. Set when it is done.
+    #[serde(default)]
+    pub results: Vec<ParkResult>,
 }
 
 /// What [`ParkStore::index_child`] did.
@@ -161,8 +196,25 @@ pub trait ParkStore: Send + Sync {
         max: u32,
     ) -> impl Future<Output = Result<IndexChild>> + Send;
 
-    /// Every child ever indexed under `parent`, in no particular order.
+    /// Every child indexed under `parent`, in the order they were added.
     fn list_children(&self, parent: &str) -> impl Future<Output = Result<Vec<TicketId>>> + Send;
+
+    /// Write a BRAND NEW commit intent. `Ok(false)`: that commit already exists.
+    fn create_batch(&self, id: &str, batch: &Batch) -> impl Future<Output = Result<bool>> + Send;
+
+    fn get_batch(&self, id: &str)
+        -> impl Future<Output = Result<Option<(Batch, Revision)>>> + Send;
+
+    /// Overwrite an existing intent, only if it is still at `expected`.
+    fn cas_batch(
+        &self,
+        id: &str,
+        expected: Revision,
+        batch: &Batch,
+    ) -> impl Future<Output = Result<bool>> + Send;
+
+    /// Every commit ever written, in no particular order.
+    fn list_batches(&self) -> impl Future<Output = Result<Vec<String>>> + Send;
 }
 
 #[cfg(test)]

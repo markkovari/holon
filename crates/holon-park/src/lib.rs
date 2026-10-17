@@ -21,6 +21,7 @@
 //! (`reconciler/src/bin/resume.rs`); `components/park-store` and
 //! `components/park-gateway` put the contract in front of it.
 
+pub mod batch;
 pub mod engine;
 pub mod error;
 pub mod group;

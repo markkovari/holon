@@ -48,6 +48,9 @@ pub struct RecoveryPolicy {
     /// How long a resolved ticket may sit untaken before it is announced again,
     /// and the gap between one such re-announcement and the next.
     pub reannounce_after_ms: u64,
+    /// How long a commit's intent may sit pending before a pass finishes it (ADR-0110): a
+    /// younger one is presumed to be in the hands of the caller that wrote it.
+    pub batch_lease_ms: u64,
 }
 
 impl Default for RecoveryPolicy {
@@ -57,6 +60,7 @@ impl Default for RecoveryPolicy {
             max_redispatches: 3,
             retry_after_ms: 60_000,
             reannounce_after_ms: 30_000,
+            batch_lease_ms: 30_000,
         }
     }
 }

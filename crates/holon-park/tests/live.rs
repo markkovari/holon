@@ -204,18 +204,20 @@ struct Stack {
     wake: Arc<WakeStream>,
     session: String,
     stream: String,
+    bucket: String,
 }
 
 async fn stack(url: &str) -> Stack {
     let t = tag();
     let stream = format!("PARK_WAKE_{}", t.replace(['-', '.'], "_"));
-    let (store, wake) =
-        nats::connect(url, &format!("holon-park-test-{t}"), &stream).await.expect("connect");
+    let bucket = format!("holon-park-test-{t}");
+    let (store, wake) = nats::connect(url, &bucket, &stream).await.expect("connect");
     Stack {
         engine: Arc::new(Engine::new(store)),
         wake: Arc::new(wake),
         session: format!("s-{t}"),
         stream,
+        bucket,
     }
 }
 
@@ -270,6 +272,7 @@ fn fast_policy() -> RecoveryPolicy {
         max_redispatches: 2,
         retry_after_ms: 400,
         reannounce_after_ms: 1_000,
+        batch_lease_ms: 1_000,
     }
 }
 
@@ -786,4 +789,126 @@ async fn a_fail_fast_group_over_real_nats_cancels_the_siblings_and_resolves() {
 
 fn ticket_of(s: &Stack, correlation: &str) -> TicketId {
     holon_park::ticket::ticket_id(&s.session, correlation)
+}
+
+// ---- ADR-0110: commits over real JetStream ---------------------------------------------------------
+
+use holon_park::model::Effect;
+use holon_park::store::{Batch, BatchState, ParkStore};
+
+/// A second handle on the stack's bucket, the way another process would have one.
+async fn raw_store(url: &str, s: &Stack) -> NatsParkStore {
+    let (store, _) = nats::connect(url, &s.bucket, &s.stream).await.expect("connect");
+    store
+}
+
+/// A commit's caller dies after writing its intent, before applying one effect. The resumer's
+/// own sweep finds the intent once its lease has run out and finishes it: the fan-out is parked,
+/// complete, with nobody having asked.
+#[tokio::test]
+async fn a_commit_whose_caller_died_is_finished_by_the_resumer_over_real_nats() {
+    let url = need_nats!("a_commit_whose_caller_died_is_finished_by_the_resumer_over_real_nats");
+    let s = stack(&url).await;
+    let sink = Arc::new(Rec::default());
+
+    let effects = vec![
+        Effect::Park(group_of("g", holon_park::model::JoinPolicy::AllSettled, 2)),
+        Effect::Park(child_of("c1", "g")),
+        Effect::Park(child_of("c2", "g")),
+    ];
+    let id = holon_park::ticket::batch_id(&s.session, &effects);
+    // Written five seconds ago, by a caller that has not been heard from since.
+    let intent = Batch {
+        id: id.clone(),
+        session: s.session.clone(),
+        effects,
+        by: agent("dead-caller"),
+        state: BatchState::Pending,
+        created_at: now_ms() - 5_000,
+        finished_at: None,
+        reason: None,
+        results: vec![],
+    };
+    assert!(raw_store(&url, &s).await.create_batch(&id, &intent).await.unwrap());
+    assert!(
+        s.engine.oplog(&s.session, None, 10, now_ms()).await.unwrap().is_empty(),
+        "nothing applied"
+    );
+
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let r = tokio::spawn(run(s.engine.clone(), s.wake.clone(), sink.clone(), cfg("t-resumer"), rx));
+    for _ in 0..200 {
+        if s.engine.oplog(&s.session, None, 10, now_ms()).await.unwrap().len() == 3 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let log = s.engine.oplog(&s.session, None, 10, now_ms()).await.unwrap();
+    let mut got: Vec<_> = log.iter().map(|e| e.correlation.clone()).collect();
+    got.sort();
+    assert_eq!(got, ["c1", "c2", "g"], "the sweep finished the fan-out");
+
+    // And it is done, not pending: the caller's own retry, when it comes, finds it so.
+    let (done, _) = raw_store(&url, &s).await.get_batch(&id).await.unwrap().unwrap();
+    assert_eq!(done.state, BatchState::Done);
+    let retry = s
+        .engine
+        .commit(
+            &s.session,
+            vec![
+                Effect::Park(group_of("g", holon_park::model::JoinPolicy::AllSettled, 2)),
+                Effect::Park(child_of("c1", "g")),
+                Effect::Park(child_of("c2", "g")),
+            ],
+            agent("dead-caller"),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    assert!(retry.result.parked.iter().all(|p| p.outcome == ParkOutcome::AlreadyParked));
+
+    stop.send(true).unwrap();
+    r.await.unwrap().unwrap();
+}
+
+/// Two callers committing the identical list at once are one commit: one intent, three tickets,
+/// and both are told it worked.
+#[tokio::test]
+async fn the_same_commit_twice_at_once_over_real_nats_is_one_commit() {
+    let url = need_nats!("the_same_commit_twice_at_once_over_real_nats_is_one_commit");
+    let s = stack(&url).await;
+    let effects = || {
+        vec![
+            Effect::Park(group_of("g", holon_park::model::JoinPolicy::FailFast, 3)),
+            Effect::Park(child_of("c1", "g")),
+            Effect::Park(child_of("c2", "g")),
+            Effect::Park(child_of("c3", "g")),
+        ]
+    };
+
+    let mut racers = Vec::new();
+    for i in 0..6 {
+        let (e, session) = (s.engine.clone(), s.session.clone());
+        racers.push(tokio::spawn(async move {
+            for _ in 0..20 {
+                match e.commit(&session, effects(), agent(&format!("caller-{i}")), now_ms()).await {
+                    Ok(c) => return c.result.batch,
+                    Err(holon_park::ParkError::Storage(_)) => {
+                        tokio::time::sleep(Duration::from_millis(5)).await
+                    }
+                    Err(e) => panic!("{e:?}"),
+                }
+            }
+            panic!("never got an answer")
+        }));
+    }
+    let mut batches = std::collections::BTreeSet::new();
+    for r in racers {
+        batches.insert(r.await.unwrap());
+    }
+    assert_eq!(batches.len(), 1, "one commit: {batches:?}");
+    let log = s.engine.oplog(&s.session, None, 20, now_ms()).await.unwrap();
+    assert_eq!(log.len(), 4, "four tickets, not six commits' worth: {log:?}");
+    let kids = raw_store(&url, &s).await.list_children(&ticket_of(&s, "g")).await.unwrap();
+    assert_eq!(kids.len(), 3);
 }

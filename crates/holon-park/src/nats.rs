@@ -13,6 +13,7 @@
 //!   the index itself, so [`NatsParkStore::list_session`] is one read, no scan.
 //! * `children.<sha256>` — a group's child list (ADR-0109), the same shape, grown
 //!   by the same loop with a bound on how long it may get.
+//! * `batch.<id>` — a commit's intent (ADR-0110), JSON, moved by CAS like a ticket.
 //!
 //! # The notification is not the durability boundary
 //!
@@ -32,7 +33,7 @@ use sha2::{Digest, Sha256};
 use crate::error::{ParkError, Result};
 use crate::model::TicketId;
 pub use crate::model::{WakeKind, WakeMessage};
-use crate::store::{IndexChild, ParkStore, Record, Revision};
+use crate::store::{Batch, IndexChild, ParkStore, Record, Revision};
 
 /// Retry bound for a list's CAS. A session's list is contended by that session's own concurrent
 /// `park` calls, and a group's (ADR-0109) by a fan-out registering its children at once, which
@@ -58,6 +59,11 @@ fn session_key(session: &str) -> String {
 
 fn children_key(parent: &str) -> String {
     format!("children.{}", sha256_hex(parent))
+}
+
+/// `id` is already a hex SHA-256 (`ticket::batch_id`), so it is a safe key as it is.
+fn batch_key(id: &str) -> String {
+    format!("batch.{id}")
 }
 
 /// Connect and open (creating if needed) the KV bucket and the `PARK_WAKE`
@@ -229,6 +235,40 @@ impl ParkStore for NatsParkStore {
             Some(bytes) => serde_json::from_slice(&bytes).map_err(ParkError::storage),
             None => Ok(Vec::new()),
         }
+    }
+
+    async fn create_batch(&self, id: &str, batch: &Batch) -> Result<bool> {
+        let value = serde_json::to_vec(batch).map_err(ParkError::storage)?;
+        match self.kv.create(batch_key(id), value.into()).await {
+            Ok(_) => Ok(true),
+            Err(e) if e.kind() == kv::CreateErrorKind::AlreadyExists => Ok(false),
+            Err(e) => Err(ParkError::storage(e)),
+        }
+    }
+
+    async fn get_batch(&self, id: &str) -> Result<Option<(Batch, Revision)>> {
+        match self.kv.entry(batch_key(id)).await.map_err(ParkError::storage)? {
+            Some(e) if e.operation == kv::Operation::Put => {
+                let batch: Batch = serde_json::from_slice(&e.value).map_err(ParkError::storage)?;
+                Ok(Some((batch, e.revision)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    async fn cas_batch(&self, id: &str, expected: Revision, batch: &Batch) -> Result<bool> {
+        let value = serde_json::to_vec(batch).map_err(ParkError::storage)?;
+        match self.kv.update(batch_key(id), value.into(), expected).await {
+            Ok(_) => Ok(true),
+            Err(e) if e.kind() == kv::UpdateErrorKind::WrongLastRevision => Ok(false),
+            Err(e) => Err(ParkError::storage(e)),
+        }
+    }
+
+    async fn list_batches(&self) -> Result<Vec<String>> {
+        let keys = self.kv.keys().await.map_err(ParkError::storage)?;
+        let keys: Vec<String> = keys.try_collect().await.map_err(ParkError::storage)?;
+        Ok(keys.into_iter().filter_map(|k| k.strip_prefix("batch.").map(str::to_string)).collect())
     }
 
     /// One pass over the bucket's keys, keeping the `ticket.` ones. Reads keys

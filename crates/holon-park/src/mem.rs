@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use crate::error::Result;
 use crate::model::TicketId;
-use crate::store::{IndexChild, ParkStore, Record, Revision};
+use crate::store::{Batch, IndexChild, ParkStore, Record, Revision};
 
 #[derive(Default)]
 struct State {
@@ -20,6 +20,7 @@ struct State {
     by_correlation: HashMap<String, TicketId>,
     by_session: HashMap<String, HashSet<TicketId>>,
     by_parent: HashMap<String, Vec<TicketId>>,
+    batches: HashMap<String, (Batch, Revision)>,
 }
 
 #[derive(Default)]
@@ -102,6 +103,37 @@ impl ParkStore for MemParkStore {
 
     async fn list_children(&self, parent: &str) -> Result<Vec<TicketId>> {
         Ok(self.s.lock().unwrap().by_parent.get(parent).cloned().unwrap_or_default())
+    }
+
+    async fn create_batch(&self, id: &str, batch: &Batch) -> Result<bool> {
+        let mut g = self.s.lock().unwrap();
+        if g.batches.contains_key(id) {
+            return Ok(false);
+        }
+        g.next_rev += 1;
+        let rev = g.next_rev;
+        g.batches.insert(id.to_string(), (batch.clone(), rev));
+        Ok(true)
+    }
+
+    async fn get_batch(&self, id: &str) -> Result<Option<(Batch, Revision)>> {
+        Ok(self.s.lock().unwrap().batches.get(id).cloned())
+    }
+
+    async fn cas_batch(&self, id: &str, expected: Revision, batch: &Batch) -> Result<bool> {
+        let mut g = self.s.lock().unwrap();
+        let Some((_, current)) = g.batches.get(id) else { return Ok(false) };
+        if *current != expected {
+            return Ok(false);
+        }
+        g.next_rev += 1;
+        let rev = g.next_rev;
+        g.batches.insert(id.to_string(), (batch.clone(), rev));
+        Ok(true)
+    }
+
+    async fn list_batches(&self) -> Result<Vec<String>> {
+        Ok(self.s.lock().unwrap().batches.keys().cloned().collect())
     }
 
     async fn list_tickets(&self) -> Result<Vec<TicketId>> {

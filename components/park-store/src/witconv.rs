@@ -97,8 +97,12 @@ variant!(ChildResult { Answered(x), Interrupted(x), Cancelled });
 record!(ChildOutcome { ticket, correlation, ended });
 record!(JoinResult { outcome, children, missing });
 variant!(Resolution { Answered(x), Interrupted(x), Joined(x) });
+record!(WakeEffect { correlation, answer });
+record!(InterruptEffect { correlation, reason });
+variant!(Effect { Park(x), Wake(x), Interrupt(x), Cancel(x) });
 variant!(ParkOutcome { Parked, AlreadyParked, AlreadyWoken });
 record!(ParkResult { ticket, outcome });
+record!(CommitResult { batch, parked });
 variant!(TurnStatus { Parked, Ready, Resumed, Cancelled, Expired, Interrupted });
 record!(TicketEntry {
     ticket,

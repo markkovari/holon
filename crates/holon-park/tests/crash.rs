@@ -32,13 +32,13 @@ use holon_park::error::{ParkError, Result};
 use holon_park::group::{join_decision, Join};
 use holon_park::mem::MemParkStore;
 use holon_park::model::{
-    Agent, CallResult, ChildResult, GroupSpec, JoinOutcome, JoinPolicy, OutboundCall, ReplayPolicy,
-    Resolution, SessionId, TicketId, TurnStatus, WakeMessage,
+    Agent, CallResult, ChildResult, Effect, GroupSpec, JoinOutcome, JoinPolicy, OutboundCall,
+    ReplayPolicy, Resolution, SessionId, TicketId, TurnStatus, WakeMessage,
 };
 use holon_park::recover::RecoveryPolicy;
 use holon_park::resume::{handle, Delivery, Sink, SinkReply};
-use holon_park::store::{IndexChild, ParkStore, Record, Revision, StoredStatus};
-use holon_park::ticket::ticket_id;
+use holon_park::store::{Batch, BatchState, IndexChild, ParkStore, Record, Revision, StoredStatus};
+use holon_park::ticket::{batch_id, ticket_id};
 use holon_park::Engine;
 
 // ---- the fuse ------------------------------------------------------------------
@@ -146,6 +146,14 @@ macro_rules! reads {
             $gate(self)?;
             self.inner().list_children(p).await
         }
+        async fn get_batch(&self, id: &str) -> Result<Option<(Batch, Revision)>> {
+            $gate(self)?;
+            self.inner().get_batch(id).await
+        }
+        async fn list_batches(&self) -> Result<Vec<String>> {
+            $gate(self)?;
+            self.inner().list_batches().await
+        }
     };
 }
 
@@ -177,6 +185,12 @@ impl<S: ParkStore> ParkStore for Shared<S> {
     }
     async fn index_child(&self, p: &str, c: &str, max: u32) -> Result<IndexChild> {
         self.inner().index_child(p, c, max).await
+    }
+    async fn create_batch(&self, id: &str, b: &Batch) -> Result<bool> {
+        self.inner().create_batch(id, b).await
+    }
+    async fn cas_batch(&self, id: &str, e: Revision, b: &Batch) -> Result<bool> {
+        self.inner().cas_batch(id, e, b).await
     }
 }
 
@@ -210,6 +224,12 @@ impl<S: ParkStore> ParkStore for Crashy<S> {
     }
     async fn index_child(&self, p: &str, c: &str, max: u32) -> Result<IndexChild> {
         write!(self, self.inner().index_child(p, c, max))
+    }
+    async fn create_batch(&self, id: &str, b: &Batch) -> Result<bool> {
+        write!(self, self.inner().create_batch(id, b))
+    }
+    async fn cas_batch(&self, id: &str, e: Revision, b: &Batch) -> Result<bool> {
+        write!(self, self.inner().cas_batch(id, e, b))
     }
 }
 
@@ -245,6 +265,7 @@ fn policy() -> RecoveryPolicy {
         max_redispatches: 3,
         retry_after_ms: 1_000,
         reannounce_after_ms: 500,
+        batch_lease_ms: 0,
     }
 }
 
@@ -341,6 +362,12 @@ enum Case {
     CancelGroup,
     /// a group's own deadline: the children still parked cancelled, then the group
     GroupTimeout,
+    /// a commit of a fan-out: the intent, a group, two children, then done
+    Commit,
+    /// a commit that replaces one call with another: the new one first, then the cancel
+    CommitReplace,
+    /// a pending commit that can never be applied, found by a pass: parked, undone, aborted
+    CommitRollBack,
 }
 
 const CASES: &[Case] = &[
@@ -358,6 +385,9 @@ const CASES: &[Case] = &[
     Case::FailFast,
     Case::CancelGroup,
     Case::GroupTimeout,
+    Case::Commit,
+    Case::CommitReplace,
+    Case::CommitRollBack,
 ];
 
 /// What every attempt at a case shares: its sink, which outlives a crash.
@@ -389,7 +419,26 @@ async fn park_one<S: ParkStore>(
         .ticket
 }
 
-async fn setup<S: ParkStore>(e: &Engine<S>, case: Case) -> Ctx {
+fn fan_out_effects() -> Vec<Effect> {
+    vec![
+        Effect::Park(group_call(JoinPolicy::AllSettled, 2, None)),
+        Effect::Park(child_call("c1")),
+        Effect::Park(child_call("c2")),
+    ]
+}
+
+fn replace_effects() -> Vec<Effect> {
+    vec![Effect::Cancel("old".into()), Effect::Park(call("new", ReplayPolicy::Unsafe, None))]
+}
+
+fn rollback_effects() -> Vec<Effect> {
+    vec![
+        Effect::Park(call("a", ReplayPolicy::Unsafe, None)),
+        Effect::Park(call("x", ReplayPolicy::Unsafe, None)),
+    ]
+}
+
+async fn setup<S: ParkStore>(w: &World<S>, e: &Engine<Shared<S>>, case: Case) -> Ctx {
     let mut tickets = Vec::new();
     match case {
         Case::Park => {}
@@ -424,6 +473,32 @@ async fn setup<S: ParkStore>(e: &Engine<S>, case: Case) -> Ctx {
             tickets = park_group(e, JoinPolicy::AllSettled, 3, Some(DEADLINE), &["c1", "c2"]).await;
             e.wake("c1", answer(), PARKED_AT + 10).await.unwrap();
         }
+        Case::Commit => {}
+        Case::CommitReplace => {
+            tickets.push(park_one(e, "old", ReplayPolicy::Unsafe, None).await);
+        }
+        Case::CommitRollBack => {
+            // Another session owns "x", and a commit whose intent was written before that, and
+            // whose caller then died, wants it.
+            let other = "other".to_string();
+            e.park(&other, call("x", ReplayPolicy::Unsafe, None), Agent::named("o"), PARKED_AT)
+                .await
+                .unwrap();
+            let effects = rollback_effects();
+            let id = batch_id(SESSION, &effects);
+            let intent = Batch {
+                id: id.clone(),
+                session: session(),
+                effects,
+                by: Agent::named("turn"),
+                state: BatchState::Pending,
+                created_at: PARKED_AT,
+                finished_at: None,
+                reason: None,
+                results: vec![],
+            };
+            Shared(w.inner.clone()).create_batch(&id, &intent).await.unwrap();
+        }
     }
     Ctx { tickets, sink: Recorder::default() }
 }
@@ -442,6 +517,7 @@ enum Done {
     Delivered,
     /// What the call asked to be announced on `PARK_WAKE`.
     Announced(Vec<WakeMessage>),
+    Committed,
 }
 
 async fn run<S: ParkStore>(e: &Engine<S>, case: Case, ctx: &Ctx) -> Result<Done> {
@@ -489,6 +565,18 @@ async fn run<S: ParkStore>(e: &Engine<S>, case: Case, ctx: &Ctx) -> Result<Done>
         }
         Case::GroupTimeout => {
             e.recover(&sweeper(), &policy(), NOW).await?;
+            Done::Recovered
+        }
+        Case::Commit => {
+            e.commit(&session(), fan_out_effects(), Agent::named("turn"), PARKED_AT).await?;
+            Done::Committed
+        }
+        Case::CommitReplace => {
+            e.commit(&session(), replace_effects(), Agent::named("turn"), PARKED_AT).await?;
+            Done::Committed
+        }
+        Case::CommitRollBack => {
+            e.complete_batches(0, NOW).await?;
             Done::Recovered
         }
     })
@@ -594,6 +682,37 @@ async fn check_effect<S: ParkStore>(
             let r = record_of(w, &ctx.tickets[0]).await;
             assert_eq!(r.status, StoredStatus::Ready);
             assert_eq!(r.announced_at, Some(NOW));
+        }
+        Case::Commit => {
+            let id = batch_id(SESSION, &fan_out_effects());
+            let (b, _) = Shared(w.inner.clone()).get_batch(&id).await.unwrap().expect("its intent");
+            assert_eq!(b.state, BatchState::Done);
+            assert_eq!(b.results.len(), 3);
+            for c in ["g", "c1", "c2"] {
+                assert_eq!(record_of(w, &tk(c)).await.batch.as_deref(), Some(id.as_str()), "{c}");
+            }
+            let kids = Shared(w.inner.clone()).list_children(&tk("g")).await.unwrap();
+            assert_eq!(kids, [tk("c1"), tk("c2")], "in the order they were listed, once each");
+            // Again: the same commit, found done.
+            e.commit(&session(), fan_out_effects(), Agent::named("turn"), NOW).await.unwrap();
+        }
+        Case::CommitReplace => {
+            assert_eq!(record_of(w, &tk("old")).await.status, StoredStatus::Cancelled);
+            assert_eq!(record_of(w, &tk("new")).await.status, StoredStatus::Parked);
+            let id = batch_id(SESSION, &replace_effects());
+            let (b, _) = Shared(w.inner.clone()).get_batch(&id).await.unwrap().expect("its intent");
+            assert_eq!(b.state, BatchState::Done);
+        }
+        Case::CommitRollBack => {
+            let id = batch_id(SESSION, &rollback_effects());
+            let (b, _) = Shared(w.inner.clone()).get_batch(&id).await.unwrap().expect("its intent");
+            assert_eq!(b.state, BatchState::Aborted);
+            assert!(b.reason.unwrap_or_default().contains("already in use"));
+            assert_eq!(record_of(w, &tk("a")).await.status, StoredStatus::Cancelled);
+            // The other session's ticket is not the commit's to touch.
+            let foreign = ticket_id("other", "x");
+            assert_eq!(record_of(w, &foreign).await.status, StoredStatus::Parked);
+            assert!(e.complete_batches(0, NOW + 1).await.unwrap().is_empty(), "aborted is over");
         }
         Case::ParkChild => {
             let r = record_of(w, &tk("c1")).await;
@@ -741,6 +860,45 @@ async fn assert_consistent<S: ParkStore>(w: &World<S>, e: &Engine<Shared<S>>, wh
             StoredStatus::Interrupted => panic!("{ctx}: a group is never interrupted"),
         }
     }
+
+    // Commits (ADR-0110): a ticket a commit made has the commit's intent behind it, and every
+    // commit is over (done with its parks in place, or aborted with what it parked cancelled) by
+    // the time anyone has retried or a pass has run.
+    for t in &tickets {
+        let (r, _) = store.get(t).await.unwrap().unwrap();
+        if let Some(id) = &r.batch {
+            assert!(
+                store.get_batch(id).await.unwrap().is_some(),
+                "{what}: ticket {t} was parked by commit {id}, whose intent does not exist"
+            );
+        }
+    }
+    for id in store.list_batches().await.unwrap() {
+        let (b, _) = store.get_batch(&id).await.unwrap().unwrap();
+        match b.state {
+            BatchState::Pending => panic!("{what}: commit {id} is still pending"),
+            BatchState::Done => {
+                for e in &b.effects {
+                    if let Effect::Park(c) = e {
+                        let t = ticket_id(&b.session, &c.correlation);
+                        assert!(tickets.contains(&t), "{what}: done commit {id} lost its park {t}");
+                    }
+                }
+            }
+            BatchState::Aborted => {
+                for t in &tickets {
+                    let (r, _) = store.get(t).await.unwrap().unwrap();
+                    if r.batch.as_deref() == Some(id.as_str()) {
+                        assert!(
+                            matches!(r.status, StoredStatus::Cancelled | StoredStatus::Resumed),
+                            "{what}: aborted commit {id} left {t} {:?}",
+                            r.status
+                        );
+                    }
+                }
+            }
+        }
+    }
     let _ = e;
 }
 
@@ -749,7 +907,7 @@ async fn one_point<B: Backend>(b: Arc<B>, case: Case, k: u32, steps: u32, mode: 
     let what = format!("{case:?} at write {k}/{steps} ({mode:?}, lazy={lazy})");
     let w = World::new(&*b).await;
     let clean = w.clean();
-    let ctx = setup(&clean, case).await;
+    let ctx = setup(&w, &clean, case).await;
 
     w.fuse.arm(k, mode);
     let crashed = run(&w.crashy(), case, &ctx).await;
@@ -784,7 +942,7 @@ async fn one_point<B: Backend>(b: Arc<B>, case: Case, k: u32, steps: u32, mode: 
 async fn crash_every_step<B: Backend>(b: &Arc<B>, case: Case) -> (u32, Vec<String>) {
     // How many writes the operation makes when nothing crashes.
     let dry = World::new(&**b).await;
-    let ctx = setup(&dry.clean(), case).await;
+    let ctx = setup(&dry, &dry.clean(), case).await;
     dry.fuse.arm(0, Mode::Before);
     run(&dry.crashy(), case, &ctx).await.unwrap_or_else(|e| panic!("{case:?} dry run: {e}"));
     let steps = dry.fuse.writes();
