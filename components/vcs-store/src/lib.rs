@@ -2,7 +2,7 @@
 //! each call one HTTP request to `comp-vcs` (ADR-0099, ADR-0095).
 //!
 //! The engine needs NATS JetStream and SurrealDB, which a `wasm32-wasip2` guest cannot dial, so
-//! it runs natively (`reconciler/src/bin/vcs.rs`) and this is its component face: each call
+//! it runs natively (`reconciler/daemons/vcs/`) and this is its component face: each call
 //! becomes `POST <vcs-url>/v1/<function>` with JSON arguments (`holon_vcs::wire`) and the answer
 //! is turned back into the WIT result. No state, no decisions.
 //!

@@ -1,0 +1,28 @@
+[package]
+name = "comp-vcs"
+description = "The agent-native code store (docs/adr/0099): the holon-vcs engine's NATS and SurrealDB adapters behind loopback HTTP, for components/vcs-store."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+comp-daemon-kit.workspace = true
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+# The code store's engine and its native adapters. Its own async-nats (0.50) and surrealdb
+# ride along; the engine never shares a client with the rest of this workspace.
+holon-vcs = { path = "../../../crates/holon-vcs", features = ["native"] }
+
+# tests/e2e_vcs.rs drives the real binary through comp-host, NATS and SurrealDB, with the gate
+# harness the root's suites share (tests/gatelib/mod.rs, included by path), which signs a TOTP
+# code with hmac and sha1 and talks to the host with a blocking reqwest client.
+[dev-dependencies]
+comp-fleet.workspace = true
+hmac.workspace = true
+reqwest.workspace = true
+sha1.workspace = true

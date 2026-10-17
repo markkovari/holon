@@ -15,8 +15,10 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+/// The root this was COMPILED in (not `COMP_REPO_ROOT`), through `comp-fleet`: the suites that
+/// include this harness are in more than one package now, at different depths (docs/adr/0115).
 pub fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+    comp_fleet::fleet::root_from_manifest()
 }
 
 /// Where the components were built, from `$CARGO_TARGET_DIR` when something set it.
@@ -103,7 +105,7 @@ impl Drop for Gate {
 /// Compose the crate against what it imports, in this process, via `plug::compose_to` (ADR-0087).
 /// Keyed by content, so a rerun against an unchanged tree reuses the artifact.
 pub fn compose(crate_name: &str) -> Option<PathBuf> {
-    use comp_reconciler::plug::{compose_to, Catalog};
+    use comp_fleet::plug::{compose_to, Catalog};
     let target = components_target();
     let dirs: Vec<PathBuf> =
         ["wasm32-wasip2/release", "wasm32-wasip2/debug"].iter().map(|d| target.join(d)).collect();
@@ -425,7 +427,7 @@ pub fn requires_capability(crate_name: &str, interface: &str, why: &str) {
     let Ok(bytes) = std::fs::read(&path) else {
         panic!("cannot read {path:?} to check its imports — run `cargo xtask build --force`");
     };
-    let surface = comp_reconciler::plug::surface(&bytes)
+    let surface = comp_fleet::plug::surface(&bytes)
         .unwrap_or_else(|e| panic!("cannot read the surface of {crate_name}: {e}"));
     let found =
         surface.imports.iter().chain(surface.host_imports.iter()).any(|i| i.starts_with(interface));

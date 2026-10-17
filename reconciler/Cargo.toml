@@ -47,6 +47,7 @@ rusty-s3 = "0.10"
 base64 = "0.22"
 bytes = "1"
 hmac = "0.12"
+sha1 = "0.10"
 getrandom = "0.2"
 jiff = "0.2"
 hex = "0.4"
@@ -156,7 +157,7 @@ reqwest.workspace = true
 sha2.workspace = true
 # HMAC-SHA1, for the one gate that computes a TOTP code from the secret the part
 # provisions. RFC 6238 fixes the algorithm; there is no newer one to prefer.
-sha1 = "0.10"
+sha1.workspace = true
 hmac.workspace = true
 # The fleet harness and composition as a library call (fleet/): `comp_reconciler::fleet`
 # and `comp_reconciler::plug` are its modules, re-exported. wac-graph and wasmparser
@@ -174,18 +175,14 @@ bytes.workspace = true
 async-trait = "0.1"
 
 # The daemons that have not moved out yet (docs/adr/0115); each of the others has a
-# package of its own in daemons/. What is below is used by comp-vcs, comp-park,
-# comp-resume and comp-agentd, and by the suites that talk to JetStream and S3.
+# package of its own in daemons/. What is below is used by comp-park, comp-resume and
+# comp-agentd, and by the suites that talk to JetStream and S3.
 async-nats.workspace = true
 rusty-s3.workspace = true
 # comp-agentd's ids and timestamps; it stays in this package until docs/adr/0115 gets to it.
 getrandom.workspace = true
 jiff.workspace = true
 hex.workspace = true
-# comp-vcs (ADR-0099): the code store's engine and its native adapters. Its own
-# async-nats (0.50) and surrealdb ride along; the engine never shares a client
-# with the rest of this crate.
-holon-vcs = { path = "../crates/holon-vcs", features = ["native"] }
 # comp-park (ADR-0100): a durable record of an outstanding call, over JetStream
 # KV and the PARK_WAKE work-queue stream. No SurrealDB — unlike vcs, there is
 # no graph here, one ticket is one mutable record.
@@ -252,12 +249,6 @@ path = "src/bin/photoserve.rs"
 [[bin]]
 name = "comp-contrastserve"
 path = "src/bin/contrastserve.rs"
-
-# The agent-native code store (ADR-0099): the engine's NATS + SurrealDB
-# adapters behind loopback HTTP, for `components/vcs-store`.
-[[bin]]
-name = "comp-vcs"
-path = "src/bin/vcs.rs"
 
 # A durable record of an outstanding call, instead of a thread blocked on its
 # answer (ADR-0100), for `components/park-store`.

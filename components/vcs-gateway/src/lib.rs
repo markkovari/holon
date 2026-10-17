@@ -4,7 +4,7 @@
 //! Imports `holon:vcs/code-store` and `holon:vcs/files` and serves each function at `POST
 //! /v1/<function>` with the same JSON `comp-vcs` takes (`holon_vcs::wire`): parse the body, make
 //! ONE import call, write the result back. Composed with `vcs-store` every request is a real
-//! round trip through the component model, which the e2e suite (`reconciler/tests/e2e_vcs.rs`)
+//! round trip through the component model, which the e2e suite (`reconciler/daemons/vcs/tests/e2e_vcs.rs`)
 //! relies on.
 //! Errors are `{error, detail, message}` with the status `holon_vcs::wire` gives each `vcs-error`
 //! case.

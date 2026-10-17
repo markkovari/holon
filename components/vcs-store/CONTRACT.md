@@ -2,7 +2,7 @@
 
 `vcs-store` (this component) exports `holon:vcs/code-store` and `holon:vcs/files`
 (`wit/vcs/vcs.wit`) and implements every call as ONE HTTP request to `comp-vcs`
-(native, `reconciler/src/bin/vcs.rs`), which runs the `holon-vcs` engine over NATS
+(native, `reconciler/daemons/vcs/`), which runs the `holon-vcs` engine over NATS
 JetStream and SurrealDB. Why the split: [ADR-0099](../../docs/adr/0099-an-agent-native-code-store.md),
 *The service*, and [ADR-0095](../../docs/adr/0095-what-is-allowed-to-be-native.md).
 `vcs-gateway` serves the same routes, with the same JSON, to agents over

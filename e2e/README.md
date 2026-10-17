@@ -169,7 +169,7 @@ RUNS=5 bash e2e/vcs.sh          # five times over one set of services
 bash e2e/vcs.sh c_crash         # a test-name filter
 ```
 
-The code store (ADR-0099) end to end: `reconciler/tests/e2e_vcs.rs` drives
+The code store (ADR-0099) end to end: `reconciler/daemons/vcs/tests/e2e_vcs.rs` drives
 `comp-host` (vcs-gateway ⊕ vcs-store) → `comp-vcs` → NATS JetStream + SurrealDB
 over HTTP only — two agents commuting and conflicting, a real `abort()` of
 `comp-vcs` at each step of the write order and a restart, the rename race,
