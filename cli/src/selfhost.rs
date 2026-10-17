@@ -103,8 +103,8 @@ pub struct Spec {
 ///
 /// Deliberately carries only what a DEPLOYMENT decides — where it listens and
 /// what it may touch — not what the daemon defaults to on its own: that lives
-/// in `reconciler/src/bin/<name>.rs` and this file has no business knowing all
-/// twelve of them, the same reason `Spec` does not know what `comp-host`
+/// in the daemon's own package (`reconciler/`, ADR-0115) and this file has no
+/// business knowing all twelve of them, the same reason `Spec` does not know what `comp-host`
 /// itself defaults to.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1624,8 +1624,8 @@ static_dir = "ui/dist"
 
     #[test]
     fn every_flag_we_emit_for_a_daemon_exists_on_its_own_binary() {
-        // Each daemon and its allow-list flag (if any), read from
-        // `reconciler/src/bin/<name>.rs`'s own `Args`.
+        // Each daemon and its allow-list flag (if any), read from the daemon's
+        // own `Args`.
         let daemons = [
             ("fswatch", Some("allow-path")),
             ("browser", Some("allow-host")),

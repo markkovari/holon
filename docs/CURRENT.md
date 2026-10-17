@@ -408,7 +408,7 @@ subprocess, and a `wasm32-wasip2` component has none of those. What each one
 gives is the interface a host-side implementation has to satisfy, which is the
 same shape as `wasi:keyvalue` — a contract the host answers (ADR-0095).
 
-Each now has a native daemon behind it in `reconciler/src/bin/` (`comp-fswatch`,
+Each now has a native daemon behind it in `reconciler/daemons/` (`comp-fswatch`,
 `comp-browser`, `comp-docker`, `comp-clipboard`, `comp-imageopt`, `comp-lanscan`,
 `comp-llmlocal`, `comp-mdns`, `comp-cron`, `comp-uinotify`, `comp-ffmpeg`,
 `comp-wireguard`) — thirteen with `comp-media`, which is not one of these

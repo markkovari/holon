@@ -33,6 +33,15 @@ publish = false
 # What more than one package here needs, said once, so the versions cannot drift apart.
 [workspace.dependencies]
 axum = { version = "0.8", features = ["http2"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "process", "sync"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+image = "0.25"
+comp-daemon-kit = { path = "daemons/kit" }
 
 [lib]
 name = "comp_reconciler"
@@ -64,13 +73,6 @@ path = "src/bin/plug.rs"
 [[bin]]
 name = "comp-trace-seed"
 path = "src/bin/traceseed.rs"
-
-# Reports directory changes to `components/fs-watcher`, which cannot look at a
-# filesystem itself. The first of the twelve host capabilities to get a daemon
-# (ADR-0095).
-[[bin]]
-name = "comp-fswatch"
-path = "src/bin/fswatch.rs"
 
 [[bin]]
 name = "comp-relay"
@@ -116,26 +118,26 @@ path = "src/bin/catalog.rs"
 [dependencies]
 comp-metadata = { path = "../comp-metadata" }
 # The shared-secret check the ADR-0095 daemons put in front of their loopback HTTP.
-comp-daemon-kit = { path = "daemons/kit" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "process", "sync"] }
+comp-daemon-kit.workspace = true
+tokio.workspace = true
 # The fabric, as traits. The reconciler holds `Arc<dyn ...>` and never names a
 # broker; `--nats-url` selects the one implementation that ships.
 comp-lattice = { path = "../lattice" }
-futures = "0.3"
-serde = { version = "1", features = ["derive"] }
+futures.workspace = true
+serde.workspace = true
 toml = "0.8"
 serde_norway = "0.9"
 tempfile = "3"
 # comp-stub serves HTTP; the OCI test also stands up a fake registry with it.
 axum.workspace = true
-serde_json = "1"
+serde_json.workspace = true
 regex = "1"
-anyhow = "1"
+anyhow.workspace = true
 # Capability versions are semver, so the self-improve gate orders them by
 # major/minor/patch rather than as strings ("2.0.0" > "10.0.0" the wrong way).
 semver = "1"
-clap = { version = "4", features = ["derive", "env"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+clap.workspace = true
+reqwest.workspace = true
 # For content addressing. The optional OCI mirror push is four HTTP calls on the
 # reqwest client we already have, so it needs no registry crate — see src/oci.rs.
 sha2 = "0.10"
@@ -160,16 +162,10 @@ bytes = "1"
 
 async-trait = "0.1"
 
-# The daemons behind the twelve host capabilities (ADR-0095). Each dependency
-# below is used by exactly one comp-<x> binary; they are listed here rather
-# than in per-binary crates because this whole file is already that shape (see
-# wac-graph, hyper, p256 above) — one native crate, many single-purpose bins.
-bollard = "0.17"       # comp-docker: talks to the docker socket
-arboard = "3"          # comp-clipboard: reads the desktop clipboard
-mdns-sd = "0.11"       # comp-mdns: browses mDNS/DNS-SD
-notify-rust = "4"      # comp-uinotify: raises a desktop notification
-image = "0.25"         # comp-imageopt: decodes/re-encodes images
-headless_chrome = "1"  # comp-browser: drives a real Chrome/Chromium process
+# The daemons that have not moved out yet (docs/adr/0115) — the twelve behind the
+# ADR-0095 capabilities each have a package of their own in daemons/. What is below
+# is used by comp-media, comp-backup, comp-vcs, comp-park, comp-resume and comp-agentd.
+image.workspace = true   # comp-media: encodes and resizes a developed photo
 # comp-media (ADR-0098): decodes camera raw, signs S3 requests, holds the
 # MEDIA_JOBS work queue. rusty-s3 is sans-IO — it signs, the reqwest client we
 # already have sends — so there is no second HTTP stack and no SDK. async-nats
@@ -259,22 +255,6 @@ path = "src/bin/photoserve.rs"
 name = "comp-contrastserve"
 path = "src/bin/contrastserve.rs"
 
-[[bin]]
-name = "comp-browser"
-path = "src/bin/browser.rs"
-
-[[bin]]
-name = "comp-docker"
-path = "src/bin/docker.rs"
-
-[[bin]]
-name = "comp-clipboard"
-path = "src/bin/clipboard.rs"
-
-[[bin]]
-name = "comp-imageopt"
-path = "src/bin/imageopt.rs"
-
 # Uploads, evaluates and renders large photos by key (ADR-0098). The only
 # daemon with a queue of its own: the Mac's GPU is the bottleneck, one photo at
 # a time.
@@ -309,31 +289,3 @@ path = "src/bin/resume.rs"
 [[bin]]
 name = "comp-agentd"
 path = "src/bin/agentd.rs"
-
-[[bin]]
-name = "comp-lanscan"
-path = "src/bin/lanscan.rs"
-
-[[bin]]
-name = "comp-llmlocal"
-path = "src/bin/llmlocal.rs"
-
-[[bin]]
-name = "comp-mdns"
-path = "src/bin/mdns.rs"
-
-[[bin]]
-name = "comp-cron"
-path = "src/bin/cron.rs"
-
-[[bin]]
-name = "comp-uinotify"
-path = "src/bin/uinotify.rs"
-
-[[bin]]
-name = "comp-ffmpeg"
-path = "src/bin/ffmpeg.rs"
-
-[[bin]]
-name = "comp-wireguard"
-path = "src/bin/wireguard.rs"
