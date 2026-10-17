@@ -1,0 +1,20 @@
+[package]
+name = "comp-fleet"
+description = "A fleet of hosts on a NATS lattice to start, drive and read, and the composition it needs as a library call. What the integration tests, the benchmarks and the goal loop share (docs/adr/0115)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+comp-lattice.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+# Composition as a library call (src/plug.rs): `wac` is a crate before it is a
+# command. Pinned to the pair `components/wit-reflect` uses — wac-graph carries
+# its own wasmparser, and two versions of the component model in one graph is a
+# type error waiting to happen.
+wac-graph = "0.10"
+wasmparser = "0.244"

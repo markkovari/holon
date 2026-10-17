@@ -220,7 +220,17 @@ pub fn repo_root() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("COMP_REPO_ROOT") {
         return std::path::PathBuf::from(p);
     }
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+    root_from_manifest()
+}
+
+/// This package is `reconciler/fleet/`, so the repository is two directories above it. It was one
+/// when the harness was part of `reconciler/` itself; the depth is the thing a move changes.
+fn root_from_manifest() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("comp-fleet sits two directories below the repository root")
+        .to_path_buf()
 }
 
 /// Keep one demo app's fleet serving forever, printing its ingress port. Shared by the
@@ -1139,5 +1149,18 @@ impl Fleet {
             std::thread::sleep(Duration::from_millis(500));
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Every path the harness builds (`reconciler/target/release/<bin>`, `components/target/...`,
+    /// `fixtures/`, `apps/`) is joined onto this, and a wrong depth fails nowhere near the cause.
+    #[test]
+    fn the_repo_root_is_the_repository_and_not_the_directory_this_package_sits_in() {
+        let root = super::root_from_manifest();
+        for marker in ["reconciler/Cargo.toml", "lattice/Cargo.toml", "components/Cargo.toml"] {
+            assert!(root.join(marker).is_file(), "{} is not the repository root", root.display());
+        }
     }
 }
