@@ -725,7 +725,7 @@ flowchart LR
 - Suites that need NATS, SurrealDB, Docker or a model are kept out of CI and run locally; CI compiles and lints them.
 - CI builds and tests; it does not deploy or publish. Publishing lives in its own workflows with their own triggers.
 
-**Where it lives** [`reconciler/tests/`](../reconciler/tests/) · [`reconciler/fleet/`](../reconciler/fleet/) · [`e2e/`](../e2e/) · [`bench/`](../bench/) · [`xtask/`](../xtask/) · [`reconciler/src/bin/bench.rs`](../reconciler/src/bin/bench.rs) · [`reconciler/src/bin/matrix.rs`](../reconciler/src/bin/matrix.rs) · [`reconciler/src/bin/planscale.rs`](../reconciler/src/bin/planscale.rs) · [`reconciler/src/bin/hopcost.rs`](../reconciler/src/bin/hopcost.rs) · [`reconciler/src/bin/stub.rs`](../reconciler/src/bin/stub.rs) · [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
+**Where it lives** [`reconciler/tests/`](../reconciler/tests/) · [`reconciler/fleet/`](../reconciler/fleet/) · [`e2e/`](../e2e/) · [`bench/`](../bench/) · [`xtask/`](../xtask/) · [`reconciler/src/bin/bench.rs`](../reconciler/src/bin/bench.rs) · [`reconciler/src/bin/planscale.rs`](../reconciler/src/bin/planscale.rs) · [`reconciler/src/bin/stub.rs`](../reconciler/src/bin/stub.rs) · [`reconciler/measure/`](../reconciler/measure/) · [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
 
 ## Every correspondence
 

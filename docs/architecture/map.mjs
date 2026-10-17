@@ -160,7 +160,7 @@ export const SYS = [
   uses:['git'],
   boundary:['Suites that need NATS, SurrealDB, Docker or a model are kept out of CI and run locally; CI compiles and lints them.',
             'CI builds and tests; it does not deploy or publish. Publishing lives in its own workflows with their own triggers.'],
-  code:['reconciler/tests/','reconciler/fleet/','e2e/','bench/','xtask/','reconciler/src/bin/{bench,matrix,planscale,hopcost,stub}.rs','.github/workflows/ci.yml']}
+  code:['reconciler/tests/','reconciler/fleet/','e2e/','bench/','xtask/','reconciler/src/bin/{bench,planscale,stub}.rs','reconciler/measure/','.github/workflows/ci.yml']}
 ];
 
 /* Overview: where the cards sit (column, row) and the primary correspondences drawn between them. */

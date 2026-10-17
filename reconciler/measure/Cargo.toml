@@ -1,0 +1,40 @@
+[package]
+name = "comp-measure"
+description = "The tools that measure and demonstrate a fleet rather than run one: the app matrix, what a network hop costs, the demo apps kept serving, and how much of a goal's app a run had to write."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# They start a fleet through comp-fleet and read what it says; none of them is started by a test,
+# which is why they could leave the root package without a line in CI changing (docs/adr/0115).
+[[bin]]
+name = "comp-matrix"
+path = "src/bin/matrix.rs"
+
+[[bin]]
+name = "comp-hopcost"
+path = "src/bin/hopcost.rs"
+
+# Keep an app's fleet serving, printing its ingress port, for a front proxy or tailscale.
+[[bin]]
+name = "comp-photoserve"
+path = "src/bin/photoserve.rs"
+
+[[bin]]
+name = "comp-contrastserve"
+path = "src/bin/contrastserve.rs"
+
+# What a goal's app is made of, and how much of it the run had to write —
+# formerly tools/reuse-ratio.py.
+[[bin]]
+name = "comp-reuse-ratio"
+path = "src/bin/reuseratio.rs"
+
+[dependencies]
+comp-fleet.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+toml.workspace = true

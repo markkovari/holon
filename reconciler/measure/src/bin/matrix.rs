@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use comp_reconciler::fleet::{bin_path, Fleet};
+use comp_fleet::fleet::{bin_path, Fleet};
 
 #[derive(Parser)]
 #[command(name = "comp-matrix", about = "Cross every dimension, hold the load")]
@@ -104,15 +104,14 @@ struct Cell {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let root = comp_reconciler::fleet::repo_root();
+    let root = comp_fleet::fleet::repo_root();
     // Honour the hand-composed artifact, derive it otherwise, as the fleet and suites do.
     let legacy = root.join("components/target/gate_domain.composed.wasm");
     let wasm = match std::fs::read(&legacy) {
         Ok(bytes) => bytes,
         Err(_) => {
-            let catalog =
-                comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&root));
-            comp_reconciler::plug::compose("gate-domain", &catalog).map_err(|e| {
+            let catalog = comp_fleet::plug::Catalog::scan(&comp_fleet::plug::default_dirs(&root));
+            comp_fleet::plug::compose("gate-domain", &catalog).map_err(|e| {
                 anyhow::anyhow!("composing gate-domain: {e} — `cargo xtask build --force` first")
             })?
         }
