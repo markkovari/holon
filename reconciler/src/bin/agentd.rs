@@ -116,6 +116,14 @@ struct Args {
     /// a busy session refuses every task, as it did before.
     #[arg(long, default_value_t = 16)]
     max_queued: usize,
+    /// A tool every session created here may call without asking (ADR-0114), on top of the ones
+    /// a caller lists when it creates a session: `list_dir`, `read_file`, `write_file` or `run`.
+    /// Repeatable. Added to a session when it is created, so a session keeps what it was created
+    /// with and a restart with other flags does not reach it. Unset: only what the caller lists.
+    /// `run` cannot be confined to the workspace, so allowing it here lets every session's agent
+    /// run any command.
+    #[arg(long = "auto-approve-tool", value_parser = parse_tool)]
+    auto_approve_tools: Vec<String>,
 
     /// `comp-park`'s base URL (ADR-0113). With it, a task that needs a human's approval parks
     /// instead of waiting here: it writes down where it stands, parks the approval and lets go,
@@ -132,6 +140,17 @@ struct Args {
     /// Same, read from a file. Wins over `--park-token`.
     #[arg(long, requires = "park_url")]
     park_token_file: Option<PathBuf>,
+}
+
+/// A tool this daemon has, so that a name that is a typo is refused at start and not found out
+/// when a person is asked about a tool the operator meant to allow.
+fn parse_tool(s: &str) -> std::result::Result<String, String> {
+    let names: Vec<&str> = tools::specs().iter().map(|(name, ..)| *name).collect();
+    if names.contains(&s) {
+        Ok(s.to_string())
+    } else {
+        Err(format!("{s}: not a tool of this daemon (it has {})", names.join(", ")))
+    }
 }
 
 fn parse_price(s: &str) -> std::result::Result<(String, u64, u64), String> {
@@ -234,6 +253,7 @@ async fn main() -> Result<()> {
         state_dir: args.state_dir.clone(),
         ctx: Arc::new(ctx),
         max_queued: args.max_queued,
+        auto_approve: args.auto_approve_tools.clone(),
     });
     // Tasks that were parked on a person when this daemon went down get their tickets again.
     d.reassert_parks();

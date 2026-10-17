@@ -179,6 +179,11 @@ impl Stack {
 
     /// (Re)start agentd on the same state directory, which is what a restart is.
     fn start_agentd(&mut self, n: usize) {
+        self.start_agentd_with(n, &[]);
+    }
+
+    /// The same, with more flags on its command line.
+    fn start_agentd_with(&mut self, n: usize, extra: &[&str]) {
         let mut args: Vec<String> = [
             "--addr",
             &format!("127.0.0.1:{}", self.agent_port),
@@ -201,6 +206,7 @@ impl Stack {
         if let Some(t) = self.approval_timeout {
             args.extend(["--approval-timeout-secs".into(), t.to_string()]);
         }
+        args.extend(extra.iter().map(|x| x.to_string()));
         self.agentd = Proc::start(
             env!("CARGO_BIN_EXE_comp-agentd"),
             &args,
@@ -270,6 +276,24 @@ impl Stack {
     fn ended(&self, sid: &str) -> Option<Value> {
         let st = self.get(&format!("/v1/sessions/{sid}/state"));
         st["transcript"].as_array()?.iter().rev().find(|e| e["type"] == "task_ended").cloned()
+    }
+
+    /// How the `n`th task ended (1-based), once it has.
+    fn nth_ended(&self, sid: &str, n: usize) -> Option<Value> {
+        let st = self.get(&format!("/v1/sessions/{sid}/state"));
+        st["transcript"]
+            .as_array()?
+            .iter()
+            .filter(|e| e["type"] == "task_ended")
+            .nth(n - 1)
+            .cloned()
+    }
+
+    /// The tool calls of a session's transcript, in order.
+    fn calls(&self, sid: &str) -> Vec<Value> {
+        let st = self.get(&format!("/v1/sessions/{sid}/state"));
+        let all = st["transcript"].as_array().cloned().unwrap_or_default();
+        all.into_iter().filter(|e| e["type"] == "tool_call").collect()
     }
 }
 
@@ -347,4 +371,54 @@ fn an_approval_nobody_answers_is_interrupted_by_the_resumers_pass_and_is_a_denia
         (call["decision"].as_str(), call["decided_by"].as_str()),
         (Some("deny"), Some("timeout"))
     );
+}
+
+#[test]
+fn an_approval_for_the_session_crosses_the_real_chain_and_kill_dash_9_and_a_flag_allows_a_tool_unasked(
+) {
+    let mut s = stack_or_skip!("scope", None);
+    s.start_agentd(1);
+    let sid = s.session();
+    let (code, _) = s.post(&format!("/v1/sessions/{sid}/tasks"), json!({"prompt": "look"}));
+    assert_eq!(code, 202);
+    let call_id = s.until("the task to wait for a person", 15, || s.waiting_call(&sid));
+
+    // The person approves the tool for the session. The answer and its reach go to `comp-park`,
+    // through NATS to `comp-resume`, and back; and the daemon says what it understood.
+    let (code, ans) = s.post(
+        &format!("/v1/sessions/{sid}/tool-calls/{call_id}/approval"),
+        json!({"decision": "approve", "approver": "mark", "scope": "session"}),
+    );
+    assert_eq!((code, ans["scope"].as_str()), (200, Some("session")), "{ans}");
+    let ended = s.until("the first task to finish", 20, || s.nth_ended(&sid, 1));
+    assert_eq!(ended["outcome"], "completed", "{ended}");
+    let view = format!("/v1/sessions/{sid}");
+    assert_eq!(s.get(&view)["approved_tools"], json!(["list_dir"]));
+
+    // The daemon dies, and its replacement has the approval back from the log.
+    s.agentd.take().unwrap().kill();
+    s.start_agentd(2);
+    assert_eq!(s.get(&view)["approved_tools"], json!(["list_dir"]), "read back from the log");
+
+    // A second task calls the tool and nobody is asked: it parks nothing, and runs.
+    let (code, _) = s.post(&format!("/v1/sessions/{sid}/tasks"), json!({"prompt": "look again"}));
+    assert_eq!(code, 202);
+    let ended = s.until("the second task to finish unasked", 20, || s.nth_ended(&sid, 2));
+    assert_eq!(ended["outcome"], "completed", "{ended}");
+    assert!(s.waiting_call(&sid).is_none());
+    let calls = s.calls(&sid);
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(calls[1]["decision"], Value::Null, "the second call was never put to a person");
+
+    // A daemon told to allow the tool never asks about it, and a session created there says so.
+    s.agentd.take().unwrap().kill();
+    s.start_agentd_with(3, &["--auto-approve-tool", "list_dir"]);
+    let fresh = s.session();
+    let created = s.get(&format!("/v1/sessions/{fresh}"));
+    assert_eq!(created["auto_approve_tools"], json!(["list_dir"]));
+    assert_eq!(created["approved_tools"], json!([]), "an allowance is not an approval");
+    s.post(&format!("/v1/sessions/{fresh}/tasks"), json!({"prompt": "look"}));
+    let ended = s.until("the task to finish unasked", 20, || s.ended(&fresh));
+    assert_eq!(ended["outcome"], "completed", "{ended}");
+    assert_eq!(s.calls(&fresh)[0]["decision"], Value::Null, "{:?}", s.calls(&fresh));
 }

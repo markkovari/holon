@@ -22,6 +22,8 @@ struct Opts {
     max_queued: usize,
     /// A `comp-park` to park approvals with (ADR-0113).
     park: Option<String>,
+    /// Tools every session created here may call without asking (ADR-0114).
+    auto_approve: Vec<String>,
 }
 
 impl Default for Opts {
@@ -34,6 +36,7 @@ impl Default for Opts {
             state_dir: None,
             max_queued: 16,
             park: None,
+            auto_approve: vec![],
         }
     }
 }
@@ -78,6 +81,7 @@ async fn serve(o: Opts, root: Arc<tempfile::TempDir>) -> Harness {
         state_dir: o.state_dir,
         ctx: Arc::new(ctx),
         max_queued: o.max_queued,
+        auto_approve: o.auto_approve,
     });
     // What `main` does once the daemon is built: tasks parked when the last one went down get
     // their tickets again.
@@ -2451,6 +2455,7 @@ fn deliveries_racing_each_other_and_a_cancel_resume_a_parked_call_at_most_once()
             decision: Decision::Approve,
             reason: String::new(),
             decided_by: "t".into(),
+            scope: super::wire::ApprovalScope::Once,
         };
 
         let resumed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -2524,4 +2529,686 @@ async fn a_steer_sent_before_a_restart_is_still_read_when_the_parked_task_resume
     let mut ev2 = h2.stream(&sid, 0).await;
     let (_, done) = ev2.until("task_completed").await;
     assert_eq!(done["result"], "Noted: steer: be brief");
+}
+
+// ---- approving beyond one call (ADR-0114) ----
+
+impl Harness {
+    /// Answer an approval, and say how far it reaches.
+    async fn approve_for(
+        &self,
+        sid: &str,
+        call: &Value,
+        decision: &str,
+        scope: &str,
+    ) -> (u16, Value) {
+        let call = call.as_str().unwrap();
+        let path = format!("/v1/sessions/{sid}/tool-calls/{call}/approval");
+        self.post(&path, json!({"decision": decision, "approver": "test", "scope": scope})).await
+    }
+
+    async fn session_view(&self, sid: &str) -> Value {
+        self.get(&format!("/v1/sessions/{sid}")).await
+    }
+}
+
+const LS: &str = r#"{"path":"."}"#;
+const CAT: &str = r#"{"path":"README.md"}"#;
+
+/// One model turn, in the OpenAI dialect, that asks for these calls: (id, tool, arguments).
+fn asks(calls: &[(&str, &str, &str)]) -> Vec<String> {
+    let calls: Vec<Value> = calls
+        .iter()
+        .enumerate()
+        .map(|(i, (id, name, args))| {
+            json!({"index": i, "id": id, "type": "function",
+                   "function": {"name": name, "arguments": args}})
+        })
+        .collect();
+    frames(&[
+        json!({"choices":[{"delta":{"tool_calls": calls}}]}),
+        json!({"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":10}}),
+    ])
+    .into_iter()
+    .chain(["[DONE]".to_string()])
+    .collect()
+}
+
+/// One that answers in words.
+fn says(text: &str) -> Vec<String> {
+    frames(&[
+        json!({"choices":[{"delta":{"content": text}}]}),
+        json!({"choices":[],"usage":{"prompt_tokens":150,"completion_tokens":4}}),
+    ])
+}
+
+/// A model that plays these turns, one to a request: its base URL. A test that restarts the
+/// daemon asks `openai` for a provider again, so that both talk to the same script.
+async fn scripted(turns: Vec<Vec<String>>) -> String {
+    format!("{}/v1", fake_model("/v1/chat/completions", turns).await.0)
+}
+
+fn openai(base: &str) -> model::Provider {
+    model::Provider::OpenAi { base: base.to_string(), key: "k".into() }
+}
+
+const RAN_UNASKED: [&str; 4] =
+    ["tool_approval_resolved", "tool_call_finished", "tool_call_started", "tool_call_finished"];
+
+#[tokio::test]
+async fn approving_for_the_session_stops_the_questions_about_that_tool_there_and_only_there() {
+    let h = harness(Opts::default()).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+
+    // The answer says what it understood, and the log what it decided.
+    let (s, a) = h.approve_for(&sid, &req["call_id"], "approve", "session").await;
+    assert_eq!((s, a["scope"].as_str()), (200, Some("session")), "{a}");
+    let (_, resolved) = ev.until("tool_approval_resolved").await;
+    assert_eq!(
+        (resolved["decision"].as_str(), resolved["scope"].as_str()),
+        (Some("approve"), Some("session"))
+    );
+    ev.until("task_completed").await;
+
+    // The session lists what a person approved, apart from what it was created with.
+    let v = h.session_view(&sid).await;
+    assert_eq!(v["approved_tools"], json!(["list_dir"]));
+    assert_eq!(v["auto_approve_tools"], json!([]), "no answer changes what it was created with");
+
+    // A later task, a different one, calls the tool and is not asked.
+    h.task(&sid, "look again").await;
+    let (kinds, done) = ev.until("task_completed").await;
+    assert!(!kinds.contains(&"tool_approval_required".to_string()), "{kinds:?}");
+    assert!(kinds.contains(&"tool_call_finished".to_string()));
+    assert_eq!(done["result"], "The workspace holds: README.md.");
+
+    // Another session on the same daemon is asked as before: it was not its person who said so.
+    let other = h.session(1_000_000).await;
+    let mut ev2 = h.stream(&other, 0).await;
+    h.task(&other, "look").await;
+    ev2.until("tool_approval_required").await;
+    assert_eq!(h.session_view(&other).await["approved_tools"], json!([]));
+}
+
+#[tokio::test]
+async fn approving_for_the_task_covers_the_rest_of_its_calls_and_ends_with_the_task() {
+    let base = scripted(vec![
+        asks(&[("c1", "list_dir", LS), ("c2", "list_dir", LS)]),
+        says("Both done."),
+        asks(&[("c3", "list_dir", LS)]),
+        says("Third."),
+    ])
+    .await;
+    let h = harness(Opts { provider: openai(&base), ..Opts::default() }).await;
+    let sid = h.session_with(json!({"model": "claude-sonnet-5"})).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look twice").await;
+
+    let (_, first) = ev.until("tool_approval_required").await;
+    assert_eq!(first["call_id"], "c1");
+    assert_eq!(h.approve_for(&sid, &first["call_id"], "approve", "task").await.0, 200);
+
+    // The second call of the tool, in the same step, runs: announced and finished, and nobody asked.
+    let (kinds, done) = ev.until("task_completed").await;
+    assert_eq!(kinds[..4], RAN_UNASKED, "{kinds:?}");
+    assert!(!kinds.contains(&"tool_approval_required".to_string()), "{kinds:?}");
+    assert_eq!(done["result"], "Both done.");
+
+    // It ended with the task: nothing is remembered, and the next task is asked.
+    assert_eq!(h.session_view(&sid).await["approved_tools"], json!([]));
+    h.task(&sid, "look once more").await;
+    let (_, third) = ev.until("tool_approval_required").await;
+    assert_eq!(third["call_id"], "c3");
+}
+
+#[tokio::test]
+async fn a_once_approval_asks_again_and_a_denial_cannot_be_given_a_reach() {
+    let h = harness(Opts::default()).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+
+    // A denial is for the call it answers: refused, not narrowed, so a client that meant "never
+    // this tool" finds out it did not get it. And nothing happened: the call is still waiting.
+    for scope in ["task", "session"] {
+        let (s, p) = h.approve_for(&sid, &req["call_id"], "deny", scope).await;
+        assert_eq!(
+            (s, p["type"].as_str()),
+            (400, Some("https://holon.dev/errors/bad-request")),
+            "{scope}: {p}"
+        );
+    }
+    // Nor does a reach nobody defined mean anything.
+    assert_eq!(h.approve_for(&sid, &req["call_id"], "approve", "forever").await.0, 400);
+    assert_eq!(h.session_view(&sid).await["status"], "awaiting_approval");
+
+    // Saying nothing is this call; so is saying once.
+    assert_eq!(h.approve(&sid, &req["call_id"], "approve").await, 200);
+    let (_, resolved) = ev.until("tool_approval_resolved").await;
+    assert_eq!(resolved["scope"], "once");
+    ev.until("task_completed").await;
+    assert_eq!(h.session_view(&sid).await["approved_tools"], json!([]));
+
+    h.task(&sid, "look again").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+    let (s, a) = h.approve_for(&sid, &req["call_id"], "approve", "once").await;
+    assert_eq!((s, a["scope"].as_str()), (200, Some("once")), "{a}");
+    ev.until("task_completed").await;
+
+    // A denial is asked about again too, and the log says it was for that call.
+    h.task(&sid, "and again").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+    let (s, a) = h.approve_for(&sid, &req["call_id"], "deny", "once").await;
+    assert_eq!((s, a["decision"].as_str()), (200, Some("deny")), "{a}");
+    let (_, resolved) = ev.until("tool_approval_resolved").await;
+    assert_eq!(
+        (resolved["decision"].as_str(), resolved["scope"].as_str()),
+        (Some("deny"), Some("once"))
+    );
+    ev.until("task_completed").await;
+    assert_eq!(h.session_view(&sid).await["approved_tools"], json!([]));
+}
+
+#[tokio::test]
+async fn an_approval_is_for_the_tool_it_was_asked_about_and_no_other() {
+    let base =
+        scripted(vec![asks(&[("c1", "list_dir", LS), ("c2", "read_file", CAT)]), says("Done.")])
+            .await;
+    let h = harness(Opts { provider: openai(&base), ..Opts::default() }).await;
+    let sid = h.session_with(json!({"model": "claude-sonnet-5"})).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look and read").await;
+    let (_, first) = ev.until("tool_approval_required").await;
+    assert_eq!(h.approve_for(&sid, &first["call_id"], "approve", "session").await.0, 200);
+
+    // The other tool is asked about, though the first was approved for the whole session.
+    let (_, second) = ev.until("tool_approval_required").await;
+    assert_eq!(
+        (second["call_id"].as_str(), second["tool_name"].as_str()),
+        (Some("c2"), Some("read_file"))
+    );
+    assert_eq!(h.approve(&sid, &second["call_id"], "approve").await, 200);
+    ev.until("task_completed").await;
+    assert_eq!(h.session_view(&sid).await["approved_tools"], json!(["list_dir"]));
+}
+
+#[tokio::test]
+async fn a_session_approval_survives_a_restart_and_a_task_approval_does_not_outlive_its_task() {
+    let state = tempfile::tempdir().unwrap();
+    let root = Arc::new(tempfile::tempdir().unwrap());
+    let opts = || Opts { state_dir: Some(state.path().to_path_buf()), ..Opts::default() };
+    let h = serve(opts(), root.clone()).await;
+    let mut sessions = Vec::new();
+    for scope in ["session", "task", "once"] {
+        let sid = h.session(1_000_000).await;
+        let mut ev = h.stream(&sid, 0).await;
+        h.task(&sid, "look").await;
+        let (_, req) = ev.until("tool_approval_required").await;
+        assert_eq!(h.approve_for(&sid, &req["call_id"], "approve", scope).await.0, 200);
+        ev.until("task_completed").await;
+        sessions.push((scope, sid));
+    }
+
+    // The daemon is replaced. Only the session's approval comes back, from the log.
+    let h2 = serve(opts(), root).await;
+    for (scope, sid) in &sessions {
+        let approved = h2.session_view(sid).await["approved_tools"].clone();
+        let expected = if *scope == "session" { json!(["list_dir"]) } else { json!([]) };
+        assert_eq!(approved, expected, "{scope}");
+        // What it says is what runs.
+        let after = h2.state(sid).await["seq"].as_u64().unwrap();
+        let mut ev = h2.stream(sid, after).await;
+        h2.task(sid, "look").await;
+        if *scope == "session" {
+            let (kinds, _) = ev.until("task_completed").await;
+            assert!(!kinds.contains(&"tool_approval_required".to_string()), "{kinds:?}");
+        } else {
+            ev.until("tool_approval_required").await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn an_approval_for_the_task_given_to_a_parked_call_covers_the_rest_of_its_step_with_no_second_ticket(
+) {
+    let park = FakePark::start().await;
+    let base = scripted(vec![
+        asks(&[("c1", "list_dir", LS), ("c2", "list_dir", LS)]),
+        says("Both done."),
+        asks(&[("c3", "list_dir", LS)]),
+        says("Third."),
+    ])
+    .await;
+    let h =
+        harness(Opts { provider: openai(&base), park: Some(park.base.clone()), ..Opts::default() })
+            .await;
+    let sid = h.session_with(json!({"model": "claude-sonnet-5"})).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look twice").await;
+    let (_, first) = ev.until("tool_approval_required").await;
+    park.wait_for("park", 1).await;
+
+    // The reach rides in the ticket with the answer, and is nothing until the answer is delivered:
+    // the call is still waiting, and what a person said is not yet decided.
+    assert_eq!(h.approve_for(&sid, &first["call_id"], "approve", "task").await.0, 200);
+    let wake = park.calls("wake").pop().unwrap();
+    let body: Vec<u8> = serde_json::from_value(wake["answer"]["body"].clone()).unwrap();
+    let said: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        (said["decision"].as_str(), said["scope"].as_str()),
+        (Some("approve"), Some("task"))
+    );
+    assert_eq!(h.session_view(&sid).await["approved_tools"], json!([]));
+
+    assert_eq!(h.deliver_answer(&park, &sid, "c1").await.0, 200);
+    let (kinds, done) = ev.until("task_completed").await;
+    assert_eq!(kinds[..4], RAN_UNASKED, "{kinds:?}");
+    assert!(!kinds.contains(&"tool_approval_required".to_string()), "{kinds:?}");
+    assert_eq!(done["result"], "Both done.");
+    assert_eq!(park.calls("park").len(), 1, "one ticket, for the call a person was asked about");
+
+    // It ended with the task: the next task is asked, and parks.
+    h.task(&sid, "again").await;
+    let (_, again) = ev.until("tool_approval_required").await;
+    assert_eq!(again["call_id"], "c3");
+    assert_eq!(park.wait_for("park", 2).await.len(), 2);
+}
+
+#[tokio::test]
+async fn an_approval_for_the_session_given_through_a_ticket_is_remembered_once_delivered_and_the_next_task_parks_nothing(
+) {
+    let park = FakePark::start().await;
+    let h = harness(Opts { park: Some(park.base.clone()), ..Opts::default() }).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "look").await;
+    let (_, req) = ev.until("tool_approval_required").await;
+    park.wait_for("park", 1).await;
+    assert_eq!(h.approve_for(&sid, &req["call_id"], "approve", "session").await.0, 200);
+    assert_eq!(h.session_view(&sid).await["approved_tools"], json!([]), "said, not yet decided");
+    assert_eq!(h.deliver_answer(&park, &sid, req["call_id"].as_str().unwrap()).await.0, 200);
+    ev.until("task_completed").await;
+    assert_eq!(h.session_view(&sid).await["approved_tools"], json!(["list_dir"]));
+
+    h.task(&sid, "look again").await;
+    let (kinds, done) = ev.until("task_completed").await;
+    assert!(!kinds.contains(&"tool_approval_required".to_string()), "{kinds:?}");
+    assert_eq!(done["result"], "The workspace holds: README.md.");
+    assert_eq!(park.calls("park").len(), 1, "the second task parked nothing");
+}
+
+#[tokio::test]
+async fn an_approval_for_the_task_given_before_a_restart_still_covers_the_task_after_it() {
+    let park = FakePark::start().await;
+    let base = scripted(vec![
+        asks(&[("c1", "list_dir", LS), ("c2", "list_dir", LS), ("c3", "read_file", CAT)]),
+        asks(&[("c4", "list_dir", LS)]),
+        says("Done."),
+    ])
+    .await;
+    let state = tempfile::tempdir().unwrap();
+    let root = Arc::new(tempfile::tempdir().unwrap());
+    let opts = || Opts {
+        provider: openai(&base),
+        state_dir: Some(state.path().to_path_buf()),
+        park: Some(park.base.clone()),
+        ..Opts::default()
+    };
+    let h = serve(opts(), root.clone()).await;
+    let sid = h.session_with(json!({"model": "claude-sonnet-5"})).await;
+    let mut ev = h.stream(&sid, 0).await;
+    h.task(&sid, "go").await;
+
+    // The first call of the tool asks, and the person says: for this task.
+    let (_, first) = ev.until("tool_approval_required").await;
+    assert_eq!(first["call_id"], "c1");
+    park.wait_for("park", 1).await;
+    assert_eq!(h.approve_for(&sid, &first["call_id"], "approve", "task").await.0, 200);
+    assert_eq!(h.deliver_answer(&park, &sid, "c1").await.0, 200);
+
+    // The second runs on it, and the other tool asks: the task parks on that.
+    let (kinds, third) = ev.until("tool_approval_required").await;
+    assert_eq!(third["call_id"], "c3");
+    assert_eq!(
+        kinds,
+        [
+            "tool_approval_resolved",
+            "tool_call_finished",
+            "tool_call_started",
+            "tool_call_finished",
+            "tool_call_started",
+            "tool_approval_required"
+        ]
+    );
+    park.wait_for("park", 2).await;
+    parked_for_good(&state.path().join(&sid).join("checkpoint.json")).await;
+
+    // The daemon is replaced while the task waits. What a person said for the task came with it.
+    let h2 = serve(opts(), root).await;
+    assert_eq!(h2.session_view(&sid).await["approved_tools"], json!(["list_dir"]));
+    let after = h2.state(&sid).await["seq"].as_u64().unwrap();
+    let mut ev2 = h2.stream(&sid, after).await;
+
+    // The person answers the new process, for the session this time, and the delivery goes to it.
+    assert_eq!(h2.approve_for(&sid, &third["call_id"], "approve", "session").await.0, 200);
+    assert_eq!(h2.deliver_answer(&park, &sid, "c3").await.0, 200);
+    let (kinds, done) = ev2.until("task_completed").await;
+    assert!(!kinds.contains(&"tool_approval_required".to_string()), "c4 is not asked: {kinds:?}");
+    assert_eq!(kinds.iter().filter(|k| *k == "tool_call_finished").count(), 2, "c3 and c4");
+    assert_eq!(done["result"], "Done.");
+
+    // The task's own approval ended with it; the session's, for the tool the new process was
+    // answered about (not the first call of the step), stays.
+    assert_eq!(h2.session_view(&sid).await["approved_tools"], json!(["read_file"]));
+    let tickets: std::collections::BTreeSet<String> = park
+        .calls("park")
+        .iter()
+        .map(|p| p["call"]["correlation"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(tickets.into_iter().collect::<Vec<_>>(), ["c1", "c3"], "c2 and c4 parked nothing");
+}
+
+#[tokio::test]
+async fn a_ticket_that_says_deny_for_the_session_is_a_denial_and_nothing_more() {
+    let park = FakePark::start().await;
+    let h = harness(Opts { park: Some(park.base.clone()), ..Opts::default() }).await;
+    let sid = h.session(1_000_000).await;
+    let mut ev = h.stream(&sid, 0).await;
+    // `SubmitApproval` refuses a denial with a reach, so this is what some other writer of the
+    // ticket could say; and an answer from a daemon that did not know scopes says none.
+    let answered = |body: Value| {
+        json!({"event": "answered",
+               "answer": {"ok": true, "body": serde_json::to_vec(&body).unwrap(), "detail": null}})
+    };
+    for (body, decision) in [
+        (json!({"decision": "deny", "decided_by": "x", "scope": "session"}), "deny"),
+        (json!({"decision": "approve", "decided_by": "x"}), "approve"),
+    ] {
+        h.task(&sid, "look").await;
+        let (_, req) = ev.until("tool_approval_required").await;
+        let call_id = req["call_id"].as_str().unwrap();
+        assert_eq!(h.deliver(&sid, call_id, answered(body)).await.0, 200);
+        let (_, resolved) = ev.until("tool_approval_resolved").await;
+        assert_eq!(
+            (resolved["decision"].as_str(), resolved["scope"].as_str()),
+            (Some(decision), Some("once")),
+            "{resolved}"
+        );
+        ev.until("task_completed").await;
+        assert_eq!(h.session_view(&sid).await["approved_tools"], json!([]), "{decision}");
+    }
+    // So the next task is asked, as ever.
+    h.task(&sid, "look").await;
+    ev.until("tool_approval_required").await;
+}
+
+#[tokio::test]
+async fn a_tool_the_daemon_allows_is_part_of_each_session_it_creates_and_never_asked_about() {
+    let h = harness(Opts {
+        auto_approve: vec!["list_dir".into(), "read_file".into()],
+        ..Opts::default()
+    })
+    .await;
+    let a = h.session_with(json!({})).await;
+    assert_eq!(h.session_view(&a).await["auto_approve_tools"], json!(["list_dir", "read_file"]));
+    // One the caller lists as well is listed once, and the caller's own come first.
+    let b = h.session_with(json!({"auto_approve_tools": ["read_file", "run"]})).await;
+    let v = h.session_view(&b).await;
+    assert_eq!(v["auto_approve_tools"], json!(["read_file", "run", "list_dir"]));
+    // It is an allowance, not an approval a person gave.
+    assert_eq!(v["approved_tools"], json!([]));
+
+    let mut ev = h.stream(&a, 0).await;
+    h.task(&a, "look").await;
+    let (kinds, done) = ev.until("task_completed").await;
+    assert!(!kinds.contains(&"tool_approval_required".to_string()), "{kinds:?}");
+    assert_eq!(done["result"], "The workspace holds: README.md.");
+}
+
+#[tokio::test]
+async fn a_session_keeps_what_it_was_created_with_when_the_daemons_list_changes() {
+    let state = tempfile::tempdir().unwrap();
+    let root = Arc::new(tempfile::tempdir().unwrap());
+    let opts = |auto_approve: Vec<String>| Opts {
+        state_dir: Some(state.path().to_path_buf()),
+        auto_approve,
+        ..Opts::default()
+    };
+    let h = serve(opts(vec!["list_dir".into()]), root.clone()).await;
+    let old = h.session(1_000_000).await;
+
+    // The daemon is replaced, with no list.
+    let h2 = serve(opts(vec![]), root).await;
+    assert_eq!(h2.session_view(&old).await["auto_approve_tools"], json!(["list_dir"]));
+    let mut ev = h2.stream(&old, 0).await;
+    h2.task(&old, "look").await;
+    let (kinds, _) = ev.until("task_completed").await;
+    assert!(!kinds.contains(&"tool_approval_required".to_string()), "{kinds:?}");
+    // A session created now has no allowance.
+    let new = h2.session(1_000_000).await;
+    assert_eq!(h2.session_view(&new).await["auto_approve_tools"], json!([]));
+}
+
+#[test]
+fn only_a_tool_the_daemon_has_can_be_allowed_by_its_flag() {
+    use clap::Parser;
+    let args = |extra: &[&str]| {
+        let mut v = vec!["comp-agentd", "--workspace-root", "/tmp"];
+        v.extend(extra);
+        super::Args::try_parse_from(v)
+    };
+    let ok =
+        args(&["--auto-approve-tool", "read_file", "--auto-approve-tool", "list_dir"]).unwrap();
+    assert_eq!(ok.auto_approve_tools, ["read_file", "list_dir"]);
+    assert!(args(&[]).unwrap().auto_approve_tools.is_empty(), "nothing is allowed unless asked");
+    for tool in ["write_file", "run"] {
+        assert!(args(&["--auto-approve-tool", tool]).is_ok(), "{tool}");
+    }
+    // A typo is refused at start, naming what there is, and not found out when someone is asked.
+    for bad in ["read-file", "Run", ""] {
+        let e = args(&["--auto-approve-tool", bad]).unwrap_err().to_string();
+        assert!(e.contains("not a tool") && e.contains("read_file"), "{bad:?}: {e}");
+    }
+}
+
+#[tokio::test]
+async fn grpc_approves_for_a_session_and_says_what_it_understood() {
+    use pb::agent_event::Payload as P;
+    let h = harness(Opts::default()).await;
+    let mut c =
+        pb::agent_service_client::AgentServiceClient::connect(h.base.clone()).await.unwrap();
+    let create = || pb::CreateSessionRequest {
+        model: "mock".into(),
+        workspace_dir: h.ws.clone(),
+        max_budget_usd_micros: 1_000_000,
+        ..Default::default()
+    };
+    let s = c.create_session(create()).await.unwrap().into_inner();
+    let mut events = c
+        .stream_events(pb::StreamEventsRequest { session_id: s.id.clone(), after_seq: 0 })
+        .await
+        .unwrap()
+        .into_inner();
+    let task = |sid: &str| pb::SendTaskRequest {
+        session_id: sid.into(),
+        prompt: "look".into(),
+        idempotency_key: String::new(),
+        when_busy: pb::WhenBusy::Unspecified as i32,
+    };
+    c.send_task(task(&s.id)).await.unwrap();
+    let call_id = loop {
+        if let Some(P::ToolApprovalRequired(r)) = next(&mut events).await.payload {
+            break r.call_id;
+        }
+    };
+    let submit = |decision: pb::ApprovalDecision, scope: i32| pb::SubmitApprovalRequest {
+        session_id: s.id.clone(),
+        call_id: call_id.clone(),
+        decision: decision as i32,
+        scope,
+        ..Default::default()
+    };
+    // A denial has no reach, and a scope this build does not know is not guessed at.
+    for scope in [pb::ApprovalScope::Task as i32, pb::ApprovalScope::Session as i32] {
+        let e = c.submit_approval(submit(pb::ApprovalDecision::Deny, scope)).await.unwrap_err();
+        assert_eq!(e.code(), tonic::Code::InvalidArgument, "{scope}");
+    }
+    let e = c.submit_approval(submit(pb::ApprovalDecision::Approve, 99)).await.unwrap_err();
+    assert_eq!(e.code(), tonic::Code::InvalidArgument);
+
+    // The answer says what it understood, and the event what was decided.
+    let r = c
+        .submit_approval(submit(pb::ApprovalDecision::Approve, pb::ApprovalScope::Session as i32))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(r.scope, pb::ApprovalScope::Session as i32);
+    let resolved = loop {
+        if let Some(P::ToolApprovalResolved(r)) = next(&mut events).await.payload {
+            break r;
+        }
+    };
+    assert_eq!(resolved.scope, pb::ApprovalScope::Session as i32);
+    loop {
+        if let Some(P::TaskCompleted(_)) = next(&mut events).await.payload {
+            break;
+        }
+    }
+    let v = c
+        .get_session(pb::GetSessionRequest { session_id: s.id.clone() })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(v.approved_tools, ["list_dir"]);
+    assert!(v.auto_approve_tools.is_empty());
+
+    // Not saying is once.
+    let s2 = c.create_session(create()).await.unwrap().into_inner();
+    let mut events = c
+        .stream_events(pb::StreamEventsRequest { session_id: s2.id.clone(), after_seq: 0 })
+        .await
+        .unwrap()
+        .into_inner();
+    c.send_task(task(&s2.id)).await.unwrap();
+    let call_id = loop {
+        if let Some(P::ToolApprovalRequired(r)) = next(&mut events).await.payload {
+            break r.call_id;
+        }
+    };
+    let r = c
+        .submit_approval(pb::SubmitApprovalRequest {
+            session_id: s2.id.clone(),
+            call_id,
+            decision: pb::ApprovalDecision::Approve as i32,
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(r.scope, pb::ApprovalScope::Once as i32);
+}
+
+/// A session directory whose log is exactly `events`: what an older daemon, or another writer,
+/// might have left. Loaded the way a restart loads it.
+fn session_with_log(events: &[Value]) -> (tempfile::TempDir, session::Session) {
+    let state = tempfile::tempdir().unwrap();
+    let ws = tempfile::tempdir().unwrap();
+    let new = session::Session::new(
+        super::wire::CreateSession {
+            model: "mock".into(),
+            workspace_dir: ws.path().display().to_string(),
+            max_budget_usd_micros: 1,
+            auto_approve_tools: vec![],
+            labels: Default::default(),
+        },
+        ws.path().to_path_buf(),
+        Some(state.path()),
+    )
+    .unwrap();
+    let dir = state.path().join(&new.id);
+    let lines: String = events
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let mut e = e.clone();
+            e["seq"] = json!(i + 1);
+            e["session_id"] = json!(new.id);
+            e["time"] = json!("2026-01-01T00:00:00Z");
+            format!("{e}\n")
+        })
+        .collect();
+    std::fs::write(dir.join("events.jsonl"), lines).unwrap();
+    let loaded = session::Session::load(&dir, false).unwrap();
+    (state, loaded)
+}
+
+fn logged(kind: &str, fields: Value) -> Value {
+    let mut e = json!({"task_id": "t1", "type": kind});
+    e.as_object_mut().unwrap().extend(fields.as_object().unwrap().clone());
+    e
+}
+
+fn asked(call: &str, tool: &str) -> Value {
+    logged(
+        "tool_approval_required",
+        json!({"call_id": call, "tool_name": tool, "input": {}, "expires_at": null}),
+    )
+}
+
+fn decided(call: &str, decision: &str, scope: Option<&str>) -> Value {
+    let mut e = logged(
+        "tool_approval_resolved",
+        json!({"call_id": call, "decision": decision, "decided_by": "x"}),
+    );
+    if let Some(s) = scope {
+        e["scope"] = json!(s);
+    }
+    e
+}
+
+fn a_task_around(inside: Vec<Value>) -> Vec<Value> {
+    let zero = json!({"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
+                      "cache_write_tokens": 0, "cost_usd_micros": 0});
+    let mut log = vec![logged("task_started", json!({"prompt": "p"}))];
+    log.extend(inside);
+    log.push(logged("task_completed", json!({"result": "r", "task_usage": zero})));
+    log
+}
+
+#[test]
+fn what_a_restart_remembers_of_a_log_is_only_what_a_person_approved_for_the_session() {
+    let remembered = |inside: Vec<Value>| {
+        let (_dir, s) = session_with_log(&a_task_around(inside));
+        s.view().approved_tools
+    };
+    // An approval for the session, of the tool the log shows was asked about.
+    assert_eq!(
+        remembered(vec![asked("c1", "list_dir"), decided("c1", "approve", Some("session"))]),
+        ["list_dir"]
+    );
+    // Each tool is its own, and they come back in order whatever order they were approved in.
+    assert_eq!(
+        remembered(vec![
+            asked("c1", "run"),
+            decided("c1", "approve", Some("session")),
+            asked("c2", "list_dir"),
+            decided("c2", "approve", Some("session")),
+        ]),
+        ["list_dir", "run"]
+    );
+    // A log from before scopes has none, which is once.
+    assert!(remembered(vec![asked("c1", "list_dir"), decided("c1", "approve", None)]).is_empty());
+    assert!(remembered(vec![asked("c1", "list_dir"), decided("c1", "approve", Some("once"))])
+        .is_empty());
+    // A task's approval ended with the task, and is not the session's.
+    assert!(remembered(vec![asked("c1", "list_dir"), decided("c1", "approve", Some("task"))])
+        .is_empty());
+    // No log makes a refusal a standing approval.
+    assert!(remembered(vec![asked("c1", "run"), decided("c1", "deny", Some("session"))]).is_empty());
+    // Nor an approval of a call the log never shows asked about: there is no tool to remember.
+    assert!(remembered(vec![decided("c9", "approve", Some("session"))]).is_empty());
 }

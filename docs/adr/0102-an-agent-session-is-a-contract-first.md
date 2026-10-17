@@ -45,7 +45,9 @@ priced differently.
 `auto_approve_tools` pauses the task on `tool_approval_required` until someone
 answers; a denial's reason goes back to the model as the tool's error. This is
 finer than the goal-level `awaiting-human` state in `platform-domain`, which
-stays as it is.
+stays as it is. Since [ADR-0114](0114-an-approval-can-reach-beyond-one-call.md) an
+approval can also say it covers the rest of the task's or the session's calls of
+that tool.
 
 ## What this is not
 

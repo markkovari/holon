@@ -88,6 +88,10 @@ message Session {
   google.protobuf.Timestamp created_at = 9;
   // Task currently running, empty when idle.
   string active_task_id = 10;
+  // Tools a person approved beyond one call: for the session, or, while that task runs, for the
+  // task. Apart from auto_approve_tools, which is what the session was created with and which no
+  // answer changes.
+  repeated string approved_tools = 11;
 }
 
 enum SessionStatus {
@@ -251,6 +255,8 @@ message ToolApprovalResolved {
   ApprovalDecision decision = 2;
   // Who decided: the approver string from SubmitApproval, or "timeout".
   string decided_by = 3;
+  // How far the approval reaches. ONCE for a denial, whatever it was sent with.
+  ApprovalScope scope = 4;
 }
 
 message ToolCallFinished {
@@ -421,6 +427,19 @@ enum ApprovalDecision {
   APPROVAL_DECISION_DENY = 2;
 }
 
+// How far an approval reaches. It is for a TOOL, not for one call's input: approving `run` for the
+// session approves every command.
+enum ApprovalScope {
+  // Did not say: ONCE.
+  APPROVAL_SCOPE_UNSPECIFIED = 0;
+  // This call. The next call of the tool asks again.
+  APPROVAL_SCOPE_ONCE = 1;
+  // This call and the rest of this task's calls of the tool.
+  APPROVAL_SCOPE_TASK = 2;
+  // This call and every later call of the tool in this session, in any task.
+  APPROVAL_SCOPE_SESSION = 3;
+}
+
 message SubmitApprovalRequest {
   string session_id = 1;
   string call_id = 2;
@@ -429,9 +448,15 @@ message SubmitApprovalRequest {
   string reason = 4;
   // Who is deciding (e.g. "telegram:12345"); recorded in ToolApprovalResolved.
   string approver = 5;
+  // How far an approval reaches. A denial is for this call only: DENY with TASK or SESSION is
+  // INVALID_ARGUMENT, not quietly narrowed.
+  ApprovalScope scope = 6;
 }
 
 message SubmitApprovalResponse {
   string call_id = 1;
   ApprovalDecision decision = 2;
+  // The scope the server understood. A server that does not know scopes leaves it unspecified,
+  // which is how a client finds out its "remember this" did nothing.
+  ApprovalScope scope = 3;
 }
