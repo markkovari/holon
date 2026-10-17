@@ -31,6 +31,7 @@ fn policy() -> RecoveryPolicy {
         max_redispatches: 3,
         retry_after_ms: 1_000,
         reannounce_after_ms: 500,
+        batch_lease_ms: 0,
     }
 }
 
@@ -570,6 +571,7 @@ async fn repair_lists_a_child_the_crash_left_out_of_its_group() {
         interruption: None,
         announced_at: None,
         joined: None,
+        batch: None,
     };
     let child =
         Record { ticket: t("c"), call: child_call("c", "g"), parked_at: 1_001, ..group.clone() };

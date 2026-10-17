@@ -172,6 +172,43 @@ pub struct JoinResult {
     pub missing: u32,
 }
 
+/// One thing a commit does (ADR-0110). Each is what the call of the same name does, named by
+/// `correlation` where it acts on a call that exists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Effect {
+    Park(OutboundCall),
+    Wake(WakeEffect),
+    Interrupt(InterruptEffect),
+    /// Give up on the call with this `correlation`.
+    Cancel(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct WakeEffect {
+    pub correlation: String,
+    pub answer: CallResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct InterruptEffect {
+    pub correlation: String,
+    pub reason: String,
+}
+
+/// What a commit returns: its id, and what each `park` in it said, in the order they were listed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct CommitResult {
+    pub batch: String,
+    pub parked: Vec<ParkResult>,
+}
+
+/// The most effects one commit may carry: the intent is one record, and it is read whole.
+pub const MAX_BATCH_EFFECTS: usize = 256;
+
 /// What `take-ready` hands over: the far side's answer, or the news that there
 /// will not be one, or — for a group — how its children ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

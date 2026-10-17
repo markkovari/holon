@@ -10,10 +10,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::ParkError;
-use crate::model::{Agent, CallResult, OutboundCall, SessionId, TicketId};
+use crate::model::{Agent, CallResult, Effect, OutboundCall, SessionId, TicketId};
 
 pub const ROUTES: &[&str] =
-    &["park", "wake", "pending", "take-ready", "interrupt", "cancel", "oplog"];
+    &["park", "wake", "pending", "take-ready", "interrupt", "cancel", "oplog", "commit"];
 
 pub fn route(func: &str) -> String {
     format!("/v1/{func}")
@@ -58,6 +58,14 @@ pub struct CancelRequest {
 pub struct InterruptRequest {
     pub ticket: TicketId,
     pub reason: String,
+    pub by: Agent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct CommitRequest {
+    pub session: SessionId,
+    pub effects: Vec<Effect>,
     pub by: Agent,
 }
 
@@ -166,7 +174,8 @@ mod tests {
 
     #[test]
     fn every_route_the_contract_names_is_listed() {
-        for f in ["park", "wake", "pending", "take-ready", "interrupt", "cancel", "oplog"] {
+        for f in ["park", "wake", "pending", "take-ready", "interrupt", "cancel", "oplog", "commit"]
+        {
             assert!(ROUTES.contains(&f), "{f}");
         }
     }

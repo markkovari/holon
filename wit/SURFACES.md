@@ -1472,11 +1472,11 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
-## `holon:park/lot@0.3.0`
+## `holon:park/lot@0.4.0`
 
 ```wit
   interface lot {
-    use types.{agent, call-result, outbound-call, park-error, park-result, resolution, session-id, ticket-entry, ticket-id, turn-status};
+    use types.{agent, call-result, commit-result, effect, outbound-call, park-error, park-result, resolution, session-id, ticket-entry, ticket-id, turn-status};
 
     park: func(session: session-id, call: outbound-call, by: agent) -> result<park-result, park-error>;
 
@@ -1489,6 +1489,8 @@ Adding a *function* to an interface is compatible; adding a case to a
     interrupt: func(ticket: ticket-id, reason: string, by: agent) -> result<turn-status, park-error>;
 
     cancel: func(ticket: ticket-id, by: agent) -> result<_, park-error>;
+
+    commit: func(session: session-id, effects: list<effect>, by: agent) -> result<commit-result, park-error>;
 
     oplog: func(session: session-id, after: option<u64>, limit: u32) -> result<list<ticket-entry>, park-error>;
   }

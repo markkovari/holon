@@ -322,6 +322,7 @@ mod tests {
             }),
             announced_at: None,
             joined: None,
+            batch: None,
         }
     }
 

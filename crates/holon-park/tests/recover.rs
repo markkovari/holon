@@ -16,7 +16,7 @@ use holon_park::model::{
 };
 use holon_park::recover::{RecoveryAction, RecoveryPolicy, Repaired};
 use holon_park::resume::{handle, sweep, Announcer, Delivery, Event, Handled, Sink, SinkReply};
-use holon_park::store::{IndexChild, ParkStore, Record, Revision};
+use holon_park::store::{Batch, IndexChild, ParkStore, Record, Revision};
 use holon_park::ticket::ticket_id;
 use holon_park::{mem_engine, Engine};
 
@@ -32,6 +32,7 @@ fn policy() -> RecoveryPolicy {
         max_redispatches: 3,
         retry_after_ms: 1_000,
         reannounce_after_ms: 500,
+        batch_lease_ms: 0,
     }
 }
 
@@ -487,6 +488,18 @@ impl ParkStore for Flaky {
     async fn list_children(&self, p: &str) -> Result<Vec<TicketId>> {
         self.inner.list_children(p).await
     }
+    async fn create_batch(&self, id: &str, b: &Batch) -> Result<bool> {
+        self.inner.create_batch(id, b).await
+    }
+    async fn get_batch(&self, id: &str) -> Result<Option<(Batch, Revision)>> {
+        self.inner.get_batch(id).await
+    }
+    async fn cas_batch(&self, id: &str, e: Revision, b: &Batch) -> Result<bool> {
+        self.inner.cas_batch(id, e, b).await
+    }
+    async fn list_batches(&self) -> Result<Vec<String>> {
+        self.inner.list_batches().await
+    }
 }
 
 /// The reason delivery reads before it takes: dying between the sink accepting
@@ -608,6 +621,7 @@ async fn unindexed(store: &MemParkStore, session: &str, correlation: &str) -> Ti
         interruption: None,
         announced_at: None,
         joined: None,
+        batch: None,
     };
     assert!(store.create(&ticket, &record).await.unwrap());
     ticket

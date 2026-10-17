@@ -114,6 +114,10 @@ struct Args {
     /// How long a resolved ticket may sit untaken before it is announced again.
     #[arg(long, default_value_t = 30)]
     reannounce_after_secs: u64,
+    /// How long a commit's intent may sit pending before a pass finishes it or rolls it back
+    /// (ADR-0110): a younger one is presumed to be in the hands of the caller that wrote it.
+    #[arg(long, default_value_t = 30)]
+    batch_lease_secs: u64,
 }
 
 struct HttpSink {
@@ -187,6 +191,7 @@ async fn main() -> Result<()> {
             max_redispatches: args.max_redispatches,
             retry_after_ms: args.retry_after_secs * 1_000,
             reannounce_after_ms: args.reannounce_after_secs * 1_000,
+            batch_lease_ms: args.batch_lease_secs * 1_000,
         },
         ..Default::default()
     };

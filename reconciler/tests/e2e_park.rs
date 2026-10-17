@@ -762,3 +762,79 @@ fn what_a_group_and_a_child_refuse_is_refused_through_the_chain() {
     let taken = s.ok("take-ready", json!({ "ticket": g }));
     assert_eq!(taken["joined"]["outcome"], "all-answered", "{taken}");
 }
+
+// ---- ADR-0110: commits ----------------------------------------------------------------------------
+
+fn wake_effect(correlation: &str) -> Value {
+    json!({ "wake": { "correlation": correlation,
+                      "answer": { "ok": true, "body": [1], "detail": null } } })
+}
+
+/// A commit through the real chain: a fan-out registered as one unit, the identical commit again
+/// found done, a list with one bad effect registering nothing — and a second commit whose `wake`
+/// effects resolve the group, so `comp-park` announces it and `comp-resume` delivers it.
+#[test]
+fn a_commit_registers_a_fan_out_whole_and_its_effects_reach_the_resumer() {
+    let name = "a_commit_registers_a_fan_out_whole_and_its_effects_reach_the_resumer";
+    let Some(nats) = nats_url(name) else { return };
+    let Some(s) = Stack::up(name, &nats) else { return };
+    let sink = StubSink::start();
+    let _resumer = s.resumer(&sink.url());
+
+    let session = format!("s-{}", nanos());
+    let commit = |effects: Value| {
+        s.call("commit", json!({ "session": session, "effects": effects, "by": agent("a1") }))
+    };
+    let fan_out = || {
+        json!([
+            { "park": group_json("g", "all-settled", 2) },
+            { "park": child_json("c1", "g") },
+            { "park": child_json("c2", "g") },
+        ])
+    };
+
+    let (status, done) = commit(fan_out());
+    assert_eq!(status, 200, "{done}");
+    let parked = done["parked"].as_array().unwrap();
+    assert_eq!(parked.len(), 3);
+    assert!(parked.iter().all(|p| p["outcome"] == "parked"), "{done}");
+    let batch = done["batch"].as_str().unwrap().to_string();
+    let count = || {
+        s.ok("oplog", json!({ "session": session, "after": null, "limit": 50 }))
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    assert_eq!(count(), 3);
+
+    // The identical list again is the same commit, and says what it found.
+    let (status, again) = commit(fan_out());
+    assert_eq!(status, 200, "{again}");
+    assert_eq!(again["batch"], batch);
+    assert!(again["parked"].as_array().unwrap().iter().all(|p| p["outcome"] == "already-parked"));
+    assert_eq!(count(), 3);
+
+    // One bad effect, and none of the good ones around it is registered.
+    let (status, refused) = commit(json!([
+        { "park": call_replaying("fine", "unsafe", None) },
+        { "park": child_json("orphan", "no-such-group") },
+    ]));
+    assert_eq!((status, refused["error"].as_str()), (400, Some("invalid")), "{refused}");
+    let (status, refused) = commit(json!([]));
+    assert_eq!((status, refused["error"].as_str()), (400, Some("invalid")), "{refused}");
+    assert_eq!(count(), 3, "the good effect in front of the bad one was not registered");
+
+    // A commit that answers both children resolves the group; the daemon announces the group,
+    // never a child, and the resumer delivers it once.
+    assert!(sink.seen().is_empty());
+    let (status, answered) = commit(json!([wake_effect("c1"), wake_effect("c2")]));
+    assert_eq!(status, 200, "{answered}");
+    wait_for("the group to be delivered", 40, || !sink.seen().is_empty());
+    let (key, body) = sink.seen()[0].clone();
+    assert!(key.ends_with(":joined"), "{key}");
+    assert_eq!(body["event"], "joined");
+    assert_eq!(body["joined"]["outcome"], "all-answered");
+    assert_eq!(body["joined"]["children"].as_array().unwrap().len(), 2);
+    std::thread::sleep(Duration::from_millis(1_500));
+    assert_eq!(sink.seen().len(), 1, "once: {:?}", sink.seen());
+}

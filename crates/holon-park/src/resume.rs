@@ -22,6 +22,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::batch::BatchRecovered;
 use crate::engine::Engine;
 use crate::error::{ParkError, Result};
 use crate::model::{
@@ -208,6 +209,8 @@ pub trait Announcer: Send + Sync {
 pub struct Swept {
     /// Index entries a crash had lost, put back.
     pub repaired: Repaired,
+    /// Commits whose caller died, finished or rolled back (ADR-0110).
+    pub batches: Vec<BatchRecovered>,
     pub recovered: Vec<Recovered>,
     /// Announcements that did not land. The tickets already moved; the next
     /// pass re-announces a resolved one, and a lost `redispatch` costs that
@@ -215,9 +218,10 @@ pub struct Swept {
     pub unannounced: Vec<(TicketId, ParkError)>,
 }
 
-/// One pass: repair what a crash left unindexed, recover what never answered, then
-/// announce each move. Repair comes first so that the tickets the pass is about to act on
-/// are the ones a `wake` and a `pending` can also see.
+/// One pass: repair what a crash left unindexed, finish the commits whose caller died, recover
+/// what never answered, then announce each move. Repair comes first so that the tickets the
+/// pass is about to act on are the ones a `wake` and a `pending` can also see, and commits come
+/// before recovery so that the tickets they park are there for it.
 pub async fn sweep<S: ParkStore, A: Announcer>(
     engine: &Engine<S>,
     announcer: &A,
@@ -226,8 +230,16 @@ pub async fn sweep<S: ParkStore, A: Announcer>(
     now_ms: u64,
 ) -> Result<Swept> {
     let repaired = engine.repair().await?;
+    let batches = engine.complete_batches(policy.batch_lease_ms, now_ms).await?;
     let recovered = engine.recover(by, policy, now_ms).await?;
     let mut unannounced = Vec::new();
+    for b in &batches {
+        for msg in &b.announce {
+            if let Err(e) = announcer.announce(msg).await {
+                unannounced.push((msg.ticket.clone(), e));
+            }
+        }
+    }
     for r in &recovered {
         if let Some(msg) = r.announcement() {
             if let Err(e) = announcer.announce(&msg).await {
@@ -235,7 +247,7 @@ pub async fn sweep<S: ParkStore, A: Announcer>(
             }
         }
     }
-    Ok(Swept { repaired, recovered, unannounced })
+    Ok(Swept { repaired, batches, recovered, unannounced })
 }
 
 /// What [`run`] needs beyond an engine, a stream and a sink.
@@ -316,6 +328,12 @@ where
                     Ok(s) => {
                         if !s.repaired.is_empty() {
                             eprintln!("holon-park resume: repaired indexes: {:?}", s.repaired);
+                        }
+                        for b in &s.batches {
+                            eprintln!(
+                                "holon-park resume: commit {} (session {}): {:?}",
+                                b.batch, b.session, b.outcome
+                            );
                         }
                         for r in &s.recovered {
                             eprintln!(
