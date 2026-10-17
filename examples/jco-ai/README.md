@@ -8,7 +8,7 @@ results; it never talks to a specific model. Any component that exports
 
 This example runs the **MOCK** provider: a deterministic, offline
 `llm-inference` component composed into `ai-inference` with
-[`wac plug`](../../reconciler/src/plug.rs) via:
+[`wac plug`](../../reconciler/fleet/src/plug.rs) via:
 
 ```sh
 cargo xtask stage-examples   # ai-inference + llm-inference -> ai_inference.composed.wasm, copied here

@@ -69,7 +69,7 @@ export const SYS = [
   boundary:['Nothing here serves traffic: this is what is built and checked, then handed on as a digest.',
             'A component’s real imports are in its binary, so the capability graph is derived from the artifacts rather than kept in a list (ADR-0097).',
             'Adding a function to a WIT interface is compatible; adding a variant case or a record field is not, and witsurface.rs fails when a shape moves without its version.'],
-  code:['wit/','components/','xtask/','reconciler/src/plug.rs','reconciler/src/bin/{plug,oci,capgraph,catalog}.rs']},
+  code:['wit/','components/','xtask/','reconciler/fleet/src/plug.rs','reconciler/src/bin/{plug,oci,capgraph,catalog}.rs']},
 
  {id:'delivery', name:'Delivery', short:'one spec, four lanes',
   purpose:'One app spec rendered for a box, a lattice, wasmCloud 1.x or 2.x. A pull agent keeps boxes current.',
@@ -160,7 +160,7 @@ export const SYS = [
   uses:['git'],
   boundary:['Suites that need NATS, SurrealDB, Docker or a model are kept out of CI and run locally; CI compiles and lints them.',
             'CI builds and tests; it does not deploy or publish. Publishing lives in its own workflows with their own triggers.'],
-  code:['reconciler/tests/','e2e/','bench/','xtask/','reconciler/src/bin/{bench,matrix,planscale,hopcost,stub}.rs','.github/workflows/ci.yml']}
+  code:['reconciler/tests/','reconciler/fleet/','e2e/','bench/','xtask/','reconciler/src/bin/{bench,matrix,planscale,hopcost,stub}.rs','.github/workflows/ci.yml']}
 ];
 
 /* Overview: where the cards sit (column, row) and the primary correspondences drawn between them. */
@@ -190,7 +190,7 @@ export const COR = [
  {id:'L3',a:['library','comp-capgraph'],b:['surreal','knowledge graph'],p:'call',over:'SurrealQL',contract:'The default surql projection of every interface, import edge and composed app into the knowledge graph.',adr:'0097 · 0091'},
  {id:'L4',a:['library','composed .wasm'],b:['runtime','comp-host'],p:'call',over:'process',contract:'cargo xtask host <app> runs a composed artifact on comp-host, for development.',adr:''},
  {id:'L5',a:['library','composed .wasm'],b:['control','platform-domain'],p:'http',over:'HTTP',contract:'POST /api/components?id=…, application/wasm. Reflection is the validation; a save that removes an export needs ?force=true.',adr:'0006'},
- {id:'L6',a:['loop','comp-goalrun'],b:['library','components'],p:'art',over:'git · library call',contract:'New components land as pull requests. reconciler/src/plug.rs composes a candidate in-process, with the wiring and the gaps as values.',adr:'0087 · 0089'},
+ {id:'L6',a:['loop','comp-goalrun'],b:['library','components'],p:'art',over:'git · library call',contract:'New components land as pull requests. reconciler/fleet/src/plug.rs composes a candidate in-process, with the wiring and the gaps as values.',adr:'0087 · 0089'},
  {id:'L7',a:['proof','suites'],b:['library','contract guards'],p:'call',over:'cargo test',contract:'contracts.rs (every import has a provider), witsurface.rs (shape moved means version moved), guestio.rs (no unbounded guest write).',adr:''},
 
  {id:'D1',a:['library','comp-plug · comp-oci'],b:['delivery','publish-apps.yml'],p:'art',over:'CI',contract:'On every merge to main: build the components, derive each app’s composition with comp-plug, push one artifact per app by digest.',adr:'0087 · 0006'},
