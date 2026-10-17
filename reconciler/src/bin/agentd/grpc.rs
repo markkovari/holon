@@ -33,6 +33,8 @@ fn status(f: Fail) -> Status {
         Fail::Invalid(_, d) => Status::invalid_argument(d),
         Fail::Conflict(_, d) => Status::failed_precondition(d),
         Fail::Exhausted(_, d) => Status::resource_exhausted(d),
+        Fail::Gone(d) => Status::not_found(d),
+        Fail::Unavailable(d) => Status::unavailable(d),
         Fail::Internal(d) => Status::internal(d),
     }
 }
@@ -396,6 +398,7 @@ impl AgentService for Grpc {
         let req = wire::SubmitApproval { decision: d, reason: r.reason, approver: r.approver };
         self.0
             .submit_approval(&r.session_id, &r.call_id, req)
+            .await
             .map(|a| {
                 Response::new(pb::SubmitApprovalResponse {
                     call_id: a.call_id,
