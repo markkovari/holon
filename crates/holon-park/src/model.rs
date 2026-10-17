@@ -61,7 +61,38 @@ pub struct OutboundCall {
     /// Absent on the wire means [`ReplayPolicy::Unsafe`].
     #[serde(default)]
     pub replay: ReplayPolicy,
+    /// The group this call is a child of, named by its `correlation` in the same
+    /// session (ADR-0109). A child is settled by its own answer and consumed by
+    /// its group: it is never announced, or taken, on its own.
+    #[serde(default)]
+    pub parent: Option<String>,
+    /// Makes this call a group: resolved by its children, not by `wake`.
+    #[serde(default)]
+    pub group: Option<GroupSpec>,
 }
+
+/// How a group is resolved by its children (ADR-0109).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum JoinPolicy {
+    /// Wait for every child to settle, however each ends.
+    AllSettled,
+    /// Resolve as soon as one child fails; the children still outstanding are
+    /// cancelled first, so the group never resolves with work still running.
+    FailFast,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct GroupSpec {
+    pub policy: JoinPolicy,
+    /// How many children this group will have. Fewer cannot resolve an
+    /// `all-settled` group; more are refused.
+    pub children: u32,
+}
+
+/// The most children a group may be declared with.
+pub const MAX_GROUP_CHILDREN: u32 = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -98,13 +129,57 @@ pub struct Interruption {
     pub by: Agent,
 }
 
+/// Why a group resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum JoinOutcome {
+    /// Every child answered, and every answer was `ok`.
+    AllAnswered,
+    /// Every child settled, and at least one failed: an `ok: false` answer, an
+    /// interruption, or a cancellation.
+    SomeFailed,
+    /// `fail-fast`: a child failed, and the ones still outstanding were cancelled.
+    FailedFast,
+    /// The group's own deadline passed first; the children still outstanding were
+    /// cancelled and `missing` counts the ones never parked.
+    TimedOut,
+}
+
+/// How one child of a group ended.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChildResult {
+    Answered(CallResult),
+    Interrupted(Interruption),
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ChildOutcome {
+    pub ticket: TicketId,
+    pub correlation: String,
+    pub ended: ChildResult,
+}
+
+/// What a group is resolved with: every child, in the order it was parked, and how each ended.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct JoinResult {
+    pub outcome: JoinOutcome,
+    pub children: Vec<ChildOutcome>,
+    /// Children the group was declared with that were never parked.
+    pub missing: u32,
+}
+
 /// What `take-ready` hands over: the far side's answer, or the news that there
-/// will not be one.
+/// will not be one, or — for a group — how its children ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Resolution {
     Answered(CallResult),
     Interrupted(Interruption),
+    Joined(JoinResult),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,6 +217,12 @@ pub struct TicketEntry {
     pub redispatches: u32,
     #[serde(default)]
     pub interrupted_at: Option<u64>,
+    /// The group this ticket belongs to, as a ticket id.
+    #[serde(default)]
+    pub parent: Option<TicketId>,
+    /// Set on a group: how it is resolved, and how many children it expects.
+    #[serde(default)]
+    pub group: Option<GroupSpec>,
 }
 
 /// What lands on `PARK_WAKE`: enough for a resumer to find the ticket; the

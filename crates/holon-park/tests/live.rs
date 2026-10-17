@@ -35,6 +35,8 @@ fn call(correlation: &str) -> OutboundCall {
         deadline: None,
         poll: None,
         replay: ReplayPolicy::Unsafe,
+        parent: None,
+        group: None,
     }
 }
 
@@ -224,6 +226,8 @@ fn call_with(correlation: &str, replay: ReplayPolicy, deadline: Option<u64>) -> 
         deadline,
         poll: None,
         replay,
+        parent: None,
+        group: None,
     }
 }
 
@@ -505,6 +509,7 @@ async fn a_safe_call_is_redispatched_twice_then_the_turn_is_told_it_was_interrup
                 format!("interrupted: {}", interruption.reason.contains("2 re-dispatches"))
             }
             Event::Answered { .. } => "answered".into(),
+            Event::Joined { .. } => "joined".into(),
         })
         .collect();
     assert_eq!(
@@ -611,4 +616,174 @@ async fn a_message_published_by_the_old_comp_park_is_still_understood() {
 
     stop.send(true).unwrap();
     r.await.unwrap().unwrap();
+}
+
+// ---- ADR-0109: groups over real JetStream ------------------------------------------------------
+
+fn group_of(
+    correlation: &str,
+    policy: holon_park::model::JoinPolicy,
+    children: u32,
+) -> OutboundCall {
+    OutboundCall {
+        group: Some(holon_park::model::GroupSpec { policy, children }),
+        ..call_with(correlation, ReplayPolicy::Unsafe, None)
+    }
+}
+
+fn child_of(correlation: &str, parent: &str) -> OutboundCall {
+    OutboundCall {
+        parent: Some(parent.into()),
+        ..call_with(correlation, ReplayPolicy::Unsafe, None)
+    }
+}
+
+/// A fan-out, answered by the far side in any order: the group resolves once, the resumer
+/// delivers one `joined` event and no child on its own, and everything is closed.
+#[tokio::test]
+async fn a_fan_out_over_real_nats_resolves_once_and_is_delivered_as_one_joined_event() {
+    let url =
+        need_nats!("a_fan_out_over_real_nats_resolves_once_and_is_delivered_as_one_joined_event");
+    let s = stack(&url).await;
+    let sink = Arc::new(Rec::default());
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let r = tokio::spawn(run(s.engine.clone(), s.wake.clone(), sink.clone(), cfg("t-resumer"), rx));
+
+    let now = now_ms();
+    let g = s
+        .engine
+        .park(
+            &s.session,
+            group_of("g", holon_park::model::JoinPolicy::AllSettled, 3),
+            agent("a1"),
+            now,
+        )
+        .await
+        .unwrap();
+    for c in ["c1", "c2", "c3"] {
+        s.engine.park(&s.session, child_of(c, "g"), agent("a1"), now).await.unwrap();
+    }
+
+    // What `comp-park` does for each answer: move the child, and publish what the engine says.
+    for (i, c) in ["c2", "c3", "c1"].iter().enumerate() {
+        let w = s.engine.wake(c, result(true, c), now_ms()).await.unwrap();
+        assert_eq!(
+            w.announce.len(),
+            usize::from(i == 2),
+            "only the last answer resolves it: {w:?}"
+        );
+        for m in &w.announce {
+            s.wake.publish(m).await.unwrap();
+        }
+    }
+
+    until("the group to be delivered", 20, || !sink.seen().is_empty()).await;
+    let d = sink.seen()[0].clone();
+    assert_eq!(d.ticket, g.ticket);
+    let Event::Joined { joined } = &d.event else { panic!("{d:?}") };
+    assert_eq!(joined.outcome, holon_park::model::JoinOutcome::AllAnswered);
+    let order: Vec<_> = joined.children.iter().map(|c| c.correlation.as_str()).collect();
+    assert_eq!(
+        order,
+        ["c1", "c2", "c3"],
+        "in the order they were parked, not the order they answered"
+    );
+
+    for _ in 0..100 {
+        if status_of(&s, &g.ticket).await == TurnStatus::Resumed {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(40)).await;
+    }
+    assert_eq!(status_of(&s, &g.ticket).await, TurnStatus::Resumed);
+    let log = s.engine.oplog(&s.session, None, 100, now_ms()).await.unwrap();
+    assert!(log.iter().filter(|e| e.parent.is_some()).all(|e| e.status == TurnStatus::Resumed));
+    assert_eq!(sink.seen().len(), 1, "one delivery for the whole fan-out");
+
+    stop.send(true).unwrap();
+    r.await.unwrap().unwrap();
+}
+
+/// The bound on a group's list is checked and written in one compare-and-set, so a fan-out that
+/// registers its children all at once cannot take more places than it declared — and the racers
+/// the contention turns away can retry, because registering is idempotent.
+#[tokio::test]
+async fn a_fan_out_racing_for_a_group_over_real_nats_cannot_exceed_it() {
+    let url = need_nats!("a_fan_out_racing_for_a_group_over_real_nats_cannot_exceed_it");
+    let s = stack(&url).await;
+    let now = now_ms();
+    s.engine
+        .park(
+            &s.session,
+            group_of("g", holon_park::model::JoinPolicy::AllSettled, 5),
+            agent("a1"),
+            now,
+        )
+        .await
+        .unwrap();
+
+    let mut racers = Vec::new();
+    for i in 0..24 {
+        let (e, session) = (s.engine.clone(), s.session.clone());
+        racers.push(tokio::spawn(async move {
+            // A racer the contention turned away tries again, as a caller would.
+            for _ in 0..20 {
+                match e.park(&session, child_of(&format!("c{i}"), "g"), agent("a1"), now_ms()).await
+                {
+                    Ok(_) => return true,
+                    Err(holon_park::ParkError::Invalid(m)) if m.contains("full") => return false,
+                    Err(holon_park::ParkError::Storage(_)) => {
+                        tokio::time::sleep(Duration::from_millis(5)).await
+                    }
+                    Err(e) => panic!("{e:?}"),
+                }
+            }
+            panic!("never got an answer");
+        }));
+    }
+    let mut taken = 0;
+    for r in racers {
+        taken += usize::from(r.await.unwrap());
+    }
+    assert_eq!(taken, 5, "exactly the places the group was declared with");
+}
+
+#[tokio::test]
+async fn a_fail_fast_group_over_real_nats_cancels_the_siblings_and_resolves() {
+    let url = need_nats!("a_fail_fast_group_over_real_nats_cancels_the_siblings_and_resolves");
+    let s = stack(&url).await;
+    let now = now_ms();
+    s.engine
+        .park(
+            &s.session,
+            group_of("g", holon_park::model::JoinPolicy::FailFast, 3),
+            agent("a1"),
+            now,
+        )
+        .await
+        .unwrap();
+    for c in ["c1", "c2", "c3"] {
+        s.engine.park(&s.session, child_of(c, "g"), agent("a1"), now).await.unwrap();
+    }
+    s.engine.wake("c1", result(true, "ok"), now_ms()).await.unwrap();
+
+    let g = ticket_of(&s, "g");
+    let out =
+        s.engine.interrupt(&ticket_of(&s, "c2"), "boom", agent("a1"), now_ms()).await.unwrap();
+    assert_eq!(out.announce, [WakeMessage::resolved(&s.session, &g)]);
+
+    let Resolution::Joined(j) = s.engine.take_ready(&g, now_ms()).await.unwrap() else {
+        panic!("a group resolves as joined")
+    };
+    assert_eq!(j.outcome, holon_park::model::JoinOutcome::FailedFast);
+    let ended: Vec<_> = j
+        .children
+        .iter()
+        .map(|c| format!("{:?}", c.ended).chars().take(11).collect::<String>())
+        .collect();
+    assert_eq!(ended, ["Answered(Ca", "Interrupted", "Cancelled"]);
+}
+
+fn ticket_of(s: &Stack, correlation: &str) -> TicketId {
+    holon_park::ticket::ticket_id(&s.session, correlation)
 }

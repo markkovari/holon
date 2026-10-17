@@ -136,6 +136,7 @@ tells you what is true now rather than what was once believed.
 | [0104](0104-agents-share-what-they-know-per-project.md) | Agents share what they know, per project: three scopes, scope enforced in agent-runtime, `knowledge-memory` reused, promotion is a person | **proposed** — nothing built |
 | [0105](0105-agents-live-in-spaces.md) | Agents live in Spaces (a project's, or a Matrix-only Agents Space that grants nothing); a schedule belongs to an agent and a project, deleting an agent retires its Matrix side (and is soft in the runtime), archiving a project pauses its agents and leaves its rooms | **accepted** — slices 0–4 built (#332–#336), slice 5 not |
 | [0106](0106-a-resumed-turn-knows-what-it-may-repeat.md) | A resumed turn knows what it may repeat: a call declares `replay` (`safe`, `unsafe`, `abandon`), an unanswered call is `interrupted` and the turn is told, and `comp-resume` delivers and recovers | **accepted**, and built — `holon:park@0.2.0`, `holon_park::recover`, `comp-resume`; `comp-agentd` parks nothing yet |
+| [0109](0109-a-call-may-fan-out.md) | A call may fan out: a group is resolved by its children (`all-settled` or `fail-fast`), delivered as one `joined`, children cancelled first and consumed with it | **accepted**, and built — `holon:park@0.3.0`, `holon_park::group`; extends [0106](0106-a-resumed-turn-knows-what-it-may-repeat.md) |
 
 ## History: superseded, and kept
 

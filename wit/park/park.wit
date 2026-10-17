@@ -25,7 +25,11 @@
 // and `take-ready` says so instead of leaving the turn to guess. Breaking
 // against 0.1.0: `outbound-call` gains a field and `take-ready` returns a
 // `resolution` rather than a bare `call-result`.
-package holon:park@0.2.0;
+//
+// 0.3.0 (ADR-0109) lets a call fan out. A call parked with a `group` is resolved by its
+// children, not by `wake`; its children are calls parked with `parent`. Breaking against
+// 0.2.0: `resolution` gains `joined`, and `outbound-call` and `ticket-entry` gain fields.
+package holon:park@0.3.0;
 
 interface types {
     /// A conversation or task this ticket belongs to. Opaque to this contract;
@@ -71,6 +75,66 @@ interface types {
         deadline: option<u64>,
         poll: option<poll-spec>,
         replay: replay-policy,
+        /// The group this call is a child of, by its `correlation` in the same session
+        /// (ADR-0109). The group must be parked first, belong to this session, still be
+        /// waiting, and have room: `invalid` otherwise. A child is settled by its own answer
+        /// and then consumed by its group; it is never announced or taken on its own.
+        parent: option<string>,
+        /// Makes this call a group: it is resolved by its children, not by `wake`, and
+        /// `take-ready` hands over how they ended. A group cannot be a child: they do not nest.
+        group: option<group-spec>,
+    }
+
+    /// How a group is resolved by its children (ADR-0109).
+    enum join-policy {
+        /// Wait for every child to settle, however each ends.
+        all-settled,
+        /// Resolve as soon as one child fails (an `ok: false` answer, an interruption, or a
+        /// cancellation). The children still outstanding are cancelled first, so a group
+        /// never resolves with work still running.
+        fail-fast,
+    }
+
+    record group-spec {
+        policy: join-policy,
+        /// How many children the group will have, 1 to 1024. An `all-settled` group
+        /// resolves only once that many have been parked and settled; more are refused.
+        children: u32,
+    }
+
+    /// Why a group resolved.
+    enum join-outcome {
+        /// Every child answered, and every answer was `ok`.
+        all-answered,
+        /// Every child settled and at least one failed.
+        some-failed,
+        /// `fail-fast`: a child failed, and the ones still outstanding were cancelled.
+        failed-fast,
+        /// The group's own deadline passed first; the children still outstanding were
+        /// cancelled, and `missing` counts the ones never parked.
+        timed-out,
+    }
+
+    /// How one child of a group ended.
+    variant child-result {
+        answered(call-result),
+        interrupted(interruption),
+        cancelled,
+    }
+
+    record child-outcome {
+        ticket: ticket-id,
+        correlation: string,
+        ended: child-result,
+    }
+
+    /// What a group is resolved with: every child, in the order it was parked, and how each
+    /// ended.
+    record join-result {
+        outcome: join-outcome,
+        children: list<child-outcome>,
+        /// Children the group was declared with that were never parked.
+        missing: u32,
     }
 
     /// What may be done about this call if whatever made it dies while it is
@@ -113,6 +177,8 @@ interface types {
         /// No answer will come. The call may or may not have happened: check
         /// on the far side before repeating it.
         interrupted(interruption),
+        /// A group: how every child ended, and why it stopped waiting (ADR-0109).
+        joined(join-result),
     }
 
     enum park-outcome {
@@ -171,6 +237,10 @@ interface types {
         /// How many times a recovery pass has granted a re-dispatch.
         redispatches: u32,
         interrupted-at: option<u64>,
+        /// The group this ticket is a child of, as a ticket id.
+        parent: option<ticket-id>,
+        /// Set on a group.
+        group: option<group-spec>,
     }
 
     variant park-error {
@@ -196,7 +266,7 @@ interface lot {
     park: func(session: session-id, call: outbound-call, by: agent) -> result<park-result, park-error>;
 
     /// The answer arrived. Refused `not-found` if no parked ticket's
-    /// `correlation` matches.
+    /// `correlation` matches, and `invalid` for a group: it is resolved by its children.
     wake: func(correlation: string, answer: call-result) -> result<ticket-id, park-error>;
 
     /// Every ticket for a session still `parked`, `ready` or `interrupted` —
