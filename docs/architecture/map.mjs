@@ -69,7 +69,7 @@ export const SYS = [
   boundary:['Nothing here serves traffic: this is what is built and checked, then handed on as a digest.',
             'A component’s real imports are in its binary, so the capability graph is derived from the artifacts rather than kept in a list (ADR-0097).',
             'Adding a function to a WIT interface is compatible; adding a variant case or a record field is not, and witsurface.rs fails when a shape moves without its version.'],
-  code:['wit/','components/','xtask/','reconciler/fleet/src/plug.rs','reconciler/src/bin/{plug,oci,capgraph,catalog}.rs']},
+  code:['wit/','components/','xtask/','reconciler/fleet/src/plug.rs','reconciler/oci/','reconciler/src/bin/{plug,oci,capgraph,catalog}.rs']},
 
  {id:'delivery', name:'Delivery', short:'one spec, four lanes',
   purpose:'One app spec rendered for a box, a lattice, wasmCloud 1.x or 2.x. A pull agent keeps boxes current.',

@@ -11,6 +11,10 @@ pub use comp_fleet::{fleet, plug};
 /// comp-agentd can price a model call without the control plane; the paths are re-exported here.
 pub use comp_fuel::{bucket, budget, cost, money, offpeak, router, wallet};
 
+/// Artifacts by digest. Their own package (docs/adr/0115), so that the tools that name an artifact need
+/// not depend on the control plane; `comp_reconciler::oci` is the crate, re-exported.
+pub use comp_oci as oci;
+
 /// "Do we already have something for this?", asked of the catalogue (ADR-0089).
 pub mod capsearch;
 pub mod catalogue;
@@ -27,7 +31,6 @@ pub mod goalbatch;
 pub mod goalexit;
 /// Skipping work already done, and recording every verdict so the next run can.
 pub mod memory;
-pub mod oci;
 pub mod plan;
 pub mod settings;
 pub mod spec;
