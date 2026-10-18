@@ -10,7 +10,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use comp_reconciler::cost::{cost_usd_micros, micros_at};
+use comp_fuel::cost::{cost_usd_micros, micros_at};
 
 use super::model::{Call, Msg, Provider, ToolResult};
 use super::park::Park;

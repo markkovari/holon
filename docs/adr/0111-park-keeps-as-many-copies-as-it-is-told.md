@@ -127,7 +127,7 @@ a resumer *started* in that window can fail to start and is left to whatever sup
 already running holds its consumer.
 
 **The flag reaches the server**, which the library test cannot see: a daemon that parsed
-`--replicas 3` and dropped it would start without a word. [`reconciler/tests/park_replicas.rs`](../../reconciler/tests/park_replicas.rs)
+`--replicas 3` and dropped it would start without a word. [`reconciler/tests/park_replicas.rs`](../../reconciler/daemons/park/tests/park_replicas.rs)
 asks one server that cannot keep three copies and requires both daemons to be refused with its
 reason, and the same daemon without the flag to start. It also covers a dead server first in the
 list, and the usage errors.

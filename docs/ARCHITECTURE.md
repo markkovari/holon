@@ -525,7 +525,7 @@ flowchart LR
 - The gateways keep nothing; every byte of state is in the daemon (kv = "memory" in the app spec).
 - A bucket that already exists with fewer copies than --replicas is refused, with the command that raises it ([ADR-0111](adr/0111-park-keeps-as-many-copies-as-it-is-told.md)).
 
-**Where it lives** [`crates/holon-park`](../crates/holon-park) · [`crates/holon-vcs`](../crates/holon-vcs) · [`components/park-store`](../components/park-store) · [`components/park-gateway`](../components/park-gateway) · [`components/vcs-store`](../components/vcs-store) · [`components/vcs-gateway`](../components/vcs-gateway) · [`reconciler/src/bin/park.rs`](../reconciler/src/bin/park.rs) · [`reconciler/src/bin/resume.rs`](../reconciler/src/bin/resume.rs) · [`reconciler/daemons/vcs/`](../reconciler/daemons/vcs/) · [`apps/park.toml`](../apps/park.toml) · [`apps/vcs.toml`](../apps/vcs.toml)
+**Where it lives** [`crates/holon-park`](../crates/holon-park) · [`crates/holon-vcs`](../crates/holon-vcs) · [`components/park-store`](../components/park-store) · [`components/park-gateway`](../components/park-gateway) · [`components/vcs-store`](../components/vcs-store) · [`components/vcs-gateway`](../components/vcs-gateway) · [`reconciler/daemons/park/`](../reconciler/daemons/park/) · [`reconciler/daemons/vcs/`](../reconciler/daemons/vcs/) · [`apps/park.toml`](../apps/park.toml) · [`apps/vcs.toml`](../apps/vcs.toml)
 
 ### Agent services
 
@@ -599,7 +599,7 @@ flowchart LR
 - agent-runtime refuses a tool an agent was not granted instead of dispatching it, and only the owner’s Matrix messages start a run.
 - Nothing in this repository is a client of comp-agentd yet: the contract came first, for bots, backends and scripts outside it ([ADR-0102](adr/0102-an-agent-session-is-a-contract-first.md)).
 
-**Where it lives** [`reconciler/src/bin/agentd/`](../reconciler/src/bin/agentd/) · [`api/holon/v1/agent.proto`](../api/holon/v1/agent.proto) · [`api/openapi.yaml`](../api/openapi.yaml) · [`agent-runtime/`](../agent-runtime/) · [`agent-matrix/`](../agent-matrix/) · [`gpui-console/`](../gpui-console/)
+**Where it lives** [`reconciler/daemons/agentd/`](../reconciler/daemons/agentd/) · [`reconciler/fuel/`](../reconciler/fuel/) · [`api/holon/v1/agent.proto`](../api/holon/v1/agent.proto) · [`api/openapi.yaml`](../api/openapi.yaml) · [`agent-runtime/`](../agent-runtime/) · [`agent-matrix/`](../agent-matrix/) · [`gpui-console/`](../gpui-console/)
 
 ### Engineering loop
 

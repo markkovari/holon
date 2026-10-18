@@ -1,0 +1,11 @@
+[package]
+name = "comp-fuel"
+description = "What a run costs and what it may spend: the price table, the off-peak window, the spend, the cap and the rate limit a project budget is checked against (docs/adr/0081)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# `std` only, which is the point of it being a package: comp-agentd prices its model calls with
+# `cost` and nothing else of the control plane (docs/adr/0115). comp-offpeak, the shim over `offpeak`
+# that a cron line or a systemd timer can call, stays with the goal loop's binaries and takes its
+# clap with it, so this package's library stays free of every dependency.

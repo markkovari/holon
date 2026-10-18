@@ -67,7 +67,8 @@ not change. (There is no committed `Cargo.lock` here, and the split does not add
 **A test lives with the binaries it spawns.** `CARGO_BIN_EXE_*` is the reason, and it is also the
 cheapest way to be sure the binary the test runs is the one this commit built. A test that needs a
 binary from another package finds it through `Fleet::bin_path`, which already works from the
-executable's own directory, and the job that runs it builds that binary by name first. That is a
+executable's own directory (`built_bin` is the same with an assertion that says how to build it), and
+the job that runs it builds that binary by name first. That is a
 line in CI for each such binary, and it is why a binary that nothing tests can move at once while one
 that a fleet test starts waits until the line exists. The harness the suites share
 ([`tests/harness/mod.rs`](../../reconciler/tests/harness/mod.rs)) is not copied into a package that a test
@@ -91,8 +92,11 @@ only thing that may differ is the package a test is in.
    it, and it is re-exported from where it was (`comp_reconciler::fleet`), so nothing that named it
    changes;
 4. the daemons that have a test of their own, which move with it (`comp-backup`, `comp-media`,
-   `comp-vcs`, and `comp-park`, `comp-resume`, `comp-agentd`, which one test starts together and so
-   share a package);
+   `comp-vcs`, and `comp-park` with `comp-resume`, whose tests start the pair and so share a
+   package); `comp-agentd` after the small modules it reads (cost and off-peak pricing) have a
+   package of their own, and its test that starts it with `comp-park` and `comp-resume` is a test
+   across three binaries of two packages, so it stays in the root's suites and finds them by
+   `Fleet::built_bin`;
 5. the tools that start a fleet (the benchmarks and `comp-stub`);
 6. the goal loop's tools last, because they share the most.
 

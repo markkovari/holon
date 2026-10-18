@@ -20,8 +20,11 @@ WORKDIR /src
 COPY reconciler ./reconciler
 COPY lattice ./lattice
 COPY comp-metadata ./comp-metadata
-# comp-vcs's engine (ADR-0099) — a path dependency of the reconciler crate.
+# comp-vcs's and comp-park's engines (ADR-0099, ADR-0100) — path dependencies of their packages.
 COPY crates ./crates
+# comp-agentd's build script compiles api/holon/v1/agent.proto (ADR-0102); no other daemon's build
+# reads it.
+COPY api ./api
 RUN cd reconciler && cargo build --release --bin "${DAEMON}"
 
 FROM debian:bookworm-slim

@@ -166,7 +166,7 @@ announcing the group and never the child that tipped it; repair listing a child 
 Over real JetStream ([`tests/live.rs`](../../crates/holon-park/tests/live.rs)): a fan-out
 resolved once and delivered as one event in parking order, 24 racers for 5 places, fail-fast.
 Through the real components, daemon and resumer
-([`reconciler/tests/e2e_park.rs`](../../reconciler/tests/e2e_park.rs), `bash e2e/park.sh`): a
+([`reconciler/tests/e2e_park.rs`](../../reconciler/daemons/park/tests/e2e_park.rs), `bash e2e/park.sh`): a
 fan-out delivered as one `joined`, fail-fast delivering with the siblings cancelled, and every
 refusal over the wire.
 

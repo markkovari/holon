@@ -23,8 +23,8 @@ description = "Diffs desired manifests against observed lattice inventory and is
 # `reconciler/target/release/comp-*` that scripts, gates and docs spell are unchanged.
 [workspace]
 resolver = "2"
-members = ["daemons/*", "fleet"]
-default-members = [".", "daemons/*", "fleet"]
+members = ["daemons/*", "fleet", "fuel"]
+default-members = [".", "daemons/*", "fleet", "fuel"]
 
 [workspace.package]
 version = "0.1.0"
@@ -53,6 +53,8 @@ jiff = "0.2"
 hex = "0.4"
 comp-daemon-kit = { path = "daemons/kit" }
 comp-fleet = { path = "fleet" }
+comp-fuel = { path = "fuel" }
+holon-park = { path = "../crates/holon-park", features = ["native"] }
 comp-lattice = { path = "../lattice" }
 sha2 = "0.10"
 tempfile = "3"
@@ -163,6 +165,9 @@ hmac.workspace = true
 # and `comp_reconciler::plug` are its modules, re-exported. wac-graph and wasmparser
 # live there with the pin that explains them.
 comp-fleet.workspace = true
+# What a run costs and what it may spend (fuel/): `comp_reconciler::{cost, offpeak, ...}` are its
+# modules, re-exported.
+comp-fuel.workspace = true
 
 # comp-ingress: terminates HTTP and spreads it across an app's replicas. A second
 # binary here rather than a sixth crate, because it needs exactly two things this
@@ -174,31 +179,9 @@ bytes.workspace = true
 
 async-trait = "0.1"
 
-# The daemons that have not moved out yet (docs/adr/0115); each of the others has a
-# package of its own in daemons/. What is below is used by comp-park, comp-resume and
-# comp-agentd, and by the suites that talk to JetStream and S3.
+# The suites that talk to JetStream (juan_live) and to S3 (the shared harness's RustFS helper).
 async-nats.workspace = true
 rusty-s3.workspace = true
-# comp-agentd's ids and timestamps; it stays in this package until docs/adr/0115 gets to it.
-getrandom.workspace = true
-jiff.workspace = true
-hex.workspace = true
-# comp-park (ADR-0100): a durable record of an outstanding call, over JetStream
-# KV and the PARK_WAKE work-queue stream. No SurrealDB — unlike vcs, there is
-# no graph here, one ticket is one mutable record.
-holon-park = { path = "../crates/holon-park", features = ["native"] }
-# comp-agentd (ADR-0102): the gRPC half of api/holon/v1/agent.proto, served on
-# the same port as the REST half. tonic is already in the tree (surrealdb).
-tonic = "0.14"
-tonic-prost = "0.14"
-prost = "0.14"
-prost-types = "0.14"
-tonic-web = "0.14"
-
-[build-dependencies]
-# build.rs: agent.proto -> Rust, with protox standing in for protoc.
-tonic-prost-build = "0.14"
-protox = "0.9"
 
 [dev-dependencies]
 miniz_oxide = "0.8"
@@ -250,18 +233,3 @@ path = "src/bin/photoserve.rs"
 name = "comp-contrastserve"
 path = "src/bin/contrastserve.rs"
 
-# A durable record of an outstanding call, instead of a thread blocked on its
-# answer (ADR-0100), for `components/park-store`.
-[[bin]]
-name = "comp-park"
-path = "src/bin/park.rs"
-
-# The resumer ADR-0100 left unbuilt (ADR-0106): delivers resolved tickets to
-# whatever drives the turn, and gives up on the calls that never answered.
-[[bin]]
-name = "comp-resume"
-path = "src/bin/resume.rs"
-
-[[bin]]
-name = "comp-agentd"
-path = "src/bin/agentd.rs"
