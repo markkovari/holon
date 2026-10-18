@@ -97,8 +97,31 @@ only thing that may differ is the package a test is in.
    package of their own, and its test that starts it with `comp-park` and `comp-resume` is a test
    across three binaries of two packages, so it stays in the root's suites and finds them by
    `Fleet::built_bin`;
-5. the tools that start a fleet (the benchmarks and `comp-stub`);
-6. the goal loop's tools last, because they share the most.
+5. the leaves nothing starts from outside a package (`comp-mailrelay`, `comp-agent`, `comp-relay`,
+   the measuring tools), then the library the loop and the reconciler both read artifacts through
+   (`comp-oci`);
+6. the goal loop last, because it shares the most: its modules, its binaries and the tests that
+   exercise them, as `comp-goal`.
+
+## Where it stopped
+
+The root package is the control plane and what its own suites start by name. `comp-reconciler` and
+`comp-ingress` are the loop and the front door, over the three modules they are made of (`plan`,
+`settings`, `spec`). `comp-stub` is the stand-in control plane a fleet can start instead of the real
+one, `comp-bench` is what a fleet's benchmark report is read with, and `comp-checks` is the gate
+runner every gate suite starts: a suite in this package starts each of them by name, and cargo builds
+them for it as the package's own. `comp-plug`, `comp-oci` and `comp-planscale` are command lines over
+libraries that live elsewhere, or over the plan the reconciler is made of, and a package for one would
+take the library's dependencies with it. Moving any of them costs a line in CI and an edit in a test
+apiece, and buys nothing until the root has no suite that starts it.
+
+What the split took out of the control plane's tree, measured with `cargo tree -p comp-reconciler -e
+normal,build` — and the same command is how to tell whether it stays true: the gRPC stack (`tonic`,
+`prost`), SurrealDB, the S3 signer, and every crate behind a daemon (`bollard`, `arboard`,
+`headless_chrome`, `mdns-sd`, `notify-rust`, `image`, `rawler`). Every crate only the suites use is a
+`[dev-dependencies]` entry now. What it still carries, and why: `comp-fleet`, and with it `wac-graph` and
+`wasmparser`, because `comp-plug` and `comp-oci` compose and the suites reach the harness through it;
+`async-nats`, through the lattice, which is what the reconciler talks to.
 
 ## What this does not do
 

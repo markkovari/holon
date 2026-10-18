@@ -23,8 +23,8 @@ description = "Diffs desired manifests against observed lattice inventory and is
 # `reconciler/target/release/comp-*` that scripts, gates and docs spell are unchanged.
 [workspace]
 resolver = "2"
-members = ["daemons/*", "fleet", "fuel", "measure", "oci"]
-default-members = [".", "daemons/*", "fleet", "fuel", "measure", "oci"]
+members = ["daemons/*", "fleet", "fuel", "goal", "measure", "oci"]
+default-members = [".", "daemons/*", "fleet", "fuel", "goal", "measure", "oci"]
 
 [workspace.package]
 version = "0.1.0"
@@ -55,6 +55,7 @@ hex = "0.4"
 comp-daemon-kit = { path = "daemons/kit" }
 comp-fleet = { path = "fleet" }
 comp-fuel = { path = "fuel" }
+comp-metadata = { path = "../comp-metadata" }
 comp-oci = { path = "oci" }
 holon-park = { path = "../crates/holon-park", features = ["native"] }
 comp-lattice = { path = "../lattice" }
@@ -80,74 +81,28 @@ name = "comp-oci"
 path = "src/bin/oci.rs"
 
 [[bin]]
-name = "comp-offpeak"
-path = "src/bin/offpeak.rs"
-
-[[bin]]
 name = "comp-plug"
 path = "src/bin/plug.rs"
 
-# Write one run's history, so the console's browser test has a run to look at.
-[[bin]]
-name = "comp-trace-seed"
-path = "src/bin/traceseed.rs"
-
-# Drains a project's goal queue, N runs at a time (ADR-0082's missing loop).
-[[bin]]
-name = "comp-goald"
-path = "src/bin/goald.rs"
-
-# The capability graph: who imports what from whom, derived from the artifacts.
-[[bin]]
-name = "comp-capgraph"
-path = "src/bin/capgraph.rs"
-
-# The component catalogue, derived from the SOURCES. Deliberately a second binary
-# rather than a `--format` on capgraph: that one reads built artifacts and answers
-# what a component really imports, this reads sources and answers what it is FOR, and
-# a component that does not build has the second and not the first.
-[[bin]]
-name = "comp-catalog"
-path = "src/bin/catalog.rs"
-
 
 [dependencies]
-comp-metadata = { path = "../comp-metadata" }
-# The shared-secret check the ADR-0095 daemons put in front of their loopback HTTP.
-comp-daemon-kit.workspace = true
 tokio.workspace = true
 # The fabric, as traits. The reconciler holds `Arc<dyn ...>` and never names a
 # broker; `--nats-url` selects the one implementation that ships.
 comp-lattice.workspace = true
-futures.workspace = true
 serde.workspace = true
 toml.workspace = true
 serde_norway = "0.9"
-tempfile.workspace = true
 # comp-stub serves HTTP; the OCI test also stands up a fake registry with it.
 axum.workspace = true
 serde_json.workspace = true
-regex = "1"
 anyhow.workspace = true
-# Capability versions are semver, so the self-improve gate orders them by
-# major/minor/patch rather than as strings ("2.0.0" > "10.0.0" the wrong way).
-semver = "1"
 clap.workspace = true
 reqwest.workspace = true
-# For content addressing. The optional OCI mirror push is four HTTP calls on the
-# reqwest client we already have, so it needs no registry crate — see oci/src/lib.rs.
-sha2.workspace = true
-# HMAC-SHA1, for the one gate that computes a TOTP code from the secret the part
-# provisions. RFC 6238 fixes the algorithm; there is no newer one to prefer.
-sha1.workspace = true
-hmac.workspace = true
 # The fleet harness and composition as a library call (fleet/): `comp_reconciler::fleet`
 # and `comp_reconciler::plug` are its modules, re-exported. wac-graph and wasmparser
 # live there with the pin that explains them.
 comp-fleet.workspace = true
-# What a run costs and what it may spend (fuel/): `comp_reconciler::{cost, offpeak, ...}` are its
-# modules, re-exported.
-comp-fuel.workspace = true
 # Artifacts by digest (oci/): `comp_reconciler::oci` is the crate, re-exported.
 comp-oci.workspace = true
 
@@ -161,11 +116,17 @@ bytes.workspace = true
 
 async-trait = "0.1"
 
-# The suites that talk to JetStream (juan_live) and to S3 (the shared harness's RustFS helper).
-async-nats.workspace = true
-rusty-s3.workspace = true
-
+# What only the suites use, which is most of what this package once declared: the shared
+# harness and gate library (tests/harness, tests/gatelib), JetStream for juan_live, and the
+# TOTP gate's HMAC-SHA1 (RFC 6238 fixes the algorithm; there is no newer one to prefer).
 [dev-dependencies]
+async-nats.workspace = true
+futures.workspace = true
+hmac.workspace = true
+rusty-s3.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
 miniz_oxide = "0.8"
 # The publisher side of ADR-0073: a test has to SIGN, which means holding a
 # private key the platform never sees.
@@ -176,10 +137,6 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 [[bin]]
 name = "comp-stub"
 path = "src/bin/stub.rs"
-
-[[bin]]
-name = "comp-goalrun"
-path = "src/bin/goalrun.rs"
 
 # The one part of the loop that genuinely needs an operating system: a gate has
 # to run the project's own tests, and a component cannot spawn a process.
@@ -194,8 +151,4 @@ path = "src/bin/bench.rs"
 [[bin]]
 name = "comp-planscale"
 path = "src/bin/planscale.rs"
-
-[[bin]]
-name = "comp-selfimprove"
-path = "src/bin/selfimprove.rs"
 

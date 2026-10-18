@@ -1,0 +1,66 @@
+[package]
+name = "comp-goal"
+description = "The goal loop: generate candidates, join the parts of a decomposed goal, judge them through a gate, remember what each attempt taught, and the tools that drive it and read what it left (docs/adr/0081 to 0092)."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Drains a project's goal queue, N runs at a time (ADR-0082's missing loop).
+[[bin]]
+name = "comp-goald"
+path = "src/bin/goald.rs"
+
+[[bin]]
+name = "comp-goalrun"
+path = "src/bin/goalrun.rs"
+
+[[bin]]
+name = "comp-selfimprove"
+path = "src/bin/selfimprove.rs"
+
+# Is DeepSeek off-peak right now? Exits 0 if so: the gate for a scheduled goalrun.
+[[bin]]
+name = "comp-offpeak"
+path = "src/bin/offpeak.rs"
+
+# Write one run's history, so the console's browser test has a run to look at.
+[[bin]]
+name = "comp-trace-seed"
+path = "src/bin/traceseed.rs"
+
+# The capability graph: who imports what from whom, derived from the artifacts.
+[[bin]]
+name = "comp-capgraph"
+path = "src/bin/capgraph.rs"
+
+# The component catalogue, derived from the SOURCES. Deliberately a second binary
+# rather than a `--format` on capgraph: that one reads built artifacts and answers
+# what a component really imports, this reads sources and answers what it is FOR, and
+# a component that does not build has the second and not the first.
+[[bin]]
+name = "comp-catalog"
+path = "src/bin/catalog.rs"
+
+[dependencies]
+comp-fleet.workspace = true
+comp-fuel.workspace = true
+comp-metadata.workspace = true
+comp-oci.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+toml.workspace = true
+# Capability versions are semver, so the self-improve gate orders them by
+# major/minor/patch rather than as strings ("2.0.0" > "10.0.0" the wrong way).
+semver = "1"
+regex = "1"
+
+# The tests include the root's shared harness (tests/harness/mod.rs), whose RustFS helper
+# signs S3 requests.
+[dev-dependencies]
+rusty-s3.workspace = true
