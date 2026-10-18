@@ -21,7 +21,7 @@ agent ──HTTP──▶ comp-host ┌ vcs-gateway ──holon:vcs──▶ vcs
 |---|---|
 | `wit/vcs/vcs.wit` | the contract: `holon:vcs/code-store` (apply, resolve, revert, query, export, conflicts, oplog, verify, repair) and `holon:vcs/files` (ingest real files, materialize a snapshot, read a blob) |
 | `crates/holon-vcs` | the engine — every decision: commutation, conflicts, names, positions, the write order and its recovery, symbol extraction. Pure; builds for wasm32-wasip2 and for the host |
-| `comp-vcs` (`reconciler/src/bin/vcs.rs`) | the engine over its NATS + SurrealDB adapters, one HTTP route per WIT function, startup repair, a `--allow-path` for `materialize`. Native because a guest cannot hold a NATS or SurrealDB connection (ADR-0095) |
+| `comp-vcs` (`reconciler/daemons/vcs/`) | the engine over its NATS + SurrealDB adapters, one HTTP route per WIT function, startup repair, a `--allow-path` for `materialize`. Native because a guest cannot hold a NATS or SurrealDB connection (ADR-0095) |
 | `vcs-store` (`components/vcs-store`) | exports the contract; each call is one request to `comp-vcs` ([CONTRACT](../../components/vcs-store/CONTRACT.md)) |
 | `vcs-gateway` (`components/vcs-gateway`) | imports the contract and serves it as `POST /v1/<function>` — the same JSON `comp-vcs` takes — for agents and tests |
 | `apps/vcs.toml` | the app: gateway ⊕ store on `:3942`, `comp-vcs` on `127.0.0.1:8014` |
@@ -73,7 +73,7 @@ bash e2e/vcs.sh c_crash      # a name filter, passed to the test binary
 the end) — or uses `VCS_E2E_SURREAL_URL` if you have one — and a private
 `nats-server -js` on a free port with a temp store (never the box's :4222),
 builds the two components and `comp-host`, and runs
-`reconciler/tests/e2e_vcs.rs`. Each scenario starts its own `comp-vcs` (own
+`reconciler/daemons/vcs/tests/e2e_vcs.rs`. Each scenario starts its own `comp-vcs` (own
 buckets, own SurrealDB database, own port) and its own `comp-host` with the
 composed gateway, and talks to nothing but the gateway:
 
