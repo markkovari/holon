@@ -2,7 +2,7 @@
 
 `park-store` (this component) exports `holon:park/lot` (`wit/park/park.wit`) and
 implements every call as ONE HTTP request to `comp-park` (native,
-`reconciler/src/bin/park.rs`), which runs the `holon-park` engine over NATS
+`reconciler/daemons/park/`), which runs the `holon-park` engine over NATS
 JetStream. Why the split: [ADR-0100](../../docs/adr/0100-a-parked-turn-is-a-record-not-a-held-thread.md)
 and [ADR-0095](../../docs/adr/0095-what-is-allowed-to-be-native.md).
 `park-gateway` serves the same routes, with the same JSON, to agents over
@@ -236,7 +236,7 @@ resolved a group. A child is never announced on its own: its group is. A message
 `{"redispatch": {"attempt": n}}`. It is a nudge, not the record: if a publish
 fails the ticket has still moved, and a recovery pass announces it again.
 
-`comp-resume` (`reconciler/src/bin/resume.rs`) is what reads it. It delivers each
+`comp-resume` (`reconciler/daemons/park/`) is what reads it. It delivers each
 resolved ticket to a sink over HTTP, at least once, and sweeps for calls that
 never answered. Its sink contract — one `POST` of `holon_park::resume::Delivery`
 with an `Idempotency-Key`, answered `2xx`, `410` or anything else — and its flags

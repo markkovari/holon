@@ -1,7 +1,7 @@
 //! `park-store` — `holon:park/lot` for components, each call one HTTP request to `comp-park` (ADR-0100, ADR-0095).
 //!
 //! The engine needs a held NATS JetStream connection, which a `wasm32-wasip2` guest cannot dial, so it runs natively
-//! (`reconciler/src/bin/park.rs`). This is its component face: it turns each call into `POST <park-url>/v1/<function>`
+//! (`reconciler/daemons/park/`). This is its component face: it turns each call into `POST <park-url>/v1/<function>`
 //! with JSON arguments (`holon_park::wire`) and the answer back into the WIT result. No state, no decisions.
 //!
 //! Config (wasi:config/store):

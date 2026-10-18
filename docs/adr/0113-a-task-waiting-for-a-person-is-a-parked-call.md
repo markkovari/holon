@@ -4,7 +4,7 @@
 answered yet has done nothing wrong.*
 
 **Status: accepted, and built.** `--park-url` on `comp-agentd`, and `POST /park/deliver`, the sink
-`comp-resume` delivers to ([`reconciler/src/bin/agentd/`](../../reconciler/src/bin/agentd/):
+`comp-resume` delivers to ([`reconciler/src/bin/agentd/`](../../reconciler/daemons/agentd/src/):
 `park.rs`, `agent.rs`, `session.rs`, `service.rs`). Builds what
 [ADR-0106](0106-a-resumed-turn-knows-what-it-may-repeat.md) left unbuilt ("`comp-agentd` parks
 nothing"), on the contract of [ADR-0100](0100-a-parked-turn-is-a-record-not-a-held-thread.md) and
@@ -105,7 +105,7 @@ memory.
 
 ## Proof
 
-[`agentd/tests.rs`](../../reconciler/src/bin/agentd/tests.rs) plays `comp-park` with a fake that
+[`agentd/tests.rs`](../../reconciler/daemons/agentd/src/tests.rs) plays `comp-park` with a fake that
 records what it is told and `comp-resume` by posting what it would deliver: the approval parked
 once, for this call and session, as unsafe; the task not moving until the answer is delivered, then
 resuming with the turn before the park still counted; a second answer refused and a repeated

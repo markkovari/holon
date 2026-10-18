@@ -5,7 +5,7 @@ anything since the first, and neither has the daemon.*
 
 **Status: accepted, and built.** `scope` on `SubmitApproval` and on `tool_approval_resolved`,
 `approved_tools` on the session, and `--auto-approve-tool` on `comp-agentd`
-([`reconciler/src/bin/agentd/`](../../reconciler/src/bin/agentd/): `wire.rs`, `session.rs`,
+([`reconciler/src/bin/agentd/`](../../reconciler/daemons/agentd/src/): `wire.rs`, `session.rs`,
 `agent.rs`, `service.rs`; `api/holon/v1/agent.proto`, `api/openapi.yaml`). Extends the approval of
 [ADR-0102](0102-an-agent-session-is-a-contract-first.md), and works the same whether the wait is
 held in memory or parked ([ADR-0113](0113-a-task-waiting-for-a-person-is-a-parked-call.md)).
@@ -99,7 +99,7 @@ session's agent run any command; the flag's help says so.
 
 ## Proof
 
-[`agentd/tests.rs`](../../reconciler/src/bin/agentd/tests.rs), driving the real router over HTTP and
+[`agentd/tests.rs`](../../reconciler/daemons/agentd/src/tests.rs), driving the real router over HTTP and
 gRPC, with a scripted model where a step needs several calls, and `FakePark` where an approval parks:
 
 - **Session.** One answer stops the questions about that tool in later tasks of that session, and

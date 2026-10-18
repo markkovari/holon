@@ -132,7 +132,7 @@ a pass rolling back a commit that can never be applied; and the sweep announcing
 commit resolved. Over real JetStream ([`tests/live.rs`](../../crates/holon-park/tests/live.rs)): a
 dead caller's intent finished by the resumer's own sweep, and six callers committing the identical
 list at once making one commit and four tickets. Through the real components, daemon and resumer
-([`reconciler/tests/e2e_park.rs`](../../reconciler/tests/e2e_park.rs)): a fan-out committed, the same
+([`reconciler/tests/e2e_park.rs`](../../reconciler/daemons/park/tests/e2e_park.rs)): a fan-out committed, the same
 commit again, a bad list and an empty one refused with nothing left behind, and a second commit
 whose `wake` effects resolve the group, which `comp-park` announces and `comp-resume` delivers once.
 

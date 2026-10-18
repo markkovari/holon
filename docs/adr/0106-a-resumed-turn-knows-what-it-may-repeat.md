@@ -7,7 +7,7 @@ again is a fact about the call, and only the caller knows it.*
 ([`wit/park/park.wit`](../../wit/park/park.wit)); the policy is
 [`crates/holon-park/src/recover.rs`](../../crates/holon-park/src/recover.rs); the
 resumer ADR-0100 left unbuilt is `comp-resume`
-([`reconciler/src/bin/resume.rs`](../../reconciler/src/bin/resume.rs)). Amends
+([`reconciler/src/bin/resume.rs`](../../reconciler/daemons/park/src/bin/resume.rs)). Amends
 [ADR-0100](0100-a-parked-turn-is-a-record-not-a-held-thread.md): the contract it
 named is now 0.2.0, and the resumer it said was "somebody else's code" exists.
 A crash-injection matrix (*Proof*) found and closed a hole in ADR-0100's `park`,
@@ -266,7 +266,7 @@ real JetStream ([`tests/live.rs`](../../crates/holon-park/tests/live.rs)): the
 same, plus a resumer's runtime dropped mid-delivery and replaced, an answer whose
 announcement was never published found by the sweep, and a message in the
 pre-0106 format. End to end
-([`reconciler/tests/e2e_park.rs`](../../reconciler/tests/e2e_park.rs), through
+([`reconciler/tests/e2e_park.rs`](../../reconciler/daemons/park/tests/e2e_park.rs), through
 `bash e2e/park.sh`): the real `park-gateway` ⊕ `park-store` components in
 `comp-host`, a real `comp-park` and a real `comp-resume` against a private NATS,
 and `comp-resume` killed with SIGKILL while its sink held the answer.

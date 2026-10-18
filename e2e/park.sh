@@ -11,7 +11,7 @@
 #     the box's :4222, which on a dev machine is often somebody else's NATS
 #   - builds park-store and park-gateway (wasm32-wasip2) and comp-host; comp-park is
 #     built by cargo for the test itself (CARGO_BIN_EXE_comp-park)
-# then runs reconciler/tests/e2e_park.rs, which starts its own comp-park and
+# then runs reconciler/daemons/park/tests/e2e_park.rs, which starts its own comp-park and
 # comp-host per scenario, and talks to nothing but the gateway. On exit — pass,
 # fail or Ctrl-C — stops NATS and removes the temp dirs.
 set -euo pipefail
@@ -68,7 +68,7 @@ export PARK_E2E_NATS_URL="nats://127.0.0.1:$NATS_PORT"
 export COMP_HOST="$ROOT/host/target/release/comp-host"
 status=0
 for run in $(seq "$RUNS"); do
-  say "run $run/$RUNS: reconciler/tests/e2e_park.rs (NATS $PARK_E2E_NATS_URL)"
+  say "run $run/$RUNS: reconciler/daemons/park/tests/e2e_park.rs (NATS $PARK_E2E_NATS_URL)"
   start=$(date +%s)
   if ! cargo test --release --manifest-path reconciler/Cargo.toml --test e2e_park -- --nocapture "$@"; then
     status=1

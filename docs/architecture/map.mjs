@@ -128,7 +128,7 @@ export const SYS = [
   boundary:['Both gateways are tailnet-only on purpose: whoever reaches the park gateway can park, wake or cancel any session’s ticket, and whoever reaches vcs can edit every workspace.',
             'The gateways keep nothing; every byte of state is in the daemon (kv = "memory" in the app spec).',
             'A bucket that already exists with fewer copies than --replicas is refused, with the command that raises it (ADR-0111).'],
-  code:['crates/holon-park','crates/holon-vcs','components/{park,vcs}-{store,gateway}','reconciler/src/bin/{park,resume}.rs','reconciler/daemons/vcs/','apps/{park,vcs}.toml']},
+  code:['crates/holon-park','crates/holon-vcs','components/{park,vcs}-{store,gateway}','reconciler/daemons/{park,vcs}/','apps/{park,vcs}.toml']},
 
  {id:'agents', name:'Agent services', short:'comp-agentd and the agent-runtime stack',
   purpose:'comp-agentd sessions with approvals, and the agent-runtime stack with its Matrix and desktop fronts.',
@@ -139,7 +139,7 @@ export const SYS = [
   boundary:['comp-agentd tools are confined to the session’s workspace root; run cannot be confined, which is what approval is for.',
             'agent-runtime refuses a tool an agent was not granted instead of dispatching it, and only the owner’s Matrix messages start a run.',
             'Nothing in this repository is a client of comp-agentd yet: the contract came first, for bots, backends and scripts outside it (ADR-0102).'],
-  code:['reconciler/src/bin/agentd/','api/holon/v1/agent.proto','api/openapi.yaml','agent-runtime/','agent-matrix/','gpui-console/']},
+  code:['reconciler/daemons/agentd/','reconciler/fuel/','api/holon/v1/agent.proto','api/openapi.yaml','agent-runtime/','agent-matrix/','gpui-console/']},
 
  {id:'loop', name:'Engineering loop', short:'goal to pull request',
   purpose:'Parallel AI branches, a real test gate, and a selector that opens the winner as a pull request.',

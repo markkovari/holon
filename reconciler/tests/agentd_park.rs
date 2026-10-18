@@ -6,7 +6,9 @@
 //! agentd's sink, and the thing it proves is what no stand-in can, that a task waiting on a person
 //! survives `kill -9` of the daemon that asked.
 //!
-//! Needs `nats-server` on `PATH`; without it every test prints `SKIPPED` and returns.
+//! Needs `nats-server` on `PATH`; without it every test prints `SKIPPED` and returns. And needs the
+//! three daemons built, which are two other packages' (docs/adr/0115): `cargo build --bin comp-agentd
+//! --bin comp-park --bin comp-resume` first, in the profile this runs in.
 
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -136,7 +138,7 @@ impl Stack {
         wait_listening(nats_port, "nats-server");
         let nats = format!("nats://127.0.0.1:{nats_port}");
         s.park = Proc::start(
-            env!("CARGO_BIN_EXE_comp-park"),
+            comp_fleet::fleet::built_bin("comp-park"),
             &a(&[
                 "--addr",
                 &format!("127.0.0.1:{park_port}"),
@@ -153,7 +155,7 @@ impl Stack {
         );
         wait_listening(park_port, "comp-park");
         s.resume = Proc::start(
-            env!("CARGO_BIN_EXE_comp-resume"),
+            comp_fleet::fleet::built_bin("comp-resume"),
             &a(&[
                 "--nats-url",
                 &nats,
@@ -208,7 +210,7 @@ impl Stack {
         }
         args.extend(extra.iter().map(|x| x.to_string()));
         self.agentd = Proc::start(
-            env!("CARGO_BIN_EXE_comp-agentd"),
+            comp_fleet::fleet::built_bin("comp-agentd"),
             &args,
             self.dir.join(format!("agentd-{n}.log")),
         );
