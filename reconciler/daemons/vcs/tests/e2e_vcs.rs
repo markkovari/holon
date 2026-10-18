@@ -29,6 +29,8 @@
 //!   G  a function moved by ingest, and back: exact both ways
 //!   H  a crashed writer's intent blocks export until the lease passes
 
+// The gate harness the root's suites share, included rather than copied (docs/adr/0115).
+#[path = "../../../tests/gatelib/mod.rs"]
 mod gatelib;
 
 use std::collections::BTreeMap;

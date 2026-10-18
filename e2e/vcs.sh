@@ -12,7 +12,7 @@
 #     the box's :4222, which on a dev machine is often somebody else's NATS
 #   - builds vcs-store and vcs-gateway (wasm32-wasip2) and comp-host; comp-vcs is
 #     built by cargo for the test itself (CARGO_BIN_EXE_comp-vcs)
-# then runs reconciler/tests/e2e_vcs.rs, which starts its own comp-vcs (and
+# then runs reconciler/daemons/vcs/tests/e2e_vcs.rs, which starts its own comp-vcs (and
 # restarts it, and crashes it on purpose) and comp-host per scenario, and talks
 # to nothing but the gateway. On exit — pass, fail or Ctrl-C — stops NATS,
 # removes the SurrealDB container and the temp dirs.
@@ -87,7 +87,7 @@ export VCS_E2E_NATS_URL="nats://127.0.0.1:$NATS_PORT"
 export COMP_HOST="$ROOT/host/target/release/comp-host"
 status=0
 for run in $(seq "$RUNS"); do
-  say "run $run/$RUNS: reconciler/tests/e2e_vcs.rs (NATS $VCS_E2E_NATS_URL, SurrealDB $VCS_E2E_SURREAL_URL)"
+  say "run $run/$RUNS: reconciler/daemons/vcs/tests/e2e_vcs.rs (NATS $VCS_E2E_NATS_URL, SurrealDB $VCS_E2E_SURREAL_URL)"
   start=$(date +%s)
   if ! cargo test --release --manifest-path reconciler/Cargo.toml --test e2e_vcs -- --nocapture "$@"; then
     status=1
