@@ -6,7 +6,7 @@ wrong. The third was right, and it wasn't the one that looked architectural.
 
 ## Theory 1: the compile cache is cold per branch. Wrong.
 
-`comp-goalrun`'s `warm_caches()` (`reconciler/src/bin/goalrun/setup.rs`)
+`comp-goalrun`'s `warm_caches()` (`reconciler/goal/src/bin/goalrun/setup.rs`)
 already gives every branch a **shared, persistent** `CARGO_HOME` and
 `CARGO_TARGET_DIR` under `~/.cache/comp-goalrun/…` — "paid once, ever," per
 its own comment. Measured against this repo's own `record-store`, one distinct

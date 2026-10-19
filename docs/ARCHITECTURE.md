@@ -160,7 +160,7 @@ flowchart LR
 - A component’s real imports are in its binary, so the capability graph is derived from the artifacts rather than kept in a list ([ADR-0097](adr/0097-a-derived-file-is-a-liability.md)).
 - Adding a function to a WIT interface is compatible; adding a variant case or a record field is not, and witsurface.rs fails when a shape moves without its version.
 
-**Where it lives** [`wit/`](../wit/) · [`components/`](../components/) · [`xtask/`](../xtask/) · [`reconciler/fleet/src/plug.rs`](../reconciler/fleet/src/plug.rs) · [`reconciler/src/bin/plug.rs`](../reconciler/src/bin/plug.rs) · [`reconciler/src/bin/oci.rs`](../reconciler/src/bin/oci.rs) · [`reconciler/src/bin/capgraph.rs`](../reconciler/src/bin/capgraph.rs) · [`reconciler/src/bin/catalog.rs`](../reconciler/src/bin/catalog.rs)
+**Where it lives** [`wit/`](../wit/) · [`components/`](../components/) · [`xtask/`](../xtask/) · [`reconciler/fleet/src/plug.rs`](../reconciler/fleet/src/plug.rs) · [`reconciler/oci/`](../reconciler/oci/) · [`reconciler/src/bin/plug.rs`](../reconciler/src/bin/plug.rs) · [`reconciler/src/bin/oci.rs`](../reconciler/src/bin/oci.rs) · [`reconciler/goal/src/bin/capgraph.rs`](../reconciler/goal/src/bin/capgraph.rs) · [`reconciler/goal/src/bin/catalog.rs`](../reconciler/goal/src/bin/catalog.rs)
 
 ### Delivery
 
@@ -675,7 +675,7 @@ flowchart LR
 - graph:select/selector is the only path from a branch to a pull request, and it takes runs rather than files, so a rejected candidate cannot be landed.
 - API keys arrive as file paths and reach the vault by reference; a key on a command line would be in every ps and shell history.
 
-**Where it lives** [`reconciler/src/generation.rs`](../reconciler/src/generation.rs) · [`reconciler/src/gate.rs`](../reconciler/src/gate.rs) · [`reconciler/src/compose.rs`](../reconciler/src/compose.rs) · [`reconciler/src/contract.rs`](../reconciler/src/contract.rs) · [`reconciler/src/memory.rs`](../reconciler/src/memory.rs) · [`reconciler/src/trace.rs`](../reconciler/src/trace.rs) · [`reconciler/src/bin/goalrun.rs`](../reconciler/src/bin/goalrun.rs) · [`reconciler/src/bin/goald.rs`](../reconciler/src/bin/goald.rs) · [`reconciler/src/bin/selfimprove.rs`](../reconciler/src/bin/selfimprove.rs) · [`components/agent-writer`](../components/agent-writer) · [`components/agent-driver`](../components/agent-driver) · [`components/graph-selector`](../components/graph-selector) · [`components/knowledge-memory`](../components/knowledge-memory) · [`components/contract-registry`](../components/contract-registry) · [`components/github-forge`](../components/github-forge) · [`.comp/goals/`](../.comp/goals/)
+**Where it lives** [`reconciler/goal/`](../reconciler/goal/) · [`components/agent-writer`](../components/agent-writer) · [`components/agent-driver`](../components/agent-driver) · [`components/graph-selector`](../components/graph-selector) · [`components/knowledge-memory`](../components/knowledge-memory) · [`components/contract-registry`](../components/contract-registry) · [`components/github-forge`](../components/github-forge) · [`.comp/goals/`](../.comp/goals/)
 
 ### Proof & measurement
 

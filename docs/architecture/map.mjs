@@ -69,7 +69,7 @@ export const SYS = [
   boundary:['Nothing here serves traffic: this is what is built and checked, then handed on as a digest.',
             'A component’s real imports are in its binary, so the capability graph is derived from the artifacts rather than kept in a list (ADR-0097).',
             'Adding a function to a WIT interface is compatible; adding a variant case or a record field is not, and witsurface.rs fails when a shape moves without its version.'],
-  code:['wit/','components/','xtask/','reconciler/fleet/src/plug.rs','reconciler/src/bin/{plug,oci,capgraph,catalog}.rs']},
+  code:['wit/','components/','xtask/','reconciler/fleet/src/plug.rs','reconciler/oci/','reconciler/src/bin/{plug,oci}.rs','reconciler/goal/src/bin/{capgraph,catalog}.rs']},
 
  {id:'delivery', name:'Delivery', short:'one spec, four lanes',
   purpose:'One app spec rendered for a box, a lattice, wasmCloud 1.x or 2.x. A pull agent keeps boxes current.',
@@ -150,7 +150,7 @@ export const SYS = [
   boundary:['The gate is a native process because a component cannot spawn one: the sandbox working, not a gap (ADR-0095).',
             'graph:select/selector is the only path from a branch to a pull request, and it takes runs rather than files, so a rejected candidate cannot be landed.',
             'API keys arrive as file paths and reach the vault by reference; a key on a command line would be in every ps and shell history.'],
-  code:['reconciler/src/{generation,gate,compose,contract,memory,trace}.rs','reconciler/src/bin/{goalrun,goald,selfimprove}.rs','components/{agent-writer,agent-driver,graph-selector,knowledge-memory,contract-registry,github-forge}','.comp/goals/']},
+  code:['reconciler/goal/','components/{agent-writer,agent-driver,graph-selector,knowledge-memory,contract-registry,github-forge}','.comp/goals/']},
 
  {id:'proof', name:'Proof & measurement', short:'tests, e2e, benchmarks',
   purpose:'Test suites, end-to-end scripts and benchmarks that drive other machines.',

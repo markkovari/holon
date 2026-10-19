@@ -1,7 +1,7 @@
 //! `cargo xtask stage-examples` — writes the jco examples' `.wasm` inputs from the
 //! build. They used to be tracked and had drifted from their components, so a green
 //! example said nothing about the component it claimed to demonstrate; they are
-//! build outputs now (`**/*.wasm` in .gitignore, and reconciler/tests/derived.rs
+//! build outputs now (`**/*.wasm` in .gitignore, and reconciler/goal/tests/derived.rs
 //! refuses a tracked one).
 //!
 //! Derived from each example's own `package.json` rather than a hand-kept list.
