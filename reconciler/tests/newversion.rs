@@ -9,7 +9,7 @@
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use comp_reconciler::fleet::{repo_root, Fleet};
+use comp_fleet::fleet::{repo_root, Fleet};
 use serde_json::{json, Value};
 
 /// Serialises builds. Tests compile the same crate into one target directory on parallel threads, so

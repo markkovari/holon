@@ -11,7 +11,7 @@
 
 use std::time::Duration;
 
-use comp_reconciler::fleet::Fleet;
+use comp_fleet::fleet::Fleet;
 
 fn client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder().timeout(Duration::from_secs(8)).build().unwrap()

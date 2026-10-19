@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use comp_reconciler::fleet::{free_port, repo_root, Fleet};
+use comp_fleet::fleet::{free_port, repo_root, Fleet};
 use serde_json::Value;
 
 fn artifacts() -> Vec<String> {

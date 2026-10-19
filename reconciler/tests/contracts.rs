@@ -15,8 +15,8 @@
 
 use std::collections::BTreeMap;
 
-use comp_reconciler::fleet::repo_root;
-use comp_reconciler::plug::{default_dirs, Catalog};
+use comp_fleet::fleet::repo_root;
+use comp_fleet::plug::{default_dirs, Catalog};
 
 fn catalogue() -> Option<Catalog> {
     let cat = Catalog::scan(&default_dirs(&repo_root()));
@@ -70,12 +70,12 @@ fn every_composition_encodes() {
         if !cat.unmet(&name).is_empty() {
             continue;
         }
-        let Ok(wiring) = comp_reconciler::plug::wiring(&name, &cat) else { continue };
+        let Ok(wiring) = comp_fleet::plug::wiring(&name, &cat) else { continue };
         if wiring.plugs.is_empty() {
             continue;
         }
         composed += 1;
-        if let Err(e) = comp_reconciler::plug::compose_to(&name, &cat, &out) {
+        if let Err(e) = comp_fleet::plug::compose_to(&name, &cat, &out) {
             broken.push(format!("  {name}: {e}"));
         }
     }

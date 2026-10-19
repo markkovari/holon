@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use comp_reconciler::plug;
+use comp_fleet::plug;
 use comp_reconciler::spec::AppSpec;
 use serde_json::{json, Value};
 

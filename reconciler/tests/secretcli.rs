@@ -9,7 +9,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use comp_reconciler::fleet::{repo_root, Fleet};
+use comp_fleet::fleet::{repo_root, Fleet};
 
 /// The CLI under test: `cli/target/release/holon`. It lives in its own workspace, so `bin_path` (beside
 /// the running test, then the reconciler's target dir) never finds it. Keep the path in step with the

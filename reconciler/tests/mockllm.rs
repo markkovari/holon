@@ -11,7 +11,7 @@
 
 use std::time::Duration;
 
-use comp_reconciler::fleet::{repo_root, Fleet};
+use comp_fleet::fleet::{repo_root, Fleet};
 use serde_json::{json, Value};
 
 fn artifacts() -> Vec<String> {

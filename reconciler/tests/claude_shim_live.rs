@@ -19,7 +19,7 @@
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-use comp_reconciler::fleet::{free_port, repo_root, Fleet};
+use comp_fleet::fleet::{free_port, repo_root, Fleet};
 use serde_json::Value;
 
 /// The shim, as a child process that dies with the test.

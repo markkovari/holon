@@ -12,10 +12,10 @@
 
 use std::time::Duration;
 
-use comp_reconciler::fleet::Fleet;
+use comp_fleet::fleet::Fleet;
 
 fn artifacts() -> Vec<String> {
-    let wasm = comp_reconciler::fleet::repo_root()
+    let wasm = comp_fleet::fleet::repo_root()
         .join("components/target/wasm32-wasip2/release/secret_probe.wasm");
     assert!(wasm.exists(), "missing {} — run `cargo xtask build --force`", wasm.display());
     vec![format!("gate={}", wasm.display())]

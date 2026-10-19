@@ -15,8 +15,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use comp_reconciler::fleet::repo_root;
-use comp_reconciler::plug::Catalog;
+use comp_fleet::fleet::repo_root;
+use comp_fleet::plug::Catalog;
 
 /// `graph:run/driver@0.2.0` -> `graph:run/driver`.
 fn base(iface: &str) -> &str {

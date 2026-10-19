@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use comp_reconciler::fleet::Fleet;
+use comp_fleet::fleet::Fleet;
 
 /// The rate limiter's remaining budget for one key, from whichever node answers.
 fn remaining(fleet: &Fleet, host: &str, key: &str) -> Option<f64> {
