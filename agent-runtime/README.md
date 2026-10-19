@@ -96,6 +96,36 @@ every run), `workspaces/<name>/` (the only place its file tools can reach).
   never calls them fails visibly. Small models otherwise write an intermediate
   note as prose and end their own task.
 
+## Coding sessions
+
+An agent granted `session_start` can hand a piece of coding to a [`comp-agentd`](../reconciler/daemons/agentd/)
+session ([ADR-0119](../docs/adr/0119-an-agent-can-start-a-coding-session.md)): an agent that reads, writes
+and runs commands in a workspace, each step asked about first. The agent chooses the task; the spec
+chooses everything else.
+
+```json
+{ "name": "lead",
+  "capabilities": [{"name": "session_start"}, {"name": "session_result"}, {"name": "session_close"}],
+  "sessions": { "workspaces": ["/Users/me/work/holon"], "budget_usd": 2.0,
+                "auto_approve": ["list_dir", "read_file"], "max_concurrent": 2 } }
+```
+
+* `session_start {"task": "...", "workspace": "own"}` returns a session id at once. `workspace` is `own`
+  (the agent's own directory) or one of `sessions.workspaces`, by path or last component. Two
+  started in a row run side by side.
+* `session_result {"session": "...", "wait_secs": 20}` says how it stands (still running, waiting for a
+  person, or its answer and what it cost) and waits up to `wait_secs`, at most 60. `session` may be left
+  out when the agent has only one. `session_close` stops it.
+* `budget_usd` is a ceiling the daemon enforces; `auto_approve` is which of the session's tools
+  (`list_dir`, `read_file`, `write_file`, `run`) run without asking, none by default.
+* A tool call the session is waiting on shows up as an ordinary approval (`session:write_file`,
+  the agent that started it, `session <id>` in its chain), so the console, the chat bridge and
+  `GET /approvals` show it as they show any. `POST /approvals/<id>/approve?scope=task|session` says how
+  far a yes reaches. `GET /sessions` lists the sessions this runtime started.
+* `--agentd-url`, `--agentd-token-file` and `--session-model` (or `HOLON_AGENTD_URL`,
+  `HOLON_AGENTD_TOKEN_FILE`, `HOLON_SESSION_MODEL`) say where the daemon is and which model sessions use.
+  The console starts a daemon itself. Without one the tools say sessions are not available.
+
 ## Tracing
 
 Standards, end to end:

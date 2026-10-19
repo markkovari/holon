@@ -17,13 +17,20 @@
 //! built-in text field; its own `examples/input.rs` is ~750 lines of IME/
 //! selection/clipboard handling, out of scope here.
 
+mod agentd;
 mod fm;
 mod lattice;
+
+use std::rc::Rc;
 
 use gpui::{
     div, prelude::*, px, rgb, size, App, Application, Bounds, Context, Entity, FocusHandle,
     Focusable, KeyDownEvent, SharedString, Window, WindowBounds, WindowOptions,
 };
+use gpui_console::board::icons::Assets;
+use gpui_console::board::theme::Mode;
+use gpui_console::board::view::Scope;
+use gpui_console::board::{Actions as BoardActions, Board};
 
 use lattice::{spec_from_form, AgentRow, FormInput, Kind, Lattice, Message, View};
 
@@ -32,10 +39,24 @@ fn is_typable(c: char) -> bool {
     c == ' ' || c.is_ascii_graphic()
 }
 
+/// Who answers a person's yes or no on the board: the runtime, through the lattice.
+struct LatticeActions {
+    lattice: Entity<Lattice>,
+}
+
+impl BoardActions for LatticeActions {
+    fn answer(&self, id: u64, approve: bool, scope: Scope, cx: &mut App) {
+        self.lattice.update(cx, |l, cx| l.resolve_approval_scoped(id, approve, scope.as_str(), cx));
+    }
+}
+
 struct Console {
     lattice: Entity<Lattice>,
     focus_handle: FocusHandle,
     message: String,
+    /// The agent board, which takes the whole window while it is showing.
+    board: Entity<Board>,
+    show_board: bool,
 }
 
 impl Console {
@@ -43,10 +64,54 @@ impl Console {
         cx.observe(&lattice, |_, _, cx| cx.notify()).detach();
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle);
-        Self { lattice, focus_handle, message: String::new() }
+        let tree = lattice.read(cx).tree.clone();
+        let actions = Rc::new(LatticeActions { lattice: lattice.clone() });
+        let board = cx.new(|cx| Board::new(tree, actions, Mode::Dark, cx));
+        Self { lattice, focus_handle, message: String::new(), board, show_board: false }
+    }
+
+    /// The board and the console take turns being the window.
+    fn set_board(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_board = show;
+        cx.notify();
+    }
+
+    /// The board, whole-window, with a way back.
+    fn board_screen(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        div()
+            .id("board-root")
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(Self::on_key_down))
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(rgb(0x151517))
+            .child(
+                div().px_3().pt_2().child(
+                    div()
+                        .id("back")
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .text_xs()
+                        .text_color(rgb(0x8d8d96))
+                        .hover(|s| s.text_color(rgb(0xf4f4f5)))
+                        .child("‹ console  (esc)")
+                        .on_click(cx.listener(|this, _, _, cx| this.set_board(false, cx))),
+                ),
+            )
+            .child(div().flex_1().min_h(px(0.0)).child(self.board.clone()))
+            .into_any_element()
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.show_board {
+            if event.keystroke.key == "escape" {
+                self.set_board(false, cx);
+            }
+            return;
+        }
         match event.keystroke.key.as_str() {
             "backspace" => {
                 self.message.pop();
@@ -103,6 +168,9 @@ impl Focusable for Console {
 
 impl Render for Console {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.show_board {
+            return self.board_screen(cx);
+        }
         let state = self.lattice.read(cx);
         let status_line = state.status_line.clone();
         let agents = state.agents.clone();
@@ -147,9 +215,27 @@ impl Render for Console {
             .flex_col()
             .bg(rgb(0x1e1e1e))
             .text_color(rgb(0xe0e0e0))
-            .child(div().p_3().text_xl().child(
-                "holon — lattice console (platform-domain + comp-reconciler, no wasmCloud/k8s)",
-            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .child(div().p_3().flex_1().text_xl().child(
+                        "holon — lattice console (platform-domain + comp-reconciler, no wasmCloud/k8s)",
+                    ))
+                    .child(
+                        div()
+                            .id("open-board")
+                            .mr_3()
+                            .px_3()
+                            .py_1()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .bg(rgb(0x2a4a6a))
+                            .child("agents board")
+                            .on_click(cx.listener(|this, _, _, cx| this.set_board(true, cx))),
+                    ),
+            )
             .child(
                 div()
                     .id("panes")
@@ -364,6 +450,7 @@ impl Render for Console {
                             }),
                     ),
             )
+            .into_any_element()
     }
 }
 
@@ -665,7 +752,7 @@ fn main() {
     let boot = lattice::boot();
     eprintln!("lattice ready: {}", boot.base_url);
 
-    Application::new().run(move |cx: &mut App| {
+    Application::new().with_assets(Assets).run(move |cx: &mut App| {
         let lattice = cx.new(|cx| {
             let mut l = Lattice::new(boot, cx);
             l.refresh(cx);
@@ -674,15 +761,48 @@ fn main() {
 
         let auto_refresh_handle = lattice.clone();
         let bounds = Bounds::centered(None, size(px(1040.0), px(640.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |window, cx| cx.new(|cx| Console::new(lattice, window, cx)),
-        )
-        .unwrap();
+        let window = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |window, cx| cx.new(|cx| Console::new(lattice, window, cx)),
+            )
+            .unwrap();
         cx.activate(true);
+
+        // For development: `HOLON_CONSOLE_BOARD=1` opens on the board, and
+        // `HOLON_CONSOLE_SHOT=<prefix>` with `HOLON_CONSOLE_SHOT_AT=8,14` (seconds) writes
+        // `<prefix>-<seconds>.png` of this window from inside the process, then exits. Reading a
+        // window's pixels back is permitted to its own process only, which is why it is done here.
+        if std::env::var("HOLON_CONSOLE_BOARD").is_ok() {
+            window.update(cx, |console, _, cx| console.set_board(true, cx)).ok();
+        }
+        #[cfg(target_os = "macos")]
+        if let Ok(prefix) = std::env::var("HOLON_CONSOLE_SHOT") {
+            let times: Vec<f32> = std::env::var("HOLON_CONSOLE_SHOT_AT")
+                .unwrap_or_else(|_| "8".into())
+                .split(',')
+                .filter_map(|t| t.trim().parse().ok())
+                .collect();
+            cx.spawn(async move |cx| {
+                let mut last = 0.0f32;
+                for t in times {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs_f32((t - last).max(0.0)))
+                        .await;
+                    last = t;
+                    let path = format!("{prefix}-{t:04.1}.png");
+                    match gpui_console::capture::own_window_png(&path) {
+                        Ok((w, h)) => eprintln!("shot {path} ({w}x{h})"),
+                        Err(e) => eprintln!("shot {path} failed: {e}"),
+                    }
+                }
+                std::process::exit(0);
+            })
+            .detach();
+        }
 
         // Auto-refresh the agent list every few seconds so convergence (and a
         // just-spawned agent going live) shows up without a manual click.
