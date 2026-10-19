@@ -13,7 +13,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use comp_reconciler::fleet::{repo_root, Fleet};
+use comp_fleet::fleet::{repo_root, Fleet};
 use serde_json::{json, Value};
 
 /// Ask the real git binary. `None` if it will not run.

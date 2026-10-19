@@ -3,8 +3,8 @@
 //!
 //! Library, not test-only. The benchmark matrix needs the same fleet start as the tests, so its numbers
 //! stay comparable, and the daemons' own end-to-end tests start from here too (docs/adr/0115).
-//! `comp_reconciler::fleet` and `comp_reconciler::plug` are this crate's modules, re-exported, so
-//! nothing that named them there changed.
+//! The suites, the benchmarks, the goal loop and `gpui-console` name this crate directly; the control plane
+//! does not re-export it, so its own tree has no wasm toolchain in it.
 
 /// Starting a fleet, driving it, reading it.
 pub mod fleet;

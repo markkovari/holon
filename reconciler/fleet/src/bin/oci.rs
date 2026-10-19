@@ -29,7 +29,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
-use comp_reconciler::oci::{self, Creds};
+use comp_oci::{self as oci, Creds};
 
 #[derive(Parser)]
 #[command(name = "comp-oci", about = "Push and pull components by digest")]
@@ -111,7 +111,7 @@ fn wasm_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 /// reasons about. Best-effort: the BYTES are the artifact, and a core module or adapter with no
 /// surface is still worth publishing, so a failure is an empty list.
 fn surface(wasm: &[u8]) -> (Vec<String>, Vec<String>) {
-    match comp_reconciler::plug::surface(wasm) {
+    match comp_fleet::plug::surface(wasm) {
         Ok(s) => (
             s.exports.into_iter().collect(),
             // Both kinds, because a puller wants to know everything the component will reach for

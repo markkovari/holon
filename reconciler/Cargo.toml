@@ -74,16 +74,6 @@ path = "src/main.rs"
 name = "comp-ingress"
 path = "src/bin/ingress.rs"
 
-# A shim over fleet/src/plug.rs, for gates — which are shell scripts and cannot call a
-# Rust function. The composition itself is the library.
-[[bin]]
-name = "comp-oci"
-path = "src/bin/oci.rs"
-
-[[bin]]
-name = "comp-plug"
-path = "src/bin/plug.rs"
-
 
 [dependencies]
 tokio.workspace = true
@@ -99,10 +89,6 @@ serde_json.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 reqwest.workspace = true
-# The fleet harness and composition as a library call (fleet/): `comp_reconciler::fleet`
-# and `comp_reconciler::plug` are its modules, re-exported. wac-graph and wasmparser
-# live there with the pin that explains them.
-comp-fleet.workspace = true
 # Artifacts by digest (oci/): `comp_reconciler::oci` is the crate, re-exported.
 comp-oci.workspace = true
 
@@ -120,6 +106,9 @@ async-trait = "0.1"
 # harness and gate library (tests/harness, tests/gatelib), JetStream for juan_live, and the
 # TOTP gate's HMAC-SHA1 (RFC 6238 fixes the algorithm; there is no newer one to prefer).
 [dev-dependencies]
+# The fleet harness the suites start a platform with, and the composition it needs (fleet/): the
+# wasm toolchain lives there, with the pin that explains it, and is not in this package's own tree.
+comp-fleet.workspace = true
 async-nats.workspace = true
 futures.workspace = true
 hmac.workspace = true

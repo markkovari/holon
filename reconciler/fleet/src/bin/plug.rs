@@ -1,4 +1,4 @@
-//! `comp-plug` — a shim over [`comp_reconciler::plug`], for callers that are not
+//! `comp-plug` — a shim over [`comp_fleet::plug`], for callers that are not
 //! Rust.
 //! A GATE is a shell script (`e2e-access.sh`) that cannot call a Rust function; this is the thin CLI over the library.
 //!
@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use comp_reconciler::plug::{compose_to, default_dirs, wiring, Catalog};
+use comp_fleet::plug::{compose_to, default_dirs, wiring, Catalog};
 
 #[derive(Parser)]
 #[command(name = "comp-plug", about = "Compose a component with what it imports")]

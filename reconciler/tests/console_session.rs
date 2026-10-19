@@ -19,7 +19,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use comp_reconciler::fleet::{free_port, repo_root};
+use comp_fleet::fleet::{free_port, repo_root};
 
 /// The token the stand-in platform issues. It is in no config or manifest, so a body containing it can
 /// only have got it from the exchange.

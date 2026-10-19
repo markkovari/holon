@@ -6,8 +6,8 @@ publish = false
 description = "A GPUI desktop console for autonomous agents: create them with capabilities and schedule/event triggers, watch them work, approve what they ask to do. Boots its own local dev lattice (reconciler/fleet/src/fleet.rs's Fleet) and embeds the agent runtime."
 
 # Native, and deliberately outside the components/ (wasm32) workspace — same
-# arrangement as cli/, host/ and reconciler/. Path-depends on comp-reconciler,
-# which is its own [workspace] root too; Cargo does not merge the two.
+# arrangement as cli/, host/ and reconciler/. Path-depends on comp-fleet, which is a
+# member of reconciler/'s [workspace]; Cargo does not merge the two.
 [workspace]
 
 [[bin]]
@@ -15,7 +15,7 @@ name = "gpui-console"
 path = "src/main.rs"
 
 [dependencies]
-comp-reconciler = { path = "../reconciler" }
+comp-fleet = { path = "../reconciler/fleet" }
 # Agents are specs + a tool-using loop + triggers, run by this crate (also
 # available headless as `agent-runtime`). The console embeds it in-process.
 agent-runtime = { path = "../agent-runtime" }

@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use comp_reconciler::fleet::repo_root;
+use comp_fleet::fleet::repo_root;
 
 /// Namespaces this repository does not define. `root` is the anonymous world every component
 /// carries; `wasi` is upstream's.
@@ -100,7 +100,7 @@ fn surfaces(root: &Path) -> Option<BTreeMap<String, String>> {
     for f in &files {
         // What this component EXPORTS: the interfaces it is the definition of.
         let Ok(bytes) = std::fs::read(f) else { continue };
-        let Ok(surface) = comp_reconciler::plug::surface(&bytes) else { continue };
+        let Ok(surface) = comp_fleet::plug::surface(&bytes) else { continue };
         if surface.exports.is_empty() {
             continue;
         }

@@ -160,7 +160,7 @@ flowchart LR
 - A component’s real imports are in its binary, so the capability graph is derived from the artifacts rather than kept in a list ([ADR-0097](adr/0097-a-derived-file-is-a-liability.md)).
 - Adding a function to a WIT interface is compatible; adding a variant case or a record field is not, and witsurface.rs fails when a shape moves without its version.
 
-**Where it lives** [`wit/`](../wit/) · [`components/`](../components/) · [`xtask/`](../xtask/) · [`reconciler/fleet/src/plug.rs`](../reconciler/fleet/src/plug.rs) · [`reconciler/oci/`](../reconciler/oci/) · [`reconciler/src/bin/plug.rs`](../reconciler/src/bin/plug.rs) · [`reconciler/src/bin/oci.rs`](../reconciler/src/bin/oci.rs) · [`reconciler/goal/src/bin/capgraph.rs`](../reconciler/goal/src/bin/capgraph.rs) · [`reconciler/goal/src/bin/catalog.rs`](../reconciler/goal/src/bin/catalog.rs)
+**Where it lives** [`wit/`](../wit/) · [`components/`](../components/) · [`xtask/`](../xtask/) · [`reconciler/fleet/src/plug.rs`](../reconciler/fleet/src/plug.rs) · [`reconciler/oci/`](../reconciler/oci/) · [`reconciler/fleet/src/bin/plug.rs`](../reconciler/fleet/src/bin/plug.rs) · [`reconciler/fleet/src/bin/oci.rs`](../reconciler/fleet/src/bin/oci.rs) · [`reconciler/goal/src/bin/capgraph.rs`](../reconciler/goal/src/bin/capgraph.rs) · [`reconciler/goal/src/bin/catalog.rs`](../reconciler/goal/src/bin/catalog.rs)
 
 ### Delivery
 

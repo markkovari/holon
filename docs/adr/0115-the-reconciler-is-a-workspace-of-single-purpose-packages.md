@@ -110,18 +110,24 @@ The root package is the control plane and what its own suites start by name. `co
 `settings`, `spec`). `comp-stub` is the stand-in control plane a fleet can start instead of the real
 one, `comp-bench` is what a fleet's benchmark report is read with, and `comp-checks` is the gate
 runner every gate suite starts: a suite in this package starts each of them by name, and cargo builds
-them for it as the package's own. `comp-plug`, `comp-oci` and `comp-planscale` are command lines over
-libraries that live elsewhere, or over the plan the reconciler is made of, and a package for one would
-take the library's dependencies with it. Moving any of them costs a line in CI and an edit in a test
-apiece, and buys nothing until the root has no suite that starts it.
+them for it as the package's own. `comp-planscale` reads the plan the reconciler is made of. Moving
+any of those costs a line in CI and an edit in a test apiece — a fleet suite would have to build
+`comp-stub` and `comp-checks` before it could run — and buys nothing while the root has a suite that
+starts them.
+
+The two command lines over libraries that live elsewhere, `comp-plug` (composition) and `comp-oci`
+(artifacts), are `comp-fleet`'s: the library they wrap is there, and while they were the root's they
+were the reason the control plane's tree carried `wac-graph` and `wasmparser`. The root does not
+re-export the harness any more; the suites, the benchmarks, the goal loop and `gpui-console` name
+`comp-fleet`, which is a dev-dependency of the control plane.
 
 What the split took out of the control plane's tree, measured with `cargo tree -p comp-reconciler -e
-normal,build` — and the same command is how to tell whether it stays true: the gRPC stack (`tonic`,
-`prost`), SurrealDB, the S3 signer, and every crate behind a daemon (`bollard`, `arboard`,
-`headless_chrome`, `mdns-sd`, `notify-rust`, `image`, `rawler`). Every crate only the suites use is a
-`[dev-dependencies]` entry now. What it still carries, and why: `comp-fleet`, and with it `wac-graph` and
-`wasmparser`, because `comp-plug` and `comp-oci` compose and the suites reach the harness through it;
-`async-nats`, through the lattice, which is what the reconciler talks to.
+normal,build` — and the same command is how to tell whether it stays true: the wasm toolchain
+(`wac-graph`, `wasmparser`), the gRPC stack (`tonic`, `prost`), SurrealDB, the S3 signer, and every
+crate behind a daemon (`bollard`, `arboard`, `headless_chrome`, `mdns-sd`, `notify-rust`, `image`,
+`rawler`). Every crate only the suites use is a `[dev-dependencies]` entry. What it still carries, and
+why: `async-nats`, through the lattice, which is what the reconciler talks to, and `comp-oci`, the
+artifacts library the reconciler pulls with.
 
 ## What this does not do
 

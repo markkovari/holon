@@ -18,7 +18,7 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use comp_reconciler::fleet::Fleet;
+use comp_fleet::fleet::Fleet;
 use serde_json::{json, Value};
 
 mod harness;

@@ -10,7 +10,7 @@ mod harness;
 
 use std::time::Duration;
 
-use comp_reconciler::fleet::{repo_root, Fleet};
+use comp_fleet::fleet::{repo_root, Fleet};
 use harness::RustFs;
 use serde_json::{json, Value};
 

@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use comp_reconciler::fleet::repo_root;
+use comp_fleet::fleet::repo_root;
 
 /// Directories with no documentation of ours in them.
 const SKIP: &[&str] = &["target", ".git", "node_modules", "vendor", "wit/deps"];
