@@ -21,9 +21,11 @@ use agent_runtime::{server, AgentSpec, Config, ModelSpec, Runtime, Trigger};
 use comp_fleet::fleet::{repo_root, Fleet};
 use futures::channel::mpsc;
 use futures::StreamExt;
-use gpui::{Context, Subscription};
+use gpui::{AppContext as _, Context, Entity, Subscription};
+use gpui_console::board::AgentTree;
 use serde_json::{json, Value};
 
+use crate::agentd::{self, AgentdProc};
 use crate::fm;
 
 /// Where the agent runtime listens. FIXED, not picked per launch: each
@@ -89,6 +91,8 @@ pub struct Boot {
     pub tenant: String,
     pub token: String,
     pub fm: Option<fm::FmServer>,
+    /// The coding-session daemon this process started, if it did.
+    pub agentd: Option<AgentdProc>,
     pub runtime: Arc<Runtime>,
     pub runtime_port: u16,
     pub runtime_dir: PathBuf,
@@ -119,6 +123,23 @@ pub fn boot() -> Boot {
         base_url: fm.as_ref().map(|s| s.base_url().to_string()),
         model: "system".into(),
     };
+    // Where an agent that is granted `session_start` opens a coding session: attached to a daemon
+    // that is already running, started here, or nowhere (and the tool says so).
+    let agentd = match agentd::start(&runtime_dir.join("workspaces"), &dir.join("agentd")) {
+        Ok((config, process)) => {
+            eprintln!(
+                "coding sessions: comp-agentd at {} ({})",
+                config.url,
+                process.as_ref().map_or("attached".to_string(), |p| p.describes.clone())
+            );
+            cfg.agentd = Some(config);
+            process
+        }
+        Err(e) => {
+            eprintln!("coding sessions are off: {e}");
+            None
+        }
+    };
     let runtime = Runtime::new(cfg).expect("opening the agent runtime");
     let port = std::env::var("HOLON_AGENT_RUNTIME_PORT")
         .ok()
@@ -143,7 +164,7 @@ pub fn boot() -> Boot {
     let tenant = "console".to_string();
     let token = register_and_login(&base_url, &format!("{tenant}@agents.test"), "password123");
 
-    Boot { fleet, base_url, tenant, token, fm, runtime, runtime_port: port, runtime_dir }
+    Boot { fleet, base_url, tenant, token, fm, agentd, runtime, runtime_port: port, runtime_dir }
 }
 
 /// Where this console's lattice lives across launches. Fixed and outside the
@@ -159,6 +180,7 @@ pub struct Lattice {
     // exits — a bare field's `Drop` never runs on a normal quit.
     _fleet: Option<Fleet>,
     _fm: Option<fm::FmServer>,
+    _agentd: Option<AgentdProc>,
     _quit_guard: Subscription,
     rt: Arc<Runtime>,
     runtime_port: u16,
@@ -168,6 +190,8 @@ pub struct Lattice {
     token: String,
     ingress_port: u16,
     pub agents: Vec<AgentRow>,
+    /// What is happening, as a tree: the runs, and the coding sessions they started.
+    pub tree: Entity<AgentTree>,
     pub approvals: Vec<Pending>,
     /// `None` = nothing selected; `Some(name)` = that agent's pane.
     pub selected: Option<String>,
@@ -185,6 +209,7 @@ impl Lattice {
             this.rt.shutdown();
             this._fleet.take();
             this._fm.take();
+            this._agentd.take();
             async {}
         });
 
@@ -213,6 +238,7 @@ impl Lattice {
         Self {
             _fleet: Some(boot.fleet),
             _fm: boot.fm,
+            _agentd: boot.agentd,
             _quit_guard: quit_guard,
             rt: boot.runtime,
             runtime_port: boot.runtime_port,
@@ -222,6 +248,7 @@ impl Lattice {
             token: boot.token,
             ingress_port,
             agents,
+            tree: cx.new(|_| AgentTree::default()),
             approvals: Vec::new(),
             selected: None,
             view: View::Chat,
@@ -241,7 +268,13 @@ impl Lattice {
 
 
     fn on_event(&mut self, ev: Event, cx: &mut Context<Self>) {
+        self.tree.update(cx, |t, cx| {
+            t.apply(&ev, gpui_console::board::view::now_ms());
+            cx.notify();
+        });
         match ev {
+            // the board has these; a conversation is only what was said
+            Event::ToolStarted { .. } | Event::Session(_) => {}
             Event::RunStarted { agent, trigger, input, .. } => {
                 if let Some(row) = self.row_mut(&agent) {
                     row.messages.extend(start_messages(&trigger, &input));
@@ -289,6 +322,19 @@ impl Lattice {
 
     pub fn resolve_approval(&mut self, id: u64, approved: bool, cx: &mut Context<Self>) {
         self.rt.resolve_approval(id, approved);
+        cx.notify();
+    }
+
+    /// Answers an approval and says how far a yes reaches (`once`, `task`, `session`): the second
+    /// two mean something for a coding session's tool call and are ignored for an agent's own.
+    pub fn resolve_approval_scoped(
+        &mut self,
+        id: u64,
+        approved: bool,
+        scope: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.rt.resolve_approval_scoped(id, approved, scope);
         cx.notify();
     }
 
