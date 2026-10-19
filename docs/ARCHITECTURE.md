@@ -599,7 +599,7 @@ flowchart LR
 - agent-runtime refuses a tool an agent was not granted instead of dispatching it, and only the owner’s Matrix messages start a run.
 - Nothing in this repository is a client of comp-agentd yet: the contract came first, for bots, backends and scripts outside it ([ADR-0102](adr/0102-an-agent-session-is-a-contract-first.md)).
 
-**Where it lives** [`reconciler/daemons/agentd/`](../reconciler/daemons/agentd/) · [`reconciler/fuel/`](../reconciler/fuel/) · [`api/holon/v1/agent.proto`](../api/holon/v1/agent.proto) · [`api/openapi.yaml`](../api/openapi.yaml) · [`agent-runtime/`](../agent-runtime/) · [`agent-matrix/`](../agent-matrix/) · [`gpui-console/`](../gpui-console/)
+**Where it lives** [`reconciler/daemons/agentd/`](../reconciler/daemons/agentd/) · [`crates/holon-llm/`](../crates/holon-llm/) · [`reconciler/fuel/`](../reconciler/fuel/) · [`api/holon/v1/agent.proto`](../api/holon/v1/agent.proto) · [`api/openapi.yaml`](../api/openapi.yaml) · [`agent-runtime/`](../agent-runtime/) · [`agent-matrix/`](../agent-matrix/) · [`gpui-console/`](../gpui-console/)
 
 ### Engineering loop
 
