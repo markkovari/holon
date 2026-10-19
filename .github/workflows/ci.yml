@@ -144,11 +144,12 @@ jobs:
   # in PARALLEL with `components` (no `needs:` between them) — its own ~90s
   # hides entirely inside that job's ~270s.
   #
-  # NOT `comp-plug`/`comp-mailrelay`: those are `reconciler`'s OWN `[[bin]]`
-  # targets, and cargo already builds a package's own binaries for free via
+  # NOT `comp-plug`/`comp-mailrelay`: `comp-plug` is `reconciler`'s OWN `[[bin]]`
+  # target, and cargo already builds a package's own binaries for free via
   # `CARGO_BIN_EXE_*` while compiling that package's tests — each downstream
   # job has to compile the `reconciler` crate to run its suites regardless, so
-  # there is no separate cost there to deduplicate.
+  # there is no separate cost there to deduplicate; and `comp-mailrelay` has no
+  # dependencies (docs/adr/0115) and builds in about a second.
   native-binaries:
     name: native binaries (comp-host, holon)
     runs-on: ubuntu-latest
@@ -387,10 +388,12 @@ jobs:
       # the answer is nothing, delete it and keep the program.
       #
       # `comp-host` and `holon` are not built here any more — downloaded above,
-      # from `native-binaries`. Only `comp-plug`/`comp-mailrelay` remain, and
-      # only for the prewarming: `cargo test` below builds `reconciler`'s own
-      # `[[bin]]` targets for free via `CARGO_BIN_EXE_*` regardless, since it
-      # has to compile the `reconciler` package to run its tests either way.
+      # from `native-binaries`. Only `comp-plug` and `comp-mailrelay` remain.
+      # `comp-plug` is `reconciler`'s own `[[bin]]`, which `cargo test` below
+      # builds for free via `CARGO_BIN_EXE_*` regardless, so building it here
+      # only prewarms. `comp-mailrelay` is a package of its own (docs/adr/0115):
+      # a gate finds it by path and nothing asks cargo to build it for a test, so
+      # THIS step is what builds it.
       - name: Build the binaries the gates and suites spawn
         run: |
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug
@@ -569,9 +572,9 @@ jobs:
       - name: Mark the downloaded binaries executable
         run: chmod +x host/target/release/comp-host cli/target/release/holon
 
-      # Only `comp-plug`/`comp-mailrelay` built here now — same reasoning as
-      # `reconciler-artifact-suites`'s own comment: `cargo nextest` below
-      # compiles `reconciler`'s own `[[bin]]` targets for free regardless.
+      # Only `comp-plug` and `comp-mailrelay` built here — same reasoning as
+      # `reconciler-artifact-suites`'s own comment: `cargo nextest` below builds
+      # `comp-plug` for free, and this step is what builds `comp-mailrelay`.
       - name: Build the binaries the gates and suites spawn
         run: |
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug

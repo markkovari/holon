@@ -1,0 +1,9 @@
+[package]
+name = "comp-mailrelay"
+description = "HTTP in, real SMTP out: what lets a wasm component reach MailHog, since the host wires no wasi:sockets and MailHog ingests SMTP only. std only, no dependencies."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# No dependencies, and that is the whole reason this is a package: `cargo build --bin
+# comp-mailrelay` used to compile the reconciler's entire dependency tree first (docs/adr/0115).

@@ -20,7 +20,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 fn repo() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+    comp_fleet::fleet::root_from_manifest()
 }
 
 fn measured_root(repo: &Path) -> PathBuf {
