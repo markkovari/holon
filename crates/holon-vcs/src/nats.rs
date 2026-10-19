@@ -116,7 +116,7 @@ impl BlobStore for NatsBlobs {
     /// creates an ordered consumer per read, and at the read rate of an engine
     /// those pile up faster than their inactivity timeout reaps them: measured
     /// here, the live suite hit JetStream's "maximum consumers limit reached"
-    /// within a few runs (and async-nats 0.50 panics on that inside the reader).
+    /// within a few runs (and async-nats 0.50 panicked on that inside the reader).
     /// Larger objects still stream through a consumer.
     async fn get(&self, hash: &str) -> Result<Option<Vec<u8>>> {
         let info = match self.store.info(hash).await {
