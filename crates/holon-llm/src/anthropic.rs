@@ -23,10 +23,10 @@ pub const DEFAULT_MAX_TOKENS: u32 = 4096;
 
 /// The request body for `/v1/messages`.
 ///
-/// A message that is a single piece of text is `"content": "<text>"`; anything else is a list of
-/// blocks, in the order the caller gave the parts.
+/// A message that is a single piece of text is `"content": "<text>"`, unless `blocks` asks for the
+/// list form; anything else is a list of blocks, in the order the caller gave the parts.
 pub fn body(req: &Request) -> Value {
-    let messages = merge_user_turns(req.messages.iter().map(message).collect());
+    let messages = merge_user_turns(req.messages.iter().map(|m| message(m, req.blocks)).collect());
     let mut v = json!({
         "model": req.model,
         "max_tokens": req.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
@@ -63,9 +63,9 @@ fn tool(t: &Tool) -> Value {
     json!({"name": t.name, "description": t.description, "input_schema": t.schema})
 }
 
-fn message(m: &Message) -> Value {
+fn message(m: &Message, blocks: bool) -> Value {
     let role = m.role.as_str();
-    if let [Part::Text(t)] = m.parts.as_slice() {
+    if let ([Part::Text(t)], false) = (m.parts.as_slice(), blocks) {
         return json!({"role": role, "content": t});
     }
     json!({"role": role, "content": m.parts.iter().map(block).collect::<Vec<_>>()})
@@ -237,6 +237,20 @@ mod tests {
         }
         let v = body(&Request { max_tokens: Some(256), ..Request::new("claude-x", &m) });
         assert_eq!(v["max_tokens"], 256);
+    }
+
+    #[test]
+    fn a_server_that_reads_only_blocks_can_ask_for_them_even_for_plain_text() {
+        let m = vec![Message::user("hi"), Message::assistant("hello")];
+        let v = body(&Request { blocks: true, ..Request::new("m", &m) });
+        assert_eq!(
+            v["messages"][0],
+            json!({"role": "user", "content": [{"type": "text", "text": "hi"}]})
+        );
+        assert_eq!(
+            v["messages"][1],
+            json!({"role": "assistant", "content": [{"type": "text", "text": "hello"}]})
+        );
     }
 
     #[test]
