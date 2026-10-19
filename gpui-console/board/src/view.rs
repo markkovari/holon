@@ -30,9 +30,11 @@ use gpui::{
 };
 
 use super::canvas::{MapEvent, MapView};
+use super::explore::{ExploreEvent, ExploreView};
 use super::field::{FieldEvent, TextField};
+use super::graph::{Graph, SessionNode};
 use super::icons::{icon, model_glyph, tool_icon};
-use super::map::{self as maps, Key, Ref, SessionText, Tab};
+use super::map::{self as maps, Ref, Tab};
 use super::store::{self, Store};
 use super::theme::{Mode, Theme};
 use super::tree::{AgentTree, Kind, Node, Pending, SessionRow, Status, Summary, Waiting};
@@ -312,14 +314,18 @@ pub struct Board {
     return_focus: Option<FocusHandle>,
     /// Room above everything, for a window whose title bar the board is drawn under.
     inset: f32,
-    /// Which of the three is showing: the sessions, the components, what the goal runs left.
+    /// Which of the three is showing: the sessions, one thing and what it is joined to, the whole.
     tab: Tab,
+    /// The whole system, grouped: the zoom-out.
     components: Entity<MapView>,
-    knowledge: Entity<MapView>,
-    /// Every key's backlinks across the three, and the tree's revision and the maps' load they were
-    /// worked out at.
-    links: HashMap<Key, Vec<Ref>>,
-    links_at: (u64, u64),
+    /// The goal runs as the store holds them, which the graph joins to the rest.
+    knowledge: maps::Map,
+    explore: Entity<ExploreView>,
+    /// What Explore's list is narrowed to, as it is typed.
+    search: Entity<TextField>,
+    query: String,
+    /// The tree's revision and the maps' load the graph was built from.
+    graph_at: (u64, u64),
     maps_loaded: u64,
     /// The frames whose items the list beside a map shows.
     expanded: HashSet<String>,
@@ -339,6 +345,7 @@ impl Board {
         cx.subscribe(&field, |this, _, ev: &FieldEvent, cx| match ev {
             FieldEvent::Submit(goal) => this.submit(goal.clone(), cx),
             FieldEvent::Cancel => this.close_form(cx),
+            FieldEvent::Changed(_) => {}
         })
         .detach();
         let components = cx.new(|cx| {
@@ -352,23 +359,31 @@ impl Board {
                 cx,
             )
         });
-        let knowledge = cx.new(|cx| {
-            MapView::new(
-                "Knowledge",
-                (
-                    "No goal runs in the store",
-                    "A run of comp-goalrun with --surreal-url writes its attempts, their fitness and the gate's verdicts here; comp-trace-seed writes a small one to look at.",
-                ),
-                theme,
-                cx,
-            )
-        });
-        for view in [&components, &knowledge] {
-            cx.subscribe(view, |this, _, ev: &MapEvent, cx| match ev {
-                MapEvent::Open(r) => this.open_ref(r, cx),
-            })
-            .detach();
-        }
+        cx.subscribe(&components, |this, _, ev: &MapEvent, cx| match ev {
+            MapEvent::Open(r) => this.open_ref(r, cx),
+        })
+        .detach();
+        let explore = cx.new(|_| ExploreView::new(theme));
+        cx.subscribe(&explore, |this, _, ev: &ExploreEvent, cx| match ev {
+            ExploreEvent::InMap(k) => this.show(Tab::Map, k, cx),
+            ExploreEvent::Session(root) => this.show(Tab::Sessions, root, cx),
+        })
+        .detach();
+        let search = cx.new(|cx| TextField::compact("Search", theme, cx));
+        cx.subscribe(&search, |this, _, ev: &FieldEvent, cx| match ev {
+            FieldEvent::Changed(q) => {
+                this.query = q.clone();
+                cx.notify();
+            }
+            // enter looks at the best match
+            FieldEvent::Submit(q) => {
+                if let Some(k) = this.explore.read(cx).graph().search(q, 1).pop() {
+                    this.explore.update(cx, |e, cx| e.show(&k, cx));
+                }
+            }
+            FieldEvent::Cancel => this.search.update(cx, |f, cx| f.clear(cx)),
+        })
+        .detach();
         // The one clock: once a second, so "45s" reads 46s without anything having happened.
         let tick = cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(Duration::from_millis(1000)).await;
@@ -403,9 +418,11 @@ impl Board {
             inset: 34.0,
             tab: Tab::Sessions,
             components,
-            knowledge,
-            links: HashMap::new(),
-            links_at: (u64::MAX, 0),
+            knowledge: maps::Map::default(),
+            explore,
+            search,
+            query: String::new(),
+            graph_at: (u64::MAX, 0),
             maps_loaded: 0,
             expanded: HashSet::new(),
             _tick: tick,
@@ -420,7 +437,7 @@ impl Board {
 
     /// Reads both maps from the store again, off the window's thread.
     pub fn reload(&mut self, cx: &mut Context<Self>) {
-        let (comps, know) = (self.components.clone(), self.knowledge.clone());
+        let comps = self.components.clone();
         cx.spawn(async move |this, cx| {
             // natively the store is asked from a thread, and what proves each thing is found on disk
             #[cfg(not(target_family = "wasm"))]
@@ -457,12 +474,12 @@ impl Board {
                 )
             };
             let _ = this.update(cx, |b, cx| {
-                for (view, got) in [(&comps, c), (&know, k)] {
-                    view.update(cx, |v, cx| match got {
-                        Ok(m) => v.set_map(m, cx),
-                        Err(e) => v.set_problem(Some(e), cx),
-                    });
-                }
+                comps.update(cx, |v, cx| match c {
+                    Ok(m) => v.set_map(m, cx),
+                    Err(e) => v.set_problem(Some(e), cx),
+                });
+                // a store with no runs is no runs; a store that did not answer has said so above
+                b.knowledge = k.unwrap_or_default();
                 b.maps_loaded += 1;
                 cx.notify();
             });
@@ -476,12 +493,10 @@ impl Board {
         match r.tab {
             Tab::Sessions => self
                 .select(r.key.strip_prefix("session:").unwrap_or(&r.key).to_string().as_str(), cx),
-            Tab::Components => {
+            Tab::Map => {
                 self.components.update(cx, |v, cx| v.focus_key(&r.key, r.frame.as_deref(), cx))
             }
-            Tab::Knowledge => {
-                self.knowledge.update(cx, |v, cx| v.focus_key(&r.key, r.frame.as_deref(), cx))
-            }
+            Tab::Explore => self.explore.update(cx, |e, cx| e.show(&r.key, cx)),
         }
         cx.notify();
     }
@@ -495,8 +510,8 @@ impl Board {
     pub fn set_tab(&mut self, tab: Tab, window: &mut Window, cx: &mut Context<Self>) {
         self.tab = tab;
         match tab {
-            Tab::Components => window.focus(&self.components.focus_handle(cx), cx),
-            Tab::Knowledge => window.focus(&self.knowledge.focus_handle(cx), cx),
+            Tab::Map => window.focus(&self.components.focus_handle(cx), cx),
+            Tab::Explore => window.focus(&self.search.focus_handle(cx), cx),
             Tab::Sessions => {}
         }
         cx.notify();
@@ -517,9 +532,9 @@ impl Board {
         self.theme = Theme::of(mode);
         let theme = self.theme;
         self.field.update(cx, |f, cx| f.set_theme(theme, cx));
-        for view in [&self.components, &self.knowledge] {
-            view.update(cx, |v, cx| v.set_theme(theme, cx));
-        }
+        self.components.update(cx, |v, cx| v.set_theme(theme, cx));
+        self.explore.update(cx, |v, cx| v.set_theme(theme, cx));
+        self.search.update(cx, |f, cx| f.set_theme(theme, cx));
         cx.notify();
     }
 
@@ -1248,10 +1263,22 @@ impl Board {
     /// What a session names on the other tabs, as chips under its goal: each opens it there.
     fn ref_chips(&self, key: &str, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let t = self.theme;
-        let refs = self.links.get(key).filter(|r| !r.is_empty())?.clone();
+        let refs: Vec<(String, String)> = {
+            let g = self.explore.read(cx).graph();
+            g.lanes(key)
+                .into_iter()
+                .filter(|l| l.title == "touched")
+                .flat_map(|l| l.keys)
+                .map(|k| (g.label(&k), k))
+                .collect()
+        };
+        if refs.is_empty() {
+            return None;
+        }
         let mut row = div().ml(px(30.0)).flex().flex_row().flex_wrap().items_center().gap(px(6.0));
-        for (n, r) in refs.into_iter().enumerate() {
-            let glyph = if r.tab == Tab::Knowledge { "brain" } else { "hexagon" };
+        for (n, (label, k)) in refs.into_iter().enumerate() {
+            let r = Ref { tab: Tab::Explore, key: k, frame: None, label: label.clone() };
+            let glyph = "hexagon";
             row = row.child(
                 div()
                     .id(SharedString::from(format!("ref-chip-{n}")))
@@ -1270,7 +1297,7 @@ impl Board {
                     .cursor_pointer()
                     .hover(|s| s.border_color(t.line))
                     .child(icon(glyph).size(px(12.0)).text_color(t.line))
-                    .child(r.label.clone())
+                    .child(label)
                     .on_click(cx.listener(move |this, _, _, cx| this.open_ref(&r, cx))),
             );
         }
@@ -1540,7 +1567,8 @@ impl Board {
             .border_color(t.card_border)
             .pt(px(self.inset))
             .child(self.tabs(cx))
-            .when(self.tab != Tab::Sessions, |c| c.child(self.contents(cx)))
+            .when(self.tab == Tab::Map, |c| c.child(self.contents(cx)))
+            .when(self.tab == Tab::Explore, |c| c.child(self.explore_side(rows, cx)))
             .when(self.tab == Tab::Sessions, |c| {
                 c.child(
                     div()
@@ -1598,11 +1626,9 @@ impl Board {
             .flex()
             .flex_row()
             .gap(px(2.0));
-        for (tab, label) in [
-            (Tab::Sessions, "Sessions"),
-            (Tab::Components, "Components"),
-            (Tab::Knowledge, "Knowledge"),
-        ] {
+        for (tab, label) in
+            [(Tab::Sessions, "Sessions"), (Tab::Explore, "Explore"), (Tab::Map, "Map")]
+        {
             let on = self.tab == tab;
             strip = strip.child(
                 div()
@@ -1631,11 +1657,7 @@ impl Board {
     /// hunting the canvas.
     fn contents(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
-        let view = if self.tab == Tab::Components {
-            self.components.clone()
-        } else {
-            self.knowledge.clone()
-        };
+        let view = self.components.clone();
         // each frame's key, title, sub and its items' keys, labels and weights
         type Entry = (String, String, String, Vec<(String, String, u32)>);
         let frames: Vec<Entry> = view
@@ -1759,6 +1781,132 @@ impl Board {
             }
         }
         list
+    }
+
+    /// Explore's side: a search, and while nothing is typed, where to start from: what was done lately,
+    /// and what most of the system is built on.
+    fn explore_side(&self, rows: &[SessionRow], cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let explore = self.explore.read(cx);
+        let (g, current) = (explore.graph(), explore.subject().cloned());
+        // (key, label, what it is) per entry, under its heading
+        type Entry = (String, String, String, maps::Kind);
+        let mut groups: Vec<(String, Vec<Entry>)> = Vec::new();
+        let entry = |k: &str| {
+            g.nodes.get(k).map(|n| (n.key.clone(), n.label.clone(), n.sub.clone(), n.kind))
+        };
+        if !self.query.trim().is_empty() {
+            let found: Vec<_> = g
+                .search(&self.query, 40)
+                .iter()
+                .filter_map(|k| entry(k))
+                .map(|(k, l, s, kind)| {
+                    (
+                        k,
+                        l,
+                        if s.is_empty() { crate::explore::kind_name(kind).to_string() } else { s },
+                        kind,
+                    )
+                })
+                .collect();
+            groups.push((format!("Found · {}", found.len()), found));
+        } else {
+            let sessions: Vec<_> =
+                rows.iter().filter_map(|r| entry(&format!("session:{}", r.root))).collect();
+            let runs: Vec<_> = self.knowledge.frames.iter().filter_map(|f| entry(&f.key)).collect();
+            let mut used: Vec<&crate::graph::Node> =
+                g.nodes.values().filter(|n| n.kind == maps::Kind::Part).collect();
+            used.sort_by_key(|n| std::cmp::Reverse(n.weight));
+            let used: Vec<_> = used
+                .into_iter()
+                .take(8)
+                .map(|n| (n.key.clone(), n.label.clone(), format!("used by {}", n.weight), n.kind))
+                .collect();
+            for (h, v) in [("Sessions", sessions), ("Goal runs", runs), ("Most used", used)] {
+                if !v.is_empty() {
+                    groups.push((h.to_string(), v));
+                }
+            }
+        }
+        let mut list = div()
+            .id("explore-list")
+            .flex_1()
+            .min_h(px(0.0))
+            .overflow_y_scroll()
+            .px(px(8.0))
+            .pb(px(12.0))
+            .flex()
+            .flex_col()
+            .gap(px(1.0));
+        for (heading, entries) in groups {
+            list = list.child(
+                div()
+                    .px(px(10.0))
+                    .pt(px(12.0))
+                    .pb(px(4.0))
+                    .text_size(px(11.5))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(t.faint)
+                    .child(heading),
+            );
+            for (key, label, sub, kind) in entries {
+                let on = current.as_deref() == Some(key.as_str());
+                let (view, k) = (self.explore.clone(), key.clone());
+                list = list.child(
+                    div()
+                        .id(SharedString::from(format!("x-{key}")))
+                        .flex()
+                        .flex_row()
+                        .items_start()
+                        .gap(px(9.0))
+                        .px(px(10.0))
+                        .py(px(6.0))
+                        .rounded(px(8.0))
+                        .cursor_pointer()
+                        .when(on, |el| el.bg(t.card))
+                        .when(!on, |el| el.hover(|s| s.bg(t.row_hover)))
+                        .child(
+                            div()
+                                .mt(px(5.0))
+                                .size(px(7.0))
+                                .flex_none()
+                                .rounded(px(4.0))
+                                .bg(crate::explore::tint(&t, kind)),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .child(
+                                    div()
+                                        .text_size(px(13.0))
+                                        .line_height(px(18.0))
+                                        .text_color(t.text)
+                                        .line_clamp(2)
+                                        .child(label),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(11.5))
+                                        .line_height(px(15.0))
+                                        .text_color(t.faint)
+                                        .truncate()
+                                        .child(sub),
+                                ),
+                        )
+                        .on_click(move |_, _, cx| view.update(cx, |v, cx| v.show(&k, cx))),
+                );
+            }
+        }
+        div()
+            .flex_1()
+            .min_h(px(0.0))
+            .flex()
+            .flex_col()
+            .child(div().px(px(10.0)).pb(px(4.0)).child(self.search.clone()))
+            .child(list)
     }
 
     /// A map tab's header: what it is, how big, and a way to read it again.
@@ -1992,30 +2140,31 @@ impl Render for Board {
             self.follow_newest = false;
         }
         self.known.extend(rows.iter().map(|r| r.root.clone()));
-        // the references, worked out again when what they are found in has changed
+        // the graph Explore walks, built again when the tree or the maps it is made of have changed
         let at = (self.tree.read(cx).revision, self.maps_loaded);
-        if at != self.links_at {
-            let texts: Vec<SessionText> = {
+        if at != self.graph_at {
+            let comps = self.components.read(cx).map().clone();
+            let names: std::collections::BTreeSet<String> = comps
+                .items()
+                .filter_map(|(_, i)| i.key.strip_prefix("component:").map(str::to_string))
+                .collect();
+            let sessions: Vec<SessionNode> = {
                 let tree = self.tree.read(cx);
                 rows.iter()
-                    .map(|r| SessionText {
+                    .map(|r| SessionNode {
                         root: r.root.clone(),
-                        title: r.title.clone(),
-                        text: tree.texts_of(&r.root),
+                        title: if r.title.is_empty() { r.lead.clone() } else { r.title.clone() },
+                        sub: meta(r, now),
+                        touched: std::iter::once(r.title.clone())
+                            .chain(tree.texts_of(&r.root))
+                            .flat_map(|t| maps::mentions(&t, &names))
+                            .collect(),
                     })
                     .collect()
             };
-            let links = maps::backlinks(
-                self.components.read(cx).map(),
-                self.knowledge.read(cx).map(),
-                &texts,
-            );
-            for view in [&self.components, &self.knowledge] {
-                let l = links.clone();
-                view.update(cx, |v, cx| v.set_links(l, cx));
-            }
-            self.links = links;
-            self.links_at = at;
+            let g = Graph::build(&comps, &self.knowledge, &sessions);
+            self.explore.update(cx, |e, cx| e.set_graph(g, cx));
+            self.graph_at = at;
         }
         let root = shown.as_ref().map(|r| r.root.clone()).unwrap_or_default();
         let (summary, branch) = {
@@ -2034,12 +2183,12 @@ impl Render for Board {
         let sidebar = self.sidebar(&rows, shown.as_ref().map(|r| r.root.as_str()), cx);
         let form = self.form.then(|| self.form_overlay(cx));
         if self.tab != Tab::Sessions {
-            let (view, title, sub) = if self.tab == Tab::Components {
-                let m = self.components.read(cx).map();
+            let m = self.components.read(cx).map();
+            let (view, title, sub): (gpui::AnyView, &str, String) = if self.tab == Tab::Map {
                 let apps = m.items().filter(|(_, i)| i.kind == maps::Kind::App).count();
                 (
-                    self.components.clone(),
-                    "Components",
+                    self.components.clone().into(),
+                    "The whole system",
                     format!(
                         "{} components · {apps} applications · {} connections",
                         m.items().count(),
@@ -2047,18 +2196,15 @@ impl Render for Board {
                     ),
                 )
             } else {
-                let m = self.knowledge.read(cx).map();
-                let attempts = m
-                    .items()
-                    .filter(|(_, i)| matches!(i.kind, maps::Kind::Attempt | maps::Kind::Missed))
-                    .count();
-                let runs = m.frames.len();
+                let runs = self.knowledge.frames.len();
                 (
-                    self.knowledge.clone(),
-                    "Knowledge",
+                    self.explore.clone().into(),
+                    "Explore",
                     format!(
-                        "{runs} goal run{} · {attempts} attempts",
-                        if runs == 1 { "" } else { "s" }
+                        "{} components · {runs} goal run{} · {} sessions",
+                        m.items().count(),
+                        if runs == 1 { "" } else { "s" },
+                        rows.len()
                     ),
                 )
             };

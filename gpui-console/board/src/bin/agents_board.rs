@@ -15,7 +15,7 @@
 //!   cargo run --bin agents-board -- --open --film 0:200:120 --gif docs/media/agents-board.gif
 //!
 //! In a browser (README.md says how it is built) the same choices are the page's query:
-//! `index.html?tab=components&select=component:record-store&mode=light&auto=6`.
+//! `index.html?tab=explore&select=component:record-store&mode=light&auto=6`.
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -45,8 +45,8 @@ struct Opts {
 
 fn tab_named(s: &str) -> Option<Tab> {
     match s {
-        "components" => Some(Tab::Components),
-        "knowledge" => Some(Tab::Knowledge),
+        "explore" => Some(Tab::Explore),
+        "map" => Some(Tab::Map),
         "sessions" => Some(Tab::Sessions),
         _ => None,
     }
@@ -192,10 +192,10 @@ mod native {
         /// Two seconds in, type GOAL into the form and start it, as a person would.
         #[arg(long, value_name = "GOAL")]
         goal: Option<String>,
-        /// Open on `components` or `knowledge` instead of the sessions.
-        #[arg(long, value_parser = ["sessions", "components", "knowledge"])]
+        /// Open on `explore` or `map` instead of the sessions.
+        #[arg(long, value_parser = ["sessions", "explore", "map"])]
         tab: Option<String>,
-        /// With `--tab`: select KEY there (`component:rate-limiter`), as following a reference would.
+        /// With `--tab`: look at KEY there (`component:rate-limiter`), as following a reference would.
         #[arg(long, value_name = "KEY", requires = "tab")]
         select: Option<String>,
         /// With `--film`: write the frames as one GIF at FILE, not as PNGs.

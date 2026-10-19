@@ -20,6 +20,8 @@ use super::theme::Theme;
 pub enum FieldEvent {
     Submit(String),
     Cancel,
+    /// The text, after any key that changed it: what a search follows as it is typed.
+    Changed(String),
 }
 
 pub struct TextField {
@@ -27,6 +29,8 @@ pub struct TextField {
     placeholder: SharedString,
     focus: FocusHandle,
     theme: Theme,
+    /// One line, and small: a search, not a goal.
+    compact: bool,
 }
 
 impl EventEmitter<FieldEvent> for TextField {}
@@ -68,7 +72,17 @@ impl TextField {
             placeholder: placeholder.into(),
             focus: cx.focus_handle(),
             theme,
+            compact: false,
         }
+    }
+
+    /// A field of one line, for a search: enter takes the text as it is, shift-enter adds no line.
+    pub fn compact(
+        placeholder: impl Into<SharedString>,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self { compact: true, ..Self::new(placeholder, theme, cx) }
     }
 
     pub fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
@@ -88,14 +102,16 @@ impl TextField {
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
         self.text.clear();
+        cx.emit(FieldEvent::Changed(String::new()));
         cx.notify();
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let k = &event.keystroke;
         let m = &k.modifiers;
+        let before = self.text.len();
         match k.key.as_str() {
-            "enter" if m.shift => self.text.push('\n'),
+            "enter" if m.shift && !self.compact => self.text.push('\n'),
             "enter" => {
                 let goal = self.text.trim().to_string();
                 if !goal.is_empty() {
@@ -117,6 +133,9 @@ impl TextField {
         }
         // a key the field used is not also the window's: escape here closes the form, not the board
         cx.stop_propagation();
+        if self.text.len() != before {
+            cx.emit(FieldEvent::Changed(self.text.clone()));
+        }
         cx.notify();
     }
 }
@@ -131,7 +150,7 @@ impl Render for TextField {
             div()
                 .mt(px(2.0))
                 .w(px(1.5))
-                .h(px(18.0))
+                .h(px(if self.compact { 15.0 } else { 18.0 }))
                 .flex_none()
                 .rounded(px(1.0))
                 .bg(t.line)
@@ -151,10 +170,10 @@ impl Render for TextField {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key_down))
             .w_full()
-            .min_h(px(70.0))
-            .px(px(14.0))
-            .py(px(12.0))
-            .rounded(px(12.0))
+            .min_h(px(if self.compact { 34.0 } else { 70.0 }))
+            .px(px(if self.compact { 10.0 } else { 14.0 }))
+            .py(px(if self.compact { 7.0 } else { 12.0 }))
+            .rounded(px(if self.compact { 9.0 } else { 12.0 }))
             .bg(t.bg)
             .border_1()
             .border_color(if focused { t.line } else { t.tile_border })
@@ -166,8 +185,9 @@ impl Render for TextField {
             .child(
                 div()
                     .min_w(px(0.0))
-                    .text_size(px(15.0))
-                    .line_height(px(21.0))
+                    .text_size(px(if self.compact { 13.5 } else { 15.0 }))
+                    .line_height(px(if self.compact { 19.0 } else { 21.0 }))
+                    .when(self.compact, |c| c.truncate())
                     .text_color(if empty { t.faint } else { t.text })
                     .child(shown),
             )

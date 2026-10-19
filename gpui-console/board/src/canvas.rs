@@ -50,7 +50,6 @@ pub struct MapView {
     empty: (SharedString, SharedString),
     map: Map,
     placed: Vec<Placed>,
-    links: HashMap<Key, Vec<Ref>>,
     /// Where the map's origin is on screen, from the canvas's own corner, and how big it is drawn.
     pan: (f32, f32),
     zoom: f32,
@@ -125,7 +124,6 @@ impl MapView {
             empty: (empty.0.into(), empty.1.into()),
             map: Map::default(),
             placed: Vec::new(),
-            links: HashMap::new(),
             pan: (0.0, 0.0),
             zoom: 1.0,
             selected: None,
@@ -178,11 +176,6 @@ impl MapView {
             .iter()
             .map(|f| f.items.iter().map(|i| i.weight).max().unwrap_or(0))
             .collect()
-    }
-
-    pub fn set_links(&mut self, links: HashMap<Key, Vec<Ref>>, cx: &mut Context<Self>) {
-        self.links = links;
-        cx.notify();
     }
 
     pub fn set_problem(&mut self, problem: Option<String>, cx: &mut Context<Self>) {
@@ -386,6 +379,7 @@ impl MapView {
             Kind::Run => t.badge(Status::NeedsYou).1,
             Kind::Attempt => t.badge(Status::Done).1,
             Kind::Missed => t.badge(Status::Failed).1,
+            Kind::Session => t.badge(Status::NeedsYou).1,
             Kind::Lesson => t.badge(Status::Failed).1,
             Kind::Part => t.muted,
         }
@@ -680,26 +674,19 @@ impl MapView {
                 };
             }
         }
-        let refs = self.links.get(&key).cloned().unwrap_or_default();
-        if !refs.is_empty() {
-            list = list.child(heading("Referenced in"));
-            for (n, r) in refs.into_iter().enumerate() {
-                let glyph = match r.tab {
-                    Tab::Sessions => "sparkles",
-                    Tab::Components => "hexagon",
-                    Tab::Knowledge => "brain",
-                };
-                let tab = match r.tab {
-                    Tab::Sessions => "a session",
-                    Tab::Components => "a component",
-                    Tab::Knowledge => "a goal run",
-                };
-                list = list.child(
-                    row(format!("ref-{n}"), glyph, r.label.clone(), tab.into()).on_click(
-                        cx.listener(move |_, _, _, cx| cx.emit(MapEvent::Open(r.clone()))),
-                    ),
-                );
-            }
+        // where it came from and what it is joined to beyond its imports: Explore's question, one click on
+        {
+            let r =
+                Ref { tab: Tab::Explore, key: key.clone(), frame: None, label: item.label.clone() };
+            list = list.child(
+                row(
+                    "explore-it".into(),
+                    "search",
+                    "Explore it".into(),
+                    "where it came from, and what it is joined to".into(),
+                )
+                .on_click(cx.listener(move |_, _, _, cx| cx.emit(MapEvent::Open(r.clone())))),
+            );
         }
         for (title, rows) in [("Uses", uses), ("Used by", used_by)] {
             if rows.is_empty() {

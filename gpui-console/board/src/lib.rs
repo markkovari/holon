@@ -20,8 +20,10 @@ pub mod canvas;
 #[cfg(target_os = "macos")]
 pub mod capture;
 pub mod demo;
+pub mod explore;
 pub mod field;
 pub mod film;
+pub mod graph;
 pub mod icons;
 pub mod map;
 pub mod store;

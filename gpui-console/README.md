@@ -1,16 +1,32 @@
 # gpui-console
 
 A desktop console for autonomous agents ([ADR-0119](../docs/adr/0119-an-agent-can-start-a-coding-session.md)):
-it boots a dev lattice, embeds `agent-runtime`, and shows what the agents are doing on the *agent board*.
-The list down the left is the sessions, a goal and everything it started; the tree beside it is that
-session's agents and the coding sessions they opened, each with its model, tools, cost and time, and the
-ones waiting for a person in the one colour that asks.
+it boots a dev lattice, embeds `agent-runtime`, and shows what the agents are doing on the *agent board*, which
+has three tabs, each for one question.
 
-![The agent board over its scripted story: a lead on Opus hands the work to a planner and a writer, the planner opens two coding sessions on Sonnet, one stops to ask to write tests/limiter.rs, the list of what needs a person opens with Approve, This task, Whole session and Deny, and once it is approved both sessions, the planner and the reviewer finish while the costs count up. The list of sessions on the left keeps three goals from earlier today.](../docs/media/agents-board.gif)
+**Sessions — what is happening.** The list down the left is the sessions, a goal and everything it
+started; the tree beside it is that session's agents and the coding sessions they opened, each with its
+model, tools, cost and time, and the ones waiting for a person in the one colour that asks. Under the goal,
+the components it touched, each a way into Explore. *New goal* gives an agent a goal and follows it.
 
-![Giving a goal: New goal opens a form, the goal is typed and given to the planner, and the board follows the session it starts to the top of the list, through its coding session to Done.](../docs/media/agents-board-goal.gif)
+![The Sessions tab: a goal's tree of agents and coding sessions, with the components it touched under it](../docs/media/agents-board-sessions.png)
 
-![The same board in the light theme, with the approval waiting.](../docs/media/agents-board-light.png)
+**Explore — one thing, and what it is joined to.** Search, or start from what was done lately (sessions,
+goal runs) or what most is built on. The subject is in the middle: above it where it came from (the goal
+run that added it, the attempt that wrote it), left what it builds on, right what builds on it, below what
+it led to and where it appeared. Each lane shows a few and says how many more; any neighbour is a way on, the
+trail a way back, and depth 2 says under each neighbour a little of what is behind it. A thing's card holds
+its proof: its application's film, its gate, the checks it passed or failed, the pull request it became.
+
+![Explore on paginate: added by the goal run "add pagination to the search box", written by its winning attempt](../docs/media/agents-board-explore-lineage.png)
+
+![Explore on auth-guard: what it uses on the left, the 60 that use it on the right, the trail above](../docs/media/agents-board-explore-relations.png)
+
+**Map — the whole system at once.** Every built component, grouped by what it is to the applications
+(the applications, what two or more share, what one carries, the probes, what nothing carries), and the
+groups joined by how many times they use each other. Closer in, the components themselves.
+
+![The Map: five groups joined by bundles, 700 uses from the applications into the shared parts](../docs/media/agents-board-map.png)
 
 ## Running it
 
@@ -18,7 +34,7 @@ GPUI (its preview releases, `gpui-pre`, which can also draw in a browser) wants 
 line tools natively; the shaders are compiled at run time.
 
     cargo run -p agent-board --bin agents-board        # the board over a scripted story: no lattice, model or key
-    cargo run -p agent-board --bin agents-board -- --mode light --tab components
+    cargo run -p agent-board --bin agents-board -- --mode light --tab explore --select component:record-store
     HOLON_CONSOLE_BOARD=1 cargo run --bin gpui-console # the console, opened on the board
     cargo test --workspace
 
@@ -30,7 +46,7 @@ The console starts a `comp-agentd` it finds built under `reconciler/target` (`cd
 
 ### The components and the goal runs
 
-The other two tabs read the one store (ADR-0091): SurrealDB from `infra/compose.yaml`, with NATS beside it.
+Explore and the Map read the one store (ADR-0091): SurrealDB from `infra/compose.yaml`, with NATS beside it.
 
     docker compose -f infra/compose.yaml --profile graph up -d nats surreal
     cargo xtask build --force                                   # the components capgraph reads
@@ -54,7 +70,7 @@ The same board, as wasm, over WebGPU or WebGL2. `wasm-bindgen-cli` must be the v
          target/wasm32-unknown-unknown/release/agents-board.wasm
     python3 -m http.server -d board/web 8787                    # any static server
 
-then `http://127.0.0.1:8787/?tab=components&mode=light&auto=6`: the query is the native flags (`tab`,
+then `http://127.0.0.1:8787/?tab=explore&select=component:record-store&auto=6`: the query is the native flags (`tab`,
 `select`, `mode`, `open`, `form`, `goal`, `auto`). It reads the same store over `fetch`; what proves a
 component (its film, its gate) is looked up on disk, so it is shown natively only.
 
@@ -69,5 +85,5 @@ Screen Recording permission another process would need.
     agents-board --open --film 0.4:280:100 --gif FILE.gif    # a film: 280 frames 100ms apart, as one GIF
     BOARD_SLOWMO=8 agents-board                              # every motion eight times slower
 
-The films above are `--open --film 0.4:280:100` and `--goal "Make the gateway answer 429 with a Retry-After
-header" --film 0.4:150:100`, from a `--release` build (a debug one is too slow to keep up with the clock).
+The pictures above are from the browser build, against a store with the built components and a seeded
+run (`agents-board` takes the same choices as the page's query there).

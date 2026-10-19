@@ -17,9 +17,12 @@ pub fn component_key(name: &str) -> Key {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tab {
+    /// What is happening: the goals given to agents, and the trees they started.
     Sessions,
-    Components,
-    Knowledge,
+    /// One thing at a time, and what it is joined to.
+    Explore,
+    /// The whole system at once: every component, grouped, and how the groups use each other.
+    Map,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +38,8 @@ pub enum Kind {
     Missed,
     /// Something a run learned.
     Lesson,
+    /// A goal given to an agent on the board, and everything it started.
+    Session,
 }
 
 /// What shows a thing works: the film of it working, the files its gate runs, a check it passed or
@@ -635,73 +640,6 @@ pub fn mentions(text: &str, names: &BTreeSet<String>) -> BTreeSet<String> {
     out
 }
 
-/// What a session is, for the references: its root, its goal, and everything its agents said or touched.
-pub struct SessionText {
-    pub root: String,
-    pub title: String,
-    pub text: Vec<String>,
-}
-
-/// Every key's backlinks: for a component, the sessions that touched it and the runs that added it, and
-/// for a session or a run, the components it names. A reference never points back at where it is read.
-pub fn backlinks(
-    components: &Map,
-    knowledge: &Map,
-    sessions: &[SessionText],
-) -> HashMap<Key, Vec<Ref>> {
-    let names: BTreeSet<String> = components.items().map(|(_, i)| i.label.clone()).collect();
-    let mut out: HashMap<Key, Vec<Ref>> = HashMap::new();
-    let mut link = |from: Key, to: Ref| {
-        let v = out.entry(from).or_default();
-        if !v.contains(&to) {
-            v.push(to);
-        }
-    };
-    for s in sessions {
-        let named: BTreeSet<String> =
-            std::iter::once(&s.title).chain(&s.text).flat_map(|t| mentions(t, &names)).collect();
-        for c in named {
-            let key = component_key(&c);
-            link(
-                key.clone(),
-                Ref {
-                    tab: Tab::Sessions,
-                    key: s.root.clone(),
-                    frame: None,
-                    label: s.title.clone(),
-                },
-            );
-            link(
-                format!("session:{}", s.root),
-                Ref { tab: Tab::Components, key, frame: None, label: c.clone() },
-            );
-        }
-    }
-    for (f, i) in knowledge.items() {
-        if i.key.starts_with("component:") {
-            link(
-                i.key.clone(),
-                Ref {
-                    tab: Tab::Knowledge,
-                    key: i.key.clone(),
-                    frame: Some(f.key.clone()),
-                    label: f.title.clone(),
-                },
-            );
-            link(
-                f.key.clone(),
-                Ref {
-                    tab: Tab::Components,
-                    key: i.key.clone(),
-                    frame: None,
-                    label: i.label.clone(),
-                },
-            );
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -940,37 +878,5 @@ mod tests {
             m.edges,
             [("attempt:77/g1/mvp".to_string(), component_key("paginate"), "wrote".to_string())]
         );
-    }
-
-    #[test]
-    fn a_session_and_the_component_it_touched_point_at_each_other() {
-        let comps = components(&rows());
-        let knowledge = Map {
-            frames: vec![Frame {
-                key: "run:7".into(),
-                title: "Add a cart".into(),
-                sub: String::new(),
-                items: vec![Item {
-                    key: component_key("cart"),
-                    label: "cart".into(),
-                    sub: String::new(),
-                    kind: Kind::Part,
-                    weight: 0,
-                    proof: vec![],
-                }],
-            }],
-            edges: vec![],
-        };
-        let sessions = [SessionText {
-            root: "r1".into(),
-            title: "Rate-limit the shop".into(),
-            text: vec!["write_file components/cart/src/lib.rs".into()],
-        }];
-        let links = backlinks(&comps, &knowledge, &sessions);
-        let cart = &links[&component_key("cart")];
-        assert_eq!(cart.iter().map(|r| r.tab).collect::<Vec<_>>(), [Tab::Sessions, Tab::Knowledge]);
-        assert_eq!(cart[1].frame.as_deref(), Some("run:7"));
-        assert_eq!(links["session:r1"][0].key, component_key("cart"));
-        assert_eq!(links["run:7"][0].tab, Tab::Components);
     }
 }
