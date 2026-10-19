@@ -14,8 +14,8 @@ serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
-# The code store's engine and its native adapters. Its own async-nats (0.50) and surrealdb
-# ride along; the engine never shares a client with the rest of this workspace.
+# The code store's engine and its native adapters. Its surrealdb rides along; its NATS client is
+# the workspace's own version, because there is one async-nats everywhere (tests/workspace.rs).
 holon-vcs = { path = "../../../crates/holon-vcs", features = ["native"] }
 
 # tests/e2e_vcs.rs drives the real binary through comp-host, NATS and SurrealDB, with the gate
