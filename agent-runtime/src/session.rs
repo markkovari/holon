@@ -314,7 +314,7 @@ impl Agentd {
         } else {
             text
         };
-        Err(format!("comp-agentd refused ({}): {}", status.as_u16(), why.trim()))
+        Err(format!("comp-agentd refused {path} ({}): {}", status.as_u16(), if why.trim().is_empty() { "no reason given" } else { why.trim() }))
     }
 
     pub(crate) fn create(

@@ -176,7 +176,19 @@ pub enum Event {
         span_id: String,
         /// The tool call (in another run) that woke this one, when one did.
         parent_span_id: Option<String>,
+        /// `provider/model`, as `RunRecord::model` will say it.
+        model: String,
         chain: Vec<String>,
+    },
+    /// A tool call is about to be asked about or made. `span_id` is the call's span: whatever it
+    /// wakes (a delegated agent, an event) names it as its parent, so a window can hang the woken
+    /// run under this one while both are still going.
+    ToolStarted {
+        agent: String,
+        run_id: String,
+        span_id: String,
+        tool: String,
+        args: Value,
     },
     StepDone {
         agent: String,
@@ -1248,6 +1260,7 @@ pub fn run(
         trace_id: trace_id.clone(),
         span_id: span_id.clone(),
         parent_span_id: cause.parent_span_id.clone(),
+        model: model_label(&spec.model),
         chain: cause.chain.clone(),
     });
     // This chain's remaining spend caps the run below the agent's own limit.
@@ -1433,6 +1446,13 @@ pub fn run(
                         .any(|c| c.name == name && c.exec.as_ref().is_some_and(|x| x.sensitive))
                 });
                 let needs = sensitive && !spec.auto_approve.contains(&name);
+                host.observe(Event::ToolStarted {
+                    agent: spec.name.clone(),
+                    run_id: run_id.clone(),
+                    span_id: tool_span.clone(),
+                    tool: name.clone(),
+                    args: args.clone(),
+                });
                 let ok = !needs || host.approve(&spec.name, &name, &args, &cause.chain);
                 if ok {
                     // What this run passes on to anything it wakes: itself as

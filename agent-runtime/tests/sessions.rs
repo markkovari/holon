@@ -462,6 +462,9 @@ fn a_daemon_that_goes_away_ends_its_sessions_instead_of_leaving_them_running() {
 // Against the real daemon.
 // ---------------------------------------------------------------------------------------------
 
+/// What the console starts its daemon with: a long random token and a state directory.
+const TOKEN: &str = "3f9a1c7e5b2d4a60918e7c3b5d1f0a42";
+
 /// A `comp-agentd` process that is killed when this is dropped.
 struct Daemon(std::process::Child);
 
@@ -503,9 +506,11 @@ fn sessions_against_the_real_daemon() {
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let _daemon = Daemon(
         std::process::Command::new(daemon_binary())
-            .args(["--addr", &format!("127.0.0.1:{port}"), "--provider", "mock", "--token", "t"])
+            .args(["--addr", &format!("127.0.0.1:{port}"), "--provider", "mock", "--token", TOKEN])
             .arg("--workspace-root")
             .arg(&root)
+            .arg("--state-dir")
+            .arg(state.join("agentd"))
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
@@ -518,7 +523,7 @@ fn sessions_against_the_real_daemon() {
 
     let mut cfg = Config::new(&state);
     let mut a = AgentdConfig::new(&url);
-    a.token = Some("t".into());
+    a.token = Some(TOKEN.into());
     a.model = "mock".into();
     a.poll = Duration::from_millis(50);
     cfg.agentd = Some(a);
