@@ -139,7 +139,7 @@ export const SYS = [
   boundary:['comp-agentd tools are confined to the session’s workspace root; run cannot be confined, which is what approval is for.',
             'agent-runtime refuses a tool an agent was not granted instead of dispatching it, and only the owner’s Matrix messages start a run.',
             'Nothing in this repository is a client of comp-agentd yet: the contract came first, for bots, backends and scripts outside it (ADR-0102).'],
-  code:['reconciler/daemons/agentd/','reconciler/fuel/','api/holon/v1/agent.proto','api/openapi.yaml','agent-runtime/','agent-matrix/','gpui-console/']},
+  code:['reconciler/daemons/agentd/','crates/holon-llm/','reconciler/fuel/','api/holon/v1/agent.proto','api/openapi.yaml','agent-runtime/','agent-matrix/','gpui-console/']},
 
  {id:'loop', name:'Engineering loop', short:'goal to pull request',
   purpose:'Parallel AI branches, a real test gate, and a selector that opens the winner as a pull request.',
