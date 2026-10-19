@@ -6,7 +6,7 @@ tool.*
 
 **Status: accepted, and built** for the tools, the watching and the approvals
 ([`agent-runtime/src/session.rs`](../../agent-runtime/src/session.rs)), and for the board that draws it
-([`gpui-console/src/board/`](../../gpui-console/src/board/)). What is not built yet is at the end.
+([`gpui-console/board/`](../../gpui-console/board/)). What is not built yet is at the end.
 Until this, nothing in the repository was a client of the daemon of
 [ADR-0102](0102-an-agent-session-is-a-contract-first.md); `agent-runtime` is the first.
 
