@@ -28,9 +28,9 @@ serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
-# Composition as a library call (src/plug.rs): `wac` is a crate before it is a
-# command. Pinned to the pair `components/wit-reflect` uses — wac-graph carries
-# its own wasmparser, and two versions of the component model in one graph is a
-# type error waiting to happen.
+# Composition as a library call (src/plug.rs): `wac` is a crate before it is a command. wasmparser is
+# pinned to the one wac-graph carries (0.10 reads with 0.247): two versions of the component model's
+# reader in one graph is a type error waiting to happen, and was this package's state for as long as
+# this pin said 0.244. tests/workspace.rs fails when it is two again.
 wac-graph = "0.10"
-wasmparser = "0.244"
+wasmparser = "0.247"
