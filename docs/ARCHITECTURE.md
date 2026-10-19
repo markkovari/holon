@@ -227,7 +227,7 @@ flowchart LR
 - A generated file never makes an app public: access = "tailnet" is the default and is left alone on purpose.
 - comp-agent only updates apps the box already has a unit for; adding an app stays a deliberate operator step.
 
-**Where it lives** [`apps/*.toml`](../apps/) · [`cli/src/selfhost.rs`](../cli/src/selfhost.rs) · [`cli/src/fleet.rs`](../cli/src/fleet.rs) · [`cli/src/wadm.rs`](../cli/src/wadm.rs) · [`reconciler/src/bin/agent.rs`](../reconciler/src/bin/agent.rs) · [`.github/workflows/publish-apps.yml`](../.github/workflows/publish-apps.yml) · [`docs/SELFHOST.md`](../docs/SELFHOST.md)
+**Where it lives** [`apps/*.toml`](../apps/) · [`cli/src/selfhost.rs`](../cli/src/selfhost.rs) · [`cli/src/fleet.rs`](../cli/src/fleet.rs) · [`cli/src/wadm.rs`](../cli/src/wadm.rs) · [`reconciler/daemons/agent/`](../reconciler/daemons/agent/) · [`.github/workflows/publish-apps.yml`](../.github/workflows/publish-apps.yml) · [`docs/SELFHOST.md`](../docs/SELFHOST.md)
 
 ### Control plane & lattice
 
@@ -305,7 +305,7 @@ flowchart LR
 - Admission fails closed: 429 above max-placement-lag, 503 when the reconciler’s report goes stale.
 - Only one reconciler acts at a time, decided by a lease in the store; a standby takes over within the TTL plus one interval.
 
-**Where it lives** [`components/platform-domain`](../components/platform-domain) · [`components/console-domain`](../components/console-domain) · [`reconciler/src/main.rs`](../reconciler/src/main.rs) · [`reconciler/src/plan.rs`](../reconciler/src/plan.rs) · [`reconciler/src/bin/ingress.rs`](../reconciler/src/bin/ingress.rs) · [`reconciler/src/bin/relay.rs`](../reconciler/src/bin/relay.rs) · [`reconciler/daemons/backup/`](../reconciler/daemons/backup/) · [`lattice/src/`](../lattice/src/)
+**Where it lives** [`components/platform-domain`](../components/platform-domain) · [`components/console-domain`](../components/console-domain) · [`reconciler/src/main.rs`](../reconciler/src/main.rs) · [`reconciler/src/plan.rs`](../reconciler/src/plan.rs) · [`reconciler/src/bin/ingress.rs`](../reconciler/src/bin/ingress.rs) · [`reconciler/daemons/relay/`](../reconciler/daemons/relay/) · [`reconciler/daemons/backup/`](../reconciler/daemons/backup/) · [`lattice/src/`](../lattice/src/)
 
 ### Runtime
 
@@ -454,7 +454,7 @@ flowchart TB
 - A missing dependency (Docker, Ollama, Chrome, ffmpeg, a desktop session) is reported as unavailable, never answered with a plausible constant.
 - The twelve [ADR-0095](adr/0095-what-is-allowed-to-be-native.md) daemons are each their own Cargo package, with one heavy crate and the shared comp-daemon-kit, so building or shipping one compiles none of the others ([ADR-0115](adr/0115-the-reconciler-is-a-workspace-of-single-purpose-packages.md)).
 
-**Where it lives** [`reconciler/daemons/kit/`](../reconciler/daemons/kit/) · [`reconciler/daemons/fswatch/`](../reconciler/daemons/fswatch/) · [`reconciler/daemons/browser/`](../reconciler/daemons/browser/) · [`reconciler/daemons/docker/`](../reconciler/daemons/docker/) · [`reconciler/daemons/clipboard/`](../reconciler/daemons/clipboard/) · [`reconciler/daemons/imageopt/`](../reconciler/daemons/imageopt/) · [`reconciler/daemons/lanscan/`](../reconciler/daemons/lanscan/) · [`reconciler/daemons/llmlocal/`](../reconciler/daemons/llmlocal/) · [`reconciler/daemons/mdns/`](../reconciler/daemons/mdns/) · [`reconciler/daemons/cron/`](../reconciler/daemons/cron/) · [`reconciler/daemons/uinotify/`](../reconciler/daemons/uinotify/) · [`reconciler/daemons/ffmpeg/`](../reconciler/daemons/ffmpeg/) · [`reconciler/daemons/wireguard/`](../reconciler/daemons/wireguard/) · [`reconciler/daemons/media/`](../reconciler/daemons/media/) · [`reconciler/src/bin/mailrelay.rs`](../reconciler/src/bin/mailrelay.rs) · [`reconciler/src/bin/checks.rs`](../reconciler/src/bin/checks.rs)
+**Where it lives** [`reconciler/daemons/kit/`](../reconciler/daemons/kit/) · [`reconciler/daemons/fswatch/`](../reconciler/daemons/fswatch/) · [`reconciler/daemons/browser/`](../reconciler/daemons/browser/) · [`reconciler/daemons/docker/`](../reconciler/daemons/docker/) · [`reconciler/daemons/clipboard/`](../reconciler/daemons/clipboard/) · [`reconciler/daemons/imageopt/`](../reconciler/daemons/imageopt/) · [`reconciler/daemons/lanscan/`](../reconciler/daemons/lanscan/) · [`reconciler/daemons/llmlocal/`](../reconciler/daemons/llmlocal/) · [`reconciler/daemons/mdns/`](../reconciler/daemons/mdns/) · [`reconciler/daemons/cron/`](../reconciler/daemons/cron/) · [`reconciler/daemons/uinotify/`](../reconciler/daemons/uinotify/) · [`reconciler/daemons/ffmpeg/`](../reconciler/daemons/ffmpeg/) · [`reconciler/daemons/wireguard/`](../reconciler/daemons/wireguard/) · [`reconciler/daemons/media/`](../reconciler/daemons/media/) · [`reconciler/daemons/mailrelay/`](../reconciler/daemons/mailrelay/) · [`reconciler/src/bin/checks.rs`](../reconciler/src/bin/checks.rs)
 
 ### Durable services
 
@@ -725,7 +725,7 @@ flowchart LR
 - Suites that need NATS, SurrealDB, Docker or a model are kept out of CI and run locally; CI compiles and lints them.
 - CI builds and tests; it does not deploy or publish. Publishing lives in its own workflows with their own triggers.
 
-**Where it lives** [`reconciler/tests/`](../reconciler/tests/) · [`reconciler/fleet/`](../reconciler/fleet/) · [`e2e/`](../e2e/) · [`bench/`](../bench/) · [`xtask/`](../xtask/) · [`reconciler/src/bin/bench.rs`](../reconciler/src/bin/bench.rs) · [`reconciler/src/bin/matrix.rs`](../reconciler/src/bin/matrix.rs) · [`reconciler/src/bin/planscale.rs`](../reconciler/src/bin/planscale.rs) · [`reconciler/src/bin/hopcost.rs`](../reconciler/src/bin/hopcost.rs) · [`reconciler/src/bin/stub.rs`](../reconciler/src/bin/stub.rs) · [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
+**Where it lives** [`reconciler/tests/`](../reconciler/tests/) · [`reconciler/fleet/`](../reconciler/fleet/) · [`e2e/`](../e2e/) · [`bench/`](../bench/) · [`xtask/`](../xtask/) · [`reconciler/src/bin/bench.rs`](../reconciler/src/bin/bench.rs) · [`reconciler/src/bin/planscale.rs`](../reconciler/src/bin/planscale.rs) · [`reconciler/src/bin/stub.rs`](../reconciler/src/bin/stub.rs) · [`reconciler/measure/`](../reconciler/measure/) · [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
 
 ## Every correspondence
 

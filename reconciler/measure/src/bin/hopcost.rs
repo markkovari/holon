@@ -27,7 +27,7 @@
 use std::time::Duration;
 
 use clap::Parser;
-use comp_reconciler::fleet::{repo_root, Fleet};
+use comp_fleet::fleet::{repo_root, Fleet};
 
 #[derive(Parser)]
 #[command(name = "comp-hopcost", about = "What one cross-node call costs")]

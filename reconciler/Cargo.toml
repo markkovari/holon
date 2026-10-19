@@ -23,8 +23,8 @@ description = "Diffs desired manifests against observed lattice inventory and is
 # `reconciler/target/release/comp-*` that scripts, gates and docs spell are unchanged.
 [workspace]
 resolver = "2"
-members = ["daemons/*", "fleet", "fuel"]
-default-members = [".", "daemons/*", "fleet", "fuel"]
+members = ["daemons/*", "fleet", "fuel", "measure"]
+default-members = [".", "daemons/*", "fleet", "fuel", "measure"]
 
 [workspace.package]
 version = "0.1.0"
@@ -48,6 +48,7 @@ base64 = "0.22"
 bytes = "1"
 hmac = "0.12"
 sha1 = "0.10"
+toml = "0.8"
 getrandom = "0.2"
 jiff = "0.2"
 hex = "0.4"
@@ -90,22 +91,6 @@ path = "src/bin/plug.rs"
 name = "comp-trace-seed"
 path = "src/bin/traceseed.rs"
 
-[[bin]]
-name = "comp-relay"
-path = "src/bin/relay.rs"
-
-# HTTP in, real SMTP out — what lets a wasm component reach MailHog, since the host
-# wires no wasi:sockets and MailHog ingests SMTP only. std-only, no dependencies.
-[[bin]]
-name = "comp-mailrelay"
-path = "src/bin/mailrelay.rs"
-
-# The pull half of continuous deployment: reads a digest lock and updates the apps
-# this box already runs. No inbound port, and no CI credential on this network.
-[[bin]]
-name = "comp-agent"
-path = "src/bin/agent.rs"
-
 # Drains a project's goal queue, N runs at a time (ADR-0082's missing loop).
 [[bin]]
 name = "comp-goald"
@@ -115,12 +100,6 @@ path = "src/bin/goald.rs"
 [[bin]]
 name = "comp-capgraph"
 path = "src/bin/capgraph.rs"
-
-# What a goal's app is made of, and how much of it the run had to write —
-# formerly tools/reuse-ratio.py.
-[[bin]]
-name = "comp-reuse-ratio"
-path = "src/bin/reuseratio.rs"
 
 # The component catalogue, derived from the SOURCES. Deliberately a second binary
 # rather than a `--format` on capgraph: that one reads built artifacts and answers
@@ -141,7 +120,7 @@ tokio.workspace = true
 comp-lattice.workspace = true
 futures.workspace = true
 serde.workspace = true
-toml = "0.8"
+toml.workspace = true
 serde_norway = "0.9"
 tempfile.workspace = true
 # comp-stub serves HTTP; the OCI test also stands up a fake registry with it.
@@ -210,26 +189,10 @@ name = "comp-bench"
 path = "src/bin/bench.rs"
 
 [[bin]]
-name = "comp-matrix"
-path = "src/bin/matrix.rs"
-
-[[bin]]
-name = "comp-hopcost"
-path = "src/bin/hopcost.rs"
-
-[[bin]]
 name = "comp-planscale"
 path = "src/bin/planscale.rs"
 
 [[bin]]
 name = "comp-selfimprove"
 path = "src/bin/selfimprove.rs"
-
-[[bin]]
-name = "comp-photoserve"
-path = "src/bin/photoserve.rs"
-
-[[bin]]
-name = "comp-contrastserve"
-path = "src/bin/contrastserve.rs"
 
