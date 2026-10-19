@@ -1,9 +1,11 @@
 # The platform as it stands
 
 What runs today, what is measured, and what is honestly missing. The reasoning lives
-in [99 ADRs](adr/); this page is the map.
+in the [ADRs](adr/); this page is the map.
 
-Last revised after ADR-0099.
+Last revised after ADR-0116, for the shape, the binaries and how the tests are run.
+The measured numbers, *what the loop does now* and *honestly missing* were last read
+against the code at ADR-0099 and are as old as that.
 
 This page is about the **runtime and delivery** half of the repository — the thing
 that runs a composed component and gets it onto a machine. For the library it runs,
@@ -45,11 +47,24 @@ browser ────┘   (orgs, catalogue, market, secrets, deployments, revisi
 | `comp-reconciler` | the loop. A pure `plan()` diff plus command dispatch |
 | `comp-ingress` | the door. Host-header routing, least-outstanding, shedding, activation |
 | `comp-relay` | the clock. Pokes an app's pump so pull-based timers and topics fire ([0096](adr/0096-a-pull-contract-needs-a-relay.md)) |
-| `comp-fswatch` | the first host-capability daemon — a watch syscall a guest has not ([0095](adr/0095-what-is-allowed-to-be-native.md)) |
 | `comp-stub` | a stand-in control plane for tests and benchmarks |
 | `comp-bench` | reads benchmark output; the only thing that interprets a number |
 | `comp-planscale` | times `plan()` over synthetic fleets — control-loop scaling |
 | `holon` | the CLI |
+
+Everything else that runs natively is a package of its own under `reconciler/`
+([0115](adr/0115-the-reconciler-is-a-workspace-of-single-purpose-packages.md)), and the root
+package keeps only the control plane. The **host-capability daemons** are one package each in
+`reconciler/daemons/`, `comp-fswatch` first — a watch syscall a guest has not
+([0095](adr/0095-what-is-allowed-to-be-native.md)) — on the shared `comp-daemon-kit`. Beside
+them are the waits that outlive a process (`comp-park`, `comp-resume`:
+[0100](adr/0100-a-parked-turn-is-a-record-not-a-held-thread.md),
+[0106](adr/0106-a-resumed-turn-knows-what-it-may-repeat.md)) and the agent session daemon
+(`comp-agentd`: [0102](adr/0102-an-agent-session-is-a-contract-first.md)). The rest of the tree is the
+loop's tools: `comp-goal` and its binaries, `comp-fleet` (the test harness, `comp-plug` and
+`comp-oci`), `comp-fuel` and `comp-measure`. `ARCHITECTURE.md` says what each is, system by system:
+[daemons](ARCHITECTURE.md#capability-daemons), [durable services](ARCHITECTURE.md#durable-services),
+[agent services](ARCHITECTURE.md#agent-services).
 
 ## Getting an app onto a machine
 
@@ -170,13 +185,17 @@ database, sealed, to a bucket and restores it ([0101](adr/0101-state-can-live-so
 
 ## Tests
 
-374 across four workspaces — 303 in `reconciler`, 43 in `host`, 19 in `cli`, 9 in
-`lattice`. No Python anywhere in `bench/` or `e2e/`.
+Most of them are in `reconciler/`, which is one workspace: the root package's suites below, and one
+set per package under it. `default-members` lists every package, so `cargo test`, `cargo nextest run`
+and `cargo clippy` in that directory reach all of them, and `reconciler/tests/workspace.rs` fails when
+one is left out. `host`, `lattice`, `cli` and `crates` are workspaces of their own with tests of their
+own, and the components have theirs (`cargo xtask test`). No workflow builds or tests `agent-runtime`,
+`agent-matrix` or `gpui-console`: they are run by hand. No Python anywhere in `bench/` or `e2e/`.
 
 Not guarded by a test, deliberately: an exact count is a number that has to be
-edited every time somebody adds a test, which is how it came to say 173 while
-another line of this same file said 356. Count them with
-`cargo test --manifest-path <workspace>/Cargo.toml -- --list | grep -c ': test$'`.
+edited every time somebody adds a test, which is how this page came to say 173 while
+another line of it said 356, and then 374 for a workspace that has since been split into packages.
+Count them with `cargo nextest list --message-format oneline --manifest-path <workspace>/Cargo.toml | wc -l`.
 
 ```
 cargo build --release --manifest-path host/Cargo.toml   # tests spawn this
