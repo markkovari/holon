@@ -124,6 +124,7 @@ dependencies = [
 name = "anthropic-vision"
 version = "0.1.0"
 dependencies = [
+ "holon-llm",
  "serde_json",
  "wit-bindgen-rt",
 ]
