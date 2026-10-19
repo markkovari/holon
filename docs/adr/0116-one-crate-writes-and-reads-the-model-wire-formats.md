@@ -6,7 +6,7 @@ places, and the places disagreed about what a token count means.*
 **Status: accepted, and built one consumer at a time.** [`crates/holon-llm`](../../crates/holon-llm/)
 is the crate; `comp-agentd` is the first thing built on it, and the order of the rest is below.
 Changes no wire format and no behaviour a caller can see: each move keeps the tests of the code it
-replaces.
+replaces. Which consumers are done, and which are not and why, is at the end.
 
 ## The problem
 
@@ -70,7 +70,7 @@ under `_raw`, so the tool fails on them visibly.
 2. `agent-runtime`: text and pictures, a whole response.
 3. The provider components, `anthropic-provider` and `openai-provider`, whose codecs were already
    pure.
-4. The vision components and the console.
+4. The vision components and the console. Only one of them moved: see *Where it stopped*.
 
 ## What this does not do
 
@@ -91,3 +91,22 @@ a thinking block — is judgement, not shape.
 
 **Leave it.** Cheap until the next provider field, which is eight edits and an unknown number of
 callers that got it wrong.
+
+## Where it stopped
+
+On the crate: `comp-agentd`, `agent-runtime`, `anthropic-provider`, `openai-provider` and
+`anthropic-vision`, which had written its own base64 and its own one-line JSON encoder and now has
+neither. What did not move, and why:
+
+**`photo-critic` and `contrast-audit`.** Each builds one request by hand and nothing else of the dialect,
+and each is exercised only by a live test that spends money and needs a key (`#[ignore]`, so no workflow
+runs it). Linking the crate costs a component about 33 KB (`anthropic-vision` went from 133 KB to 166 KB)
+to replace one `format!`. `contrast-audit` also reads the raw reply to say *why* an answer was empty,
+which block kinds came back and what the stop reason was, and a normalised `Reply` does not carry that;
+`photo-critic` is handed its picture already as base64 and would decode it for the crate to encode it
+again. Neither lacks a field the crate has. They move when one of them next needs one, with a test of
+the body written first, as `anthropic-vision`'s was.
+
+**The console's `fm.rs`.** `ask` is `#[allow(dead_code)]` and called by nothing but its own test. It is
+deleted (ADR-0097) and not moved, and not here: the console does not compile at the moment, and a change
+to it could not be run.
