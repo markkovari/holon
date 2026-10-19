@@ -11,10 +11,11 @@
 //! [`Event`]: agent_runtime::agent::Event
 
 pub mod demo;
+pub mod field;
 pub mod icons;
 pub mod theme;
 pub mod tree;
 pub mod view;
 
 pub use tree::{AgentTree, Kind, Node, Pending, Status, Summary};
-pub use view::{Actions, Board};
+pub use view::{Actions, AgentChoice, Board};

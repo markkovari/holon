@@ -7,7 +7,10 @@
 //! `--shoot DIR` writes `DIR/board-<mode>-<seconds>.png` at each time in `--at` (seconds after
 //! start) from inside the process, approves the approval itself after `--auto` seconds, and exits
 //! after the last shot. `--film START:COUNT:STEP_MS` instead takes COUNT shots, STEP_MS apart,
-//! from START seconds in, as `DIR/film-NN.png`: how a motion is looked at.
+//! from START seconds in, as `DIR/film-NN.png`: how a motion is looked at. With `--gif FILE` the
+//! same frames are one GIF instead, at the size a person sees the window:
+//!
+//!   cargo run --bin agents-board -- --open --film 0:200:120 --gif docs/media/agents-board.gif
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -45,8 +48,17 @@ struct Args {
     /// Open the list of what is waiting for a person as soon as there is one.
     #[arg(long)]
     open: bool,
+    /// Open the form that gives an agent a goal.
+    #[arg(long)]
+    form: bool,
+    /// Two seconds in, type GOAL into the form and start it, as a person would.
+    #[arg(long, value_name = "GOAL")]
+    goal: Option<String>,
+    /// With `--film`: write the frames as one GIF at FILE, not as PNGs.
+    #[arg(long, value_name = "FILE", requires = "film")]
+    gif: Option<String>,
     /// The window's size, WIDTHxHEIGHT.
-    #[arg(long, value_parser = parse_size, default_value = "1010x900")]
+    #[arg(long, value_parser = parse_size, default_value = "1320x900")]
     size: (f32, f32),
 }
 
@@ -77,7 +89,7 @@ fn main() {
         let auto = a
             .auto
             .map(Duration::from_secs_f32)
-            .or(a.shoot.as_ref().map(|_| Duration::from_secs(6)));
+            .or((a.shoot.is_some() || a.gif.is_some()).then(|| Duration::from_secs(6)));
         let actions = demo::play(tree.clone(), auto, cx);
         let bounds = Bounds::centered(None, size(px(a.size.0), px(a.size.1)), cx);
         let mode = if a.mode == "light" { Mode::Light } else { Mode::Dark };
@@ -103,9 +115,63 @@ fn main() {
         if a.open {
             window.update(cx, |board, _, cx| board.set_open(true, cx)).expect("open the list");
         }
+        if a.form {
+            window
+                .update(cx, |board, window, cx| board.open_form(window, cx))
+                .expect("open the form");
+        }
+        if let Some(goal) = a.goal.clone() {
+            cx.spawn(async move |cx| {
+                let clock = cx.background_executor().clone();
+                let wait = |ms| clock.timer(Duration::from_millis(ms));
+                wait(2_000).await;
+                let field = window.update(cx, |board, window, cx| {
+                    board.open_form(window, cx);
+                    board.field()
+                });
+                let Ok(field) = field else { return };
+                wait(500).await;
+                for c in goal.chars() {
+                    field.update(cx, |f, cx| f.push_str(&c.to_string(), cx)).ok();
+                    wait(28).await;
+                }
+                wait(600).await;
+                window.update(cx, |board, _, cx| board.submit(goal, cx)).ok();
+            })
+            .detach();
+        }
 
         #[cfg(target_os = "macos")]
-        if let (Some(dir), Some((start, count, step))) = (a.shoot.clone(), a.film) {
+        if let (Some(gif), Some((start, count, step))) = (a.gif.clone(), a.film) {
+            cx.spawn(async move |cx| {
+                cx.background_executor().timer(Duration::from_secs_f32(start)).await;
+                let mut film: Option<gpui_console::film::Gif> = None;
+                for _ in 0..count {
+                    let at = std::time::Instant::now();
+                    let made = gpui_console::capture::own_window_rgba().and_then(|(rgba, w, h)| {
+                        let (rgba, w, h) = gpui_console::film::half(&rgba, w, h);
+                        if film.is_none() {
+                            film = Some(gpui_console::film::Gif::create(&gif, w, h)?);
+                        }
+                        film.as_mut().map_or(Ok(()), |f| f.push(rgba, at))
+                    });
+                    if let Err(e) = made {
+                        eprintln!("film {gif}: {e}");
+                        std::process::exit(1);
+                    }
+                    cx.background_executor().timer(Duration::from_millis(step)).await;
+                }
+                if let Some(f) = film {
+                    if let Err(e) = f.finish(std::time::Instant::now()) {
+                        eprintln!("film {gif}: {e}");
+                        std::process::exit(1);
+                    }
+                }
+                eprintln!("film: {gif}, {count} frames from {start}s every {step}ms");
+                std::process::exit(0);
+            })
+            .detach();
+        } else if let (Some(dir), Some((start, count, step))) = (a.shoot.clone(), a.film) {
             std::fs::create_dir_all(&dir).ok();
             cx.spawn(async move |cx| {
                 cx.background_executor().timer(Duration::from_secs_f32(start)).await;

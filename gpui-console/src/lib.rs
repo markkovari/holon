@@ -5,3 +5,4 @@
 pub mod board;
 #[cfg(target_os = "macos")]
 pub mod capture;
+pub mod film;

@@ -44,6 +44,7 @@ icons![
     "message-square",
     "mic",
     "moon",
+    "plus",
     "search",
     "settings",
     "shield-check",

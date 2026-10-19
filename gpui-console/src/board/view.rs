@@ -22,14 +22,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{
     canvas, deferred, div, ease_in_out, ease_out_quint, percentage, point, prelude::*,
-    pulsating_between, px, Animation, AnimationExt as _, App, BoxShadow, Context, Entity,
-    FontWeight, Hsla, IntoElement, PathBuilder, Pixels, Render, Rgba, SharedString, Task,
-    Transformation, Window,
+    pulsating_between, px, transparent_black, Animation, AnimationExt as _, App, BoxShadow,
+    Context, Entity, FocusHandle, Focusable, FontWeight, Hsla, IntoElement, PathBuilder, Pixels,
+    Render, Rgba, SharedString, Task, Transformation, Window,
 };
 
+use super::field::{FieldEvent, TextField};
 use super::icons::{icon, model_glyph, tool_icon};
 use super::theme::{Mode, Theme};
-use super::tree::{AgentTree, Kind, Node, Pending, Status, Summary, Waiting};
+use super::tree::{AgentTree, Kind, Node, Pending, SessionRow, Status, Summary, Waiting};
 
 // -- metrics ------------------------------------------------------------------------------------
 
@@ -51,10 +52,32 @@ const NEST_X: f32 = 27.0;
 const DOT: f32 = 9.0;
 /// More children than this are stacked, not laid out in a row.
 const ROW_MAX: usize = 4;
+/// The list of sessions down the left.
+const SIDEBAR_W: f32 = 264.0;
 
-/// Who answers a person's yes or no, and how far a yes reaches.
+/// An agent a goal can be given to.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentChoice {
+    pub name: String,
+    pub about: String,
+    /// Whether it can start a coding session (it has `session_start`).
+    pub codes: bool,
+}
+
+/// What the board asks of whoever hosts it: the answer to a person's yes or no, and a goal started.
 pub trait Actions {
+    /// Answers an approval, and says how far a yes reaches.
     fn answer(&self, id: u64, approve: bool, scope: Scope, cx: &mut App);
+
+    /// The agents a goal can be given to, best first.
+    fn agents(&self, _cx: &App) -> Vec<AgentChoice> {
+        Vec::new()
+    }
+
+    /// Gives `goal` to `agent`. `Err` is why not, in words to show a person.
+    fn start(&self, _agent: &str, _goal: &str, _cx: &mut App) -> Result<(), String> {
+        Err("this board cannot start anything".into())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,6 +155,18 @@ pub fn model_name(label: &str) -> String {
         .replacen("GPT ", "GPT-", 1)
 }
 
+/// `just now`, `5m ago`, `3h ago`.
+pub fn ago(ms: u64) -> String {
+    let s = ms / 1000;
+    match s {
+        0..=9 => "just now".into(),
+        10..=59 => format!("{s}s ago"),
+        60..=3599 => format!("{}m ago", s / 60),
+        3600..=86_399 => format!("{}h ago", s / 3600),
+        _ => format!("{}d ago", s / 86_400),
+    }
+}
+
 /// `45s`, `1m 09s`, `2h 05m`.
 pub fn clock(ms: u64) -> String {
     let s = ms / 1000;
@@ -140,6 +175,33 @@ pub fn clock(ms: u64) -> String {
         60..=3599 => format!("{}m {:02}s", s / 60, s % 60),
         _ => format!("{}h {:02}m", s / 3600, (s % 3600) / 60),
     }
+}
+
+/// What a session's row says under its goal: who was asked, how many agents it took, what it cost,
+/// and how long it has been going, how long ago it ended, or that it is waiting for a person.
+pub fn meta(r: &SessionRow, now: u64) -> String {
+    let when = match (r.status, r.finished_ms) {
+        (Status::NeedsYou, _) => "needs you".to_string(),
+        (_, Some(end)) => ago(now.saturating_sub(end)),
+        (_, None) => clock(now.saturating_sub(r.started_ms)),
+    };
+    let agents = if r.agents == 1 { "1 agent".to_string() } else { format!("{} agents", r.agents) };
+    format!("{} · {agents} · {} · {when}", r.lead, money(r.cost_micros))
+}
+
+/// The session on show: with `follow`, the first one not seen before (the goal just given); else the
+/// one picked, while it is still listed; else the newest.
+pub fn pick<'a>(
+    rows: &'a [SessionRow],
+    selected: Option<&str>,
+    known: &HashSet<String>,
+    follow: bool,
+) -> Option<&'a SessionRow> {
+    follow
+        .then(|| rows.iter().find(|r| !known.contains(&r.root)))
+        .flatten()
+        .or_else(|| rows.iter().find(|r| Some(r.root.as_str()) == selected))
+        .or(rows.first())
 }
 
 /// `12.4k tok`, for a model whose price is not known.
@@ -229,6 +291,22 @@ pub struct Board {
     /// The width of each tree's row of children as it was and is: when a child joins, the parent
     /// glides to the new middle instead of jumping there.
     row_width: HashMap<String, (f32, f32)>,
+    /// The session on show: the root of a tree. The newest until a person picks one.
+    selected: Option<String>,
+    /// The roots seen so far, so that the one a goal was just given to can be followed.
+    known: HashSet<String>,
+    follow_newest: bool,
+    /// The form that states a goal, and what it is made of: the agents it can go to are read once,
+    /// when it opens, and not on every frame.
+    form: bool,
+    field: Entity<TextField>,
+    choices: Vec<AgentChoice>,
+    lead: Option<String>,
+    problem: Option<String>,
+    /// What had the keyboard before the form took it, given back on the frame after it closes.
+    return_focus: Option<FocusHandle>,
+    /// Room above everything, for a window whose title bar the board is drawn under.
+    inset: f32,
     _tick: Task<()>,
 }
 
@@ -240,6 +318,13 @@ impl Board {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe(&tree, |_, _, cx| cx.notify()).detach();
+        let theme = Theme::of(mode);
+        let field = cx.new(|cx| TextField::new("What should be done?", theme, cx));
+        cx.subscribe(&field, |this, _, ev: &FieldEvent, cx| match ev {
+            FieldEvent::Submit(goal) => this.submit(goal.clone(), cx),
+            FieldEvent::Cancel => this.close_form(cx),
+        })
+        .detach();
         // The one clock: once a second, so "45s" reads 46s without anything having happened.
         let tick = cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(Duration::from_millis(1000)).await;
@@ -256,18 +341,97 @@ impl Board {
         Self {
             tree,
             actions,
-            theme: Theme::of(mode),
+            theme,
             collapsed: HashSet::new(),
             open: false,
             now: now_ms(),
             shown_cost: HashMap::new(),
             row_width: HashMap::new(),
+            selected: None,
+            known: HashSet::new(),
+            follow_newest: false,
+            form: false,
+            field,
+            choices: Vec::new(),
+            lead: None,
+            problem: None,
+            return_focus: None,
+            inset: 34.0,
             _tick: tick,
         }
     }
 
+    /// The field the form's goal is typed into.
+    pub fn field(&self) -> Entity<TextField> {
+        self.field.clone()
+    }
+
+    /// Room above everything: the traffic lights of a window drawn under its title bar, or nothing.
+    pub fn with_inset(mut self, inset: f32) -> Self {
+        self.inset = inset;
+        self
+    }
+
     pub fn set_mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
         self.theme = Theme::of(mode);
+        let theme = self.theme;
+        self.field.update(cx, |f, cx| f.set_theme(theme, cx));
+        cx.notify();
+    }
+
+    fn select(&mut self, root: &str, cx: &mut Context<Self>) {
+        self.selected = Some(root.to_string());
+        self.follow_newest = false;
+        self.open = false;
+        cx.notify();
+    }
+
+    /// Opens the form that states a goal, with the field ready to be typed in.
+    pub fn open_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.form = true;
+        self.problem = None;
+        self.choices = self.actions.agents(cx);
+        if self.lead.as_ref().is_none_or(|l| !self.choices.iter().any(|c| &c.name == l)) {
+            self.lead = self.choices.first().map(|c| c.name.clone());
+        }
+        self.return_focus = window.focused(cx);
+        window.focus(&self.field.focus_handle(cx));
+        cx.notify();
+    }
+
+    /// Start, pressed rather than typed: the same as enter in the field.
+    fn start_typed(&mut self, cx: &mut Context<Self>) {
+        let goal = self.field.read(cx).text().trim().to_string();
+        if goal.is_empty() {
+            self.problem = Some("Say what should be done first.".into());
+            cx.notify();
+        } else {
+            self.submit(goal, cx);
+        }
+    }
+
+    fn close_form(&mut self, cx: &mut Context<Self>) {
+        self.form = false;
+        cx.notify();
+    }
+
+    /// Gives the goal to the chosen agent. The new session is followed when it appears.
+    pub fn submit(&mut self, goal: String, cx: &mut Context<Self>) {
+        let Some(lead) = self.lead.clone() else {
+            self.problem = Some("There is no agent to give it to.".into());
+            cx.notify();
+            return;
+        };
+        let actions = self.actions.clone();
+        match actions.start(&lead, &goal, cx) {
+            Ok(()) => {
+                self.follow_newest = true;
+                self.form = false;
+                self.problem = None;
+                self.field.update(cx, |f, cx| f.clear(cx));
+            }
+            Err(e) => self.problem = Some(e),
+        }
         cx.notify();
     }
 
@@ -935,13 +1099,21 @@ impl Board {
             )
     }
 
-    fn header(&mut self, s: &Summary, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The selected session's header: its goal, and how the agents in it are doing. `root` keys the
+    /// total, so another session's total is shown as it is rather than counted to from this one's.
+    fn header(
+        &mut self,
+        s: &Summary,
+        title: &str,
+        root: &str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let t = self.theme;
         let waiting = s.waiting.clone();
         let running_ink = t.badge(Status::Running).1;
         let (ask_bg, ask_ink) = t.badge(Status::NeedsYou);
         let total = {
-            let id = "total".to_string();
+            let id = format!("total-{root}");
             let target = s.cost_micros;
             let from = match self.shown_cost.get(&id) {
                 Some((_, to)) if *to == target => self.shown_cost[&id].0,
@@ -954,7 +1126,7 @@ impl Board {
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(t.text)
                 .with_animation(
-                    SharedString::from(format!("cost-total-{target}")),
+                    SharedString::from(format!("cost-total-{root}-{target}")),
                     Animation::new(self::ms(520)).with_easing(ease_out_quint()),
                     move |el, p| el.child(money(lerp(from, target, p))),
                 )
@@ -992,9 +1164,9 @@ impl Board {
             .flex()
             .flex_row()
             .items_center()
-            .justify_between()
+            .gap(px(24.0))
             .px(px(40.0))
-            .pt(px(34.0))
+            .pt(px(self.inset))
             .pb(px(26.0))
             .child(
                 div()
@@ -1002,19 +1174,24 @@ impl Board {
                     .flex_row()
                     .items_center()
                     .gap(px(10.0))
-                    .child(icon("sparkles").size(px(20.0)).text_color(running_ink))
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .child(icon("sparkles").size(px(20.0)).flex_none().text_color(running_ink))
                     .child(
                         div()
-                            .text_size(px(24.0))
+                            .min_w(px(0.0))
+                            .truncate()
+                            .text_size(px(20.0))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(t.text)
-                            .child("Agents"),
+                            .child(title.to_string()),
                     ),
             )
             .child(
                 div()
                     .flex()
                     .flex_row()
+                    .flex_none()
                     .items_center()
                     .gap(px(18.0))
                     .child(div().text_size(px(14.5)).text_color(t.muted).child(format!(
@@ -1083,55 +1260,390 @@ impl Board {
     }
 }
 
-impl Render for Board {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl Board {
+    // -- the sessions -----------------------------------------------------------------------------
+
+    /// One goal in the list: a dot for how it stands, what was asked, and the line under it.
+    fn session_row(
+        &self,
+        r: &SessionRow,
+        selected: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let t = self.theme;
-        let now = self.now;
-        let (summary, branches) = {
-            let tree = self.tree.read(cx);
-            (
-                tree.summary(now),
-                tree.visible_roots(now)
-                    .into_iter()
-                    .map(|r| branch(tree, r, &self.collapsed, 0))
-                    .collect::<Vec<_>>(),
+        let ink = t.badge(r.status).1;
+        let dot = div().mt(px(5.0)).size(px(8.0)).flex_none().rounded(px(4.0)).bg(ink);
+        // A goal still being worked on breathes; one that has ended is still.
+        let dot = if r.status == Status::Running {
+            dot.with_animation(
+                SharedString::from(format!("pulse-{}", r.root)),
+                Animation::new(self::ms(1600)).repeat().with_easing(pulsating_between(0.35, 1.0)),
+                |el, p| el.opacity(p),
             )
+            .into_any_element()
+        } else {
+            dot.into_any_element()
         };
-        let header = self.header(&summary, cx);
-        let trees: Vec<gpui::AnyElement> = branches.iter().map(|b| self.block(b, cx)).collect();
-        let empty = trees.is_empty();
-        div().size_full().flex().flex_col().bg(t.bg).text_color(t.text).child(header).child(
+        let root = r.root.clone();
+        let title = if r.title.is_empty() { r.lead.clone() } else { r.title.clone() };
+        div()
+            .id(SharedString::from(format!("row-{}", r.root)))
+            .flex()
+            .flex_row()
+            .items_start()
+            .gap(px(10.0))
+            .px(px(10.0))
+            .py(px(9.0))
+            .rounded(px(10.0))
+            .border_1()
+            .border_color(if selected { t.card_border.into() } else { transparent_black() })
+            .bg(if selected { t.card.into() } else { transparent_black() })
+            .when(!selected, |el| el.hover(|s| s.bg(t.row_hover)))
+            .cursor_pointer()
+            .child(dot)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .gap(px(3.0))
+                    .child(
+                        div()
+                            .text_size(px(13.5))
+                            .line_height(px(18.0))
+                            .text_color(if selected || !r.status.is_over() {
+                                t.text
+                            } else {
+                                t.muted
+                            })
+                            .line_clamp(2)
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(if r.status == Status::NeedsYou { ink } else { t.faint })
+                            .truncate()
+                            .child(meta(r, self.now)),
+                    ),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.select(&root, cx)))
+    }
+
+    fn sidebar(
+        &self,
+        rows: &[SessionRow],
+        shown: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let t = self.theme;
+        let list: Vec<gpui::AnyElement> = rows
+            .iter()
+            .map(|r| self.session_row(r, shown == Some(r.root.as_str()), cx).into_any_element())
+            .collect();
+        div()
+            .w(px(SIDEBAR_W))
+            .flex_none()
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(t.sidebar)
+            .border_r_1()
+            .border_color(t.card_border)
+            .pt(px(self.inset))
+            .child(
+                div()
+                    .px(px(18.0))
+                    .h(px(30.0))
+                    .flex()
+                    .items_center()
+                    .text_size(px(13.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(t.muted)
+                    .child("Sessions"),
+            )
+            .child(
+                div()
+                    .id("new-goal")
+                    .mx(px(10.0))
+                    .mt(px(8.0))
+                    .mb(px(10.0))
+                    .h(px(34.0))
+                    .px(px(10.0))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(7.0))
+                    .rounded(px(9.0))
+                    .bg(t.card)
+                    .border_1()
+                    .border_color(t.tile_border)
+                    .hover(|s| s.border_color(t.card_hover))
+                    .cursor_pointer()
+                    .text_size(px(13.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(t.text)
+                    .child(icon("plus").size(px(15.0)).text_color(t.muted))
+                    .child("New goal")
+                    .on_click(cx.listener(|this, _, window, cx| this.open_form(window, cx))),
+            )
+            .child(
+                div()
+                    .id("sessions")
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
+                    .px(px(8.0))
+                    .pb(px(12.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .children(list),
+            )
+    }
+
+    // -- the form -------------------------------------------------------------------------------
+
+    /// The goal, whom it goes to, and what went wrong if anything did, over everything else.
+    fn form_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let (pick_bg, pick_ink) = t.badge(Status::Running);
+        let chips: Vec<gpui::AnyElement> = self
+            .choices
+            .iter()
+            .map(|c| {
+                let on = self.lead.as_deref() == Some(c.name.as_str());
+                let ink = if on { pick_ink } else { t.text };
+                let name = c.name.clone();
+                div()
+                    .id(SharedString::from(format!("lead-{}", c.name)))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(5.0))
+                    .h(px(28.0))
+                    .px(px(10.0))
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(if on { pick_ink } else { t.tile_border })
+                    .bg(if on { pick_bg } else { t.tile })
+                    .text_color(ink)
+                    .text_size(px(13.0))
+                    .cursor_pointer()
+                    .when(c.codes, |el| el.child(icon("code-xml").size(px(13.0)).text_color(ink)))
+                    .child(c.name.clone())
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.lead = Some(name.clone());
+                        window.focus(&this.field.focus_handle(cx));
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+        let about = self
+            .choices
+            .iter()
+            .find(|c| self.lead.as_deref() == Some(c.name.as_str()))
+            .map(|c| c.about.clone())
+            .unwrap_or_default();
+        let card = div()
+            .id("form")
+            .relative()
+            .w(px(540.0))
+            .p(px(18.0))
+            .rounded(px(16.0))
+            .bg(t.popover)
+            .border_1()
+            .border_color(t.popover_border)
+            .shadow_lg()
+            .flex()
+            .flex_col()
+            .gap(px(14.0))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_form(cx)))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(icon("sparkles").size(px(16.0)).text_color(pick_ink))
+                    .child(
+                        div()
+                            .text_size(px(16.5))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(t.text)
+                            .child("New goal"),
+                    ),
+            )
+            .child(self.field.clone())
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
+                    .child(div().text_size(px(12.0)).text_color(t.muted).child("Give it to"))
+                    .child(if chips.is_empty() {
+                        div()
+                            .text_size(px(13.0))
+                            .text_color(t.faint)
+                            .child("There is no agent to give a goal to yet.")
+                    } else {
+                        div().flex().flex_row().flex_wrap().gap(px(6.0)).children(chips)
+                    })
+                    .when(!about.is_empty(), |c| {
+                        c.child(
+                            div()
+                                .text_size(px(12.5))
+                                .text_color(t.faint)
+                                .line_clamp(2)
+                                .child(about.clone()),
+                        )
+                    }),
+            )
+            .when_some(self.problem.clone(), |c, p| {
+                c.child(div().text_size(px(13.0)).text_color(t.badge(Status::Failed).1).child(p))
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(12.0))
+                            .text_color(t.faint)
+                            .child("enter starts, shift-enter adds a line, esc cancels"),
+                    )
+                    .child(self.chip_button(
+                        "form-cancel".into(),
+                        "Cancel",
+                        t.tile,
+                        t.text,
+                        |this, cx| this.close_form(cx),
+                        cx,
+                    ))
+                    .child(self.chip_button(
+                        "form-start".into(),
+                        "Start",
+                        t.text,
+                        t.bg,
+                        |this, cx| this.start_typed(cx),
+                        cx,
+                    )),
+            )
+            .with_animation(
+                "form-in",
+                Animation::new(self::ms(200)).with_easing(ease_out_quint()),
+                |el, p| el.top(px(10.0 * (1.0 - p))),
+            );
+        deferred(
             div()
-                .id("canvas")
-                .flex_1()
-                .min_h(px(0.0))
-                .overflow_scroll()
-                .px(px(40.0))
-                .pb(px(48.0))
+                .id("form-backdrop")
+                .occlude()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .bg(t.shadow)
                 .flex()
                 .flex_col()
-                .gap(px(56.0))
-                .when(empty, |c| {
-                    c.child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .gap(px(10.0))
-                            .pt(px(120.0))
-                            .text_color(t.muted)
-                            .child(icon("sparkles").size(px(26.0)).text_color(t.faint))
-                            .child(div().text_size(px(15.0)).child("No agents are running"))
-                            .child(
-                                div()
-                                    .text_size(px(13.0))
-                                    .text_color(t.faint)
-                                    .child("An agent that starts a coding session shows up here."),
-                            ),
-                    )
-                })
-                .children(trees),
+                .items_center()
+                .pt(px(140.0))
+                .child(card)
+                .with_animation(
+                    "form-fade",
+                    Animation::new(self::ms(160)).with_easing(ease_out_quint()),
+                    |el, p| el.opacity(p),
+                ),
         )
+        .with_priority(2)
+    }
+}
+
+impl Render for Board {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let now = self.now;
+        if !self.form {
+            if let Some(f) = self.return_focus.take() {
+                window.focus(&f);
+            }
+        }
+        let rows = self.tree.read(cx).sessions(now);
+        let shown = pick(&rows, self.selected.as_deref(), &self.known, self.follow_newest).cloned();
+        if self.follow_newest && shown.as_ref().is_some_and(|r| !self.known.contains(&r.root)) {
+            self.selected = shown.as_ref().map(|r| r.root.clone());
+            self.follow_newest = false;
+        }
+        self.known.extend(rows.iter().map(|r| r.root.clone()));
+        let root = shown.as_ref().map(|r| r.root.clone()).unwrap_or_default();
+        let (summary, branch) = {
+            let tree = self.tree.read(cx);
+            (tree.summary_of(&root), tree.node(&root).map(|r| branch(tree, r, &self.collapsed, 0)))
+        };
+        let title = shown.as_ref().map_or("Agents".to_string(), |r| {
+            if r.title.is_empty() {
+                r.lead.clone()
+            } else {
+                r.title.clone()
+            }
+        });
+        let header = self.header(&summary, &title, &root, cx);
+        let block = branch.as_ref().map(|b| self.block(b, cx));
+        let sidebar = self.sidebar(&rows, shown.as_ref().map(|r| r.root.as_str()), cx);
+        let form = self.form.then(|| self.form_overlay(cx));
+        let main = div()
+            .flex_1()
+            .min_w(px(0.0))
+            .h_full()
+            .flex()
+            .flex_col()
+            .child(header)
+            .child(
+                div()
+                    // keyed by the session, so each keeps its own scroll
+                    .id(SharedString::from(format!("canvas-{root}")))
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_scroll()
+                    .px(px(40.0))
+                    .pb(px(48.0))
+                    .flex()
+                    .flex_col()
+                    .when(block.is_none(), |c| {
+                        c.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .gap(px(10.0))
+                                .pt(px(120.0))
+                                .text_color(t.muted)
+                                .child(icon("sparkles").size(px(26.0)).text_color(t.faint))
+                                .child(div().text_size(px(15.0)).child("No sessions yet"))
+                                .child(
+                                    div()
+                                        .text_size(px(13.0))
+                                        .text_color(t.faint)
+                                        .child("Give an agent a goal with New goal, and what it starts shows up here."),
+                                ),
+                        )
+                    })
+                    .children(block),
+            );
+        div()
+            .relative()
+            .size_full()
+            .flex()
+            .flex_row()
+            .bg(t.bg)
+            .text_color(t.text)
+            .child(sidebar)
+            .child(main)
+            .children(form)
     }
 }
 
@@ -1167,6 +1679,60 @@ mod tests {
         assert_eq!(clock(7_500_000), "2h 05m");
         assert_eq!(tokens(12_400), "12.4k tok");
         assert_eq!(tokens(800), "800 tok");
+    }
+
+    fn row(root: &str, status: Status, finished: Option<u64>) -> SessionRow {
+        SessionRow {
+            root: root.into(),
+            title: format!("{root}'s goal"),
+            lead: "lead".into(),
+            status,
+            agents: 3,
+            waiting: 0,
+            cost_micros: 290_000,
+            started_ms: 1_000_000,
+            finished_ms: finished,
+        }
+    }
+
+    #[test]
+    fn a_session_row_says_who_how_many_what_it_cost_and_when() {
+        let now = 1_045_000;
+        assert_eq!(meta(&row("a", Status::Running, None), now), "lead · 3 agents · $0.29 · 45s");
+        assert_eq!(
+            meta(&row("a", Status::Done, Some(now - 300_000)), now),
+            "lead · 3 agents · $0.29 · 5m ago"
+        );
+        assert_eq!(
+            meta(&row("a", Status::NeedsYou, None), now),
+            "lead · 3 agents · $0.29 · needs you"
+        );
+        let mut lone = row("a", Status::Failed, Some(now));
+        lone.agents = 1;
+        assert_eq!(meta(&lone, now), "lead · 1 agent · $0.29 · just now");
+    }
+
+    #[test]
+    fn the_session_on_show_is_the_new_one_then_the_picked_one_then_the_newest() {
+        let rows = [
+            row("new", Status::Running, None),
+            row("b", Status::Running, None),
+            row("c", Status::Done, Some(1)),
+        ];
+        let known: HashSet<String> = ["b", "c"].map(String::from).into();
+        let on =
+            |sel: Option<&str>, follow| pick(&rows, sel, &known, follow).map(|r| r.root.as_str());
+        assert_eq!(on(None, false), Some("new"), "nothing picked: the newest");
+        assert_eq!(on(Some("c"), false), Some("c"), "a pick stays while it is listed");
+        assert_eq!(on(Some("gone"), false), Some("new"), "a pick that left the list: the newest");
+        assert_eq!(on(Some("c"), true), Some("new"), "a goal just given is followed");
+        let all: HashSet<String> = ["new", "b", "c"].map(String::from).into();
+        assert_eq!(
+            pick(&rows, Some("c"), &all, true).map(|r| r.root.as_str()),
+            Some("c"),
+            "until it appears, the pick holds"
+        );
+        assert!(pick(&[], None, &all, true).is_none());
     }
 
     #[test]

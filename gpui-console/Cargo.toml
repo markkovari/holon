@@ -38,6 +38,8 @@ gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 # reports checkpoints ("building…", "deploying…") back to the foreground
 # entity as they happen, rather than only a single result at the end.
 futures = "0.3"
+# The board's films (src/film.rs). Already built for gpui's `image`, so it costs no new crate.
+gif = "0.14"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 reqwest = { version = "0.12", features = ["blocking", "json"] }

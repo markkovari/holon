@@ -30,7 +30,7 @@ use gpui::{
 use gpui_console::board::icons::Assets;
 use gpui_console::board::theme::Mode;
 use gpui_console::board::view::Scope;
-use gpui_console::board::{Actions as BoardActions, Board};
+use gpui_console::board::{Actions as BoardActions, AgentChoice, Board};
 
 use lattice::{spec_from_form, AgentRow, FormInput, Kind, Lattice, Message, View};
 
@@ -47,6 +47,28 @@ struct LatticeActions {
 impl BoardActions for LatticeActions {
     fn answer(&self, id: u64, approve: bool, scope: Scope, cx: &mut App) {
         self.lattice.update(cx, |l, cx| l.resolve_approval_scoped(id, approve, scope.as_str(), cx));
+    }
+
+    /// The agents that are not paused; those that can start a coding session first.
+    fn agents(&self, cx: &App) -> Vec<AgentChoice> {
+        let mut v: Vec<AgentChoice> = self
+            .lattice
+            .read(cx)
+            .agents
+            .iter()
+            .filter(|a| !a.paused)
+            .map(|a| AgentChoice {
+                name: a.name.clone(),
+                about: a.description.clone(),
+                codes: a.capabilities.iter().any(|c| c == "session_start"),
+            })
+            .collect();
+        v.sort_by_key(|c| !c.codes);
+        v
+    }
+
+    fn start(&self, agent: &str, goal: &str, cx: &mut App) -> Result<(), String> {
+        self.lattice.update(cx, |l, cx| l.start_goal(agent, goal, cx))
     }
 }
 
@@ -66,7 +88,8 @@ impl Console {
         window.focus(&focus_handle);
         let tree = lattice.read(cx).tree.clone();
         let actions = Rc::new(LatticeActions { lattice: lattice.clone() });
-        let board = cx.new(|cx| Board::new(tree, actions, Mode::Dark, cx));
+        // under an ordinary title bar and the way back, not under the traffic lights
+        let board = cx.new(|cx| Board::new(tree, actions, Mode::Dark, cx).with_inset(14.0));
         Self { lattice, focus_handle, message: String::new(), board, show_board: false }
     }
 

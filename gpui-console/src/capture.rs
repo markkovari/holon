@@ -55,8 +55,8 @@ fn own_window() -> Option<u32> {
     None
 }
 
-/// Writes the window as a PNG at the display's own resolution. Returns its size in pixels.
-pub fn own_window_png(path: &str) -> Result<(u32, u32), String> {
+/// The window's pixels at the display's own resolution, RGBA, with its width and height.
+pub fn own_window_rgba() -> Result<(Vec<u8>, usize, usize), String> {
     let id = own_window().ok_or("this process has no window on screen")?;
     // `CGRectNull`: the window's own bounds, whatever they are.
     let null = CGRect::new(&CGPoint::new(f64::INFINITY, f64::INFINITY), &CGSize::new(0.0, 0.0));
@@ -79,6 +79,12 @@ pub fn own_window_png(path: &str) -> Result<(u32, u32), String> {
             rgba.extend_from_slice(&[bytes[o + 2], bytes[o + 1], bytes[o], 255]);
         }
     }
+    Ok((rgba, w, h))
+}
+
+/// Writes the window as a PNG at the display's own resolution. Returns its size in pixels.
+pub fn own_window_png(path: &str) -> Result<(u32, u32), String> {
+    let (rgba, w, h) = own_window_rgba()?;
     let file = std::fs::File::create(path).map_err(|e| format!("{path}: {e}"))?;
     let mut enc = png::Encoder::new(std::io::BufWriter::new(file), w as u32, h as u32);
     enc.set_color(png::ColorType::Rgba);

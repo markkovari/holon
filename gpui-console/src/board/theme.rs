@@ -29,6 +29,9 @@ pub struct Theme {
     pub mode: Mode,
     /// The window.
     pub bg: Rgba,
+    /// The list of sessions down the left, and a row of it under the pointer.
+    pub sidebar: Rgba,
+    pub row_hover: Rgba,
     pub card: Rgba,
     pub card_border: Rgba,
     pub card_hover: Rgba,
@@ -54,6 +57,8 @@ impl Theme {
         Self {
             mode: Mode::Dark,
             bg: rgb(0x151517),
+            sidebar: rgb(0x111113),
+            row_hover: rgb(0x1a1a1d),
             card: rgb(0x1e1e21),
             card_border: rgb(0x2c2c31),
             card_hover: rgb(0x3b3b42),
@@ -77,6 +82,8 @@ impl Theme {
         Self {
             mode: Mode::Light,
             bg: rgb(0xfafafa),
+            sidebar: rgb(0xf3f3f5),
+            row_hover: rgb(0xe9e9ed),
             card: rgb(0xffffff),
             card_border: rgb(0xeaeaee),
             card_hover: rgb(0xc9c9d2),
