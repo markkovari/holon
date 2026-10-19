@@ -575,6 +575,7 @@ flowchart LR
   n_gw -- "HTTP" --> n_rt
   n_mx -- "HTTP" --> n_rt
   n_mx -- "appservice" --> n_syn
+  n_rt -- "session_start" --> n_api
   n_g_cl -- "1 · REST" --> n_api
   n_g_res -- "2 · sink" --> n_api
   n_appr -- "3 · park" --> n_g_park
@@ -597,7 +598,7 @@ flowchart LR
 
 - comp-agentd tools are confined to the session’s workspace root; run cannot be confined, which is what approval is for.
 - agent-runtime refuses a tool an agent was not granted instead of dispatching it, and only the owner’s Matrix messages start a run.
-- Nothing in this repository is a client of comp-agentd yet: the contract came first, for bots, backends and scripts outside it ([ADR-0102](adr/0102-an-agent-session-is-a-contract-first.md)). Whether agent-runtime should become one is proposed in [ADR-0117](adr/0117-an-autonomous-run-is-a-task-in-a-session.md).
+- agent-runtime is the first client of comp-agentd: an agent granted session_start opens a coding session, the runtime watches it and shows its approvals as its own ([ADR-0119](adr/0119-an-agent-can-start-a-coding-session.md)); the contract came first, for bots, backends and scripts outside it ([ADR-0102](adr/0102-an-agent-session-is-a-contract-first.md)). Whether agent-runtime should also run its own tasks on the daemon is proposed in [ADR-0117](adr/0117-an-autonomous-run-is-a-task-in-a-session.md).
 
 **Where it lives** [`reconciler/daemons/agentd/`](../reconciler/daemons/agentd/) · [`crates/holon-llm/`](../crates/holon-llm/) · [`reconciler/fuel/`](../reconciler/fuel/) · [`api/holon/v1/agent.proto`](../api/holon/v1/agent.proto) · [`api/openapi.yaml`](../api/openapi.yaml) · [`agent-runtime/`](../agent-runtime/) · [`agent-matrix/`](../agent-matrix/) · [`gpui-console/`](../gpui-console/)
 
