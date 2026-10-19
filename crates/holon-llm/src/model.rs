@@ -185,6 +185,10 @@ pub struct Request<'a> {
     /// Anthropic only: mark the system block as a cache breakpoint and ask for automatic caching of
     /// the growing tail. The system prompt is the part identical across every call.
     pub cache: bool,
+    /// Anthropic only: write every message's content as a list of blocks, even a lone piece of text.
+    /// The API takes either form; a server that stands in for it and reads only blocks needs this
+    /// (this repository's `tools/claude-shim.mjs` is one).
+    pub blocks: bool,
 }
 
 impl<'a> Request<'a> {
@@ -200,6 +204,7 @@ impl<'a> Request<'a> {
             seed: None,
             stream: false,
             cache: false,
+            blocks: false,
         }
     }
 }

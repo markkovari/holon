@@ -1,7 +1,9 @@
-//! Pure OpenAI request-building + response-parsing, decoupled from the WIT bindings so it is unit-testable on the host.
-//! The Guest impl in `lib.rs` converts WIT records to/from these plain types. Deterministic, serde_json only: no WASI,
-//! config or HTTP (that plumbing lives in `lib.rs`).
+//! The OpenAI provider's side of a completion, decoupled from the WIT bindings so it is unit-testable on the host.
+//! The Guest impl in `lib.rs` converts WIT records to/from these plain types. Deterministic: no WASI, config or HTTP
+//! (that plumbing lives in `lib.rs`). What the chat API looks like on the wire is `holon-llm`'s (docs/adr/0116);
+//! the embeddings endpoint is a different shape and stays here.
 
+use holon_llm::{openai, Message, Part, Request, Role};
 use serde::Deserialize;
 
 /// A chat message (plain mirror of the WIT `message`).
@@ -40,28 +42,30 @@ fn json_str(s: &str) -> String {
 }
 
 /// Build the `/v1/chat/completions` request body. `temperature` is milli-units
-/// (700 -> 0.7). `model` must already be resolved (non-empty).
+/// (700 -> 0.7). `model` must already be resolved (non-empty). Unset optionals (a zero
+/// temperature, token limit or seed) are left to the server's defaults, and system turns
+/// are lifted into the one system prompt that leads the messages.
 pub fn chat_body(messages: &[Msg], opts: &Opts) -> String {
-    let mut parts = vec![format!("\"model\":{}", json_str(opts.model))];
-    let msgs: Vec<String> = messages
+    let system: Vec<&str> =
+        messages.iter().filter(|m| m.role == "system").map(|m| m.content).collect();
+    let system = (!system.is_empty()).then(|| system.join("\n\n"));
+    let turns: Vec<Message> = messages
         .iter()
-        .map(|m| format!("{{\"role\":\"{}\",\"content\":{}}}", m.role, json_str(m.content)))
+        .filter(|m| m.role != "system")
+        .map(|m| {
+            let role = if m.role == "assistant" { Role::Assistant } else { Role::User };
+            Message::new(role, vec![Part::Text(m.content.to_string())])
+        })
         .collect();
-    parts.push(format!("\"messages\":[{}]", msgs.join(",")));
-    if opts.temperature > 0 {
-        parts.push(format!("\"temperature\":{}", opts.temperature as f64 / 1000.0));
-    }
-    if opts.max_tokens > 0 {
-        parts.push(format!("\"max_tokens\":{}", opts.max_tokens));
-    }
-    if !opts.stop.is_empty() {
-        let stops: Vec<String> = opts.stop.iter().map(|s| json_str(s)).collect();
-        parts.push(format!("\"stop\":[{}]", stops.join(",")));
-    }
-    if opts.seed > 0 {
-        parts.push(format!("\"seed\":{}", opts.seed));
-    }
-    format!("{{{}}}", parts.join(","))
+    let req = Request {
+        system: system.as_deref(),
+        max_tokens: (opts.max_tokens > 0).then_some(opts.max_tokens),
+        temperature: (opts.temperature > 0).then(|| opts.temperature as f64 / 1000.0),
+        stop: &opts.stop,
+        seed: (opts.seed > 0).then_some(opts.seed),
+        ..Request::new(opts.model, &turns)
+    };
+    openai::body(&req).to_string()
 }
 
 /// Build the `/v1/embeddings` request body. `model` must already be resolved.
@@ -69,33 +73,6 @@ pub fn embed_body(text: &str, model: &str) -> String {
     format!("{{\"model\":{},\"input\":{}}}", json_str(model), json_str(text))
 }
 
-#[derive(Deserialize)]
-struct ChatResp {
-    #[serde(default)]
-    choices: Vec<ChatChoice>,
-    #[serde(default)]
-    model: String,
-    #[serde(default)]
-    usage: Option<UsageResp>,
-}
-#[derive(Deserialize)]
-struct ChatChoice {
-    message: ChatMsg,
-    #[serde(default)]
-    finish_reason: Option<String>,
-}
-#[derive(Deserialize)]
-struct ChatMsg {
-    #[serde(default)]
-    content: String,
-}
-#[derive(Deserialize)]
-struct UsageResp {
-    #[serde(default)]
-    prompt_tokens: u32,
-    #[serde(default)]
-    completion_tokens: u32,
-}
 #[derive(Deserialize)]
 struct EmbedResp {
     #[serde(default)]
@@ -107,21 +84,23 @@ struct EmbedData {
     embedding: Vec<f32>,
 }
 
+/// A count as the WIT record has it, which is 32 bits.
+fn narrow(n: u64) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
 /// Parse a `/v1/chat/completions` response into the domain completion.
 pub fn parse_completion(body: &[u8]) -> Result<Parsed, ParseError> {
-    let parsed: ChatResp = serde_json::from_slice(body)
-        .map_err(|e| ParseError::BadResponse(format!("chat json: {e}")))?;
-    let choice = parsed.choices.into_iter().next().ok_or(ParseError::NoContent)?;
-    if choice.message.content.is_empty() {
+    let reply = openai::parse(body).map_err(|e| ParseError::BadResponse(e.to_string()))?;
+    if reply.text.is_empty() {
         return Err(ParseError::NoContent);
     }
-    let usage = parsed.usage.unwrap_or(UsageResp { prompt_tokens: 0, completion_tokens: 0 });
     Ok(Parsed {
-        text: choice.message.content,
-        finish_reason: choice.finish_reason.unwrap_or_else(|| "other".to_string()),
-        model: parsed.model,
-        prompt_tokens: usage.prompt_tokens,
-        completion_tokens: usage.completion_tokens,
+        text: reply.text,
+        finish_reason: reply.finish.unwrap_or_else(|| "other".to_string()),
+        model: reply.model,
+        prompt_tokens: narrow(reply.usage.total_input()),
+        completion_tokens: narrow(reply.usage.output),
     })
 }
 
