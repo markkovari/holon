@@ -1,13 +1,16 @@
-//! Pure Anthropic Messages-API request building and response parsing, decoupled from
-//! the WIT bindings so it is unit-testable on the host. HTTP, config and the secret
-//! live in `lib.rs`.
+//! The Anthropic provider's side of a completion: this provider's POLICY over the Messages API, decoupled
+//! from the WIT bindings so it is unit-testable on the host. HTTP, config and the secret live in `lib.rs`;
+//! what the API looks like on the wire is `holon-llm`'s (docs/adr/0116).
 //!
-//! Differences from an OpenAI request:
-//! * the SYSTEM prompt is a top-level string, so system turns are lifted out of `messages`;
-//! * `max_tokens` is REQUIRED (a request without it is a 400);
-//! * the response is a list of `content` BLOCKS, with `input_tokens`/`output_tokens` usage.
+//! The policy, which is this file's to say:
+//! * system turns are lifted out of `messages` into the top-level system prompt, which is a cache
+//!   breakpoint because it is identical across every branch and repair;
+//! * `max_tokens` is always sent (a request without it is a 400);
+//! * `temperature` goes only to the models that accept it, clamped to their range;
+//! * messages are written as lists of blocks, because `tools/claude-shim.mjs`, which answers this
+//!   provider's requests from `claude -p`, reads only that form.
 
-use serde::Deserialize;
+use holon_llm::{anthropic, Message, Part, Request, Role};
 
 pub struct Msg<'a> {
     pub role: &'a str, // "system" | "user" | "assistant"
@@ -34,10 +37,6 @@ pub struct Parsed {
 pub enum ParseError {
     BadResponse(String),
     NoContent,
-}
-
-fn json_str(s: &str) -> String {
-    serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
 }
 
 /// Whether a model accepts a `temperature`, as a tagged union so a future tier with a
@@ -69,139 +68,60 @@ fn temp_support(model: &str) -> TempSupport {
 
 /// Build the `/v1/messages` request body.
 ///
-/// System messages are concatenated into the top-level `system` field and
-/// removed from `messages`; everything else stays a user/assistant turn. An
-/// unknown role is treated as `user`, because the alternative — dropping it —
-/// silently loses a turn the caller meant to send.
-/// The ephemeral cache-breakpoint marker, appended inside a content block. We keep ONE
-/// explicit breakpoint, on the system block: the system + files prefix is identical
-/// across every branch AND repair, so it must cache independently of the message tail.
-/// The growing tail is left to automatic caching (the top-level field below).
-const CACHE: &str = ",\"cache_control\":{\"type\":\"ephemeral\"}";
-
+/// System messages are concatenated into the top-level `system` field and removed from `messages`;
+/// everything else stays a user/assistant turn. An unknown role is treated as `user`, because the
+/// alternative — dropping it — silently loses a turn the caller meant to send.
+///
+/// The system block carries an explicit cache breakpoint and the request asks for automatic caching of
+/// the growing tail: the system + files prefix is identical across every branch AND repair, so it must
+/// cache independently of the message tail.
 pub fn messages_body(messages: &[Msg], opts: &Opts) -> String {
-    let mut system_parts: Vec<&str> = Vec::new();
-    let mut user_turns: Vec<&Msg> = Vec::new();
-    for m in messages {
-        if m.role == "system" {
-            system_parts.push(m.content);
-        } else {
-            user_turns.push(m);
-        }
-    }
-
-    // Plain text blocks; the message tail's breakpoint is automatic caching's job.
-    let turns: Vec<String> = user_turns
+    let system: Vec<&str> =
+        messages.iter().filter(|m| m.role == "system").map(|m| m.content).collect();
+    let system = (!system.is_empty()).then(|| system.join("\n\n"));
+    let turns: Vec<Message> = messages
         .iter()
+        .filter(|m| m.role != "system")
         .map(|m| {
-            let role = if m.role == "assistant" { "assistant" } else { "user" };
-            format!(
-                "{{\"role\":\"{role}\",\"content\":[{{\"type\":\"text\",\"text\":{}}}]}}",
-                json_str(m.content)
-            )
+            let role = if m.role == "assistant" { Role::Assistant } else { Role::User };
+            Message::new(role, vec![Part::Text(m.content.to_string())])
         })
         .collect();
-
-    let mut parts = vec![
-        format!("\"model\":{}", json_str(opts.model)),
-        format!("\"max_tokens\":{}", opts.max_tokens),
-        format!("\"messages\":[{}]", turns.join(",")),
-        // Automatic caching: one top-level breakpoint the system moves forward as the
-        // conversation grows; composes with the explicit system breakpoint.
-        "\"cache_control\":{\"type\":\"ephemeral\"}".to_string(),
-    ];
-    if !system_parts.is_empty() {
-        // The system prompt is identical across every branch and attempt, so it is
-        // its own cache breakpoint.
-        parts.push(format!(
-            "\"system\":[{{\"type\":\"text\",\"text\":{}{CACHE}}}]",
-            json_str(&system_parts.join("\n\n"))
-        ));
-    }
-    // The 5-generation models deprecated `temperature` and answer 400 if it is sent.
-    // Sent only where accepted and clamped to the tier's range, so a repair can turn
-    // the knob up without a 400 killing the run.
-    if let TempSupport::Ranged { max_milli } = temp_support(opts.model) {
-        let milli = opts.temperature.min(max_milli);
-        // milli-units to a JSON float: 200 -> 0.2, 1000 -> 1.
-        parts.push(format!("\"temperature\":{}", milli as f64 / 1000.0));
-    }
-    if !opts.stop.is_empty() {
-        let stops: Vec<String> = opts.stop.iter().map(|s| json_str(s)).collect();
-        parts.push(format!("\"stop_sequences\":[{}]", stops.join(",")));
-    }
-    format!("{{{}}}", parts.join(","))
+    let req = Request {
+        system: system.as_deref(),
+        max_tokens: Some(opts.max_tokens),
+        // The 5-generation models deprecated `temperature` and answer 400 if it is sent. Sent only
+        // where accepted and clamped to the tier's range, so a repair can turn the knob up without a
+        // 400 killing the run.
+        temperature: match temp_support(opts.model) {
+            TempSupport::Ranged { max_milli } => {
+                Some(opts.temperature.min(max_milli) as f64 / 1000.0)
+            }
+            TempSupport::Deprecated => None,
+        },
+        stop: &opts.stop,
+        cache: true,
+        blocks: true,
+        ..Request::new(opts.model, &turns)
+    };
+    anthropic::body(&req).to_string()
 }
 
-#[derive(Deserialize)]
-struct MsgResp {
-    #[serde(default)]
-    content: Vec<Block>,
-    #[serde(default)]
-    model: String,
-    #[serde(default)]
-    stop_reason: Option<String>,
-    #[serde(default)]
-    usage: Option<UsageResp>,
-    #[serde(default)]
-    #[serde(rename = "type")]
-    kind: String,
-    #[serde(default)]
-    error: Option<ApiError>,
-}
-#[derive(Deserialize)]
-struct Block {
-    #[serde(default)]
-    #[serde(rename = "type")]
-    kind: String,
-    #[serde(default)]
-    text: String,
-}
-#[derive(Deserialize)]
-struct UsageResp {
-    #[serde(default)]
-    input_tokens: u32,
-    #[serde(default)]
-    output_tokens: u32,
-    // With caching on, `input_tokens` counts ONLY tokens after the last breakpoint;
-    // the cached prefix is reported here. Summing all three gives the true input,
-    // else a cached run looks ~free and the wallet under-counts.
-    #[serde(default)]
-    cache_creation_input_tokens: u32,
-    #[serde(default)]
-    cache_read_input_tokens: u32,
-}
-#[derive(Deserialize)]
-struct ApiError {
-    #[serde(default)]
-    message: String,
+/// A count as the WIT record has it, which is 32 bits.
+fn narrow(n: u64) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
 }
 
 /// Parse a `/v1/messages` response into the domain completion. Anthropic sometimes
 /// answers a 200 with `{"type":"error",...}` when throttling, so an error envelope is
 /// checked even on a success status.
 pub fn parse_completion(body: &[u8]) -> Result<Parsed, ParseError> {
-    let parsed: MsgResp = serde_json::from_slice(body)
-        .map_err(|e| ParseError::BadResponse(format!("messages json: {e}")))?;
-
-    if parsed.kind == "error" {
-        let m = parsed.error.map(|e| e.message).unwrap_or_else(|| "unknown error".into());
-        return Err(ParseError::BadResponse(format!("api error: {m}")));
-    }
-
-    // Non-text blocks (tool use, thinking) are skipped rather than stringified.
-    let text: String = parsed
-        .content
-        .iter()
-        .filter(|b| b.kind == "text")
-        .map(|b| b.text.as_str())
-        .collect::<Vec<_>>()
-        .join("");
-    if text.is_empty() {
+    let reply = anthropic::parse(body).map_err(|e| ParseError::BadResponse(e.to_string()))?;
+    if reply.text.is_empty() {
         // A thinking model can spend the WHOLE budget thinking and never reach a text
         // block (`stop_reason` is `max_tokens`). "The model returned nothing" would send
         // the reader to the wrong place; this says where to look.
-        if parsed.stop_reason.as_deref() == Some("max_tokens") {
+        if reply.hit_token_limit() {
             return Err(ParseError::BadResponse(
                 "the model used its entire max-tokens budget before writing any text \
                  (a thinking model on a large task) — raise `anthropic:max-tokens`"
@@ -210,26 +130,15 @@ pub fn parse_completion(body: &[u8]) -> Result<Parsed, ParseError> {
         }
         return Err(ParseError::NoContent);
     }
-
-    let usage = parsed.usage.unwrap_or(UsageResp {
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_creation_input_tokens: 0,
-        cache_read_input_tokens: 0,
-    });
-    // True total input = post-breakpoint + freshly-cached + cache-read. Cache reads are
-    // billed at ~10% and writes at ~125%, so counting them at par makes the dollar cost
-    // an UPPER bound — safe for a budget ceiling.
-    let prompt_tokens = usage
-        .input_tokens
-        .saturating_add(usage.cache_creation_input_tokens)
-        .saturating_add(usage.cache_read_input_tokens);
     Ok(Parsed {
-        text,
-        finish_reason: parsed.stop_reason.unwrap_or_else(|| "other".to_string()),
-        model: parsed.model,
-        prompt_tokens,
-        completion_tokens: usage.output_tokens,
+        text: reply.text,
+        finish_reason: reply.finish.unwrap_or_else(|| "other".to_string()),
+        model: reply.model,
+        // True total input = post-breakpoint + freshly-cached + cache-read. Cache reads are
+        // billed at ~10% and writes at ~125%, so counting them at par makes the dollar cost
+        // an UPPER bound — safe for a budget ceiling.
+        prompt_tokens: narrow(reply.usage.total_input()),
+        completion_tokens: narrow(reply.usage.output),
     })
 }
 
