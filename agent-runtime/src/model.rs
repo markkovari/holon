@@ -6,32 +6,12 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use base64::engine::general_purpose::STANDARD as B64;
-use base64::Engine as _;
-use serde_json::{json, Value};
+use holon_llm::{anthropic, openai, Message, ParseError, Part, Request, Role};
 
 use crate::spec::ModelSpec;
 
-/// A picture that goes to the model with a message.
-#[derive(Clone, PartialEq)]
-pub struct Image {
-    /// `image/jpeg`, `image/png`, `image/webp` or `image/gif`.
-    pub media_type: String,
-    pub data: Vec<u8>,
-}
-
-// Never the bytes: a message is logged and compared in tests, and a photo is megabytes.
-impl std::fmt::Debug for Image {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Image({}, {} bytes)", self.media_type, self.data.len())
-    }
-}
-
-impl Image {
-    fn data_url(&self) -> String {
-        format!("data:{};base64,{}", self.media_type, B64.encode(&self.data))
-    }
-}
+/// A picture that goes to the model with a message. The wire crate's, which never prints the bytes.
+pub use holon_llm::Image;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Msg {
@@ -186,99 +166,91 @@ fn http() -> Result<reqwest::blocking::Client, String> {
         .map_err(|e| e.to_string())
 }
 
-fn openai(base: &str, model: &str, key: &str, system: &str, msgs: &[Msg]) -> Result<Reply, String> {
-    let mut messages = vec![json!({"role": "system", "content": system})];
-    messages.extend(msgs.iter().map(|m| {
-        if m.images.is_empty() {
-            return json!({"role": m.role, "content": m.content});
-        }
-        // text first, then each picture as a data URL
-        let mut parts = vec![json!({"type": "text", "text": m.content})];
-        parts.extend(
-            m.images
-                .iter()
-                .map(|i| json!({"type": "image_url", "image_url": {"url": i.data_url()}})),
-        );
-        json!({"role": m.role, "content": parts})
-    }));
-    let mut req = http()?
-        .post(format!("{}/v1/chat/completions", base.trim_end_matches('/')))
-        // Room for a reasoning model to think AND answer; some servers default to a few hundred.
-        .json(&json!({"model": model, "messages": messages, "stream": false, "max_tokens": 4096}));
-    if !key.is_empty() {
-        req = req.bearer_auth(key);
-    }
-    let v = send(req)?;
-    let text = match v["choices"][0]["message"]["content"].as_str() {
-        Some(t) => t.to_string(),
-        None if v["choices"][0]["finish_reason"] == "length" => {
-            return Err("the model ran out of tokens while thinking and never answered; \
-                        ask again, or use a model that thinks less"
-                .into())
-        }
-        None => return Err(format!("unexpected model response: {}", clip(&v.to_string()))),
-    };
-    Ok(Reply {
-        text,
-        usage: Usage {
-            input: v["usage"]["prompt_tokens"].as_u64().unwrap_or(0),
-            output: v["usage"]["completion_tokens"].as_u64().unwrap_or(0),
-        },
-    })
-}
-
-/// The Messages API's form of a conversation: a message with pictures is a list of blocks, the
-/// pictures first and then the words about them.
-fn anthropic_messages(msgs: &[Msg]) -> Vec<Value> {
+/// A message as the wire crate writes it. The two dialects want a message's pictures in different
+/// places — Anthropic's before the words about them, OpenAI's after — so the caller says which.
+fn wire(msgs: &[Msg], pictures_first: bool) -> Vec<Message> {
     msgs.iter()
         .map(|m| {
-            if m.images.is_empty() {
-                return json!({"role": m.role, "content": m.content});
-            }
-            let mut blocks: Vec<Value> = m
-                .images
-                .iter()
-                .map(|i| {
-                    json!({"type": "image", "source": {"type": "base64",
-                        "media_type": i.media_type, "data": B64.encode(&i.data)}})
-                })
-                .collect();
-            blocks.push(json!({"type": "text", "text": m.content}));
-            json!({"role": m.role, "content": blocks})
+            let role = if m.role == "assistant" { Role::Assistant } else { Role::User };
+            let words = Part::Text(m.content.clone());
+            let pictures = m.images.iter().cloned().map(Part::Image);
+            let parts = if pictures_first {
+                pictures.chain(std::iter::once(words)).collect()
+            } else {
+                std::iter::once(words).chain(pictures).collect()
+            };
+            Message::new(role, parts)
         })
         .collect()
 }
 
-fn anthropic(model: &str, key: &str, system: &str, msgs: &[Msg]) -> Result<Reply, String> {
-    let messages = anthropic_messages(msgs);
-    let req = http()?
-        .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", key)
-        .header("anthropic-version", "2023-06-01")
-        .json(&json!({"model": model, "max_tokens": 2048, "system": system, "messages": messages}));
-    let v = send(req)?;
-    let text: String = v["content"]
-        .as_array()
-        .map(|a| a.iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join(""))
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| format!("unexpected model response: {}", clip(&v.to_string())))?;
+fn openai(base: &str, model: &str, key: &str, system: &str, msgs: &[Msg]) -> Result<Reply, String> {
+    let messages = wire(msgs, false);
+    let req = Request {
+        system: Some(system),
+        // Room for a reasoning model to think AND answer; some servers default to a few hundred.
+        max_tokens: Some(4096),
+        ..Request::new(model, &messages)
+    };
+    let mut req = http()?
+        .post(format!("{}/v1/chat/completions", base.trim_end_matches('/')))
+        .json(&openai::body(&req));
+    if !key.is_empty() {
+        req = req.bearer_auth(key);
+    }
+    let body = send(req)?;
+    let r = openai::parse(body.as_bytes()).map_err(read_error)?;
+    if r.text.is_empty() {
+        return Err(if r.hit_token_limit() {
+            "the model ran out of tokens while thinking and never answered; \
+             ask again, or use a model that thinks less"
+                .into()
+        } else {
+            format!("unexpected model response: {}", clip(&body))
+        });
+    }
     Ok(Reply {
-        text,
-        usage: Usage {
-            input: v["usage"]["input_tokens"].as_u64().unwrap_or(0),
-            output: v["usage"]["output_tokens"].as_u64().unwrap_or(0),
-        },
+        text: r.text,
+        usage: Usage { input: r.usage.total_input(), output: r.usage.output },
     })
 }
 
-fn send(req: reqwest::blocking::RequestBuilder) -> Result<Value, String> {
+fn anthropic(model: &str, key: &str, system: &str, msgs: &[Msg]) -> Result<Reply, String> {
+    let messages = wire(msgs, true);
+    let req =
+        Request { system: Some(system), max_tokens: Some(2048), ..Request::new(model, &messages) };
+    let req = http()?
+        .post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", key)
+        .header("anthropic-version", anthropic::VERSION)
+        .json(&anthropic::body(&req));
+    let body = send(req)?;
+    let r = anthropic::parse(body.as_bytes()).map_err(read_error)?;
+    if r.text.is_empty() {
+        return Err(format!("unexpected model response: {}", clip(&body)));
+    }
+    Ok(Reply {
+        text: r.text,
+        usage: Usage { input: r.usage.total_input(), output: r.usage.output },
+    })
+}
+
+/// The body of a successful response; a failed request or a non-2xx status is the error.
+fn send(req: reqwest::blocking::RequestBuilder) -> Result<String, String> {
     let r = req.send().map_err(|e| format!("model request failed: {e}"))?;
     let status = r.status();
     let body = r.text().map_err(|e| e.to_string())?;
     if !status.is_success() {
         return Err(format!("model returned {status}: {}", clip(&body)));
     }
-    serde_json::from_str(&body).map_err(|e| format!("model sent invalid JSON: {e}"))
+    Ok(body)
+}
+
+fn read_error(e: ParseError) -> String {
+    match e {
+        ParseError::Malformed(m) => format!("model sent invalid JSON: {m}"),
+        ParseError::Api(m) => m,
+    }
 }
 
 fn clip(s: &str) -> String {
@@ -288,6 +260,7 @@ fn clip(s: &str) -> String {
 #[cfg(test)]
 mod vision_tests {
     use super::*;
+    use serde_json::{json, Value};
 
     fn photo() -> Image {
         Image { media_type: "image/png".into(), data: vec![0x89, b'P', b'N', b'G'] }
@@ -400,10 +373,14 @@ mod vision_tests {
 
     #[test]
     fn anthropic_gets_the_pictures_first_as_image_blocks() {
-        let m = anthropic_messages(&[
-            Msg::user("what is this?").with_images(vec![photo()]),
-            Msg::assistant("a plate"),
-        ]);
+        let body = anthropic::body(&Request::new(
+            "m",
+            &wire(
+                &[Msg::user("what is this?").with_images(vec![photo()]), Msg::assistant("a plate")],
+                true,
+            ),
+        ));
+        let m = &body["messages"];
         assert_eq!(m[0]["content"][0]["type"], "image");
         assert_eq!(
             m[0]["content"][0]["source"],
