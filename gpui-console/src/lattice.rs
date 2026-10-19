@@ -1203,6 +1203,8 @@ mod tests {
                 parent_span_id: parent.map(String::from),
                 hops: 0,
                 chain: vec![],
+                project: String::new(),
+                attachments: vec![],
             };
         let runs = vec![
             run("origin", "s1", None, &[("emit_event", "tool-a")]),

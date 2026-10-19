@@ -85,7 +85,7 @@ fn a_session_is_watched_through_this_crates_http_client() {
         }
         let view = rt.sessions().first().cloned();
         assert!(
-            view.as_ref().map_or(true, |v| v.phase != Phase::Failed),
+            view.as_ref().is_none_or(|v| v.phase != Phase::Failed),
             "the session failed: {:?}",
             view.map(|v| v.result)
         );

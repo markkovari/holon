@@ -139,6 +139,10 @@ pub fn start(
         .arg(&workspaces)
         .arg("--state-dir")
         .arg(state);
+    if provider == "mock" {
+        // the daemon prices a model it does not know as the dearest there is, and a scripted one is free
+        cmd.args(["--price", "mock=0,0"]);
+    }
     if let Ok(base) = std::env::var("HOLON_AGENTD_BASE_URL") {
         cmd.args(["--base-url", &base]);
     }
