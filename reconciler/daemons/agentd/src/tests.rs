@@ -155,7 +155,7 @@ impl Events {
                 .unwrap()
                 .expect("stream open");
             self.buf.push_str(&String::from_utf8_lossy(&chunk));
-            for data in model::take_frames(&mut self.buf) {
+            for data in holon_llm::sse::take_frames(&mut self.buf) {
                 if let Ok(v) = serde_json::from_str::<Value>(&data) {
                     self.queue.push_back(v);
                 }
