@@ -878,6 +878,32 @@ jobs:
             echo "::endgroup::"
           done
 
+  # `reconciler/Dockerfile.daemon` builds one daemon per image from a NARROW context — the five
+  # directories it COPYs — and nothing built it, so a change that made the context too small went
+  # unseen until someone tried to ship a daemon: from the day `comp-agentd`'s build script began
+  # reading `api/holon/v1/agent.proto`, the image could build NO daemon (the reconciler package's
+  # build script ran for every `--bin` and `api/` was not in the context), for as long as it took
+  # anyone to try. The split into packages (docs/adr/0115) is what made it buildable again, and this
+  # is what keeps it so: a leaf daemon (what the context must hold for the smallest case) and
+  # `comp-agentd` (the one whose build reads outside `reconciler/`), each built and then run.
+  daemon-image:
+    name: daemon image (${{ matrix.daemon }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        daemon: [comp-fswatch, comp-agentd]
+    env:
+      DAEMON: ${{ matrix.daemon }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image from the Dockerfile's own context
+        run: docker build -f reconciler/Dockerfile.daemon --build-arg DAEMON="$DAEMON" -t "$DAEMON" .
+      # `--help` exits 0 and proves the entrypoint is the daemon and that it runs on the slim image.
+      - name: Run it
+        run: docker run --rm "$DAEMON" --help
+
   semgrep:
     name: semgrep
     runs-on: ubuntu-latest
