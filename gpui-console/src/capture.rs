@@ -17,21 +17,39 @@ use core_graphics::window::{
     kCGWindowListOptionOnScreenOnly, kCGWindowNumber, kCGWindowOwnerPID,
 };
 
+// The three places this file leaves safe Rust, each of which CoreFoundation's own API requires:
+// reading a `kCG*` key (an `extern static`), and taking a reference the window list still owns.
+
+/// A window list entry, as a dictionary.
+fn entry(raw: *const std::ffi::c_void) -> CFDictionary<CFString, core_foundation::base::CFType> {
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+    unsafe { CFDictionary::wrap_under_get_rule(raw as _) } // the list owns it; this only borrows
+}
+
+/// One of the `kCG*` window-info keys, as a string.
+fn key(raw: CFStringRef) -> CFString {
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+    unsafe { CFString::wrap_under_get_rule(raw) } // a constant CoreGraphics owns
+}
+
+/// The window-info keys read here: owner process, layer, number.
+fn keys() -> (CFStringRef, CFStringRef, CFStringRef) {
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+    unsafe { (kCGWindowOwnerPID, kCGWindowLayer, kCGWindowNumber) } // `extern static`s, never written
+}
+
 /// The id of this process's first normal window, if it has one on screen.
 fn own_window() -> Option<u32> {
     let pid = std::process::id() as i64;
+    let (owner_key, layer_key, number_key) = keys();
     let info = copy_window_info(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)?;
     for i in 0..info.len() {
-        let dict: CFDictionary<CFString, core_foundation::base::CFType> =
-            unsafe { CFDictionary::wrap_under_get_rule(*info.get(i)? as _) };
-        let number = |key: CFStringRef| {
-            dict.find(unsafe { CFString::wrap_under_get_rule(key) })
-                .and_then(|v| v.downcast::<CFNumber>())
-                .and_then(|n| n.to_i64())
+        let dict = entry(*info.get(i)?);
+        let number = |k: CFStringRef| {
+            dict.find(key(k)).and_then(|v| v.downcast::<CFNumber>()).and_then(|n| n.to_i64())
         };
-        let (owner, layer) = unsafe { (number(kCGWindowOwnerPID), number(kCGWindowLayer)) };
-        if owner == Some(pid) && layer == Some(0) {
-            return unsafe { number(kCGWindowNumber) }.map(|n| n as u32);
+        if number(owner_key) == Some(pid) && number(layer_key) == Some(0) {
+            return number(number_key).map(|n| n as u32);
         }
     }
     None

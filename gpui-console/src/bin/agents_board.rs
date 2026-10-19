@@ -12,6 +12,7 @@
 use std::rc::Rc;
 use std::time::Duration;
 
+use clap::Parser;
 use gpui::{
     point, prelude::*, px, size, App, Application, Bounds, TitlebarOptions, WindowBounds,
     WindowOptions,
@@ -22,64 +23,55 @@ use gpui_console::board::icons::Assets;
 use gpui_console::board::theme::Mode;
 use gpui_console::board::{AgentTree, Board};
 
+/// `agents-board`'s flags.
+#[derive(Parser)]
+#[command(name = "agents-board", about = "The agent board over a scripted run")]
 struct Args {
-    mode: Mode,
+    /// `dark` or `light`.
+    #[arg(long, value_parser = ["dark", "light"], default_value = "dark")]
+    mode: String,
+    /// Write screenshots of the window into DIR, from inside the process, and exit.
+    #[arg(long, value_name = "DIR")]
     shoot: Option<String>,
+    /// With `--shoot`: the seconds after start to photograph at.
+    #[arg(long, value_delimiter = ',', default_values_t = [4.0, 11.0, 24.0])]
     at: Vec<f32>,
+    /// Approve the approval after this many seconds if nobody has (a `--shoot` does, after 6).
+    #[arg(long)]
     auto: Option<f32>,
+    /// With `--shoot`: START:COUNT:STEP_MS, a burst of frames to look at a motion.
+    #[arg(long, value_parser = parse_film)]
     film: Option<(f32, usize, u64)>,
     /// Open the list of what is waiting for a person as soon as there is one.
+    #[arg(long)]
     open: bool,
-    width: f32,
-    height: f32,
+    /// The window's size, WIDTHxHEIGHT.
+    #[arg(long, value_parser = parse_size, default_value = "1010x900")]
+    size: (f32, f32),
 }
 
-fn args() -> Args {
-    let mut a = Args {
-        mode: Mode::Dark,
-        shoot: None,
-        at: vec![4.0, 11.0, 24.0],
-        auto: None,
-        film: None,
-        open: false,
-        width: 1010.0,
-        height: 900.0,
-    };
-    let mut it = std::env::args().skip(1);
-    while let Some(k) = it.next() {
-        let v = |it: &mut std::iter::Skip<std::env::Args>| it.next().unwrap_or_default();
-        match k.as_str() {
-            "--mode" => a.mode = if v(&mut it) == "light" { Mode::Light } else { Mode::Dark },
-            "--shoot" => a.shoot = Some(v(&mut it)),
-            "--at" => a.at = v(&mut it).split(',').filter_map(|s| s.trim().parse().ok()).collect(),
-            "--auto" => a.auto = v(&mut it).parse().ok(),
-            "--open" => a.open = true,
-            "--film" => {
-                let spec = v(&mut it);
-                let p: Vec<&str> = spec.split(':').collect();
-                if let [t, n, step] = p.as_slice() {
-                    a.film = Some((
-                        t.parse().unwrap_or(0.0),
-                        n.parse().unwrap_or(8),
-                        step.parse().unwrap_or(60),
-                    ));
-                }
-            }
-            "--size" => {
-                let s = v(&mut it);
-                if let Some((w, h)) = s.split_once('x') {
-                    a.width = w.parse().unwrap_or(a.width);
-                    a.height = h.parse().unwrap_or(a.height);
-                }
-            }
-            other => eprintln!("agents-board: ignoring {other}"),
-        }
+fn parse_film(s: &str) -> Result<(f32, usize, u64), String> {
+    let p: Vec<&str> = s.split(':').collect();
+    match p.as_slice() {
+        [t, n, step] => Ok((
+            t.parse().map_err(|e| format!("start: {e}"))?,
+            n.parse().map_err(|e| format!("count: {e}"))?,
+            step.parse().map_err(|e| format!("step: {e}"))?,
+        )),
+        _ => Err("write it as START:COUNT:STEP_MS, for example 1.2:10:90".into()),
     }
-    a
+}
+
+fn parse_size(s: &str) -> Result<(f32, f32), String> {
+    let (w, h) = s.split_once('x').ok_or("write it as WIDTHxHEIGHT")?;
+    Ok((
+        w.parse().map_err(|e| format!("width: {e}"))?,
+        h.parse().map_err(|e| format!("height: {e}"))?,
+    ))
 }
 
 fn main() {
-    let a = args();
+    let a = Args::parse();
     Application::new().with_assets(Assets).run(move |cx: &mut App| {
         let tree = cx.new(|_| AgentTree::default());
         let auto = a
@@ -87,8 +79,8 @@ fn main() {
             .map(Duration::from_secs_f32)
             .or(a.shoot.as_ref().map(|_| Duration::from_secs(6)));
         let actions = demo::play(tree.clone(), auto, cx);
-        let bounds = Bounds::centered(None, size(px(a.width), px(a.height)), cx);
-        let mode = a.mode;
+        let bounds = Bounds::centered(None, size(px(a.size.0), px(a.size.1)), cx);
+        let mode = if a.mode == "light" { Mode::Light } else { Mode::Dark };
         let window = cx
             .open_window(
                 WindowOptions {
