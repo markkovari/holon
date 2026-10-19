@@ -12,6 +12,8 @@ crate-type = ["cdylib"]
 [dependencies]
 wit-bindgen-rt = { workspace = true }
 serde_json = { workspace = true }
+# One crate writes and reads the Anthropic dialect (docs/adr/0116).
+holon-llm = { path = "../../crates/holon-llm" }
 
 [package.metadata.component]
 package = "anthropic-vision:component"
