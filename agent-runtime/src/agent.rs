@@ -138,6 +138,30 @@ pub trait Host: Sync {
     fn embed(&self, _texts: &[String], _kind: &str) -> Option<Vec<Vec<f32>>> {
         None
     }
+    /// Opens a coding session for `spec` on `comp-agentd` and sends it `task`. Returns its id at
+    /// once. `run_id` and `cause` say which run and which tool call it is for.
+    fn session_start(
+        &self,
+        _spec: &AgentSpec,
+        _run_id: &str,
+        _cause: &Cause,
+        _task: &str,
+        _workspace: &str,
+    ) -> Result<String, String> {
+        Err("coding sessions are not available here".into())
+    }
+    /// How one of `agent`'s sessions stands, waiting up to `wait` for it to end.
+    fn session_result(
+        &self,
+        _agent: &str,
+        _id: &str,
+        _wait: Duration,
+    ) -> Result<crate::session::SessionView, String> {
+        Err("coding sessions are not available here".into())
+    }
+    fn session_close(&self, _agent: &str, _id: &str) -> Result<(), String> {
+        Err("coding sessions are not available here".into())
+    }
     fn observe(&self, event: Event);
 }
 
@@ -150,6 +174,8 @@ pub enum Event {
         input: String,
         trace_id: String,
         span_id: String,
+        /// The tool call (in another run) that woke this one, when one did.
+        parent_span_id: Option<String>,
         chain: Vec<String>,
     },
     StepDone {
@@ -169,6 +195,8 @@ pub enum Event {
         id: u64,
         approved: bool,
     },
+    /// A coding session an agent started changed: the whole of it, to be replaced by id.
+    Session(Box<crate::session::SessionView>),
 }
 
 /// Longest wake-up chain. Past this, the next hop is dropped and logged.
@@ -250,6 +278,28 @@ const TOOLS: &[ToolDef] = &[
         name: "task_result",
         args: r#"{"id": "..."}"#,
         about: "Check on a task you started: running, or its answer.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "session_start",
+        args: r#"{"task": "...", "workspace": "own"}"#,
+        about: "Start a coding session: an agent that reads, writes and runs commands in a \
+                workspace, each step approved by a person. Returns a session id at once; \
+                collect the answer with session_result.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "session_result",
+        args: r#"{"session": "...", "wait_secs": 20}"#,
+        about: "Check on a coding session you started: still running, waiting for a person, or \
+                its answer and what it cost. Waits up to wait_secs (at most 60) for it to end. \
+                `session` may be left out when you have only one.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "session_close",
+        args: r#"{"session": "..."}"#,
+        about: "Stop a coding session you started, and whatever it is doing.",
         sensitive: false,
     },
     ToolDef {
@@ -396,6 +446,7 @@ fn required(name: &str) -> &'static [&'static str] {
         "schedule_self" => &["prompt"],
         "spawn_task" => &["agent", "message"],
         "task_result" => &["id"],
+        "session_start" => &["task"],
         "transcribe" => &["path"],
         "speak" => &["text"],
         "http_get" => &["url"],
@@ -428,6 +479,8 @@ fn primary(name: &str) -> Option<&'static str> {
         "store_get" | "store_list" => Some("ns"),
         "schedule_self" => Some("prompt"),
         "task_result" => Some("id"),
+        "session_start" => Some("task"),
+        "session_result" | "session_close" => Some("session"),
         "agent_show"
         | "agent_delete"
         | "agent_pause"
@@ -839,6 +892,7 @@ fn http_get(spec: &AgentSpec, url: &str) -> Result<String, String> {
 fn exec(
     host: &dyn Host,
     spec: &AgentSpec,
+    run_id: &str,
     name: &str,
     args: &Value,
     cause: &Cause,
@@ -948,6 +1002,24 @@ fn exec(
             Some(TaskState::Done { ok: true, answer }) => format!("done: {answer}"),
             Some(TaskState::Done { ok: false, answer }) => format!("failed: {answer}"),
         }),
+        "session_start" => {
+            let id =
+                host.session_start(spec, run_id, cause, &arg(args, "task"), &arg(args, "workspace"))?;
+            Ok(format!("session {id} started; collect it with session_result"))
+        }
+        "session_result" => {
+            let wait = args.get("wait_secs").and_then(Value::as_u64).unwrap_or(20);
+            let view = host.session_result(
+                &spec.name,
+                &arg(args, "session"),
+                Duration::from_secs(wait.min(crate::session::MAX_WAIT.as_secs())),
+            )?;
+            Ok(view.for_model())
+        }
+        "session_close" => {
+            host.session_close(&spec.name, &arg(args, "session"))?;
+            Ok("stopped".into())
+        }
         "agents_list" => {
             let all = store.list();
             Ok(if all.is_empty() {
@@ -1175,6 +1247,7 @@ pub fn run(
         input: input.to_string(),
         trace_id: trace_id.clone(),
         span_id: span_id.clone(),
+        parent_span_id: cause.parent_span_id.clone(),
         chain: cause.chain.clone(),
     });
     // This chain's remaining spend caps the run below the agent's own limit.
@@ -1375,7 +1448,7 @@ pub fn run(
                         project: cause.project.clone(),
                         attachments: Vec::new(),
                     };
-                    match exec(host, spec, &name, &args, &me, &mut child_tokens) {
+                    match exec(host, spec, &run_id, &name, &args, &me, &mut child_tokens) {
                         Ok(r) => (r, false, needs.then_some(true)),
                         Err(e) => (e, true, needs.then_some(true)),
                     }
