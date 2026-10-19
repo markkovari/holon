@@ -164,6 +164,77 @@ fn post(body: &[u8]) -> Result<(u16, Vec<u8>), String> {
     Ok((status, buf))
 }
 
+/// The request: the picture, then what to do with it. `data` is base64, so it is safe between
+/// quotes as it stands; everything else goes through the JSON encoder.
+fn request_body(model: &str, media_type: &str, image: &[u8], prompt: &str) -> String {
+    format!(
+        "{{\"model\":{},\"max_tokens\":1024,\"messages\":[{{\"role\":\"user\",\"content\":[\
+         {{\"type\":\"image\",\"source\":{{\"type\":\"base64\",\"media_type\":{},\"data\":\"{}\"}}}},\
+         {{\"type\":\"text\",\"text\":{}}}]}}]}}",
+        json_str(model),
+        json_str(media_type),
+        b64(image),
+        json_str(prompt),
+    )
+}
+
+/// What the model wrote: every text block, joined. A model may answer in several, and taking only
+/// the first silently truncates a reply in the middle of its JSON.
+fn reply_text(bytes: &[u8]) -> String {
+    let parsed: serde_json::Value = serde_json::from_slice(bytes).unwrap_or_default();
+    parsed["content"]
+        .as_array()
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter(|b| b["type"] == "text")
+                .filter_map(|b| b["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn the_request_is_the_picture_then_what_to_do_with_it() {
+        let body = request_body("claude-x", "image/png", b"\x00\xffabc", "what is \"it\"?\n");
+        let body: serde_json::Value = serde_json::from_str(&body).expect("the body is JSON");
+        assert_eq!(
+            body,
+            json!({
+                "model": "claude-x",
+                "max_tokens": 1024,
+                "messages": [{"role": "user", "content": [
+                    {"type": "image", "source": {
+                        "type": "base64", "media_type": "image/png", "data": "AP9hYmM="}},
+                    {"type": "text", "text": "what is \"it\"?\n"}
+                ]}]
+            })
+        );
+    }
+
+    #[test]
+    fn every_text_block_is_the_answer_and_nothing_else_is() {
+        let reply = json!({"content": [
+            {"type": "thinking", "thinking": "hm"},
+            {"type": "text", "text": "A red "},
+            {"type": "text", "text": "door."},
+        ]});
+        assert_eq!(reply_text(reply.to_string().as_bytes()), "A red door.");
+    }
+
+    #[test]
+    fn a_reply_with_no_text_is_empty_and_so_is_one_that_is_not_json() {
+        assert_eq!(reply_text(json!({"content": [{"type": "thinking"}]}).to_string().as_bytes()), "");
+        assert_eq!(reply_text(b"not json"), "");
+    }
+}
+
 impl Guest for Component {
     fn describe(
         image: Vec<u8>,
@@ -194,17 +265,7 @@ impl Guest for Component {
             )));
         }
 
-        // `data` is base64, so it is safe between quotes as it stands; everything
-        // else goes through the JSON encoder.
-        let body = format!(
-            "{{\"model\":{},\"max_tokens\":1024,\"messages\":[{{\"role\":\"user\",\"content\":[\
-             {{\"type\":\"image\",\"source\":{{\"type\":\"base64\",\"media_type\":{},\"data\":\"{}\"}}}},\
-             {{\"type\":\"text\",\"text\":{}}}]}}]}}",
-            json_str(&model()),
-            json_str(&media_type),
-            b64(&image),
-            json_str(&prompt),
-        );
+        let body = request_body(&model(), &media_type, &image, &prompt);
 
         let (status, bytes) = post(body.as_bytes()).map_err(DescribeError::ProviderUnavailable)?;
 
@@ -223,19 +284,7 @@ impl Guest for Component {
             });
         }
 
-        // Every text block, joined: a model may answer in several, and taking only
-        // the first silently truncates a reply in the middle of its JSON.
-        let text: String = parsed["content"]
-            .as_array()
-            .map(|blocks| {
-                blocks
-                    .iter()
-                    .filter(|b| b["type"] == "text")
-                    .filter_map(|b| b["text"].as_str())
-                    .collect::<Vec<_>>()
-                    .join("")
-            })
-            .unwrap_or_default();
+        let text = reply_text(&bytes);
 
         if text.trim().is_empty() {
             // It looked and said nothing — a safety filter, or an empty reply. Not a
