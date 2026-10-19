@@ -1,6 +1,6 @@
 # Fuel is money — 🟡 half built: priced, not yet bounded
 
-> **Built:** the pure function, in `reconciler/src/cost.rs` rather than
+> **Built:** the pure function, in `reconciler/fuel/src/cost.rs` rather than
 > `generation.rs` (205af9e), and it gained a fourth parameter when DeepSeek's
 > off-peak pricing arrived (#260):
 >
@@ -9,7 +9,7 @@
 > ```
 >
 > `off_peak` only moves DeepSeek's price; every other model ignores it.
-> `reconciler/src/budget.rs` sums a run's attempts through it (`spent_cents`) and
+> `reconciler/fuel/src/budget.rs` sums a run's attempts through it (`spent_cents`) and
 > answers `over_budget(cap_cents, attempts)`, with a cap of 0 meaning no cap.
 >
 > **Still open:** nothing calls either. `generation::search` has no `max-cents`
@@ -41,8 +41,8 @@ Then `generation::search`'s `max-tokens` bound gains a sibling `max-cents`, and
 
 ## Surface
 
-- **writable:** `reconciler/src/generation.rs`
-- **gate:** `cargo test -p comp-reconciler --lib generation::` (write the price
+- **writable:** `reconciler/goal/src/generation.rs`
+- **gate:** `cargo test -p comp-goal --lib generation::` (write the price
   and rounding assertions first — that is the 🟡)
 
 ## Why this shape
