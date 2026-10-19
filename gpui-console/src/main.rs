@@ -23,14 +23,14 @@ mod lattice;
 
 use std::rc::Rc;
 
+use agent_board::icons::Assets;
+use agent_board::theme::Mode;
+use agent_board::view::Scope;
+use agent_board::{Actions as BoardActions, AgentChoice, Board};
 use gpui::{
-    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, Entity, FocusHandle,
-    Focusable, KeyDownEvent, SharedString, Window, WindowBounds, WindowOptions,
+    div, prelude::*, px, rgb, size, App, Bounds, Context, Entity, FocusHandle, Focusable,
+    KeyDownEvent, SharedString, Window, WindowBounds, WindowOptions,
 };
-use gpui_console::board::icons::Assets;
-use gpui_console::board::theme::Mode;
-use gpui_console::board::view::Scope;
-use gpui_console::board::{Actions as BoardActions, AgentChoice, Board};
 
 use lattice::{spec_from_form, AgentRow, FormInput, Kind, Lattice, Message, View};
 
@@ -85,7 +85,7 @@ impl Console {
     fn new(lattice: Entity<Lattice>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.observe(&lattice, |_, _, cx| cx.notify()).detach();
         let focus_handle = cx.focus_handle();
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
         let tree = lattice.read(cx).tree.clone();
         let actions = Rc::new(LatticeActions { lattice: lattice.clone() });
         // under an ordinary title bar and the way back, not under the traffic lights
@@ -632,7 +632,7 @@ struct NewAgentForm {
 impl NewAgentForm {
     fn new(lattice: Entity<Lattice>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
         Self { lattice, focus_handle, values: Default::default(), field: 0, error: None }
     }
 
@@ -775,7 +775,7 @@ fn main() {
     let boot = lattice::boot();
     eprintln!("lattice ready: {}", boot.base_url);
 
-    Application::new().with_assets(Assets).run(move |cx: &mut App| {
+    gpui_platform::application().with_assets(Assets).run(move |cx: &mut App| {
         let lattice = cx.new(|cx| {
             let mut l = Lattice::new(boot, cx);
             l.refresh(cx);
@@ -817,7 +817,7 @@ fn main() {
                         .await;
                     last = t;
                     let path = format!("{prefix}-{t:04.1}.png");
-                    match gpui_console::capture::own_window_png(&path) {
+                    match agent_board::capture::own_window_png(&path) {
                         Ok((w, h)) => eprintln!("shot {path} ({w}x{h})"),
                         Err(e) => eprintln!("shot {path} failed: {e}"),
                     }
@@ -831,7 +831,7 @@ fn main() {
         // just-spawned agent going live) shows up without a manual click.
         cx.spawn(async move |cx| loop {
             cx.background_executor().timer(std::time::Duration::from_secs(3)).await;
-            if auto_refresh_handle.update(cx, |l, cx| l.refresh(cx)).is_err() {
+            if auto_refresh_handle.downgrade().update(cx, |l, cx| l.refresh(cx)).is_err() {
                 break;
             }
         })

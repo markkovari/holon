@@ -38,21 +38,28 @@ fn keys() -> (CFStringRef, CFStringRef, CFStringRef) {
     unsafe { (kCGWindowOwnerPID, kCGWindowLayer, kCGWindowNumber) } // `extern static`s, never written
 }
 
-/// The id of this process's first normal window, if it has one on screen.
+/// The id of this process's first normal window if it has one on screen, else its first window on any
+/// layer (a pop-up, which is how it is kept drawing while it is photographed).
 fn own_window() -> Option<u32> {
     let pid = std::process::id() as i64;
     let (owner_key, layer_key, number_key) = keys();
     let info = copy_window_info(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)?;
+    let mut any = None;
     for i in 0..info.len() {
         let dict = entry(*info.get(i)?);
         let number = |k: CFStringRef| {
             dict.find(key(k)).and_then(|v| v.downcast::<CFNumber>()).and_then(|n| n.to_i64())
         };
-        if number(owner_key) == Some(pid) && number(layer_key) == Some(0) {
-            return number(number_key).map(|n| n as u32);
+        if number(owner_key) != Some(pid) {
+            continue;
         }
+        let id = number(number_key).map(|n| n as u32);
+        if number(layer_key) == Some(0) {
+            return id;
+        }
+        any = any.or(id);
     }
-    None
+    any
 }
 
 /// The window's pixels at the display's own resolution, RGBA, with its width and height.

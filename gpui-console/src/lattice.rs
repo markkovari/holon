@@ -12,6 +12,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
+use agent_board::AgentTree;
 use agent_runtime::agent::{Cause, Event};
 use agent_runtime::model::LocalModel;
 use agent_runtime::runtime::Pending;
@@ -22,7 +23,6 @@ use comp_fleet::fleet::{repo_root, Fleet};
 use futures::channel::mpsc;
 use futures::StreamExt;
 use gpui::{AppContext as _, Context, Entity, Subscription};
-use gpui_console::board::AgentTree;
 use serde_json::{json, Value};
 
 use crate::agentd::{self, AgentdProc};
@@ -275,7 +275,7 @@ impl Lattice {
 
     fn on_event(&mut self, ev: Event, cx: &mut Context<Self>) {
         self.tree.update(cx, |t, cx| {
-            t.apply(&ev, gpui_console::board::view::now_ms());
+            t.apply(&ev, agent_board::view::now_ms());
             cx.notify();
         });
         match ev {
@@ -579,7 +579,7 @@ impl Lattice {
             })
             .ok();
             if let Some(handle) = this.upgrade() {
-                handle.update(cx, |this, cx| this.refresh(cx)).ok();
+                handle.update(cx, |this, cx| this.refresh(cx));
             }
         })
         .detach();

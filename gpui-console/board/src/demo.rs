@@ -9,10 +9,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use agent_runtime::agent::Event;
-use agent_runtime::runtime::Pending as RtPending;
-use agent_runtime::session::{Phase, SessionView};
-use agent_runtime::store::{RunRecord, Step};
+use agent_wire::{Event, Pending as RtPending, Phase, RunRecord, SessionView, Step};
 use gpui::{App, AsyncApp, Entity};
 use serde_json::{json, Value};
 
@@ -164,7 +161,7 @@ const SHORT: [&str; 4] = ["list_dir", "read_file", "write_file", "run"];
 
 /// The whole story, in the order things happen.
 fn story() -> Vec<Beat> {
-    let s1 = "Implement a token-bucket limiter in the ingress and wire the flag";
+    let s1 = "Implement a token bucket in rate-limiter and wire it into eshop-gateway";
     let s2 = "Write tests for the limiter, run them, and fix what fails";
     vec![
         started(
@@ -200,7 +197,7 @@ fn story() -> Vec<Beat> {
             "r-plan",
             "c-rd",
             "read_file",
-            json!({"path": "reconciler/src/bin/ingress.rs"}),
+            json!({"path": "components/eshop-gateway/src/lib.rs"}),
         ),
         tool(
             3_000,
@@ -266,7 +263,7 @@ fn story() -> Vec<Beat> {
             Phase::Running,
             21_000,
             &["list_dir", "read_file"],
-            "read_file reconciler/src/bin/ingress.rs",
+            "read_file components/eshop-gateway/src/lib.rs",
             None,
             None,
             2_100,
@@ -294,7 +291,7 @@ fn story() -> Vec<Beat> {
             Phase::Running,
             64_000,
             &["list_dir", "read_file", "write_file"],
-            "write_file src/limiter.rs",
+            "write_file components/rate-limiter/src/lib.rs",
             None,
             None,
             4_700,
@@ -328,7 +325,7 @@ fn story() -> Vec<Beat> {
 
 /// What happens once the person has said yes: the rest of the story.
 fn after_approval() -> Vec<Beat> {
-    let s1 = "Implement a token-bucket limiter in the ingress and wire the flag";
+    let s1 = "Implement a token bucket in rate-limiter and wire it into eshop-gateway";
     let s2 = "Write tests for the limiter, run them, and fix what fails";
     vec![
         session(
@@ -631,7 +628,8 @@ async fn run_beats(tree: &Entity<AgentTree>, beats: Vec<Beat>, cx: &mut AsyncApp
         cx.background_executor().timer(Duration::from_millis(b.at.saturating_sub(last))).await;
         last = last.max(b.at);
         let ev = (b.event)(now_ms());
-        let alive = tree.update(cx, |t, cx| {
+        // through a weak handle, which says when the board that held the tree has gone
+        let alive = tree.downgrade().update(cx, |t, cx| {
             t.apply(&ev, now_ms());
             cx.notify();
         });
@@ -662,9 +660,7 @@ pub fn play(tree: Entity<AgentTree>, auto: Option<Duration>, cx: &mut App) -> Rc
                 *l = l.saturating_sub(step);
                 if l.is_zero() {
                     let me = me.clone();
-                    if cx.update(|app| me.answer(900, true, Scope::Once, app)).is_err() {
-                        return;
-                    }
+                    cx.update(|app| me.answer(900, true, Scope::Once, app));
                 }
             }
         }

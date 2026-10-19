@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent board</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #151517; }
+    canvas { display: block; width: 100%; height: 100%; outline: none; }
+  </style>
+</head>
+<body>
+  <!-- pkg/ is what `wasm-bindgen` writes (README.md); the board draws into a canvas it adds itself -->
+  <script type="module">import init from "./pkg/agents-board.js"; init();</script>
+</body>
+</html>

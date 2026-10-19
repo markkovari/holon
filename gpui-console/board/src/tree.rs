@@ -11,9 +11,7 @@
 
 use std::collections::HashMap;
 
-use agent_runtime::agent::Event;
-use agent_runtime::session::{Phase, SessionView};
-use agent_runtime::store::{RunRecord, Status as RunStatus, Step};
+use agent_wire::{Event, Phase, RunRecord, SessionView, Status as RunStatus, Step};
 use serde_json::Value;
 
 /// A finished tree of several nodes stays on the board this long: it is a goal somebody set, and the
@@ -82,6 +80,8 @@ pub struct Node {
     pub pending: Vec<Pending>,
     /// When the board first saw it: what the enter animation is timed from.
     pub born_ms: u64,
+    /// Every path or name its calls were given, once each: what the other tabs' references are found in.
+    pub notes: Vec<String>,
     tokens_in: u64,
     tokens_out: u64,
 }
@@ -106,6 +106,7 @@ impl Node {
             children: Vec::new(),
             pending: Vec::new(),
             born_ms: now,
+            notes: Vec::new(),
             tokens_in: 0,
             tokens_out: 0,
         }
@@ -178,6 +179,18 @@ fn brief(args: &Value) -> String {
         }
     }
     String::new()
+}
+
+/// Every string in a call's arguments, as a note worth keeping once.
+fn note(notes: &mut Vec<String>, v: &Value) {
+    match v {
+        Value::String(s) if !s.is_empty() && !notes.contains(s) => {
+            notes.push(s.chars().take(400).collect())
+        }
+        Value::Array(a) => a.iter().for_each(|x| note(notes, x)),
+        Value::Object(o) => o.values().for_each(|x| note(notes, x)),
+        _ => {}
+    }
 }
 
 /// `agent:researcher` is a call to another agent; everything else is a tool by its own name.
@@ -331,6 +344,22 @@ impl AgentTree {
             .collect()
     }
 
+    /// Everything said in one tree: what each agent was asked and answered, and every path or name its
+    /// calls were given. What a reference from this session to a component is found in.
+    pub fn texts_of(&self, root: &str) -> Vec<String> {
+        let mut ids = Vec::new();
+        self.subtree(root, &mut ids);
+        ids.iter()
+            .filter_map(|i| self.nodes.get(i))
+            .flat_map(|n| {
+                std::iter::once(n.task.clone())
+                    .chain(n.result.clone())
+                    .chain(n.notes.iter().cloned())
+            })
+            .filter(|t| !t.is_empty())
+            .collect()
+    }
+
     /// The header for one tree: as `summary`, of `root` and what it started.
     pub fn summary_of(&self, root: &str) -> Summary {
         let mut s = Summary::default();
@@ -384,10 +413,11 @@ impl AgentTree {
             n.tokens = r.tokens_in + r.tokens_out;
             n.cost_micros = price(&n.model, n.tokens_in, n.tokens_out);
             for step in &r.steps {
-                if let Step::Tool { name, .. } = step {
+                if let Step::Tool { name, args, .. } = step {
                     if !n.tools.contains(name) && !name.starts_with("agent:") {
                         n.tools.push(name.clone());
                     }
+                    note(&mut n.notes, args);
                 }
             }
             n.finished_ms = Some(r.finished_ms.max(r.started_ms));
@@ -485,6 +515,7 @@ impl AgentTree {
                         n.tools.push(tool.clone());
                     }
                     n.activity = activity_of(tool, args);
+                    note(&mut n.notes, args);
                 }
             }
             Event::StepDone { run_id, step, .. } => {
@@ -566,6 +597,10 @@ impl AgentTree {
         n.status = session_status(v.phase);
         n.tools = v.tools.clone();
         n.activity = v.activity.clone();
+        note(&mut n.notes, &Value::String(v.activity.clone()));
+        for p in &v.pending {
+            note(&mut n.notes, &p.args);
+        }
         n.tokens = v.tokens_in + v.tokens_out;
         n.cost_micros = Some(v.cost_micros);
         n.finished_ms = v.finished_ms;
@@ -782,7 +817,7 @@ mod tests {
         let mut t = AgentTree::default();
         t.apply(&started("lead", "r1", None, "x/y"), T0);
         let mut v = session("s1", "r1", Phase::NeedsYou, 10);
-        v.pending = vec![agent_runtime::runtime::Pending {
+        v.pending = vec![agent_wire::Pending {
             id: 3,
             agent: "lead".into(),
             tool: "session:write_file".into(),
@@ -858,7 +893,7 @@ mod tests {
         t.apply(&started("lead", "r1", None, "x/y"), T0);
         t.apply(&Event::Session(Box::new(session("s1", "r1", Phase::NeedsYou, 5_000))), T0 + 10);
         let mut v = session("s1", "r1", Phase::NeedsYou, 5_000);
-        v.pending = vec![agent_runtime::runtime::Pending {
+        v.pending = vec![agent_wire::Pending {
             id: 4,
             agent: "lead".into(),
             tool: "session:run".into(),

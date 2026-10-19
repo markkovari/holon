@@ -18,7 +18,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
+
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use gpui::{
     canvas, deferred, div, ease_in_out, ease_out_quint, percentage, point, prelude::*,
@@ -27,8 +29,11 @@ use gpui::{
     Render, Rgba, SharedString, Task, Transformation, Window,
 };
 
+use super::canvas::{MapEvent, MapView};
 use super::field::{FieldEvent, TextField};
 use super::icons::{icon, model_glyph, tool_icon};
+use super::map::{self as maps, Key, Ref, SessionText, Tab};
+use super::store::{self, Store};
 use super::theme::{Mode, Theme};
 use super::tree::{AgentTree, Kind, Node, Pending, SessionRow, Status, Summary, Waiting};
 
@@ -307,6 +312,17 @@ pub struct Board {
     return_focus: Option<FocusHandle>,
     /// Room above everything, for a window whose title bar the board is drawn under.
     inset: f32,
+    /// Which of the three is showing: the sessions, the components, what the goal runs left.
+    tab: Tab,
+    components: Entity<MapView>,
+    knowledge: Entity<MapView>,
+    /// Every key's backlinks across the three, and the tree's revision and the maps' load they were
+    /// worked out at.
+    links: HashMap<Key, Vec<Ref>>,
+    links_at: (u64, u64),
+    maps_loaded: u64,
+    /// The frames whose items the list beside a map shows.
+    expanded: HashSet<String>,
     _tick: Task<()>,
 }
 
@@ -325,6 +341,34 @@ impl Board {
             FieldEvent::Cancel => this.close_form(cx),
         })
         .detach();
+        let components = cx.new(|cx| {
+            MapView::new(
+                "Components",
+                (
+                    "No components in the store",
+                    "Build them (cargo xtask build --force), start the store (docker compose -f infra/compose.yaml --profile graph up -d) and project the graph into it: comp-capgraph --format surql, posted to its /sql.",
+                ),
+                theme,
+                cx,
+            )
+        });
+        let knowledge = cx.new(|cx| {
+            MapView::new(
+                "Knowledge",
+                (
+                    "No goal runs in the store",
+                    "A run of comp-goalrun with --surreal-url writes its attempts, their fitness and the gate's verdicts here; comp-trace-seed writes a small one to look at.",
+                ),
+                theme,
+                cx,
+            )
+        });
+        for view in [&components, &knowledge] {
+            cx.subscribe(view, |this, _, ev: &MapEvent, cx| match ev {
+                MapEvent::Open(r) => this.open_ref(r, cx),
+            })
+            .detach();
+        }
         // The one clock: once a second, so "45s" reads 46s without anything having happened.
         let tick = cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(Duration::from_millis(1000)).await;
@@ -357,8 +401,105 @@ impl Board {
             problem: None,
             return_focus: None,
             inset: 34.0,
+            tab: Tab::Sessions,
+            components,
+            knowledge,
+            links: HashMap::new(),
+            links_at: (u64::MAX, 0),
+            maps_loaded: 0,
+            expanded: HashSet::new(),
             _tick: tick,
         }
+        .reloaded(cx)
+    }
+
+    fn reloaded(mut self, cx: &mut Context<Self>) -> Self {
+        self.reload(cx);
+        self
+    }
+
+    /// Reads both maps from the store again, off the window's thread.
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        let (comps, know) = (self.components.clone(), self.knowledge.clone());
+        cx.spawn(async move |this, cx| {
+            // natively the store is asked from a thread, and what proves each thing is found on disk
+            #[cfg(not(target_family = "wasm"))]
+            let (c, k) = cx
+                .background_executor()
+                .spawn(async move {
+                    let store = Store::from_env();
+                    let root = crate::repo_root();
+                    let with_proof = |mut m: maps::Map| {
+                        store::evidence(&root, &mut m);
+                        m
+                    };
+                    (
+                        store.catalog().map(|r| with_proof(maps::components(&r))),
+                        store.knowledge().map(|r| with_proof(maps::knowledge(&r))),
+                    )
+                })
+                .await;
+            // in a browser it is fetched, and the page has no disk to look for proofs on
+            #[cfg(target_family = "wasm")]
+            let (c, k) = {
+                let store = Store::from_env();
+                (
+                    store
+                        .post(store::CATALOG_SQL)
+                        .await
+                        .and_then(|b| store::catalog_of(&b))
+                        .map(|r| maps::components(&r)),
+                    store
+                        .post(store::KNOWLEDGE_SQL)
+                        .await
+                        .and_then(|b| store::knowledge_of(&b))
+                        .map(|r| maps::knowledge(&r)),
+                )
+            };
+            let _ = this.update(cx, |b, cx| {
+                for (view, got) in [(&comps, c), (&know, k)] {
+                    view.update(cx, |v, cx| match got {
+                        Ok(m) => v.set_map(m, cx),
+                        Err(e) => v.set_problem(Some(e), cx),
+                    });
+                }
+                b.maps_loaded += 1;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Shows what a reference names, on its own tab.
+    fn open_ref(&mut self, r: &Ref, cx: &mut Context<Self>) {
+        self.tab = r.tab;
+        match r.tab {
+            Tab::Sessions => self
+                .select(r.key.strip_prefix("session:").unwrap_or(&r.key).to_string().as_str(), cx),
+            Tab::Components => {
+                self.components.update(cx, |v, cx| v.focus_key(&r.key, r.frame.as_deref(), cx))
+            }
+            Tab::Knowledge => {
+                self.knowledge.update(cx, |v, cx| v.focus_key(&r.key, r.frame.as_deref(), cx))
+            }
+        }
+        cx.notify();
+    }
+
+    /// Shows `key` on `tab`, as following a reference to it would.
+    pub fn show(&mut self, tab: Tab, key: &str, cx: &mut Context<Self>) {
+        let r = Ref { tab, key: key.to_string(), frame: None, label: String::new() };
+        self.open_ref(&r, cx);
+    }
+
+    pub fn set_tab(&mut self, tab: Tab, window: &mut Window, cx: &mut Context<Self>) {
+        self.tab = tab;
+        match tab {
+            Tab::Components => window.focus(&self.components.focus_handle(cx), cx),
+            Tab::Knowledge => window.focus(&self.knowledge.focus_handle(cx), cx),
+            Tab::Sessions => {}
+        }
+        cx.notify();
     }
 
     /// The field the form's goal is typed into.
@@ -376,6 +517,9 @@ impl Board {
         self.theme = Theme::of(mode);
         let theme = self.theme;
         self.field.update(cx, |f, cx| f.set_theme(theme, cx));
+        for view in [&self.components, &self.knowledge] {
+            view.update(cx, |v, cx| v.set_theme(theme, cx));
+        }
         cx.notify();
     }
 
@@ -395,7 +539,7 @@ impl Board {
             self.lead = self.choices.first().map(|c| c.name.clone());
         }
         self.return_focus = window.focused(cx);
-        window.focus(&self.field.focus_handle(cx));
+        window.focus(&self.field.focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -720,6 +864,7 @@ impl Board {
                 offset: point(px(0.0), px(1.0)),
                 blur_radius: px(if t.mode == Mode::Light { 10.0 } else { 0.0 }),
                 spread_radius: px(0.0),
+                inset: false,
             }])
             .hover(|s| s.border_color(if attention { t.attention() } else { t.card_hover }))
             .flex()
@@ -744,6 +889,7 @@ impl Board {
                             offset: point(px(0.0), px(0.0)),
                             blur_radius: px(10.0 + 14.0 * p),
                             spread_radius: px(0.0),
+                            inset: false,
                         }])
                     },
                 )
@@ -1048,7 +1194,7 @@ impl Board {
                     .when(!what.is_empty(), |c| {
                         c.child(
                             div()
-                                .font_family("Menlo")
+                                .font_family(crate::MONO)
                                 .text_size(px(11.5))
                                 .text_color(t.muted)
                                 .truncate()
@@ -1097,6 +1243,38 @@ impl Board {
                         cx,
                     )),
             )
+    }
+
+    /// What a session names on the other tabs, as chips under its goal: each opens it there.
+    fn ref_chips(&self, key: &str, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let t = self.theme;
+        let refs = self.links.get(key).filter(|r| !r.is_empty())?.clone();
+        let mut row = div().ml(px(30.0)).flex().flex_row().flex_wrap().items_center().gap(px(6.0));
+        for (n, r) in refs.into_iter().enumerate() {
+            let glyph = if r.tab == Tab::Knowledge { "brain" } else { "hexagon" };
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!("ref-chip-{n}")))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(5.0))
+                    .h(px(24.0))
+                    .px(px(8.0))
+                    .rounded(px(7.0))
+                    .border_1()
+                    .border_color(t.tile_border)
+                    .bg(t.tile)
+                    .text_size(px(12.0))
+                    .text_color(t.text)
+                    .cursor_pointer()
+                    .hover(|s| s.border_color(t.line))
+                    .child(icon(glyph).size(px(12.0)).text_color(t.line))
+                    .child(r.label.clone())
+                    .on_click(cx.listener(move |this, _, _, cx| this.open_ref(&r, cx))),
+            );
+        }
+        Some(row.into_any_element())
     }
 
     /// The selected session's header: its goal, and how the agents in it are doing. `root` keys the
@@ -1171,21 +1349,30 @@ impl Board {
             .child(
                 div()
                     .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(10.0))
+                    .flex_col()
+                    .gap(px(8.0))
                     .flex_1()
                     .min_w(px(0.0))
-                    .child(icon("sparkles").size(px(20.0)).flex_none().text_color(running_ink))
                     .child(
                         div()
-                            .min_w(px(0.0))
-                            .truncate()
-                            .text_size(px(20.0))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(t.text)
-                            .child(title.to_string()),
-                    ),
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(10.0))
+                            .child(
+                                icon("sparkles").size(px(20.0)).flex_none().text_color(running_ink),
+                            )
+                            .child(
+                                div()
+                                    .min_w(px(0.0))
+                                    .truncate()
+                                    .text_size(px(20.0))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(t.text)
+                                    .child(title.to_string()),
+                            ),
+                    )
+                    .children(self.ref_chips(&format!("session:{root}"), cx)),
             )
             .child(
                 div()
@@ -1352,54 +1539,280 @@ impl Board {
             .border_r_1()
             .border_color(t.card_border)
             .pt(px(self.inset))
-            .child(
+            .child(self.tabs(cx))
+            .when(self.tab != Tab::Sessions, |c| c.child(self.contents(cx)))
+            .when(self.tab == Tab::Sessions, |c| {
+                c.child(
+                    div()
+                        .id("new-goal")
+                        .mx(px(10.0))
+                        .mt(px(8.0))
+                        .mb(px(10.0))
+                        .h(px(34.0))
+                        .px(px(10.0))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(7.0))
+                        .rounded(px(9.0))
+                        .bg(t.card)
+                        .border_1()
+                        .border_color(t.tile_border)
+                        .hover(|s| s.border_color(t.card_hover))
+                        .cursor_pointer()
+                        .text_size(px(13.5))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(t.text)
+                        .child(icon("plus").size(px(15.0)).text_color(t.muted))
+                        .child("New goal")
+                        .on_click(cx.listener(|this, _, window, cx| this.open_form(window, cx))),
+                )
+                .child(
+                    div()
+                        .id("sessions")
+                        .flex_1()
+                        .min_h(px(0.0))
+                        .overflow_y_scroll()
+                        .px(px(8.0))
+                        .pb(px(12.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .children(list),
+                )
+            })
+    }
+
+    /// The three tabs, as one control.
+    fn tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let mut strip = div()
+            .mx(px(10.0))
+            .mt(px(2.0))
+            .mb(px(6.0))
+            .p(px(3.0))
+            .rounded(px(10.0))
+            .bg(t.bg)
+            .border_1()
+            .border_color(t.card_border)
+            .flex()
+            .flex_row()
+            .gap(px(2.0));
+        for (tab, label) in [
+            (Tab::Sessions, "Sessions"),
+            (Tab::Components, "Components"),
+            (Tab::Knowledge, "Knowledge"),
+        ] {
+            let on = self.tab == tab;
+            strip = strip.child(
                 div()
-                    .px(px(18.0))
-                    .h(px(30.0))
+                    .id(SharedString::from(format!("tab-{label}")))
+                    .flex_1()
+                    .h(px(28.0))
                     .flex()
                     .items_center()
-                    .text_size(px(13.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(t.muted)
-                    .child("Sessions"),
-            )
-            .child(
+                    .justify_center()
+                    .rounded(px(8.0))
+                    .text_size(px(12.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .cursor_pointer()
+                    .when(on, |el| el.bg(t.card).text_color(t.text).shadow_sm())
+                    .when(!on, |el| el.text_color(t.muted).hover(|s| s.text_color(t.text)))
+                    .child(label)
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.set_tab(tab, window, cx)),
+                    ),
+            );
+        }
+        strip
+    }
+
+    /// A map's frames as a list beside it, each opening onto its items: where a person goes from, without
+    /// hunting the canvas.
+    fn contents(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let view = if self.tab == Tab::Components {
+            self.components.clone()
+        } else {
+            self.knowledge.clone()
+        };
+        // each frame's key, title, sub and its items' keys, labels and weights
+        type Entry = (String, String, String, Vec<(String, String, u32)>);
+        let frames: Vec<Entry> = view
+            .read(cx)
+            .map()
+            .frames
+            .iter()
+            .map(|f| {
+                let mut items: Vec<(String, String, u32)> =
+                    f.items.iter().map(|i| (i.key.clone(), i.label.clone(), i.weight)).collect();
+                items.sort_by(|a, b| a.1.cmp(&b.1));
+                (f.key.clone(), f.title.clone(), f.sub.clone(), items)
+            })
+            .collect();
+        let mut list = div()
+            .id(SharedString::from(format!("contents-{:?}", self.tab)))
+            .flex_1()
+            .min_h(px(0.0))
+            .overflow_y_scroll()
+            .px(px(8.0))
+            .pb(px(12.0))
+            .flex()
+            .flex_col()
+            .gap(px(1.0));
+        for (i, (key, title, sub, items)) in frames.into_iter().enumerate() {
+            let open = self.expanded.contains(&key);
+            let (v, k) = (view.clone(), key.clone());
+            list = list.child(
                 div()
-                    .id("new-goal")
-                    .mx(px(10.0))
-                    .mt(px(8.0))
-                    .mb(px(10.0))
-                    .h(px(34.0))
-                    .px(px(10.0))
+                    .id(SharedString::from(format!("toc-{key}")))
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap(px(7.0))
-                    .rounded(px(9.0))
-                    .bg(t.card)
-                    .border_1()
-                    .border_color(t.tile_border)
-                    .hover(|s| s.border_color(t.card_hover))
+                    .gap(px(8.0))
+                    .px(px(8.0))
+                    .py(px(7.0))
+                    .rounded(px(8.0))
                     .cursor_pointer()
-                    .text_size(px(13.5))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(t.text)
-                    .child(icon("plus").size(px(15.0)).text_color(t.muted))
-                    .child("New goal")
-                    .on_click(cx.listener(|this, _, window, cx| this.open_form(window, cx))),
-            )
+                    .hover(|s| s.bg(t.row_hover))
+                    .child(
+                        icon("chevron-down")
+                            .size(px(13.0))
+                            .flex_none()
+                            .text_color(t.faint)
+                            .with_transformation(gpui::Transformation::rotate(gpui::percentage(
+                                if open { 0.0 } else { 0.75 },
+                            ))),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(t.text)
+                                    .truncate()
+                                    .child(title),
+                            )
+                            .child(
+                                div().text_size(px(11.5)).text_color(t.faint).truncate().child(sub),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(px(11.5))
+                            .text_color(t.faint)
+                            .child(items.len().to_string()),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !this.expanded.remove(&k) {
+                            this.expanded.insert(k.clone());
+                        }
+                        v.update(cx, |v, cx| v.focus_frame(i, cx));
+                        cx.notify();
+                    })),
+            );
+            if open {
+                for (n, (ik, label, weight)) in items.into_iter().enumerate() {
+                    let (v, fk) = (view.clone(), key.clone());
+                    list = list.child(
+                        div()
+                            .id(SharedString::from(format!("toc-{key}-{n}")))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.0))
+                            .ml(px(29.0))
+                            .px(px(8.0))
+                            .py(px(4.0))
+                            .rounded(px(7.0))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(t.row_hover))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .text_size(px(12.5))
+                                    .text_color(t.muted)
+                                    .truncate()
+                                    .child(label),
+                            )
+                            .when(weight > 0, |r| {
+                                r.child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(px(11.0))
+                                        .text_color(t.faint)
+                                        .child(weight.to_string()),
+                                )
+                            })
+                            .on_click(move |_, _, cx| {
+                                v.update(cx, |v, cx| v.focus_key(&ik, Some(&fk), cx))
+                            }),
+                    );
+                }
+            }
+        }
+        list
+    }
+
+    /// A map tab's header: what it is, how big, and a way to read it again.
+    fn map_header(&self, title: &str, sub: String, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let mode_glyph = if t.mode == Mode::Dark { "sun" } else { "moon" };
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(18.0))
+            .px(px(40.0))
+            .pt(px(self.inset))
+            .pb(px(20.0))
             .child(
                 div()
-                    .id("sessions")
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .overflow_y_scroll()
-                    .px(px(8.0))
-                    .pb(px(12.0))
                     .flex()
-                    .flex_col()
-                    .gap(px(2.0))
-                    .children(list),
+                    .flex_row()
+                    .items_baseline()
+                    .gap(px(14.0))
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .child(
+                        div()
+                            .text_size(px(20.0))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(t.text)
+                            .child(title.to_string()),
+                    )
+                    .child(div().text_size(px(13.5)).text_color(t.muted).truncate().child(sub)),
+            )
+            .child(self.chip_button(
+                "reload".into(),
+                "Reload",
+                t.tile,
+                t.text,
+                |this, cx| this.reload(cx),
+                cx,
+            ))
+            .child(
+                div()
+                    .id("theme-map")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(30.0))
+                    .rounded(px(9.0))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.tile))
+                    .child(icon(mode_glyph).size(px(16.0)).text_color(t.muted))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let m = this.theme.mode.toggled();
+                        this.set_mode(m, cx)
+                    })),
             )
     }
 
@@ -1435,7 +1848,7 @@ impl Board {
                     .child(c.name.clone())
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.lead = Some(name.clone());
-                        window.focus(&this.field.focus_handle(cx));
+                        window.focus(&this.field.focus_handle(cx), cx);
                         cx.notify();
                     }))
                     .into_any_element()
@@ -1569,7 +1982,7 @@ impl Render for Board {
         let now = self.now;
         if !self.form {
             if let Some(f) = self.return_focus.take() {
-                window.focus(&f);
+                window.focus(&f, cx);
             }
         }
         let rows = self.tree.read(cx).sessions(now);
@@ -1579,6 +1992,31 @@ impl Render for Board {
             self.follow_newest = false;
         }
         self.known.extend(rows.iter().map(|r| r.root.clone()));
+        // the references, worked out again when what they are found in has changed
+        let at = (self.tree.read(cx).revision, self.maps_loaded);
+        if at != self.links_at {
+            let texts: Vec<SessionText> = {
+                let tree = self.tree.read(cx);
+                rows.iter()
+                    .map(|r| SessionText {
+                        root: r.root.clone(),
+                        title: r.title.clone(),
+                        text: tree.texts_of(&r.root),
+                    })
+                    .collect()
+            };
+            let links = maps::backlinks(
+                self.components.read(cx).map(),
+                self.knowledge.read(cx).map(),
+                &texts,
+            );
+            for view in [&self.components, &self.knowledge] {
+                let l = links.clone();
+                view.update(cx, |v, cx| v.set_links(l, cx));
+            }
+            self.links = links;
+            self.links_at = at;
+        }
         let root = shown.as_ref().map(|r| r.root.clone()).unwrap_or_default();
         let (summary, branch) = {
             let tree = self.tree.read(cx);
@@ -1595,6 +2033,57 @@ impl Render for Board {
         let block = branch.as_ref().map(|b| self.block(b, cx));
         let sidebar = self.sidebar(&rows, shown.as_ref().map(|r| r.root.as_str()), cx);
         let form = self.form.then(|| self.form_overlay(cx));
+        if self.tab != Tab::Sessions {
+            let (view, title, sub) = if self.tab == Tab::Components {
+                let m = self.components.read(cx).map();
+                let apps = m.items().filter(|(_, i)| i.kind == maps::Kind::App).count();
+                (
+                    self.components.clone(),
+                    "Components",
+                    format!(
+                        "{} components · {apps} applications · {} connections",
+                        m.items().count(),
+                        m.edges.len()
+                    ),
+                )
+            } else {
+                let m = self.knowledge.read(cx).map();
+                let attempts = m
+                    .items()
+                    .filter(|(_, i)| matches!(i.kind, maps::Kind::Attempt | maps::Kind::Missed))
+                    .count();
+                let runs = m.frames.len();
+                (
+                    self.knowledge.clone(),
+                    "Knowledge",
+                    format!(
+                        "{runs} goal run{} · {attempts} attempts",
+                        if runs == 1 { "" } else { "s" }
+                    ),
+                )
+            };
+            let header = self.map_header(title, sub, cx);
+            return div()
+                .relative()
+                .size_full()
+                .flex()
+                .flex_row()
+                .bg(t.bg)
+                .text_color(t.text)
+                .child(sidebar)
+                .child(
+                    div().flex_1().min_w(px(0.0)).h_full().flex().flex_col().child(header).child(
+                        div()
+                            .flex_1()
+                            .min_h(px(0.0))
+                            .border_t_1()
+                            .border_color(t.card_border)
+                            .child(view),
+                    ),
+                )
+                .children(form)
+                .into_any_element();
+        }
         let main = div()
             .flex_1()
             .min_w(px(0.0))
@@ -1644,6 +2133,7 @@ impl Render for Board {
             .child(sidebar)
             .child(main)
             .children(form)
+            .into_any_element()
     }
 }
 

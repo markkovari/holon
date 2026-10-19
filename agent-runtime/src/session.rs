@@ -50,73 +50,17 @@ impl AgentdConfig {
     }
 }
 
-/// How a session stands, in the words a person watching it would use.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Phase {
-    /// Working: the model is writing, or a tool is running.
-    Running,
-    /// Waiting for a person to approve a tool call.
-    NeedsYou,
-    /// The task ended with an answer.
-    Done,
-    /// The task ended without one: out of money or turns, a model error.
-    Failed,
-    /// Stopped on purpose, by the agent or a person.
-    Cancelled,
+pub use agent_wire::{Phase, SessionView};
+
+/// What the runtime says about a session: as `GET /sessions` serves it, and as the model that started it
+/// is told.
+pub trait Describe {
+    fn to_json(&self) -> Value;
+    fn for_model(&self) -> String;
 }
 
-impl Phase {
-    /// No more changes will come.
-    pub fn is_over(self) -> bool {
-        matches!(self, Phase::Done | Phase::Failed | Phase::Cancelled)
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Phase::Running => "running",
-            Phase::NeedsYou => "needs-you",
-            Phase::Done => "done",
-            Phase::Failed => "failed",
-            Phase::Cancelled => "stopped",
-        }
-    }
-}
-
-/// One session as a person watching it draws it. An [`Event::Session`] carries a whole one each
-/// time anything in it changes, so a consumer keys by `id` and replaces.
-#[derive(Clone, Debug, PartialEq)]
-pub struct SessionView {
-    pub id: String,
-    /// The agent that started it.
-    pub agent: String,
-    /// The run whose tool call started it, and that call's span: this session's parent in a trace.
-    pub run_id: String,
-    pub call_span: Option<String>,
-    pub trace_id: String,
-    pub task: String,
-    pub model: String,
-    pub workspace: String,
-    pub phase: Phase,
-    /// What the daemon has charged so far, in micro-USD.
-    pub cost_micros: u64,
-    pub tokens_in: u64,
-    pub tokens_out: u64,
-    /// The session's tools used so far, each once, in the order first used.
-    pub tools: Vec<String>,
-    /// Tool calls so far.
-    pub calls: u32,
-    /// What it is doing now, in a few words: `write_file src/lib.rs`, `waiting to run cargo test`.
-    pub activity: String,
-    pub started_ms: u64,
-    pub finished_ms: Option<u64>,
-    /// The answer, or why there is none.
-    pub result: Option<String>,
-    /// Approvals waiting, as the runtime shows approvals.
-    pub pending: Vec<Pending>,
-}
-
-impl SessionView {
-    pub fn to_json(&self) -> Value {
+impl Describe for SessionView {
+    fn to_json(&self) -> Value {
         json!({
             "id": self.id, "agent": self.agent, "run": self.run_id, "span": self.call_span,
             "task": self.task, "model": self.model, "workspace": self.workspace,
@@ -131,7 +75,7 @@ impl SessionView {
     }
 
     /// What the model that started it is told: the state, and the answer once there is one.
-    pub fn for_model(&self) -> String {
+    fn for_model(&self) -> String {
         let spent = format!("${:.2}, {} tool call(s)", self.cost_micros as f64 / 1e6, self.calls);
         match self.phase {
             Phase::Done => format!(
