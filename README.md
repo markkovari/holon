@@ -224,9 +224,9 @@ CHECKOUT=~/src/widgets REPO=acme/widgets bash goal-demo.sh real     # goal → P
 | | |
 |---|---|
 | how a run succeeds, and every way it fails | [`docs/SCENARIOS.md`](docs/SCENARIOS.md) |
-| the agentic core | `components/{agent-writer,agent-driver,graph-selector}`, `reconciler/src/generation.rs`, `reconciler/src/bin/goalrun.rs` |
+| the agentic core | `components/{agent-writer,agent-driver,graph-selector}`, `reconciler/goal/src/generation.rs`, `reconciler/goal/src/bin/goalrun.rs` |
 | what the swarm remembers | `components/knowledge-memory`, [ADR-0084](docs/adr/0084-two-retrievers-and-an-optimistic-database.md) |
-| how two halves of one goal agree | `components/contract-registry`, `reconciler/src/compose.rs`, [ADR-0086](docs/adr/0086-parts-negotiate-a-contract.md) |
+| how two halves of one goal agree | `components/contract-registry`, `reconciler/goal/src/compose.rs`, [ADR-0086](docs/adr/0086-parts-negotiate-a-contract.md) |
 | the worklist — goals a person has written | [`.comp/goals/`](.comp/goals/) |
 | the browser surface: author a goal, read a run as a graph | [`docs/apps/CONSOLE.md`](docs/apps/CONSOLE.md) — `cargo xtask host console` |
 

@@ -616,4 +616,4 @@ the pure-compute ones automatically and prints which.
 | `cli/src/fleet.rs` | the lattice-lane renderer. Reached as `holon fleet render\|validate` |
 | `host/` | `comp-host` — the runtime for tiers 1 and 2 |
 | `cli/src/wadm.rs` | the wasmCloud renderer (lanes 3 and 4): fused or linked, v1 OAM or a v2 `Workload`. Reached as `holon wadm render\|host` |
-| `reconciler/` | the tier-3 lane: reconcile, distribute, and `src/oci.rs` for registry push |
+| `reconciler/` | the tier-3 lane: reconcile, distribute, and `oci/` for registry push |

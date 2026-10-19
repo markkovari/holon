@@ -8,7 +8,7 @@
 //!
 //! ## Why this exists
 //!
-//! Push has existed (`reconciler/src/oci.rs`, ADR-0017) with nothing to pull it back, so the only ways
+//! Push has existed (`reconciler/oci/src/lib.rs`, ADR-0017) with nothing to pull it back, so the only ways
 //! to get a component's bytes were to build it (five toolchains, `docs/POLYGLOT.md`) or download
 //! CI's artifact (expires after thirty days, needs a green run for that commit, all 205 components
 //! or none). This is the way to get ONE component you did not build.

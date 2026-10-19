@@ -7,7 +7,7 @@ same way — nothing in the loop read the *binary* contract, so nothing could an
 the only question that matters when you wire two components together: **would this
 plug actually fit this socket?** (Both are gone now: `cargo xtask compose` calls
 `comp-plug`, which derives the wiring from the artifact's own imports, and the
-catalogue is `comp-catalog`, `reconciler/src/bin/catalog.rs`.)
+catalogue is `comp-catalog`, `reconciler/goal/src/bin/catalog.rs`.)
 
 `studio` is that question with a canvas around it. Drop a `.wasm` in and it is
 **inspected**, not declared. Drag an export onto an import and the connection is

@@ -44,7 +44,7 @@ struct Args {
     surreal_password: Option<PathBuf>,
 }
 
-/// A thin client over SurrealDB's `/sql` HTTP endpoint, as `reconciler/src/trace.rs` uses it, at the
+/// A thin client over SurrealDB's `/sql` HTTP endpoint, as `reconciler/goal/src/trace.rs` uses it, at the
 /// `comp`/`goalmemory` coordinates `comp-capgraph --format surql` projects into.
 struct Surreal {
     url: String,

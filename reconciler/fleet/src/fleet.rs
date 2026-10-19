@@ -279,12 +279,19 @@ fn spawn_logged(name: &str, cmd: &mut Command, log: &std::path::Path) -> Kill {
     let f =
         std::fs::File::create(log).unwrap_or_else(|e| panic!("creating {}: {e}", log.display()));
     let err = f.try_clone().unwrap();
-    Kill(
-        cmd.stdout(Stdio::from(f))
-            .stderr(Stdio::from(err))
-            .spawn()
-            .unwrap_or_else(|e| panic!("spawning {name}: {e}")),
-    )
+    Kill(cmd.stdout(Stdio::from(f)).stderr(Stdio::from(err)).spawn().unwrap_or_else(|e| {
+        // A `comp-*` that is not there is, after docs/adr/0115, usually another package's: cargo
+        // builds a package's own binaries for its tests and nobody else's.
+        let hint = if e.kind() == std::io::ErrorKind::NotFound && name.starts_with("comp-") {
+            format!(
+                " — build it with `cd reconciler && cargo build --bin {name}`; `cargo test` \
+                         builds it for you only in the package that owns it"
+            )
+        } else {
+            String::new()
+        };
+        panic!("spawning {name}: {e}{hint}")
+    }))
 }
 
 /// A port nothing is listening on, found by asking the OS.

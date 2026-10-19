@@ -693,7 +693,7 @@ pub struct GoaldSpec {
     #[serde(default = "default_poll")]
     pub poll: u64,
     /// Hold a DeepSeek-backed run until DeepSeek's off-peak window opens
-    /// (`comp_reconciler::offpeak`) instead of spending it at up to 2x the
+    /// (`comp_fuel::offpeak`) instead of spending it at up to 2x the
     /// price. Off by default — see `comp-goald --help`.
     #[serde(default)]
     pub enforce_deepseek_offpeak: bool,
