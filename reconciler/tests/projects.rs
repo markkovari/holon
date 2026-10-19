@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use comp_reconciler::fleet::Fleet;
+use comp_fleet::fleet::Fleet;
 use serde_json::{json, Value};
 
 /// Guards the window between setting the fleet's env-var config and the fleet reading it. Those vars

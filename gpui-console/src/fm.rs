@@ -10,7 +10,7 @@
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use comp_reconciler::fleet::free_port;
+use comp_fleet::fleet::free_port;
 use serde_json::{json, Value};
 
 /// A running `fm serve` process, killed on drop — same shape as

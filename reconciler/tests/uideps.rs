@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use comp_reconciler::fleet::repo_root;
+use comp_fleet::fleet::repo_root;
 
 /// Every `examples/*/ui/package-lock.json`.
 fn lockfiles() -> Vec<PathBuf> {

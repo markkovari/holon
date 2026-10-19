@@ -14,7 +14,7 @@
 
 use std::time::Duration;
 
-use comp_reconciler::fleet::{repo_root, Fleet};
+use comp_fleet::fleet::{repo_root, Fleet};
 
 fn artifacts() -> Vec<String> {
     let raw = repo_root().join("components/target/wasm32-wasip2/release");

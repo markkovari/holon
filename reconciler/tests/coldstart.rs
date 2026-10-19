@@ -6,9 +6,9 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use comp_fleet::fleet::Fleet;
 use comp_lattice::nats::NatsLattice;
 use comp_lattice::CommandBus;
-use comp_reconciler::fleet::Fleet;
 use serde_json::Value;
 
 /// The start command the node last accepted, read from its own ledger: the same bytes the reconciler
