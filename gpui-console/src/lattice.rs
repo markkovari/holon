@@ -710,12 +710,23 @@ fn row_from(spec: &AgentSpec, rt: &Runtime) -> AgentRow {
                 Trigger::StoreChange { ns, .. } => format!("on {ns} change"),
             })
             .collect(),
-        model: match &spec.model {
-            ModelSpec::Local => "local".into(),
-            ModelSpec::OpenAi { model, .. } | ModelSpec::Anthropic { model, .. } => model.clone(),
-            ModelSpec::Mock { .. } => "mock".into(),
-        },
+        model: model_name(&spec.model),
         messages,
+    }
+}
+
+/// The short name a sidebar shows for a model: the model's own name, and for a fallback chain the
+/// first one it tries and how many stand behind it.
+fn model_name(m: &ModelSpec) -> String {
+    match m {
+        ModelSpec::Local => "local".into(),
+        ModelSpec::OpenAi { model, .. } | ModelSpec::Anthropic { model, .. } => model.clone(),
+        ModelSpec::Fallback { models } => match models.split_first() {
+            Some((first, [])) => model_name(first),
+            Some((first, rest)) => format!("{} (+{} fallback)", model_name(first), rest.len()),
+            None => "fallback (empty)".into(),
+        },
+        ModelSpec::Mock { .. } => "mock".into(),
     }
 }
 
@@ -845,6 +856,9 @@ pub fn spec_from_form(f: &FormInput) -> Result<AgentSpec, String> {
                 base_url: url.trim().to_string(),
                 model: model.trim().to_string(),
                 api_key_env: "OPENAI_API_KEY".into(),
+                api_key_file: String::new(),
+                service: String::new(),
+                vision: false,
             }
         }
         other => {
