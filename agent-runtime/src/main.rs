@@ -73,6 +73,17 @@ struct Cli {
     /// `token.json` (written by `agent-runtime google-auth`).
     #[arg(long, env = "HOLON_GOOGLE_DIR")]
     google_dir: Option<PathBuf>,
+    /// `comp-agentd`'s base URL, where an agent granted `session_start` opens coding sessions
+    /// (docs/adr/0119). Without it that tool answers that sessions are not available.
+    #[arg(long, env = "HOLON_AGENTD_URL")]
+    agentd_url: Option<String>,
+    /// The bearer token `comp-agentd` was started with, read from a file.
+    #[arg(long, env = "HOLON_AGENTD_TOKEN_FILE")]
+    agentd_token_file: Option<PathBuf>,
+    /// The model a coding session uses unless the agent's spec names one, as `comp-agentd`'s
+    /// provider names it.
+    #[arg(long, env = "HOLON_SESSION_MODEL", default_value = "")]
+    session_model: String,
 }
 
 /// `agent-runtime google-auth [--google-dir DIR]`: sign in to Google once, in a browser.
@@ -117,6 +128,20 @@ fn main() -> Result<(), String> {
     };
     if let Some(dir) = cli.google_dir {
         cfg.google.dir = dir;
+    }
+    if let Some(url) = cli.agentd_url.filter(|u| !u.is_empty()) {
+        let mut agentd = agent_runtime::session::AgentdConfig::new(url);
+        agentd.token = match cli.agentd_token_file {
+            Some(f) => Some(
+                std::fs::read_to_string(&f)
+                    .map_err(|e| format!("--agentd-token-file {}: {e}", f.display()))?
+                    .trim()
+                    .to_string(),
+            ),
+            None => None,
+        };
+        agentd.model = cli.session_model;
+        cfg.agentd = Some(agentd);
     }
     let rt = Runtime::new(cfg)?;
     let addr = server::serve(rt.clone(), &cli.listen, token)?;

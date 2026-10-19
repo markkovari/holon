@@ -459,10 +459,23 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
             json_reply(req, 200, json!(v))
         }
         (Method::Post, ["approvals", id, verdict @ ("approve" | "deny")]) => {
+            // `?scope=task|session` is how far an approval of a coding session's tool call reaches
+            // (ADR-0114); an agent's own sensitive call has one reach and ignores it.
+            let scope = query_param(query, "scope").unwrap_or_else(|| "once".into());
+            if !matches!(scope.as_str(), "once" | "task" | "session") {
+                return text(req, 400, "scope is once, task or session");
+            }
             match id.parse::<u64>() {
-                Ok(id) if rt.resolve_approval(id, *verdict == "approve") => text(req, 200, "ok"),
+                Ok(id) if rt.resolve_approval_scoped(id, *verdict == "approve", &scope) => {
+                    text(req, 200, "ok")
+                }
                 _ => text(req, 404, "no such pending approval"),
             }
+        }
+        // The coding sessions agents have started, newest first (docs/adr/0119).
+        (Method::Get, ["sessions"]) => {
+            let v: Vec<Value> = rt.sessions().iter().map(|s| s.to_json()).collect();
+            json_reply(req, 200, json!(v))
         }
         _ => text(req, 404, "not found"),
     }

@@ -162,6 +162,84 @@ fn default_result_chars() -> usize {
     8_000
 }
 
+/// What an agent granted `session_start` may open (docs/adr/0119): where, with which model, for how
+/// much, and which of the session's tools run without a person saying yes. The agent chooses a task;
+/// everything on this page is the spec author's, and none of it is a tool argument.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SessionPolicy {
+    /// Directories, besides the agent's own workspace, a session may be opened in. Absolute paths:
+    /// the agent names one of them (or `own`); it never writes a path of its own.
+    #[serde(default)]
+    pub workspaces: Vec<String>,
+    /// The model a session uses, as `comp-agentd`'s provider names it. Empty: the runtime's own
+    /// (`--session-model`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub model: String,
+    /// What one session may spend, in dollars. The daemon stops a task at this ceiling.
+    #[serde(default = "default_session_budget")]
+    pub budget_usd: f64,
+    /// The session's tools that run without asking: any of `list_dir`, `read_file`, `write_file`,
+    /// `run`. None: every call waits for a person, who sees it where approvals are shown.
+    #[serde(default)]
+    pub auto_approve: Vec<String>,
+    /// Sessions this agent may have open at once.
+    #[serde(default = "default_session_concurrency")]
+    pub max_concurrent: u32,
+}
+
+fn default_session_budget() -> f64 {
+    1.0
+}
+fn default_session_concurrency() -> u32 {
+    2
+}
+
+impl Default for SessionPolicy {
+    fn default() -> Self {
+        Self {
+            workspaces: Vec::new(),
+            model: String::new(),
+            budget_usd: default_session_budget(),
+            auto_approve: Vec::new(),
+            max_concurrent: default_session_concurrency(),
+        }
+    }
+}
+
+/// The tools `comp-agentd` gives a session (`reconciler/daemons/agentd/src/tools.rs`).
+pub const SESSION_TOOLS: [&str; 4] = ["list_dir", "read_file", "write_file", "run"];
+
+impl SessionPolicy {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Checked with the rest of a spec, so a typo is an error now and not a session that asks about
+    /// everything or a budget that is a negative number.
+    pub fn validate(&self) -> Result<(), String> {
+        if !(self.budget_usd > 0.0 && self.budget_usd <= 100.0) {
+            return Err("sessions.budget_usd must be above 0 and at most 100".into());
+        }
+        if !(1..=8).contains(&self.max_concurrent) {
+            return Err("sessions.max_concurrent must be 1-8".into());
+        }
+        for t in &self.auto_approve {
+            if !SESSION_TOOLS.contains(&t.as_str()) {
+                return Err(format!(
+                    "sessions.auto_approve `{t}` is not a session tool ({})",
+                    SESSION_TOOLS.join(", ")
+                ));
+            }
+        }
+        for w in &self.workspaces {
+            if !std::path::Path::new(w).is_absolute() {
+                return Err(format!("sessions.workspaces `{w}` must be an absolute path"));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AgentSpec {
     pub name: String,
@@ -223,6 +301,9 @@ pub struct AgentSpec {
     /// A paused agent fires no schedule or event triggers and refuses HTTP.
     #[serde(default)]
     pub paused: bool,
+    /// What `session_start` may open, when the agent has it (docs/adr/0119).
+    #[serde(default, skip_serializing_if = "SessionPolicy::is_default")]
+    pub sessions: SessionPolicy,
     /// Filled in at run time from the project registry (`projects::effective`);
     /// never read from or written to the spec file.
     #[serde(skip)]
@@ -257,6 +338,7 @@ impl AgentSpec {
             max_runs_per_min: default_rate(),
             daily_token_budget: 0,
             paused: false,
+            sessions: SessionPolicy::default(),
             projects: Vec::new(),
         }
     }

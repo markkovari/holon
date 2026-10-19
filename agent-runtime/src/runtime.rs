@@ -35,6 +35,7 @@ use crate::bus::{Bus, Draft, Envelope, FileBus};
 use crate::cron;
 use crate::kv::{Entry, Kv, Put};
 use crate::model::{self, LocalModel, Msg, Reply};
+use crate::session::{self, AgentdConfig};
 use crate::spec::{validate_name, validate_topic, AgentSpec, Trigger};
 use crate::store::{RunRecord, Status, Store};
 use crate::trace::{new_span_id, new_trace_id};
@@ -64,6 +65,9 @@ pub struct Config {
     pub embed_service: String,
     /// Where the Google login lives (`client.json`, `token.json`) and which API it talks to.
     pub google: crate::google::GoogleConfig,
+    /// `comp-agentd`, where an agent granted `session_start` opens coding sessions. `None`: the
+    /// tool answers that sessions are not available.
+    pub agentd: Option<AgentdConfig>,
 }
 
 impl Config {
@@ -79,11 +83,12 @@ impl Config {
             embed_url: String::new(),
             embed_service: String::new(),
             google: Default::default(),
+            agentd: None,
         }
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Pending {
     pub id: u64,
     pub agent: String,
@@ -130,7 +135,10 @@ pub struct Runtime {
     busy: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     approvals: Mutex<Vec<Slot>>,
     approvals_cv: Condvar,
-    next_approval: AtomicU64,
+    pub(crate) next_approval: AtomicU64,
+    /// The daemon coding sessions run on, and the sessions this runtime has started on it.
+    pub(crate) agentd: Option<session::Agentd>,
+    pub(crate) sessions: Mutex<Vec<session::Tracked>>,
     observers: Mutex<Vec<Sender<Event>>>,
     mock_cursor: Mutex<HashMap<String, usize>>,
     last_fired: Mutex<HashMap<(String, usize), u64>>,
@@ -178,6 +186,7 @@ pub fn validate_spec(spec: &AgentSpec) -> Result<(), String> {
             return Err(format!("must_call `{t}` is not one of this agent's capabilities"));
         }
     }
+    spec.sessions.validate()?;
     for t in &spec.topics_out {
         validate_topic(&t.replace('*', "x")).map_err(|e| format!("topics_out: {e}"))?;
     }
@@ -233,6 +242,10 @@ impl Runtime {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         let next_timer = timers.iter().map(|t| t.id).max().unwrap_or(0) + 1;
+        let cfg_agentd = match &cfg.agentd {
+            Some(c) => Some(session::Agentd::new(c.clone())?),
+            None => None,
+        };
         let rt = Arc::new_cyclic(|me| Self {
             me: me.clone(),
             store,
@@ -249,6 +262,8 @@ impl Runtime {
             approvals: Mutex::new(Vec::new()),
             approvals_cv: Condvar::new(),
             next_approval: AtomicU64::new(1),
+            agentd: cfg_agentd,
+            sessions: Mutex::new(Vec::new()),
             observers: Mutex::new(Vec::new()),
             mock_cursor: Mutex::new(HashMap::new()),
             last_fired: Mutex::new(HashMap::new()),
@@ -862,6 +877,7 @@ impl Runtime {
     /// backlog left from before this process started.
     pub fn start_scheduler(self: &Arc<Self>) {
         self.recover();
+        self.start_session_watcher();
         let rt = self.clone();
         std::thread::spawn(move || {
             let mut swept = 0;
@@ -880,6 +896,12 @@ impl Runtime {
 
     pub fn shutdown(&self) {
         self.stop.store(true, Ordering::Relaxed);
+        // A session left open keeps a task running that nobody is left to answer.
+        self.close_all_sessions();
+    }
+
+    pub(crate) fn is_stopping(&self) -> bool {
+        self.stop.load(Ordering::Relaxed)
     }
 
 
@@ -944,27 +966,38 @@ impl Runtime {
     }
 
 
+    /// What is waiting for a person: sensitive tool calls agents have asked to make, and the
+    /// calls a coding session's daemon is waiting on, shown the same way.
     pub fn pending_approvals(&self) -> Vec<Pending> {
-        self.approvals
+        let mut all: Vec<Pending> = self
+            .approvals
             .lock()
             .unwrap()
             .iter()
             .filter(|s| s.answer.is_none())
             .map(|s| s.pending.clone())
-            .collect()
+            .collect();
+        all.extend(self.session_pending());
+        all
     }
 
     /// `false` if no such pending request (already answered or timed out).
     pub fn resolve_approval(&self, id: u64, approved: bool) -> bool {
-        let mut list = self.approvals.lock().unwrap();
-        match list.iter_mut().find(|s| s.pending.id == id && s.answer.is_none()) {
-            Some(s) => {
+        self.resolve_approval_scoped(id, approved, "once")
+    }
+
+    /// `scope` (`once`, `task`, `session`) says how far an approval of a coding session's tool
+    /// call reaches (ADR-0114); an agent's own sensitive call has one reach, and ignores it.
+    pub fn resolve_approval_scoped(&self, id: u64, approved: bool, scope: &str) -> bool {
+        {
+            let mut list = self.approvals.lock().unwrap();
+            if let Some(s) = list.iter_mut().find(|s| s.pending.id == id && s.answer.is_none()) {
                 s.answer = Some(approved);
                 self.approvals_cv.notify_all();
-                true
+                return true;
             }
-            None => false,
         }
+        self.resolve_session_approval(id, approved, scope).unwrap_or(false)
     }
 
     fn arc(&self) -> Result<Arc<Runtime>, String> {
@@ -1214,6 +1247,30 @@ impl Host for Runtime {
 
     fn embed(&self, texts: &[String], kind: &str) -> Option<Vec<Vec<f32>>> {
         self.embedder.as_ref()?.embed(texts, kind)
+    }
+
+    fn session_start(
+        &self,
+        spec: &AgentSpec,
+        run_id: &str,
+        cause: &Cause,
+        task: &str,
+        workspace: &str,
+    ) -> Result<String, String> {
+        self.start_session(spec, run_id, cause, task, workspace)
+    }
+
+    fn session_result(
+        &self,
+        agent: &str,
+        id: &str,
+        wait: Duration,
+    ) -> Result<session::SessionView, String> {
+        Runtime::session_result(self, agent, id, wait)
+    }
+
+    fn session_close(&self, agent: &str, id: &str) -> Result<(), String> {
+        self.close_session(agent, id)
     }
 
     fn observe(&self, event: Event) {

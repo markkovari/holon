@@ -20,6 +20,7 @@ pub mod otlp;
 pub mod projects;
 pub mod runtime;
 pub mod server;
+pub mod session;
 pub mod spec;
 pub mod speech;
 pub mod store;

@@ -138,7 +138,7 @@ export const SYS = [
   uses:['llm','disk'],
   boundary:['comp-agentd tools are confined to the session’s workspace root; run cannot be confined, which is what approval is for.',
             'agent-runtime refuses a tool an agent was not granted instead of dispatching it, and only the owner’s Matrix messages start a run.',
-            'Nothing in this repository is a client of comp-agentd yet: the contract came first, for bots, backends and scripts outside it (ADR-0102). Whether agent-runtime should become one is proposed in ADR-0117.'],
+            'agent-runtime is the first client of comp-agentd: an agent granted session_start opens a coding session, the runtime watches it and shows its approvals as its own (ADR-0119); the contract came first, for bots, backends and scripts outside it (ADR-0102). Whether agent-runtime should also run its own tasks on the daemon is proposed in ADR-0117.'],
   code:['reconciler/daemons/agentd/','crates/holon-llm/','reconciler/fuel/','api/holon/v1/agent.proto','api/openapi.yaml','agent-runtime/','agent-matrix/','gpui-console/']},
 
  {id:'loop', name:'Engineering loop', short:'goal to pull request',
@@ -485,7 +485,8 @@ export const DIA = {
   ],
   edges:[
    ['api','sess','call','call'],['sess','loop','start','call'],['loop','tools','tool call','call'],['loop','prov','model','call'],['loop','appr','ask','call'],['sess','disk','log','call'],
-   ['gpui','rt','embeds','call'],['gw','rt','HTTP','http'],['mx','rt','HTTP','http'],['mx','syn','appservice','http']
+   ['gpui','rt','embeds','call'],['gw','rt','HTTP','http'],['mx','rt','HTTP','http'],['mx','syn','appservice','http'],
+   ['rt','api','session_start','http']
   ],
   ghosts:[
    G('g-cl','clients','Agent clients',['bots · scripts · UIs'],'l',{r:1,dy:-46,actor:1}),
