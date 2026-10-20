@@ -16,6 +16,7 @@
 //!
 //! [`Event`]: agent_wire::Event
 
+pub mod agents;
 pub mod canvas;
 #[cfg(target_os = "macos")]
 pub mod capture;

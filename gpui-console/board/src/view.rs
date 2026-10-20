@@ -29,6 +29,7 @@ use gpui::{
     Render, Rgba, SharedString, Task, Transformation, Window,
 };
 
+use super::agents::{self, AgentInfo, Element};
 use super::canvas::{MapEvent, MapView};
 use super::explore::{ExploreEvent, ExploreView};
 use super::field::{FieldEvent, TextField};
@@ -84,6 +85,11 @@ pub trait Actions {
     /// Gives `goal` to `agent`. `Err` is why not, in words to show a person.
     fn start(&self, _agent: &str, _goal: &str, _cx: &mut App) -> Result<(), String> {
         Err("this board cannot start anything".into())
+    }
+
+    /// Every conversational agent, as its spec says it: the Agents tab.
+    fn roster(&self, _cx: &App) -> Vec<AgentInfo> {
+        Vec::new()
     }
 }
 
@@ -327,6 +333,16 @@ pub struct Board {
     /// The tree's revision and the maps' load the graph was built from.
     graph_at: (u64, u64),
     maps_loaded: u64,
+    /// The conversational agents, read again with the graph; the one on show; what to say to it.
+    roster: Vec<AgentInfo>,
+    agent: Option<String>,
+    say: Entity<TextField>,
+    unsaid: Option<String>,
+    /// Where the agents are in Element, when the board knows.
+    element: Option<Element>,
+    /// The conversation's scroll, and which agent and how long it was when it was last sent to the end.
+    talk: gpui::ScrollHandle,
+    talk_seen: (String, usize),
     /// The frames whose items the list beside a map shows.
     expanded: HashSet<String>,
     _tick: Task<()>,
@@ -367,6 +383,14 @@ impl Board {
         cx.subscribe(&explore, |this, _, ev: &ExploreEvent, cx| match ev {
             ExploreEvent::InMap(k) => this.show(Tab::Map, k, cx),
             ExploreEvent::Session(root) => this.show(Tab::Sessions, root, cx),
+            ExploreEvent::Agent(name) => this.show(Tab::Agents, name, cx),
+        })
+        .detach();
+        let say = cx.new(|cx| TextField::compact("Say something…", theme, cx));
+        cx.subscribe(&say, |this, _, ev: &FieldEvent, cx| match ev {
+            FieldEvent::Submit(text) => this.say_to(text.clone(), cx),
+            FieldEvent::Cancel => this.say.update(cx, |f, cx| f.clear(cx)),
+            FieldEvent::Changed(_) => {}
         })
         .detach();
         let search = cx.new(|cx| TextField::compact("Search", theme, cx));
@@ -424,6 +448,16 @@ impl Board {
             query: String::new(),
             graph_at: (u64::MAX, 0),
             maps_loaded: 0,
+            roster: Vec::new(),
+            agent: None,
+            say,
+            unsaid: None,
+            #[cfg(not(target_family = "wasm"))]
+            element: Element::load(),
+            #[cfg(target_family = "wasm")]
+            element: None,
+            talk: gpui::ScrollHandle::new(),
+            talk_seen: (String::new(), 0),
             expanded: HashSet::new(),
             _tick: tick,
         }
@@ -497,6 +531,33 @@ impl Board {
                 self.components.update(cx, |v, cx| v.focus_key(&r.key, r.frame.as_deref(), cx))
             }
             Tab::Explore => self.explore.update(cx, |e, cx| e.show(&r.key, cx)),
+            Tab::Agents => {
+                self.agent = Some(r.key.strip_prefix("agent:").unwrap_or(&r.key).to_string())
+            }
+        }
+        cx.notify();
+    }
+
+    /// Where the agents are in Element: what the bridge recorded, or, told only a server (a page is),
+    /// their users there.
+    pub fn with_element(mut self, element: Option<Element>) -> Self {
+        if element.is_some() {
+            self.element = element;
+        }
+        self
+    }
+
+    /// Says `text` to the agent on show, as a person in its room would: it is given it as a goal, and
+    /// what it answers comes back into the conversation.
+    fn say_to(&mut self, text: String, cx: &mut Context<Self>) {
+        let Some(agent) = self.agent.clone() else { return };
+        let actions = self.actions.clone();
+        match actions.start(&agent, &text, cx) {
+            Ok(()) => {
+                self.unsaid = None;
+                self.say.update(cx, |f, cx| f.clear(cx));
+            }
+            Err(e) => self.unsaid = Some(e),
         }
         cx.notify();
     }
@@ -512,6 +573,7 @@ impl Board {
         match tab {
             Tab::Map => window.focus(&self.components.focus_handle(cx), cx),
             Tab::Explore => window.focus(&self.search.focus_handle(cx), cx),
+            Tab::Agents => window.focus(&self.say.focus_handle(cx), cx),
             Tab::Sessions => {}
         }
         cx.notify();
@@ -535,6 +597,7 @@ impl Board {
         self.components.update(cx, |v, cx| v.set_theme(theme, cx));
         self.explore.update(cx, |v, cx| v.set_theme(theme, cx));
         self.search.update(cx, |f, cx| f.set_theme(theme, cx));
+        self.say.update(cx, |f, cx| f.set_theme(theme, cx));
         cx.notify();
     }
 
@@ -1569,6 +1632,7 @@ impl Board {
             .child(self.tabs(cx))
             .when(self.tab == Tab::Map, |c| c.child(self.contents(cx)))
             .when(self.tab == Tab::Explore, |c| c.child(self.explore_side(rows, cx)))
+            .when(self.tab == Tab::Agents, |c| c.child(self.agents_side(cx)))
             .when(self.tab == Tab::Sessions, |c| {
                 c.child(
                     div()
@@ -1626,9 +1690,12 @@ impl Board {
             .flex()
             .flex_row()
             .gap(px(2.0));
-        for (tab, label) in
-            [(Tab::Sessions, "Sessions"), (Tab::Explore, "Explore"), (Tab::Map, "Map")]
-        {
+        for (tab, label) in [
+            (Tab::Sessions, "Sessions"),
+            (Tab::Agents, "Agents"),
+            (Tab::Explore, "Explore"),
+            (Tab::Map, "Map"),
+        ] {
             let on = self.tab == tab;
             strip = strip.child(
                 div()
@@ -1909,6 +1976,425 @@ impl Board {
             .child(list)
     }
 
+    /// The agents down the left, grouped as Element groups their rooms: a project's agents under it,
+    /// the rest under Agents, and the control room first when the bridge has made one.
+    fn agents_side(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = self.theme;
+        let waiting: HashSet<String> = self
+            .tree
+            .read(cx)
+            .all()
+            .filter(|n| n.kind == Kind::Run && n.status == Status::NeedsYou)
+            .map(|n| n.name.clone())
+            .collect();
+        let mut groups: std::collections::BTreeMap<String, Vec<&AgentInfo>> = Default::default();
+        for a in &self.roster {
+            if a.projects.is_empty() {
+                groups.entry(String::new()).or_default().push(a);
+            }
+            for p in &a.projects {
+                groups.entry(p.clone()).or_default().push(a);
+            }
+        }
+        let mut list = div()
+            .id("agents-list")
+            .flex_1()
+            .min_h(px(0.0))
+            .overflow_y_scroll()
+            .px(px(8.0))
+            .pb(px(12.0))
+            .flex()
+            .flex_col()
+            .gap(px(1.0));
+        if let Some(url) = self.element.as_ref().and_then(Element::control_room) {
+            list = list.child(
+                div()
+                    .id("control-room")
+                    .mx(px(2.0))
+                    .mt(px(4.0))
+                    .px(px(10.0))
+                    .py(px(8.0))
+                    .rounded(px(9.0))
+                    .border_1()
+                    .border_color(t.tile_border)
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.0))
+                    .cursor_pointer()
+                    .hover(|s| s.border_color(t.line))
+                    .child(icon("message-square").size(px(14.0)).text_color(t.line))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(div().text_size(px(13.0)).text_color(t.text).child("holon"))
+                            .child(
+                                div()
+                                    .text_size(px(11.5))
+                                    .text_color(t.faint)
+                                    .child("the control room, in Element"),
+                            ),
+                    )
+                    .on_click(move |_, _, cx| cx.open_url(&url)),
+            );
+        }
+        // the agents in no project last, as Element lists the Agents Space after a person's own
+        let mut order: Vec<String> = groups.keys().filter(|k| !k.is_empty()).cloned().collect();
+        if groups.contains_key("") {
+            order.push(String::new());
+        }
+        for g in order {
+            let heading = if g.is_empty() { "Agents".to_string() } else { g.clone() };
+            list = list.child(
+                div()
+                    .px(px(10.0))
+                    .pt(px(12.0))
+                    .pb(px(4.0))
+                    .text_size(px(11.5))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(t.faint)
+                    .child(heading),
+            );
+            for a in &groups[&g] {
+                let on = self.agent.as_deref() == Some(a.name.as_str());
+                let dot = if waiting.contains(&a.name) {
+                    t.attention()
+                } else if a.paused {
+                    t.faint
+                } else {
+                    t.line
+                };
+                let name = a.name.clone();
+                let sub = if a.paused {
+                    format!("{} · paused", model_name(&a.model))
+                } else {
+                    model_name(&a.model)
+                };
+                list = list.child(
+                    div()
+                        .id(SharedString::from(format!("agent-{g}-{}", a.name)))
+                        .flex()
+                        .flex_row()
+                        .items_start()
+                        .gap(px(9.0))
+                        .px(px(10.0))
+                        .py(px(6.0))
+                        .rounded(px(8.0))
+                        .cursor_pointer()
+                        .when(on, |el| el.bg(t.card))
+                        .when(!on, |el| el.hover(|s| s.bg(t.row_hover)))
+                        .child(div().mt(px(5.0)).size(px(8.0)).flex_none().rounded(px(4.0)).bg(dot))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .min_w(px(0.0))
+                                .child(
+                                    div()
+                                        .text_size(px(13.0))
+                                        .line_height(px(18.0))
+                                        .text_color(t.text)
+                                        .child(a.name.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(11.5))
+                                        .text_color(t.faint)
+                                        .truncate()
+                                        .child(sub),
+                                ),
+                        )
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.agent = Some(name.clone());
+                            this.unsaid = None;
+                            window.focus(&this.say.focus_handle(cx), cx);
+                            cx.notify();
+                        })),
+                );
+            }
+        }
+        list
+    }
+
+    /// One agent: what was said to it and what it answered, a field to say more, and who it is: its
+    /// model, what it may use, its projects, and where it is in Element.
+    fn agent_page(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let t = self.theme;
+        if self.agent.as_ref().is_none_or(|a| !self.roster.iter().any(|r| &r.name == a)) {
+            self.agent = self.roster.first().map(|a| a.name.clone());
+        }
+        let Some(a) =
+            self.agent.as_ref().and_then(|n| self.roster.iter().find(|r| &r.name == n)).cloned()
+        else {
+            return div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(8.0))
+                .child(icon("bot").size(px(24.0)).text_color(t.faint))
+                .child(div().text_size(px(15.0)).text_color(t.muted).child("No agents here yet"))
+                .child(div().text_size(px(13.0)).text_color(t.faint).child(
+                    "An agent made in the console, or in Element's control room, shows up here.",
+                ))
+                .into_any_element();
+        };
+        let talk = agents::conversation(self.tree.read(cx), &a.name, 30);
+        // the newest exchange in view: on opening an agent, and when one arrives
+        if self.talk_seen != (a.name.clone(), talk.len()) {
+            self.talk.scroll_to_bottom();
+            self.talk_seen = (a.name.clone(), talk.len());
+        }
+        let now = self.now;
+        let bubbles: Vec<gpui::AnyElement> = talk
+            .iter()
+            .map(|e| {
+                let (badge_bg, badge_ink) = t.badge(e.status);
+                let answer = match (&e.answer, e.status) {
+                    (Some(text), _) if !text.trim().is_empty() => text.clone(),
+                    (_, Status::NeedsYou) => "waiting for you to approve a step".to_string(),
+                    (_, s) if !s.is_over() => "working…".to_string(),
+                    _ => "(no answer)".to_string(),
+                };
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
+                    .child(
+                        div().flex().flex_row().justify_end().child(
+                            div()
+                                .max_w(px(520.0))
+                                .px(px(14.0))
+                                .py(px(9.0))
+                                .rounded(px(14.0))
+                                .bg(t.tile)
+                                .border_1()
+                                .border_color(t.tile_border)
+                                .text_size(px(14.0))
+                                .line_height(px(20.0))
+                                .text_color(t.text)
+                                .child(e.asked.clone()),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_start()
+                            .gap(px(10.0))
+                            .child(
+                                div()
+                                    .mt(px(12.0))
+                                    .size(px(8.0))
+                                    .flex_none()
+                                    .rounded(px(4.0))
+                                    .bg(t.line),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(6.0))
+                                    .max_w(px(560.0))
+                                    .child(
+                                        div()
+                                            .px(px(14.0))
+                                            .py(px(9.0))
+                                            .rounded(px(14.0))
+                                            .bg(t.card)
+                                            .border_1()
+                                            .border_color(t.card_border)
+                                            .text_size(px(14.0))
+                                            .line_height(px(20.0))
+                                            .text_color(if e.status.is_over() {
+                                                t.text
+                                            } else {
+                                                t.muted
+                                            })
+                                            .child(answer),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_row()
+                                            .flex_wrap()
+                                            .items_center()
+                                            .gap(px(6.0))
+                                            .text_size(px(11.5))
+                                            .text_color(t.faint)
+                                            .child(ago(now.saturating_sub(e.started_ms)))
+                                            .when(e.status != Status::Done, |c| {
+                                                c.child(
+                                                    div()
+                                                        .px(px(6.0))
+                                                        .rounded(px(5.0))
+                                                        .bg(badge_bg)
+                                                        .text_color(badge_ink)
+                                                        .child(
+                                                            format!("{:?}", e.status)
+                                                                .to_lowercase(),
+                                                        ),
+                                                )
+                                            })
+                                            .when(!e.tools.is_empty(), |c| {
+                                                c.child(format!("used {}", e.tools.join(", ")))
+                                            }),
+                                    ),
+                            ),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+        let element = self.element.as_ref().map(|e| e.agent(&a.name, &a.projects));
+        let chip = |text: String| {
+            div()
+                .px(px(8.0))
+                .py(px(3.0))
+                .rounded(px(7.0))
+                .bg(t.tile)
+                .border_1()
+                .border_color(t.tile_border)
+                .text_size(px(12.0))
+                .text_color(t.text)
+                .child(text)
+        };
+        let section = |title: &str| {
+            div()
+                .mt(px(6.0))
+                .text_size(px(11.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(t.faint)
+                .child(title.to_string())
+        };
+        let explore_key = format!("agent:{}", a.name);
+        let side = div()
+            .w(px(300.0))
+            .flex_none()
+            .h_full()
+            .border_l_1()
+            .border_color(t.card_border)
+            .p(px(20.0))
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(div().text_size(px(19.0)).font_weight(FontWeight::SEMIBOLD).text_color(t.text).child(a.name.clone()))
+            .when(!a.description.is_empty(), |c| c.child(div().text_size(px(13.0)).line_height(px(19.0)).text_color(t.muted).child(a.description.clone())))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap(px(6.0))
+                    .child(chip(model_name(&a.model)))
+                    .when(a.paused, |c| c.child(chip("paused".into()))),
+            )
+            .children(element.clone().map(|url| {
+                div()
+                    .id("open-element")
+                    .mt(px(6.0))
+                    .h(px(32.0))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(7.0))
+                    .rounded(px(9.0))
+                    .bg(t.line)
+                    .text_color(t.bg)
+                    .text_size(px(13.0))
+                    .font_weight(FontWeight::MEDIUM)
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.9))
+                    .child(icon("message-square").size(px(14.0)).text_color(t.bg))
+                    .child("Open in Element")
+                    .on_click(move |_, _, cx| cx.open_url(&url))
+            }))
+            .when(element.is_none(), |c| {
+                c.child(div().mt(px(4.0)).text_size(px(12.0)).line_height(px(17.0)).text_color(t.faint).child(
+                    "Not on Matrix here. agent-matrix makes every agent a Matrix user with a room, and then it opens in Element.",
+                ))
+            })
+            .child(
+                div()
+                    .id("agent-explore")
+                    .h(px(30.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(9.0))
+                    .border_1()
+                    .border_color(t.tile_border)
+                    .text_size(px(12.5))
+                    .text_color(t.text)
+                    .cursor_pointer()
+                    .hover(|s| s.border_color(t.line))
+                    .child("Explore it")
+                    .on_click(cx.listener(move |this, _, _, cx| this.show(Tab::Explore, &explore_key, cx))),
+            )
+            .when(!a.triggers.is_empty(), |c| {
+                c.child(section("Wakes on")).child(div().flex().flex_col().gap(px(3.0)).children(
+                    a.triggers.iter().map(|tr| div().font_family(crate::MONO).text_size(px(11.5)).text_color(t.muted).child(tr.clone())),
+                ))
+            })
+            .when(!a.capabilities.is_empty(), |c| {
+                c.child(section("Can use")).child(div().flex().flex_row().flex_wrap().gap(px(5.0)).children(a.capabilities.iter().map(|x| chip(x.clone()))))
+            })
+            .when(!a.projects.is_empty(), |c| {
+                c.child(section("In projects")).child(div().flex().flex_row().flex_wrap().gap(px(5.0)).children(a.projects.iter().map(|x| chip(x.clone()))))
+            });
+        let unsaid = self.unsaid.clone();
+        div()
+            .size_full()
+            .flex()
+            .flex_row()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("talk-{}", a.name)))
+                            .track_scroll(&self.talk)
+                            .flex_1()
+                            .min_h(px(0.0))
+                            .overflow_y_scroll()
+                            .px(px(40.0))
+                            .py(px(24.0))
+                            .flex()
+                            .flex_col()
+                            .gap(px(22.0))
+                            .when(bubbles.is_empty(), |c| {
+                                c.child(div().pt(px(80.0)).flex().justify_center().text_size(px(13.5)).text_color(t.faint).child(format!("Nothing said to {} yet.", a.name)))
+                            })
+                            .children(bubbles),
+                    )
+                    .child(
+                        div()
+                            .px(px(40.0))
+                            .py(px(14.0))
+                            .border_t_1()
+                            .border_color(t.card_border)
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.0))
+                            .child(self.say.clone())
+                            .when_some(unsaid, |c, e| c.child(div().text_size(px(12.5)).text_color(t.badge(Status::Failed).1).child(e)))
+                            .child(div().text_size(px(11.5)).text_color(t.faint).child(if element.is_some() {
+                                "enter sends it; the answer comes here, and in its room in Element"
+                            } else {
+                                "enter sends it; the answer comes here"
+                            })),
+                    ),
+            )
+            .child(side)
+            .into_any_element()
+    }
+
     /// A map tab's header: what it is, how big, and a way to read it again.
     fn map_header(&self, title: &str, sub: String, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
@@ -2143,6 +2629,7 @@ impl Render for Board {
         // the graph Explore walks, built again when the tree or the maps it is made of have changed
         let at = (self.tree.read(cx).revision, self.maps_loaded);
         if at != self.graph_at {
+            self.roster = self.actions.roster(cx);
             let comps = self.components.read(cx).map().clone();
             let names: std::collections::BTreeSet<String> = comps
                 .items()
@@ -2153,6 +2640,7 @@ impl Render for Board {
                 rows.iter()
                     .map(|r| SessionNode {
                         root: r.root.clone(),
+                        lead: r.lead.clone(),
                         title: if r.title.is_empty() { r.lead.clone() } else { r.title.clone() },
                         sub: meta(r, now),
                         touched: std::iter::once(r.title.clone())
@@ -2162,7 +2650,7 @@ impl Render for Board {
                     })
                     .collect()
             };
-            let g = Graph::build(&comps, &self.knowledge, &sessions);
+            let g = Graph::build(&comps, &self.knowledge, &sessions, &self.roster);
             self.explore.update(cx, |e, cx| e.set_graph(g, cx));
             self.graph_at = at;
         }
@@ -2184,10 +2672,25 @@ impl Render for Board {
         let form = self.form.then(|| self.form_overlay(cx));
         if self.tab != Tab::Sessions {
             let m = self.components.read(cx).map();
-            let (view, title, sub): (gpui::AnyView, &str, String) = if self.tab == Tab::Map {
+            let (view, title, sub): (gpui::AnyElement, &str, String) = if self.tab == Tab::Agents {
+                let projects: std::collections::BTreeSet<&String> =
+                    self.roster.iter().flat_map(|a| &a.projects).collect();
+                let n = self.roster.len();
+                let sub = format!(
+                    "{n} agent{} · {} project{}{}",
+                    if n == 1 { "" } else { "s" },
+                    projects.len(),
+                    if projects.len() == 1 { "" } else { "s" },
+                    self.element.as_ref().map_or(" · not on Matrix here".to_string(), |e| format!(
+                        " · on Matrix at {}",
+                        e.server
+                    ))
+                );
+                (self.agent_page(cx), "Agents", sub)
+            } else if self.tab == Tab::Map {
                 let apps = m.items().filter(|(_, i)| i.kind == maps::Kind::App).count();
                 (
-                    self.components.clone().into(),
+                    self.components.clone().into_any_element(),
                     "The whole system",
                     format!(
                         "{} components · {apps} applications · {} connections",
@@ -2198,7 +2701,7 @@ impl Render for Board {
             } else {
                 let runs = self.knowledge.frames.len();
                 (
-                    self.explore.clone().into(),
+                    self.explore.clone().into_any_element(),
                     "Explore",
                     format!(
                         "{} components · {runs} goal run{} · {} sessions",

@@ -2,7 +2,7 @@
 
 A desktop console for autonomous agents ([ADR-0119](../docs/adr/0119-an-agent-can-start-a-coding-session.md)):
 it boots a dev lattice, embeds `agent-runtime`, and shows what the agents are doing on the *agent board*, which
-has three tabs, each for one question.
+has four tabs, each for one question.
 
 **Sessions — what is happening.** The list down the left is the sessions, a goal and everything it
 started; the tree beside it is that session's agents and the coding sessions they opened, each with its
@@ -11,12 +11,24 @@ the components it touched, each a way into Explore. *New goal* gives an agent a 
 
 ![The Sessions tab: a goal's tree of agents and coding sessions, with the components it touched under it](../docs/media/agents-board-sessions.png)
 
+**Agents — the conversational agents, here and in Element.** The agents down the left, grouped by
+project as Element groups their rooms by Space. One agent's conversation: what was said to it and what it
+answered, with how it ended and what it used; say more and it answers there. Beside it, who it is (model,
+what wakes it, what it may use, its projects) and **Open in Element**: `agent-matrix` makes every agent a
+Matrix user with a room, and the board reads where from the bridge's own files (`~/.holon-matrix`, or
+`HOLON_MATRIX_DIR`), so the button opens the agent's room, or its project's, in Element or Element X. The
+control room, *holon*, is at the top of the list. Without a bridge the button goes to the agent's user on
+`--matrix SERVER` (`?matrix=` in a browser), and with neither it says how to get one.
+
+![The Agents tab: lead's conversation, what it answered and what it is doing, and Open in Element beside it](../docs/media/agents-board-agents.png)
+
 **Explore — one thing, and what it is joined to.** Search, or start from what was done lately (sessions,
 goal runs) or what most is built on. The subject is in the middle: above it where it came from (the goal
 run that added it, the attempt that wrote it), left what it builds on, right what builds on it, below what
 it led to and where it appeared. Each lane shows a few and says how many more; any neighbour is a way on, the
 trail a way back, and depth 2 says under each neighbour a little of what is behind it. A thing's card holds
 its proof: its application's film, its gate, the checks it passed or failed, the pull request it became.
+An agent is a thing here too: the sessions it ran, and *Talk to it*.
 
 ![Explore on paginate: added by the goal run "add pagination to the search box", written by its winning attempt](../docs/media/agents-board-explore-lineage.png)
 

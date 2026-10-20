@@ -13,6 +13,7 @@ use agent_wire::{Event, Pending as RtPending, Phase, RunRecord, SessionView, Ste
 use gpui::{App, AsyncApp, Entity};
 use serde_json::{json, Value};
 
+use super::agents::AgentInfo;
 use super::tree::AgentTree;
 use super::view::{now_ms, Actions, AgentChoice, Scope};
 
@@ -501,7 +502,7 @@ fn past(
 /// Goals from earlier today, finished, so the list of sessions has a past to show.
 fn history(now: u64) -> Vec<RunRecord> {
     let min = |m: u64| now.saturating_sub(m * 60_000);
-    vec![
+    let mut runs = vec![
         past(
             "h-wasm",
             "lead",
@@ -568,7 +569,22 @@ fn history(now: u64) -> Vec<RunRecord> {
             Some("h-adr-rv"),
             &[],
         ),
-    ]
+    ];
+    // what each answered, which is what its conversation on the Agents tab says back
+    let answers = [
+        ("h-wasm", "Wasmtime is at 46 and the toolchain pin at 1.99; every gate passes on both."),
+        ("h-wasm-plan", "Three places name 45: host/Cargo.toml, wrpc-runtime-wasmtime's pin, and the toolchain file's comment."),
+        ("h-flaky", "I could not make it fail twice in a row. The researcher's logs point at the runner, not the test."),
+        ("h-flaky-r", "Seven of the last ten runs timed out in setup, all on the same runner, none in the test itself."),
+        ("h-adr", "ADR-0115 to 0119 in five short paragraphs, one per decision, each with what it changed."),
+        ("h-adr-rv", "Two citations were one ADR off; corrected. The rest says what the ADRs say."),
+    ];
+    for r in &mut runs {
+        if let Some((_, a)) = answers.iter().find(|(id, _)| *id == r.id) {
+            r.answer = a.to_string();
+        }
+    }
+    runs
 }
 
 /// What a person does to the story: an answer ends the wait, and the board hears it as it would; a
@@ -597,6 +613,65 @@ impl Actions for DemoActions {
         ]
         .map(|(name, about, codes)| AgentChoice { name: name.into(), about: about.into(), codes })
         .into()
+    }
+
+    fn roster(&self, _cx: &App) -> Vec<AgentInfo> {
+        let agent = |name: &str,
+                     about: &str,
+                     model: &str,
+                     caps: &[&str],
+                     wakes: &[&str],
+                     projects: &[&str]| AgentInfo {
+            name: name.into(),
+            description: about.into(),
+            model: model.into(),
+            paused: false,
+            triggers: wakes.iter().map(|s| s.to_string()).collect(),
+            capabilities: caps.iter().map(|s| s.to_string()).collect(),
+            projects: projects.iter().map(|s| s.to_string()).collect(),
+        };
+        vec![
+            agent(
+                "lead",
+                "Plans a goal, hands it out and checks what comes back",
+                OPUS,
+                &["agent:planner", "agent:writer", "agent:reviewer", "read_file"],
+                &[],
+                &["gateway"],
+            ),
+            agent(
+                "planner",
+                "Splits a goal into coding tasks and starts a session for each",
+                SONNET,
+                &["session_start", "session_result", "list_dir", "read_file"],
+                &[],
+                &["gateway"],
+            ),
+            agent(
+                "reviewer",
+                "Reviews a diff and the gates it ran",
+                GPT,
+                &["read_file", "http_get"],
+                &["event: gateway.diff"],
+                &["gateway"],
+            ),
+            agent(
+                "writer",
+                "Writes and updates the docs",
+                LOCAL,
+                &["read_file", "write_file"],
+                &["schedule: @weekly"],
+                &["docs"],
+            ),
+            agent(
+                "researcher",
+                "Reads CI logs and the web, and says what it found",
+                SONNET,
+                &["http_get", "remember"],
+                &[],
+                &[],
+            ),
+        ]
     }
 
     fn start(&self, agent: &str, goal: &str, cx: &mut App) -> Result<(), String> {

@@ -24,6 +24,8 @@ pub enum Rel {
     Tried,
     /// A session's agents named or touched a component.
     Touched,
+    /// An agent was given a session's goal.
+    Ran,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,6 +67,8 @@ pub struct Graph {
 /// A session, as the graph needs it: its root, its goal, how it stands, and the components it named.
 pub struct SessionNode {
     pub root: String,
+    /// The agent that was given the goal.
+    pub lead: String,
     pub title: String,
     pub sub: String,
     pub touched: BTreeSet<String>,
@@ -72,8 +76,29 @@ pub struct SessionNode {
 
 impl Graph {
     /// The components, the goal runs and the sessions, joined.
-    pub fn build(components: &Map, knowledge: &Map, sessions: &[SessionNode]) -> Graph {
+    pub fn build(
+        components: &Map,
+        knowledge: &Map,
+        sessions: &[SessionNode],
+        agents: &[super::agents::AgentInfo],
+    ) -> Graph {
         let mut g = Graph::default();
+        for a in agents {
+            let key = format!("agent:{}", a.name);
+            let sub =
+                if a.description.is_empty() { a.model.clone() } else { a.description.clone() };
+            g.nodes.insert(
+                key.clone(),
+                Node {
+                    key,
+                    label: a.name.clone(),
+                    sub,
+                    kind: Kind::Agent,
+                    weight: 0,
+                    proof: Vec::new(),
+                },
+            );
+        }
         for (_, i) in components.items().chain(knowledge.items()) {
             g.nodes.entry(i.key.clone()).or_insert_with(|| Node {
                 key: i.key.clone(),
@@ -132,6 +157,10 @@ impl Graph {
                     proof: Vec::new(),
                 },
             );
+            let agent = format!("agent:{}", s.lead);
+            if g.nodes.contains_key(&agent) {
+                g.rels.insert((agent, Rel::Ran, key.clone()));
+            }
             for c in &s.touched {
                 let to = super::map::component_key(c);
                 if g.nodes.contains_key(&to) {
@@ -145,7 +174,8 @@ impl Graph {
     /// `key`'s neighbours, lane by lane, each lane heaviest first. Lanes with nobody in them are left out.
     pub fn lanes(&self, key: &str) -> Vec<Lane> {
         // (relation, whether the subject is its source, the lane's name, where it is drawn)
-        const LANES: [(Rel, bool, &str, Side); 12] = [
+        const LANES: [(Rel, bool, &str, Side); 14] = [
+            (Rel::Ran, false, "run by", Side::Above),
             (Rel::Added, false, "added by", Side::Above),
             (Rel::Wrote, false, "written by", Side::Above),
             (Rel::Tried, false, "attempt of", Side::Above),
@@ -158,6 +188,7 @@ impl Graph {
             (Rel::Wrote, true, "wrote", Side::Below),
             (Rel::Touched, false, "touched in", Side::Below),
             (Rel::Touched, true, "touched", Side::Below),
+            (Rel::Ran, true, "ran", Side::Below),
         ];
         LANES
             .iter()
@@ -271,11 +302,17 @@ mod tests {
         };
         let sessions = [SessionNode {
             root: "r1".into(),
+            lead: "lead".into(),
             title: "rate-limit the shop".into(),
             sub: String::new(),
             touched: ["paginate".to_string(), "not-a-component".to_string()].into(),
         }];
-        Graph::build(&components, &knowledge, &sessions)
+        let agents = [crate::agents::AgentInfo {
+            name: "lead".into(),
+            description: "plans".into(),
+            ..Default::default()
+        }];
+        Graph::build(&components, &knowledge, &sessions, &agents)
     }
 
     #[test]
@@ -307,9 +344,14 @@ mod tests {
         assert_eq!(run, ["attempts", "added"]);
         let s = g.lanes("session:r1");
         assert_eq!(
-            (s.len(), s[0].title, s[0].keys.len()),
-            (1, "touched", 1),
+            s.iter().map(|l| (l.title, l.keys.len())).collect::<Vec<_>>(),
+            [("run by", 1), ("touched", 1)],
             "only what is a component"
+        );
+        assert_eq!(
+            g.lanes("agent:lead")[0].title,
+            "ran",
+            "and the agent knows the sessions it was given"
         );
         assert_eq!(g.degree(&component_key("store")), 2);
     }
@@ -320,8 +362,8 @@ mod tests {
         assert_eq!(g.search("pag", 5)[0], component_key("paginate"));
         assert_eq!(g.search("store", 5), [component_key("store")], "record-store holds it");
         assert!(g.search("  ", 5).is_empty());
-        // paginate, add pagination, rate-limit the shop: each once
+        // paginate, add pagination, rate-limit the shop, and the agent lead: each once
         let all = g.search("a", 50);
-        assert_eq!((all.len(), all.iter().collect::<BTreeSet<_>>().len()), (3, 3));
+        assert_eq!((all.len(), all.iter().collect::<BTreeSet<_>>().len()), (4, 4));
     }
 }

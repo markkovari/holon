@@ -346,6 +346,27 @@ impl Lattice {
 
     /// Gives `goal` to `agent`, as a person typing it on the board would. The run is followed through
     /// the runtime's events like any other; `Err` is why it cannot start, in words to show.
+    /// Every agent as the board's Agents tab draws it: its spec, and the projects it is in.
+    pub fn roster(&self) -> Vec<agent_board::agents::AgentInfo> {
+        let projects = self.rt.store().list_projects();
+        self.agents
+            .iter()
+            .map(|a| agent_board::agents::AgentInfo {
+                name: a.name.clone(),
+                description: a.description.clone(),
+                model: a.model.clone(),
+                paused: a.paused,
+                triggers: a.triggers.clone(),
+                capabilities: a.capabilities.clone(),
+                projects: projects
+                    .iter()
+                    .filter(|p| p.agents.contains(&a.name))
+                    .map(|p| p.name.clone())
+                    .collect(),
+            })
+            .collect()
+    }
+
     pub fn start_goal(
         &mut self,
         agent: &str,

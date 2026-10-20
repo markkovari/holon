@@ -245,6 +245,11 @@ impl AgentTree {
         self.nodes.len()
     }
 
+    /// Every node, in the order the board first saw them.
+    pub fn all(&self) -> impl Iterator<Item = &Node> {
+        self.order.iter().filter_map(|id| self.nodes.get(id))
+    }
+
     /// Nodes with no parent, oldest first.
     pub fn roots(&self) -> Vec<&Node> {
         self.order

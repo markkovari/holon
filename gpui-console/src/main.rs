@@ -49,6 +49,10 @@ impl BoardActions for LatticeActions {
         self.lattice.update(cx, |l, cx| l.resolve_approval_scoped(id, approve, scope.as_str(), cx));
     }
 
+    fn roster(&self, cx: &App) -> Vec<agent_board::agents::AgentInfo> {
+        self.lattice.read(cx).roster()
+    }
+
     /// The agents that are not paused; those that can start a coding session first.
     fn agents(&self, cx: &App) -> Vec<AgentChoice> {
         let mut v: Vec<AgentChoice> = self

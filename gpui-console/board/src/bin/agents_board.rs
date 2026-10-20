@@ -41,11 +41,14 @@ struct Opts {
     goal: Option<String>,
     auto: Option<Duration>,
     size: (f32, f32),
+    /// The Matrix server the agents are users on, when the bridge's own files do not say.
+    matrix: Option<String>,
 }
 
 fn tab_named(s: &str) -> Option<Tab> {
     match s {
         "explore" => Some(Tab::Explore),
+        "agents" => Some(Tab::Agents),
         "map" => Some(Tab::Map),
         "sessions" => Some(Tab::Sessions),
         _ => None,
@@ -74,7 +77,10 @@ fn run(
                 }),
                 move |_, cx| {
                     cx.new(|cx| {
-                        let board = Board::new(tree, actions as Rc<dyn Actions>, mode, cx);
+                        let board = Board::new(tree, actions as Rc<dyn Actions>, mode, cx)
+                            .with_element(
+                                o.matrix.as_deref().map(agent_board::agents::Element::on),
+                            );
                         // a page has no traffic lights to leave room for
                         if cfg!(target_family = "wasm") {
                             board.with_inset(18.0)
@@ -149,6 +155,7 @@ pub fn start() {
             "form" => o.form = true,
             "goal" => o.goal = Some(v),
             "auto" => o.auto = v.parse().ok().map(Duration::from_secs_f32),
+            "matrix" => o.matrix = Some(v),
             _ => {}
         }
     }
@@ -192,12 +199,16 @@ mod native {
         /// Two seconds in, type GOAL into the form and start it, as a person would.
         #[arg(long, value_name = "GOAL")]
         goal: Option<String>,
-        /// Open on `explore` or `map` instead of the sessions.
-        #[arg(long, value_parser = ["sessions", "explore", "map"])]
+        /// Open on `agents`, `explore` or `map` instead of the sessions.
+        #[arg(long, value_parser = ["sessions", "agents", "explore", "map"])]
         tab: Option<String>,
         /// With `--tab`: look at KEY there (`component:rate-limiter`), as following a reference would.
         #[arg(long, value_name = "KEY", requires = "tab")]
         select: Option<String>,
+        /// The Matrix server the agents are users on (`agent-matrix`'s `--server-name`), when its files in
+        /// `~/.holon-matrix` do not say: the Agents tab then opens each in Element.
+        #[arg(long, value_name = "SERVER")]
+        matrix: Option<String>,
         /// With `--film`: write the frames as one GIF at FILE, not as PNGs.
         #[arg(long, value_name = "FILE", requires = "film")]
         gif: Option<String>,
@@ -240,6 +251,7 @@ mod native {
                 .map(Duration::from_secs_f32)
                 .or((a.shoot.is_some() || a.gif.is_some()).then(|| Duration::from_secs(6))),
             size: a.size,
+            matrix: a.matrix.clone(),
         };
         let photographing = a.shoot.is_some() || a.gif.is_some();
         run(

@@ -380,6 +380,7 @@ impl MapView {
             Kind::Attempt => t.badge(Status::Done).1,
             Kind::Missed => t.badge(Status::Failed).1,
             Kind::Session => t.badge(Status::NeedsYou).1,
+            Kind::Agent => t.line,
             Kind::Lesson => t.badge(Status::Failed).1,
             Kind::Part => t.muted,
         }

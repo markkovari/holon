@@ -21,6 +21,8 @@ pub enum Tab {
     Sessions,
     /// One thing at a time, and what it is joined to.
     Explore,
+    /// The conversational agents: who each is, what it was asked, and where it is in Element.
+    Agents,
     /// The whole system at once: every component, grouped, and how the groups use each other.
     Map,
 }
@@ -40,6 +42,8 @@ pub enum Kind {
     Lesson,
     /// A goal given to an agent on the board, and everything it started.
     Session,
+    /// A conversational agent: one you talk to, here or in Element.
+    Agent,
 }
 
 /// What shows a thing works: the film of it working, the files its gate runs, a check it passed or

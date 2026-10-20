@@ -30,6 +30,7 @@ const CHIP_W: f32 = 210.0;
 pub enum ExploreEvent {
     InMap(Key),
     Session(String),
+    Agent(String),
 }
 
 pub struct ExploreView {
@@ -53,6 +54,7 @@ pub fn tint(t: &Theme, kind: Kind) -> gpui::Rgba {
         Kind::App => t.badge(Status::Running).1,
         Kind::Probe => t.faint,
         Kind::Run | Kind::Session => t.badge(Status::NeedsYou).1,
+        Kind::Agent => t.line,
         Kind::Attempt => t.badge(Status::Done).1,
         Kind::Missed | Kind::Lesson => t.badge(Status::Failed).1,
         Kind::Part => t.muted,
@@ -70,6 +72,7 @@ pub fn kind_name(k: Kind) -> &'static str {
         Kind::Missed => "attempt that failed",
         Kind::Lesson => "lesson",
         Kind::Session => "session",
+        Kind::Agent => "agent",
     }
 }
 
@@ -376,6 +379,10 @@ impl ExploreView {
             Kind::App | Kind::Part | Kind::Probe => {
                 Some(("Show in the whole system", ExploreEvent::InMap(key.clone())))
             }
+            Kind::Agent => Some((
+                "Talk to it",
+                ExploreEvent::Agent(key.strip_prefix("agent:").unwrap_or(key).to_string()),
+            )),
             _ => None,
         };
         let card = div()
@@ -440,6 +447,7 @@ impl ExploreView {
                         let e = match ev.borrow().as_ref() {
                             Some(ExploreEvent::InMap(k)) => ExploreEvent::InMap(k.clone()),
                             Some(ExploreEvent::Session(r)) => ExploreEvent::Session(r.clone()),
+                            Some(ExploreEvent::Agent(a)) => ExploreEvent::Agent(a.clone()),
                             None => return,
                         };
                         cx.emit(e);
