@@ -6,6 +6,7 @@ version = 4
 name = "agent-runtime"
 version = "0.1.0"
 dependencies = [
+ "agent-wire",
  "base64 0.22.1",
  "clap",
  "holon-llm",
@@ -15,6 +16,14 @@ dependencies = [
  "sha2",
  "tempfile",
  "tiny_http",
+]
+
+[[package]]
+name = "agent-wire"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

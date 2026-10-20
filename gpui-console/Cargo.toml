@@ -7,33 +7,25 @@ description = "A GPUI desktop console for autonomous agents: create them with ca
 
 # Native, and deliberately outside the components/ (wasm32) workspace — same
 # arrangement as cli/, host/ and reconciler/. Path-depends on comp-fleet, which is a
-# member of reconciler/'s [workspace]; Cargo does not merge the two.
+# member of reconciler/'s [workspace]; Cargo does not merge the two. The board is its own
+# crate in this workspace, because it also builds for a browser and the console cannot.
 [workspace]
-
-[lib]
-name = "gpui_console"
-path = "src/lib.rs"
+members = ["board"]
 
 [[bin]]
 name = "gpui-console"
 path = "src/main.rs"
 
-[[bin]]
-name = "agents-board"
-path = "src/bin/agents_board.rs"
-
 [dependencies]
 comp-fleet = { path = "../reconciler/fleet" }
-# Prices a run's tokens the way the session daemon prices its own (`cost_usd_micros`).
-comp-fuel = { path = "../reconciler/fuel" }
 # Agents are specs + a tool-using loop + triggers, run by this crate (also
 # available headless as `agent-runtime`). The console embeds it in-process.
 agent-runtime = { path = "../agent-runtime" }
-# `runtime_shaders`: this machine has only Xcode Command Line Tools, not full
-# Xcode.app, so `xcrun metal` (gpui's default AOT shader compile) isn't
-# available at build time. This feature defers shader compilation to runtime
-# instead, which needs no `xcrun metal` — no functional difference otherwise.
-gpui = { version = "0.2.2", features = ["runtime_shaders"] }
+# The agent board, which the console shows (board/).
+agent-board = { path = "board" }
+# The same GPUI as the board's (board/Cargo.toml says why these features and why pinned exactly).
+gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", default-features = false, features = ["runtime_shaders", "font-kit"] }
 # For the spawn-progress channel: the background build/upload/deploy work
 # reports checkpoints ("building…", "deploying…") back to the foreground
 # entity as they happen, rather than only a single result at the end.
@@ -46,10 +38,3 @@ serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
-
-# The board's own screenshots (src/capture.rs): a process may read back its OWN windows without the
-# Screen Recording permission another process would need, so the capture is made from inside.
-[target.'cfg(target_os = "macos")'.dependencies]
-core-graphics = "0.24"
-core-foundation = "0.10"
-png = "0.17"

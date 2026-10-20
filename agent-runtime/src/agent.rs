@@ -165,51 +165,7 @@ pub trait Host: Sync {
     fn observe(&self, event: Event);
 }
 
-#[derive(Clone, Debug)]
-pub enum Event {
-    RunStarted {
-        agent: String,
-        run_id: String,
-        trigger: String,
-        input: String,
-        trace_id: String,
-        span_id: String,
-        /// The tool call (in another run) that woke this one, when one did.
-        parent_span_id: Option<String>,
-        /// `provider/model`, as `RunRecord::model` will say it.
-        model: String,
-        chain: Vec<String>,
-    },
-    /// A tool call is about to be asked about or made. `span_id` is the call's span: whatever it
-    /// wakes (a delegated agent, an event) names it as its parent, so a window can hang the woken
-    /// run under this one while both are still going.
-    ToolStarted {
-        agent: String,
-        run_id: String,
-        span_id: String,
-        tool: String,
-        args: Value,
-    },
-    StepDone {
-        agent: String,
-        run_id: String,
-        step: Step,
-    },
-    RunFinished(Box<RunRecord>),
-    ApprovalRequested {
-        id: u64,
-        agent: String,
-        tool: String,
-        args: Value,
-        chain: Vec<String>,
-    },
-    ApprovalResolved {
-        id: u64,
-        approved: bool,
-    },
-    /// A coding session an agent started changed: the whole of it, to be replaced by id.
-    Session(Box<crate::session::SessionView>),
-}
+pub use agent_wire::Event;
 
 /// Longest wake-up chain. Past this, the next hop is dropped and logged.
 pub const MAX_HOPS: u32 = 6;
@@ -1026,7 +982,7 @@ fn exec(
                 &arg(args, "session"),
                 Duration::from_secs(wait.min(crate::session::MAX_WAIT.as_secs())),
             )?;
-            Ok(view.for_model())
+            Ok(crate::session::Describe::for_model(&view))
         }
         "session_close" => {
             host.session_close(&spec.name, &arg(args, "session"))?;

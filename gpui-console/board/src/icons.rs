@@ -14,7 +14,7 @@ macro_rules! icons {
         /// Every icon by path, as `AssetSource::load` is asked for them.
         const FILES: &[(&str, &[u8])] = &[
             $((concat!("icons/", $name, ".svg"),
-               include_bytes!(concat!("../../assets/icons/", $name, ".svg")).as_slice())),*
+               include_bytes!(concat!("../assets/icons/", $name, ".svg")).as_slice())),*
         ];
     };
 }
@@ -44,6 +44,7 @@ icons![
     "message-square",
     "mic",
     "moon",
+    "plus",
     "search",
     "settings",
     "shield-check",
