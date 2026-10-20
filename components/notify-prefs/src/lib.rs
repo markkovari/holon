@@ -1,4 +1,4 @@
-//! Fan-out tries every channel even after one fails, reporting one outcome per attempt.
+//! `notify-prefs` — read what a subject asked for, then tell them on those channels.
 //! An empty override means "not this kind"; no override means "use the defaults".
 
 #[allow(warnings)]

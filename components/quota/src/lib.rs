@@ -1,4 +1,4 @@
-//! Unlike rate-limiter, consumption accumulates per billing PERIOD; bucket = now / period, found by arithmetic.
+//! `quota` — meter cumulative usage against a budget over a billing period — reserve, consume, refund
 //! The draft API has no CAS, so reserve is check-increment-recheck with best-effort compensation.
 
 #[allow(warnings)]

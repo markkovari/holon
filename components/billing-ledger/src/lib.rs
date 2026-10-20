@@ -1,4 +1,4 @@
-//! A retry with the same idempotency key gets the cached response byte-for-byte: no double charge.
+//! ledger:app — billing ledger over composed capability contracts.
 
 #[allow(warnings)]
 mod bindings {

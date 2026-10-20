@@ -1,3 +1,4 @@
+//! `photosocial-domain` — a social photo-sharing application with AI critique,
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({

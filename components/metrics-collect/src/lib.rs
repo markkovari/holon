@@ -1,3 +1,4 @@
+//! `metrics-collect` — count named events, read a family by prefix, and compute the rate between two counters
 #[allow(warnings)]
 mod bindings;
 

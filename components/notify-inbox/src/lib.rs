@@ -1,4 +1,4 @@
-//! Two monotonic counters, `d:` delivered and `r:` read (kv:atomics has no negative delta); unread = d - r.
+//! `notify-inbox` — the in-app channel: durable, per subject, with unread state.
 //! A note's `seq` is its ordinal in the subject's inbox, so `since(after)` pages and tails without `list-keys`.
 
 #[allow(warnings)]

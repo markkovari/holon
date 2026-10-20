@@ -1,4 +1,4 @@
-//! `mock-script` rules, first match wins: `when` (substring or "*"), optional `seed`, then `text`/`error`/`delay_ms`.
+//! `mock-provider` — `llm:inference`, scripted.
 //! `embed` is a hashing vectoriser: texts sharing words are closer, but it is not semantic.
 
 #[allow(warnings)]

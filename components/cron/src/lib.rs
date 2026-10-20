@@ -1,4 +1,4 @@
-//! Vixie cron: when both day-of-month and day-of-week are restricted, either one matches.
+//! `cron` — parse a cron expression like `0 */6 * * *` and compute when it next fires
 
 #[allow(warnings)]
 mod bindings;

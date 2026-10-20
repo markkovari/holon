@@ -1,4 +1,4 @@
-//! Pokémon card collection. Every key is per-account (`u/<subject>/`) except quotes, a market fact.
+//! `binder-domain` — keep a Pokémon card collection: scan a photo into fields, record what you paid, and see what it is worth
 
 #[allow(warnings)]
 mod bindings {

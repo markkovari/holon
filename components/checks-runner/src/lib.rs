@@ -1,4 +1,4 @@
-//! `graph:fitness` judgement; process spawning is the native `comp-checks`, reached over `wasi:http`.
+//! `checks-runner` — `graph:fitness` over the native check runner.
 
 #[allow(warnings)]
 mod bindings;

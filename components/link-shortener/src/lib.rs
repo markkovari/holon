@@ -1,3 +1,4 @@
+//! shortlink:app — link shortener over composed capability contracts.
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({

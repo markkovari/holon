@@ -1,4 +1,4 @@
-//! The git-data API builds a commit over HTTP alone; the branch is created last, so a failure leaves none.
+//! `github-forge` — `git:forge` over GitHub's REST API.
 
 #[allow(warnings)]
 mod bindings;

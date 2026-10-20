@@ -1,4 +1,4 @@
-//! The ROUTER of a 5-part decomposed goal (ADR-0086, CONTRACT.md); no part may write it.
+//! `marketplace-domain` — a 5-part DECOMPOSED goal (ADR-0086). See `CONTRACT.md` for what the parts must agree on.
 //! Parts meet only in records:store and fsm:workflow instances, never via each other's functions.
 
 #[allow(warnings)]

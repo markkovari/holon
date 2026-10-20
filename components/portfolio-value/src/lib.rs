@@ -1,4 +1,4 @@
-//! FIFO, not average cost: a collector asks about a specific purchase. Integer minor units, no FX.
+//! `portfolio-value` — what a collection is worth now, what it cost, and what selling has already made
 //! An unpriced holding is carried at COST and counted: zero lies downward, dropping it lies upward.
 
 use std::collections::{HashMap, VecDeque};

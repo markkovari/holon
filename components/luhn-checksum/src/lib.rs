@@ -1,3 +1,4 @@
+//! `luhn-checksum` — the mod-10 check digit used by credit-card numbers, IMEIs and
 /// `double_rightmost`: a check digit will still be appended to the right.
 fn folded_sum(digits: &str, double_rightmost: bool) -> Option<u32> {
     if digits.is_empty() {

@@ -1,3 +1,4 @@
+//! abtest:app — an A/B/n experiment console over composed contracts.
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({

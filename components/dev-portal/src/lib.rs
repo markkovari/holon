@@ -1,4 +1,4 @@
-//! RBAC gates role verbs, policy:guard ABAC gates projects; keys are stored as sha256, shown once at mint.
+//! portal:app — developer portal / API-key service over composed contracts.
 
 #[allow(warnings)]
 mod bindings {

@@ -1,4 +1,4 @@
-//! Raise `anthropic:timeout` when base-url is tools/claude-shim.mjs: `claude -p` has a tail past 300s.
+//! `anthropic-provider` — `llm:inference` over Anthropic's Messages API.
 //! The API key is a secret, never config: a token that spends money (ADR-0051).
 
 #[allow(warnings)]

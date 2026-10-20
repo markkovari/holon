@@ -1,4 +1,4 @@
-//! The ROUTER (no part may write it); intake/verdict/queue are the goal, CONTRACT.md their agreement.
+//! `moderation-domain` — content in, a decision out, and the model does not have the
 //! Precedence is the point: only `verdict` asks a model, and only it may overrule it.
 
 #[allow(warnings)]

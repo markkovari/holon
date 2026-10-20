@@ -1,4 +1,4 @@
-//! Only colours leave the browser, never the screenshot, so an unreleased UI cannot leak by accident.
+//! `contrast-audit` — a WCAG contrast auditor that runs on the lattice.
 
 #[allow(warnings)]
 mod bindings {

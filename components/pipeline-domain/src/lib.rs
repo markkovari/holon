@@ -1,4 +1,4 @@
-//! Events live entirely in outbox:dispatch; the domain adds nothing durable and only pumps it.
+//! pipeline:app — a reliable event pipeline over composed contracts.
 
 #[allow(warnings)]
 mod bindings {

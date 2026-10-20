@@ -1,4 +1,4 @@
-//! ULIDs are monotonic within a millisecond: a second id increments the random part instead of redrawing.
+//! `id-generate` — mint a unique identifier — sortable ULIDs and random ids that do not collide across processes
 
 #[allow(warnings)]
 mod bindings;

@@ -1,4 +1,4 @@
-//! A refusal is a 200 `{"error":"refused"}`: what is under test is the registry's decision, not the link.
+//! `contract-probe` — the door onto `contract:registry` (see wit/probe.wit).
 
 #[allow(warnings)]
 mod bindings {

@@ -1,4 +1,4 @@
-//! Carry forward, never interpolate: a line between Friday and Monday invents movement.
+//! `price-history` — what a card sold for over time, from quotes that arrive late, out of order and in gaps
 //! Before the first quote samples are absent, not zero; stale quotes are labelled with `age_seconds`.
 
 /// A currency, ISO-4217, compared exactly and never converted.

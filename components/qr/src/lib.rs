@@ -1,4 +1,4 @@
-//! Rendered here, not by qrcode: keeps the dependency to the encoder and lets `svg` honour any quiet zone.
+//! `qr` — turn a URL or a string into a scannable QR code, as SVG
 
 #[allow(warnings)]
 mod bindings;

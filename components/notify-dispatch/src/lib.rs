@@ -1,4 +1,4 @@
-//! Gateway URLs are deploy-time config (`notify:email-url`, `notify:sms-url`); the contract names no vendor.
+//! `notify-dispatch` — send an outbound notification — a webhook POST, or email/SMS through a configured gateway
 
 #[allow(warnings)]
 mod bindings;

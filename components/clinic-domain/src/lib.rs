@@ -1,4 +1,4 @@
-//! The router; neither part may write it.
+//! `clinic-domain` — owners, pets and visits, as one component.
 
 mod access;
 #[allow(warnings)]

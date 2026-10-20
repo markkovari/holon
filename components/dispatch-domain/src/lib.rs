@@ -1,4 +1,4 @@
-//! The router; no part may write it. Two parts import `geo:resolve`: only the composition sees them disagree.
+//! `dispatch-domain` — service requests, scheduling and the day's manifest.
 
 #[allow(warnings)]
 mod bindings {

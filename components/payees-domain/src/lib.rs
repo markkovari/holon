@@ -1,3 +1,4 @@
+//! `payees-domain` — a payee book (docs/apps/PAYEES.md) as ONE composed wasm HTTP
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({

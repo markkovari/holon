@@ -1,4 +1,4 @@
-//! The router; no part may write this file. The fixture never pre-issues tickets (that is `tickets`' job).
+//! `events-domain` — free event ticketing, as one component.
 
 #[allow(warnings)]
 mod bindings {

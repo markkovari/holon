@@ -1,4 +1,4 @@
-//! Search/replace edits shrink the model's output and stop whole-file rewrites silently dropping code.
+//! `agent-writer` — a goal and a tree in, a candidate out.
 
 #[allow(warnings)]
 mod bindings;

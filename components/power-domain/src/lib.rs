@@ -1,3 +1,4 @@
+//! `power-domain` — work out what running an appliance costs from its wattage and hours
 use bindings::auth::identity::authorizer::authorize;
 use bindings::auth::identity::types::Permission;
 use bindings::wasi::keyvalue::store::open;
