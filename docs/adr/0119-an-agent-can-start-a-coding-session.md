@@ -6,7 +6,7 @@ tool.*
 
 **Status: accepted, and built** for the tools, the watching and the approvals
 ([`agent-runtime/src/session.rs`](../../agent-runtime/src/session.rs)), and for the board that draws it
-([`gpui-console/src/board/`](../../gpui-console/src/board/)). What is not built yet is at the end.
+([`gpui-console/board/`](../../gpui-console/board/)). What is not built yet is at the end.
 Until this, nothing in the repository was a client of the daemon of
 [ADR-0102](0102-an-agent-session-is-a-contract-first.md); `agent-runtime` is the first.
 
@@ -62,9 +62,10 @@ its card turns orange and says `waiting to list_dir`, and ends Done with the wor
 
 ## What it does not do yet
 
-- **A session is not yet something a person sets up.** The board shows every tree; the left-hand list of
-  sessions (a goal and everything it started, one trace), a way to state the goal there, and the same
-  from a chat client are the next steps. The unit exists already: a trace is a goal and what it set off.
+- **A goal from a chat client.** On the board a person sets one up: the list down the left is the
+  sessions (a goal and everything it started, newest first, kept six hours once over and seeded from the
+  runs the runtime kept, so a restart does not empty it), and *New goal* gives one to an agent and follows
+  the session it starts. A chat client cannot do that yet.
 - **A window on another machine.** The console embeds its runtime, so a phone or a second computer
   sees nothing of it. The runtime has to stream the same events over HTTP (a bearer token, SSE, as the
   daemon does) for a board, a web page or the chat bridge to attach to one runtime; until then the chat

@@ -11,13 +11,12 @@
 
 use std::collections::HashMap;
 
-use agent_runtime::agent::Event;
-use agent_runtime::session::{Phase, SessionView};
-use agent_runtime::store::{Status as RunStatus, Step};
+use agent_wire::{Event, Phase, RunRecord, SessionView, Status as RunStatus, Step};
 use serde_json::Value;
 
-/// A finished tree of several nodes stays on the board this long, so what just happened can be read.
-pub const KEEP_TREE_MS: u64 = 15 * 60_000;
+/// A finished tree of several nodes stays on the board this long: it is a goal somebody set, and the
+/// list of them is what they come back to.
+pub const KEEP_TREE_MS: u64 = 6 * 3_600_000;
 /// A finished tree of one node is a chat reply or a schedule that fired: it goes sooner.
 pub const KEEP_LONE_MS: u64 = 90_000;
 
@@ -81,6 +80,8 @@ pub struct Node {
     pub pending: Vec<Pending>,
     /// When the board first saw it: what the enter animation is timed from.
     pub born_ms: u64,
+    /// Every path or name its calls were given, once each: what the other tabs' references are found in.
+    pub notes: Vec<String>,
     tokens_in: u64,
     tokens_out: u64,
 }
@@ -105,6 +106,7 @@ impl Node {
             children: Vec::new(),
             pending: Vec::new(),
             born_ms: now,
+            notes: Vec::new(),
             tokens_in: 0,
             tokens_out: 0,
         }
@@ -124,6 +126,25 @@ pub struct Summary {
     pub waiting: Vec<Waiting>,
     /// The sum of the costs that are known, in micro-USD.
     pub cost_micros: u64,
+}
+
+/// One line of the list of sessions: a goal, and everything it started.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SessionRow {
+    /// The root node's id: what a selection is.
+    pub root: String,
+    /// What was asked.
+    pub title: String,
+    /// The agent that was asked.
+    pub lead: String,
+    /// How the whole stands: waiting for a person beats working beats how it ended.
+    pub status: Status,
+    pub agents: usize,
+    pub waiting: usize,
+    pub cost_micros: u64,
+    pub started_ms: u64,
+    /// When the last of it finished, if all of it has.
+    pub finished_ms: Option<u64>,
 }
 
 /// One approval, and whose it is.
@@ -158,6 +179,18 @@ fn brief(args: &Value) -> String {
         }
     }
     String::new()
+}
+
+/// Every string in a call's arguments, as a note worth keeping once.
+fn note(notes: &mut Vec<String>, v: &Value) {
+    match v {
+        Value::String(s) if !s.is_empty() && !notes.contains(s) => {
+            notes.push(s.chars().take(400).collect())
+        }
+        Value::Array(a) => a.iter().for_each(|x| note(notes, x)),
+        Value::Object(o) => o.values().for_each(|x| note(notes, x)),
+        _ => {}
+    }
 }
 
 /// `agent:researcher` is a call to another agent; everything else is a tool by its own name.
@@ -210,6 +243,11 @@ impl AgentTree {
 
     pub fn len(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// Every node, in the order the board first saw them.
+    pub fn all(&self) -> impl Iterator<Item = &Node> {
+        self.order.iter().filter_map(|id| self.nodes.get(id))
     }
 
     /// Nodes with no parent, oldest first.
@@ -273,6 +311,125 @@ impl AgentTree {
         shown.reverse();
         shown.sort_by_key(|n| std::cmp::Reverse(n.started_ms));
         shown
+    }
+
+    /// Every session worth listing, newest first.
+    pub fn sessions(&self, now: u64) -> Vec<SessionRow> {
+        self.visible_roots(now)
+            .into_iter()
+            .map(|r| {
+                let mut ids = Vec::new();
+                self.subtree(&r.id, &mut ids);
+                let nodes: Vec<&Node> = ids.iter().filter_map(|i| self.nodes.get(i)).collect();
+                let waiting: usize = nodes.iter().map(|n| n.pending.len()).sum();
+                let over = nodes.iter().all(|n| n.status.is_over());
+                let status = if nodes.iter().any(|n| n.status == Status::NeedsYou) {
+                    Status::NeedsYou
+                } else if !over {
+                    Status::Running
+                } else {
+                    r.status
+                };
+                SessionRow {
+                    root: r.id.clone(),
+                    title: r.task.clone(),
+                    lead: r.name.clone(),
+                    status,
+                    agents: nodes.len(),
+                    waiting,
+                    cost_micros: nodes.iter().map(|n| n.cost_micros.unwrap_or(0)).sum(),
+                    started_ms: r.started_ms,
+                    finished_ms: if over {
+                        nodes.iter().filter_map(|n| n.finished_ms).max()
+                    } else {
+                        None
+                    },
+                }
+            })
+            .collect()
+    }
+
+    /// Everything said in one tree: what each agent was asked and answered, and every path or name its
+    /// calls were given. What a reference from this session to a component is found in.
+    pub fn texts_of(&self, root: &str) -> Vec<String> {
+        let mut ids = Vec::new();
+        self.subtree(root, &mut ids);
+        ids.iter()
+            .filter_map(|i| self.nodes.get(i))
+            .flat_map(|n| {
+                std::iter::once(n.task.clone())
+                    .chain(n.result.clone())
+                    .chain(n.notes.iter().cloned())
+            })
+            .filter(|t| !t.is_empty())
+            .collect()
+    }
+
+    /// The header for one tree: as `summary`, of `root` and what it started.
+    pub fn summary_of(&self, root: &str) -> Summary {
+        let mut s = Summary::default();
+        let mut ids = Vec::new();
+        self.subtree(root, &mut ids);
+        for id in ids {
+            let Some(n) = self.nodes.get(&id) else { continue };
+            s.agents += 1;
+            if matches!(n.status, Status::Running | Status::NeedsYou) {
+                s.running += 1;
+            }
+            s.cost_micros += n.cost_micros.unwrap_or(0);
+            let via = self.ancestors(&n.id);
+            for p in &n.pending {
+                s.waiting.push(Waiting {
+                    node: n.id.clone(),
+                    agent: n.name.clone(),
+                    via: via.clone(),
+                    pending: p.clone(),
+                });
+            }
+        }
+        s
+    }
+
+    /// Learns what ran before this board was open from the runs the runtime kept, oldest first, so a
+    /// restart does not empty the list of sessions. A run is a node that has already ended; where it
+    /// hangs is known from the tool-call spans its parent's steps recorded, whichever was written
+    /// first. Coding sessions are not kept by the runtime, so only their parents' runs come back.
+    pub fn seed(&mut self, runs: &[RunRecord]) {
+        let mut runs: Vec<&RunRecord> = runs.iter().collect();
+        runs.sort_by_key(|r| r.started_ms);
+        for r in &runs {
+            for step in &r.steps {
+                if let Step::Tool { span_id, .. } = step {
+                    self.spans.insert(span_id.clone(), r.id.clone());
+                }
+            }
+        }
+        for r in runs {
+            if self.nodes.contains_key(&r.id) {
+                continue;
+            }
+            let parent = r.parent_span_id.as_ref().and_then(|s| self.spans.get(s)).cloned();
+            let mut n = Node::new(&r.id, Kind::Run, &r.agent, r.started_ms);
+            n.model = r.model.clone();
+            n.task = r.input.clone();
+            n.status = run_status(r.status);
+            n.tokens_in = r.tokens_in;
+            n.tokens_out = r.tokens_out;
+            n.tokens = r.tokens_in + r.tokens_out;
+            n.cost_micros = price(&n.model, n.tokens_in, n.tokens_out);
+            for step in &r.steps {
+                if let Step::Tool { name, args, .. } = step {
+                    if !n.tools.contains(name) && !name.starts_with("agent:") {
+                        n.tools.push(name.clone());
+                    }
+                    note(&mut n.notes, args);
+                }
+            }
+            n.finished_ms = Some(r.finished_ms.max(r.started_ms));
+            n.result = Some(r.answer.clone());
+            self.insert(n, parent);
+        }
+        self.revision += 1;
     }
 
     /// The header: how many agents are on the board, how many are working, who is waiting for a
@@ -363,6 +520,7 @@ impl AgentTree {
                         n.tools.push(tool.clone());
                     }
                     n.activity = activity_of(tool, args);
+                    note(&mut n.notes, args);
                 }
             }
             Event::StepDone { run_id, step, .. } => {
@@ -444,6 +602,10 @@ impl AgentTree {
         n.status = session_status(v.phase);
         n.tools = v.tools.clone();
         n.activity = v.activity.clone();
+        note(&mut n.notes, &Value::String(v.activity.clone()));
+        for p in &v.pending {
+            note(&mut n.notes, &p.args);
+        }
         n.tokens = v.tokens_in + v.tokens_out;
         n.cost_micros = Some(v.cost_micros);
         n.finished_ms = v.finished_ms;
@@ -660,7 +822,7 @@ mod tests {
         let mut t = AgentTree::default();
         t.apply(&started("lead", "r1", None, "x/y"), T0);
         let mut v = session("s1", "r1", Phase::NeedsYou, 10);
-        v.pending = vec![agent_runtime::runtime::Pending {
+        v.pending = vec![agent_wire::Pending {
             id: 3,
             agent: "lead".into(),
             tool: "session:write_file".into(),
@@ -728,5 +890,94 @@ mod tests {
         let mut t = AgentTree::default();
         t.apply(&started("lead", "r1", None, "x/y"), T0);
         assert_eq!(t.visible_roots(T0 + 100 * KEEP_TREE_MS).len(), 1);
+    }
+
+    #[test]
+    fn a_session_row_says_how_the_whole_goal_stands() {
+        let mut t = AgentTree::default();
+        t.apply(&started("lead", "r1", None, "x/y"), T0);
+        t.apply(&Event::Session(Box::new(session("s1", "r1", Phase::NeedsYou, 5_000))), T0 + 10);
+        let mut v = session("s1", "r1", Phase::NeedsYou, 5_000);
+        v.pending = vec![agent_wire::Pending {
+            id: 4,
+            agent: "lead".into(),
+            tool: "session:run".into(),
+            args: json!({}),
+            chain: vec!["session s1".into()],
+        }];
+        t.apply(&Event::Session(Box::new(v)), T0 + 20);
+        let rows = t.sessions(T0 + 30);
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(
+            (r.root.as_str(), r.lead.as_str(), r.title.as_str()),
+            ("r1", "lead", "lead's task")
+        );
+        assert_eq!((r.status, r.agents, r.waiting, r.cost_micros), (Status::NeedsYou, 2, 1, 5_000));
+        assert_eq!(r.finished_ms, None);
+
+        // the root ending does not end a goal whose session is still going
+        t.apply(&finished("r1", "ok", T0 + 40), T0 + 40);
+        assert_eq!(t.sessions(T0 + 50)[0].status, Status::NeedsYou);
+        let mut done = session("s1", "r1", Phase::Done, 9_000);
+        done.finished_ms = Some(T0 + 90);
+        t.apply(&Event::Session(Box::new(done)), T0 + 90);
+        let r = &t.sessions(T0 + 100)[0];
+        assert_eq!((r.status, r.finished_ms), (Status::Done, Some(T0 + 90)));
+    }
+
+    #[test]
+    fn the_header_of_one_session_counts_only_that_session() {
+        let mut t = AgentTree::default();
+        t.apply(&started("a", "ra", None, "x/y"), T0);
+        t.apply(&started("b", "rb", None, "x/y"), T0 + 1);
+        t.apply(&Event::Session(Box::new(session("s1", "ra", Phase::Running, 700))), T0 + 2);
+        assert_eq!(t.summary_of("ra").agents, 2);
+        assert_eq!(t.summary_of("rb").agents, 1);
+        assert_eq!(t.summary_of("ra").cost_micros, 700);
+    }
+
+    #[test]
+    fn what_ran_before_comes_back_with_its_parents() {
+        let record = |id: &str,
+                      agent: &str,
+                      started: u64,
+                      parent: Option<&str>,
+                      tools: &[(&str, &str)]| {
+            serde_json::from_value::<RunRecord>(json!({
+                "id": id, "agent": agent, "trigger": "http", "input": format!("{agent} did it"),
+                "started": 0, "finished": 0, "status": "ok", "answer": "fine",
+                "steps": tools.iter().map(|(n, sp)| json!({
+                    "kind": "tool", "name": n, "args": {}, "result": "", "error": false,
+                    "approved": null, "span_id": sp, "t0": 0, "t1": 0})).collect::<Vec<_>>(),
+                "tokens_in": 10, "tokens_out": 5, "started_ms": started, "finished_ms": started + 500,
+                "model": "local/system", "parent_span_id": parent,
+            }))
+            .unwrap()
+        };
+        // written child first: the parent's call is found whichever was stored first
+        let runs = vec![
+            record("child", "helper", T0 + 100, Some("call-1"), &[]),
+            record(
+                "lead",
+                "lead",
+                T0,
+                None,
+                &[("agent:helper", "call-1"), ("read_file", "call-2")],
+            ),
+        ];
+        let mut t = AgentTree::default();
+        t.seed(&runs);
+        assert_eq!(t.roots().len(), 1);
+        assert_eq!(t.children_of("lead")[0].id, "child");
+        let lead = t.node("lead").unwrap();
+        assert_eq!(
+            (lead.status, lead.tools.clone(), lead.finished_ms),
+            (Status::Done, vec!["read_file".to_string()], Some(T0 + 500))
+        );
+        assert_eq!(lead.result.as_deref(), Some("fine"));
+        // seeding again is a no-op
+        t.seed(&runs);
+        assert_eq!(t.len(), 2);
     }
 }

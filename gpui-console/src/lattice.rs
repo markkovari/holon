@@ -12,7 +12,8 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use agent_runtime::agent::Event;
+use agent_board::AgentTree;
+use agent_runtime::agent::{Cause, Event};
 use agent_runtime::model::LocalModel;
 use agent_runtime::runtime::Pending;
 use agent_runtime::spec::{validate_name, Capability};
@@ -22,7 +23,6 @@ use comp_fleet::fleet::{repo_root, Fleet};
 use futures::channel::mpsc;
 use futures::StreamExt;
 use gpui::{AppContext as _, Context, Entity, Subscription};
-use gpui_console::board::AgentTree;
 use serde_json::{json, Value};
 
 use crate::agentd::{self, AgentdProc};
@@ -233,8 +233,11 @@ impl Lattice {
         })
         .detach();
 
-        let agents =
-            boot.runtime.store().list().iter().map(|s| row_from(s, &boot.runtime)).collect();
+        let specs = boot.runtime.store().list();
+        let agents = specs.iter().map(|s| row_from(s, &boot.runtime)).collect();
+        // What ran before this launch, so the board's list of sessions does not start empty.
+        let runs: Vec<RunRecord> =
+            specs.iter().flat_map(|s| boot.runtime.store().runs(&s.name, 50)).collect();
         Self {
             _fleet: Some(boot.fleet),
             _fm: boot.fm,
@@ -248,7 +251,11 @@ impl Lattice {
             token: boot.token,
             ingress_port,
             agents,
-            tree: cx.new(|_| AgentTree::default()),
+            tree: cx.new(|_| {
+                let mut t = AgentTree::default();
+                t.seed(&runs);
+                t
+            }),
             approvals: Vec::new(),
             selected: None,
             view: View::Chat,
@@ -266,10 +273,9 @@ impl Lattice {
         self.agents.iter_mut().find(|a| a.name == name)
     }
 
-
     fn on_event(&mut self, ev: Event, cx: &mut Context<Self>) {
         self.tree.update(cx, |t, cx| {
-            t.apply(&ev, gpui_console::board::view::now_ms());
+            t.apply(&ev, agent_board::view::now_ms());
             cx.notify();
         });
         match ev {
@@ -338,6 +344,61 @@ impl Lattice {
         cx.notify();
     }
 
+    /// Gives `goal` to `agent`, as a person typing it on the board would. The run is followed through
+    /// the runtime's events like any other; `Err` is why it cannot start, in words to show.
+    /// Every agent as the board's Agents tab draws it: its spec, and the projects it is in.
+    pub fn roster(&self) -> Vec<agent_board::agents::AgentInfo> {
+        let projects = self.rt.store().list_projects();
+        self.agents
+            .iter()
+            .map(|a| agent_board::agents::AgentInfo {
+                name: a.name.clone(),
+                description: a.description.clone(),
+                model: a.model.clone(),
+                paused: a.paused,
+                triggers: a.triggers.clone(),
+                capabilities: a.capabilities.clone(),
+                projects: projects
+                    .iter()
+                    .filter(|p| p.agents.contains(&a.name))
+                    .map(|p| p.name.clone())
+                    .collect(),
+            })
+            .collect()
+    }
+
+    pub fn start_goal(
+        &mut self,
+        agent: &str,
+        goal: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let spec = self
+            .rt
+            .store()
+            .get(agent)
+            .ok_or_else(|| format!("There is no agent named {agent}."))?;
+        if spec.paused {
+            return Err(format!("{agent} is paused."));
+        }
+        let (rt, name, goal) = (self.rt.clone(), agent.to_string(), goal.to_string());
+        let (tx, rx) = futures::channel::oneshot::channel();
+        // A run can wait minutes on an approval: its own thread, not one of the executor's.
+        std::thread::spawn(move || {
+            let _ = tx.send(rt.run_agent(&name, "ui", &goal, &Cause::default(), "", true));
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Err(e)) = rx.await {
+                this.update(cx, |l, cx| {
+                    l.status_line = e;
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+        Ok(())
+    }
 
     /// Re-reads the agent list from the runtime (the source of truth for what
     /// exists) and each agent's gateway status from platform-domain, keeping
@@ -402,7 +463,6 @@ impl Lattice {
         .detach();
     }
 
-
     /// Sends `text` to the agent over the real HTTP ingress (ingress ->
     /// lattice -> gateway -> runtime). The transcript fills from the runtime's
     /// events — this only reports a failure the runtime never saw.
@@ -426,7 +486,6 @@ impl Lattice {
         })
         .detach();
     }
-
 
     pub fn validate_name(&self, name: &str) -> Result<(), String> {
         validate_name(name)?;
@@ -541,7 +600,7 @@ impl Lattice {
             })
             .ok();
             if let Some(handle) = this.upgrade() {
-                handle.update(cx, |this, cx| this.refresh(cx)).ok();
+                handle.update(cx, |this, cx| this.refresh(cx));
             }
         })
         .detach();
@@ -682,7 +741,6 @@ pub fn trace_lines(runs: &[RunRecord], trace_id: &str) -> Vec<String> {
     lines
 }
 
-
 fn short(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
         s.to_string()
@@ -775,7 +833,6 @@ fn model_name(m: &ModelSpec) -> String {
         ModelSpec::Mock { .. } => "mock".into(),
     }
 }
-
 
 /// What the "+ new agent" form collects, as raw text.
 #[derive(Default, Clone)]
@@ -916,7 +973,6 @@ pub fn spec_from_form(f: &FormInput) -> Result<AgentSpec, String> {
     agent_runtime::runtime::validate_spec(&spec)?;
     Ok(spec)
 }
-
 
 fn client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().unwrap()

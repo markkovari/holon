@@ -88,15 +88,7 @@ impl Config {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Pending {
-    pub id: u64,
-    pub agent: String,
-    pub tool: String,
-    pub args: Value,
-    /// What led to this request (`agent|topic` per wake-up), oldest first.
-    pub chain: Vec<String>,
-}
+pub use agent_wire::Pending;
 
 struct Slot {
     pending: Pending,

@@ -23,14 +23,14 @@ mod lattice;
 
 use std::rc::Rc;
 
+use agent_board::icons::Assets;
+use agent_board::theme::Mode;
+use agent_board::view::Scope;
+use agent_board::{Actions as BoardActions, AgentChoice, Board};
 use gpui::{
-    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, Entity, FocusHandle,
-    Focusable, KeyDownEvent, SharedString, Window, WindowBounds, WindowOptions,
+    div, prelude::*, px, rgb, size, App, Bounds, Context, Entity, FocusHandle, Focusable,
+    KeyDownEvent, SharedString, Window, WindowBounds, WindowOptions,
 };
-use gpui_console::board::icons::Assets;
-use gpui_console::board::theme::Mode;
-use gpui_console::board::view::Scope;
-use gpui_console::board::{Actions as BoardActions, Board};
 
 use lattice::{spec_from_form, AgentRow, FormInput, Kind, Lattice, Message, View};
 
@@ -48,6 +48,32 @@ impl BoardActions for LatticeActions {
     fn answer(&self, id: u64, approve: bool, scope: Scope, cx: &mut App) {
         self.lattice.update(cx, |l, cx| l.resolve_approval_scoped(id, approve, scope.as_str(), cx));
     }
+
+    fn roster(&self, cx: &App) -> Vec<agent_board::agents::AgentInfo> {
+        self.lattice.read(cx).roster()
+    }
+
+    /// The agents that are not paused; those that can start a coding session first.
+    fn agents(&self, cx: &App) -> Vec<AgentChoice> {
+        let mut v: Vec<AgentChoice> = self
+            .lattice
+            .read(cx)
+            .agents
+            .iter()
+            .filter(|a| !a.paused)
+            .map(|a| AgentChoice {
+                name: a.name.clone(),
+                about: a.description.clone(),
+                codes: a.capabilities.iter().any(|c| c == "session_start"),
+            })
+            .collect();
+        v.sort_by_key(|c| !c.codes);
+        v
+    }
+
+    fn start(&self, agent: &str, goal: &str, cx: &mut App) -> Result<(), String> {
+        self.lattice.update(cx, |l, cx| l.start_goal(agent, goal, cx))
+    }
 }
 
 struct Console {
@@ -63,10 +89,11 @@ impl Console {
     fn new(lattice: Entity<Lattice>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.observe(&lattice, |_, _, cx| cx.notify()).detach();
         let focus_handle = cx.focus_handle();
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
         let tree = lattice.read(cx).tree.clone();
         let actions = Rc::new(LatticeActions { lattice: lattice.clone() });
-        let board = cx.new(|cx| Board::new(tree, actions, Mode::Dark, cx));
+        // under an ordinary title bar and the way back, not under the traffic lights
+        let board = cx.new(|cx| Board::new(tree, actions, Mode::Dark, cx).with_inset(14.0));
         Self { lattice, focus_handle, message: String::new(), board, show_board: false }
     }
 
@@ -609,7 +636,7 @@ struct NewAgentForm {
 impl NewAgentForm {
     fn new(lattice: Entity<Lattice>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
-        window.focus(&focus_handle);
+        window.focus(&focus_handle, cx);
         Self { lattice, focus_handle, values: Default::default(), field: 0, error: None }
     }
 
@@ -752,7 +779,7 @@ fn main() {
     let boot = lattice::boot();
     eprintln!("lattice ready: {}", boot.base_url);
 
-    Application::new().with_assets(Assets).run(move |cx: &mut App| {
+    gpui_platform::application().with_assets(Assets).run(move |cx: &mut App| {
         let lattice = cx.new(|cx| {
             let mut l = Lattice::new(boot, cx);
             l.refresh(cx);
@@ -794,7 +821,7 @@ fn main() {
                         .await;
                     last = t;
                     let path = format!("{prefix}-{t:04.1}.png");
-                    match gpui_console::capture::own_window_png(&path) {
+                    match agent_board::capture::own_window_png(&path) {
                         Ok((w, h)) => eprintln!("shot {path} ({w}x{h})"),
                         Err(e) => eprintln!("shot {path} failed: {e}"),
                     }
@@ -808,7 +835,7 @@ fn main() {
         // just-spawned agent going live) shows up without a manual click.
         cx.spawn(async move |cx| loop {
             cx.background_executor().timer(std::time::Duration::from_secs(3)).await;
-            if auto_refresh_handle.update(cx, |l, cx| l.refresh(cx)).is_err() {
+            if auto_refresh_handle.downgrade().update(cx, |l, cx| l.refresh(cx)).is_err() {
                 break;
             }
         })

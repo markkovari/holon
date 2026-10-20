@@ -1,0 +1,11 @@
+[package]
+name = "agent-wire"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "What agent-runtime says happened, as data: the events a run, a tool call, an approval and a coding session announce, and the run record they end in. No I/O, so the board that draws them builds for a browser as well as natively."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

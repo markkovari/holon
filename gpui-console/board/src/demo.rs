@@ -9,15 +9,13 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use agent_runtime::agent::Event;
-use agent_runtime::runtime::Pending as RtPending;
-use agent_runtime::session::{Phase, SessionView};
-use agent_runtime::store::Step;
+use agent_wire::{Event, Pending as RtPending, Phase, RunRecord, SessionView, Step};
 use gpui::{App, AsyncApp, Entity};
 use serde_json::{json, Value};
 
+use super::agents::AgentInfo;
 use super::tree::AgentTree;
-use super::view::{now_ms, Actions, Scope};
+use super::view::{now_ms, Actions, AgentChoice, Scope};
 
 /// One thing that happens `at` milliseconds into the story, built when it does.
 struct Beat {
@@ -159,11 +157,12 @@ const OPUS: &str = "anthropic/claude-opus-5-5";
 const SONNET: &str = "anthropic/claude-sonnet-5-5";
 const GPT: &str = "openai/gpt-5";
 const LOCAL: &str = "local/system";
+const HAIKU: &str = "anthropic/claude-haiku-4-5";
 const SHORT: [&str; 4] = ["list_dir", "read_file", "write_file", "run"];
 
 /// The whole story, in the order things happen.
 fn story() -> Vec<Beat> {
-    let s1 = "Implement a token-bucket limiter in the ingress and wire the flag";
+    let s1 = "Implement a token bucket in rate-limiter and wire it into eshop-gateway";
     let s2 = "Write tests for the limiter, run them, and fix what fails";
     vec![
         started(
@@ -199,7 +198,7 @@ fn story() -> Vec<Beat> {
             "r-plan",
             "c-rd",
             "read_file",
-            json!({"path": "reconciler/src/bin/ingress.rs"}),
+            json!({"path": "components/eshop-gateway/src/lib.rs"}),
         ),
         tool(
             3_000,
@@ -265,7 +264,7 @@ fn story() -> Vec<Beat> {
             Phase::Running,
             21_000,
             &["list_dir", "read_file"],
-            "read_file reconciler/src/bin/ingress.rs",
+            "read_file components/eshop-gateway/src/lib.rs",
             None,
             None,
             2_100,
@@ -293,7 +292,7 @@ fn story() -> Vec<Beat> {
             Phase::Running,
             64_000,
             &["list_dir", "read_file", "write_file"],
-            "write_file src/limiter.rs",
+            "write_file components/rate-limiter/src/lib.rs",
             None,
             None,
             4_700,
@@ -327,7 +326,7 @@ fn story() -> Vec<Beat> {
 
 /// What happens once the person has said yes: the rest of the story.
 fn after_approval() -> Vec<Beat> {
-    let s1 = "Implement a token-bucket limiter in the ingress and wire the flag";
+    let s1 = "Implement a token bucket in rate-limiter and wire it into eshop-gateway";
     let s2 = "Write tests for the limiter, run them, and fix what fails";
     vec![
         session(
@@ -437,10 +436,163 @@ fn after_approval() -> Vec<Beat> {
     ]
 }
 
-/// What a person's answer does in the story: it ends the wait, and the board hears it as it would.
+/// What a goal given on the board does in the story: its agent reads, starts a coding session if it
+/// can (`session`), and finishes.
+fn given(
+    agent: &'static str,
+    run: &'static str,
+    goal: &'static str,
+    session: Option<&'static str>,
+) -> Vec<Beat> {
+    let mut v = vec![
+        started(0, agent, run, None, OPUS, goal),
+        thought(700, agent, run, 1_800, 160),
+        tool(1_300, agent, run, "c-goal-read", "read_file", json!({"path": "README.md"})),
+    ];
+    if let Some(s) = session {
+        let at = |at, phase, cost, tools, activity, result, begun| {
+            self::session(
+                at, s, run, SONNET, goal, phase, cost, tools, activity, None, result, begun,
+            )
+        };
+        v.extend([
+            tool(1_900, agent, run, "c-goal-start", "session_start", json!({"task": goal})),
+            at(2_200, Phase::Running, 3_000, &["read_file"], "read_file src/lib.rs", None, 0),
+            at(
+                5_000,
+                Phase::Running,
+                26_000,
+                &["read_file", "write_file"],
+                "write_file src/lib.rs",
+                None,
+                2_800,
+            ),
+            at(8_000, Phase::Done, 58_000, &SHORT, "", Some("Done, and the tests pass."), 5_800),
+        ]);
+    }
+    v.push(finished(9_000, agent, run, OPUS, "ok", "Done.", 4_200, 600));
+    v
+}
+
+/// A run that ended before the board was open, as the runtime keeps it. `calls` are its tool calls,
+/// by name and span, which is how the runs they started find their parent.
+#[allow(clippy::too_many_arguments)]
+fn past(
+    id: &str,
+    agent: &str,
+    model: &str,
+    input: &str,
+    span: (u64, u64),
+    status: &str,
+    tokens: (u64, u64),
+    parent: Option<&str>,
+    calls: &[(&str, &str)],
+) -> RunRecord {
+    serde_json::from_value(json!({
+        "id": id, "agent": agent, "trigger": "ui", "input": input, "started": 0, "finished": 0,
+        "status": status, "answer": "", "tokens_in": tokens.0, "tokens_out": tokens.1,
+        "started_ms": span.0, "finished_ms": span.1, "model": model, "parent_span_id": parent,
+        "steps": calls.iter().map(|(name, sp)| json!({
+            "kind": "tool", "name": name, "args": {}, "result": "", "error": false,
+            "approved": null, "span_id": sp, "t0": 0, "t1": 0})).collect::<Vec<_>>(),
+    }))
+    .expect("a run record")
+}
+
+/// Goals from earlier today, finished, so the list of sessions has a past to show.
+fn history(now: u64) -> Vec<RunRecord> {
+    let min = |m: u64| now.saturating_sub(m * 60_000);
+    let mut runs = vec![
+        past(
+            "h-wasm",
+            "lead",
+            OPUS,
+            "Upgrade wasmtime to 46 and raise the toolchain pin with it",
+            (min(46), min(38)),
+            "ok",
+            (41_000, 5_200),
+            None,
+            &[("agent:planner", "h-wasm-plan"), ("read_file", "h-wasm-rd")],
+        ),
+        past(
+            "h-wasm-plan",
+            "planner",
+            SONNET,
+            "Find every place that names wasmtime 45",
+            (min(45), min(40)),
+            "ok",
+            (22_000, 2_100),
+            Some("h-wasm-plan"),
+            &[("read_file", "x")],
+        ),
+        past(
+            "h-flaky",
+            "lead",
+            OPUS,
+            "Find out why gate_billing is flaky on CI",
+            (min(140), min(128)),
+            "failed",
+            (63_000, 7_400),
+            None,
+            &[("agent:researcher", "h-flaky-r")],
+        ),
+        past(
+            "h-flaky-r",
+            "researcher",
+            SONNET,
+            "Read the last ten CI logs of gate_billing",
+            (min(139), min(131)),
+            "ok",
+            (88_000, 3_900),
+            Some("h-flaky-r"),
+            &[("http_get", "y")],
+        ),
+        past(
+            "h-adr",
+            "writer",
+            SONNET,
+            "Summarise this week's ADRs for the changelog",
+            (min(250), min(244)),
+            "ok",
+            (12_000, 3_300),
+            None,
+            &[("agent:reviewer", "h-adr-rv")],
+        ),
+        past(
+            "h-adr-rv",
+            "reviewer",
+            HAIKU,
+            "Check the summary against the ADRs it cites",
+            (min(246), min(245)),
+            "ok",
+            (9_000, 700),
+            Some("h-adr-rv"),
+            &[],
+        ),
+    ];
+    // what each answered, which is what its conversation on the Agents tab says back
+    let answers = [
+        ("h-wasm", "Wasmtime is at 46 and the toolchain pin at 1.99; every gate passes on both."),
+        ("h-wasm-plan", "Three places name 45: host/Cargo.toml, wrpc-runtime-wasmtime's pin, and the toolchain file's comment."),
+        ("h-flaky", "I could not make it fail twice in a row. The researcher's logs point at the runner, not the test."),
+        ("h-flaky-r", "Seven of the last ten runs timed out in setup, all on the same runner, none in the test itself."),
+        ("h-adr", "ADR-0115 to 0119 in five short paragraphs, one per decision, each with what it changed."),
+        ("h-adr-rv", "Two citations were one ADR off; corrected. The rest says what the ADRs say."),
+    ];
+    for r in &mut runs {
+        if let Some((_, a)) = answers.iter().find(|(id, _)| *id == r.id) {
+            r.answer = a.to_string();
+        }
+    }
+    runs
+}
+
+/// What a person does to the story: an answer ends the wait, and the board hears it as it would; a
+/// goal plays a short story of its own.
 pub struct DemoActions {
     tree: Entity<AgentTree>,
     answered: Cell<Option<bool>>,
+    goals: Cell<u32>,
 }
 
 impl Actions for DemoActions {
@@ -451,6 +603,97 @@ impl Actions for DemoActions {
             cx.notify();
         });
     }
+
+    fn agents(&self, _cx: &App) -> Vec<AgentChoice> {
+        [
+            ("planner", "Splits a goal into coding tasks and starts a session for each", true),
+            ("lead", "Plans a goal, hands it out and checks what comes back", false),
+            ("reviewer", "Reviews a diff and the gates it ran", false),
+            ("writer", "Writes and updates the docs", false),
+        ]
+        .map(|(name, about, codes)| AgentChoice { name: name.into(), about: about.into(), codes })
+        .into()
+    }
+
+    fn roster(&self, _cx: &App) -> Vec<AgentInfo> {
+        let agent = |name: &str,
+                     about: &str,
+                     model: &str,
+                     caps: &[&str],
+                     wakes: &[&str],
+                     projects: &[&str]| AgentInfo {
+            name: name.into(),
+            description: about.into(),
+            model: model.into(),
+            paused: false,
+            triggers: wakes.iter().map(|s| s.to_string()).collect(),
+            capabilities: caps.iter().map(|s| s.to_string()).collect(),
+            projects: projects.iter().map(|s| s.to_string()).collect(),
+        };
+        vec![
+            agent(
+                "lead",
+                "Plans a goal, hands it out and checks what comes back",
+                OPUS,
+                &["agent:planner", "agent:writer", "agent:reviewer", "read_file"],
+                &[],
+                &["gateway"],
+            ),
+            agent(
+                "planner",
+                "Splits a goal into coding tasks and starts a session for each",
+                SONNET,
+                &["session_start", "session_result", "list_dir", "read_file"],
+                &[],
+                &["gateway"],
+            ),
+            agent(
+                "reviewer",
+                "Reviews a diff and the gates it ran",
+                GPT,
+                &["read_file", "http_get"],
+                &["event: gateway.diff"],
+                &["gateway"],
+            ),
+            agent(
+                "writer",
+                "Writes and updates the docs",
+                LOCAL,
+                &["read_file", "write_file"],
+                &["schedule: @weekly"],
+                &["docs"],
+            ),
+            agent(
+                "researcher",
+                "Reads CI logs and the web, and says what it found",
+                SONNET,
+                &["http_get", "remember"],
+                &[],
+                &[],
+            ),
+        ]
+    }
+
+    fn start(&self, agent: &str, goal: &str, cx: &mut App) -> Result<(), String> {
+        let n = self.goals.get() + 1;
+        self.goals.set(n);
+        let codes = self.agents(cx).iter().any(|c| c.name == agent && c.codes);
+        // shortcut: a demo is given a few goals, so their names are leaked rather than owned by
+        // every beat; own them if the demo ever runs unattended for long
+        let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+        let beats = given(
+            leak(agent.to_string()),
+            leak(format!("r-goal-{n}")),
+            leak(goal.to_string()),
+            codes.then(|| leak(format!("g{n}"))),
+        );
+        let tree = self.tree.clone();
+        cx.spawn(async move |cx| {
+            run_beats(&tree, beats, cx).await;
+        })
+        .detach();
+        Ok(())
+    }
 }
 
 /// Plays `beats` into `tree`, each at its own time (milliseconds from when this was called).
@@ -460,7 +703,8 @@ async fn run_beats(tree: &Entity<AgentTree>, beats: Vec<Beat>, cx: &mut AsyncApp
         cx.background_executor().timer(Duration::from_millis(b.at.saturating_sub(last))).await;
         last = last.max(b.at);
         let ev = (b.event)(now_ms());
-        let alive = tree.update(cx, |t, cx| {
+        // through a weak handle, which says when the board that held the tree has gone
+        let alive = tree.downgrade().update(cx, |t, cx| {
             t.apply(&ev, now_ms());
             cx.notify();
         });
@@ -474,7 +718,9 @@ async fn run_beats(tree: &Entity<AgentTree>, beats: Vec<Beat>, cx: &mut AsyncApp
 /// Plays the story into `tree`. If nobody answers the approval within `auto`, it is approved, so an
 /// unattended run (a screenshot) still gets to the end.
 pub fn play(tree: Entity<AgentTree>, auto: Option<Duration>, cx: &mut App) -> Rc<DemoActions> {
-    let actions = Rc::new(DemoActions { tree: tree.clone(), answered: Cell::new(None) });
+    tree.update(cx, |t, _| t.seed(&history(now_ms())));
+    let actions =
+        Rc::new(DemoActions { tree: tree.clone(), answered: Cell::new(None), goals: Cell::new(0) });
     let me = actions.clone();
     cx.spawn(async move |cx| {
         if !run_beats(&tree, story(), cx).await {
@@ -489,9 +735,7 @@ pub fn play(tree: Entity<AgentTree>, auto: Option<Duration>, cx: &mut App) -> Rc
                 *l = l.saturating_sub(step);
                 if l.is_zero() {
                     let me = me.clone();
-                    if cx.update(|app| me.answer(900, true, Scope::Once, app)).is_err() {
-                        return;
-                    }
+                    cx.update(|app| me.answer(900, true, Scope::Once, app));
                 }
             }
         }

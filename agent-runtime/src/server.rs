@@ -474,7 +474,7 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
         }
         // The coding sessions agents have started, newest first (docs/adr/0119).
         (Method::Get, ["sessions"]) => {
-            let v: Vec<Value> = rt.sessions().iter().map(|s| s.to_json()).collect();
+            let v: Vec<Value> = rt.sessions().iter().map(crate::session::Describe::to_json).collect();
             json_reply(req, 200, json!(v))
         }
         _ => text(req, 404, "not found"),
