@@ -29,7 +29,6 @@ pub struct Theme {
     pub mode: Mode,
     /// The window.
     pub bg: Rgba,
-    /// The list of sessions down the left, and a row of it under the pointer.
     pub sidebar: Rgba,
     pub row_hover: Rgba,
     pub card: Rgba,

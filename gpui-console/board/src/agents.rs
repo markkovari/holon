@@ -1,46 +1,28 @@
-//! The conversational agents: who each one is, what was said to it and what it answered, and where it
-//! is in Element.
-//!
-//! `agent-matrix` makes every agent a Matrix user and gives it a room: its own in the Agents Space when it
-//! is in no project, its project's `general` when it is in one (agent-matrix/README.md). What the bridge
-//! knows is in its own files (`~/.holon-matrix/config.json`, `state.json`), and a room in them is a
-//! `matrix.to` link that Element, Element X and any other client open; without them an agent is still
-//! its user, `@agent-<name>:<server>`, when the server is known. Pure but for reading those two files.
-
 use std::collections::BTreeMap;
 
 use super::tree::{AgentTree, Kind, Status};
 
-/// An agent, as the runtime's spec says it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AgentInfo {
     pub name: String,
     pub description: String,
-    /// `provider/model`.
     pub model: String,
     pub paused: bool,
-    /// `schedule: @daily`, `event: rowing.*`, ...
     pub triggers: Vec<String>,
-    /// The tools it may use.
     pub capabilities: Vec<String>,
     pub projects: Vec<String>,
 }
 
-/// One thing said to an agent, and what it answered.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Exchange {
-    /// The run, which is a session when nothing called it.
     pub run: String,
     pub asked: String,
-    /// `None` while it is still going.
     pub answer: Option<String>,
     pub status: Status,
     pub tools: Vec<String>,
     pub started_ms: u64,
 }
 
-/// What was said to `agent` lately, oldest first, as the board has seen it (its runs since launch, and
-/// what the runtime kept from before).
 pub fn conversation(tree: &AgentTree, agent: &str, limit: usize) -> Vec<Exchange> {
     let mut runs: Vec<Exchange> = tree
         .all()
@@ -59,19 +41,14 @@ pub fn conversation(tree: &AgentTree, agent: &str, limit: usize) -> Vec<Exchange
     runs.split_off(skip)
 }
 
-/// Where the agents are in Matrix, as the bridge recorded it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Element {
     pub server: String,
-    /// The `holon` control room.
     pub control: Option<String>,
-    /// agent -> its own room.
     pub dms: BTreeMap<String, String>,
-    /// project -> its `general` room.
     pub projects: BTreeMap<String, String>,
 }
 
-/// A Matrix id (a room's `!…` or a user's `@…`) as a link any client opens.
 pub fn link(id: &str, server: &str) -> String {
     if id.starts_with('!') {
         format!("https://matrix.to/#/{id}?via={server}")
@@ -81,12 +58,10 @@ pub fn link(id: &str, server: &str) -> String {
 }
 
 impl Element {
-    /// Just a server: what a page is told, or what is known before the bridge has made rooms.
     pub fn on(server: &str) -> Self {
         Element { server: server.to_string(), ..Default::default() }
     }
 
-    /// The bridge's own record, from its config and state (agent-matrix/src/config.rs, state.rs).
     pub fn from_files(config: &serde_json::Value, state: &serde_json::Value) -> Option<Self> {
         let server = config["server_name"].as_str()?.to_string();
         let map = |v: &serde_json::Value| -> BTreeMap<String, String> {
@@ -114,8 +89,6 @@ impl Element {
         })
     }
 
-    /// The bridge's files where it keeps them: `HOLON_MATRIX_DIR`, or `~/.holon-matrix`. Natively only;
-    /// a page is told its server instead (`?matrix=`).
     #[cfg(not(target_family = "wasm"))]
     pub fn load() -> Option<Self> {
         let dir = std::env::var("HOLON_MATRIX_DIR")
@@ -130,8 +103,6 @@ impl Element {
         Element::from_files(&read("config.json")?, &read("state.json").unwrap_or_default())
     }
 
-    /// Where to talk to `agent`: its own room, else the `general` of the first project it is in that has
-    /// one, else its user.
     pub fn agent(&self, agent: &str, projects: &[String]) -> String {
         let room =
             self.dms.get(agent).or_else(|| projects.iter().find_map(|p| self.projects.get(p)));
@@ -175,7 +146,6 @@ mod tests {
             e.control_room().unwrap(),
             "https://matrix.to/#/!ctl:malna.ts.net?via=malna.ts.net"
         );
-        // a bridge that has not been set up is no Element at all
         assert!(Element::from_files(&json!({}), &json!({})).is_none());
         assert_eq!(Element::on("s.net").agent("a", &[]), "https://matrix.to/#/@agent-a:s.net");
     }

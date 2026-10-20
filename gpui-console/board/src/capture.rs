@@ -38,8 +38,6 @@ fn keys() -> (CFStringRef, CFStringRef, CFStringRef) {
     unsafe { (kCGWindowOwnerPID, kCGWindowLayer, kCGWindowNumber) } // `extern static`s, never written
 }
 
-/// The id of this process's first normal window if it has one on screen, else its first window on any
-/// layer (a pop-up, which is how it is kept drawing while it is photographed).
 fn own_window() -> Option<u32> {
     let pid = std::process::id() as i64;
     let (owner_key, layer_key, number_key) = keys();
@@ -62,7 +60,6 @@ fn own_window() -> Option<u32> {
     any
 }
 
-/// The window's pixels at the display's own resolution, RGBA, with its width and height.
 pub fn own_window_rgba() -> Result<(Vec<u8>, usize, usize), String> {
     let id = own_window().ok_or("this process has no window on screen")?;
     // `CGRectNull`: the window's own bounds, whatever they are.
@@ -89,7 +86,6 @@ pub fn own_window_rgba() -> Result<(Vec<u8>, usize, usize), String> {
     Ok((rgba, w, h))
 }
 
-/// Writes the window as a PNG at the display's own resolution. Returns its size in pixels.
 pub fn own_window_png(path: &str) -> Result<(u32, u32), String> {
     let (rgba, w, h) = own_window_rgba()?;
     let file = std::fs::File::create(path).map_err(|e| format!("{path}: {e}"))?;

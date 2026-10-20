@@ -1,11 +1,3 @@
-//! Reads the one store (ADR-0091): the capability graph `comp-capgraph` projects into it, and what the
-//! goal runs wrote, over SurrealDB's HTTP `/sql`, which is how `reconciler/goal/src/trace.rs` writes it.
-//!
-//! The store is `infra/compose.yaml`'s (`docker compose -f infra/compose.yaml --profile graph up -d`);
-//! `HOLON_SURREAL_URL`, `HOLON_SURREAL_USER` and `HOLON_SURREAL_PASS` point elsewhere. What is asked and
-//! how a reply is read are the same everywhere; only sending differs: blocking natively, off the window's
-//! thread, and `fetch` in a browser.
-
 use serde_json::Value;
 
 use super::map::{AttemptRow, CatalogRows, KnowledgeRows, RunRow};
@@ -15,14 +7,12 @@ use {
     std::path::Path,
 };
 
-/// The capability graph, as `comp-capgraph --format surql` leaves it.
 pub const CATALOG_SQL: &str = "SELECT VALUE name FROM artifact;
 SELECT in.name AS a, out.name AS b FROM imports;
 SELECT in.name AS a, out.name AS b FROM exports;
 SELECT name AS a, root AS b FROM app;
 SELECT in.name AS a, out.name AS b FROM carries;";
 
-/// The goal runs (ADR-0092): runs, the gate's verdicts, attempts, and what they added.
 pub const KNOWLEDGE_SQL: &str = "SELECT id_text, goal, outcome, winner, url, branches, started_at FROM run ORDER BY started_at DESC LIMIT 60;
 SELECT attempt, data.verdict AS verdict FROM event WHERE kind = 'gate-verdict';
 SELECT id_text, run, branch, round, outcome, score, tokens, paths FROM attempt;
@@ -36,9 +26,6 @@ pub struct Store {
 }
 
 impl Store {
-    /// The compose file's store unless the environment names another: `comp`/`goalmemory`, as
-    /// `comp-goalrun` and `comp-trace-seed` default to. A browser has no environment, so it is the
-    /// compose file's there.
     pub fn from_env() -> Self {
         let var = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
         let user = var("HOLON_SURREAL_USER", "root");
@@ -114,7 +101,6 @@ impl Store {
     }
 }
 
-/// Each statement's rows, or what it failed with; `Err` when the reply is not a list of statements.
 fn each(body: &Value) -> Result<Vec<Result<Vec<Value>, String>>, String> {
     let list = body.as_array().ok_or_else(|| format!("the store said {body}"))?;
     Ok(list
@@ -126,8 +112,7 @@ fn each(body: &Value) -> Result<Vec<Result<Vec<Value>, String>>, String> {
         .collect())
 }
 
-/// A statement's rows, where a table (or the whole namespace) that does not exist yet is no rows: a store
-/// nothing has been written to is empty, not broken.
+// a missing namespace or table is an empty store, not a failure
 fn rows(r: Option<&Result<Vec<Value>, String>>) -> Result<Vec<Value>, String> {
     match r {
         Some(Ok(v)) => Ok(v.clone()),
@@ -145,7 +130,6 @@ fn text(v: &Value, k: &str) -> String {
     }
 }
 
-/// The capability graph from a reply to [`CATALOG_SQL`].
 pub fn catalog_of(body: &Value) -> Result<CatalogRows, String> {
     let r = each(body)?;
     let pairs = |i: usize| -> Result<Vec<(String, String)>, String> {
@@ -163,7 +147,6 @@ pub fn catalog_of(body: &Value) -> Result<CatalogRows, String> {
     })
 }
 
-/// The goal runs from a reply to [`KNOWLEDGE_SQL`].
 pub fn knowledge_of(body: &Value) -> Result<KnowledgeRows, String> {
     let r = each(body)?;
     let num = |v: &Value, k: &str| v[k].as_u64().unwrap_or(0);
@@ -184,7 +167,6 @@ pub fn knowledge_of(body: &Value) -> Result<KnowledgeRows, String> {
         let Some(v) = verdicts.iter().find(|v| v["attempt"].as_str() == Some(attempt)) else {
             return Vec::new();
         };
-        // what goalrun writes, `[{id, detail}]`, or the seeder's `{failing: [id]}`
         match &v["verdict"] {
             Value::Array(a) => a.iter().map(|c| (text(c, "id"), text(c, "detail"))).collect(),
             o => o["failing"]
@@ -219,9 +201,6 @@ pub fn knowledge_of(body: &Value) -> Result<KnowledgeRows, String> {
     Ok(KnowledgeRows { runs, attempts, capabilities })
 }
 
-/// What in the repository shows a component works, found where the repository keeps it: the film of
-/// its application (`docs/media/<app>.gif`, made by `tools/screencast/<app>.mjs`), a component's own
-/// demo, and the gate that scores a goal for it with the scenario that gate runs.
 #[cfg(not(target_family = "wasm"))]
 pub fn evidence(root: &Path, map: &mut Map) {
     let is = |p: &str| root.join(p).is_file();
@@ -230,7 +209,6 @@ pub fn evidence(root: &Path, map: &mut Map) {
             let Some(name) = item.key.strip_prefix("component:").map(str::to_string) else {
                 continue;
             };
-            // an application is named for itself, its component for what it is built as
             let app = (item.kind == Kind::App).then(|| item.label.clone());
             let mut proof = Vec::new();
             let mut media =
@@ -291,7 +269,6 @@ mod tests {
             json!([{"status": "ERR", "result": "There was a problem with authentication"}]);
         assert!(catalog_of(&broken).is_err(), "anything else is the store's to say");
         assert!(catalog_of(&json!({"code": 401})).is_err());
-        // a store with no namespace yet: every statement says so, and that is an empty catalogue
         let fresh = json!([{"status": "ERR", "result": "The namespace 'comp' does not exist"}]);
         assert_eq!(catalog_of(&fresh).unwrap(), CatalogRows::default());
     }
@@ -318,7 +295,6 @@ mod tests {
 
 #[cfg(all(test, not(target_family = "wasm")))]
 mod live {
-    /// Against the compose file's store, when it is up: `cargo test --lib live -- --ignored`.
     #[test]
     #[ignore]
     fn the_store_reads_back_what_capgraph_and_the_seeder_wrote() {
