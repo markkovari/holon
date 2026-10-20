@@ -1,4 +1,4 @@
-//! Component side of ADR-0095: reaches the `comp-llmlocal` daemon over HTTP.
+//! `llm-local` — send a prompt to a language model running on this machine
 
 #[allow(warnings)]
 mod bindings;

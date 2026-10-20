@@ -1,4 +1,4 @@
-//! Helpers as macros: `cargo-component` bindings differ per crate, so they expand in the caller (ADR-0095).
+//! `guestio` — the `wasi:http` body helpers every component needs, expanded into the caller rather than linked.
 //!
 //! ```ignore
 //! use guestio::guest_write_all;

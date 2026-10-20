@@ -1,4 +1,4 @@
-//! Regex-free ASCII scanners with byte offsets: every pattern is ASCII, so slicing is safe.
+//! `pii-redact` — find and mask personal data in free text before it reaches a log, an LLM prompt or an analytics sink.
 
 #[allow(warnings)]
 mod bindings;
@@ -137,7 +137,6 @@ fn scan_credit_card(b: &[u8]) -> Vec<(usize, usize)> {
             continue;
         }
         // don't start mid-run.
-        if i > 0 && (is_digit(b[i - 1]) || matches!(b[i - 1], b'-' | b' ')) {}
         let start = i;
         let mut digits: Vec<u8> = Vec::new();
         let mut j = i;

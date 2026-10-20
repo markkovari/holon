@@ -1,4 +1,4 @@
-//! Not a GeoIP database: IP-to-location needs a licensed dataset, so it is out of scope.
+//! `geo` — distance between two lat/lon points, a bounding box for a within-N-km filter, and IP address classing
 
 #[allow(warnings)]
 mod bindings;

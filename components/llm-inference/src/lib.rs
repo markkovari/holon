@@ -1,4 +1,4 @@
-//! Deterministic mock for `llm:inference`: it imports nothing, so higher layers test offline.
+//! `llm-inference` — the DETERMINISTIC MOCK provider for `llm:inference@0.1.0`.
 
 #[allow(warnings)]
 mod bindings;

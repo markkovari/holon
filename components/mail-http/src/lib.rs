@@ -1,4 +1,4 @@
-//! HTTP, not SMTP: comp-host wires no wasi:sockets (tools/mail-relay speaks SMTP outside).
+//! `mail-http` — one email, POSTed to whatever gateway config names.
 //! The API key is a secret by reference (ADR-0051), never config.
 
 #[allow(warnings)]

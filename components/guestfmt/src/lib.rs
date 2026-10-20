@@ -1,4 +1,4 @@
-//! A percent escape encodes a byte: decoding each as a code point turned `caf%C3%A9` into `cafÃ©`.
+//! `guestfmt` — the two wire-format helpers components kept rewriting, and the bug that hid in one
 
 /// Lossy UTF-8: a query string is attacker-supplied. `+` is replaced first because `from_str_radix`
 /// accepts a sign, so a one-pass decoder turned `%+a` into a newline.

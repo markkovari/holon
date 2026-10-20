@@ -1,4 +1,4 @@
-//! `mock-script` rules, first match wins: `when` (substring or "*"), then `selected`/`flat`/`error`/`level`/`probability`.
+//! `mock-jev-provider` — `jev:decision`, scripted.
 //! `selected` must be one of the request's options unless `flat`: a low-confidence answer does not claim to know.
 
 #[allow(warnings)]

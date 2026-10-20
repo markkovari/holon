@@ -1,4 +1,4 @@
-//! HMAC-SHA1: what Google Authenticator / Authy expect. Stateless: the caller supplies the secret every time.
+//! `otp` — generate and verify a one-time password for two-factor login — TOTP and HOTP, RFC 6238 and 4226
 
 #[allow(warnings)]
 mod bindings;

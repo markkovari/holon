@@ -1,4 +1,4 @@
-//! The daemon reaches the pasteboard a wasm guest lacks (ADR-0095); egress is the manifest's call (ADR-0008).
+//! `desktop-clipboard` — read the desktop session's clipboard
 
 #[allow(warnings)]
 mod bindings;

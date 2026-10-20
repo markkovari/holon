@@ -1,4 +1,4 @@
-//! `auth:identity` boilerplate as macros: `Principal`/`AuthError` are generated per crate (ADR-0095).
+//! `guestauth` — the `auth:identity` register/login/RBAC+ABAC boilerplate every "real SaaS" domain
 //!
 //! ```ignore
 //! use guestauth::Route;

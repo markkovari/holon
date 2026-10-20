@@ -1,3 +1,4 @@
+//! `lms-domain` — a learning-management service (docs/apps/LMS.md) as ONE composed wasm
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({

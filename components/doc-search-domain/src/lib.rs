@@ -1,4 +1,4 @@
-//! The router; no part may write it. `answer` alone spends: a repeat must be free, a refusal not cached.
+//! `doc-search-domain` — retrieval-augmented answers over an indexed library, behind
 
 mod answer;
 #[allow(warnings)]

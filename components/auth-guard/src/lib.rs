@@ -1,4 +1,4 @@
-//! Roles are resolved from the RBAC store by (tenant, subject), never trusted from the token.
+//! `auth-guard` — register and log a user in, hash their password, issue and introspect a session token, and check whether their role grants an action
 
 #[allow(warnings)]
 mod bindings;

@@ -1,4 +1,4 @@
-//! RFC 4180: `trim` touches unquoted fields only; one trailing newline adds no empty row.
+//! `csv` — parse and format CSV — RFC 4180, with quoted fields, embedded commas, newlines and custom delimiters
 
 #[allow(warnings)]
 mod bindings;

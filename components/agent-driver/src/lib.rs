@@ -1,3 +1,4 @@
+//! `agent-driver` — the loop that joins the writer to the gate. Every decision here is
 #[allow(warnings)]
 mod bindings;
 

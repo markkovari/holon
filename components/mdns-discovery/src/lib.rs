@@ -1,4 +1,4 @@
-//! No multicast in a wasm32-wasip2 guest (ADR-0095): this reaches the comp-mdns daemon over HTTP at `mdns-url`.
+//! `mdns-discovery` — what a printer, speaker or other device is announcing
 
 #[allow(warnings)]
 mod bindings;

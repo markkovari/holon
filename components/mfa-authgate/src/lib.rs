@@ -1,4 +1,4 @@
-//! TOTP 2FA: the secret is sealed in secrets:vault (write-once, read-only-to-verify);
+//! mfa:app — TOTP 2FA enrollment + challenge-response login over composed contracts.
 //! recovery codes are single-use and stored only as SHA-256 hashes.
 
 #[allow(warnings)]

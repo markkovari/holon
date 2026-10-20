@@ -1,4 +1,4 @@
-//! The daemon reaches the runtime socket a wasm guest lacks (ADR-0095); egress is the manifest's call (ADR-0008).
+//! `container-docker` — list containers running on the machine
 
 #[allow(warnings)]
 mod bindings;

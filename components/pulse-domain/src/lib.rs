@@ -1,4 +1,4 @@
-//! `seq` is global and monotonic, so it doubles as the SSE cursor. Server-push on WASI p3, no WebSocket.
+//! pulse:app — a realtime chat room over composed contracts.
 
 #[allow(warnings)]
 mod bindings {

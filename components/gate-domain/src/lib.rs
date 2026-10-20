@@ -1,4 +1,4 @@
-//! Per-key state is updated under a revision CAS, so concurrent requests to one key serialise.
+//! `gate-domain` — a durable traffic-shaping gateway (docs/apps/GATE.md) as ONE composed
 
 #[allow(warnings)]
 mod bindings {

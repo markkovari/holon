@@ -1,4 +1,4 @@
-//! Tenant rule, then global rule, then config, then false; rollouts hash the subject, so they stick.
+//! `feature-flags` — is this feature on for this user? — flag evaluation with percentage rollouts and kill switches
 
 #[allow(warnings)]
 mod bindings;

@@ -1,4 +1,4 @@
-//! Policy over the graph, lexical index and embeddings: agents observe, only a passing gate promotes.
+//! `knowledge-memory` — the policy layer over the stores that already exist (ADR-0081, ADR-0084).
 //! ponytail: a same-width embedding model change slips past the HNSW width guard; add a canary set then.
 
 #[allow(warnings)]

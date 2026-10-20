@@ -1,4 +1,4 @@
-//! RealWorld (Conduit) over composed contracts; conformance target is `examples/conduit/conformance`.
+//! conduit:app — the RealWorld ("Conduit") spec over composed contracts.
 
 #[allow(warnings)]
 mod bindings {

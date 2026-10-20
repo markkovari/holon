@@ -1,4 +1,4 @@
-//! Decoding one alphabet with the other's table silently produces different bytes; padding is optional in.
+//! `bytes-codec` — turn bytes into text that survives a URL, a JSON string or a header, and back again
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Alphabet {

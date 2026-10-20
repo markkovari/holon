@@ -1,4 +1,4 @@
-//! State-based CRDTs. Output is canonical (sorted keys, BTree collections), so equal merges are byte-equal.
+//! `crdt` — merge concurrent replicas with no lock — state-based CRDTs that converge whatever order updates arrive in
 
 #[allow(warnings)]
 mod bindings;

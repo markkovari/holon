@@ -1,4 +1,4 @@
-//! eShopOnDapr Catalog.API; stock moves only through the checkout choreography, via POST /internal/pump.
+//! eshop:catalog — the eShopOnDapr Catalog.API over composed contracts.
 
 #[allow(warnings)]
 mod bindings {

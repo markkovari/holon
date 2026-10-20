@@ -1,4 +1,4 @@
-//! Prompts carry the directive words the mock keys off, so the composed graph is testable offline.
+//! `ai:assist` — domain-level AI verbs over a provider-agnostic LLM.
 
 #[allow(warnings)]
 mod bindings;

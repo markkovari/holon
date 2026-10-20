@@ -1,4 +1,4 @@
-//! Integer minor units only, never a float; every operation is overflow-checked.
+//! `money` — exact money arithmetic in integer minor units tagged with an ISO-4217 currency — never a float
 
 #[allow(warnings)]
 mod bindings;

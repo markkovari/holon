@@ -1,4 +1,4 @@
-//! Claims are leases, not locks: a dead producer must not wedge a key, and a lost race only duplicates work.
+//! `artifact-cache` — derived work, computed once and handed over.
 
 #[allow(warnings)]
 mod bindings;

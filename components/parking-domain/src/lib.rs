@@ -1,3 +1,4 @@
+//! `parking-domain` — router: auth (register/login/logout/me) and dispatch into `handlers.rs`. The whole router is
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({

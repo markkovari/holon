@@ -1,3 +1,4 @@
+//! `mdns-discoverer-domain` — discover printers, speakers and other services advertised on the local network
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({

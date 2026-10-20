@@ -1,4 +1,4 @@
-//! The router; no part may write it. `posting` is the one irreversible step, so it happens exactly once.
+//! `invoice-copilot-domain` — the model writes the words and the money component does the
 
 #[allow(warnings)]
 mod bindings {

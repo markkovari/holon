@@ -1,4 +1,4 @@
-//! Name segments are sanitised to kv-safe chars, so ids containing `:` never break a key.
+//! `fsm-workflow` — enforce a lifecycle — declare the legal state transitions and refuse the illegal ones
 
 #[allow(warnings)]
 mod bindings;

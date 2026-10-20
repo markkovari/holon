@@ -1,4 +1,4 @@
-//! Nothing blocks: two parts waiting on each other is the deadlock (ADR-0086). A version mismatch is a refusal.
+//! `contract-registry` — what two parts of a decomposed goal build against.
 
 #[allow(warnings)]
 mod bindings;

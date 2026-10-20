@@ -1,4 +1,4 @@
-//! Not `guest_saas_router!`: comp-media's /internal callback is HMAC-authenticated over its exact bytes,
+//! `photoquest-domain` — router: auth (register/login/logout/me), the photo routes in `photos.rs`, and the evaluator's callback.
 //! not a bearer, so it is dispatched before anything expecting a login. Photo bytes never reach here (ADR-0098).
 
 #[allow(warnings)]

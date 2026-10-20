@@ -1,4 +1,4 @@
-//! One vote per browser: a cookie plus a `(poll, voter)` record. Clearable, which is fine for a poll,
+//! `poll-domain` — a live poll, as one component.
 //! not a ballot (`auth-guard` is for when it matters). The e2e is Playwright with two cookie jars.
 
 #[allow(warnings)]

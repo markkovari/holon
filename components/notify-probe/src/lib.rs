@@ -1,4 +1,4 @@
-//! 200 unless the request is malformed: a status code would flatten "that subject wants no email" into "the gateway refused".
+//! `notify-probe` — the door onto `notify:prefs` and `notify:inbox`.
 
 #[allow(warnings)]
 mod bindings {

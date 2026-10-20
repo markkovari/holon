@@ -1,3 +1,4 @@
+//! bin:app — a paste / gist bin over a chain of mostly pure-compute contracts.
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({

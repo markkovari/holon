@@ -1,4 +1,4 @@
-//! Transactional outbox on wasi:keyvalue: at-least-once, leased claim, backoff, dead-letter.
+//! `outbox` — emit an event reliably after a state change — the transactional outbox, so a crash neither loses nor double-fires it
 //! RACE CAVEAT: `ob_idx` is read-modify-write and keyvalue@0.2.0-draft has no CAS; assumes a single writer.
 
 #[allow(warnings)]
