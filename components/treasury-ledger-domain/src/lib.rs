@@ -1,7 +1,4 @@
 //! `treasury-ledger-domain` — concurrent transfers that never lose money.
-//!
-//! ROUTER, and no part may write it. See CONTRACT.md.
-
 mod accounts;
 #[allow(warnings)]
 mod bindings {
@@ -31,7 +28,6 @@ mod bindings {
         world: "treasury:ledger/treasury-ledger-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -131,9 +127,7 @@ fn mint(body: &str) -> Reply {
     }
 }
 
-/// Two accounts, each opened with a starting balance the caller names (a contention test has to
-/// choose it). Scaffold: `transfers` and `reconcile` both need accounts and neither may wait for
-/// `accounts`.
+/// The caller names the starting balances: a contention test has to choose them.
 fn seed(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let start = req.get("start").and_then(Value::as_str).unwrap_or("100.00");
@@ -156,9 +150,7 @@ fn seed(body: &str) -> Reply {
     Reply::json(201, json!({ "account_ids": ids, "units": amount.units }))
 }
 
-/// One journal line, written straight through. Scaffold: `reconcile` recomputes balances FROM the
-/// journal and is judged while `transfers`, the only writer, is a stub; against an empty journal
-/// a part that reads nothing looks correct.
+/// Against an empty journal, a part that reads nothing looks correct.
 fn seed_journal(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let f = |k: &str| req.get(k).and_then(Value::as_str).unwrap_or("").to_string();
@@ -169,8 +161,7 @@ fn seed_journal(body: &str) -> Reply {
     let doc = json!({
         "transfer": req.get("transfer").and_then(Value::as_str).unwrap_or("fixture"),
         "from": f("from"), "to": f("to"), "units": units,
-        // An explicit `at` lets a gate write lines whose time disagrees with listing order, the
-        // only way to tell "oldest first" from "first listed".
+        // An explicit `at` is the only way to tell "oldest first" from "first listed".
         "at": req.get("at").and_then(Value::as_str).map(str::to_string)
             .unwrap_or_else(|| rfc3339(now_secs())),
     });
@@ -180,9 +171,7 @@ fn seed_journal(body: &str) -> Reply {
     }
 }
 
-/// Every journal line, straight out of the store. Scaffold: the route that READS the journal
-/// belongs to `reconcile`, a stub while `transfers` is judged, so without this the proof that a
-/// transfer was written down is unobservable and the part is unpassable.
+/// While `reconcile` is a stub, this is the only proof a transfer was written down.
 fn peek_journal() -> Reply {
     let mut lines = Vec::new();
     let mut after = String::new();

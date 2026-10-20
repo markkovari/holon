@@ -151,10 +151,8 @@ fn list_journal(route: &Route) -> Reply {
     let limit_str = route.param("limit");
     let limit = limit_str.parse::<u32>().unwrap_or(50).min(500);
 
-    // "Oldest first, up to `limit`" is a claim about the WHOLE journal, not about the first
-    // page the store hands back: the store lists in id order and a line's `at` is what the
-    // contract orders by. So read every line, order by `at` (id breaks ties, and ids are
-    // time-sortable), and only then cut to `limit`.
+    // "Oldest first" is about the WHOLE journal: the store lists in id order, the contract orders
+    // by `at`. So read every line, sort by `at` (time-sortable ids break ties), then cut.
     let mut lines: Vec<(String, String, Value)> = Vec::new();
     let mut after = String::new();
     loop {

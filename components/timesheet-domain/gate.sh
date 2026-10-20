@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# timesheet-domain's held-out-spec gate: compose the real capability graph, host it, and
-# assert real HTTP behavior — register, login, RBAC and row-level ownership.
+# Held-out-spec gate: compose the real capability graph, host it, assert real HTTP behaviour.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 

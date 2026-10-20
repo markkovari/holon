@@ -1,8 +1,4 @@
 //! `textdiff` — what changed between two texts — a structured edit script, a unified diff, and apply
-//!
-//! Line-based diff: the edit script comes from an LCS backtrack, `unified` groups it into hunks
-//! with context, `apply-unified` replays a diff against a source checking every context/delete
-//! line. Round-trip holds: `apply-unified(a, unified(a,b)) == b`. Pure compute.
 
 #[allow(warnings)]
 mod bindings;
@@ -11,9 +7,8 @@ use bindings::exports::diff::text::differ::{DiffError, Guest, Op};
 
 struct Component;
 
-/// Split into lines on `\n`. Empty input is zero lines (not one empty line);
-/// a trailing `\n` becomes a trailing empty line, so `join("\n")` restores the
-/// exact bytes.
+/// Empty input is zero lines; a trailing `\n` becomes a trailing empty line, so `join("\n")`
+/// restores the exact bytes.
 fn lines(s: &str) -> Vec<&str> {
     if s.is_empty() {
         Vec::new()
@@ -22,8 +17,7 @@ fn lines(s: &str) -> Vec<&str> {
     }
 }
 
-// ponytail: O(n*m) LCS table — fine for docs/snippets; swap for Myers O(ND) if
-// this ever diffs large files.
+// ponytail: O(n*m) LCS table, fine for docs; swap for Myers O(ND) if this diffs large files.
 fn edit_script<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<Op> {
     let (n, m) = (a.len(), b.len());
     let mut dp = vec![vec![0u32; m + 1]; n + 1];
@@ -91,7 +85,7 @@ fn build_unified(a: &str, b: &str, from: &str, to: &str, context: usize) -> Stri
     let (al, bl) = (lines(a), lines(b));
     let rows = rows_of(edit_script(&al, &bl));
     if !rows.iter().any(|r| is_change(&r.op)) {
-        return String::new(); // identical
+        return String::new();
     }
     // Keep every row within `context` of a change; contiguous kept runs = hunks.
     let n = rows.len();
@@ -158,7 +152,7 @@ fn apply(a: &str, patch: &str) -> Result<String, DiffError> {
             continue;
         }
         let Some(header) = line.strip_prefix("@@") else {
-            continue; // ignore anything outside a hunk
+            continue;
         };
         let start = hunk_a_start(header)
             .ok_or_else(|| DiffError::MalformedPatch(format!("bad hunk header: {line}")))?;
@@ -178,8 +172,7 @@ fn apply(a: &str, patch: &str) -> Result<String, DiffError> {
                 break;
             }
             it.next();
-            // A context line is " text"; a stray empty line is treated as
-            // context of "".
+            // A stray empty line is treated as context of "".
             if body.is_empty() || body.starts_with(' ') {
                 let t = body.get(1..).unwrap_or("");
                 if ai >= al.len() || al[ai] != t {
@@ -259,19 +252,17 @@ mod tests {
         assert_eq!(tags, ["=", "-", "+", "="]);
     }
 
-    /// The property that matters: a unified diff applied to the source
-    /// reproduces the target, across many context sizes and edit shapes.
     #[test]
     fn roundtrip_apply_reproduces_target() {
         let cases = [
-            ("", "hello"),                                // empty -> content
-            ("hello", ""),                                // content -> empty
-            ("a\nb\nc\nd\ne", "a\nB\nc\nd\ne"),           // single change
-            ("a\nb\nc\nd\ne", "a\nc\nd\ne\nf"),           // delete + append
-            ("one\ntwo\nthree", "zero\none\ntwo\nthree"), // prepend
-            ("keep\ndrop\nkeep", "keep\nkeep"),           // middle delete
-            ("x\ny\nz\n", "x\nY\nz\n"),                   // trailing newline preserved
-            ("line", "totally\ndifferent\ntext"),         // full rewrite
+            ("", "hello"),
+            ("hello", ""),
+            ("a\nb\nc\nd\ne", "a\nB\nc\nd\ne"),
+            ("a\nb\nc\nd\ne", "a\nc\nd\ne\nf"),
+            ("one\ntwo\nthree", "zero\none\ntwo\nthree"),
+            ("keep\ndrop\nkeep", "keep\nkeep"),
+            ("x\ny\nz\n", "x\nY\nz\n"),
+            ("line", "totally\ndifferent\ntext"),
         ];
         for (a, b) in cases {
             for ctx in [0usize, 1, 3] {

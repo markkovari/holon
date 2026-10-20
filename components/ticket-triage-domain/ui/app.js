@@ -18,7 +18,6 @@ function showToast(msg) {
     setTimeout(() => t.remove(), 3000);
 }
 
-// Authentication
 async function login(subject, roles, scopes) {
     try {
         const res = await fetch('/test/token', {
@@ -54,7 +53,6 @@ logoutBtn.addEventListener('click', () => {
     searchResultsSection.classList.add('hidden');
 });
 
-// Create Ticket
 createTicketForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const subject = document.getElementById('ticket-subject').value;
@@ -78,7 +76,6 @@ createTicketForm.addEventListener('submit', async (e) => {
     }
 });
 
-// Search Tickets
 searchTicketForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const query = document.getElementById('search-query').value;
@@ -123,7 +120,6 @@ function displayResults(tickets) {
     });
 }
 
-// Resolve Ticket
 async function resolveTicket(id) {
     try {
         const res = await fetch(`${API_BASE}/tickets/${id}/resolve`, {
@@ -139,7 +135,6 @@ async function resolveTicket(id) {
         
         showToast('Ticket resolved!');
         
-        // Refresh search results
         document.getElementById('search-ticket-form').dispatchEvent(new Event('submit'));
     } catch (err) {
         showToast(err.message);

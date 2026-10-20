@@ -1,12 +1,6 @@
-//! Minimal ISO-8601 -> unix-seconds parser for the appointment-datetime rules.
-//!
-//! The TS reference leans on `Date.parse`; a wasm component has no such runtime, so this parses
-//! the subset the clinic uses: `YYYY-MM-DD`, optionally `THH:MM[:SS]`, optionally `Z` or
-//! `±HH:MM`. Returns unix seconds (UTC), `None` for anything unreadable (callers treat it like
-//! the TS `NaN` path).
+//! The TS reference leans on `Date.parse`, which a wasm component lacks; `None` is its `NaN` path.
 
-/// Parse an ISO-8601-ish datetime to unix seconds (UTC). A bare date is midnight UTC; a missing
-/// offset is UTC.
+/// A bare date is midnight UTC; a missing offset is UTC.
 pub fn parse_unix_seconds(s: &str) -> Option<i64> {
     let s = s.trim();
     let (date_part, rest) = match s.split_once(['T', ' ']) {
@@ -18,9 +12,7 @@ pub fn parse_unix_seconds(s: &str) -> Option<i64> {
     let year: i64 = dp.next()?.parse().ok()?;
     let month: i64 = dp.next()?.parse().ok()?;
     let day: i64 = dp.next()?.parse().ok()?;
-    // Bounding the year isn't just range-checking for its own sake: an
-    // adversarial digit string here (the field has no length limit) overflows
-    // the `era * 146_097` multiply in `days_from_civil` below.
+    // Untrusted, unbounded digits would overflow `era * 146_097` in `days_from_civil`.
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) || !(-9999..=9999).contains(&year) {
         return None;
     }
@@ -35,9 +27,7 @@ pub fn parse_unix_seconds(s: &str) -> Option<i64> {
         let sec_int = sec_field.split('.').next().unwrap_or("0");
         sec = sec_int.parse().ok()?;
     }
-    // Lower-bounded too, not just `> 23`: a field like "-080006000000000608"
-    // parses fine as a huge negative i64 and would otherwise sail through an
-    // upper-bound-only check, then overflow `hour * 3600` below.
+    // Lower-bounded too: a huge negative i64 would pass `> 23` and overflow `hour * 3600`.
     if !(0..=23).contains(&hour) || !(0..=59).contains(&min) || !(0..=60).contains(&sec) {
         return None;
     }
@@ -47,9 +37,7 @@ pub fn parse_unix_seconds(s: &str) -> Option<i64> {
     Some(secs - offset_secs)
 }
 
-/// Split a `HH:MM:SS` + offset tail into (time, offset-seconds-from-UTC).
-/// `None` for an offset whose hour/minute is out of range — including an
-/// adversarial digit string, which would otherwise overflow `oh * 3600` below.
+/// `None` for an out-of-range offset, which would otherwise overflow `oh * 3600`.
 fn split_offset(rest: &str) -> Option<(&str, i64)> {
     if rest.is_empty() {
         return Some((rest, 0));
@@ -57,10 +45,7 @@ fn split_offset(rest: &str) -> Option<(&str, i64)> {
     if let Some(stripped) = rest.strip_suffix('Z').or_else(|| rest.strip_suffix('z')) {
         return Some((stripped, 0));
     }
-    // find a +/- that introduces an offset (skip the first char — never a sign
-    // there). Skipping by char, not by byte index 1: `rest` is untrusted and a
-    // multi-byte first char would put byte 1 mid-character, which a raw `[1..]`
-    // slice panics on.
+    // Skip the first char by char, not byte: a multi-byte first char would panic a raw `[1..]`.
     let skip_first = rest.char_indices().nth(1).map_or(rest.len(), |(i, _)| i);
     if let Some(pos) = rest[skip_first..].find(['+', '-']).map(|i| i + skip_first) {
         let (time, off) = rest.split_at(pos);
@@ -96,7 +81,6 @@ mod tests {
     }
     #[test]
     fn known_instant() {
-        // 2021-01-01T00:00:00Z = 1609459200
         assert_eq!(parse_unix_seconds("2021-01-01T00:00:00Z"), Some(1_609_459_200));
     }
     #[test]
@@ -105,7 +89,6 @@ mod tests {
     }
     #[test]
     fn offset() {
-        // 2021-01-01T01:00:00+01:00 == 2021-01-01T00:00:00Z
         assert_eq!(parse_unix_seconds("2021-01-01T01:00:00+01:00"), Some(1_609_459_200));
     }
     #[test]

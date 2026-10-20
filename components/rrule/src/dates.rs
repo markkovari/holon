@@ -1,7 +1,5 @@
-//! Civil-date <-> days-since-epoch (Hinnant), pulled out of `lib.rs` so it can
-//! be exercised without the wit bindings — no state, no host imports.
+//! Hinnant's algorithms, outside `lib.rs` so fuzzing needs no wit bindings.
 
-/// Days since the Unix epoch for a civil date (Hinnant).
 pub fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = (if y >= 0 { y } else { y - 399 }) / 400;
@@ -12,7 +10,6 @@ pub fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146097 + doe - 719468
 }
 
-/// Civil date from days since the Unix epoch (Hinnant).
 pub fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719468;
     let era = (if z >= 0 { z } else { z - 146096 }) / 146097;

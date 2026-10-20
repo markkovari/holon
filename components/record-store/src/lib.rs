@@ -1,12 +1,4 @@
 //! `record-store` — store JSON records in named collections, query them by field, and index them
-//!
-//! Typed JSON records in named collections; the app owns the schema.
-//! Ids are ULIDs, so the per-collection id index stays sorted in creation order (`list` pages
-//! over it, `count` is its length).
-//! Secondary indexes `ix_{collection}_{F}_{sanitize(V)}` hold matching ids. The value is
-//! sanitized and capped, so keys can collide and only ever over-match; `find-by` re-verifies.
-//! `update` with a non-zero `expected-revision` yields `revision-conflict(current)` on mismatch, comparing and writing through `comp:store/cas` (ADR-0065).
-//! Index upkeep (`idlist`) is CAS-guarded but not atomic with the record write, so records stay
 //! authoritative: readers re-verify, `list` reports dangling ids, `repair` rebuilds.
 
 #[allow(warnings)]
@@ -29,17 +21,12 @@ struct Component;
 
 const BUCKET: &str = "default";
 
-/// Default page size for `list` / `query` when `limit == 0`.
 const DEFAULT_LIMIT: usize = 50;
-/// Hard cap on a single `list` page.
 const MAX_LIMIT: usize = 500;
-/// Cap on the sanitized value embedded in a secondary-index key. Longer values
-/// are truncated, which can only cause distinct values to share an index key
-/// (over-matching), which the readers then re-filter away.
+/// Truncation can only over-match, which readers re-filter.
 const MAX_INDEXED_VALUE: usize = 120;
 
-/// What we persist per record at `rec_{collection}_{id}`. `data` is the JSON
-/// object body verbatim (so re-serialization can't reorder/normalize it).
+/// `data` is kept verbatim so re-serialization can't reorder or normalize it.
 #[derive(Serialize, Deserialize)]
 struct Stored {
     data: String,
@@ -58,8 +45,7 @@ fn now_ms() -> u128 {
     (t.seconds as u128) * 1000 + (t.nanoseconds as u128) / 1_000_000
 }
 
-/// Sanitize one opaque segment to NATS-legal kv chars (same byte scheme as
-/// config-store's `sanitize` / idempotency-guard's `id_key`).
+/// Same byte scheme as config-store's `sanitize` / idempotency-guard's `id_key`.
 fn sanitize(seg: &str) -> String {
     let mut out = String::with_capacity(seg.len());
     for b in seg.bytes() {
@@ -71,8 +57,6 @@ fn sanitize(seg: &str) -> String {
     out
 }
 
-/// Sanitize an indexed value, capping its length so arbitrarily long values
-/// still fit in a key. Truncation can only over-match (readers re-verify).
 fn sanitize_value(v: &str) -> String {
     let mut s = sanitize(v);
     if s.len() > MAX_INDEXED_VALUE {
@@ -81,43 +65,32 @@ fn sanitize_value(v: &str) -> String {
     s
 }
 
-/// Storage key for a record: `rec_{collection}_{id}`.
 fn rec_key(collection: &str, id: &str) -> String {
     format!("rec_{}_{}", sanitize(collection), sanitize(id))
 }
 
-/// Storage key for a collection's sorted id index: `idx_{collection}`.
 fn idx_key(collection: &str) -> String {
     format!("idx_{}", sanitize(collection))
 }
 
-/// Storage key for a secondary index: `ix_{collection}_{field}_{sanitize(value)}`.
 fn ix_key(collection: &str, field: &str, value: &str) -> String {
     format!("ix_{}_{}_{}", sanitize(collection), sanitize(field), sanitize_value(value))
 }
 
-//
-// 128 bits = [48-bit ms timestamp big-endian | 80-bit random], rendered as 26
-// Crockford-base32 chars. The top char encodes the high 2 bits; the remaining
-// 25 chars encode 5 bits each (2 + 25*5 = 127, the spec pads the top bit to 0,
-// which is why a ULID's first char is never above '7'). Monotonic-within-ms is
-// intentionally skipped: every id draws fresh random, so ids minted in the same
-// millisecond still sort by their ms prefix (their intra-ms order is arbitrary,
-// which is acceptable for the id-index).
+// ULID: 48-bit ms | 80-bit random in 26 Crockford chars. No intra-ms monotonicity: same-ms
+// ids sort arbitrarily among themselves, which the id index tolerates.
 
 const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 fn mint_ulid() -> String {
-    let ms = now_ms() & 0xFFFF_FFFF_FFFF; // low 48 bits
+    let ms = now_ms() & 0xFFFF_FFFF_FFFF;
     let rand = get_random_bytes(10);
 
-    // Assemble the full 128-bit value as a u128: 48-bit time then 80-bit random.
     let mut value: u128 = ms;
     for &b in rand.iter() {
         value = (value << 8) | (b as u128);
     }
 
-    // Encode 26 Crockford chars, most-significant first.
     let mut buf = [0u8; 26];
     for i in (0..26).rev() {
         let idx = (value & 0x1F) as usize;
@@ -131,9 +104,7 @@ fn open() -> Result<kv::Bucket, StoreError> {
     kv::open(BUCKET).map_err(|e| StoreError::BackendUnavailable(format!("open: {e:?}")))
 }
 
-/// Say the index disagreed with the records, in the shape `audit-log` uses.
-/// Instances are per-request (ADR-0037), so there is no counter: one line per occurrence, nothing
-/// when quiet.
+/// Instances are per-request (ADR-0037), so no counter: one line per occurrence.
 fn drift(collection: &str, op: &str, missing: usize) {
     if missing == 0 {
         return;
@@ -147,15 +118,10 @@ fn drift(collection: &str, op: &str, missing: usize) {
     );
 }
 
-/// How many times a guarded RECORD write (`create`'s id placement, `update`)
-/// re-reads and retries before giving up. The same bound `gate-domain` uses for
-/// its own CAS loop. The index lists have their own, larger bound
-/// (`idlist::CAS_TRIES`): every create in a collection contends on one id-index
-/// chunk, where a single record rarely sees that many writers at once.
+/// The id index has its own larger bound (`idlist::CAS_TRIES`): every create contends on one chunk.
 const CAS_TRIES: u32 = 40;
 
-/// Load + deserialize the record at `id`, `None` if absent. A corrupt stored
-/// record surfaces as `backend-unavailable` (it is our own bug, not bad input).
+/// A corrupt stored record is `backend-unavailable`: our bug, not bad input.
 fn load_record(
     bucket: &kv::Bucket,
     collection: &str,
@@ -172,11 +138,8 @@ fn load_record(
     }
 }
 
-/// Load many records in ONE backend round-trip via `wasi:keyvalue/batch` get-many. Returns (id,
-/// record) pairs in input-id order, skipping absent ids.
-/// A get-many error propagates: a host without the batch interface fails at LINK time, so a
-/// runtime error is a real backend fault, and degrading to sequential gets turned one transient
-/// error into a 20-second page.
+/// A get-many error propagates: a missing batch interface fails at link time, and falling back
+/// to sequential gets turned one transient error into a 20-second page.
 fn load_records_many(
     bucket: &kv::Bucket,
     collection: &str,
@@ -201,12 +164,8 @@ fn load_records_many(
     Ok(out)
 }
 
-//
-// The chunked sorted lists live in `idlist`, written against a two-call `Kv`
-// trait so their interleavings can be tested without a host. This is the
-// component's implementation of that trait: the guarded half goes through
-// `comp:store/cas` (never cached), the reader half through plain
-// `wasi:keyvalue` (which a host may cache, ADR-0064).
+// `idlist`'s `Kv`: the guarded half goes through `comp:store/cas` (never cached), the reader
+// half through plain `wasi:keyvalue` (which a host may cache, ADR-0064).
 
 struct BucketKv<'a>(&'a kv::Bucket);
 
@@ -269,14 +228,11 @@ fn ix_remove(bucket: &kv::Bucket, key: &str, id: &str) -> Result<(), StoreError>
     idlist::remove(&BucketKv(bucket), key, id).map_err(be)
 }
 
-/// The JSON-encoded value of a top-level field in `data`, or `None` if the
-/// field is absent. Encodes compactly so a string field `acme` -> `"acme"`,
-/// matching the `value` callers pass to `find-by` / `filter`.
+/// Compact, so it matches the `value` callers pass to `find-by` / `filter`.
 fn field_value(parsed: &Value, field: &str) -> Option<String> {
     parsed.as_object().and_then(|obj| obj.get(field)).map(|v| v.to_string())
 }
 
-/// The secondary-index keys `data` + `index_fields` imply, deduped.
 fn secondary_keys(collection: &str, parsed: &Value, index_fields: &[String]) -> Vec<String> {
     let mut keys: Vec<String> = index_fields
         .iter()
@@ -287,17 +243,11 @@ fn secondary_keys(collection: &str, parsed: &Value, index_fields: &[String]) -> 
     keys
 }
 
-/// How many times index maintenance that runs AFTER a record write has committed
-/// is attempted before it is left to `repair`. Each attempt is itself a CAS loop
-/// of up to `CAS_TRIES`, so this only matters for a backend error or a key under
-/// pathological contention.
+/// Each attempt is a full CAS loop, so this only matters for a backend error.
 const INDEX_TRIES: u32 = 3;
 
-/// Apply one index edit after the record has committed. This must NOT fail the call: the record
-/// is authoritative, and reporting `err` misleads a caller about a write that landed
-/// (`treasury:ledger` refunded transfers whose debit had landed).
-/// A missed index edit is recoverable (readers re-verify, `repair` rebuilds), so retry, then say
-/// so in the `drift` shape and leave it for `repair`.
+/// Must NOT fail the call: the record landed, and an `err` misled callers (`treasury:ledger`
+/// refunded transfers whose debit had landed). Missed edits are left to `repair`.
 fn index_after_commit(
     collection: &str,
     op: &str,
@@ -322,10 +272,8 @@ fn index_after_commit(
     );
 }
 
-/// Move `id` between the secondary indexes `old` implied and those `new` implies, touching ONLY
-/// the keys whose value changed. Best-effort — see `index_after_commit`.
-/// Rewriting unchanged keys made concurrent updates contend on one key and hid the record from
-/// `find-by` between the remove and the add.
+/// Touch only keys whose value changed: rewriting unchanged ones made concurrent updates contend
+/// and hid the record from `find-by` between the remove and the add.
 fn reindex_after_commit(
     bucket: &kv::Bucket,
     collection: &str,
@@ -352,7 +300,6 @@ fn entry_from(id: &str, s: Stored) -> Entry {
     }
 }
 
-/// Parse caller `data`, requiring a JSON object. Bad input -> `invalid-json`.
 fn parse_object(data: &str) -> Result<Value, StoreError> {
     let v = serde_json::from_str::<Value>(data)
         .map_err(|e| StoreError::InvalidJson(format!("not valid JSON: {e}")))?;
@@ -373,8 +320,7 @@ impl Guest for Component {
         let ts = now();
         let stored = Stored { data, revision: 1, created: ts, updated: ts, index_fields };
 
-        // CAS'd with `expected: 0` (must not exist yet), so an id collision retries with a fresh
-        // id instead of silently overwriting the first record.
+        // `expected: 0`, so an id collision retries with a fresh id instead of overwriting.
         let mut id = mint_ulid();
         let mut placed = false;
         for _ in 0..CAS_TRIES {
@@ -395,9 +341,7 @@ impl Guest for Component {
             )));
         }
 
-        // The record is committed; from here on nothing may turn this into an
-        // `err` (see `index_after_commit`). A caller told its create failed
-        // creates again, and the first one is a live, unlisted duplicate.
+        // Committed: an `err` from here makes callers create again, leaving a live unlisted duplicate.
         let ix = idx_key(&collection);
         index_after_commit(&collection, "create", &ix, || {
             id_index_insert(&bucket, &collection, &id)
@@ -424,7 +368,7 @@ impl Guest for Component {
         let parsed_new = parse_object(&data)?;
         let key = rec_key(&collection, &id);
 
-        // `cas::get` reports the revision the store is actually at and is never cached; `cas::set` only lands if the key is unchanged. A writer that lost the race re-reads and retries (comparing in the component raced with other nodes and the host cache, ADR-0065).
+        // Compared via `comp:store/cas`: comparing here raced other nodes and the host cache (ADR-0065).
         for _ in 0..CAS_TRIES {
             let (store_revision, bytes) = match cas::get(&bucket, &key) {
                 Ok(Some(v)) => (v.revision, v.value),
@@ -434,8 +378,7 @@ impl Guest for Component {
             let current: Stored = serde_json::from_slice(&bytes)
                 .map_err(|e| StoreError::BackendUnavailable(format!("corrupt record {id}: {e}")))?;
 
-            // The CALLER's expectation is about the record's own revision, not the backend's
-            // sequence. Both have to hold.
+            // The caller's revision is the record's own, not the backend sequence; both must hold.
             if expected_revision != 0 && expected_revision != current.revision {
                 return Err(StoreError::RevisionConflict(current.revision));
             }
@@ -452,10 +395,7 @@ impl Guest for Component {
 
             match cas::set(&bucket, &key, &body, store_revision) {
                 Ok(cas::Outcome::Committed(_)) => {
-                    // Indexes follow the record as separate writes; a crash between them leaves a
-                    // stale index entry.
-                    // The write has landed, so nothing below may report `err` (see
-                    // `index_after_commit`).
+                    // Landed: the index writes below are separate and must not report `err`.
                     let old_keys = serde_json::from_str::<Value>(&current.data)
                         .map(|v| secondary_keys(&collection, &v, &current.index_fields))
                         .unwrap_or_default();
@@ -463,7 +403,6 @@ impl Guest for Component {
                     reindex_after_commit(&bucket, &collection, &id, "update", &old_keys, &new_keys);
                     return Ok(entry_from(&id, stored));
                 }
-                // Someone else wrote between the read and the write. Re-read and retry.
                 Ok(cas::Outcome::Conflict(_)) => continue,
                 Err(e) => return Err(StoreError::BackendUnavailable(format!("cas set: {e:?}"))),
             }
@@ -475,13 +414,11 @@ impl Guest for Component {
 
     fn delete(collection: String, id: String) -> Result<(), StoreError> {
         let bucket = open()?;
-        // Idempotent: absent -> Ok.
         let Some(stored) = load_record(&bucket, &collection, &id)? else {
             return Ok(());
         };
 
-        // The record goes FIRST and is the only step that can fail the call; an interrupted
-        // delete then leaves only dangling ids, which reads skip and `repair` prunes.
+        // Record first, the only step that can fail; an interrupted delete leaves only dangling ids.
         bucket
             .delete(&rec_key(&collection, &id))
             .map_err(|e| StoreError::BackendUnavailable(format!("delete: {e:?}")))?;
@@ -503,17 +440,13 @@ impl Guest for Component {
             n => n.min(MAX_LIMIT),
         };
 
-        // Page over the chunked id index (fetches only the chunks the page
-        // touches), then ONE batched record fetch; ids whose record vanished
-        // (best-effort index drift) are skipped by load_records_many.
         let (window, more) =
             idlist::page(&BucketKv(&bucket), &idx_key(&collection), &after, limit).map_err(be)?;
         let entries: Vec<Entry> = load_records_many(&bucket, &collection, &window)?
             .into_iter()
             .map(|(id, stored)| entry_from(&id, stored))
             .collect();
-        // The index named ids this page could not resolve (ADR-0075). This is the only drift a
-        // read can see; a record the index never mentions needs `verify`.
+        // The only drift a read can see (ADR-0075); a record the index never mentions needs `verify`.
         drift(&collection, "list", window.len().saturating_sub(entries.len()));
 
         let next = if more {
@@ -531,8 +464,7 @@ impl Guest for Component {
 
         let mut entries = Vec::new();
         for (id, stored) in load_records_many(&bucket, &collection, &ids)? {
-            // RE-VERIFY: the sanitized+capped index key can over-match, so
-            // confirm the record's actual top-level field == value.
+            // Re-verify: the sanitized, capped index key can over-match.
             if let Ok(parsed) = serde_json::from_str::<Value>(&stored.data) {
                 if field_value(&parsed, &field).as_deref() == Some(value.as_str()) {
                     entries.push(entry_from(&id, stored));
@@ -554,16 +486,12 @@ impl Guest for Component {
             n => n,
         };
 
-        // Candidate ids: if there are filters, use the FIRST filter's secondary
-        // index (cheap, may over-match) as the candidate set; otherwise the full
-        // sorted id index. Either way every record is re-checked against ALL
-        // filters below, so a non-indexed first filter still yields correct
-        // results (it just won't have narrowed the candidates).
+        // The first filter's index only narrows candidates (it may over-match or be absent); every
+        // record is re-checked against ALL filters.
         let candidates = match filters.first() {
             Some(f) => {
                 let ix = read_ix(&bucket, &ix_key(&collection, &f.field, &f.value))?;
-                // A non-indexed first filter has no index key, so `ix` is empty yet records may
-                // match: scan when the index is absent.
+                // A non-indexed first filter has no index key, so scan when it is empty.
                 if ix.is_empty() {
                     read_id_index(&bucket, &collection)?
                 } else {
@@ -573,8 +501,7 @@ impl Guest for Component {
             None => read_id_index(&bucket, &collection)?,
         };
 
-        // Batch-fetch candidates in chunks so a scan over a big collection
-        // still early-exits once `limit` matches are found.
+        // Chunked so a big scan stops once `limit` matches are found.
         let mut entries = Vec::new();
         for chunk in candidates.chunks(100) {
             if entries.len() >= limit {
@@ -600,24 +527,20 @@ impl Guest for Component {
 
     fn count(collection: String) -> Result<u64, StoreError> {
         let bucket = open()?;
-        // manifest chunk counts sum — one kv read regardless of size.
         idlist::count(&BucketKv(&bucket), &idx_key(&collection)).map_err(be)
     }
 
-    /// Rebuild the id index from the records (ADR-0068). Records are authoritative. It scans the
-    /// whole bucket, so it is an operator action, not something `list` does.
+    /// Scans the whole bucket, so an operator action, not something `list` does (ADR-0068).
     fn repair(collection: String) -> Result<RepairReport, StoreError> {
         repair_inner(&collection, true)
     }
 
-    /// Report the same disagreement without touching anything (ADR-0075).
+    /// `repair` without writing (ADR-0075).
     fn verify(collection: String) -> Result<RepairReport, StoreError> {
         repair_inner(&collection, false)
     }
 }
 
-/// The scan behind both `repair` and `verify`. `write` is the only difference:
-/// one of them fixes what it finds and the other only says so.
 fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreError> {
     {
         let collection = collection.to_string();
@@ -633,9 +556,7 @@ fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreErro
             .filter_map(|k| k.strip_prefix(&prefix))
             .map(|id| id.to_string())
             .collect();
-        // The index is sorted, and `sanitize` is identity for a ULID, so the
-        // stored suffix IS the id. Sorting here makes the comparison below a
-        // set difference rather than a quadratic scan.
+        // `sanitize` is identity for a ULID, so the stored suffix IS the id.
         real.sort();
         real.dedup();
 
@@ -657,9 +578,7 @@ fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreErro
             )));
         }
 
-        // Patched id by id through the guarded insert/remove, not rewritten wholesale (a
-        // wholesale write erases ids inserted after the scan). `heal` then re-derives every
-        // manifest entry.
+        // Patched id by id: a wholesale write erases ids inserted after the scan.
         let lists = BucketKv(&bucket);
         if write {
             let ix = idx_key(&collection);
@@ -667,8 +586,7 @@ fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreErro
                 idlist::insert(&lists, &ix, id).map_err(be)?;
             }
             for id in &dangling {
-                // Re-checked: a record created after the scan is in the index and
-                // not in `real`, and must not be pruned for being quick.
+                // Re-checked: a record created after the scan must not be pruned.
                 if load_record(&bucket, &collection, id)?.is_none() {
                     idlist::remove(&lists, &ix, id).map_err(be)?;
                 }
@@ -676,8 +594,6 @@ fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreErro
             idlist::heal(&lists, &ix).map_err(be)?;
         }
 
-        // Then the secondary indexes (ADR-0068 left them out): recompute what each should hold
-        // from the records and apply the difference with the guarded writers.
         let mut wanted: std::collections::BTreeMap<String, Vec<String>> =
             std::collections::BTreeMap::new();
         for (id, stored) in load_records_many(&bucket, &collection, &real)? {
@@ -692,7 +608,6 @@ fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreErro
             ids.sort();
             ids.dedup();
         }
-        // Is `id` still, right now, a record whose fields put it under index `key`?
         // Asked before removing anything, for the same reason as above.
         let still_under = |key: &str, id: &str| -> Result<bool, StoreError> {
             Ok(load_record(&bucket, &collection, id)?.is_some_and(|s| {
@@ -725,9 +640,8 @@ fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreErro
             fix_index(key, ids)?;
         }
 
-        // An index key nothing points at any more (interrupted delete, changed value)
-        // over-matches until re-verified. Counted only while it still names something, so a
-        // second run reports zero.
+        // An orphaned index key over-matches until re-verified; counted only while it still names
+        // something, so a second run reports zero.
         let ix_prefix = format!("ix_{}_", sanitize(&collection));
         let mut dropped = 0u64;
         for k in keys.keys.iter() {
@@ -756,9 +670,7 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::*;
 
-    /// The escape scheme has to be INJECTIVE: `_` is both the key joiner and the escape prefix,
-    /// so it must never survive unescaped, or collection `a_b` and `a` with ids starting `b`
-    /// would share keys.
+    /// `_` is both the key joiner and the escape prefix, so it must never survive unescaped.
     #[test]
     fn the_joiner_cannot_be_forged_from_inside_a_segment() {
         assert_eq!(sanitize("a_b"), "a_5Fb", "an underscore must be escaped");
@@ -778,22 +690,18 @@ mod tests {
         }
     }
 
-    /// The bytes that pass through untouched are the ones NATS accepts, and the
-    /// rest become `_XX`. Pinned because widening this set later would silently
-    /// change every existing key and orphan the records behind them.
+    /// Pinned: widening the passthrough set would change every existing key and orphan records.
     #[test]
     fn only_nats_legal_bytes_survive_unescaped() {
         assert_eq!(sanitize("azAZ09-/="), "azAZ09-/=");
         assert_eq!(sanitize("."), "_2E");
         assert_eq!(sanitize(" "), "_20");
         assert_eq!(sanitize("%"), "_25");
-        // Multi-byte UTF-8 is escaped per BYTE, so a key stays ASCII.
         assert_eq!(sanitize("é"), "_C3_A9");
         assert!(sanitize("naïve").is_ascii());
     }
 
-    /// An indexed value is capped, and the cap may OVER-match (readers re-verify) but must never
-    /// under-match.
+    /// The cap may over-match (readers re-verify) but never under-match.
     #[test]
     fn a_long_indexed_value_is_truncated_and_can_only_over_match() {
         let long = "x".repeat(MAX_INDEXED_VALUE + 50);
@@ -802,8 +710,7 @@ mod tests {
         let b = format!("{long}bbb");
         assert_eq!(ix_key("c", "f", &a), ix_key("c", "f", &b), "a shared prefix over-matches");
         assert_eq!(sanitize_value("short"), "short");
-        // Escaping happens BEFORE the cap, so the cap is on key bytes and the
-        // key cannot exceed it however many escapes a value needs.
+        // Escaping happens before the cap, so the cap bounds key bytes.
         assert!(sanitize_value(&"é".repeat(100)).len() <= MAX_INDEXED_VALUE);
     }
 
@@ -820,12 +727,8 @@ mod tests {
         assert_eq!(idlist::page_start(&[], "a"), 0);
     }
 
-    /// Chunk keys must sort in sequence order as STRINGS, because that is how
-    /// they come back from a prefix scan. Without the zero padding `_c10` sorts
-    /// before `_c2` and the id list silently reorders after the tenth chunk.
     #[test]
     fn an_update_that_changes_no_indexed_field_touches_no_index() {
-        // The treasury bug: every balance update rewrote the `name` index, and
         let fields = vec!["name".to_string(), "name".to_string(), "absent".to_string()];
         let before = serde_json::json!({"name": "a", "units": 10});
         let after = serde_json::json!({"name": "a", "units": 0});
@@ -839,6 +742,7 @@ mod tests {
         assert_ne!(old, renamed);
     }
 
+    /// Prefix scans return string order, so without zero padding `_c10` sorts before `_c2`.
     #[test]
     fn chunk_keys_sort_lexicographically_in_sequence_order() {
         let mut keys: Vec<String> = [0u32, 2, 9, 10, 11, 100, 12345]

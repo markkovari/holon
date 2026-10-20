@@ -1,15 +1,13 @@
 #![no_main]
 
-// `dates::days_from_civil` itself, included directly (no wit bindings needed —
-// it's the pure Hinnant algorithm, moved out of lib.rs for exactly this).
+// Included by path: pure, so no wit bindings needed.
 #[path = "../../src/dates.rs"]
 mod dates;
 
 use libfuzzer_sys::fuzz_target;
 
-// Mirrors `lib.rs::parse`'s split + bounds-check, since that function's real
-// signature returns the wit-generated `RecurError` and isn't fuzzable without
-// pulling in the whole component's bindings. Keep this in sync with `parse`.
+// Mirrors `lib.rs::parse`, whose `RecurError` return needs the component's bindings. Keep this
+// in sync with `parse`.
 fn parse(s: &str) -> Option<i64> {
     let p: Vec<&str> = s.split('-').collect();
     if p.len() != 3 {

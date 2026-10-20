@@ -1,11 +1,5 @@
 //! `svg-chart` — render a chart to SVG on the server — bar, line, donut and sparkline
-//!
-//! A dependency-free renderer: one data series in, a standalone `<svg>` out (bar, line, donut,
-//! sparkline). Axes and labels use `currentColor` so an embedded chart follows the page theme;
-//! data uses a palette or per-slice color. Pure compute.
-//!
-//! ponytail: single-series only, which is the common report shape. Multi-series
-//! / stacked / rich gridlines is a much bigger renderer and out of scope.
+//! ponytail: single series only; multi-series / stacked is a much bigger renderer.
 
 #[allow(warnings)]
 mod bindings;
@@ -55,8 +49,7 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 fn open(w: f64, h: f64) -> String {
-    // Explicit width/height give the SVG an intrinsic size (so it doesn't
-    // collapse when embedded); the viewBox keeps it scalable via CSS.
+    // Explicit size so it doesn't collapse when embedded; the viewBox keeps it scalable.
     format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"0 0 {} {}\" font-family=\"ui-sans-serif,system-ui,sans-serif\" font-size=\"11\" fill=\"currentColor\">",
         n(w), n(h), n(w), n(h)
@@ -197,7 +190,6 @@ fn donut(c: &Chart, w: f64, h: f64) -> String {
             n(cx), n(cy), fmt(total)
         );
     }
-    // legend below.
     let mut ly = mt + dia + 4.0;
     for (i, sl) in c.data.iter().enumerate() {
         s += &format!(

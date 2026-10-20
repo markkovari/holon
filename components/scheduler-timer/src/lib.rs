@@ -1,20 +1,5 @@
 //! `scheduler-timer` — do this later — durable timers for reminders, payment retries and nightly sweeps
-//!
-//! A durable store of future jobs on `wasi:keyvalue`. This component owns the when (eligibility,
-//! recurrence, leasing); a relay owns the what (it `due`-polls, does the work, `ack`s one-shots),
-//! so it composes with any sink.
-//! Lifecycle: schedule-at / schedule-every store a job keyed by app `key`. `due(now)` leases and
-//! returns eligible jobs: a one-shot gets `lease_until = now + lease` and awaits `ack` (so a
-//! crashed relay's job becomes due again: at-least-once); a recurring job advances run_at to the
-//! next slot STRICTLY AFTER `now` (a relay down for a day fires once, not a backlog burst) and
-//! fires++. `ack(key)` removes a fired one-shot; `cancel(key)` removes any job.
-//! `schedule-*` REPLACES any job with the same key, so a boot-time "nightly-sweep" never duplicates.
-//! Storage (BUCKET = "default"): `tm_{key}` is one tab-delimited line per job (kind, run_at,
-//! period, fires, lease_until, base64(payload)); `tm_idx` is the newline-joined list of live
-//! keys, so `due` / `list-jobs` need no key-scan API.
-//! RACE CAVEAT (best-effort, NOT a correctness guarantee): `tm_idx` is read-modify-write and
-//! `wasi:keyvalue@0.2.0-draft` has no compare-and-swap, so concurrent writers can clobber each
-//! other. Assumes a single relay.
+//! `now`, so a day-long outage fires once. `tm_idx` has no CAS, so this assumes a single relay.
 
 #[allow(warnings)]
 mod bindings;
@@ -35,8 +20,7 @@ fn now_clock() -> u64 {
     wall_clock::now().seconds
 }
 
-/// Sanitize an app key to NATS-legal kv chars (same scheme as outbox's
-/// `ob_key`), prefixed with `tm_`.
+/// Same scheme as outbox's `ob_key`.
 fn tm_key(key: &str) -> String {
     let mut out = String::with_capacity(key.len() + 3);
     out.push_str("tm_");
@@ -68,10 +52,7 @@ fn char_kind(c: char) -> Result<Kind, TimerError> {
     }
 }
 
-//
-// One tab-delimited line: `{kind}\t{run_at}\t{period}\t{fires}\t{lease_until}\t
-// {b64(payload)}`. lease_until is the in-flight lease deadline for a one-shot
-// (0 = not leased); payload is base64'd so arbitrary bytes round-trip safely.
+// lease_until 0 = not leased; payload is base64 so arbitrary bytes round-trip.
 
 struct Stored {
     job: Job,

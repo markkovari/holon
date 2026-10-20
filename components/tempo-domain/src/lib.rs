@@ -1,13 +1,5 @@
 //! tempo:app — a multi-person worktime logger over composed contracts.
-//!
-//! Accounts + RBAC come from the composed auth-guard (`auth:identity`). Global roles: admin
-//! (creates projects/categories, manages membership, sees all) and member; per-project
-//! memberships (member or lead): you log only against projects you belong to, and a lead sees
-//! that project's whole distribution. Everything is a `record:store` collection. A time entry
-//! carries a `day` (YYYY-MM-DD, so range filters are string compares), denormalized
-//! project/category names, and minutes. `GET /report` sums minutes by project, category,
-//! project×category, day and user, scoped by role. A "pomodoro" is start (store now) then stop
-//! (an entry with the elapsed minutes).
+//! projects; a lead sees that project's whole distribution.
 
 #[allow(warnings)]
 mod bindings {
@@ -34,7 +26,6 @@ mod bindings {
         world: "tempo:app/tempo-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -148,9 +139,6 @@ fn has_role(p: &Principal, role: &str) -> bool {
 fn is_admin(p: &Principal) -> bool {
     has_role(p, "admin")
 }
-
-// A regular user's reach is defined by per-project memberships (member | lead),
-// not a global role. Admin transcends all of it.
 
 fn my_memberships(subject: &str) -> Vec<Value> {
     records::find_by(MEMBERS, "user", &json!(subject).to_string())
@@ -469,8 +457,7 @@ fn build_entry(subject: &str, b: &Value) -> Result<Value, Outcome> {
     let minutes = b["minutes"].as_u64().unwrap_or(0);
     let day = b["day"].as_str().unwrap_or("").to_string();
     let note = b["note"].as_str().unwrap_or("").to_string();
-    // optional time-of-day (minutes from midnight) for the calendar grid; -1 =
-    // unscheduled.
+    // Minutes from midnight for the calendar grid; -1 = unscheduled.
     let start = b["start"].as_i64().unwrap_or(-1);
     if minutes == 0 {
         return Err(Outcome::Err(422, "minutes must be > 0".into()));
@@ -560,7 +547,6 @@ async fn edit_entry(request: Request, id: &str) -> Outcome {
     if let Some(project) = b["project"].as_str() {
         match name_map(PROJECTS).get(project) {
             Some(n) => {
-                // moving an entry to a project the caller can't log to is refused.
                 if !can_log(&p, project) {
                     return Outcome::Err(403, "you are not a member of that project".into());
                 }
@@ -612,8 +598,7 @@ fn save_indexed_entry(mut d: Value) -> Outcome {
     Outcome::Json(201, d.to_string())
 }
 
-/// Entries in [from,to] visible to the caller: scope=me is own; scope=all is everything for admin
-/// and the led projects' entries for a lead; a member asking for `all` falls back to own.
+/// A member asking for `scope=all` falls back to their own entries.
 fn visible_entries(p: &Principal, from: &str, to: &str, scope_all: bool) -> Vec<Value> {
     let team = scope_all && can_see_all(p);
     let led = if team { led_projects(p) } else { Some(Vec::new()) }; // None = admin (all)
@@ -697,7 +682,7 @@ fn timer_stop(request: &Request) -> Outcome {
         return Outcome::Err(404, "no running timer".into());
     };
     let started = t["started"].as_u64().unwrap_or_else(now);
-    let minutes = ((now().saturating_sub(started)) / 60).max(1); // at least a minute
+    let minutes = ((now().saturating_sub(started)) / 60).max(1);
     let entry = json!({
         "id": Value::Null, "user": p.subject, "email": email_of(&p.subject),
         "project": t["project"], "project_name": name_map(PROJECTS).get(t["project"].as_str().unwrap_or("")).cloned().unwrap_or_default(),
@@ -854,8 +839,7 @@ fn report_pdf(request: &Request, path: &str) -> Outcome {
     Outcome::File(200, "application/pdf".to_string(), name, bytes)
 }
 
-/// Truncate to `n` chars for fixed-width PDF columns (built-in fonts aren't
-/// monospaced, but short labels keep the columns readable enough).
+/// Built-in PDF fonts aren't monospaced, but short labels keep the columns readable.
 fn trunc(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
         s.to_string()
@@ -900,9 +884,8 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be before the component stops reading it. Without a ceiling,
-/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
-/// A backstop, not a content policy; uploads police their own size with a 413.
+/// Without a ceiling a read grew to wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy: uploads 413 on their own.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

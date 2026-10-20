@@ -1,11 +1,5 @@
 //! `select-probe` — an instrument for `graph:select` (see wit/probe.wit).
-//!
-//!   POST /select  {entries:[…]}                 — decide, without acting
-//!   POST /land    {entries:[…], landing:{…}}    — decide, and propose the winner
-//!
-//! Both, because the assertion that matters most is a NEGATIVE one: when nothing
-//! passed the gate, the forge must see no request at all. That is only checkable
-//! against something that would have made one.
+//! no request at all.
 
 #[allow(warnings)]
 mod bindings {
@@ -27,7 +21,6 @@ mod bindings {
         world: "comp:selectprobe/select-probe",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -41,8 +34,7 @@ use serde_json::json;
 
 struct Component;
 
-/// A ceiling on a request body, not a policy: past this the body reads as empty rather than
-/// growing until the memory cap traps the component.
+/// Past this the body reads as empty, instead of growing until the memory cap traps the component.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);

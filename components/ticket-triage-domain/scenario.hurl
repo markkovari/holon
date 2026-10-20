@@ -25,8 +25,7 @@ HTTP 201
 [Captures]
 ticket_id: jsonpath "$.id"
 
-# the fresh KV this gate run gets has exactly this one ticket, so "found at
-# all" and "found and is this one" are the same assertion here.
+# A fresh KV holds only this ticket, so "found" and "found this one" are the same assertion.
 GET {{base}}/api/tickets/search?q=charge&queue=billing
 Authorization: Bearer {{agent_billing_token}}
 HTTP 200

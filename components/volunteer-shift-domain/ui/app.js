@@ -3,7 +3,6 @@ let currentToken = null;
 let currentRole = null;
 let currentSubject = null;
 
-// DOM Elements
 const authOverlay = document.getElementById('auth-overlay');
 const userDisplay = document.getElementById('user-display');
 const logoutBtn = document.getElementById('logout-btn');
@@ -21,7 +20,6 @@ function showToast(msg) {
     setTimeout(() => t.remove(), 3000);
 }
 
-// Authentication
 async function login(subject, roles, scopes) {
     try {
         const res = await fetch('/test/token', {
@@ -73,7 +71,6 @@ logoutBtn.addEventListener('click', () => {
     shiftsList.innerHTML = '';
 });
 
-// API Calls
 async function loadShifts() {
     if (!currentToken) return;
     try {

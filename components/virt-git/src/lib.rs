@@ -1,18 +1,5 @@
 //! `virt-git` — git's object model over `blob:store`. No disk, no working copy.
-//!
-//! See `wit/git.wit` for why this exists: components have no filesystem, but a content-addressed
-//! object store is something an agent can touch.
-//!
-//! Two backing stores, for one reason each:
-//!
-//!   * **objects → `blob:store`.** Immutable and named by their own content, so a
-//!     plain put is safe: two writers storing the same object write identical
-//!     bytes to the same key.
-//!   * **refs → `comp:store/cas`.** The only mutable thing in git, so the only
-//!     thing that needs a guarded write. Two branches moving one ref without CAS
-//!     is a lost update (ADR-0065), and the lost one is somebody's work.
-//!
-//! The serialisation lives in `git.rs`, tested against the real `git` binary.
+//! thing, go through `comp:store/cas`, since a ref moved without CAS is a lost update (ADR-0065).
 
 #[allow(warnings)]
 mod bindings;
@@ -30,8 +17,7 @@ use bindings::wasi::keyvalue::store as kv;
 
 struct Component;
 
-/// The container objects live in. One per repository, so repositories cannot see each other's
-/// objects.
+/// One per repository, so repositories cannot see each other's objects.
 fn container() -> String {
     config::get("git-container")
         .ok()
@@ -47,8 +33,7 @@ fn store_err(e: blobstore::BlobError) -> GitError {
     }
 }
 
-/// Objects are keyed by their id. Fanned out by the first two characters the way
-/// git does, so a listing of one prefix stays small on a backend that lists.
+/// Fanned out by the first two characters as git does, so one prefix's listing stays small.
 fn key(id: &str) -> String {
     format!("o/{}/{}", &id[..2.min(id.len())], id)
 }
@@ -64,8 +49,7 @@ fn valid_id(id: &str) -> Result<(), GitError> {
 fn put_object(kind: &str, payload: &[u8]) -> Result<String, GitError> {
     let framed = git::frame(kind, payload);
     let id = git::id_of(&framed);
-    // Content-addressed, so a re-write is the same bytes; skipping it when present turns a re-run
-    // into a read.
+    // Content-addressed, so skipping a present object turns a re-run into a read.
     match blobstore::exists(&container(), &key(&id)) {
         Ok(true) => return Ok(id),
         Ok(false) => {}
@@ -151,11 +135,8 @@ impl ObjectsGuest for Component {
     }
 }
 
-/// A ref name that cannot collide with an object key or escape its namespace. Refs live in the
-/// app's own bucket, which the host names (ADR-0012, ADR-0023); opened per call, not cached.
+/// The app's own bucket, named by the host (ADR-0012, ADR-0023); opened per call, not cached.
 fn ref_bucket() -> Result<kv::Bucket, GitError> {
-    // "default" is the name the host maps to this app's own bucket; a guest cannot choose one
-    // (ADR-0012).
     kv::open("default").map_err(|e| GitError::Unavailable(format!("opening the ref store: {e:?}")))
 }
 
@@ -186,10 +167,8 @@ impl RefsGuest for Component {
     fn update(name: String, expect: Option<String>, to: String) -> Result<bool, GitError> {
         valid_id(&to)?;
         let k = ref_key(&name)?;
-        // The revision to guard against comes from a READ, not from the caller —
-        // the caller knows the sha it expects, and the store knows the revision
-        // that sha was at. Checking both is what makes this safe against a ref
-        // that moved and moved back.
+        // The revision comes from a READ, not the caller: checking both it and the sha is what makes
+        // this safe against a ref that moved and moved back.
         let b = ref_bucket()?;
         let current = cas::get(&b, &k).map_err(|e| GitError::Unavailable(format!("{e:?}")))?;
         let (revision, have) = match &current {
@@ -197,8 +176,7 @@ impl RefsGuest for Component {
             None => (0, None),
         };
         if have.as_deref() != expect.as_deref() {
-            // Someone else moved it. Not an error — the caller re-reads and
-            // decides, which is the whole point of saying so plainly.
+            // Someone else moved it: not an error, the caller re-reads and decides.
             return Ok(false);
         }
         match cas::set(&b, &k, to.as_bytes(), revision) {
@@ -239,8 +217,6 @@ fn entry_at(commit: &str, segs: &[String]) -> Result<Option<TreeEntry>, GitError
             return Ok(Some(found));
         }
         if found.mode != "40000" {
-            // A path continuing through a file is not a missing path, it is a
-            // caller who thinks a file is a directory.
             return Err(GitError::Invalid(format!("{} is a file, not a directory", found.name)));
         }
         tree = found.id;
@@ -248,10 +224,8 @@ fn entry_at(commit: &str, segs: &[String]) -> Result<Option<TreeEntry>, GitError
     Ok(None)
 }
 
-/// Rewrite `tree` so that `segs` maps to `want` (or is removed), returning the
-/// new tree id. Recursive, and only along the path — every sibling subtree is
-/// reused by id, which is why the cost is the depth of the change rather than
-/// the size of the repository.
+/// Only along the path: siblings are reused by id, so the cost is the change's depth, not the
+/// repository's size.
 fn splice(tree: &str, segs: &[String], want: Option<(String, String)>) -> Result<String, GitError> {
     let mut entries = if tree.is_empty() {
         Vec::new()
@@ -273,8 +247,7 @@ fn splice(tree: &str, segs: &[String], want: Option<(String, String)>) -> Result
             .unwrap_or_default();
         let new_sub = splice(&sub, &segs[1..], want)?;
         entries.retain(|e| &e.name != name);
-        // An empty subtree is dropped rather than written: git has no empty directories, and
-        // keeping one would make our tree ids disagree with git's.
+        // git has no empty directories; writing one would make our tree ids disagree with git's.
         if !new_sub.is_empty() {
             entries.push(TreeEntry { mode: "40000".into(), name: name.clone(), id: new_sub });
         }

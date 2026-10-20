@@ -1,10 +1,4 @@
 //! status:app — uptime monitor over composed capability contracts.
-//!
-//! The pump (`POST /api/tick`): timer::due, probe each monitor's URL over outgoing HTTP, fire
-//! `recover`/`fail` on its fsm instance when legal, and on a real transition publish to the bus
-//! and optionally alert via webhook. up -> degraded -> down takes two consecutive failures; one
-//! good probe recovers from either.
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -28,7 +22,6 @@ mod bindings {
         world: "status:app/status-app",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -320,9 +313,8 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-/// The most a request body may be before the component stops reading it. Without a ceiling,
-/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
-/// A backstop, not a content policy; uploads police their own size with a 413.
+/// Without a ceiling a read grew to wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy: uploads 413 on their own.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

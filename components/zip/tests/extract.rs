@@ -1,8 +1,5 @@
-//! The specification for reading an archive, held out.
-//!
-//! The fixture is a REAL `.xlsx` written by Python's `zipfile` with `ZIP_DEFLATED`: every entry
-//! is method 8, with sizes and CRCs from a writer that is not this one. A round trip through our
-//! own `archive()` would only prove the writer and reader agree.
+//! The fixture is written by Python's `zipfile` (DEFLATED): a round trip through our own
+//! `archive()` would only prove the writer and reader agree.
 
 use zip::{archive, extract, File, ZipError};
 
@@ -27,8 +24,7 @@ fn a_real_deflated_xlsx_reads_back() {
     assert!(sst.contains("<t>Charizard</t>"), "the shared strings");
 }
 
-/// Catches an inflate that stops early — the failure mode that still produces
-/// plausible-looking XML.
+/// An inflate that stops early still produces plausible-looking XML.
 #[test]
 fn inflated_entries_are_whole() {
     for f in &extract(XLSX).expect("a real .xlsx") {
@@ -41,7 +37,6 @@ fn inflated_entries_are_whole() {
     }
 }
 
-/// Our own STORE archives still read back, so writer and reader agree.
 #[test]
 fn store_round_trips() {
     let files = vec![
@@ -69,8 +64,7 @@ fn something_that_is_not_a_zip() {
     );
 }
 
-/// A byte flipped inside the data. The archive still parses, the entry still
-/// yields something, and the CRC says it is not the file.
+/// The archive still parses; only the CRC says it is not the file.
 #[test]
 fn a_corrupted_entry_is_refused_rather_than_returned() {
     let files = vec![File { name: "a.txt".into(), data: b"the original contents".to_vec() }];

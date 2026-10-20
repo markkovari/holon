@@ -1,12 +1,5 @@
 //! `system-cron` — read the machine's scheduled jobs, for a component that
-//! cannot read crontab
-//!
-//! The read happens in `comp-cron`, native because crontab is the host's (ADR-0095). This is the
-//! component side: it holds the contract and reaches the daemon over HTTP, as `fs-watcher`
-//! reaches `comp-fswatch`.
-//! What this may dial is a MANIFEST decision (ADR-0008): the daemon's address is `cron-url` in
-//! `wasi:config`, and the egress allow-list decides whether the call leaves. The daemon needs no
-//! allow-list of its own: there is only one crontab to read.
+//! needs no allow-list of its own, there is only one crontab.
 
 #[allow(warnings)]
 mod bindings;
@@ -21,14 +14,13 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Ten seconds: reading a crontab is one process spawn, so slower means a daemon in trouble.
+/// Reading a crontab is one process spawn, so slower means a daemon in trouble.
 const TIMEOUT_NS: u64 = 10_000_000_000;
 
 fn daemon_url() -> Result<String, CronError> {
     match config::get("cron-url") {
         Ok(Some(u)) if !u.is_empty() => Ok(u),
-        // Unavailable rather than any other variant: nobody refused anything,
-        // the deployment simply never said where the daemon is.
+        // Unavailable: nobody refused anything, the deployment never said where the daemon is.
         _ => Err(CronError::Unavailable(
             "cron-url is not set — this component has nowhere to ask".into(),
         )),
@@ -50,9 +42,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), CronError> {
     Ok((scheme, authority, path))
 }
 
-/// POST the request and return the body. Every failure is `unavailable`: the
-/// daemon's own refusals arrive as JSON with a 200, so anything at this level
-/// is the transport rather than an answer.
+/// Every failure is `unavailable`: the daemon's own refusals arrive as JSON with a 200.
 fn post(body: Vec<u8>) -> Result<Vec<u8>, CronError> {
     let url = daemon_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
@@ -60,10 +50,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, CronError> {
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // A shared secret, if the deployment set one — see
-    // `comp_daemon_kit`'s own doc for why loopback
-    // binding alone is not a boundary. Absent means the daemon was
-    // started with no --token, so there is nothing to send.
+    // Loopback binding alone is not a boundary (see `comp_daemon_kit`); absent means no --token.
     if let Ok(Some(token)) = config::get("cron-token") {
         if !token.is_empty() {
             let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
@@ -78,9 +65,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, CronError> {
     let out = req.body().map_err(|_| net("body"))?;
     {
         let stream = out.write().map_err(|_| net("write"))?;
-        // Chunked: `blocking-write-and-flush` traps above 4096 bytes. The
-        // body here is always small (`{}`), but the shape matches the rest of
-        // this repo's HTTP clients.
+        // `blocking-write-and-flush` traps above 4096 bytes.
         for chunk in body.chunks(4096) {
             stream
                 .blocking_write_and_flush(chunk)
@@ -110,9 +95,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, CronError> {
         match stream.blocking_read(8192) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went
-            // wrong, and returning what arrived would be a truncated answer
-            // presented as a whole one.
+            // Anything else would present a truncated answer as a whole one.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -120,8 +103,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, CronError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser: the replies are flat, so serde would be more
-/// code than what it reads.
+/// No parser: the replies are flat.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];
@@ -173,8 +155,6 @@ mod tests {
         assert_eq!(jobs[1].command, "/usr/bin/ping.sh");
     }
 
-    /// An empty job list is a legitimate answer — no crontab installed is not
-    /// a failure — and must not read as an error.
     #[test]
     fn an_empty_job_list_is_not_an_error() {
         let json = r#"{"jobs":[]}"#;

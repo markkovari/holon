@@ -1,12 +1,5 @@
 //! drop:app — a presigned direct-upload drop-box over composed contracts.
-//!
-//! Presigned-ticket axis: the backend never streams the payload IN. `POST /api/tickets` answers
-//! only the policy question via `upload::gate` and returns a signed, expiring ticket; the client
-//! `PUT`s the bytes at `/api/blob/{token}`, we `upload::redeem` it (HMAC + expiry), store the
-//! bytes in `blob::store` and the metadata in `records::store`.
-//! Downloads go out under a `webhook::sign` HMAC token: `/api/object/{id}` returns `{sig, exp}`
-//! and `/api/blob/{id}?sig=&exp=` streams only if it verifies and hasn't expired, so no auth
-//! component and no exposed store.
+//! policy), and downloads are HMAC-signed links, so no auth component and no exposed store.
 
 #[allow(warnings)]
 mod bindings {
@@ -30,7 +23,6 @@ mod bindings {
         world: "drop:app/upload-drop",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -53,10 +45,8 @@ struct Component;
 
 const META: &str = "objects";
 const CONTAINER: &str = "drop";
-/// The download-link signing secret: a deploy-time key, not a request secret. Swap via a real
-/// secret in production.
+/// A deploy-time key, not a request secret; use a real secret in production.
 const LINK_SECRET: &str = "drop-download-link-secret";
-/// Signed download links live this long.
 const LINK_TTL: u64 = 300;
 
 impl Guest for Component {
@@ -130,8 +120,7 @@ async fn make_ticket(request: Request) -> Outcome {
     }
 }
 
-/// Redeem the ticket, store the raw body under the granted object-key and write metadata. Policy
-/// was decided at ticket time, so the body streams into the store once.
+/// Policy was decided at ticket time, so the body streams into the store once.
 async fn put_blob(request: Request, token: &str) -> Outcome {
     let grant = match upload::redeem(token) {
         Ok(g) => g,
@@ -144,8 +133,7 @@ async fn put_blob(request: Request, token: &str) -> Outcome {
     if data.len() as u64 > grant.max_size {
         return Outcome::err(413, "body exceeds granted max-size");
     }
-    // Create the metadata record first so the store mints the id; the blob is keyed under that
-    // SAME id so download reads the right object.
+    // The record first, so the store mints the id the blob is keyed under.
     let seed = json!({
         "object_key": grant.object_key,
         "content_type": grant.content_type,
@@ -218,9 +206,7 @@ fn get_blob(id: &str, path: &str) -> Outcome {
     }
 }
 
-/// Sign `id
-/// exp` with the download secret using the signer's stripe scheme; the header string is opaque to
-/// the client.
+/// Stripe scheme; the header string is opaque to the client.
 fn sign_link(id: &str) -> (String, u64) {
     let exp = now() + LINK_TTL;
     let payload = format!("{id}|{exp}");
@@ -235,7 +221,7 @@ fn verify_link(id: &str, exp: u64, sig: &str) -> bool {
         return false;
     }
     let payload = format!("{id}|{exp}");
-    // tolerance is generous — we already gate on `exp` ourselves above.
+    // Generous tolerance: `exp` is already gated above.
     sign::verify(payload.as_bytes(), sig, LINK_SECRET, sign::Scheme::Stripe, LINK_TTL + 60).is_ok()
 }
 
@@ -296,9 +282,7 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
         .map_err(|e| Outcome::Json(400, json!({"error": format!("bad json: {e}")}).to_string()))
 }
 
-/// A ceiling on a request body, not a policy: past this the read stops and the
-/// caller is told, rather than growing until the store's memory cap traps the
-/// component and the connection simply closes.
+/// Past this the read stops and the caller is told, instead of the memory cap trapping the component.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

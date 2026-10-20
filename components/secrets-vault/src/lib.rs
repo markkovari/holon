@@ -1,17 +1,5 @@
 //! `secrets-vault` — store secrets envelope-encrypted, so an API key never sits in plaintext beside ordinary data
-//!
-//! An envelope-encryption vault on `wasi:keyvalue`. Every secret *value version* is sealed with
-//! AEAD (ChaCha20-Poly1305) under a per-vault **master key**, so only ciphertext lives in the
-//! backend. The master key is never persisted: it comes from `wasi:config/store` (`master-key`,
-//! base64 STANDARD, exactly 32 bytes) and is read fresh on each call.
-//! Each version is encrypted independently with a fresh random 96-bit nonce; the stored blob is
-//! `nonce
-//!
-//! ciphertext` (base64). Old versions stay decryptable after a rotation (`get-version`).
-//! State (BUCKET = "default"): `sv_meta_{name}` -> "{version}:{updated}"; `sv_{name}_v{version}`
-//! -> base64(nonce
-//!
-//! ciphertext); `sv_index` -> newline-joined secret names.
+//! its own random nonce, so old versions stay decryptable after a rotation.
 
 #[allow(warnings)]
 mod bindings;
@@ -31,14 +19,13 @@ struct Component;
 
 const BUCKET: &str = "default";
 const INDEX_KEY: &str = "sv_index";
-const NONCE_LEN: usize = 12; // ChaCha20-Poly1305 uses a 96-bit nonce.
+const NONCE_LEN: usize = 12;
 
 fn now() -> u64 {
     wall_clock::now().seconds
 }
 
-/// Sanitize a secret name to NATS-legal kv chars (same byte scheme as idempotency-guard's
-/// `id_key`).
+/// Same byte scheme as idempotency-guard's `id_key`.
 fn safe_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for b in name.bytes() {
@@ -58,8 +45,7 @@ fn version_key(name: &str, version: u32) -> String {
     format!("sv_{}_v{version}", safe_name(name))
 }
 
-/// Build the AEAD cipher from the config-injected master key; anything but 32 base64 bytes is a
-/// `crypto` error (the host mis-provisioned the vault).
+/// Anything but 32 base64 bytes is a `crypto` error: the host mis-provisioned the vault.
 fn cipher() -> Result<ChaCha20Poly1305, VaultError> {
     let raw = match config::get("master-key") {
         Ok(Some(v)) => v,
@@ -77,9 +63,7 @@ fn cipher() -> Result<ChaCha20Poly1305, VaultError> {
             master.len()
         )));
     }
-    // `Key::from_slice` is deprecated and panics on the wrong length; the length
-    // is already checked above, so this converts explicitly and keeps the failure
-    // a `VaultError` rather than a trap inside a component.
+    // Not the deprecated `Key::from_slice`, which panics: a wrong length stays a `VaultError`.
     let key: [u8; 32] = master
         .as_slice()
         .try_into()
@@ -166,9 +150,8 @@ fn write_meta(
     set_str(bucket, &meta_key(name), &format!("{version}:{updated}"))
 }
 
-// Best-effort registry of secret names for `list-names`, read-modify-write like
-// idempotency-guard's reservation: concurrent first-puts of distinct names can clobber each
-// other's entry (no compare-and-swap in `wasi:keyvalue@0.2.0-draft`).
+// Best-effort read-modify-write (no CAS in `wasi:keyvalue@0.2.0-draft`): concurrent first-puts
+// of distinct names can clobber each other's entry.
 
 fn read_index(bucket: &kv::Bucket) -> Result<Vec<String>, VaultError> {
     Ok(match get_str(bucket, INDEX_KEY)? {
@@ -249,8 +232,6 @@ impl Guest for Component {
 
     fn delete(name: String) -> Result<(), VaultError> {
         let bucket = open()?;
-        // Iterate and delete every version blob up to the current one, then the
-        // meta + index entry. Idempotent: a missing meta means nothing to do.
         if let Some((current, _)) = read_meta(&bucket, &name)? {
             for version in 1..=current {
                 delete_key(&bucket, &version_key(&name, version))?;

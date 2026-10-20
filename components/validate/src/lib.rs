@@ -1,10 +1,5 @@
 //! `validate` — validate input against declared per-field rules and return structured errors
-//!
-//! Pure compute. The JSON object is parsed once and every rule checked, collecting *all* failures
-//! as `field-error`s (empty = valid). Per rule, in order: `required`, kind, string length (char
-//! counts, only when non-zero), format class (email shape / ASCII-alphanumeric / UUID), numeric
-//! range (inclusive), `one-of`. Unknown keys are ignored; non-object or unparseable `json` yields
-//! a single `format` error on the empty field.
+//! field.
 
 #[allow(warnings)]
 mod bindings;
@@ -19,8 +14,6 @@ fn err(field: &str, code: &str, message: impl Into<String>) -> FieldError {
     FieldError { field: field.to_string(), code: code.to_string(), message: message.into() }
 }
 
-/// Basic email shape: exactly one '@', non-empty local part, domain contains a
-/// '.', and no whitespace anywhere.
 fn is_email_shape(s: &str) -> bool {
     if s.chars().any(|c| c.is_whitespace()) {
         return false;

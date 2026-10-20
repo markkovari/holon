@@ -1,12 +1,9 @@
 //! `rot13` — obscure text with the ROT13 letter substitution, and reverse it
-
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::demo::rot13::cipher::Guest;
 struct Component;
 
-/// ROT13 every ASCII letter (a↔n, A↔N), leaving digits, punctuation and spaces
-/// unchanged. UNIMPLEMENTED — the goal. The tests are the spec.
 pub fn rot13(text: &str) -> String {
     text.chars()
         .map(|c| match c {

@@ -1,6 +1,5 @@
 //! `version-probe` — answers with the tag it was BUILT with.
-//!
-//! `option_env!` is resolved at compile time, so `COMP_VERSION_TAG=alpha` and `=beta` produce different bytes and digests: "which build is this node running" is answerable from outside, not a version field someone could set wrong.
+//! node runs is answerable from outside, not a version field someone could set wrong.
 
 #[allow(warnings)]
 mod bindings {
@@ -13,7 +12,6 @@ mod bindings {
         world: "comp:versionprobe/version-probe",
         generate_all,
     });
-    /// Stable names for the p3 `wasi:http` (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http::handler;
         pub use super::wasi::http;
@@ -28,8 +26,7 @@ guestio::guest_p3_respond!();
 
 struct Component;
 
-/// Baked in at build time; `unset` when nobody passed one. The TAG is the artifact's identity;
-/// what the version CAN DO is loaded from config at startup.
+/// The TAG is the artifact's identity; what the version CAN DO is loaded from config at startup.
 const TAG: &str = match option_env!("COMP_VERSION_TAG") {
     Some(v) => v,
     None => "unset",
@@ -37,9 +34,8 @@ const TAG: &str = match option_env!("COMP_VERSION_TAG") {
 
 impl Guest for Component {
     async fn handle(_request: Request) -> Result<Response, ErrorCode> {
-        // Capabilities are LOADED at startup from `wasi:config/store` key `capabilities` (a
-        // `name:semver` list); nothing is baked in. A version advertising nothing is not healthy:
-        // health is "I was given a registry and can do something", reported by the running code.
+        // A version advertising nothing is not healthy: health is "I was given a registry and can do
+        // something", reported by the running code.
         let registry = config::get("capabilities").ok().flatten().unwrap_or_default();
         let items: Vec<(&str, &str)> = registry
             .lines()

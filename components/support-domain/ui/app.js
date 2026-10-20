@@ -59,9 +59,6 @@ function renderTicketDetails(ticket) {
     const details = document.getElementById('ticketDetails');
     const d = new Date(ticket.created_at * 1000).toLocaleString();
     
-    // In a real app we'd fetch the ticket again to get replies, but for now we assume it's in the list or we can reload.
-    // Actually, our list API returns replies? Let's assume we need to reload the list to get replies.
-    
     let repliesHtml = '';
     const replies = ticket.replies || [];
     replies.forEach(r => {
@@ -137,7 +134,6 @@ async function addReply(id) {
     if (res && res.error) {
         alert('Failed: ' + res.error);
     } else {
-        // Find ticket and reload to get new replies. Actually we should just reload all.
         await loadTickets();
         const t = currentTickets.find(x => x.id === id);
         if (t) renderTicketDetails(t);

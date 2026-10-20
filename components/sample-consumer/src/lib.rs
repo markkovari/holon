@@ -1,13 +1,4 @@
 //! Sample HTTP consumer. Proves the auth:identity contract: every request is
-//! guarded by a single `authorizer.authorize(token, required)` call.
-//!
-//! - No `Authorization: Bearer <token>` header           -> 401
-//! - Token valid but lacks the required permission        -> 403
-//! - Token valid and authorized                           -> 200 + principal
-//!
-//! The required permission for this demo endpoint is { target: "demo",
-//! action: "read" }.
-
 #[allow(warnings)]
 mod bindings;
 
@@ -50,7 +41,6 @@ fn guard(request: &IncomingRequest) -> Result<Principal, AuthError> {
 guestio::guest_bearer!();
 use bearer as bearer_token;
 
-/// Map an auth-error to (HTTP status, message).
 fn error_response(e: &AuthError) -> (u16, &'static str) {
     match e {
         AuthError::InsufficientScope(_) => (403, "insufficient_scope"),

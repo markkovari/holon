@@ -1,16 +1,8 @@
-//! Git's object serialisation, as pure functions.
-//!
-//! Separated from the component so it can be tested natively against the real `git` binary: every
-//! id is checked against `git hash-object` and `git mktree`, because "hashes consistently" and
-//! "hashes the way git does" are different claims. No WASI, no storage, no bindings.
+//! Pure, so it is tested against the real `git` binary: hashing consistently is not hashing as git does.
 
 use sha1::{Digest, Sha1};
 
-/// `<type> <len>\0<payload>` — the bytes git hashes, and the bytes stored.
-///
-/// Stored WITH the header rather than without: it makes an object
-/// self-describing, so a read knows what it got, and it makes the id
-/// re-checkable against the content at any time.
+/// Stored WITH the header: an object is self-describing and its id re-checkable at any time.
 pub fn frame(kind: &str, payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(payload.len() + 32);
     out.extend_from_slice(kind.as_bytes());
@@ -40,8 +32,7 @@ pub fn unframe(bytes: &[u8]) -> Result<(String, &[u8]), String> {
     let len: usize = len.parse().map_err(|_| format!("header length {len:?} is not a number"))?;
     let payload = &bytes[nul + 1..];
     if payload.len() != len {
-        // A truncated object that still parses is the worst kind, because it
-        // reads as valid and produces a wrong tree.
+        // A truncated object that still parses reads as valid and yields a wrong tree.
         return Err(format!("object says {len} bytes and carries {}", payload.len()));
     }
     Ok((kind.to_string(), payload))
@@ -54,10 +45,8 @@ pub struct Entry {
     pub id: String,
 }
 
-/// Entries sort by name, except that a SUBTREE sorts as though its name ended in
-/// `/`. So `foo` the file comes before `foo.txt`, and `foo` the directory comes
-/// after it — because `foo/` > `foo.`. Get this wrong and the tree still
-/// serialises, still hashes, and hashes to something git does not agree with.
+/// A SUBTREE sorts as though its name ended in `/` (file `foo` < `foo.txt` < dir `foo`); get it
+/// wrong and the tree still hashes, to an id git disagrees with.
 fn sort_key(e: &Entry) -> Vec<u8> {
     let mut k = e.name.as_bytes().to_vec();
     if e.mode == "40000" {
@@ -69,8 +58,7 @@ fn sort_key(e: &Entry) -> Vec<u8> {
 pub fn tree_payload(entries: &[Entry]) -> Result<Vec<u8>, String> {
     let mut sorted: Vec<&Entry> = entries.iter().collect();
     sorted.sort_by_key(|e| sort_key(e));
-    // Two entries with the same name would produce a tree git refuses to read,
-    // and the failure would land somewhere far away from the cause.
+    // Duplicate names make a tree git refuses to read, failing far from the cause.
     for w in sorted.windows(2) {
         if w[0].name == w[1].name {
             return Err(format!("two entries named {:?} in one tree", w[0].name));
@@ -99,10 +87,8 @@ pub fn parse_tree(payload: &[u8]) -> Result<Vec<Entry>, String> {
     while i < payload.len() {
         let sp = payload[i..].iter().position(|b| *b == b' ').ok_or("tree entry has no space")? + i;
         let nul = payload[i..].iter().position(|b| *b == 0).ok_or("tree entry has no NUL")? + i;
-        // Found independently, so an entry with no real space before its NUL —
-        // where the next space byte the scan finds is actually inside the
-        // 20-byte binary id that follows — would otherwise put `sp` past `nul`
-        // and panic slicing `payload[sp + 1..nul]` below.
+        // Found independently: with no real space before the NUL, the next space may sit inside the
+        // binary id, putting `sp` past `nul` and panicking the slice below.
         if sp >= nul {
             return Err("tree entry's space is not before its NUL".into());
         }
@@ -129,10 +115,7 @@ pub struct Commit {
     pub message: String,
 }
 
-/// The commit payload, in the order git writes it.
-///
-/// Timezone fixed at `+0000` and time from the caller, so the same inputs always produce the same
-/// commit id.
+/// Timezone fixed at `+0000`, time from the caller, so the same inputs give the same commit id.
 pub fn commit_payload(c: &Commit) -> Result<Vec<u8>, String> {
     if c.tree.len() != 40 {
         return Err(format!("tree id {:?} is not a sha", c.tree));
@@ -149,8 +132,7 @@ pub fn commit_payload(c: &Commit) -> Result<Vec<u8>, String> {
     s.push_str(&format!("committer {who} {} +0000\n", c.when));
     s.push('\n');
     s.push_str(&c.message);
-    // git's own commits end with a newline; without one, `git log` runs the
-    // next thing onto the same line.
+    // git's commits end with a newline; without one, `git log` runs the next thing onto the line.
     if !c.message.ends_with('\n') {
         s.push('\n');
     }
@@ -173,8 +155,7 @@ pub fn parse_commit(payload: &[u8]) -> Result<Commit, String> {
         } else if let Some(v) = line.strip_prefix("parent ") {
             c.parents.push(v.trim().to_string());
         } else if let Some(v) = line.strip_prefix("author ") {
-            // `Name <email> <seconds> <tz>` — take the identity and the seconds,
-            // and drop the offset, which we always write as +0000 anyway.
+            // `Name <email> <seconds> <tz>`; the offset is always written as +0000 anyway.
             let mut parts: Vec<&str> = v.rsplitn(3, ' ').collect();
             parts.reverse();
             if parts.len() == 3 {
@@ -232,8 +213,7 @@ mod tests {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
-    /// Ask the real git binary. `None` when git is not installed, so the
-    /// assertions can skip rather than fail for the wrong reason.
+    /// `None` without git installed, so assertions skip rather than fail for the wrong reason.
     fn git(args: &[&str], stdin: Option<&[u8]>) -> Option<String> {
         let mut c = Command::new("git");
         c.args(args)
@@ -251,8 +231,6 @@ mod tests {
         Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
-    /// The claim is not "we hash consistently", it is "we hash the way git does".
-    /// Only the real binary can settle that.
     #[test]
     fn a_blob_id_is_the_id_git_gives_it() {
         for content in [
@@ -271,9 +249,6 @@ mod tests {
         }
     }
 
-    /// Tree ordering is the classic way to get a subtly wrong id: a subtree sorts
-    /// as though its name ended in `/`, so `foo` the DIRECTORY comes after
-    /// `foo.txt` while `foo` the FILE comes before it.
     #[test]
     fn a_tree_id_is_the_id_git_gives_it_including_the_ordering_trap() {
         let empty = id_of(&frame("blob", b""));
@@ -296,8 +271,7 @@ mod tests {
         entries[1].id = sub_id.clone();
         let ours = id_of(&frame("tree", &tree_payload(&entries).unwrap()));
 
-        // `git mktree` sorts nothing — it takes what it is given in order and
-        // trusts it — so feeding it the same entries proves OUR ordering matches.
+        // `git mktree` keeps the given order, so feeding it the same entries proves OUR ordering.
         let mut spec = String::new();
         for e in &entries {
             let kind = if e.mode == "40000" { "tree" } else { "blob" };
@@ -373,7 +347,6 @@ mod tests {
         assert!(tree_payload(&bad).is_err(), "040000 is not how git writes a subtree");
     }
 
-    /// The commit id must be a function of the inputs alone.
     #[test]
     fn a_commit_id_does_not_move_with_the_clock() {
         let c = Commit {

@@ -1,11 +1,5 @@
 //! scribe:app — a collaborative document editor over composed contracts.
-//!
-//! A document is one `crdt:merge` `lwwmap` state persisted in `record:store` (one row per doc,
-//! found by an indexed `doc` field). An edit is an op `{field, value, ts, replica}` merged with
-//! `lwwmap-set` under optimistic concurrency (record `revision` is the CAS token); on conflict it
-//! reloads and re-merges, safe because CRDT merge is commutative and idempotent. `GET /events`
-//! holds the connection open and pushes the merged document whenever its revision changes (SSE on
-//! wasip2, as in pulse).
+//! and idempotent.
 
 #[allow(warnings)]
 mod bindings {
@@ -29,7 +23,6 @@ mod bindings {
         world: "scribe:app/scribe-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -59,7 +52,7 @@ const PRESENCE: &str = "presence";
 const POLL_MS: u64 = 600;
 const MAX_TICKS: u32 = 900; // ~9 min connection cap; the client's EventSource reconnects.
 const PRESENCE_WINDOW: u64 = 15; // seconds since last heartbeat to count as "editing"
-const MAX_RETRY: u32 = 8; // optimistic-merge retries on revision conflict
+const MAX_RETRY: u32 = 8;
 const MAX_FIELD_LEN: usize = 20_000;
 
 impl Guest for Component {
@@ -70,7 +63,6 @@ impl Guest for Component {
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         match (&method, seg.as_slice()) {
-            //
             (Method::Get, ["api", "docs", doc, "events"]) => stream_events(doc, &path),
             _ => {
                 let outcome = match (&method, seg.as_slice()) {
@@ -113,12 +105,8 @@ fn usage_json() -> Outcome {
     )
 }
 
-/// The stored row for `doc`, if any: (record id, crdt lwwmap state, revision).
-/// If more than one row somehow exists for a doc, the earliest (lowest id) wins
-/// deterministically.
-// ponytail: a first-write race could create two rows for a doc; the earliest-id
-// tie-break keeps reads deterministic. Harden with a keyed put or a lock if it
-// matters (rung 2).
+// ponytail: a first-write race can create two rows for a doc; the earliest id wins so reads
+// stay deterministic. Harden with a keyed put or a lock if it matters (rung 2).
 fn load(doc: &str) -> Doc {
     let mut entries = records::find_by(DOCS, "doc", &json!(doc).to_string()).unwrap_or_default();
     entries.sort_by(|a, b| a.id.cmp(&b.id));
@@ -127,8 +115,7 @@ fn load(doc: &str) -> Doc {
             let d = serde_json::from_str::<Value>(&e.data).unwrap_or_else(|_| json!({}));
             Doc {
                 id: Some(e.id),
-                // `meta` = scalar fields (title, …) as an lwwmap; `body` = an
-                // rga text sequence. Older single-`state` rows read as meta.
+                // `meta`: an lwwmap of scalars; `body`: rga text. Older single-`state` rows read as meta.
                 meta: d["meta"]
                     .as_str()
                     .or_else(|| d["state"].as_str())
@@ -165,8 +152,7 @@ fn body_text(body: &str) -> String {
         .unwrap_or_default()
 }
 
-/// The full document view: scalar fields + `body` text + `body_elems` (the rga
-/// `{id, ch}` list the client maps cursor positions against for id-anchored ops).
+/// `body_elems` is the rga `{id, ch}` list the client maps cursor positions against.
 fn doc_json(doc: &str, d: &Doc) -> Value {
     let mut fields = merged_doc(&d.meta);
     if let Some(obj) = fields.as_object_mut() {
@@ -211,7 +197,6 @@ async fn apply_op(request: Request, doc: &str) -> Outcome {
 
     for _ in 0..MAX_RETRY {
         let cur = load(doc);
-        //
         let (new_meta, new_body, before, after) = match field.as_str() {
             "body" => {
                 let before = body_text(&cur.body);
@@ -246,8 +231,7 @@ async fn apply_op(request: Request, doc: &str) -> Outcome {
         };
         match res {
             Ok(entry) => {
-                // History only when the value actually changed (a losing LWW op,
-                // or an idempotent re-delete, leaves before == after).
+                // A losing LWW op or an idempotent re-delete leaves before == after.
                 if before != after {
                     record_history(doc, entry.revision, &field, &replica, &before, &after);
                 }
@@ -261,8 +245,6 @@ async fn apply_op(request: Request, doc: &str) -> Outcome {
     Outcome::Err(409, "too much contention, retry".into())
 }
 
-/// Apply an id-anchored rga op to the body: `insert` (`{after, text, ts, seq}`) or `delete`
-/// (`{ids}`).
 #[allow(clippy::result_large_err)]
 fn apply_body_op(body_state: &str, req: &Value, replica: &str) -> Result<String, Outcome> {
     match req["kind"].as_str().unwrap_or("") {
@@ -275,8 +257,7 @@ fn apply_body_op(body_state: &str, req: &Value, replica: &str) -> Result<String,
             if text.len() > MAX_FIELD_LEN {
                 return Err(Outcome::Err(422, "insert too long".into()));
             }
-            // Build a globally-unique, sortable id-base: ts dominates, so later
-            // edits sort first among same-anchor siblings; replica + seq break
+            // ts dominates, so later edits sort first among same-anchor siblings; replica + seq break
             // ties. The client mints the SAME shape so it can predict ids.
             let ts = req["ts"].as_u64().unwrap_or_else(|| now() * 1000);
             let seq = req["seq"].as_u64().unwrap_or(0);
@@ -294,8 +275,7 @@ fn apply_body_op(body_state: &str, req: &Value, replica: &str) -> Result<String,
     }
 }
 
-// ponytail: history grows unbounded (one row per real change); fine for a demo.
-// Cap it (keep last N) or roll up if a doc sees heavy editing.
+// ponytail: history grows unbounded (a row per real change); cap or roll up under heavy editing.
 fn record_history(doc: &str, rev: u64, field: &str, replica: &str, before: &str, after: &str) {
     let h = json!({
         "doc": doc, "rev": rev, "field": field, "replica": replica,
@@ -304,8 +284,6 @@ fn record_history(doc: &str, rev: u64, field: &str, replica: &str, before: &str,
     let _ = records::create(HISTORY, &h.to_string(), &["doc".to_string()]);
 }
 
-/// Per-revision history, newest first: each entry carries a unified diff (from
-/// `diff:text`) of what that edit changed in the field.
 fn get_history(doc: &str, path: &str) -> Outcome {
     let limit = query_i64(path, "limit").unwrap_or(25).clamp(1, 200) as usize;
     let mut rows: Vec<Value> = records::find_by(HISTORY, "doc", &json!(doc).to_string())
@@ -384,16 +362,14 @@ fn presence(doc: &str) -> Outcome {
     Outcome::Json(200, json!({ "online": online }).to_string())
 }
 
-/// Hold the connection open and push the merged document whenever its revision
-/// changes. Sends the current document immediately (so a late joiner is caught
-/// up), then loops until the client disconnects or the cap is hit.
+/// Sends the current document first, so a late joiner is caught up.
 fn stream_events(doc: &str, path: &str) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
     let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
 
-    // start below any client-supplied rev so the first tick always pushes.
+    // Below any client-supplied rev, so the first tick always pushes.
     let mut cursor = query_i64(path, "rev").unwrap_or(-1);
     let doc = doc.to_string();
 
@@ -412,7 +388,7 @@ fn stream_events(doc: &str, path: &str) -> Result<Response, ErrorCode> {
                 ": ping\n\n".to_string()
             };
             if !stream.write_all(frame.into_bytes()).await.is_empty() {
-                break; // client disconnected
+                break;
             }
             monotonic_clock::wait_for(POLL_MS * 1_000_000).await;
         }
@@ -449,9 +425,8 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be before the component stops reading it. Without a ceiling,
-/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
-/// A backstop, not a content policy; uploads police their own size with a 413.
+/// Without a ceiling a read grew to wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy: uploads 413 on their own.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

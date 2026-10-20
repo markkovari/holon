@@ -1,7 +1,4 @@
 //! `ticket-triage-domain` — router (scaffold, not part of the goal).
-//!
-//! `src/handlers.rs` is the goal. This file answers `/health` and mints a test token at `POST /test/token` `{"subject","roles":[...],"scopes":[...]}`, a fixture so a gate never drives a real register/login flow.
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -28,7 +25,6 @@ mod bindings {
         world: "ticket:triage/ticket-triage-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -91,8 +87,7 @@ pub fn now_secs() -> u64 {
     system_clock::now().seconds as u64
 }
 
-/// A test token minted directly: the ROUTER's fixture, never `handlers.rs`'s, so a fixture
-/// minting its own tokens cannot drift from what the verifier accepts.
+/// The ROUTER's fixture, never `handlers.rs`'s, so it cannot drift from what the verifier accepts.
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let subject = req.get("subject").and_then(Value::as_str).unwrap_or("test").to_string();
