@@ -1,10 +1,4 @@
-//! What `agent-runtime` says happened, as data: the events a run, a tool call, an approval and a coding
-//! session announce ([`Event`]), and the [`RunRecord`] a run ends in.
-//!
-//! The runtime owns what these mean; it re-exports them where they always were
-//! (`agent_runtime::agent::Event`, `agent_runtime::store::RunRecord`, ...). They live here, with no I/O,
-//! so that what draws them (the agent board) and what carries them (a stream to another machine) can be
-//! built for a browser too, where the runtime itself cannot.
+//! agent-runtime's events and run records as plain data, so the board can be built for wasm.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

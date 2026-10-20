@@ -1,17 +1,7 @@
-//! A burst of the window's frames as one GIF: how the board's motion is shown in a pull request rather
-//! than described.
-//!
-//! A frame keeps only the rectangle that changed since the one before, and inside it what did not
-//! change is transparent, so a board standing still costs nothing and a turning badge costs its own
-//! pixels. A frame is written when the next one arrives, so how long it stays up is how long it was on
-//! screen, measured rather than assumed.
-
 use std::fs::File;
 use std::io::BufWriter;
 use std::time::Instant;
 
-/// An image half as wide and half as tall, each pixel the mean of the four it stands for: a retina
-/// window at the size a person sees it.
 pub fn half(rgba: &[u8], w: usize, h: usize) -> (Vec<u8>, usize, usize) {
     let (hw, hh) = (w / 2, h / 2);
     let mut out = Vec::with_capacity(hw * hh * 4);
@@ -27,7 +17,6 @@ pub fn half(rgba: &[u8], w: usize, h: usize) -> (Vec<u8>, usize, usize) {
     (out, hw, hh)
 }
 
-/// The smallest rectangle `(x, y, w, h)` that holds every pixel that differs, or `None` if none does.
 pub fn changed(
     prev: &[u8],
     cur: &[u8],
@@ -51,7 +40,6 @@ pub struct Gif {
     w: usize,
     h: usize,
     prev: Option<Vec<u8>>,
-    /// The last frame, held until the next one says how long it was up.
     pending: Option<(gif::Frame<'static>, Instant)>,
 }
 
@@ -64,8 +52,6 @@ impl Gif {
         Ok(Self { enc, w, h, prev: None, pending: None })
     }
 
-    /// What the window showed at `at`, `w * h` RGBA pixels. A frame no different from the one before
-    /// keeps that one up longer and is not written.
     pub fn push(&mut self, rgba: Vec<u8>, at: Instant) -> Result<(), String> {
         if rgba.len() != self.w * self.h * 4 {
             return Err(format!("a frame of {} bytes is not {}x{}", rgba.len(), self.w, self.h));
@@ -94,10 +80,9 @@ impl Gif {
         Ok(())
     }
 
-    /// Writes the frame held back, as up until `at`.
     fn flush(&mut self, at: Instant) -> Result<(), String> {
         if let Some((mut f, since)) = self.pending.take() {
-            // a GIF counts in hundredths, and players stretch anything under two of them
+            // GIF delays are hundredths; players stretch anything under two
             let cs = (at.duration_since(since).as_millis() + 5) / 10;
             f.delay = cs.clamp(2, u16::MAX as u128) as u16;
             self.enc.write_frame(&f).map_err(|e| e.to_string())?;
@@ -105,7 +90,6 @@ impl Gif {
         Ok(())
     }
 
-    /// Writes the last frame, as up until `at`, and the file's end.
     pub fn finish(mut self, at: Instant) -> Result<(), String> {
         self.flush(at)
     }
@@ -117,7 +101,6 @@ mod tests {
 
     #[test]
     fn a_half_image_is_the_mean_of_each_square_of_four() {
-        // 2x2 of one grey and three black: one pixel, a quarter as bright
         let px = [[200, 200, 200, 255], [0, 0, 0, 255], [0, 0, 0, 255], [0, 0, 0, 255]].concat();
         assert_eq!(half(&px, 2, 2), (vec![50, 50, 50, 255], 1, 1));
     }

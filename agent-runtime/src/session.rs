@@ -52,8 +52,6 @@ impl AgentdConfig {
 
 pub use agent_wire::{Phase, SessionView};
 
-/// What the runtime says about a session: as `GET /sessions` serves it, and as the model that started it
-/// is told.
 pub trait Describe {
     fn to_json(&self) -> Value;
     fn for_model(&self) -> String;

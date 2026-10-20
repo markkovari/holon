@@ -1,11 +1,3 @@
-//! A [`Map`] on a canvas that pans and zooms: frames of items where [`map::layout`] put them, drawn at
-//! whatever scale the person is looking at, with what the selection is joined to drawn and listed.
-//!
-//! Drag or scroll to move, pinch-style with command (or control) and scroll to zoom about the pointer,
-//! `0` or *Fit* to see everything, escape to let go. What is drawn depends on the scale: close enough to
-//! read, an item says its name, what it exports and how many use it; further out it is a tile, and a
-//! frame keeps a label a person can still read. Only what is on screen is built.
-
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -25,19 +17,12 @@ use super::tree::Status;
 
 const MIN_ZOOM: f32 = 0.06;
 const MAX_ZOOM: f32 = 2.5;
-/// Fitting a small map stops a little past life size: it is shown, not blown up.
 const FIT_MAX: f32 = 1.1;
-/// Below this an item is a tile, not words.
 const READABLE: f32 = 0.62;
-/// Below this the items are not drawn at all: each frame is one card, and the frames are joined by
-/// the connections between them, counted.
 const OVERVIEW: f32 = 0.5;
 const PANEL_W: f32 = 320.0;
 
-/// What a map says to the board: open this reference, on whichever tab it is on.
-/// Where a press began on screen, the pan then, and whether it has moved since.
 type Drag = ((f32, f32), (f32, f32), bool);
-/// A bundle's end: where on a frame's border, and the way out of it.
 type End = ((f32, f32), Side);
 
 pub enum MapEvent {
@@ -46,32 +31,23 @@ pub enum MapEvent {
 
 pub struct MapView {
     title: SharedString,
-    /// What to say when there is nothing to draw: a headline and how to get something.
     empty: (SharedString, SharedString),
     map: Map,
     placed: Vec<Placed>,
-    /// Where the map's origin is on screen, from the canvas's own corner, and how big it is drawn.
     pan: (f32, f32),
     zoom: f32,
     selected: Option<(usize, usize)>,
-    /// What the pointer is over, whose connections are drawn while nothing is selected.
     hover: Option<(usize, usize)>,
-    /// The connections between frames, and inside each, counted once per map.
     bundles: Vec<(usize, usize, usize)>,
     within: Vec<usize>,
-    /// Each frame's column, which says which side of it a connection leaves from.
     cols: Vec<usize>,
-    /// Where a press began and the pan then, until it is let go; and whether it has moved.
     drag: Option<Drag>,
-    /// The canvas as it was last laid out, in window coordinates: what a pointer is measured against.
     bounds: Rc<Cell<Bounds<Pixels>>>,
     fitted: bool,
-    /// A focus asked for before the canvas had a size to centre in.
     pending: Option<(Key, Option<Key>)>,
     problem: Option<String>,
     theme: Theme,
     focus: FocusHandle,
-    /// Where proofs' paths are from.
     root: PathBuf,
 }
 
@@ -83,7 +59,6 @@ impl Focusable for MapView {
     }
 }
 
-/// The item under a point of the map, if any.
 pub fn hit(placed: &[Placed], x: f32, y: f32) -> Option<(usize, usize)> {
     placed.iter().enumerate().find_map(|(f, p)| {
         p.frame
@@ -92,8 +67,6 @@ pub fn hit(placed: &[Placed], x: f32, y: f32) -> Option<(usize, usize)> {
     })
 }
 
-/// The zoom and pan for looking into one frame: as [`fit`], but never further out than its items can be
-/// read, and then its top left corner a margin in from the view's.
 pub fn frame_view(r: Rect, w: f32, h: f32) -> (f32, (f32, f32)) {
     let (zoom, pan) = fit(r, w, h);
     if zoom >= READABLE {
@@ -102,7 +75,6 @@ pub fn frame_view(r: Rect, w: f32, h: f32) -> (f32, (f32, f32)) {
     (READABLE, (32.0 - r.x * READABLE, 32.0 - r.y * READABLE))
 }
 
-/// The zoom and pan that show `r` whole in a view `w` by `h`, with a margin.
 pub fn fit(r: Rect, w: f32, h: f32) -> (f32, (f32, f32)) {
     if r.w <= 0.0 || r.h <= 0.0 {
         return (1.0, (0.0, 0.0));
@@ -151,8 +123,6 @@ impl MapView {
         &self.map
     }
 
-    /// A new map: laid out afresh, fitted to the view on the next frame, the selection kept if it is
-    /// still on it.
     pub fn set_map(&mut self, map: Map, cx: &mut Context<Self>) {
         let keep = self.selected_item().map(|(f, i)| (f.key.clone(), i.key.clone()));
         self.placed = map::layout(&map);
@@ -169,7 +139,6 @@ impl MapView {
         cx.notify();
     }
 
-    /// The heaviest item of each frame, so a tile can say how much it is used against its neighbours.
     fn heaviest(&self) -> Vec<u32> {
         self.map
             .frames
@@ -195,7 +164,6 @@ impl MapView {
         ((f32::from(b.size.width) - panel).max(1.0), f32::from(b.size.height).max(1.0))
     }
 
-    /// Everything, as large as it fits.
     pub fn fit_all(&mut self, cx: &mut Context<Self>) {
         let (w, h) = self.view_size();
         (self.zoom, self.pan) = fit(map::bounds(&self.placed), w, h);
@@ -203,9 +171,6 @@ impl MapView {
         cx.notify();
     }
 
-    /// One frame, as large as it fits: what the list beside the map goes to.
-    /// One frame, near enough that its items can be read: whole if it fits at that, else from its top
-    /// left corner, where its heaviest items are.
     pub fn focus_frame(&mut self, f: usize, cx: &mut Context<Self>) {
         if let Some(p) = self.placed.get(f) {
             let (w, h) = self.view_size();
@@ -216,8 +181,6 @@ impl MapView {
         }
     }
 
-    /// Selects what `key` stands for (in `frame`, if it is drawn in several) and brings it to the
-    /// middle, near enough to read.
     pub fn focus_key(&mut self, key: &str, frame: Option<&str>, cx: &mut Context<Self>) {
         let found = match frame {
             Some(fk) => self.map.frames.iter().position(|f| f.key == fk).and_then(|f| {
@@ -227,7 +190,6 @@ impl MapView {
         }
         .or_else(|| self.map.find(key));
         let Some((f, i)) = found else {
-            // not on the map yet, which may still be coming: held until it is
             self.pending = Some((key.to_string(), frame.map(str::to_string)));
             return;
         };
@@ -244,7 +206,6 @@ impl MapView {
         cx.notify();
     }
 
-    /// The selection and everything it is joined to, as large as they fit.
     fn show_connections(&mut self, cx: &mut Context<Self>) {
         let Some((sf, si)) = self.selected else { return };
         let key = self.map.frames[sf].items[si].key.clone();
@@ -274,7 +235,6 @@ impl MapView {
         cx.notify();
     }
 
-    /// A window position, from the canvas's corner.
     fn local(&self, p: gpui::Point<Pixels>) -> (f32, f32) {
         let o = self.bounds.get().origin;
         (f32::from(p.x - o.x), f32::from(p.y - o.y))
@@ -297,7 +257,6 @@ impl MapView {
 
     fn on_move(&mut self, ev: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         let Some((start, pan, moved)) = self.drag else {
-            // what is under the pointer, while it is only looking
             let (x, y) = self.local(ev.position);
             let over = if self.zoom < OVERVIEW {
                 None
@@ -324,7 +283,6 @@ impl MapView {
         self.drag = Some((start, pan, moved));
     }
 
-    /// A press let go where it began is a click: on an item it selects it, anywhere else it lets go.
     fn on_up(&mut self, ev: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
         let Some((_, _, moved)) = self.drag.take() else { return };
         if !moved {
@@ -335,7 +293,6 @@ impl MapView {
             }
             let world = ((x - self.pan.0) / self.zoom, (y - self.pan.1) / self.zoom);
             if self.zoom < OVERVIEW {
-                // far out, a frame is a card, and a card is a way in
                 if let Some(f) = self.placed.iter().position(|p| p.frame.contains(world.0, world.1))
                 {
                     return self.focus_frame(f, cx);
@@ -368,8 +325,6 @@ impl MapView {
         }
         cx.notify();
     }
-
-    // -- drawing --------------------------------------------------------------------------------
 
     fn tint(&self, kind: Kind) -> Rgba {
         let t = &self.theme;
@@ -409,8 +364,6 @@ impl MapView {
             .border(px(if state == ItemState::Selected { 2.0 } else { 1.0 }))
             .border_color(edge);
         if z < READABLE {
-            // a tile: its kind as a bar down the left, how much it is used as warmth, and, while there
-            // is room for a few letters, its name at the smallest size that can still be read
             let tile = base
                 .when(heat > 0.0, |el| el.bg(warm))
                 .child(div().absolute().left_0().top_0().bottom_0().w(px(3.0)).bg(tint));
@@ -493,14 +446,11 @@ impl MapView {
             .border_1()
             .border_color(t.card_border)
             .child(
-                // the frame's name: inside it when the items can be read, above it at a size that can be
-                // read when they cannot
                 div()
                     .absolute()
                     .left(px(if readable { map::PAD * z } else { 2.0 }))
                     .top(px(if readable { 12.0 * z } else { -22.0 }))
                     .right(px(if readable { map::PAD * z } else { 0.0 }))
-                    // inside, the name over what it is, each with the width to itself; outside, one line
                     .flex()
                     .when(readable, |c| c.flex_col().gap(px(2.0 * z)))
                     .when(!readable, |c| c.flex_row().items_baseline().gap(px(8.0)))
@@ -528,8 +478,6 @@ impl MapView {
             .into_any_element()
     }
 
-    /// The panel of what is selected: what it is, what it uses and what uses it, and every other place it
-    /// is named.
     fn panel(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let t = self.theme;
         let (frame, item) = self.selected_item()?;
@@ -675,7 +623,6 @@ impl MapView {
                 };
             }
         }
-        // where it came from and what it is joined to beyond its imports: Explore's question, one click on
         {
             let r =
                 Ref { tab: Tab::Explore, key: key.clone(), frame: None, label: item.label.clone() };
@@ -853,15 +800,12 @@ impl MapView {
     }
 }
 
-/// The control point of the curve from `a` to `b`: bowed to one side by a sixth of its length, so the
-/// two directions between a pair of frames are two arcs and not one line drawn twice.
 fn control(a: (f32, f32), b: (f32, f32)) -> (f32, f32) {
     let (mx, my) = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     (mx - dy / 6.0, my + dx / 6.0)
 }
 
-/// One line on screen: a cubic from `from` to `to`, how thick, and how strongly it is drawn.
 struct Stroke {
     from: (f32, f32),
     c1: (f32, f32),
@@ -871,21 +815,18 @@ struct Stroke {
     strength: f32,
 }
 
-/// Where a cubic is, `t` of the way along: where a bundle's count can go.
 fn cubic_at(a: (f32, f32), c1: (f32, f32), c2: (f32, f32), b: (f32, f32), t: f32) -> (f32, f32) {
     let u = 1.0 - t;
     let (k0, k1, k2, k3) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
     (k0 * a.0 + k1 * c1.0 + k2 * c2.0 + k3 * b.0, k0 * a.1 + k1 * c1.1 + k2 * c2.1 + k3 * b.1)
 }
 
-/// Which side of a frame a bundle uses, as the way out of it: right, left, down or up.
 type Side = (f32, f32);
 const RIGHT: Side = (1.0, 0.0);
 const LEFT: Side = (-1.0, 0.0);
 const DOWN: Side = (0.0, 1.0);
 const UP: Side = (0.0, -1.0);
 
-/// A point `t` of the way along a side of `r`.
 fn on_side(r: &Rect, side: Side, t: f32) -> (f32, f32) {
     match side {
         RIGHT => (r.x + r.w, r.y + r.h * t),
@@ -896,10 +837,6 @@ fn on_side(r: &Rect, side: Side, t: f32) -> (f32, f32) {
 }
 
 impl MapView {
-    /// Where each bundle leaves its frame and arrives at the other, and which way: to a column further
-    /// right out of the right side and into the left, within a column out of the bottom into the top,
-    /// back to a column further left out of the left and into the right. The bundles sharing a side
-    /// are spread along it in the order of where their other ends are, so they do not cross there.
     fn bundle_ends(&self, rects: &[Rect]) -> Vec<(End, End)> {
         let sides: Vec<(Side, Side)> = self
             .bundles
@@ -922,8 +859,6 @@ impl MapView {
                 }
             })
             .collect();
-        // every (frame, side) a bundle touches, with the bundles there and where each one's far end is
-        // per frame and side: each bundle there, whether it leaves, and where its far end is
         type Touching = Vec<(usize, bool, f32)>;
         let mut at: HashMap<(usize, (i8, i8)), Touching> = HashMap::new();
         for (k, &(a, b, _)) in self.bundles.iter().enumerate() {
@@ -952,8 +887,6 @@ impl MapView {
 }
 
 impl MapView {
-    /// A frame from far away: what it is, how many, the few that weigh most, and how much runs inside.
-    /// A card too small for all that says what it is and how many, on one line.
     fn card_el(&self, f: &map::Frame, r: Rect, inside: usize) -> gpui::AnyElement {
         let t = self.theme;
         let base = div()
@@ -1090,7 +1023,6 @@ impl Render for MapView {
         let (vw, vh) = (f32::from(b.size.width), f32::from(b.size.height));
         let view = Rect { x: -40.0, y: -40.0, w: vw + 80.0, h: vh + 80.0 };
         let overview = self.zoom < OVERVIEW;
-        // whose connections are drawn: the selection's, or else what the pointer is over
         let lit = self.selected.or(self.hover);
         let sel_key =
             lit.and_then(|(f, i)| Some(self.map.frames.get(f)?.items.get(i)?.key.clone()));
@@ -1110,7 +1042,6 @@ impl Render for MapView {
                 .collect()
         });
 
-        // the lines, on screen; far out the frames' bundles, close in the lit item's own connections
         let mut lines: Vec<Stroke> = Vec::new();
         let mut pills: Vec<((f32, f32), usize)> = Vec::new();
         if overview {
@@ -1123,7 +1054,6 @@ impl Render for MapView {
                 let reach = ((to.0 - from.0).abs().max((to.1 - from.1).abs()) / 2.0).max(60.0);
                 let mut c1 = (from.0 + dir_a.0 * reach, from.1 + dir_a.1 * reach);
                 let mut c2 = (to.0 + dir_b.0 * reach, to.1 + dir_b.1 * reach);
-                // a bundle that skips a column goes over it, not behind its cards
                 let skip =
                     self.cols.get(a).zip(self.cols.get(b)).is_some_and(|(x, y)| x.abs_diff(*y) > 1);
                 if skip {
@@ -1140,8 +1070,6 @@ impl Render for MapView {
                     width: 2.5 + 13.0 * share,
                     strength: 0.38 + 0.5 * share,
                 });
-                // the count where the line is in the open: from its middle outwards, clear of every card and
-                // every count already placed, or not at all
                 let free = |p: (f32, f32)| {
                     let r = Rect { x: p.0 - 26.0, y: p.1 - 14.0, w: 52.0, h: 28.0 };
                     !rects.iter().any(|c| c.overlaps(&r))
@@ -1165,7 +1093,6 @@ impl Render for MapView {
                     if joined.contains(&it.key) {
                         let to = self.to_screen(&self.placed[f].items[i]).centre();
                         let c = control(from, to);
-                        // the arc as a cubic: two thirds of the way to the one control point, from each end
                         let third = |p: (f32, f32)| {
                             (p.0 + (c.0 - p.0) * 2.0 / 3.0, p.1 + (c.1 - p.1) * 2.0 / 3.0)
                         };
@@ -1223,7 +1150,7 @@ impl Render for MapView {
         let (dot, line) = (t.card_border, t.line);
         let (pan, zoom) = (self.pan, self.zoom);
         let backdrop = canvas(
-            // a canvas that has just been given its size is drawn again at it: fitting needs the size
+            // fitting needs the laid-out size, so a new size draws again
             move |b, _, cx| {
                 if bounds.get() != b {
                     bounds.set(b);
@@ -1232,7 +1159,6 @@ impl Render for MapView {
             },
             move |b, _, window, _| {
                 let o = b.origin;
-                // the dots of an endless sheet, every 32 of the map's units, thinned out far away
                 let step = 32.0 * zoom * if zoom < 0.25 { 4.0 } else { 1.0 };
                 let (w, h) = (f32::from(b.size.width), f32::from(b.size.height));
                 let (mut x, y0) = (pan.0.rem_euclid(step), pan.1.rem_euclid(step));
@@ -1364,7 +1290,6 @@ mod tests {
         assert_eq!(fit(Rect::default(), 10.0, 10.0).0, 1.0, "nothing to fit");
         let (z, _) = fit(Rect { x: 0.0, y: 0.0, w: 100.0, h: 50.0 }, 1000.0, 1000.0);
         assert_eq!(z, FIT_MAX, "a small map is shown, not blown up");
-        // a frame too big to read whole is looked into from its corner
         let (z, (x, y)) =
             frame_view(Rect { x: 100.0, y: 50.0, w: 4000.0, h: 3000.0 }, 1000.0, 700.0);
         assert_eq!((z, x, y), (READABLE, 32.0 - 100.0 * READABLE, 32.0 - 50.0 * READABLE));

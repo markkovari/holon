@@ -60,34 +60,26 @@ const NEST_X: f32 = 27.0;
 const DOT: f32 = 9.0;
 /// More children than this are stacked, not laid out in a row.
 const ROW_MAX: usize = 4;
-/// The list of sessions down the left.
 const SIDEBAR_W: f32 = 264.0;
 
-/// An agent a goal can be given to.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AgentChoice {
     pub name: String,
     pub about: String,
-    /// Whether it can start a coding session (it has `session_start`).
     pub codes: bool,
 }
 
-/// What the board asks of whoever hosts it: the answer to a person's yes or no, and a goal started.
 pub trait Actions {
-    /// Answers an approval, and says how far a yes reaches.
     fn answer(&self, id: u64, approve: bool, scope: Scope, cx: &mut App);
 
-    /// The agents a goal can be given to, best first.
     fn agents(&self, _cx: &App) -> Vec<AgentChoice> {
         Vec::new()
     }
 
-    /// Gives `goal` to `agent`. `Err` is why not, in words to show a person.
     fn start(&self, _agent: &str, _goal: &str, _cx: &mut App) -> Result<(), String> {
         Err("this board cannot start anything".into())
     }
 
-    /// Every conversational agent, as its spec says it: the Agents tab.
     fn roster(&self, _cx: &App) -> Vec<AgentInfo> {
         Vec::new()
     }
@@ -168,7 +160,6 @@ pub fn model_name(label: &str) -> String {
         .replacen("GPT ", "GPT-", 1)
 }
 
-/// `just now`, `5m ago`, `3h ago`.
 pub fn ago(ms: u64) -> String {
     let s = ms / 1000;
     match s {
@@ -190,8 +181,6 @@ pub fn clock(ms: u64) -> String {
     }
 }
 
-/// What a session's row says under its goal: who was asked, how many agents it took, what it cost,
-/// and how long it has been going, how long ago it ended, or that it is waiting for a person.
 pub fn meta(r: &SessionRow, now: u64) -> String {
     let when = match (r.status, r.finished_ms) {
         (Status::NeedsYou, _) => "needs you".to_string(),
@@ -202,8 +191,6 @@ pub fn meta(r: &SessionRow, now: u64) -> String {
     format!("{} · {agents} · {} · {when}", r.lead, money(r.cost_micros))
 }
 
-/// The session on show: with `follow`, the first one not seen before (the goal just given); else the
-/// one picked, while it is still listed; else the newest.
 pub fn pick<'a>(
     rows: &'a [SessionRow],
     selected: Option<&str>,
@@ -304,46 +291,31 @@ pub struct Board {
     /// The width of each tree's row of children as it was and is: when a child joins, the parent
     /// glides to the new middle instead of jumping there.
     row_width: HashMap<String, (f32, f32)>,
-    /// The session on show: the root of a tree. The newest until a person picks one.
     selected: Option<String>,
-    /// The roots seen so far, so that the one a goal was just given to can be followed.
     known: HashSet<String>,
     follow_newest: bool,
-    /// The form that states a goal, and what it is made of: the agents it can go to are read once,
-    /// when it opens, and not on every frame.
     form: bool,
     field: Entity<TextField>,
     choices: Vec<AgentChoice>,
     lead: Option<String>,
     problem: Option<String>,
-    /// What had the keyboard before the form took it, given back on the frame after it closes.
     return_focus: Option<FocusHandle>,
-    /// Room above everything, for a window whose title bar the board is drawn under.
     inset: f32,
-    /// Which of the three is showing: the sessions, one thing and what it is joined to, the whole.
     tab: Tab,
-    /// The whole system, grouped: the zoom-out.
     components: Entity<MapView>,
-    /// The goal runs as the store holds them, which the graph joins to the rest.
     knowledge: maps::Map,
     explore: Entity<ExploreView>,
-    /// What Explore's list is narrowed to, as it is typed.
     search: Entity<TextField>,
     query: String,
-    /// The tree's revision and the maps' load the graph was built from.
     graph_at: (u64, u64),
     maps_loaded: u64,
-    /// The conversational agents, read again with the graph; the one on show; what to say to it.
     roster: Vec<AgentInfo>,
     agent: Option<String>,
     say: Entity<TextField>,
     unsaid: Option<String>,
-    /// Where the agents are in Element, when the board knows.
     element: Option<Element>,
-    /// The conversation's scroll, and which agent and how long it was when it was last sent to the end.
     talk: gpui::ScrollHandle,
     talk_seen: (String, usize),
-    /// The frames whose items the list beside a map shows.
     expanded: HashSet<String>,
     _tick: Task<()>,
 }
@@ -399,7 +371,6 @@ impl Board {
                 this.query = q.clone();
                 cx.notify();
             }
-            // enter looks at the best match
             FieldEvent::Submit(q) => {
                 if let Some(k) = this.explore.read(cx).graph().search(q, 1).pop() {
                     this.explore.update(cx, |e, cx| e.show(&k, cx));
@@ -469,11 +440,9 @@ impl Board {
         self
     }
 
-    /// Reads both maps from the store again, off the window's thread.
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         let comps = self.components.clone();
         cx.spawn(async move |this, cx| {
-            // natively the store is asked from a thread, and what proves each thing is found on disk
             #[cfg(not(target_family = "wasm"))]
             let (c, k) = cx
                 .background_executor()
@@ -490,7 +459,6 @@ impl Board {
                     )
                 })
                 .await;
-            // in a browser it is fetched, and the page has no disk to look for proofs on
             #[cfg(target_family = "wasm")]
             let (c, k) = {
                 let store = Store::from_env();
@@ -512,7 +480,6 @@ impl Board {
                     Ok(m) => v.set_map(m, cx),
                     Err(e) => v.set_problem(Some(e), cx),
                 });
-                // a store with no runs is no runs; a store that did not answer has said so above
                 b.knowledge = k.unwrap_or_default();
                 b.maps_loaded += 1;
                 cx.notify();
@@ -521,7 +488,6 @@ impl Board {
         .detach();
     }
 
-    /// Shows what a reference names, on its own tab.
     fn open_ref(&mut self, r: &Ref, cx: &mut Context<Self>) {
         self.tab = r.tab;
         match r.tab {
@@ -538,8 +504,6 @@ impl Board {
         cx.notify();
     }
 
-    /// Where the agents are in Element: what the bridge recorded, or, told only a server (a page is),
-    /// their users there.
     pub fn with_element(mut self, element: Option<Element>) -> Self {
         if element.is_some() {
             self.element = element;
@@ -547,8 +511,6 @@ impl Board {
         self
     }
 
-    /// Says `text` to the agent on show, as a person in its room would: it is given it as a goal, and
-    /// what it answers comes back into the conversation.
     fn say_to(&mut self, text: String, cx: &mut Context<Self>) {
         let Some(agent) = self.agent.clone() else { return };
         let actions = self.actions.clone();
@@ -562,7 +524,6 @@ impl Board {
         cx.notify();
     }
 
-    /// Shows `key` on `tab`, as following a reference to it would.
     pub fn show(&mut self, tab: Tab, key: &str, cx: &mut Context<Self>) {
         let r = Ref { tab, key: key.to_string(), frame: None, label: String::new() };
         self.open_ref(&r, cx);
@@ -579,12 +540,10 @@ impl Board {
         cx.notify();
     }
 
-    /// The field the form's goal is typed into.
     pub fn field(&self) -> Entity<TextField> {
         self.field.clone()
     }
 
-    /// Room above everything: the traffic lights of a window drawn under its title bar, or nothing.
     pub fn with_inset(mut self, inset: f32) -> Self {
         self.inset = inset;
         self
@@ -608,7 +567,6 @@ impl Board {
         cx.notify();
     }
 
-    /// Opens the form that states a goal, with the field ready to be typed in.
     pub fn open_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.form = true;
         self.problem = None;
@@ -621,7 +579,6 @@ impl Board {
         cx.notify();
     }
 
-    /// Start, pressed rather than typed: the same as enter in the field.
     fn start_typed(&mut self, cx: &mut Context<Self>) {
         let goal = self.field.read(cx).text().trim().to_string();
         if goal.is_empty() {
@@ -637,7 +594,6 @@ impl Board {
         cx.notify();
     }
 
-    /// Gives the goal to the chosen agent. The new session is followed when it appears.
     pub fn submit(&mut self, goal: String, cx: &mut Context<Self>) {
         let Some(lead) = self.lead.clone() else {
             self.problem = Some("There is no agent to give it to.".into());
@@ -1323,7 +1279,6 @@ impl Board {
             )
     }
 
-    /// What a session names on the other tabs, as chips under its goal: each opens it there.
     fn ref_chips(&self, key: &str, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let t = self.theme;
         let refs: Vec<(String, String)> = {
@@ -1367,8 +1322,6 @@ impl Board {
         Some(row.into_any_element())
     }
 
-    /// The selected session's header: its goal, and how the agents in it are doing. `root` keys the
-    /// total, so another session's total is shown as it is rather than counted to from this one's.
     fn header(
         &mut self,
         s: &Summary,
@@ -1538,9 +1491,6 @@ impl Board {
 }
 
 impl Board {
-    // -- the sessions -----------------------------------------------------------------------------
-
-    /// One goal in the list: a dot for how it stands, what was asked, and the line under it.
     fn session_row(
         &self,
         r: &SessionRow,
@@ -1550,7 +1500,6 @@ impl Board {
         let t = self.theme;
         let ink = t.badge(r.status).1;
         let dot = div().mt(px(5.0)).size(px(8.0)).flex_none().rounded(px(4.0)).bg(ink);
-        // A goal still being worked on breathes; one that has ended is still.
         let dot = if r.status == Status::Running {
             dot.with_animation(
                 SharedString::from(format!("pulse-{}", r.root)),
@@ -1675,7 +1624,6 @@ impl Board {
             })
     }
 
-    /// The three tabs, as one control.
     fn tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let mut strip = div()
@@ -1720,12 +1668,9 @@ impl Board {
         strip
     }
 
-    /// A map's frames as a list beside it, each opening onto its items: where a person goes from, without
-    /// hunting the canvas.
     fn contents(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let view = self.components.clone();
-        // each frame's key, title, sub and its items' keys, labels and weights
         type Entry = (String, String, String, Vec<(String, String, u32)>);
         let frames: Vec<Entry> = view
             .read(cx)
@@ -1850,13 +1795,10 @@ impl Board {
         list
     }
 
-    /// Explore's side: a search, and while nothing is typed, where to start from: what was done lately,
-    /// and what most of the system is built on.
     fn explore_side(&self, rows: &[SessionRow], cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let explore = self.explore.read(cx);
         let (g, current) = (explore.graph(), explore.subject().cloned());
-        // (key, label, what it is) per entry, under its heading
         type Entry = (String, String, String, maps::Kind);
         let mut groups: Vec<(String, Vec<Entry>)> = Vec::new();
         let entry = |k: &str| {
@@ -1976,8 +1918,6 @@ impl Board {
             .child(list)
     }
 
-    /// The agents down the left, grouped as Element groups their rooms: a project's agents under it,
-    /// the rest under Agents, and the control room first when the bridge has made one.
     fn agents_side(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let waiting: HashSet<String> = self
@@ -2039,7 +1979,6 @@ impl Board {
                     .on_click(move |_, _, cx| cx.open_url(&url)),
             );
         }
-        // the agents in no project last, as Element lists the Agents Space after a person's own
         let mut order: Vec<String> = groups.keys().filter(|k| !k.is_empty()).cloned().collect();
         if groups.contains_key("") {
             order.push(String::new());
@@ -2117,8 +2056,6 @@ impl Board {
         list
     }
 
-    /// One agent: what was said to it and what it answered, a field to say more, and who it is: its
-    /// model, what it may use, its projects, and where it is in Element.
     fn agent_page(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
         if self.agent.as_ref().is_none_or(|a| !self.roster.iter().any(|r| &r.name == a)) {
@@ -2142,7 +2079,6 @@ impl Board {
                 .into_any_element();
         };
         let talk = agents::conversation(self.tree.read(cx), &a.name, 30);
-        // the newest exchange in view: on opening an agent, and when one arrives
         if self.talk_seen != (a.name.clone(), talk.len()) {
             self.talk.scroll_to_bottom();
             self.talk_seen = (a.name.clone(), talk.len());
@@ -2395,7 +2331,6 @@ impl Board {
             .into_any_element()
     }
 
-    /// A map tab's header: what it is, how big, and a way to read it again.
     fn map_header(&self, title: &str, sub: String, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let mode_glyph = if t.mode == Mode::Dark { "sun" } else { "moon" };
@@ -2450,9 +2385,6 @@ impl Board {
             )
     }
 
-    // -- the form -------------------------------------------------------------------------------
-
-    /// The goal, whom it goes to, and what went wrong if anything did, over everything else.
     fn form_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let (pick_bg, pick_ink) = t.badge(Status::Running);
@@ -2626,7 +2558,6 @@ impl Render for Board {
             self.follow_newest = false;
         }
         self.known.extend(rows.iter().map(|r| r.root.clone()));
-        // the graph Explore walks, built again when the tree or the maps it is made of have changed
         let at = (self.tree.read(cx).revision, self.maps_loaded);
         if at != self.graph_at {
             self.roster = self.actions.roster(cx);
@@ -2742,7 +2673,6 @@ impl Render for Board {
             .child(header)
             .child(
                 div()
-                    // keyed by the session, so each keeps its own scroll
                     .id(SharedString::from(format!("canvas-{root}")))
                     .flex_1()
                     .min_h(px(0.0))

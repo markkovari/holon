@@ -1,11 +1,3 @@
-//! One thing at a time, and what it is joined to: the Explore tab.
-//!
-//! The subject is in the middle. Above it is where it came from (the goal run that added it, the attempt
-//! that wrote it), left what it builds on, right what builds on it, below what it led to and where it
-//! appeared (a run's attempts, the sessions that touched it). A lane shows a few of its neighbours and
-//! says how many more; any neighbour is a way on, and the trail of where a person has been is a way back.
-//! A second level says, under each neighbour, a little of what is behind it, without drawing it.
-
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -22,11 +14,9 @@ use super::map::{Key, Kind, Proof};
 use super::theme::Theme;
 use super::tree::Status;
 
-/// How many of a lane's neighbours are shown before "+N more".
 const SHOWN: usize = 6;
 const CHIP_W: f32 = 210.0;
 
-/// What Explore asks of the board: show this in the map, or this session on its own tab.
 pub enum ExploreEvent {
     InMap(Key),
     Session(String),
@@ -36,19 +26,16 @@ pub enum ExploreEvent {
 pub struct ExploreView {
     graph: Graph,
     subject: Option<Key>,
-    /// Where a person has been, oldest first; the subject is the last.
     trail: Vec<Key>,
     expanded: HashSet<&'static str>,
     deep: bool,
     theme: Theme,
     root: PathBuf,
-    /// Where each chip and the subject were laid out, for the lines between them.
     placed: Rc<RefCell<HashMap<Key, Bounds<Pixels>>>>,
 }
 
 impl EventEmitter<ExploreEvent> for ExploreView {}
 
-/// The colour a kind of thing is marked with, wherever it is listed.
 pub fn tint(t: &Theme, kind: Kind) -> gpui::Rgba {
     match kind {
         Kind::App => t.badge(Status::Running).1,
@@ -61,7 +48,6 @@ pub fn tint(t: &Theme, kind: Kind) -> gpui::Rgba {
     }
 }
 
-/// What a kind is called in a sentence.
 pub fn kind_name(k: Kind) -> &'static str {
     match k {
         Kind::App => "application",
@@ -108,13 +94,11 @@ impl ExploreView {
         cx.notify();
     }
 
-    /// Looks at `key`: onto the end of the trail, or back to where it already is on it.
     pub fn show(&mut self, key: &str, cx: &mut Context<Self>) {
         match self.trail.iter().position(|k| k == key) {
             Some(i) => self.trail.truncate(i + 1),
             None => self.trail.push(key.to_string()),
         }
-        // a trail longer than a person can read back is only its last few steps
         if self.trail.len() > 6 {
             self.trail.drain(..self.trail.len() - 6);
         }
@@ -127,7 +111,6 @@ impl ExploreView {
         tint(&self.theme, kind)
     }
 
-    /// Records where `el` was laid out under `key`, so a line can be drawn to it.
     fn tracked(&self, key: Key, el: impl IntoElement) -> gpui::AnyElement {
         let placed = self.placed.clone();
         div()
@@ -148,7 +131,6 @@ impl ExploreView {
             .into_any_element()
     }
 
-    /// One neighbour: what it is, and how much is behind it; a way on.
     fn chip(&self, key: &Key, side: Side, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
         let g = &self.graph;
@@ -216,7 +198,6 @@ impl ExploreView {
         chip.into_any_element()
     }
 
-    /// A lane: what joins its neighbours to the subject, how many, the first few, and the rest on asking.
     fn lane(&self, lane: &Lane, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
         let open = self.expanded.contains(lane.title);
@@ -269,7 +250,6 @@ impl ExploreView {
         self.tracked(format!("lane:{title}"), block)
     }
 
-    /// The subject: what it is, a few facts, and what proves it.
     fn subject_card(&self, key: &Key, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
         let n = self.graph.nodes.get(key);
@@ -456,7 +436,6 @@ impl ExploreView {
         self.tracked(key.clone(), card)
     }
 
-    /// Where a person has been: each step a way back.
     fn trail_el(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let mut row = div().flex().flex_row().items_center().gap(px(4.0)).min_w(px(0.0));
@@ -516,7 +495,6 @@ impl Render for ExploreView {
         let on = |side: Side| lanes.iter().filter(|l| l.side == side).collect::<Vec<_>>();
         let column =
             |els: Vec<gpui::AnyElement>| div().flex().flex_col().gap(px(22.0)).children(els);
-        // above and below, lanes side by side, so a line to one never crosses another
         let row = |els: Vec<gpui::AnyElement>| {
             div().flex().flex_row().items_start().justify_center().gap(px(40.0)).children(els)
         };
@@ -530,7 +508,6 @@ impl Render for ExploreView {
             on(Side::Below).into_iter().map(|l| self.lane(l, cx)).collect();
         let card = self.subject_card(&subject, cx);
 
-        // one line per lane, from the lane's edge that faces the subject to the subject's edge that faces it
         let joins: Vec<(Key, Side)> =
             lanes.iter().map(|l| (format!("lane:{}", l.title), l.side)).collect();
         let placed = self.placed.clone();
@@ -554,7 +531,6 @@ impl Render for ExploreView {
                         f32::from(b.size.width),
                         f32::from(b.size.height),
                     );
-                    // from the neighbour's edge that faces the subject, to the subject's edge that faces it
                     let (from, to, c1, c2) = match side {
                         Side::Left => {
                             let (a, z) = ((bx + bw, by + bh / 2.0), (sx, sy + sh / 2.0));

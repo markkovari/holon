@@ -14,8 +14,6 @@ use std::collections::HashMap;
 use agent_wire::{Event, Phase, RunRecord, SessionView, Status as RunStatus, Step};
 use serde_json::Value;
 
-/// A finished tree of several nodes stays on the board this long: it is a goal somebody set, and the
-/// list of them is what they come back to.
 pub const KEEP_TREE_MS: u64 = 6 * 3_600_000;
 /// A finished tree of one node is a chat reply or a schedule that fired: it goes sooner.
 pub const KEEP_LONE_MS: u64 = 90_000;
@@ -80,7 +78,6 @@ pub struct Node {
     pub pending: Vec<Pending>,
     /// When the board first saw it: what the enter animation is timed from.
     pub born_ms: u64,
-    /// Every path or name its calls were given, once each: what the other tabs' references are found in.
     pub notes: Vec<String>,
     tokens_in: u64,
     tokens_out: u64,
@@ -128,22 +125,16 @@ pub struct Summary {
     pub cost_micros: u64,
 }
 
-/// One line of the list of sessions: a goal, and everything it started.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SessionRow {
-    /// The root node's id: what a selection is.
     pub root: String,
-    /// What was asked.
     pub title: String,
-    /// The agent that was asked.
     pub lead: String,
-    /// How the whole stands: waiting for a person beats working beats how it ended.
     pub status: Status,
     pub agents: usize,
     pub waiting: usize,
     pub cost_micros: u64,
     pub started_ms: u64,
-    /// When the last of it finished, if all of it has.
     pub finished_ms: Option<u64>,
 }
 
@@ -181,7 +172,6 @@ fn brief(args: &Value) -> String {
     String::new()
 }
 
-/// Every string in a call's arguments, as a note worth keeping once.
 fn note(notes: &mut Vec<String>, v: &Value) {
     match v {
         Value::String(s) if !s.is_empty() && !notes.contains(s) => {
@@ -245,7 +235,6 @@ impl AgentTree {
         self.nodes.len()
     }
 
-    /// Every node, in the order the board first saw them.
     pub fn all(&self) -> impl Iterator<Item = &Node> {
         self.order.iter().filter_map(|id| self.nodes.get(id))
     }
@@ -313,7 +302,6 @@ impl AgentTree {
         shown
     }
 
-    /// Every session worth listing, newest first.
     pub fn sessions(&self, now: u64) -> Vec<SessionRow> {
         self.visible_roots(now)
             .into_iter()
@@ -349,8 +337,6 @@ impl AgentTree {
             .collect()
     }
 
-    /// Everything said in one tree: what each agent was asked and answered, and every path or name its
-    /// calls were given. What a reference from this session to a component is found in.
     pub fn texts_of(&self, root: &str) -> Vec<String> {
         let mut ids = Vec::new();
         self.subtree(root, &mut ids);
@@ -365,7 +351,6 @@ impl AgentTree {
             .collect()
     }
 
-    /// The header for one tree: as `summary`, of `root` and what it started.
     pub fn summary_of(&self, root: &str) -> Summary {
         let mut s = Summary::default();
         let mut ids = Vec::new();
@@ -390,10 +375,6 @@ impl AgentTree {
         s
     }
 
-    /// Learns what ran before this board was open from the runs the runtime kept, oldest first, so a
-    /// restart does not empty the list of sessions. A run is a node that has already ended; where it
-    /// hangs is known from the tool-call spans its parent's steps recorded, whichever was written
-    /// first. Coding sessions are not kept by the runtime, so only their parents' runs come back.
     pub fn seed(&mut self, runs: &[RunRecord]) {
         let mut runs: Vec<&RunRecord> = runs.iter().collect();
         runs.sort_by_key(|r| r.started_ms);
@@ -916,7 +897,6 @@ mod tests {
         assert_eq!((r.status, r.agents, r.waiting, r.cost_micros), (Status::NeedsYou, 2, 1, 5_000));
         assert_eq!(r.finished_ms, None);
 
-        // the root ending does not end a goal whose session is still going
         t.apply(&finished("r1", "ok", T0 + 40), T0 + 40);
         assert_eq!(t.sessions(T0 + 50)[0].status, Status::NeedsYou);
         let mut done = session("s1", "r1", Phase::Done, 9_000);
@@ -955,7 +935,6 @@ mod tests {
             }))
             .unwrap()
         };
-        // written child first: the parent's call is found whichever was stored first
         let runs = vec![
             record("child", "helper", T0 + 100, Some("call-1"), &[]),
             record(
@@ -976,7 +955,6 @@ mod tests {
             (Status::Done, vec!["read_file".to_string()], Some(T0 + 500))
         );
         assert_eq!(lead.result.as_deref(), Some("fine"));
-        // seeding again is a no-op
         t.seed(&runs);
         assert_eq!(t.len(), 2);
     }
