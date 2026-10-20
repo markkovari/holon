@@ -1,22 +1,14 @@
-//! golem-workflow — the type-mapping core of the wRPC→Golem provider: the typed
-//! `run-request` becomes the arguments of a Golem worker invocation, and the
-//! worker's `result<string, string>` becomes the contract's
-//! `result<string, run-error>`. Kept free of the lattice, provider SDK and
-//! wasmtime so it is exhaustively unit-testable; `src/main.rs` wires it to
-//! wRPC + golem-client.
+//! Free of the lattice, provider SDK and wasmtime so it is unit-testable; `src/main.rs` wires it.
 
 use golem_wasm_rpc::Value;
 
-/// A workflow invocation (mirrors `durable:workflow/orchestrator.run-request`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunRequest {
     pub workflow_id: String,
     pub payload: String,
 }
 
-/// Map a `run-request` to the argument list of the Golem worker function
-/// `trigger-workflow(req: run-request)` — a single `record { workflow-id,
-/// payload }` argument, i.e. a positional `Record` of two strings.
+/// `trigger-workflow` takes one record whose fields are positional, so order matters.
 pub fn to_worker_args(req: &RunRequest) -> Vec<Value> {
     vec![Value::Record(vec![
         Value::String(req.workflow_id.clone()),
@@ -24,10 +16,7 @@ pub fn to_worker_args(req: &RunRequest) -> Vec<Value> {
     ])]
 }
 
-/// Interpret the worker's return `Value` as the contract's `result<string, _>`.
-///
-/// Accepts `Value::Result`, and also a bare `Value::String` (some invoke paths
-/// unwrap a single non-result return).
+/// Also accepts a bare `Value::String`: some invoke paths unwrap a single non-result return.
 pub fn from_worker_result(v: &Value) -> Result<String, String> {
     match v {
         Value::Result(Ok(Some(inner))) => expect_string(inner),
@@ -47,23 +36,16 @@ fn expect_string(v: &Value) -> Result<String, String> {
 }
 
 
-/// How to reach a Golem worker/agent's invoke endpoint. Golem 1.5 agents expose
-/// HTTP endpoints through the API gateway (e.g. `POST /counters/{name}/increment`
-/// on host `bookapp.localhost:9006`), so the provider just POSTs there — no
-/// worker-service typed-value dance needed for the endpoint-style agents.
+/// Golem 1.5 agents are reached over the API gateway's HTTP endpoints, not the typed worker API.
 #[derive(Clone, Debug)]
 pub struct GolemConfig {
-    /// Gateway base, e.g. `http://127.0.0.1:9006`.
     pub base_url: String,
     /// `Host` header for gateway subdomain routing, e.g. `bookapp.localhost:9006`.
     pub host: Option<String>,
-    /// Path with `{workflow-id}` substituted, e.g. `/counters/{workflow-id}/increment`.
     pub path_template: String,
 }
 
-/// Invoke a Golem agent endpoint and return its result body as a string. Kept
-/// here (not in the binary) so an integration test can run it against a live
-/// Golem without the wasmCloud host.
+/// In the lib, not the binary, so a test can run it against a live Golem.
 pub async fn invoke_golem(
     http: &reqwest::Client,
     cfg: &GolemConfig,
@@ -142,9 +124,7 @@ mod tests {
     }
 }
 
-/// Live end-to-end test of the actual bridge call against a RUNNING Golem.
-/// Gated on `GOLEM_E2E=1` (needs `golem server run` + the `book:flight` agent
-/// deployed at `bookapp.localhost:9006`) so a plain `cargo test` skips it.
+/// Gated on `GOLEM_E2E=1`: needs a running Golem with the `book:flight` agent (see `e2e.sh`).
 #[cfg(test)]
 mod live_e2e {
     use super::{invoke_golem, GolemConfig};
@@ -161,9 +141,7 @@ mod live_e2e {
             host: Some(std::env::var("GOLEM_HOST").unwrap_or_else(|_| "bookapp.localhost:9006".into())),
             path_template: "/counters/{workflow-id}/increment".into(),
         };
-        // Trigger the SAME worker twice; the durable count must advance — proof
-        // we invoked a real, stateful Golem worker through the provider's bridge,
-        // not a stub.
+        // Same worker twice: the durable count must advance, which a stub cannot fake.
         let a = invoke_golem(&http, &cfg, "e2e-agent", "").await.expect("first invoke");
         let b = invoke_golem(&http, &cfg, "e2e-agent", "").await.expect("second invoke");
         let na: i64 = a.trim().parse().unwrap_or_else(|_| panic!("non-numeric result: {a:?}"));

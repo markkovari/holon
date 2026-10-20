@@ -1,23 +1,4 @@
-//! `csv` — parse and format CSV — RFC 4180, with quoted fields, embedded commas, newlines and custom delimiters
-//!
-//! A correct, dependency-free RFC 4180 CSV codec: parse delimited text into
-//! rows (or header-keyed records) and format rows back out with proper quoting.
-//! Pure compute — text in, structure out. No state, no host imports.
-//!
-//! Dialect: the delimiter is the first `char` of `opts.delimiter` (default `,`
-//! when empty); the quote character is always `"`. Per RFC 4180, a field is
-//! quoted on output when it contains the delimiter, a `"`, `\n`, or `\r`, and an
-//! embedded `"` is doubled. `\r\n` is the canonical RFC 4180 record terminator.
-//!
-//! Parsing notes:
-//!   * A quoted field begins with `"`; inside, `""` is a literal quote and
-//!     embedded delimiters / newlines are literal until the closing quote.
-//!   * Outside quotes, a lone `\r` is ignored (so `\r\n` collapses to a single
-//!     row break).
-//!   * An unterminated quoted field at EOF is `malformed`.
-//!   * `opts.trim` trims ASCII whitespace from UNQUOTED fields only.
-//!   * A single trailing newline does not yield an extra empty row, but
-//!     genuinely empty fields and empty interior rows are preserved.
+//! RFC 4180: `trim` touches unquoted fields only; one trailing newline adds no empty row.
 
 #[allow(warnings)]
 mod bindings;
@@ -26,16 +7,10 @@ use bindings::exports::csv::codec::codec::{CsvError, Dialect, Guest, RecordRow, 
 
 struct Component;
 
-/// First char of the configured delimiter, defaulting to ',' when empty.
 fn delim(opts: &Dialect) -> char {
     opts.delimiter.chars().next().unwrap_or(',')
 }
 
-/// RFC 4180 state-machine parse into rows of raw field strings.
-///
-/// Returns `Malformed("unterminated quoted field")` if a quote is opened but
-/// never closed before EOF. A single trailing record terminator is not turned
-/// into a spurious trailing empty row.
 fn parse_rows(text: &str, opts: &Dialect) -> Result<Vec<Vec<String>>, CsvError> {
     let delimiter = delim(opts);
     let trim = opts.trim;
@@ -44,12 +19,10 @@ fn parse_rows(text: &str, opts: &Dialect) -> Result<Vec<Vec<String>>, CsvError> 
     let mut row: Vec<String> = Vec::new();
     let mut field = String::new();
 
-    // `in_quotes`: currently inside a quoted field.
-    // `quoted`: this field was (at any point) a quoted field — disables trim.
+    // `quoted`: this field was ever quoted, which disables trim.
     let mut in_quotes = false;
     let mut quoted = false;
-    // Have we seen any content for the current field/row yet? Used so a trailing
-    // terminator after a complete row does not emit an extra empty row.
+    // So a trailing terminator after a complete row adds no empty row.
     let mut pending = false;
 
     let mut chars = text.chars().peekable();
@@ -76,8 +49,7 @@ fn parse_rows(text: &str, opts: &Dialect) -> Result<Vec<Vec<String>>, CsvError> 
                 pending = true;
             }
             '\r' => {
-                // Lone CR outside quotes is ignored; the following LF (if any)
-                // ends the record.
+                // Ignored outside quotes; the following LF ends the record.
             }
             '\n' => {
                 push_field(&mut row, &mut field, quoted, trim);
@@ -101,8 +73,6 @@ fn parse_rows(text: &str, opts: &Dialect) -> Result<Vec<Vec<String>>, CsvError> 
         return Err(CsvError::Malformed("unterminated quoted field".to_string()));
     }
 
-    // Flush the final field/row unless the input ended exactly on a record
-    // terminator (no pending content), which would otherwise add an empty row.
     if pending {
         push_field(&mut row, &mut field, quoted, trim);
         rows.push(row);
@@ -119,7 +89,6 @@ fn push_field(row: &mut Vec<String>, field: &mut String, quoted: bool, trim: boo
     row.push(value);
 }
 
-/// Quote a field per RFC 4180 if it contains the delimiter, a quote, CR or LF.
 fn format_field(value: &str, delimiter: char) -> String {
     let needs_quote = value.chars().any(|c| c == delimiter || c == '"' || c == '\n' || c == '\r');
     if needs_quote {
@@ -149,12 +118,11 @@ impl Guest for Component {
         if rows.is_empty() {
             return Ok(Vec::new());
         }
-        // Row 0 is always the header (per WIT doc), regardless of `has-header`.
+        // Row 0 is always the header (per the WIT), regardless of `has-header`.
         let header = &rows[0];
         let mut out = Vec::with_capacity(rows.len().saturating_sub(1));
         for (data_index, data_row) in rows[1..].iter().enumerate() {
             if data_row.len() != header.len() {
-                // `data_index` is the 0-based index among DATA rows.
                 return Err(CsvError::RaggedRow(data_index as u32));
             }
             let pairs = header.iter().cloned().zip(data_row.iter().cloned()).collect();

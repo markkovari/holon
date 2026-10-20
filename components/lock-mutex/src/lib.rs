@@ -1,20 +1,5 @@
-//! `lock-mutex` — stop two workers doing the same job — a distributed mutex / advisory lease with an expiry
-//!
-//! Lease-based advisory mutual exclusion on `wasi:keyvalue`. A holder claims `key` for a TTL and gets a secret
-//! `token` + a monotonic `fence`; holders renew before expiry and a crashed holder's lease lapses (TTL is the
-//! dead-man's switch). Advisory: it answers "may I proceed?" and gates release/renew by token; it does not police the resource.
-//!
-//! Storage layout (BUCKET = "default"):
-//!   lk_{key}    the current lease: `owner\ttoken\texpires\tfence` (or absent).
-//!   tt_{token}  reverse pointer token -> key, so `renew(token)` finds the lock without a key-scan API. Removed on release / takeover.
-//!
-//! Acquire takes over an EXPIRED lease (fence bumped; the old token pointer no longer matches, so it is inert). A
-//! live lease held by another owner yields `err(held)`. Re-acquire by the SAME owner on a live lease REPLACES it
-//! (new token, fence bumped; the prior token stops being holder); keep-alive is `renew`.
-//!
-//! RACE CAVEAT (best-effort, NOT a correctness guarantee): acquire is read-then-write and `wasi:keyvalue@0.2.0-draft`
-//! has no compare-and-swap, so two simultaneous acquires of a free key can both win. Assumes effective serialization
-//! (single-writer relay topology or a backend with external CAS); a true mutex needs CAS on `lk_{key}`.
+//! Advisory lease mutex on wasi:keyvalue. Best-effort: keyvalue@0.2.0-draft has no CAS,
+//! so two simultaneous acquires of a free key can both win.
 
 #[allow(warnings)]
 mod bindings;
@@ -32,12 +17,11 @@ fn now() -> u64 {
     wall_clock::now().seconds
 }
 
-/// A fresh 16-hex token from 8 random bytes.
 fn new_token() -> String {
     get_random_bytes(8).iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// Sanitize an arbitrary string to NATS-legal kv chars, with a 3-char prefix.
+/// NATS-legal kv chars only.
 fn key_with(prefix: &str, s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 3);
     out.push_str(prefix);
@@ -61,7 +45,7 @@ fn open() -> Result<kv::Bucket, LockError> {
     kv::open(BUCKET).map_err(|e| LockError::BackendUnavailable(format!("open: {e:?}")))
 }
 
-// One tab-delimited line: `owner\ttoken\texpires\tfence`. A tab in an owner would corrupt the line, so tabs are replaced (owners are opaque ids).
+// Tabs in an owner are replaced: they would corrupt the tab-delimited line.
 
 fn serialize(l: &Lease) -> String {
     format!("{}\t{}\t{}\t{}", l.owner.replace('\t', " "), l.token, l.expires, l.fence,)
@@ -114,8 +98,6 @@ fn key_for_token(bucket: &kv::Bucket, token: &str) -> Result<Option<String>, Loc
     }
 }
 
-// ---- guest --------------------------------------------------------------
-
 impl Guest for Component {
     fn acquire(key: String, owner: String, ttl_seconds: u64) -> Result<Lease, LockError> {
         if ttl_seconds == 0 {
@@ -124,10 +106,10 @@ impl Guest for Component {
         let bucket = open()?;
         let now = now();
         let prior = load(&bucket, &key)?;
-        // A live lease held by ANYONE blocks (the same owner too: keep-alive is `renew`). An expired lease is taken over.
+        // A live lease blocks even its own owner (keep-alive is `renew`); an expired one is taken over.
         let prior_fence = match &prior {
             Some(l) if l.expires > now => return Err(LockError::Held(l.clone())),
-            Some(l) => l.fence, // expired -> take over, bump fence
+            Some(l) => l.fence,
             None => 0,
         };
         let lease = Lease {
@@ -145,7 +127,7 @@ impl Guest for Component {
         let bucket = open()?;
         match load(&bucket, &key)? {
             Some(mut l) if l.token == token => {
-                // Tombstone: keep the record (so `fence` survives for the next holder) but mark it free by zeroing the expiry and blanking the token; drop the token->key pointer so the old token is inert.
+                // Tombstone, not delete: `fence` must survive for the next holder; dropping tt_ makes the old token inert.
                 let old_token = l.token.clone();
                 l.expires = 0;
                 l.token = String::new();

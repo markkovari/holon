@@ -1,54 +1,24 @@
-# A lattice, as a person writes it — the tier-2/3 analogue of `apps/<name>.toml`.
-#
-# Copy to `fleet.toml`, edit the addresses, then:
-#
-#   holon fleet validate fleet.toml                    # names, addresses, a lease that outlives a pass
-#   holon fleet render fleet.toml --out target/fleet   # read the units before trusting them to a server
-#
-# then ship by hand (docs/SELFHOST.md, lane 2): once per box, install comp-host,
-# comp-reconciler and comp-ingress (musl builds) to /usr/local/bin; copy each
-# target/fleet/<box>/ to the box it is named for, install its units into
-# /etc/systemd/system and `systemctl enable --now` them; on a control box fill
-# PLATFORM_SECRET in /etc/comp/reconciler.env (0600). `systemctl status` per box
-# is the status check.
-#
-# This is the tier ABOVE self-hosting. Reach for it when deciding WHICH box an app
-# runs on has become a chore — with two or three machines that decision is one
-# argument to a deploy recipe, and `docs/SELFHOST.md` tier 1 is the cheaper answer.
+# Copy to `fleet.toml`, edit the addresses, then `holon fleet validate` and `holon fleet render` it (docs/SELFHOST.md, lane 2).
 
-# The first subject token after `comp.`. Two lattices on one NATS never see each
-# other's commands, so this is what separates staging from production.
+# Separates lattices sharing one NATS (e.g. staging from production).
 lattice = "prod"
 
-# Every node, the reconciler and the ingress dial this. JetStream must be enabled
-# (`nats-server -js`): the inventory, the artifact object store and the leader lease
-# are all JetStream, not core NATS.
+# JetStream must be enabled (`nats-server -js`): inventory, artifact store and leader lease all use it.
 nats_url = "nats://10.0.0.1:4222"
 
-# The control plane the reconciler polls for desired state.
 platform_url = "http://10.0.0.1:8080"
 
-# Seconds between reconcile passes. Also the floor on how fast anything is noticed,
-# other than an activation, which bypasses this loop entirely (ADR-0042).
+# Seconds between passes; activations bypass this loop (ADR-0042).
 interval = 10
 
-# Seconds an inventory entry survives without a heartbeat — the failover detection
-# time. ADR-0035 measured a dead machine noticed 11-12s after the kill with this at
-# 15. Lower it and a slow node looks dead; raise it and traffic keeps being offered
-# to a corpse for longer.
+# Failover detection time (ADR-0035): lower and a slow node looks dead, higher and traffic goes to a corpse longer.
 inventory_ttl = 15
 
-# ---- the boxes that run workloads -------------------------------------------
-# One `comp-host` per node, holding every tenant placed on it. `addr` must be an
-# address the INGRESS can dial — a node advertising loopback is refused, because it
-# would deploy clean and fail at the first request.
-
+# `addr` must be dialable by the ingress; a loopback address is refused.
 [[nodes]]
 name = "node-1"
 addr = "10.0.0.2:3401"
-# nats is the default and what a real fleet wants: `sqlite` and `memory` are
-# node-local, so two replicas of one app on two nodes get two stores under one
-# bucket name. The reconciler refuses to spread a stateful app onto them (ADR-0027).
+# sqlite and memory are node-local, so the reconciler will not spread a stateful app onto them (ADR-0027).
 kv = "nats"
 
 [[nodes]]
@@ -56,29 +26,17 @@ name = "node-2"
 addr = "10.0.0.3:3401"
 kv = "nats"
 
-# ---- the door ----------------------------------------------------------------
-# The only process that faces anything. Routes by `Host` header from inventory, so
-# it needs no platform credential and keeps routing while the control plane is down.
-
 [ingress]
 host = "edge"
-# Loopback, with Caddy in front doing ACME — TLS is not terminated by the ingress.
-# `holon node ingress <domain>` renders that Caddy site.
+# Loopback behind Caddy, which terminates TLS (`holon node ingress <domain>` renders the site).
 addr = "127.0.0.1:8088"
-# Requests in flight to ONE NODE before shedding with 503; 0 disables shedding.
-# ADR-0041 measured the difference: with no bound, an overloaded node answered p99
-# 42 SECONDS with zero errors; with 64, p99 747ms and more useful work done.
+# Per-node in-flight bound before shedding with 503; 0 disables (ADR-0041).
 max_inflight = 64
 
-# ---- the control loop --------------------------------------------------------
-# TWO entries is the supported shape, not a mistake. They contend for a JetStream KV
-# lease whose expiry IS the lease, so exactly one acts and the other waits — which is
-# the standby ADR-0072 names as the real gap, closed by a unit rather than by code.
-
+# Two reconcilers on purpose: they contend for a JetStream KV lease, so one acts and one stands by (ADR-0072).
 [[reconcilers]]
 host = "control-1"
-# Failover takes up to this plus one interval. Must be comfortably longer than
-# `interval`, since the lease is renewed once per pass — a shorter one is refused.
+# Must be well above `interval`: the lease is renewed once per pass.
 lease_ttl = 30
 
 [[reconcilers]]

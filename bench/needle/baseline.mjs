@@ -1,8 +1,4 @@
-// Scores the SHIPPED matcher against the case set — the console's own file, not
-// a copy of it. Node 24 strips the types, so there is no build step and no way
-// for the thing benchmarked to drift from the thing served.
-//
-//   node bench/needle/baseline.mjs
+// Imports the console's own query.ts (Node 24 strips types), so the bench cannot drift from what ships.
 import { readFileSync } from "node:fs";
 import { parse } from "../../examples/console/ui/src/query.ts";
 

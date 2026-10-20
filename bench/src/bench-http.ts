@@ -1,20 +1,11 @@
-// HTTP roundtrip benchmark: drive the DEPLOYED accounts-app over HTTP. This is
-// the full path — Node fetch -> port-forward -> wasmCloud http-server provider
-// -> wrpc -> component -> kv (NATS). Compare against the in-process numbers to
-// see the transport + host overhead.
-//
-// Prereq: a single wasmCloud host with accounts-app, port-forwarded to :8001
-// (see comp/README + `just k8s-collapse`). Override with AUTH_BASE_URL.
+// Prereq: accounts-app port-forwarded to :8001 (`just k8s-collapse`); override with AUTH_BASE_URL.
 
 import { writeFileSync } from "node:fs";
 import { measure, type Result } from "./measure.js";
 
 const BASE = process.env.AUTH_BASE_URL ?? "http://localhost:8001";
 
-// Retry transient connection drops — the local port-forward can flap while the
-// operator reconciles host pods; that is infra noise, not the component's
-// latency. We retry the fetch (not counted as extra iterations by `measure`,
-// which times the whole call including any retry — acceptable: drops are rare).
+// The port-forward can flap while the operator reconciles host pods: infra noise, not latency.
 async function withRetry<T>(fn: () => Promise<T>, tries = 5): Promise<T> {
   let last: unknown;
   for (let i = 0; i < tries; i++) {
@@ -50,7 +41,6 @@ async function main() {
   const password = "hunter2hunter";
   const results: Result[] = [];
 
-  // HTTP iters are lower than in-process — these are real network roundtrips.
   // register is argon2-bound (~30ms each), so it gets fewer iters.
   const iters = Number(process.env.HTTP_ITERS ?? 150);
 
@@ -67,7 +57,6 @@ async function main() {
     await measure("POST /login", () => post("/login", { email: "hb@b.com", password, tenant }), { iters }),
   );
 
-  // grab a session token for the guarded endpoints
   const tokRes = await fetch(`${BASE}/login`, {
     method: "POST",
     headers: { "content-type": "application/json" },

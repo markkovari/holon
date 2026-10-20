@@ -1,24 +1,4 @@
-//! NATS JetStream adapters (`native` feature): blobs in an ObjectStore, pointers
-//! and the oplog in KV.
-//!
-//! * [`NatsBlobs`] — object name = the blob's SHA-256 hex. `put` checks `info`
-//!   first and skips the upload when the object exists; two racing puts of the same
-//!   bytes both write the same content, so either winning is the same state.
-//! * [`NatsKv`] — the [`Kv`] both [`KvPointers`] and [`KvOpLog`] run on.
-//!   `cas(expected: None)` is `create` (fails if the key has a live value);
-//!   `cas(expected: Some(r))` is `update(key, value, r)`, which JetStream rejects
-//!   unless the key's last revision is exactly `r`. A rejection
-//!   (`AlreadyExists` / `WrongLastRevision`) is a [`CasMismatch`]; anything else is
-//!   a storage error. Nothing here deletes or purges a key (see [`crate::store`]).
-//!
-//! # Keys
-//!
-//! The engine's keys are already in JetStream's key charset (`[-/_=.A-Za-z0-9]`):
-//! every user-supplied segment goes through [`crate::store::escape`], which maps
-//! everything outside `[A-Za-z0-9_-]` — including `.`, the subject token
-//! separator — to `=XX`. A key longer than [`MAX_KEY`] bytes (a very long
-//! workspace id) is replaced by `h/<sha256 of the key>`: collision-free in
-//! practice, and still deterministic, which is all a CAS key needs.
+//! Nothing here deletes or purges a key (see `crate::store`).
 
 use async_nats::jetstream::{self, kv, object_store};
 use tokio::io::AsyncReadExt;
@@ -28,10 +8,8 @@ use crate::model::Hash;
 use crate::oplog::KvOpLog;
 use crate::store::{sha256_hex, BlobStore, CasMismatch, Kv, KvPointers, Revision};
 
-/// Longest key passed to JetStream verbatim.
 pub const MAX_KEY: usize = 256;
 
-/// Bucket names.
 #[derive(Debug, Clone)]
 pub struct NatsConfig {
     pub blob_bucket: String,
@@ -50,7 +28,6 @@ impl Default for NatsConfig {
 }
 
 impl NatsConfig {
-    /// The default names with a prefix, for isolating tests or tenants.
     pub fn prefixed(prefix: &str) -> Self {
         NatsConfig {
             blob_bucket: format!("{prefix}-blobs"),
@@ -60,7 +37,6 @@ impl NatsConfig {
     }
 }
 
-/// Connect and open (creating if needed) the three buckets.
 pub async fn connect(
     url: &str,
     cfg: &NatsConfig,
@@ -75,7 +51,6 @@ pub async fn connect(
 
 pub struct NatsBlobs {
     store: object_store::ObjectStore,
-    /// The bucket's backing stream, for direct chunk reads (see `get`).
     stream: jetstream::stream::Stream,
     bucket: String,
 }
@@ -111,13 +86,8 @@ impl BlobStore for NatsBlobs {
         Ok(h)
     }
 
-    /// An object of at most one chunk (128 KiB by default — nearly every source
-    /// blob) is read with one direct get of its chunk subject. `ObjectStore::get`
-    /// creates an ordered consumer per read, and at the read rate of an engine
-    /// those pile up faster than their inactivity timeout reaps them: measured
-    /// here, the live suite hit JetStream's "maximum consumers limit reached"
-    /// within a few runs (and async-nats 0.50 panicked on that inside the reader).
-    /// Larger objects still stream through a consumer.
+    /// One-chunk objects use a direct get: `ObjectStore::get` makes a consumer per read, which at engine
+    /// read rates hit JetStream's "maximum consumers limit reached" (async-nats 0.50 panicked on it).
     async fn get(&self, hash: &str) -> Result<Option<Vec<u8>>> {
         let info = match self.store.info(hash).await {
             Ok(info) if !info.deleted => info,
@@ -181,10 +151,7 @@ impl NatsKv {
 }
 
 impl NatsKv {
-    /// Every key in the bucket with a live value — JetStream's own spelling,
-    /// which is the engine key unless it was longer than [`MAX_KEY`] (then it
-    /// is `h/<sha256>` and the original is not recoverable). An admin read: a
-    /// scan of the bucket, not for a hot path.
+    /// A full bucket scan, not for a hot path; keys over [`MAX_KEY`] come back hashed.
     pub async fn keys(&self) -> Result<Vec<String>> {
         use futures::TryStreamExt;
         let keys = self.store.keys().await.map_err(VcsError::storage)?;
@@ -192,8 +159,7 @@ impl NatsKv {
     }
 }
 
-/// Every workspace with an oplog in `log`'s bucket, sorted. A workspace whose
-/// head key was too long to store verbatim is not listed: its key is hashed.
+/// A workspace whose head key was hashed (over [`MAX_KEY`]) is not listed.
 pub async fn workspaces(log: &KvOpLog<NatsKv>) -> Result<Vec<String>> {
     let mut out: Vec<String> = log
         .kv()
@@ -207,7 +173,7 @@ pub async fn workspaces(log: &KvOpLog<NatsKv>) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// The JetStream key for an engine key (see the module docs).
+/// Keys over [`MAX_KEY`] become `h/<sha256>`: deterministic, which is all a CAS key needs.
 pub fn kv_key(key: &str) -> Result<String> {
     let ok = !key.is_empty()
         && !key.starts_with('.')

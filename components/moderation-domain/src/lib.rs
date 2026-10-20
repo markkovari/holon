@@ -1,15 +1,5 @@
-//! `moderation-domain` — content in, a decision out, and the model does not have the
-//! last word.
-//!
-//! ## What is scaffold and what is the goal
-//!
-//! This file is the ROUTER and no part may write it: it dispatches to `intake`, `verdict` and `queue`, answers
-//! `/health`, mints a test token, seeds a queue and writes one policy rule directly. `src/intake.rs`,
-//! `src/verdict.rs` and `src/queue.rs` are the goal; `CONTRACT.md` is what they must agree on.
-//!
-//! The chain is about PRECEDENCE: `queue` writes the rules, `verdict` is the only part that asks a model and
-//! the only one that may overrule it, and `intake` decides what gets that far. A part that lets the model win,
-//! or reports an outcome without saying what overruled what, leaves an app nobody can govern or audit.
+//! The ROUTER (no part may write it); intake/verdict/queue are the goal, CONTRACT.md their agreement.
+//! Precedence is the point: only `verdict` asks a model, and only it may overrule it.
 
 #[allow(warnings)]
 mod bindings {
@@ -39,7 +29,6 @@ mod bindings {
         world: "moderation:queue/moderation-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -85,12 +74,10 @@ impl Reply {
     }
 }
 
-/// One request, as a part sees it. The bearer is handed over as a STRING, not a principal: resolving it is
-/// `auth:identity/authorizer`'s job, which is the part's reason for importing that capability.
+/// The bearer stays a string: resolving it is `auth:identity/authorizer`'s job.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
-    /// The `Authorization: Bearer …` value, empty when the header is absent.
     pub bearer: String,
 }
 
@@ -107,7 +94,6 @@ impl Route {
 
 use guestfmt::percent_decode as percent;
 
-/// A `wasi:config` value, with a default. Scaffold: plumbing every part would write; the contract names the keys.
 pub fn cfg(key: &str, default: &str) -> String {
     bindings::wasi::config::store::get(key)
         .ok()
@@ -116,15 +102,13 @@ pub fn cfg(key: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_string())
 }
 
-/// Unix seconds, for anything that has to be stamped.
 pub fn now_secs() -> u64 {
     system_clock::now().seconds as u64
 }
 
 use guestfmt::rfc3339;
 
-/// A token for a test caller, so no gate has to log in through a part it is not judging. Scaffold; uses
-/// `session::issue` rather than a hand-built JWT, since a fixture minting its own tokens can drift from what the verifier accepts.
+/// Via `session::issue`, not a hand-built JWT: a fixture minting its own tokens can drift from the verifier.
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let subject = req.get("subject").and_then(Value::as_str).unwrap_or("ada").to_string();
@@ -147,9 +131,7 @@ fn mint(body: &str) -> Reply {
     }
 }
 
-/// Two pending items, so `verdict` and `queue` can be judged before `intake` exists. Scaffold: `decision` is
-/// absent on purpose (a pre-filled one would let a part that decides nothing pass). One item carries a link and
-/// one does not, the only fact the contract's `has_link` attribute is about.
+/// Lets verdict and queue be judged before intake exists; no `decision`, so a part deciding nothing cannot pass.
 fn seed() -> Reply {
     let mut ids = Vec::new();
     for (text, author) in [
@@ -172,9 +154,7 @@ fn seed() -> Reply {
     Reply::json(201, json!({ "item_ids": ids }))
 }
 
-/// One rule, written straight through `policy:guard`. `verdict` is judged with `queue` stubbed, and without a
-/// rule could only be judged where policy stays silent. Denies anything whose text carries a link, a fact about
-/// the item and not the model, so the rule fires whatever the model says.
+/// A link-deny rule fires whatever the model says, so verdict is judgeable with queue stubbed.
 fn seed_rules() -> Reply {
     let rule = policy::Rule {
         id: "no-links".to_string(),
@@ -193,9 +173,7 @@ fn seed_rules() -> Reply {
     }
 }
 
-/// What has been published, straight off the bus. Scaffold: `verdict` ends in a publish and the route that reads
-/// the bus belongs to `queue` (a stub while `verdict` is judged). A different consumer group from the contract's,
-/// so a gate reading here never competes with `queue`'s reads.
+/// A different consumer group from the contract's, so a gate reading here never competes with queue.
 fn peek_bus() -> Reply {
     match bus::poll("moderation.decided", "fixture-reader", 50) {
         Ok(events) => Reply::json(
@@ -216,9 +194,7 @@ fn peek_bus() -> Reply {
     }
 }
 
-/// A ceiling on a body read into memory, not a policy: past this the read gives up
-/// and the body reads as empty, rather than growing until the store's memory cap
-/// traps the component and the connection simply closes.
+/// Backstop under wasmtime's per-store memory cap, which traps instead of erroring.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
@@ -242,8 +218,6 @@ impl Guest for Component {
             _ => String::new(),
         };
 
-        // The router: `/health`, the token and the fixture here, everything else to
-        // the part that owns it.
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
         let reply = match seg.as_slice() {
             [] | ["index.html"] => Reply::Html(include_str!("../ui/index.html").to_string()),
@@ -254,7 +228,7 @@ impl Guest for Component {
             ["test", "seed"] => seed(),
             ["test", "rules"] => seed_rules(),
             ["test", "events"] => peek_bus(),
-            // The stored document straight out of the store (scaffold): a part must be judgeable on what it WROTE.
+            // A part must be judgeable on what it WROTE.
             ["test", "item", id] => match records::get("items", id) {
                 Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
                 Err(_) => Reply::err(404, "not_found"),

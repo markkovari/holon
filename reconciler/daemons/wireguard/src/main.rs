@@ -1,28 +1,5 @@
-//! `comp-wireguard` — whether a WireGuard tunnel is up, for a component that cannot look.
-//!
-//! ## Why this is a process and not a component
-//!
-//! Reading a WireGuard interface means running the `wg` binary and reading kernel module state, which
-//! a `wasm32-wasip2` guest cannot do (ADR-0095). So the part that needs an operating system is native
-//! and reached over HTTP like the gate, the database and the model provider.
-//!
-//! `components/vpn-wireguard` is the component side: it holds the WIT contract and dials this.
-//!
-//! ## An allow-list, for the same reason `comp-fswatch` has one
-//!
-//! `--allow-interface wg0` permits reading that interface, repeatable; nothing is permitted by default.
-//! `status` takes no argument (no caller-supplied interface name to refuse), so this daemon iterates
-//! every allowed interface and concatenates their peers. `wg-error::not-permitted` exists in the WIT
-//! only for symmetry with the other allow-list capabilities and is never constructed here.
-//!
-//! ## Parsing `wg show <iface> dump`
-//!
-//! The first line describes the interface itself (private-key, public-key,
-//! listen-port, fwmark) and is not a peer; every subsequent line is
-//! tab-separated: public-key, preshared-key, endpoint, allowed-ips,
-//! latest-handshake, transfer-rx, transfer-tx, persistent-keepalive.
-//!
-//!   comp-wireguard --addr 127.0.0.1:8011 --allow-interface wg0
+//! Native side of components/vpn-wireguard (ADR-0095). `wg-error::not-permitted` is never built:
+//! `status` takes no interface name to refuse, it reads every allowed one.
 
 use anyhow::Result;
 use axum::{extract::State, routing::post, Json, Router};
@@ -36,26 +13,18 @@ use tokio::process::Command;
     about = "Report WireGuard tunnel status, for a component that cannot look."
 )]
 struct Args {
-    /// Shared secret a caller must send as `Authorization: Bearer
-    /// <token>`. Loopback binding alone is not a boundary — see
-    /// `comp_daemon_kit`'s own doc for why. No token means
-    /// no check, logged loudly rather than silently.
+    /// Shared secret callers must send as `Authorization: Bearer <token>`; unset means no check.
     #[arg(long)]
     token: Option<String>,
-    /// Same, but read from a file (a systemd `LoadCredential` path)
-    /// rather than passed as a value — `--token` is `ps`-readable by
-    /// any local user, which is most of what this exists to close.
-    /// Wins over `--token` when both are given.
+    /// Like `--token` but read from a file, since a flag is `ps`-readable; takes precedence.
     #[arg(long)]
     token_file: Option<std::path::PathBuf>,
 
-    /// Where to listen. Loopback by default: this hands out network topology
-    /// and has no authentication of its own.
+    /// Where to listen; loopback by default, since this hands out network topology.
     #[arg(long, default_value = "127.0.0.1:8011")]
     addr: String,
 
-    /// An interface this may read, repeatable. Empty means nothing is
-    /// permitted, which is what a capability nobody has scoped should do.
+    /// An interface this may read, repeatable; none means nothing is permitted.
     #[arg(long = "allow-interface")]
     allow_interface: Vec<String>,
 }
@@ -69,8 +38,7 @@ struct Peer {
     tx_bytes: u64,
 }
 
-/// Parse `wg show <iface> dump` output into its peer lines, skipping the first line (the interface's
-/// own row, not a peer).
+/// The first line of `wg show <iface> dump` is the interface itself, not a peer.
 fn parse_dump(output: &str) -> Vec<Peer> {
     output
         .lines()
@@ -167,7 +135,6 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
 
-    /// The first line is the interface itself and must not be read as a peer.
     #[test]
     fn a_dump_parses_its_peer_lines_and_skips_the_interface_line() {
         let dump = "privkey\tpubkey\t51820\t0\n\
@@ -190,7 +157,6 @@ mod tests {
         assert!(parse_dump(dump).is_empty());
     }
 
-    /// No `--allow-interface` at all means zero peers, not an error.
     #[test]
     fn no_allowed_interfaces_means_no_peers_not_an_error() {
         let d = Daemon { allowed: vec![] };

@@ -1,14 +1,4 @@
-//! A search: generations of generations, each seeded from the last one's best.
-//!
-//! `generation.rs` proves one round works; this is built so a single generation CANNOT succeed:
-//!
-//!   * `max_attempts` is 1, so no branch can repair itself
-//!   * the only scripted answer satisfying the gate matches on `step_one`, text that can be in a prompt
-//!     only if the branch was seeded with a previous generation's winner
-//!
-//! So an accepted candidate proves generation two built on generation one. The other half is the branch
-//! that reads NOTHING: seeded branches inherit the last winner's mistakes, so one branch per generation
-//! starts from the original tree, asserted by the content it produced, not a flag.
+//! A search across generations, built so no single generation can succeed.
 
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -79,7 +69,7 @@ fn spec_for(port: u16) -> std::path::PathBuf {
     out
 }
 
-/// The goal. Two required checks and no way for one attempt to satisfy both.
+/// No way for one attempt to satisfy both required checks.
 fn plan(text: &str) -> Value {
     json!({
         "text": text,
@@ -95,7 +85,7 @@ fn plan(text: &str) -> Value {
             { "path": "README", "content": "a project\n" },
             { "path": "src/lib.rs", "content": "pub fn nothing() {}\n" },
         ],
-                // ONE: a self-repairing branch would make this a test of the driver's loop (`driver.rs`).
+                // One: a self-repairing branch would make this a test of the driver (`driver.rs`).
         "max_attempts": 1,
         "seed": 0,
     })
@@ -121,7 +111,7 @@ fn a_second_generation_builds_on_the_first_and_one_branch_refuses_to() {
 
     let bounds = Bounds { branches: BRANCHES, max_rounds: 4, max_tokens: 0, patience: 0 };
 
-    // Up, proven by a real search rather than a readiness signal.
+    // Proven by a real search, not a readiness signal.
     fleet.until("the fleet serving a search", Duration::from_secs(180), || {
         let s = search(
             &url,
@@ -153,8 +143,7 @@ fn a_second_generation_builds_on_the_first_and_one_branch_refuses_to() {
     assert_eq!(found.stopped, SearchStop::Accepted, "the search found nothing: {found:?}");
     assert_eq!(found.rounds.len(), 2, "it should take exactly two generations: {found:?}");
 
-    // --- NO GENERATION COULD HAVE DONE IT ALONE ---
-    // With `max_attempts` at 1 and the winning rule keyed on a previous winner's text, the SEARCH did the work.
+    // `max_attempts` 1 and a winning rule keyed on a previous winner: the search did the work.
     assert!(
         found.rounds[0].entries.iter().all(|e| !e.accepted),
         "the first generation passed the gate, so this proves nothing about seeding: {found:?}"
@@ -167,9 +156,7 @@ fn a_second_generation_builds_on_the_first_and_one_branch_refuses_to() {
         "the winner did not build on the first generation: {body}"
     );
 
-    // --- THE BRANCH THAT READS NOTHING REALLY DID NOT READ ---
-    // Asserted by what it PRODUCED, not the flag: it is the only escape from a local optimum once every
-    // other branch inherits the last winner.
+    // Asserted by what it produced, not the flag.
     let blind = &found.rounds[1].entries[BRANCHES as usize - 1];
     assert!(
         !body_of(&blind.files).contains("step_one"),
@@ -185,8 +172,7 @@ fn a_second_generation_builds_on_the_first_and_one_branch_refuses_to() {
     assert_eq!(found.spent_tokens, summed, "a search's cost is every branch of every round");
     assert!(summed > 0, "nothing was spent, so nothing was asked: {found:?}");
 
-    // --- THE BUDGET IS ACROSS THE SEARCH, NOT PER BRANCH ---
-    // Four branches inside their own budgets can put a project far outside its own, hence a separate bound.
+    // Per-branch budgets can sum past a project's, hence a separate bound.
     let first_round: u64 = found.rounds[0].entries.iter().map(|e| e.spent_tokens).sum();
     let broke = search(
         &url,
@@ -203,9 +189,7 @@ fn a_second_generation_builds_on_the_first_and_one_branch_refuses_to() {
         "a budget of one generation's worth must stop after one, having overshot by none: {broke:?}"
     );
 
-    // --- A SEARCH THAT IS NOT GOING ANYWHERE STOPS ---
-    // Every generation produces the same useless thing, so the best score never improves. Four rounds
-    // were allowed; two are spent.
+    // The best score never improves: four rounds allowed, two spent.
     let circling =
         search(&url, host, &plan("go nowhere"), Bounds { patience: 1, ..bounds }, SEED, timeout);
     assert_eq!(circling.stopped, SearchStop::NoProgress, "{circling:?}");

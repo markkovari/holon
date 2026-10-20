@@ -1,5 +1,4 @@
-//! The control room's `!` commands: how projects are made and staffed from any
-//! Matrix client, including ones that cannot create Spaces.
+//! Control-room `!` commands, so clients that cannot create Spaces can still manage projects.
 
 use crate::bridge::Bridge;
 use crate::runtime::ProjectInfo;
@@ -23,14 +22,12 @@ pub enum Cmd {
     Bad(String),
 }
 
-/// `rower`, `@rower`, `@agent-rower:server` and `agent-rower` all mean the agent `rower`.
 fn agent_token(t: &str) -> String {
     let t = t.trim_start_matches('@');
     let t = t.split(':').next().unwrap_or(t);
     t.strip_prefix("agent-").unwrap_or(t).to_string()
 }
 
-/// `None` when the text is not a command at all.
 pub fn parse(body: &str) -> Option<Cmd> {
     let body = body.trim();
     if !body.starts_with('!') {
@@ -131,7 +128,7 @@ const HELP: &str = "\
 
 You can also invite an agent's user (@agent-<name>) into a project's room: that adds it.";
 
-/// Whole days left before the runtime empties the trash entry deleted at `deleted_at`.
+/// The runtime empties the trash after 30 days.
 fn restorable_days(deleted_at: u64) -> u64 {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -141,7 +138,6 @@ fn restorable_days(deleted_at: u64) -> u64 {
 }
 
 impl Bridge {
-    /// The reply to a control-room message.
     pub fn command(&self, body: &str) -> Option<String> {
         let Some(cmd) = parse(body) else {
             return Some("I only understand commands here. Try !help".into());

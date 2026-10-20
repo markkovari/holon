@@ -1,11 +1,5 @@
-//! `mail-http` — one email, POSTed to whatever gateway config names.
-//!
-//! Why HTTP and not SMTP: `comp-host` wires no `wasi:sockets`, so a component cannot speak SMTP at all. That is why this
-//! interface is a POST and why `tools/mail-relay` exists: it speaks real SMTP on the outside, where sockets are allowed.
-//!
-//! `mail:gateway-url` and `mail:from` are config. The API key is a SECRET read through `comp:secrets` under
-//! `mail-api-key` (ADR-0051: a secret arrives by reference, never as config). A gateway needing no key (the local relay)
-//! has none, and the Authorization header is then absent rather than empty.
+//! HTTP, not SMTP: comp-host wires no wasi:sockets (tools/mail-relay speaks SMTP outside).
+//! The API key is a secret by reference (ADR-0051), never config.
 
 #[allow(warnings)]
 mod bindings;
@@ -38,7 +32,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), SendError> {
     Ok((scheme, authority, path))
 }
 
-/// The gateway's key, revealed only at the moment it is used. `none` is not an error: it is the normal way to run against a gateway needing no credential (the local relay).
+/// `None` is normal against a keyless gateway (the local relay).
 fn api_key() -> Option<String> {
     match secrets::get("mail-api-key") {
         Ok(Some(s)) => secrets::reveal(&s).ok().filter(|v| !v.is_empty()),
@@ -50,8 +44,7 @@ fn cfg(key: &str) -> Option<String> {
     config::get(key).ok().flatten().filter(|s| !s.is_empty())
 }
 
-/// The gateway's own id for the message (Resend answers `{"id":"..."}`; the relay the same shape with MailHog's id).
-/// A gateway returning neither is not an error (the send happened), so the status stands in.
+/// A gateway returning no id still sent the message, so the status stands in.
 fn message_id(body: &[u8], status: u16) -> String {
     serde_json::from_slice::<serde_json::Value>(body)
         .ok()
@@ -75,7 +68,7 @@ impl Guest for Component {
             return Err(SendError::Rejected(format!("not an address: {}", msg.to)));
         }
 
-        // Resend's shape, which the relay also accepts. `text` rather than `html`: an event notification has no markup.
+        // Resend's shape (the relay accepts it too); `text`: a notification has no markup.
         let payload = serde_json::json!({
             "from": from,
             "to": [msg.to],

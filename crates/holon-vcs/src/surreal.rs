@@ -1,58 +1,5 @@
-//! The [`Graph`] on SurrealDB (`native` feature), over the 3.x WebSocket client.
-//!
-//! # Schema
-//!
-//! | table | record id | holds |
-//! |---|---|---|
-//! | `symbol` | `sha256(ws, key)` | a [`SymbolRecord`] + `ws` |
-//! | `patch` | `sha256(ws, hash)` | a [`PatchRecord`] + `ws` |
-//! | `symref` | `sha256(ws, symbol id)` | a symbol *name* an edge can point at |
-//! | `conflict` | `sha256(ws, id)` | a [`ConflictRecord`] + `ws`, its `id` stored as `cid` |
-//!
-//! (Conflict effects live in the oplog's intents, not here.)
-//!
-//! Edges, all `RELATE`d: `patch ->depends_on-> symref`, `patch ->implements->
-//! symref` (a patch's content uses / implements those names — by name, because
-//! that is what source refers by; after a rename the old name's dependents are
-//! exactly the code still using the old name), and `patch ->conflicts_with->
-//! patch` (left to right, carrying the conflict id). `dependents` is a graph
-//! traversal: `symref<-depends_on<-patch`.
-//!
-//! Record ids are hashes, so no user string is ever spliced into a query: every
-//! value — workspace, names, content hashes — is a bound parameter, and ids are
-//! built server-side with `type::record(<table>, $rid)`. The only identifiers
-//! interpolated are the namespace and database at connect time, which are checked
-//! against `[A-Za-z0-9_]` first.
-//!
-//! # Indexes
-//!
-//! Every lookup the adapter makes is either by record id (a patch by hash, a
-//! symbol or conflict by key, a symref) or through an index, so its cost is
-//! bounded by what it returns, not by how much any workspace has written. Record
-//! ids are hashes of `(ws, natural id)`, so different workspaces never share a
-//! record; every other lookup leads with `ws`.
-//!
-//! | lookup | statement | index |
-//! |---|---|---|
-//! | symbols by name (`symbols_named`) | `symbol WHERE ws, component, path, kind` (+ alias filter) | `symbol_name` |
-//! | symbols of a component | `symbol WHERE ws, component` | `symbol_component` |
-//! | open conflicts of a symbol | `conflict WHERE ws, key, state` | `conflict_key` |
-//! | conflicts of a workspace (by state) | `conflict WHERE ws [, state]` | `conflict_ws` |
-//! | a patch's old edges, on rewrite | `DELETE depends_on / implements WHERE in` | `depends_on_in`, `implements_in` |
-//! | a conflict's edge, on rewrite | `DELETE conflicts_with WHERE ws, conflict` | `conflicts_with_cid` |
-//! | dependents | `symref<-depends_on<-patch` | graph edge scan (no index needed) |
-//!
-//! `tests/live.rs::surreal_queries_use_indexes` runs `EXPLAIN` on each and
-//! fails on a table scan; `tests/bench.rs` measures them on 20k patches.
-//!
-//! # Atomicity
-//!
-//! Each method is one request; the multi-statement ones run in a `BEGIN …
-//! COMMIT` transaction. The conditional writes the engine relies on —
-//! `put_patch` replacing only a pending record, the op-monotone guards on
-//! `mark_patch`, `update_symbol` and conflict effects, `abandon_if_uncommitted`
-//! touching only an uncommitted conflict — are `UPDATE … WHERE` / `IF`
-//! statements inside one transaction, so they are atomic on the server.
+//! The [`Graph`] on SurrealDB. Record ids are hashes and every value is a bound parameter, so no
+//! user string is spliced into a query; edges point at names (`symref`) because source refers by name.
 
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
@@ -100,8 +47,7 @@ fn ident(s: &str) -> Result<&str> {
     Ok(s)
 }
 
-/// A record id: a hash of the workspace and the natural id, so it is always a
-/// plain hex string whatever the user typed.
+/// Hashed, so a record id is plain hex whatever the user typed.
 fn rid(ws: &str, id: &str) -> String {
     let mut b = Vec::with_capacity(ws.len() + id.len() + 1);
     b.extend_from_slice(ws.as_bytes());
@@ -126,8 +72,7 @@ fn with_ws<T: serde::Serialize>(ws: &str, t: &T) -> Result<Value> {
     Ok(v)
 }
 
-/// A conflict's own `id` would collide with the record id, so it is stored as
-/// `cid`.
+/// A conflict's own `id` would collide with the record id, so it is stored as `cid`.
 fn conflict_row(ws: &str, c: &ConflictRecord) -> Result<Value> {
     let mut v = with_ws(ws, c)?;
     if let Value::Object(m) = &mut v {
@@ -151,8 +96,7 @@ fn from_value<T: DeserializeOwned>(v: Value) -> Result<T> {
     serde_json::from_value(v).map_err(|e| VcsError::Storage(format!("surreal row: {e}")))
 }
 
-/// SurrealDB 3 errors on a SELECT from a table that does not exist, so every
-/// table is defined up front — with an index for every lookup (module docs).
+/// SurrealDB 3 errors on a SELECT from a missing table, so every table is defined up front.
 pub const SCHEMA: &str = "
 DEFINE TABLE IF NOT EXISTS symbol SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS patch SCHEMALESS;
@@ -170,8 +114,7 @@ DEFINE INDEX IF NOT EXISTS implements_in ON implements FIELDS in;
 DEFINE INDEX IF NOT EXISTS conflicts_with_cid ON conflicts_with FIELDS ws, conflict;
 ";
 
-/// Every read and delete-by-condition the adapter issues, with sample
-/// parameters, for the `EXPLAIN` check in the live suite: `(name, statement)`.
+/// Every lookup the adapter issues, for the live suite's `EXPLAIN` no-table-scan check.
 pub const INDEXED_QUERIES: &[(&str, &str)] = &[
     (
         "symbols_named",
@@ -205,13 +148,8 @@ impl SurrealGraph {
         Ok(g)
     }
 
-    /// Run `sql` with `vars`; every statement must succeed.
-    ///
-    /// SurrealDB's transactions are optimistic: two that write the same key
-    /// concurrently and one is cancelled with a "can be retried" conflict, having
-    /// changed nothing. That is retried here (bounded) — every statement this
-    /// adapter sends is either a single atomic statement or one `BEGIN … COMMIT`
-    /// block, so a cancelled one can simply run again.
+    /// SurrealDB transactions are optimistic: a write-write race cancels one, unapplied, with a "can be
+    /// retried" conflict, so it is retried (bounded); every request here is one atomic unit.
     async fn run(&self, sql: &str, vars: Value) -> Result<surrealdb::IndexedResults> {
         let mut delay = std::time::Duration::from_millis(1);
         let mut last = String::new();
@@ -235,9 +173,8 @@ impl SurrealGraph {
                 return Ok(r);
             }
             errors.sort();
-            // In a `BEGIN … COMMIT` block every statement reports the failed
-            // transaction; the cause is whichever says something else. None
-            // saying anything else still means nothing was applied.
+            // In a `BEGIN … COMMIT` every statement reports the failed transaction; the cause is
+            // whichever says something else. If none does, nothing was applied either.
             let causes: Vec<&str> = errors
                 .iter()
                 .map(|(_, m)| m.as_str())
@@ -255,8 +192,7 @@ impl SurrealGraph {
         )))
     }
 
-    /// The plan of `sql` (a SELECT or DELETE, without the trailing `;`), as
-    /// SurrealDB's `EXPLAIN` renders it.
+    /// `sql` is a SELECT or DELETE without the trailing `;`.
     pub async fn explain(&self, sql: &str) -> Result<Value> {
         // A SELECT's plan is one object, a DELETE's a list of steps: wrap both.
         let mut r = self.run(&format!("RETURN [({sql} EXPLAIN)];"), json!({})).await?;
@@ -264,14 +200,12 @@ impl SurrealGraph {
         Ok(Value::Array(v))
     }
 
-    /// Drop this graph's database (tests: one database per run).
     pub async fn remove_database(&self, database: &str) -> Result<()> {
         let dbn = ident(database)?;
         self.run(&format!("REMOVE DATABASE IF EXISTS {dbn};"), json!({})).await?;
         Ok(())
     }
 
-    /// Rows of statement `idx`.
     async fn rows<T: DeserializeOwned>(
         &self,
         sql: &str,
@@ -298,7 +232,6 @@ impl SurrealGraph {
     }
 }
 
-/// Transaction-conflict retries per request.
 pub const TXN_TRIES: u32 = 100;
 
 fn is_retryable(msg: &str) -> bool {

@@ -1,4 +1,3 @@
-// Benchmarks the REAL Store::recall_semantic / recall over synthetic clustered vectors.
 use agent_runtime::store::Store;
 use std::time::Instant;
 
@@ -18,7 +17,7 @@ fn main() {
     for &n in &[100usize, 1_000, 5_000, 10_000, 50_000, 100_000] {
         let dir = tempfile::tempdir().unwrap();
         let st = Store::open(dir.path()).unwrap();
-        // write memories + sidecar exactly as the runtime lays them out
+        // must match the runtime's on-disk layout
         let mut mem = String::new(); let mut vecs = String::new();
         for i in 0..n {
             let text = format!("note {i} about topic {} with some words to look like a memory entry of moderate length", i % 10);

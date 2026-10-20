@@ -1,9 +1,4 @@
-//! `comp-plug` — a shim over [`comp_fleet::plug`], for callers that are not
-//! Rust.
-//! A GATE is a shell script (`e2e-access.sh`) that cannot call a Rust function; this is the thin CLI over the library.
-//!
-//!   comp-plug clinic-domain --dir components/target/wasm32-wasip2/debug
-//!   comp-plug clinic-domain --wiring     # what would be plugged, and what is missing
+//! CLI over [`comp_fleet::plug`] for gates, which are shell scripts.
 
 use std::path::PathBuf;
 
@@ -43,7 +38,7 @@ fn main() -> Result<(), String> {
     }
 
     let wiring = wiring(&args.component, &catalog)?;
-    // Missing capabilities go to stderr either way: on `--wiring` they are the answer, on a compose they explain what `wac` says next.
+    // To stderr either way: with `--wiring` they are the answer, else they explain `wac`.
     for (node, iface) in &wiring.missing {
         eprintln!("  ! nothing built exports {iface} (imported by {node})");
     }

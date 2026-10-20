@@ -1,11 +1,4 @@
-//! `adversary` — the component ADR-0023 asks for: two sweeps (store reach, egress) that
-//! count what got through. Both are designed so the WRONG answer is loud.
-//!
-//!   GET /sweep?neighbour=<tenant>/<app>   the whole thing, as JSON
-//!   GET /work                             a trivial handler, so the same binary
-//!                                         can generate the load the throughput
-//!                                         half needs (ADR-0023: isolation and
-//!                                         throughput numbers come from ONE run)
+//! ADR-0023's adversary: store-reach and egress sweeps, built so a wrong answer is loud.
 
 #[allow(warnings)]
 mod bindings {
@@ -23,7 +16,6 @@ mod bindings {
         world: "probe:adversary/adversary",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -38,9 +30,7 @@ guestio::guest_p3_respond!();
 
 struct Component;
 
-/// Bucket names a leak would have used. `default` is first: every catalogue component
-/// hardcodes it, so it MUST succeed and resolve to this tenant's own store; a failing
-/// `default` is a broken host, not a secure one.
+/// `default` must open this tenant's own store: failing it means a broken host, not a secure one.
 fn dictionary(neighbour: &str) -> Vec<String> {
     let (tenant, app) = neighbour.split_once('/').unwrap_or(("eve", "shop"));
     vec![
@@ -65,29 +55,24 @@ fn dictionary(neighbour: &str) -> Vec<String> {
     ]
 }
 
-/// Targets, and whether reaching one is a finding. The `control` entry is not padding:
-/// a host that refused everything would pass while being useless, so the sweep also dials
-/// one ordinary public host to catch a policy that is broken the other way.
+/// The `control` entry catches a host that refuses everything and so passes while useless.
 const TARGETS: &[(&str, bool)] = &[
     // (target, lateral) — `lateral` means reaching it is an escape.
-    ("127.0.0.1:4222", true),     // the NATS bus this node is joined to
-    ("localhost:4222", true),     // the same thing, by a name that resolves to it
-    ("127.0.0.1:3401", true),     // this host's own listener — calling back in
+    ("127.0.0.1:4222", true), // the NATS bus this node is joined to
+    ("localhost:4222", true),
+    ("127.0.0.1:3401", true), // this host's own listener — calling back in
     ("169.254.169.254:80", true), // cloud metadata: credentials
-    ("100.64.0.1:3401", true),    // Tailscale CGNAT — the rest of the lattice
+    ("100.64.0.1:3401", true), // Tailscale CGNAT — the rest of the lattice
     ("100.127.255.254:80", true),
     ("10.0.0.1:80", true),
     ("192.168.1.1:80", true),
     ("[::1]:4222", true),
-    ("example.com:80", false), // the control
+    ("example.com:80", false),
 ];
 
 struct Reached {
-    /// Stores opened that are not this tenant's own.
     foreign_opens: u32,
-    /// Bytes of a neighbour's data actually read.
     foreign_keys: u32,
-    /// Connections that were established rather than refused.
     connections: u32,
 }
 
@@ -102,8 +87,7 @@ fn sweep_stores(neighbour: &str, out: &mut String, r: &mut Reached) {
         let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
         match kv::open(&name) {
             Ok(bucket) => {
-                // An open is not a breach (`default` must work); every handle is used,
-                // not just counted, to see whether it reached someone else's data.
+                // An open is not a breach (`default` must work), so each handle is read to see whose data it reaches.
                 let keys = bucket.list_keys(None).map(|k| k.keys.len()).unwrap_or(0);
                 let own = name == "default";
                 if !own {
@@ -121,10 +105,8 @@ fn sweep_stores(neighbour: &str, out: &mut String, r: &mut Reached) {
     out.push(']');
 }
 
-/// Try to open a connection. Anything but a refusal is a finding. `http-request-denied`
-/// is the NAME check; any other send error is the ADDRESS check (an allow-listed name
-/// resolving somewhere no tenant may reach) — a design with only the first would pass a
-/// DNS entry pointed at the metadata endpoint.
+/// `http-request-denied` is the name check; any other send error is the address check
+/// (an allow-listed name resolving somewhere no tenant may reach).
 async fn probe_egress(out: &mut String, r: &mut Reached) {
     out.push_str(",\"egress\":[");
     let mut first = true;
@@ -137,8 +119,7 @@ async fn probe_egress(out: &mut String, r: &mut Reached) {
             Dial::DeniedByName => "refused:name",
             Dial::DeniedByAddress => "refused:address",
             Dial::Connected => {
-                // Only a LATERAL connection is an escape. Reaching an allow-listed
-                // public host is the policy working, not failing.
+                // Only a lateral connection is an escape; reaching an allow-listed public host is the policy working.
                 if *lateral {
                     r.connections += 1;
                 }
@@ -167,14 +148,11 @@ async fn dial(authority: &str) -> Dial {
     let _ = req.set_authority(Some(authority));
     let _ = req.set_path_with_query(Some("/"));
 
-    // p3 has one `send` where p2 had `handle` + a future, so the NAME check shows
-    // up as its own error code (`http-request-denied`) rather than a sync `Err`.
+    // In p3 the name check surfaces as its own error code, not a sync `Err`.
     match client::send(req).await {
         Ok(_resp) => Dial::Connected,
         Err(ErrorCode::HttpRequestDenied) => Dial::DeniedByName,
-        // The host refused after resolving, or the connection failed. `wasi:http` has
-        // one error channel for both; the host's log separates them. `connections`
-        // is unaffected either way.
+        // wasi:http has one error channel for address refusal and connect failure; the host log separates them.
         Err(_) => Dial::DeniedByAddress,
     }
 }
@@ -189,8 +167,7 @@ impl Guest for Component {
 
         let body = match route.as_str() {
             "/work" => {
-                // Trivial, but touches the store so the load half exercises the same
-                // capability path the isolation half attacks.
+                // Touches the store so the load half exercises the capability path the isolation half attacks.
                 let n = kv::open("default").and_then(|b| b.increment_or_zero("hits")).unwrap_or(0);
                 format!("{{\"ok\":true,\"hits\":{n}}}")
             }
@@ -225,9 +202,7 @@ impl Guest for Component {
     }
 }
 
-/// `wasi:keyvalue` has no counter on `bucket`; the host's `atomics` does, but this
-/// component deliberately does not import it — fewer capabilities, more meaning in the
-/// sweep. Read-modify-write is fine; the count need not be exact.
+/// No `atomics` import on purpose (fewer capabilities); an inexact read-modify-write count is fine.
 trait CounterExt {
     fn increment_or_zero(&self, key: &str) -> Result<u64, kv::Error>;
 }

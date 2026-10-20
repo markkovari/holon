@@ -5,8 +5,7 @@ edition = "2021"
 publish = false
 description = "The autonomous half of a Holon agent: a tool-using loop over a model, per-agent memory, schedule/event/HTTP triggers, approvals and a run log. Native on purpose (ADR-0095): a wasm component has no background, so nothing in a guest can fire a cron trigger or hold an approval open."
 
-# Native, outside the components/ (wasm32) workspace — same arrangement as
-# reconciler/ and gpui-console/.
+# Native, so kept out of the wasm32 components/ workspace.
 [workspace]
 
 [lib]
@@ -25,9 +24,7 @@ clap = { version = "4", features = ["derive", "env"] }
 tiny_http = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
-# Both model dialects as data: the request a call sends and the reply it reads back (ADR-0116).
 holon-llm = { path = "../crates/holon-llm" }
-# The events and the run record, as data the board and a stream can share (they build for wasm).
 agent-wire = { path = "../crates/agent-wire" }
 tempfile = "3"
 

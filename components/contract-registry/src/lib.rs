@@ -1,18 +1,4 @@
-//! `contract-registry` — what two parts of a decomposed goal build against.
-//!
-//! Three rules:
-//! 1. **Nothing blocks.** `ask` records and returns; `pending` is read at a generation
-//!    boundary. Nothing waits on another part, since two parts waiting on each other is the
-//!    deadlock this design exists to prevent (ADR-0086). A needed change costs a generation.
-//! 2. **An amendment is a promotion.** `answer(granted)` produces a PROPOSED version;
-//!    `ratify` makes it canonical, only for the part that owns it and only on a passing score
-//!    (as `knowledge:memory`'s trusted pool, ADR-0084), else a part could poison every sibling.
-//! 3. **A version mismatch is a refusal**, not a warning: candidates built against different
-//!    versions compile, deploy, and fail on one field.
-//!
-//! The guards live in the statements, not after a read: `ratify` has `WHERE owner = …`,
-//! `answer` has `WHERE answered = false`, and the version counter is `n += 1 RETURN n` (a
-//! read-modify-write was measured landing 7 of 60 concurrent writes, ADR-0084).
+//! Nothing blocks: two parts waiting on each other is the deadlock (ADR-0086). A version mismatch is a refusal.
 
 #[allow(warnings)]
 mod bindings;
@@ -35,8 +21,6 @@ fn graph_err(e: graph::GraphError) -> RegistryError {
     }
 }
 
-/// Send SurrealQL through the graph, which owns the connection, the credentials,
-/// the namespace bootstrap and the conflict retry.
 fn ask_db(statement: &str) -> Result<Vec<Value>, RegistryError> {
     let body = graph::query(statement).map_err(graph_err)?;
     surql::rows(&body).map_err(RegistryError::Rejected)
@@ -54,14 +38,12 @@ fn verdict_of(name: &str) -> Verdict {
     match name {
         "granted" => Verdict::Granted,
         "counter" => Verdict::Counter,
-        // An unreadable verdict is a refusal, never a grant: a decoding gap must
-        // not amend anything.
+        // An unreadable verdict is a refusal, never a grant.
         _ => Verdict::Denied,
     }
 }
 
-/// A gate score that actually passed. The scale belongs to the fitness function,
-/// so this asserts only the sign (ADR-0081).
+/// The scale is the fitness function's, so only the sign is asserted (ADR-0081).
 fn passed(gate_score: i32) -> bool {
     gate_score > 0
 }
@@ -100,9 +82,7 @@ impl Guest for Component {
                 "a contract with no body is not something two parts can build against".into(),
             ));
         }
-        // Refused rather than versioned: `publish` is the human's contract at the
-        // start of a run, and a second one mid-run would silently move what every
-        // part is building against without anybody granting anything.
+        // Refused, not versioned: a mid-run publish would move what every part builds against.
         if !ask_db(&surql::current_contract())?.is_empty() {
             return Err(RegistryError::Refused(
                 "a contract is already published — amend it through ask/answer, which leaves a \
@@ -111,8 +91,7 @@ impl Guest for Component {
             ));
         }
         let version = next_version()?;
-        // Canonical on arrival, and owned by nobody: it is the human's, and there
-        // is no part whose gate could ratify it.
+        // Canonical on arrival, owned by nobody: it is the human's.
         ask_db(&surql::put_contract(version, &body, true, "", ""))?;
         Ok(version)
     }
@@ -179,9 +158,7 @@ impl Guest for Component {
             }));
         }
 
-        // A grant is the only verdict that moves the contract, and what it produces
-        // is PROPOSED: the part that granted it has not yet shown it can implement
-        // what it agreed to.
+        // A grant yields a proposed version: the granting part has not yet shown it can implement it.
         let version = match v {
             Verdict::Granted => {
                 let version = next_version()?;
@@ -190,8 +167,6 @@ impl Guest for Component {
             }
             _ => 0,
         };
-        // Guarded in the statement: two boundary passes resolving one request would
-        // otherwise both succeed, and the second would overwrite the first verdict.
         if ask_db(&surql::answer(&id, verdict_name(v), &body, version))?.is_empty() {
             return Err(RegistryError::Refused(format!(
                 "request {id} was answered by somebody else first"
@@ -213,8 +188,6 @@ impl Guest for Component {
         if c.canonical {
             return Ok(());
         }
-        // `WHERE owner = …` in the statement, so a part cannot ratify a version it
-        // does not own even if two ratifications race.
         if ask_db(&surql::ratify(version, &part))?.is_empty() {
             return Err(RegistryError::Refused(format!(
                 "v{version} is owned by {:?}, not by {part:?} — the part that granted an \
@@ -233,7 +206,6 @@ impl Guest for Component {
     }
 
     fn composable(candidates: Vec<String>) -> Result<Vec<String>, RegistryError> {
-        // One part, or none, always composes with itself.
         if candidates.len() < 2 {
             return Ok(Vec::new());
         }
@@ -248,8 +220,7 @@ impl Guest for Component {
                 )
             })
             .collect();
-        // A candidate nobody recorded is not composable either: it was built
-        // against something, and not knowing what is worse than knowing it differs.
+        // Not knowing what a candidate was built against is worse than knowing it differs.
         let mut out: Vec<String> = candidates
             .iter()
             .filter(|c| !builds.iter().any(|(id, _, _)| id == *c))
@@ -269,8 +240,6 @@ mod tests {
 
     #[test]
     fn a_version_is_claimed_atomically_and_never_read_then_written() {
-        // Two parts granting amendments at one boundary is the normal case, so the
-        // counter increments in the database and hands back what it became.
         assert_eq!(surql::next_version(), "UPSERT contract_seq:⟨1⟩ SET n += 1 RETURN n;");
     }
 
@@ -312,7 +281,6 @@ mod tests {
         let a = surql::request_id("frontend", "backend", "SearchResult needs total_pages", 3);
         let b = surql::request_id("frontend", "backend", "SearchResult needs total_pages", 3);
         assert_eq!(a, b, "asking twice in one generation is one request");
-        // A different version is a different question: the interface moved under it.
         assert_ne!(
             a,
             surql::request_id("frontend", "backend", "SearchResult needs total_pages", 4)
@@ -364,9 +332,7 @@ mod tests {
         );
     }
 
-    /// Captured from v3.1.3: an `ORDER BY` over a field the projection does not
-    /// carry is a PARSE error, not a silently unsorted result. Both statements that
-    /// sort therefore select everything they sort by, and this pins that.
+    /// Captured from v3.1.3: ORDER BY over an unprojected field is a parse error, not an unsorted result.
     #[test]
     fn a_part_is_offered_only_its_own_undemonstrated_proposal() {
         let s = surql::proposed_for("backend");
@@ -380,9 +346,6 @@ mod tests {
         let pending = surql::pending("backend");
         assert!(pending.contains("SELECT *"), "ORDER BY at_version needs it projected: {pending}");
         assert!(pending.contains("ORDER BY at_version"), "{pending}");
-        // Unanswered is `!= true`, not `= false`: a fresh request has no such
-        // field at all, because writing one on every ask would un-answer a verdict
-        // the part has already been given.
         assert!(pending.contains("answered != true"), "{pending}");
         assert!(
             !surql::put_request("i", "a", "b", "s", "x", 1).contains("answered ="),
@@ -395,7 +358,6 @@ mod tests {
 
     #[test]
     fn an_empty_registry_reads_as_empty_rather_than_broken() {
-        // The first `current()` of a run always precedes the first `publish`.
         let absent = r#"[{"status":"ERR","result":"The table 'contract' does not exist"}]"#;
         assert!(surql::rows(absent).unwrap().is_empty());
         assert!(surql::rows(r#"[{"status":"ERR","result":"permission denied"}]"#).is_err());
@@ -419,8 +381,6 @@ mod tests {
 
     #[test]
     fn a_candidate_with_no_recorded_version_is_not_composable() {
-        // Not knowing what something was built against is worse than knowing it
-        // differs, so it is reported rather than assumed to agree.
         let rows = vec![("c1".to_string(), "backend".to_string(), 4u32)];
         assert!(surql::disagreements(&rows).is_empty(), "one build cannot disagree with itself");
     }

@@ -1,17 +1,5 @@
-//! `mesh-domain` — the resilience playground (docs/apps/MESH.md) as ONE composed wasm HTTP component.
-//! Exports `wasi:http`; imports only WIT contracts: `resilience:breaker` (stateless breaker + backoff
-//! math), `records:store` (durable per-key circuit state), `proxy:route` (the real outgoing hop).
-//!
-//! One guarded call, in order:
-//!
-//!   1. `admit` — if the circuit is OPEN the request is SHED here (503, upstream never dialled).
-//!   2. forward the real HTTP request through `proxy:route`.
-//!   3. judge it: a 5xx, an unreachable upstream, or a response slower than `slo_ms` is a FAILURE;
-//!      `observe` feeds that into the circuit.
-//!   4. on failure, wait `backoff(attempt)` and go again, re-checking `admit` each time since our own
-//!      retries may trip the breaker.
-//!
-//! Every circuit mutation is a revision-guarded `records:store` update, so concurrent callers converge.
+//! Resilience playground (docs/apps/MESH.md): admit, forward via proxy:route, judge, observe, back off.
+//! Every circuit mutation is a revision-guarded records:store update, so concurrent callers converge.
 
 #[allow(warnings)]
 mod bindings {
@@ -34,7 +22,6 @@ mod bindings {
         world: "mesh:app/mesh-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -56,7 +43,6 @@ struct Component;
 
 const CIRCUITS: &str = "circuits";
 const CAS_TRIES: u32 = 40;
-/// Hard ceiling on attempts per request, whatever the client asks for.
 const MAX_ATTEMPTS_CAP: u32 = 8;
 const MAX_BACKOFF_CAP: u32 = 2_000;
 
@@ -89,7 +75,7 @@ fn now_ms() -> u64 {
     t.seconds as u64 * 1000 + (t.nanoseconds / 1_000_000) as u64
 }
 
-/// Monotonic millis — for measuring a call, never for state timestamps.
+/// For measuring a call, never for state timestamps.
 fn mono_ms() -> u64 {
     monotonic_clock::now() / 1_000_000
 }
@@ -120,7 +106,7 @@ fn usage() -> Outcome {
 struct Policies {
     breaker: rb::Policy,
     retry: rb::RetryPolicy,
-    /// A response slower than this counts as a failure. 0 = no SLO.
+    /// 0 = no SLO.
     slo_ms: u64,
 }
 
@@ -192,10 +178,7 @@ fn circuit_json(c: &rb::Circuit) -> Value {
     })
 }
 
-/// Read-modify-write one key's circuit under a revision compare-and-set. `f` gets the current circuit plus
-/// the record's counters and returns `(result, new circuit, counter deltas)`. Retried on a revision conflict,
-/// so a racing caller can't lose a trip; returns none only under sustained contention. `open_ms` is stored
-/// with the state so a READ can report an honest "probe admitted in N ms".
+/// Retried on a revision conflict so a racing caller can't lose a trip; `None` only under sustained contention.
 fn cas_circuit<T>(
     key: &str,
     open_ms: u64,
@@ -233,14 +216,12 @@ fn cas_circuit<T>(
     None
 }
 
-/// Observable counters per circuit — what the dashboard shows.
 #[derive(Default)]
 struct Counters {
     /// Attempts that actually left the host.
     attempts: u64,
     ok: u64,
     failed: u64,
-    /// Requests refused by an open circuit (the upstream was never dialled).
     shed: u64,
     trips: u64,
 }
@@ -279,9 +260,7 @@ async fn call(request: Request) -> Outcome {
         Some(k) => k.to_string(),
         None => return Outcome::Err(422, "key required".into()),
     };
-    // The client picks the upstream path (the demo asks for failure with /upstream/hit?fail=1). Not an open
-    // proxy: `proxy:route` only forwards paths in its route table, else `no-route`. Still require an absolute
-    // path so a stray value can't be read as a full URL.
+    // Not an open proxy: proxy:route forwards only its route table; an absolute path stops a stray value reading as a URL.
     let path = b["path"].as_str().unwrap_or("/upstream/hit").to_string();
     if !path.starts_with('/') {
         return Outcome::Err(422, "path must start with /".into());
@@ -296,7 +275,7 @@ async fn call(request: Request) -> Outcome {
         if attempt > 1 {
             match rb::backoff(attempt, pol.retry, now_ms() ^ attempt as u64) {
                 Some(ms) => sleep_ms(ms.min(MAX_BACKOFF_CAP)).await,
-                None => break, // out of attempts
+                None => break,
             }
         }
 
@@ -311,7 +290,7 @@ async fn call(request: Request) -> Outcome {
             None => return Outcome::Err(503, "circuit contended, retry".into()),
         };
         if !admission.admit {
-            // Fail fast. `attempts` here counts only calls that were MADE.
+            // `attempts` counts only calls that were MADE.
             return Outcome::Json(
                 503,
                 json!({
@@ -331,7 +310,7 @@ async fn call(request: Request) -> Outcome {
         let (ok, status, err) = match &forwarded {
             Ok(r) if r.status >= 500 => (false, r.status, Some(format!("upstream {}", r.status))),
             Ok(r) if pol.slo_ms > 0 && elapsed > pol.slo_ms => {
-                // Slow is not success. An in-flight wasi:http request cannot be cancelled, so this is an SLO judgement after the fact, not a timeout.
+                // An in-flight wasi:http request cannot be cancelled, so this is an SLO judgement after the fact.
                 (false, r.status, Some(format!("slo breach: {elapsed}ms > {}ms", pol.slo_ms)))
             }
             Ok(r) => (true, r.status, None),
@@ -407,8 +386,7 @@ fn current_doc(key: &str) -> Option<Value> {
         .and_then(|e| serde_json::from_str::<Value>(&e.data).ok())
 }
 
-/// A circuit as the UI wants it: state, counters, and, when open, how long until a probe is admitted. Derived
-/// on read; a GET must not spend the half-open probe budget.
+/// Derived on read: a GET must not spend the half-open probe budget.
 fn view(doc: &Value, now: u64) -> Value {
     let c = circuit_from(doc);
     let open_ms = doc["open_ms"].as_u64().unwrap_or(2_000);
@@ -471,9 +449,7 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it. Without a ceiling a guest
-/// accumulated until wasmtime's 64 MiB per-store cap TRAPPED, reaching the caller as a bare closed
-/// connection. Generous: a backstop, not a content policy; uploads police themselves with a 413.
+/// Backstop under wasmtime's 64 MiB per-store cap, which traps instead of erroring.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

@@ -114,5 +114,4 @@ async function submitTransaction() {
   loadItems();
 }
 
-// Init
 checkMe();

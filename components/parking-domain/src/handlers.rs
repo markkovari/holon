@@ -1,7 +1,5 @@
-//! Spots + reservations. A reservation's window is HALF-OPEN `[start, end)`: two windows on a spot conflict only when
-//! `a.start < b.end && b.start < a.end`, so adjacent bookings are both allowed. Overlap is a rule `auth:identity/rbac`
-//! cannot express, so the check is plain Rust over `records::find_by("reservations", "spot_id", …)`. Cancelling IS a
-//! row-level rule (owner or admin), enforced with `policy:guard` through `guestauth::guest_owner_or_admin_policy!`.
+//! Windows are HALF-OPEN [start, end), so adjacent bookings are allowed. Overlap is plain Rust
+//! (auth:identity/rbac cannot express it); cancelling is a policy:guard row-level rule.
 
 use crate::bindings::records::store::store as records;
 use crate::bindings::p3::http::types::Method;
@@ -35,7 +33,6 @@ struct SpotReq {
     label: String,
 }
 
-/// `admin`-only: a role, not a row, decides who may open a new spot.
 fn create_spot(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "spot.create", "");
@@ -171,16 +168,14 @@ fn list_all(collection: &str) -> Result<Vec<records::Entry>, ()> {
     Ok(all)
 }
 
-/// A lot-seeded spot carries BOTH `floor` and `number`; an ad-hoc spot made through `POST /api/spots` carries neither,
-/// which is the only thing telling the two apart in the shared `spots` collection.
+/// Lot spots carry `floor` and `number`, ad-hoc ones neither: the only tell in the shared `spots` collection.
 fn is_lot_spot(data: &str) -> bool {
     let v: Value = serde_json::from_str(data).unwrap_or(json!({}));
     v.get("floor").and_then(Value::as_u64).is_some()
         && v.get("number").and_then(Value::as_u64).is_some()
 }
 
-/// `admin`-only and idempotent: seed exactly 150 lot spots (3 floors × 50, `"F1-01"`..`"F3-50"`). A marker record in
-/// `meta` (as `guest_owner_or_admin_policy!` uses) makes a second call create NOTHING more.
+/// Idempotent via a `meta` marker record: a second call creates nothing.
 fn seed_lot(route: &Route) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "lot.seed", "");
@@ -213,8 +208,7 @@ fn seed_lot(route: &Route) -> Reply {
     Reply::json(200, json!({"total": total}))
 }
 
-/// Any authenticated caller: every lot-seeded spot, grouped by floor. `taken` is computed live, never stored, from active
-/// reservations whose HALF-OPEN window covers `now` (`start <= now < end`). An unseeded lot is `{"floors": []}`.
+/// `taken` is computed live from active windows covering now, never stored.
 fn get_lot(route: &Route) -> Reply {
     if introspect(route).is_err() {
         return Reply::err(401, "unauthorized");
@@ -269,8 +263,6 @@ fn get_lot(route: &Route) -> Reply {
     Reply::json(200, json!({"floors": floors}))
 }
 
-/// `admin`-only: every reservation ever made on a spot (active AND cancelled), oldest first, lot-seeded or ad-hoc. No
-/// reservations answers `[]`; only a spot that does not exist is 404.
 fn spot_history(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "spot.history", id);

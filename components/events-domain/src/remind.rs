@@ -1,12 +1,4 @@
-//! Reminders, and telling people things.
-//!
-//! Why a timer and not a check on read: a check on every read sends nothing if nobody loads
-//! the page and twice if two people load it at once. `sched:timer` holds the job, leases it
-//! to one caller when due, and takes an `ack`.
-//!
-//! The app does not decide the channel: whether a reminder becomes an email, an in-app note,
-//! both or neither is `notify:prefs`' answer. This module calls `notify` and reads back what
-//! happened.
+//! A timer, not a check on read: that sends nothing if nobody loads the page, and twice if two do.
 
 use serde_json::json;
 
@@ -17,11 +9,9 @@ use crate::bindings::sched::timer::timer;
 use crate::store::{find_by_str, load};
 use crate::{require, Reply, Route};
 
-/// How long before an event its reminder goes out.
 pub const LEAD_SECONDS: u64 = 24 * 60 * 60;
 
-/// One job per event, and the key says which — so scheduling twice replaces rather
-/// than duplicates, and cancelling an event can find the job without an index.
+/// One job per event, so rescheduling replaces and cancelling needs no index.
 fn job_key(event_id: &str) -> String {
     format!("reminder:{event_id}")
 }
@@ -30,9 +20,7 @@ pub fn now() -> u64 {
     system_clock::now().seconds as u64
 }
 
-/// `2026-09-01T18:00:00Z` -> unix seconds. By hand: a date crate is too much for one shape
-/// of one format. Anything else returns `None` and the caller declines to schedule, rather
-/// than scheduling for the epoch and firing immediately.
+/// Anything else is `None` and nothing is scheduled, rather than firing at the epoch.
 pub fn parse_iso(s: &str) -> Option<u64> {
     let b = s.as_bytes();
     if b.len() < 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' {
@@ -44,7 +32,7 @@ pub fn parse_iso(s: &str) -> Option<u64> {
     if !(1..=12).contains(&mo) || !(1..=31).contains(&d) {
         return None;
     }
-    // Days from the civil epoch (Hinnant): exact for every proleptic Gregorian date.
+    // Days from the civil epoch (Hinnant).
     let y2 = if mo <= 2 { y - 1 } else { y };
     let era = if y2 >= 0 { y2 } else { y2 - 399 } / 400;
     let yoe = y2 - era * 400;
@@ -56,9 +44,6 @@ pub fn parse_iso(s: &str) -> Option<u64> {
     u64::try_from(secs).ok()
 }
 
-/// Put an event's reminder on the clock. Absent or unparseable `starts_at`, or an
-/// event less than the lead time away, schedules nothing — and says so rather than
-/// firing a reminder for something that has already happened.
 pub fn schedule(event_id: &str, starts_at: &str) -> Option<u64> {
     let start = parse_iso(starts_at)?;
     let at = start.checked_sub(LEAD_SECONDS)?;
@@ -68,19 +53,15 @@ pub fn schedule(event_id: &str, starts_at: &str) -> Option<u64> {
 }
 
 pub fn cancel(event_id: &str) {
-    // A cancelled event must not still remind people to come to it. Failure is
-    // ignored on purpose: there may be no job, which is not a problem to report.
+    // No job is not a problem to report.
     let _ = timer::cancel(&job_key(event_id));
 }
 
-/// Everyone holding a live ticket for this event.
 pub fn holders_of(event_id: &str) -> Vec<String> {
     find_by_str("tickets", "event_id", event_id)
         .into_iter()
         .filter_map(|e| {
             let d: serde_json::Value = serde_json::from_str(&e.data).ok()?;
-            // A released ticket is not a reason to come; a checked-in one means they
-            // are already here.
             if d["state"].as_str() != Some("issued") {
                 return None;
             }
@@ -89,7 +70,6 @@ pub fn holders_of(event_id: &str) -> Vec<String> {
         .collect()
 }
 
-/// Tell one subject, through their own preferences, and report what happened.
 pub fn tell(
     subject: &str,
     kind: &str,
@@ -113,20 +93,16 @@ pub fn tell(
     }
 }
 
-/// `POST /api/reminders/run` — fire whatever is due. A route because a component has no
-/// loop: in a deployment the caller is `comp-relay` on a schedule (the `[triggers]` block in
-/// an app spec), in a demo it is a button.
+/// A route because a component has no loop: `comp-relay` calls it on a schedule.
 pub fn run(method: &Method, route: &Route) -> Reply {
     if !matches!(method, Method::Post) {
         return Reply::err(404, "not_found");
     }
-    // Only an organizer or admin may make the clock tick by hand.
     if let Err(r) = require(route, "event", "write") {
         return r;
     }
 
-    // A 60-second lease: long enough that this run finishes, short enough that a
-    // crash re-offers the job rather than losing it.
+    // A 60s lease: this run finishes, and a crash re-offers the job.
     let due = match timer::due(now(), 20, 60) {
         Ok(jobs) => jobs,
         Err(e) => return Reply::err(500, &format!("timer: {e:?}")),
@@ -138,7 +114,6 @@ pub fn run(method: &Method, route: &Route) -> Reply {
             serde_json::from_slice(&job.payload).unwrap_or_else(|_| json!({}));
         let event_id = payload["event_id"].as_str().unwrap_or_default().to_string();
         let Ok((_, event)) = load("events", &event_id) else {
-            // The event is gone; the job should be too.
             let _ = timer::ack(&job.key);
             continue;
         };
@@ -161,8 +136,7 @@ pub fn run(method: &Method, route: &Route) -> Reply {
                 ),
             }));
         }
-        // Ack AFTER telling everyone: a crash in the middle re-offers the job when
-        // the lease expires, and a second reminder is a smaller wrong than none.
+        // Ack after telling everyone: a second reminder is a smaller wrong than none.
         let _ = timer::ack(&job.key);
         fired.push(json!({ "event_id": event_id, "title": title, "told": told }));
     }
@@ -170,7 +144,6 @@ pub fn run(method: &Method, route: &Route) -> Reply {
     Reply::json(200, json!({ "fired": fired.len(), "reminders": fired }))
 }
 
-/// `GET /api/events/{id}/reminder` — when it will go out, if it will.
 pub fn peek(route: &Route, event_id: &str) -> Reply {
     if let Err(r) = require(route, "event", "read") {
         return r;

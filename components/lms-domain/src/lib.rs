@@ -1,9 +1,3 @@
-//! `lms-domain` — a learning-management service (docs/apps/LMS.md) as ONE composed wasm
-//! HTTP component. Exports `wasi:http`; imports only WIT contracts: the composed
-//! auth-guard (`auth:identity`), `records:store`, `quiz:grade` (auto-grading +
-//! gradebook stats), `pdf:codec` (certificates) and `svg:chart` (the gradebook
-//! chart). No bespoke auth, storage, grading, PDF, or charting.
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -31,11 +25,10 @@ mod bindings {
         world: "lms:app/lms-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
     }
 }
 
@@ -48,11 +41,11 @@ use bindings::auth::identity::authorizer;
 use bindings::auth::identity::rbac;
 use bindings::auth::identity::session;
 use bindings::auth::identity::types::{AuthError, Principal};
+use bindings::p3::clocks::system_clock;
 use bindings::pdf::codec::codec as pdf;
 use bindings::quiz::grade::grader as quiz;
 use bindings::records::store::store as records;
 use bindings::svg::chart::charts as svg;
-use bindings::p3::clocks::system_clock;
 
 use bindings::p3::handler::Guest;
 use bindings::p3::http::types::{ErrorCode, Fields, Method, Request, Response};
@@ -292,7 +285,6 @@ fn quizzes_of(course: &str) -> Vec<Value> {
     v
 }
 
-/// Strip the answer key from a quiz for a student view.
 fn quiz_public(q: &Value) -> Value {
     let questions: Vec<Value> = q["questions"]
         .as_array()
@@ -323,7 +315,6 @@ fn get_course(request: &Request, id: &str) -> Outcome {
     )
 }
 
-/// Ensure the caller owns the course (instructor); returns the course or an error.
 fn owned_course(p: &Principal, id: &str) -> Result<Value, Outcome> {
     let c = get(COURSES, id).ok_or(Outcome::Err(404, "no such course".into()))?;
     if c["instructor"].as_str() != Some(&p.subject) {
@@ -373,7 +364,6 @@ async fn add_quiz(request: Request, id: &str) -> Outcome {
     if title.is_empty() || questions.is_empty() {
         return Outcome::Err(422, "title and at least one question required".into());
     }
-    // validate each question: a prompt, >= 2 options, an answer index in range.
     for q in &questions {
         let opts = q["options"].as_array().map(|a| a.len()).unwrap_or(0);
         let ans = q["answer"].as_u64().unwrap_or(u64::MAX);
@@ -444,7 +434,6 @@ async fn submit_quiz(request: Request, quiz_id: &str) -> Outcome {
         .unwrap_or_default();
     let pass_mark = quiz["pass_mark"].as_u64().unwrap_or(60) as u32;
 
-    // the grading lives in quiz:grade.
     let r = quiz::grade(&answers, &key, pass_mark);
     let d = json!({
         "quiz": quiz_id, "course": course, "student": p.subject, "email": subject_email(&p.subject),
@@ -461,7 +450,6 @@ async fn submit_quiz(request: Request, quiz_id: &str) -> Outcome {
     )
 }
 
-/// A student's best submission per quiz in a course: quiz_id -> (best_pct, passed).
 fn best_scores(course: &str, student: &str) -> BTreeMap<String, (u32, bool)> {
     let mut best: BTreeMap<String, (u32, bool)> = BTreeMap::new();
     for s in find(SUBMISSIONS, "student", student) {
@@ -522,9 +510,7 @@ fn gradebook(request: &Request, id: &str) -> Outcome {
     let quizzes = quizzes_of(id);
     let students = find(ENROLLMENTS, "course", id);
 
-    // per-student row: best score per quiz + their average.
     let mut student_rows = Vec::new();
-    // collect per-quiz score lists for the distribution.
     let mut per_quiz_scores: BTreeMap<String, Vec<u32>> = BTreeMap::new();
     for e in &students {
         let sub = e["student"].as_str().unwrap_or("");
@@ -543,7 +529,6 @@ fn gradebook(request: &Request, id: &str) -> Outcome {
             "passed_all": !quizzes.is_empty() && quizzes.iter().all(|q| best.get(q["id"].as_str().unwrap_or("")).map(|(_, p)| *p).unwrap_or(false)) }));
     }
 
-    // per-quiz stats via quiz:grade, and a class-average bar chart via svg:chart.
     let mut quiz_meta = Vec::new();
     let mut chart_slices = Vec::new();
     for q in &quizzes {
@@ -674,16 +659,15 @@ fn store_err(e: records::StoreError) -> Outcome {
 }
 
 async fn body(request: Request) -> Result<Value, Outcome> {
-    let raw = read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+    let raw =
+        read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
         return Ok(Value::Object(Map::new()));
     }
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it. Without a ceiling a guest
-/// accumulated until wasmtime's 64 MiB per-store cap TRAPPED, reaching the caller as a bare closed
-/// connection. Generous: a backstop, not a content policy; uploads police themselves with a 413.
+/// Backstop under wasmtime's 64 MiB per-store cap, which traps instead of erroring.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

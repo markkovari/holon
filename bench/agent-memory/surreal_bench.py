@@ -71,7 +71,6 @@ def timed(sql,db,reps=40):
 def probe(db,scope,k=10,nq=30,ef=None,label=""):
     rng=random.Random(11); rec=[];got=[];tk=[];te=[]
     knn=f"<|{k},{ef}|>" if ef else f"<|{k},COSINE|>"
-    # exact via scope index
     for _ in range(nq):
         v=qvec(scope,rng)
         t=time.perf_counter(); a=q(f"SELECT id FROM memory WHERE vec {knn} {v} AND scope='{scope}';",db); tk.append((time.perf_counter()-t)*1000)
@@ -110,7 +109,6 @@ if "conc" in PHASES:
         t0=time.time()
         with ThreadPoolExecutor(th) as ex: allts=[x for r in ex.map(reader,range(th)) for x in r]
         emit(exp="concurrent_read",threads=th,qps=round(len(allts)/(time.time()-t0)),**stats(allts))
-    # mixed: 8 readers while 4 writers insert
     stop=time.time()+10; wl=[];rl=[]; lk=threading.Lock()
     def writer(i):
         rng=random.Random(100+i)
@@ -127,7 +125,6 @@ if "conc" in PHASES:
         fs=[ex.submit(writer,i) for i in range(4)]+[ex.submit(mreader,i) for i in range(8)]; [f.result() for f in fs]
     emit(exp="mixed_8r_4w_10s",read=stats(rl),read_qps=round(len(rl)/10),write_batch10=stats(wl),write_rows_per_s=round(len(wl)*10/10))
 if "nohnsw" in PHASES:
-    # is HNSW needed at all? scope index + exact scan, per scope size
     db="nohnsw"; mkdb(db); mkidx(db,hnsw=False)
     plan=[("big",90000),("mid",5000),("small",500),("tiny",20)]+[(f"x{i}",100) for i in range(45)]
     emit(exp="load_skew_no_hnsw",**load(db,plan))
@@ -138,7 +135,6 @@ if "nohnsw" in PHASES:
         emit(exp="nohnsw_exact_scan",scope=sc,**stats(ts))
 
 if "auth" in PHASES:
-    # as-built cost of Basic vs token on the realistic query, same data
     db="scale100000"
     for mode in ("basic","bearer"):
         global_auth="Basic "+base64.b64encode(b"root:root").decode() if mode=="basic" else "Bearer "+_tok()

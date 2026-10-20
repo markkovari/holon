@@ -1,10 +1,3 @@
-//! The specification, held out: this file is not writable by the goal.
-//!
-//! Every case here is a way a price chart lies: interpolating across a gap the
-//! market did not trade in, starting a line at zero because the card was not yet
-//! listed, mixing a "lowest listing" into a market series, or picking whichever
-//! of two disagreeing sources happened to be last in the list.
-
 use price_history::{at, series, Observed, Point, PriceError, Quote, QuoteKind};
 
 const DAY: u64 = 86_400;
@@ -29,7 +22,6 @@ fn a_price_is_the_latest_quote_at_or_before_the_instant() {
     assert!(obs.carried, "carried forward across the gap");
 }
 
-/// Asked at the exact instant of a quote, nothing is carried and nothing is old.
 #[test]
 fn a_quote_at_the_exact_instant_is_neither_carried_nor_stale() {
     let obs = at(&[market(4000, 10)], QuoteKind::Market, 10 * DAY).expect("priced");
@@ -37,14 +29,12 @@ fn a_quote_at_the_exact_instant_is_neither_carried_nor_stale() {
     assert!(!obs.carried);
 }
 
-/// Before the first quote there is no price. Zero would show a gain nobody made.
 #[test]
 fn before_the_first_quote_there_is_no_price() {
     assert_eq!(at(&[market(4000, 10)], QuoteKind::Market, 5 * DAY), Err(PriceError::NotYetPriced));
 }
 
-/// A market series must never absorb a "lowest listing": they answer different
-/// questions and one is systematically below the other.
+/// They answer different questions and one is systematically below the other.
 #[test]
 fn kinds_do_not_mix() {
     let quotes = vec![market(4000, 10), q(1200, 20, QuoteKind::Low, "fixture")];
@@ -57,10 +47,7 @@ fn kinds_do_not_mix() {
     assert_eq!(at(&quotes, QuoteKind::LastSold, 25 * DAY), Err(PriceError::NotYetPriced));
 }
 
-/// Two sources disagreeing about the same instant is the normal case, and "last
-/// in the list wins" makes the answer depend on fetch order. The NEWEST
-/// observation wins; on an exact tie the source that sorts first does, so the
-/// same inputs always give the same answer whatever order they arrive in.
+/// The NEWEST observation wins; on an exact tie the first-sorting source, whatever the arrival order.
 #[test]
 fn the_newest_observation_wins_and_ties_are_broken_deterministically() {
     let forward =
@@ -80,7 +67,6 @@ fn the_newest_observation_wins_and_ties_are_broken_deterministically() {
     assert_eq!(obs.unit_minor, 4000);
 }
 
-/// A duplicate of the same quote is not two data points.
 #[test]
 fn an_exact_duplicate_changes_nothing() {
     let once = vec![market(4000, 10)];
@@ -92,7 +78,6 @@ fn an_exact_duplicate_changes_nothing() {
     );
 }
 
-/// Two currencies for one card is refused, not converted.
 #[test]
 fn two_currencies_are_refused() {
     let mut usd = market(4000, 20);
@@ -105,8 +90,6 @@ fn two_currencies_are_refused() {
     }
 }
 
-/// A gap carries the last price forward and SAYS it did. This is the case that
-/// separates an honest chart from an invented one.
 #[test]
 fn a_gap_carries_forward_and_never_interpolates() {
     // €40 on day 0, €90 on day 4. Days 1-3 are €40 carried — not €52.50, €65,
@@ -119,8 +102,6 @@ fn a_gap_carries_forward_and_never_interpolates() {
     assert_eq!(carried, vec![false, true, true, true, false]);
 }
 
-/// Samples before the first quote are absent, so the line starts where the data
-/// starts instead of climbing out of a zero that never happened.
 #[test]
 fn samples_before_the_first_quote_are_absent_not_zero() {
     let points = series(&[market(4000, 3)], QuoteKind::Market, 0, 5 * DAY, DAY).expect("series");
@@ -129,16 +110,14 @@ fn samples_before_the_first_quote_are_absent_not_zero() {
     assert!(points.iter().all(|p| p.unit_minor == 4000));
 }
 
-/// Never priced in the window is an empty series, not an error: a caller charting
-/// forty cards should get forty answers, and "no line" is an answer.
+/// Not an error: a caller charting forty cards should get forty answers.
 #[test]
 fn never_priced_in_the_window_is_an_empty_series() {
     let points = series(&[market(4000, 90)], QuoteKind::Market, 0, 5 * DAY, DAY).expect("series");
     assert!(points.is_empty());
 }
 
-/// The series ends at `until` even when the step does not divide the window, so
-/// the last point on the chart agrees with the headline number beside it.
+/// The last point must agree with the headline number beside it.
 #[test]
 fn the_series_always_ends_at_until() {
     let points =
@@ -147,13 +126,11 @@ fn the_series_always_ends_at_until() {
     assert_eq!(ats, vec![0, 3 * DAY, 6 * DAY, 9 * DAY, 10 * DAY]);
 }
 
-/// A zero step does not terminate.
 #[test]
 fn a_zero_step_is_refused() {
     assert_eq!(series(&[market(4000, 0)], QuoteKind::Market, 0, DAY, 0), Err(PriceError::ZeroStep));
 }
 
-/// No quotes at all is not priced, rather than a panic or a zero.
 #[test]
 fn no_quotes_is_not_priced() {
     assert_eq!(at(&[], QuoteKind::Market, DAY), Err(PriceError::NotYetPriced));

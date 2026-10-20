@@ -1,21 +1,4 @@
-//! `contract-probe` — the door onto `contract:registry` (see wit/probe.wit).
-//!
-//!   POST /publish                                   body is the contract
-//!   GET  /current
-//!   GET  /get?version=
-//!   GET  /proposed?part=
-//!   POST /ask?from=&to=&subject=&at=                body is what is being asked for
-//!   GET  /pending?part=
-//!   POST /answer?id=&verdict=granted|denied|counter body is the amendment or the reason
-//!   POST /ratify?version=&part=&score=
-//!   POST /built-against?candidate=&part=&version=
-//!   GET  /composable?candidates=a,b
-//!
-//! Every route answers JSON, and a refusal is `{"error":"refused","detail":"…"}`
-//! with a **200** — the same choice `graph-probe` and `memory-probe` made, for the
-//! same reason: what is under test is what the registry decided, and a status code
-//! would flatten "this part does not own that version" into the same shape as "the
-//! host refused the link".
+//! A refusal is a 200 `{"error":"refused"}`: what is under test is the registry's decision, not the link.
 
 #[allow(warnings)]
 mod bindings {
@@ -36,7 +19,6 @@ mod bindings {
         world: "comp:contractprobe/contract-probe",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -76,8 +58,7 @@ fn verdict_of(name: &str) -> reg::Verdict {
     match name {
         "granted" => reg::Verdict::Granted,
         "counter" => reg::Verdict::Counter,
-        // Anything unspelled is a refusal, never a grant — the same rule the
-        // registry applies when it reads a verdict back.
+        // Anything unspelled is a refusal, never a grant, as the registry itself reads verdicts.
         _ => reg::Verdict::Denied,
     }
 }
@@ -126,9 +107,7 @@ fn request_json(r: &reg::Request) -> String {
     )
 }
 
-/// A ceiling on a request body, not a policy: past this the read gives up and
-/// the body reads as empty, rather than growing until the store's memory cap
-/// traps the component and the connection simply closes.
+/// Past this the body reads as empty, rather than the store's memory cap trapping the component.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
@@ -156,7 +135,6 @@ impl Guest for Component {
 
             (Method::Get, "/get") => match reg::get(num(&query, "version")) {
                 Ok(Some(c)) => contract_json(&c),
-                // Absence is an answer.
                 Ok(None) => "{\"found\":false}".to_string(),
                 Err(e) => err(e),
             },
@@ -193,8 +171,7 @@ impl Guest for Component {
                 let v = verdict_of(&param(&query, "verdict"));
                 let body = read_body(request).await;
                 match reg::answer(&param(&query, "id"), v, &body) {
-                    // 0 means no new version: a denial and a counter change
-                    // nothing about what the parts build against.
+                    // 0 means no new version: a denial or counter changes nothing parts build against.
                     Ok(version) => format!("{{\"version\":{version}}}"),
                     Err(e) => err(e),
                 }
@@ -225,9 +202,7 @@ impl Guest for Component {
                     .map(str::to_string)
                     .collect();
                 match reg::composable(&candidates) {
-                    // An empty list is the yes. Reported as a list rather than a
-                    // boolean because "no" without saying which part is on which
-                    // version sends the reader to the wrong file.
+                    // A list, not a boolean: "no" without which part is on which version misleads.
                     Ok(problems) => format!(
                         "{{\"composable\":{},\"problems\":[{}]}}",
                         problems.is_empty(),

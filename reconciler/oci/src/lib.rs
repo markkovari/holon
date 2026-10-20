@@ -1,27 +1,16 @@
-//! OCI push and pull (ADR-0017, ADR-0024). Off the runtime path: artifacts reach nodes through the
-//! JetStream object store, keyed by digest. Kept behind `--oci-mirror` for `wkg oci pull` interop.
-//!
-//! `pull_artifact` verifies the bytes against the digest the manifest named: the store is a cache
-//! and the digest is the trust boundary, so a lying registry must be caught here.
-//!
-//! A real registry answers `401` with `WWW-Authenticate: Bearer realm=…,service=…,scope=…`; `send`
-//! fetches a token from that realm once per request and retries. Anonymous can pull public
-//! artifacts, never push.
+//! Off the runtime path (nodes pull from the object store); for `wkg` interop. ADR-0017, ADR-0024.
 
 use std::collections::BTreeMap;
 
 use anyhow::{bail, Context, Result};
 use serde_json::json;
 
-/// Media types matched to what `wkg oci push` writes, read off a real artifact.
+/// Must match what `wkg oci push` writes.
 const MT_MANIFEST: &str = "application/vnd.oci.image.manifest.v1+json";
 const MT_CONFIG: &str = "application/vnd.wasm.config.v0+json";
 const MT_LAYER: &str = "application/wasm";
 
-/// Layer media types that carry wasm, for PULL only.
-///
-/// `application/wasm` is what push and `wkg` write; the two `vnd` forms are also in the wild
-/// (wasmCloud uses the `module` one, the OCI-wasm draft the other). Pull accepts all three.
+/// Pull only: `wkg` writes `application/wasm`; wasmCloud and the OCI-wasm draft use the `vnd` forms.
 const MT_WASM_LAYERS: &[&str] = &[
     MT_LAYER,
     "application/vnd.wasm.content.layer.v1+wasm",
@@ -37,11 +26,8 @@ pub fn digest_of(bytes: &[u8]) -> String {
     format!("sha256:{}", sha256_hex(bytes))
 }
 
-/// Push one component by hand over the OCI distribution API: start an upload, PUT the layer, PUT
-/// the config, PUT the manifest. No registry crate, because the media types have to match `wkg`
-/// exactly.
-///
-/// Returns the **manifest** digest: a pull by digest resolves the manifest, not the layer.
+/// No registry crate: the media types must match `wkg` exactly. Returns the MANIFEST digest,
+/// because a pull by digest resolves the manifest, not the layer.
 pub async fn push_artifact(
     http: &reqwest::Client,
     base: &str,
@@ -56,7 +42,7 @@ pub async fn push_artifact(
     upload_blob(http, base, repo, wasm, &layer_digest, creds).await?;
     upload_blob(http, base, repo, &config_bytes, &digest_of(&config_bytes), creds).await?;
 
-    // Tagged with the artifact's short content hash. A tag is human convenience only (ADR-0006).
+    // A tag is human convenience only (ADR-0006).
     let tag = &layer_digest["sha256:".len()..][..12];
     let res = send(
         http,
@@ -78,7 +64,6 @@ pub async fn push_artifact(
     Ok(manifest_digest)
 }
 
-/// What a registry asks for when it asks. `None` is anonymous.
 #[derive(Clone, Debug, Default)]
 pub struct Creds {
     pub user: String,
@@ -86,8 +71,7 @@ pub struct Creds {
 }
 
 impl Creds {
-    /// From the environment, the way CI has them. `None` rather than empty strings: an empty Basic
-    /// header is rejected, where none falls through to anonymous.
+    /// `None`, not empty strings: an empty Basic header is rejected, none falls back to anonymous.
     pub fn from_env() -> Option<Self> {
         let user = std::env::var("OCI_USER").ok().filter(|v| !v.is_empty())?;
         let pass = std::env::var("OCI_PASSWORD").ok().filter(|v| !v.is_empty())?;
@@ -95,15 +79,8 @@ impl Creds {
     }
 }
 
-/// Bearer tokens already obtained, keyed by repository.
-///
-/// Without it every request of a push (HEAD blob, POST upload, PUT blob, PUT manifest) answered
-/// 401 and fetched a fresh token; pushing 82 apps timed the token endpoint out. Keyed by
-/// REPOSITORY, not scope string: caching by scope would keep `pull` and `push,pull` apart and
-/// re-fetch for each.
-///
-/// Process-wide because this is a CLI that pushes to one registry and exits. An expired token is
-/// evicted and retried once on 401.
+/// Keyed by repository, not scope, so `pull` and `push,pull` share one. Without it every request
+/// of a push re-fetched a token and pushing 82 apps timed the token endpoint out.
 static TOKENS: std::sync::OnceLock<std::sync::Mutex<BTreeMap<String, String>>> =
     std::sync::OnceLock::new();
 
@@ -129,7 +106,6 @@ fn challenge_field(challenge: &str, key: &str) -> Option<String> {
     Some(rest[..rest.find('"')?].to_string())
 }
 
-/// Trade a challenge for a bearer token.
 async fn token_for(
     http: &reqwest::Client,
     challenge: &str,
@@ -152,7 +128,7 @@ async fn token_for(
         bail!("the registry's token endpoint refused: {}", res.status());
     }
     let body: serde_json::Value = res.json().await.context("token response was not json")?;
-    // Registries disagree on the field name and both are in the wild.
+    // Registries disagree on the field name.
     body["token"]
         .as_str()
         .or_else(|| body["access_token"].as_str())
@@ -160,12 +136,7 @@ async fn token_for(
         .context("the token response carried no token")
 }
 
-/// Send, and if the registry answers `401` with a bearer challenge, get a token and try exactly
-/// once more. Once, not in a loop: a second 401 means the credentials lack the scope, and looping
-/// would turn a permissions problem into a hang.
-///
-/// A token already held for `repo` is attached up front, saving the 401 round-trip; if it has
-/// expired it is evicted and the challenge answered once.
+/// Retries a 401 once, not in a loop: a second 401 means missing scope, and looping would hang.
 async fn send(
     http: &reqwest::Client,
     req: reqwest::RequestBuilder,
@@ -181,7 +152,6 @@ async fn send(
     if res.status() != reqwest::StatusCode::UNAUTHORIZED {
         return Ok(res);
     }
-    // Either there was no token or the one there is no longer good.
     forget_token(repo);
     let challenge = res
         .headers()
@@ -193,9 +163,7 @@ async fn send(
     if challenge.is_empty() {
         return Ok(res);
     }
-    // Basic, not Bearer. An htpasswd registry challenges `Basic realm="Registry"`, a NAME not a
-    // URL, so `token_for` would fail with `relative URL without a base`. No token to cache here:
-    // the credentials go on every request.
+    // htpasswd registries challenge `Basic realm="Registry"`, a name not a URL: no token to fetch.
     if challenge.trim_start().to_ascii_lowercase().starts_with("basic") {
         let Some(c) = creds else {
             bail!("{repo}: the registry wants a username and password (OCI_USER / OCI_PASSWORD)");
@@ -207,11 +175,7 @@ async fn send(
     Ok(retry.bearer_auth(token).send().await?)
 }
 
-/// Pull one component by reference (a tag or a `sha256:…` manifest digest): GET the manifest, find
-/// the `application/wasm` layer, GET the blob.
-///
-/// The bytes are checked against the digest the manifest named, and a digest reference is checked
-/// against the manifest too (ADR-0024: the digest is the trust boundary).
+/// The digest is the trust boundary (ADR-0024): the layer and a digest reference are both checked.
 pub async fn pull_artifact(
     http: &reqwest::Client,
     base: &str,
@@ -270,9 +234,7 @@ pub async fn pull_artifact(
     Ok(wasm)
 }
 
-/// The bytes an OCI wasm artifact is made of: `(config, manifest, manifest digest, layer digest)`.
-///
-/// Pure, so the shape can be asserted against a real `wkg`-produced artifact without a registry.
+/// `(config, manifest, manifest digest, layer digest)`.
 pub fn oci_shape(
     wasm: &[u8],
     exports: &[String],
@@ -280,9 +242,8 @@ pub fn oci_shape(
 ) -> (Vec<u8>, Vec<u8>, String, String) {
     let layer_digest = digest_of(wasm);
 
-    // A FIXED timestamp, deliberately: `created` is in the config blob, so a wall-clock value would
-    // change the config and manifest digests, minting a new identity per push. Pinned, the push is
-    // a pure function of the component and a retry is a no-op.
+    // Fixed, not wall-clock: `created` is in the config blob, so a real time would mint new digests
+    // on every push; pinned, a retry is a no-op.
     let config = json!({
         "created": "1970-01-01T00:00:00Z",
         "author": null,
@@ -313,7 +274,7 @@ async fn upload_blob(
     digest: &str,
     creds: Option<&Creds>,
 ) -> Result<()> {
-    // Blobs are content-addressed, so skipping an existing one is safe and keeps a retried push cheap.
+    // Blobs are content-addressed, so skipping an existing one is safe and keeps a retry cheap.
     if let Ok(r) =
         send(http, http.head(format!("{base}/v2/{repo}/blobs/{digest}")), creds, repo).await
     {
@@ -359,12 +320,10 @@ async fn upload_blob(
 
 #[cfg(test)]
 mod tests {
-    /// A token is reused for the repository it was issued for, and evicting one affects only that
-    /// repository.
     #[test]
     fn a_token_is_remembered_per_repository() {
         use super::{cached_token, forget_token, remember_token};
-        // Names unique to this test: the cache is process-wide, so collisions would be order-dependent.
+        // Unique names: the cache is process-wide, so collisions would be order-dependent.
         let (a, b) = ("owner/holon-apps/events", "owner/holon-apps/poll");
         assert_eq!(cached_token(a), None, "nothing is cached before anything is put");
 
@@ -373,7 +332,6 @@ mod tests {
         assert_eq!(cached_token(a).as_deref(), Some("tok-a"));
         assert_eq!(cached_token(b).as_deref(), Some("tok-b"));
 
-        // An expired token evicts only its own repository.
         forget_token(a);
         assert_eq!(cached_token(a), None);
         assert_eq!(cached_token(b).as_deref(), Some("tok-b"), "the other survives");
@@ -382,8 +340,6 @@ mod tests {
 
     use super::*;
 
-    /// The artifact shape, asserted against a REAL `wkg oci push` artifact read out of a running
-    /// registry.
     #[test]
     fn the_oci_shape_matches_what_wkg_writes() {
         let wasm = b"\0asm\x0d\0\0\0 pretend component";
@@ -408,7 +364,6 @@ mod tests {
         assert_eq!(c["component"]["exports"][0], "wasi:http/incoming-handler@0.2.0");
         assert!(c["component"]["target"].is_null());
 
-        // Same bytes, same digest, always.
         let (_, _, again, _) = oci_shape(
             wasm,
             &["wasi:http/incoming-handler@0.2.0".to_string()],
@@ -416,13 +371,9 @@ mod tests {
         );
         assert_eq!(manifest_digest, again, "the push must be a pure function of the bytes");
 
-        // The MANIFEST digest is pinned, not the layer's.
         assert_ne!(manifest_digest, layer_digest);
     }
 
-    /// Push, then pull, and get the same bytes back, by tag and by digest. The last assertion
-    /// matters most: a registry serving a layer that does not hash to its manifest's digest must be
-    /// refused.
     #[tokio::test]
     async fn pulls_back_exactly_what_was_pushed_and_refuses_anything_else() {
         use axum::body::Bytes;
@@ -431,10 +382,8 @@ mod tests {
         use std::collections::HashMap;
         use std::sync::Mutex;
 
-        // A registry that is nothing but content-addressed storage plus a tag map.
         static BLOBS: Mutex<Option<HashMap<String, Vec<u8>>>> = Mutex::new(None);
         static TAGS: Mutex<Option<HashMap<String, Vec<u8>>>> = Mutex::new(None);
-        /// Flipped on to make the registry lie about one blob.
         static TAMPER: Mutex<bool> = Mutex::new(false);
         *BLOBS.lock().unwrap() = Some(HashMap::new());
         *TAGS.lock().unwrap() = Some(HashMap::new());
@@ -497,21 +446,17 @@ mod tests {
         let manifest_digest =
             push_artifact(&http, &base, "acme/api", &wasm, &[], &[], None).await.expect("push");
 
-        // By the content tag the push wrote.
         let tag = digest_of(&wasm)["sha256:".len()..][..12].to_string();
         let got = pull_artifact(&http, &base, "acme/api", &tag, None).await.expect("pull by tag");
         assert_eq!(got, wasm, "the bytes must survive the round trip");
 
-        // And by the manifest digest, which is the reference that cannot drift.
         let got = pull_artifact(&http, &base, "acme/api", &manifest_digest, None)
             .await
             .expect("pull by digest");
         assert_eq!(got, wasm);
 
-        // Something that was never pushed is a clean error, not an empty file.
         assert!(pull_artifact(&http, &base, "acme/api", "nope", None).await.is_err());
 
-        // Now the registry lies about the layer; that must be refused.
         *TAMPER.lock().unwrap() = true;
         let err = pull_artifact(&http, &base, "acme/api", &tag, None)
             .await
@@ -522,8 +467,6 @@ mod tests {
         );
     }
 
-    /// The four-call upload dance, against a registry that records what it is sent: the upload
-    /// session, the `?digest=` parameter, and relative vs absolute `Location`.
     #[tokio::test]
     async fn pushes_blobs_then_the_manifest() {
         use axum::http::StatusCode;
@@ -538,15 +481,13 @@ mod tests {
         static SEEN: Mutex<Option<Seen>> = Mutex::new(None);
         *SEEN.lock().unwrap() = Some(Seen::default());
 
-        // One handler dispatching on method+path, because OCI repo names contain slashes and axum
-        // will not take a wildcard mid-route.
+        // One handler: OCI repo names contain slashes and axum takes no wildcard mid-route.
         let app = Router::new().fallback(
             |method: axum::http::Method, uri: axum::http::Uri, body: axum::body::Bytes| async move {
                 let path = uri.path().to_string();
                 let query = uri.query().unwrap_or_default().to_string();
                 if method == axum::http::Method::POST && path.ends_with("/blobs/uploads/") {
-                    // Relative Location on purpose: both forms are legal and this is
-                    // the one a naive client mishandles.
+                    // Relative on purpose: the form a naive client mishandles.
                     return (StatusCode::ACCEPTED, [("location", "/upload/session-1".to_string())]);
                 }
                 if method == axum::http::Method::PUT && path == "/upload/session-1" {
@@ -568,8 +509,7 @@ mod tests {
                         Some((reference, digest_of(&body)));
                     return (StatusCode::CREATED, [("location", String::new())]);
                 }
-                // Anything else, including the HEAD cache probe: not found, so every
-                // blob is a fresh upload in this test.
+                // Including the HEAD probe, so every blob is a fresh upload.
                 (StatusCode::NOT_FOUND, [("location", String::new())])
             },
         );
@@ -596,7 +536,6 @@ mod tests {
         assert_eq!(seen.blobs.len(), 2, "the layer and the config: {:?}", seen.blobs);
         assert!(seen.blobs.iter().any(|(_, len)| *len == wasm.len()), "the wasm itself");
         let (reference, put_digest) = seen.manifest.expect("a manifest was PUT");
-        // Must be the digest of what we actually sent, or the catalog records an unresolvable reference.
         assert_eq!(digest, put_digest);
         assert_eq!(reference, digest_of(&wasm)["sha256:".len()..][..12]);
     }

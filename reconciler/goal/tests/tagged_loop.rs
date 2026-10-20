@@ -1,26 +1,5 @@
-//! The loop closes around a TAG: a run passes only because a differently-worded run left a lesson
-//! against an interface it shares.
-//!
-//! `learning.rs` proves the loop closes around text. This proves the case a capability library is for:
-//! two goals with **nothing in common except an interface**, where similarity has nothing to work with
-//! and the structural key is all that connects them (ADR-0090).
-//!
-//! The scripted model has three rules and only one writes a passing answer:
-//!
-//!   · a prompt containing `AVOID` (the marker a retrieved `errors` lesson is rendered under) writes
-//!     `42`, which passes the gate.
-//!   · the first goal's exact wording writes `41`, which fails.
-//!   · anything else writes `0`, which fails.
-//!
-//! So the second goal CANNOT pass on its own, and a retrieval that ignores tags cannot find the lesson.
-//! Three arms make it falsifiable:
-//!
-//!   1. **tagged**: must pass.
-//!   2. **text only**: must FAIL. If it passes, similarity already connected the goals and tags bought nothing.
-//!   3. **cold**, reading nothing: must fail, or arm 1 proves nothing.
-//!
-//! No AI calls: a real SurrealDB, eight components, the real checks runner and a deterministic provider.
-//! Skipped, loudly, when Docker cannot start the database.
+//! Two goals sharing only an interface: the second passes only via a tagged lesson (ADR-0090).
+//! Arms: tagged must pass; text-only and cold must fail, or tags bought nothing.
 
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -30,22 +9,19 @@ use comp_goal::generation::{default_strategies, search_with, Bounds, SearchStop}
 use comp_goal::memory::{self, run_id, Memory, Reading};
 use serde_json::{json, Value};
 
-// The shared test module of the root's suites, included rather than copied (docs/adr/0115).
+// Shared harness, included rather than copied (docs/adr/0115).
 #[path = "../../tests/harness/mod.rs"]
 mod harness;
 use harness::{Surreal, SURREAL_IMAGE, SURREAL_PASSWORD};
 
 const BASE: &str = "tagged-loop-base-1";
 
-/// The two goals, side by side, because their DISSIMILARITY is the experiment: one is the wording the
-/// script fails on, the other shares no content word. If they drift together the control arm starts
-/// passing and the test stops meaning anything.
+/// Their dissimilarity is the experiment: if they drift together the control arm passes.
 const FIRST_GOAL: &str = "make the answer 42";
 const SECOND_GOAL: &str =
     "produce a monthly payroll remittance file for the finance team, totalled per employee";
 
-/// What both pieces of work touch: an identifier shared by two goals, as `plug::tags_for` produces
-/// from a real part's artifact (no component here really imports it).
+/// As `plug::tags_for` produces from a real part's artifact.
 const SHARED_TAG: &str = "csv:codec/codec@0.1.0";
 
 fn artifacts() -> Vec<String> {
@@ -211,10 +187,8 @@ fn a_lesson_reaches_a_goal_that_shares_only_an_interface() {
         .expect("the pool took the tagged lesson");
     assert!(handle.starts_with("errors:"), "negative knowledge goes to errors: {handle}");
 
-    // --- arm 2 first: the second goal, reading by TEXT only ---
-    // Run before the tagged arm so a passing control is found BEFORE the positive result. A
-    // `min_similarity` floor is set because the mock provider's embeddings are a deterministic function
-    // of the text, so unrelated goals could otherwise land arbitrarily close.
+    // Text-only first, so a passing control shows before the positive result. The floor stops mock
+    // embeddings landing unrelated goals arbitrarily close.
     let text_only =
         Reading { k: 3, budget: 1200, pools: vec![], tags: vec![], min_similarity: 0.55 };
     let by_text = pool.recall(SECOND_GOAL, &text_only).expect("the pool answered");
@@ -278,8 +252,7 @@ fn a_lesson_reaches_a_goal_that_shares_only_an_interface() {
     );
     assert!(matches!(tagged_run.stopped, SearchStop::Accepted), "{:?}", tagged_run.stopped);
 
-    // --- arm 3: reading nothing at all ---
-    // The floor: without it, "the tagged branch passed" is compatible with the goal being winnable alone.
+    // Without this arm, a tagged pass is compatible with the goal being winnable alone.
     let cold = search_with(
         &driver_url,
         "learndrive.acme.test",

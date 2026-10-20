@@ -1,9 +1,4 @@
-//! What a run may ship, and that both ends agree about it.
-//!
-//! The base tree travels to the driver as ONE message. NATS refuses one past `max_payload` with an
-//! opaque failure, so `comp-goalrun` refuses it first with an actionable message. The bug to prevent is
-//! the two numbers drifting (a hardcoded `900_000` guard against NATS's 1 MB default), so the ceiling
-//! lives in `fleet`, the server is configured FROM it, and the guard reads it.
+//! The tree-size guard reads the same ceiling the NATS server is configured from.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -11,8 +6,7 @@ use std::time::Duration;
 
 use comp_fleet::fleet::{max_tree_payload, Fleet, MAX_TREE_BYTES};
 
-/// The guard sits below the ceiling it is derived from: one AT the ceiling passes a tree whose message
-/// (contract, goal text, framing) is then too large, failing on the server where the reason is not visible.
+/// At the ceiling, the framed message would fail on the server where the reason is invisible.
 #[test]
 fn the_guard_sits_below_the_ceiling_it_is_derived_from() {
     assert!(
@@ -20,7 +14,7 @@ fn the_guard_sits_below_the_ceiling_it_is_derived_from() {
         "the guard must leave room for the envelope: {} vs {MAX_TREE_BYTES}",
         max_tree_payload()
     );
-    // And well above the old hardcoded 900_000 (the largest goal in `.comp/goals` ships 504 KB).
+    // The largest goal in `.comp/goals` ships 504 KB.
     assert!(
         max_tree_payload() > 4 * 1024 * 1024,
         "8 MB was the point; the guard is {}",
@@ -28,9 +22,7 @@ fn the_guard_sits_below_the_ceiling_it_is_derived_from() {
     );
 }
 
-/// The SERVER advertises the ceiling this code believes in. Read off the wire, not from the config the
-/// fleet wrote, since a config `nats-server` rejected or ignored still sits on disk looking correct.
-/// NATS sends `INFO {json}` first on connect, so no client library is needed.
+/// Read off the wire (NATS sends `INFO {json}` first): a rejected config still sits on disk.
 #[test]
 fn the_server_the_fleet_starts_advertises_that_ceiling() {
     let fleet = Fleet::start("treesize", &[], 1, None);
@@ -40,7 +32,7 @@ fn the_server_the_fleet_starts_advertises_that_ceiling() {
     s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
-    // Until the end of the INFO line, not EOF: the server holds the connection open waiting for CONNECT.
+    // Until the INFO line ends: the server holds the connection open waiting for CONNECT.
     while !buf.windows(2).any(|w| w == b"\r\n") {
         match s.read(&mut chunk) {
             Ok(0) => break,
@@ -62,16 +54,14 @@ fn the_server_the_fleet_starts_advertises_that_ceiling() {
         "the fleet started a server whose ceiling is not the one the guard reads — \
          which is the drift this file exists to catch. INFO said {advertised}."
     );
-    // Named explicitly, since passing while still on the default would be green and worthless.
+    // Explicit, since passing on the default would be green and worthless.
     assert!(
         advertised > 1024 * 1024,
         "still on NATS's 1 MB default: the config the fleet wrote was not applied"
     );
 }
 
-/// Seeding the runner is what lets every plan afterwards carry no tree. The claim is that a candidate
-/// judged AFTERWARDS, sending no tree, is judged against the real base (once a side effect of a critic
-/// that is allowed to fail).
+/// A candidate judged after seeding, sending no tree, is judged against the real base.
 #[test]
 fn a_seeded_runner_judges_a_candidate_that_carries_no_tree() {
     use comp_goal::compose;
@@ -108,7 +98,7 @@ fn a_seeded_runner_judges_a_candidate_that_carries_no_tree() {
           "command": ["test", "-f", "answer.txt"] },
     ]);
 
-    // Before the seed the runner has nothing, and says so rather than guessing.
+    // Unseeded, the runner says so rather than guessing.
     let cold =
         compose::gate(&url, None, commit, &json!([]), &json!([]), &checks, Duration::from_secs(30));
     assert!(cold.is_ok(), "the runner did not answer at all: {cold:?}");
@@ -117,7 +107,6 @@ fn a_seeded_runner_judges_a_candidate_that_carries_no_tree() {
     compose::seed_base(&url, None, commit, &tree, Duration::from_secs(60))
         .expect("seeding the base");
 
-    // The candidate, with NO tree, as a plan now carries.
     let report = compose::gate(
         &url,
         None,
@@ -134,7 +123,7 @@ fn a_seeded_runner_judges_a_candidate_that_carries_no_tree() {
         report.failures
     );
 
-    // An UNSEEDED commit still asks, so the seed is doing the work.
+    // An unseeded commit still asks, so the seed is doing the work.
     let other = compose::gate(
         &url,
         None,

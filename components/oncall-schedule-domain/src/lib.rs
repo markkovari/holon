@@ -1,9 +1,4 @@
-//! `oncall-schedule-domain` — router (scaffold, not part of the goal).
-//!
-//! `src/handlers.rs` is the goal: nothing in it is implemented yet. This file
-//! answers `/health` and mints a test token at `POST /test/token`
-//! `{"subject","roles":[...],"scopes":[...]}` — a fixture, so a gate never has
-//! to drive a real register/login flow to test `handlers.rs` in isolation.
+//! Scaffold router; `src/handlers.rs` is the goal.
 
 #[allow(warnings)]
 mod bindings {
@@ -31,7 +26,6 @@ mod bindings {
         world: "oncall:schedule/oncall-schedule-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -54,7 +48,6 @@ guestio::guest_p3_bearer!();
 
 struct Component;
 
-/// What a handler answers with: a status and a JSON body.
 pub struct Reply {
     pub status: u16,
     pub json: Value,
@@ -72,11 +65,9 @@ impl Reply {
     }
 }
 
-/// One request, as `handlers::handle` sees it.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
-    /// The `Authorization: Bearer …` value, empty when the header is absent.
     pub bearer: String,
 }
 
@@ -97,8 +88,7 @@ pub fn now_secs() -> u64 {
     system_clock::now().seconds as u64
 }
 
-/// A test token, minted directly (never a real register/login): the ROUTER's fixture, never `handlers.rs`'s, since a
-/// fixture minting its own tokens can drift from what the verifier accepts and make `handlers.rs` fail for the router's reason.
+/// Minted here, never in handlers.rs: a fixture minting its own tokens can drift from what the verifier accepts.
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let subject = req.get("subject").and_then(Value::as_str).unwrap_or("test").to_string();

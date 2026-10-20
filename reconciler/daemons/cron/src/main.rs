@@ -1,26 +1,4 @@
-//! `comp-cron` — read the machine's crontab, for a component that has none
-//!
-//! ## Why this is a process and not a component
-//!
-//! Reading crontab needs `crontab -l`, and a `wasm32-wasip2` guest cannot spawn a process (ADR-0095).
-//! So the part that needs an operating system is native and reached over HTTP like the watcher and
-//! the transcoder.
-//!
-//! `components/system-cron` is the component side: it holds the WIT contract and dials this.
-//!
-//! ## No allow-list here
-//!
-//! `comp-fswatch` and `comp-ffmpeg` take `--allow-path` because a request names a path a model chose.
-//! This daemon reads exactly one thing, the crontab of the user running it, so there is nothing to
-//! scope.
-//!
-//! ## No crontab installed is not a failure
-//!
-//! `crontab -l` exits nonzero and writes "no crontab for <user>" to stderr when nobody installed one.
-//! That is an empty job list, not `unavailable`, which is reserved for failing to run `crontab` at
-//! all (binary missing, spawn failed).
-//!
-//!   comp-cron --addr 127.0.0.1:8008
+//! Native side of components/system-cron (ADR-0095): a wasm guest cannot run `crontab -l`.
 
 use anyhow::Result;
 use axum::{routing::post, Json, Router};
@@ -31,16 +9,10 @@ use serde_json::{json, Value};
 #[derive(Parser)]
 #[command(name = "comp-cron", about = "Native daemon for system-cron")]
 struct Args {
-    /// Shared secret a caller must send as `Authorization: Bearer
-    /// <token>`. Loopback binding alone is not a boundary — see
-    /// `comp_daemon_kit`'s own doc for why. No token means
-    /// no check, logged loudly rather than silently.
+    /// Shared secret callers must send as `Authorization: Bearer <token>`; unset means no check.
     #[arg(long)]
     token: Option<String>,
-    /// Same, but read from a file (a systemd `LoadCredential` path)
-    /// rather than passed as a value — `--token` is `ps`-readable by
-    /// any local user, which is most of what this exists to close.
-    /// Wins over `--token` when both are given.
+    /// Like `--token` but read from a file, since a flag is `ps`-readable; takes precedence.
     #[arg(long)]
     token_file: Option<std::path::PathBuf>,
 
@@ -54,9 +26,6 @@ struct Job {
     command: String,
 }
 
-/// One 5-field cron line -> a job. Blank lines and comments are not jobs.
-///
-/// `0 3 * * * /usr/bin/backup.sh` -> schedule `"0 3 * * *"`, command `"/usr/bin/backup.sh"`.
 fn parse_line(line: &str) -> Option<Job> {
     let line = line.trim();
     if line.is_empty() || line.starts_with('#') {
@@ -77,7 +46,7 @@ async fn list_jobs() -> Json<Value> {
     let out = tokio::process::Command::new("crontab").arg("-l").output().await;
     let out = match out {
         Ok(o) => o,
-        // The binary itself could not be found or spawned: the only thing reported as unavailable.
+        // Only a missing or unspawnable binary is `unavailable`.
         Err(e) => {
             return Json(
                 json!({ "error": "unavailable", "detail": format!("failed to run crontab: {e}") }),

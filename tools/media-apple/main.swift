@@ -1,24 +1,5 @@
-// comp-media-apple — the macOS half of comp-media (ADR-0098).
-//
-// Core Image develops the raw file into three renditions, Vision looks at the
-// AI copy, and a Metal kernel computes `green-stab-v1` sharpness on the green
-// plane comp-media already pulled out of the Bayer data. One process per photo:
-// comp-media runs it, reads the JPEGs it wrote, and parses the one JSON object
-// it prints. Everything here is on-device; nothing is sent anywhere.
-//
-//   swiftc -O -o comp-media-apple tools/media-apple/main.swift
-//   comp-media-apple --original <file.arw> --green <plane.f32> \
-//                    --green-width W --green-height H --out <dir>
-//
-// The wire shapes (renditions / sharpness / vision) are the callback's, in
-// components/media-pipeline/CONTRACT.md. Every box printed is [x, y, w, h],
-// normalised, TOP-LEFT origin — Vision's own boxes are bottom-left, and that
-// conversion happens here and nowhere else.
-//
-// The Metal kernel must match comp-media's CPU `green_stab_v1` tile for tile
-// (sqrt -> separable [1 2 1]/4 leaving borders -> 4-neighbour Laplacian ->
-// per-tile variance x1e6, last tile row/column taking the remainder). The spike
-// that produced it printed identical tile values from both.
+// The macOS half of comp-media (ADR-0098); wire shapes in components/media-pipeline/CONTRACT.md.
+// The Metal kernel must match comp-media's CPU `green_stab_v1` tile for tile.
 
 import CoreImage
 import Foundation
@@ -34,7 +15,6 @@ func fail(_ msg: String) -> Never {
 func ms(_ t: DispatchTime) -> Int { Int((DispatchTime.now().uptimeNanoseconds - t.uptimeNanoseconds) / 1_000_000) }
 func r3(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
 
-// ---- arguments ---------------------------------------------------------------
 var opts: [String: String] = [:]
 var it = CommandLine.arguments.dropFirst().makeIterator()
 while let k = it.next() {
@@ -52,11 +32,7 @@ let ci = device.map { CIContext(mtlDevice: $0) } ?? CIContext()
 let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
 var timings: [String: Int] = [:]
 
-// ---- develop -----------------------------------------------------------------
-// The largest rendition is 4096 px on the long edge, so develop at just over
-// that: CIRAWFilter's scaleFactor demosaics at reduced size, which is most of
-// what made a full-size develop cost ~1.35 s. A JPEG original is not a raw
-// file; Core Image opens it directly, upright.
+// Demosaic at just over the largest rendition (4096 px): a full-size develop cost ~1.35 s.
 var t = DispatchTime.now()
 let developer: String
 let developed: CIImage
@@ -73,16 +49,11 @@ if let raw = CIRAWFilter(imageURL: original) {
 } else {
     fail("Core Image cannot open \(originalPath)")
 }
-// No camera metadata in a rendition: Core Image would otherwise copy the raw
-// file's EXIF (serial number, GPS when the camera had it) into every JPEG, and
-// the share copy is meant to leave the building. The callback carries what the
-// app needs; the pixels are already upright.
+// Strip EXIF (serial number, GPS): the share copy leaves the building.
 let base = developed
     .transformed(by: CGAffineTransform(translationX: -developed.extent.minX, y: -developed.extent.minY))
     .settingProperties([:])
 
-/// Scale to exactly `long` px on the long edge, integer dimensions, no
-/// half-covered edge pixel.
 func fit(_ img: CIImage, long: CGFloat) -> (CIImage, Int, Int) {
     let (w, h) = (img.extent.width, img.extent.height)
     let s = min(1.0, long / max(w, h))
@@ -114,9 +85,8 @@ let (thumb, tw, th) = fit(base, long: 512)
 renditions["thumb"] = ["width": tw, "height": th, "bytes": writeJPEG(thumb, "thumb.jpg", quality: 0.8)]
 timings["develop"] = ms(t)
 
-// ---- Vision, on the AI copy --------------------------------------------------
 t = DispatchTime.now()
-/// Vision's normalised rect (bottom-left origin) as [x, y, w, h] top-left.
+// Vision's boxes are bottom-left origin; the contract's are top-left.
 func box(_ r: CGRect) -> [Double] { [r3(r.minX), r3(1 - r.maxY), r3(r.width), r3(r.height)] }
 
 guard let cg = ci.createCGImage(ai, from: ai.extent, format: .RGBA8, colorSpace: srgb) else { fail("no CGImage for Vision") }
@@ -148,7 +118,6 @@ if #available(macOS 15.0, *), let a = (aestheticsReq as? VNCalculateImageAesthet
 }
 timings["vision"] = ms(t)
 
-// ---- Metal: green-stab-v1 on the green plane ---------------------------------
 let grid = 16
 var sharpness: Any = NSNull()
 if let device {
@@ -221,9 +190,6 @@ if let device {
         let floor = tiles.sorted()[tiles.count / 2]
         let above = tiles.map { max($0 - floor, 0) }
         let peak = above.max() ?? 0
-        // Sharpness where the subject is: the mean above-floor score of the
-        // tiles under each face. The green plane is already upright and
-        // cropped to the picture, so a box maps straight onto the grid.
         let subjects: [[String: Any]] = faceObs.map { f in
             let b = box(f.boundingBox)
             let clampT = { (v: Double) in min(grid - 1, max(0, Int(v * Double(grid)))) }

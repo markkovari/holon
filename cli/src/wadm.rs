@@ -1,19 +1,4 @@
-//! The wasmCloud lanes: one app spec, four manifests.
-//!
-//! Two axes. Topology (`fused` = one `wac plug` artifact; `linked` = every capability
-//! its own component wired by wadm `link` traits) is not a style choice: wasmtime
-//! allows 30 nested instances per component and the full vet-clinic is 104 core
-//! modules. A linked hop costs 57 µs on comp's own lattice and 1.2 ms on wasmCloud v1
-//! (`docs/SELFHOST.md`), hence `hybrid`: fuse pure compute, link only stateful parts.
-//!
-//! API version (v1 or v2) is a property of the CLUSTER, so it is a flag, not a spec
-//! field. Getting it wrong fails silently: wadm 0.21 accepted a v2 manifest and
-//! created no scalers. The renderer stamps a `holon` annotation so `holon wadm check`
-//! can say which version a stored manifest was rendered for.
-//!
-//! No `wash` invocation: wash 2.x removed `wash app put`, while the NATS subjects
-//! (`wadm.api.<lattice>.model.put`) that both versions serve are stable.
-
+//! The wasmCloud lanes: one app spec, four manifests (fused/linked x v1/v2).
 use std::collections::BTreeMap;
 
 use anyhow::{bail, Context, Result};
@@ -22,15 +7,12 @@ use serde::Deserialize;
 
 use crate::selfhost::{Daemon, Spec};
 
-/// One interface, as `comp-capgraph --format json` reports it. The graph is derived
-/// from the built artifacts (ADR-0087), so it cannot drift like a hand-kept table.
+/// As `comp-capgraph --format json` reports it, derived from built artifacts (ADR-0087).
 #[derive(Debug, Deserialize)]
 pub struct Iface {
     /// Fully qualified: `records:store/store@0.1.0`.
     pub interface: String,
-    /// The component that exports it.
     pub provider: String,
-    /// The components that import it.
     pub consumers: Vec<String>,
 }
 
@@ -46,12 +28,8 @@ impl Graph {
         serde_json::from_str(&text).context("parsing the capability graph")
     }
 
-    /// Every edge `consumer -> provider`, with the WIT coordinates wadm needs.
-    ///
-    /// A link trait carries `namespace`, `package` and `interfaces` — a target alone
-    /// is refused ("Link trait deserialized as custom trait"), because wadm has no
-    /// way to know WHICH import of the consumer this satisfies. Those three fields
-    /// are exactly what the interface string already spells.
+    /// Every edge from `consumer`, with the namespace/package/interfaces a wadm link needs:
+    /// a target alone is refused, since wadm can't tell which import it satisfies.
     fn edges_from(&self, consumer: &str) -> Vec<Edge> {
         let mut by_target: BTreeMap<(String, String, String), Vec<String>> = BTreeMap::new();
         for i in &self.interfaces {
@@ -80,9 +58,7 @@ pub struct Edge {
 }
 
 /// `records:store/store@0.1.0` -> ("records", "store", "store").
-///
-/// The version is dropped on purpose: wadm links name the package, and a version in
-/// that field is what makes a link silently match nothing.
+/// The version is dropped: a versioned package in a wadm link silently matches nothing.
 fn split_wit(s: &str) -> Option<(String, String, String)> {
     let (head, iface) = s.split_once('/')?;
     let (ns, package) = head.split_once(':')?;
@@ -100,12 +76,8 @@ pub enum Topology {
     Linked,
 }
 
-/// Which wasmCloud a manifest is for.
-///
-/// These are different KINDS of document, not two versions of one: v1 deploys an OAM
-/// `Application` to wadm over NATS; wasmCloud 2.x dropped wadm and OAM, and applies a
-/// `Workload` to the Kubernetes API. wadm 0.21 accepts a bogus "v2" OAM manifest,
-/// answers `"result":"acknowledged"` and creates no scalers.
+/// Different kinds of document: v1 is an OAM `Application` for wadm over NATS, v2 a Kubernetes
+/// `Workload`. wadm 0.21 silently accepts a bogus v2 OAM manifest and creates no scalers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ApiVersion {
     /// wasmCloud 1.x: an OAM `Application` for wadm, over NATS.
@@ -125,23 +97,17 @@ impl ApiVersion {
             ApiVersion::V2 => "runtime.wasmcloud.dev/v1alpha1",
         }
     }
-    /// v1's scaler trait. v2 has no traits — replicas live on a
-    /// `WorkloadDeployment` instead.
+    /// v1's scaler trait; v2 has no traits (replicas live on a `WorkloadDeployment`).
     fn scaler(&self) -> &'static str {
         "spreadscaler"
     }
 }
 
-/// Everything the manifest needs that the app spec does not carry, because it
-/// describes the CLUSTER rather than the app.
+/// What the manifest needs that describes the cluster, not the app.
 pub struct Target {
-    /// Registry the artifacts are pushed to and the host pulls from.
     pub registry: String,
-    /// In-cluster NATS, for the keyvalue provider.
     pub nats: String,
-    /// Where the http-server provider listens.
     pub addr: String,
-    /// Replicas of the HTTP-facing component.
     pub replicas: u32,
 }
 
@@ -156,12 +122,7 @@ impl Default for Target {
     }
 }
 
-/// Which capabilities keep state, and therefore need a `wasi:keyvalue` link.
-///
-/// Derived from the component's own name rather than a hand-typed table: a pure
-/// compute capability that later grows a store would otherwise be linked to nothing
-/// and fail at its first write. Conservative on purpose — an unnecessary link costs
-/// a bucket nobody writes to, while a missing one costs a runtime trap.
+/// Conservative on purpose: an unneeded link costs an unused bucket, a missing one a runtime trap.
 fn stateful(component: &str) -> bool {
     const PURE: &[&str] = &[
         "money",
@@ -181,10 +142,7 @@ fn stateful(component: &str) -> bool {
     !PURE.contains(&component)
 }
 
-/// The capabilities worth fusing into the root even in a linked deployment.
-///
-/// Pure compute, so fusing them costs nothing but saves a hop each — and on v1 that
-/// hop is 1.2 ms. This is `gen-manifest.py`'s `FUSED` set, derived instead of typed.
+/// Pure compute: fusing costs nothing and saves a hop each (1.2ms on v1).
 pub fn fusable(components: &[String]) -> Vec<&str> {
     components.iter().map(|s| s.as_str()).filter(|c| !stateful(c)).collect()
 }
@@ -193,38 +151,17 @@ fn dns(s: &str) -> String {
     s.replace('_', "-")
 }
 
-/// The root component's id.
-///
-/// Most apps here name it `<app>-domain` and list it first in `components`, but not
-/// all — `lan-scanner`'s component is just `lan-scanner`. Guessing the suffix
-/// produces a manifest that deploys (neither wadm nor the operator resolves a
-/// component by that name) and then reads wrong to whoever opens it, so prefer what
-/// the spec actually says.
+/// Prefer the spec's first component: not every root is `<app>-domain` (`lan-scanner`), and a
+/// wrong guess still deploys, just misleadingly.
 fn root_of(spec: &Spec) -> String {
     if let Some(first) = spec.components.first() {
         return first.clone();
     }
-    // No list: the convention, which is right for the ~60 apps that follow it.
     format!("{}-domain", spec.name)
 }
 
-/// Render a wasmCloud 2.x `Workload`.
-///
-/// A different document from v1's OAM `Application`, not a variant of it: it goes to
-/// the Kubernetes API rather than to wadm, and there is no wadm on this path.
-///
-/// Four things learned by deploying this against runtime-operator 2.8.0, each of
-/// which produced a real failure first:
-///
-/// 1. **No `oci://` prefix on the image.** v1 requires it; v2 answers
-///    `invalid reference format`.
-/// 2. **HTTP needs a hostname.** Without `config: {host: ...}` the host refuses the
-///    workload with `no host header found` — it routes by `Host` header on one
-///    shared port, exactly as `comp-ingress` does.
-/// 3. **Every non-standard import must be DECLARED in `hostInterfaces`.** An
-///    undeclared `wasi:keyvalue` fails at link time, not at first use.
-/// 4. **A `comp:` interface cannot be satisfied at all** on a release host — see
-///    `unsupported_on_v2`.
+/// A wasmCloud 2.x `Workload`, for the Kubernetes API (no wadm). Each rule below was a real
+/// failure against runtime-operator 2.8.0 first.
 pub fn render_workload(
     spec: &Spec,
     namespace: &str,
@@ -258,19 +195,12 @@ pub fn render_workload(
         t.registry,
         dns(&spec.name)
     ));
-    // A worker listens on nothing and no component dials it, so it has no Service to grant
-    // reaching and no `<name>-url` to rewrite.
+    // A worker listens on nothing: no Service to grant, no `<name>-url` to rewrite.
     let served: Vec<(&Daemon, &str)> =
         spec.daemons.iter().filter_map(|d| d.addr.as_deref().map(|a| (d, a))).collect();
     if !served.is_empty() {
-        // Egress is fail-closed here exactly as it is on `comp-host`'s own
-        // `--egress` — an app with a `[[daemon]]` needs its own daemon's Service
-        // granted explicitly, both to dial it (`allowedHosts`) and to resolve its
-        // name at all (`allowedIpNameLookups`; the operator grants that
-        // separately, so one without the other still fails). Both live under
-        // `localResources`, not on the component directly — `kubectl explain
-        // workload.spec.components --recursive` is the source of truth here;
-        // the CRD's own doc comments describe the fields but not their parent.
+        // Egress is fail-closed, like comp-host's `--egress`: dialing (`allowedHosts`) and resolving
+        // (`allowedIpNameLookups`) are separate grants, both under `localResources` (`kubectl explain`).
         y.push_str("      localResources:\n        allowedHosts:\n");
         for (d, addr) in &served {
             y.push_str(&format!("          - {}\n", daemon_service_host(namespace, d, addr)));
@@ -281,9 +211,7 @@ pub fn render_workload(
         }
     }
 
-    // Everything the component imports that the host does not provide as standard
-    // WASI has to be declared, or the workload fails to link. Derived from the
-    // capability graph where there is one.
+    // Every non-standard-WASI import must be declared, or the workload fails to link.
     y.push_str("  hostInterfaces:\n");
     y.push_str(&format!(
         "    # The door. The host serves one port and routes by `Host` header, so a\n\
@@ -307,26 +235,15 @@ pub fn render_workload(
              version: \"0.2.0-draft\"\n",
         );
     }
-    // Gated on the ARTIFACT, not `spec.config`: a component can import
-    // `wasi:config/store` structurally (pulled in by a shared dependency) with
-    // nothing in its own `[config]` table — `flags` does. `spec.config.is_empty()`
-    // said "nothing to declare" and skipped the interface entirely, which left the
-    // import unlinked and the workload failed to start: "instance export `get` has
-    // the wrong type: function implementation is missing". Declaring it with an
-    // empty `config:` still satisfies the link; the app's own `get` calls just see
-    // nothing there, same as any other lane.
+    // Gated on the artifact, not `spec.config`: a shared dependency can import `wasi:config/store`
+    // with an empty `[config]` (`flags`), and an undeclared import fails to link.
     if imports_config {
         y.push_str(
             "    - namespace: wasi\n      package: config\n      interfaces: [store]\n      \
              version: \"0.2.0-rc.1\"\n      config:\n",
         );
         for (k, v) in &spec.config {
-            // `<name>-url` is written for tier 1, where the daemon is a sibling
-            // process reachable at 127.0.0.1 (`check()` enforces that agreement).
-            // On this lane the daemon is its own Deployment, so the value that
-            // makes the tier-1 agreement true here is wrong — override it with
-            // where the daemon's Service actually answers, same key, different
-            // address, exactly as the daemon's own image differs per lane.
+            // `<name>-url` points at tier 1's loopback sibling; here the daemon is its own Service.
             let value = served
                 .iter()
                 .find(|(d, _)| *k == format!("{}-url", d.name))
@@ -342,44 +259,25 @@ pub fn render_workload(
     Ok(y)
 }
 
-/// The port half of a `host:port` address (`"127.0.0.1:8000"` -> `"8000"`).
 fn addr_port(addr: &str) -> &str {
     addr.rsplit_once(':').map(|(_, p)| p).unwrap_or(addr)
 }
 
-/// The Service name a `[[daemon]]`'s Deployment answers behind — no namespace,
-/// no port, just the bit that's also a valid k8s object name.
 fn daemon_service_name(d: &Daemon) -> String {
     format!("{}-daemon", dns(&d.name))
 }
 
-/// The Service's cluster DNS name, no port — what `allowedIpNameLookups`
-/// grants resolving, separately from `allowedHosts` granting reaching it.
+/// No port: what `allowedIpNameLookups` grants resolving.
 fn daemon_fqdn(namespace: &str, d: &Daemon) -> String {
     format!("{}.{namespace}.svc.cluster.local", daemon_service_name(d))
 }
 
-/// Where this daemon's Deployment answers inside the cluster: the FQDN above,
-/// port carried over from the spec's own `addr` (`check()` already enforces
-/// that this is the port the daemon binds). Only a daemon that has an `addr`.
 fn daemon_service_host(namespace: &str, d: &Daemon, addr: &str) -> String {
     format!("{}:{}", daemon_fqdn(namespace, d), addr_port(addr))
 }
 
-/// A `[[daemon]]`'s own Deployment + Service (a worker, which listens on nothing, gets the
-/// Deployment alone: no `--addr` and no Service) — the missing half of the
-/// wasmCloud/Kubernetes lane's daemon story (`docs/SELFHOST.md`: "There is no
-/// equivalent yet for the wasmCloud/Kubernetes lanes — a daemon a component in
-/// those lanes needs is still a manual step"). Built from
-/// `reconciler/Dockerfile.daemon`, one image per daemon, picked at build time
-/// by `--build-arg DAEMON=comp-<name>` — the same binary tier 1 runs as a
-/// systemd unit, in a container instead of on the box.
-///
-/// No token support yet — permissive, same reasoning tier 1's own `[[daemon]]`
-/// tables give for shipping with none set: meant to compose and run with
-/// nothing extra to provision. A real deployment sharing a namespace with
-/// anything else should wire one (a Secret + `--token-file`, mirroring tier
-/// 1's `LoadCredential`) before this is more than a demo.
+/// A `[[daemon]]`'s Deployment + Service (a worker gets no Service), from `reconciler/Dockerfile.daemon`.
+/// No token support yet: wire a Secret + `--token-file` before sharing a namespace.
 fn render_daemon_deployment(d: &Daemon, namespace: &str, registry: &str) -> String {
     let name = daemon_service_name(d);
     let mut args = String::new();
@@ -438,27 +336,9 @@ fn render_daemon_deployment(d: &Daemon, namespace: &str, registry: &str) -> Stri
     )
 }
 
-/// The imports a wasmCloud 2.x release host cannot satisfy, read from the artifact.
-///
-/// Measured rather than assumed: a 2.8.0 host logs what it provides at startup, and
-/// it is standard WASI plus `wasmcloud:messaging`. Anything else — a `comp:`
-/// interface, or any other custom namespace — needs a host component plugin, and the
-/// chart says those need "a wash image built with the `host-component-plugins`
-/// feature (not enabled in release images yet)".
-///
-/// **Read from the BINARY, not from the capability graph.** The graph records edges
-/// between components and carries no `comp:` interface at all, because those are
-/// host imports rather than component-to-component ones — asking it this question
-/// silently returns "nothing is wrong". `wasm-tools component wit` sees what the
-/// component actually asks for, which is the same source ADR-0087 uses for
-/// composition.
-///
-/// Declaring an interface in `hostInterfaces` is what satisfies the ones that ARE
-/// supported: an undeclared `wasi:keyvalue` fails at link time. So only the
-/// genuinely unsatisfiable ones are reported here.
+/// Imports a 2.x release host can't satisfy: it provides standard WASI and `wasmcloud:messaging`,
+/// the rest needs host plugins release images lack. Read from the binary: the graph has no `comp:` imports.
 pub fn unsupported_on_v2(artifact: &std::path::Path) -> Result<Vec<String>> {
-    // The namespaces a release host can satisfy, either as standard WASI or by
-    // declaration in `hostInterfaces`.
     const SATISFIABLE: &[&str] = &["wasi:", "wasmcloud:"];
 
     let mut bad: Vec<String> = component_imports(artifact)?
@@ -470,17 +350,11 @@ pub fn unsupported_on_v2(artifact: &std::path::Path) -> Result<Vec<String>> {
     Ok(bad)
 }
 
-/// Does the artifact actually import `wasi:config/store`? Read from the binary
-/// for the same reason `unsupported_on_v2` does: a shared dependency can pull the
-/// import in whether or not the app itself ever calls `get` — `flags` does, with
-/// an empty `[config]` table — and gating `hostInterfaces` on `spec.config` alone
-/// left that import unlinked (`function implementation is missing`).
+/// Read from the binary: a shared dependency can import it with an empty `[config]` (`flags`).
 pub fn imports_wasi_config(artifact: &std::path::Path) -> Result<bool> {
     Ok(component_imports(artifact)?.iter().any(|i| i.starts_with("wasi:config/store")))
 }
 
-/// Every `import ...;` line `wasm-tools component wit` reports for `artifact`,
-/// namespace:package/interface, no version.
 fn component_imports(artifact: &std::path::Path) -> Result<Vec<String>> {
     let out = std::process::Command::new("wasm-tools")
         .args(["component", "wit"])
@@ -502,7 +376,6 @@ fn component_imports(artifact: &std::path::Path) -> Result<Vec<String>> {
         .collect())
 }
 
-/// Render the wadm Application for one app.
 pub fn render(
     spec: &Spec,
     topo: Topology,
@@ -563,9 +436,7 @@ pub fn render(
 
     if topo == Topology::Linked {
         let fused = fusable(&spec.components);
-        // The edges, with their WIT coordinates. A link naming only a target is
-        // refused by wadm — it cannot know which import of the consumer it
-        // satisfies — so a linked render needs the graph.
+        // wadm refuses a link naming only a target, so a linked render needs the graph.
         let edges = match graph {
             Some(g) => g.edges_from(&root),
             None => bail!(
@@ -587,8 +458,6 @@ pub fn render(
             ));
         }
     }
-    // The app reads its `wasi:config` keys the same way in every lane; only the
-    // delivery differs (CFG_* env in tier 1, this table here).
     if !spec.config.is_empty() {
         y.push_str("      properties_config:\n");
         for (k, v) in &spec.config {
@@ -619,10 +488,8 @@ pub fn render(
         }
     }
 
-    // wadm refuses a manifest whose link names a capability the manifest does not
-    // declare ("The following capability component(s) are missing"), so a target is
-    // not enough — the provider is a component like any other. Emitted only when
-    // something actually links to it, so a stateless app carries no NATS provider.
+    // wadm refuses a link to an undeclared capability, so declare the provider, but only when
+    // something links to it.
     let links_state = graph
         .map(|g| g.edges_from(&root).iter().any(|e| e.target != root && stateful(&e.target)))
         .unwrap_or(false);
@@ -633,8 +500,7 @@ pub fn render(
         );
     }
 
-    // An http-server provider, not the app listening itself: on wasmCloud the
-    // component exports wasi:http/incoming-handler and a provider brings the socket.
+    // On wasmCloud a provider brings the socket; the component only exports incoming-handler.
     y.push_str(&format!(
         "    - name: httpserver\n      type: capability\n      properties:\n        \
          image: ghcr.io/wasmcloud/http-server:0.23.1\n      traits:\n        \
@@ -650,11 +516,7 @@ pub fn render(
     Ok(y)
 }
 
-/// The `wasi:keyvalue` link every stateful capability needs, each to its own bucket.
-///
-/// A bucket per component, not one shared: `docs/SELFHOST.md` makes the same point
-/// for tier 1, and ADR-0015 is the general rule — a bucket name is not a boundary,
-/// so two components sharing one is two components sharing state.
+/// A bucket per component: a bucket name is not a boundary (ADR-0015).
 fn kv_link(component: &str, nats: &str) -> String {
     format!(
         "        - type: link\n          properties:\n            namespace: wasi\n            \
@@ -667,11 +529,7 @@ fn kv_link(component: &str, nats: &str) -> String {
     )
 }
 
-/// The operator's host, for the Kubernetes lane.
-///
-/// The wadm Application above is IDENTICAL whether wadm is driven by `wash` or by
-/// the operator — which is what makes the k8s lane small. This is the only file that
-/// is specific to it.
+/// The only k8s-specific file: the Application is identical whether `wash` or the operator drives wadm.
 pub fn render_host_config(namespace: &str, lattice: &str, version: &str, t: &Target) -> String {
     format!(
         "# Generated by `holon wadm host` — do not edit.\n#\n\
@@ -696,12 +554,8 @@ pub fn render_host_config(namespace: &str, lattice: &str, version: &str, t: &Tar
     )
 }
 
-/// Refuse a fused render that the host would reject at start.
-///
-/// wasmtime allows 30 nested instances per component. `wac` will happily produce the
-/// artifact anyway, so without this the failure arrives as a start-time trap on the
-/// cluster rather than as a sentence here — which is the whole reason the linked
-/// manifest exists in the tree at all.
+/// wasmtime allows 30 nested instances per component and `wac` builds past that anyway,
+/// so refuse here rather than as a start-time trap on the cluster.
 pub fn check_fusable(spec: &Spec, topo: Topology) -> Result<()> {
     const CEILING: usize = 30;
     if topo == Topology::Fused && spec.components.len() > CEILING {
@@ -719,7 +573,6 @@ pub fn check_fusable(spec: &Spec, topo: Topology) -> Result<()> {
 mod tests {
     use super::*;
 
-    /// The real edges `comp-capgraph` reports for `gate-domain`, as a fixture.
     fn graph() -> Graph {
         serde_json::from_str(
             r#"{"interfaces":[
@@ -746,10 +599,8 @@ mod tests {
         let s = spec("components = [\"gate-domain\", \"record-store\", \"shaper\"]\n");
         let y = render(&s, Topology::Fused, ApiVersion::V1, &Target::default(), None).unwrap();
         assert!(y.contains("apiVersion: core.oam.dev/v1beta1"), "{y}");
-        // The capabilities are INSIDE the artifact, so they must not appear.
         assert!(!y.contains("name: record-store"), "fused hides its parts: {y}");
         assert!(y.contains("name: gate-domain"), "{y}");
-        // Still needs a door.
         assert!(y.contains("http-server"), "{y}");
     }
 
@@ -759,27 +610,20 @@ mod tests {
         let y = render(&s, Topology::Linked, ApiVersion::V1, &Target::default(), Some(&graph()))
             .unwrap();
         assert!(y.contains("name: record-store"), "{y}");
-        // record-store keeps state, so it gets its own bucket...
         assert!(y.contains("bucket: record-store"), "{y}");
-        // ...and shaper is pure compute, so it is fused in rather than linked.
         assert!(!y.contains("name: shaper"), "pure compute should fuse: {y}");
     }
 
     #[test]
     fn the_keyvalue_provider_is_declared_and_not_merely_targeted() {
-        // wadm rejects a link naming a capability the manifest does not declare.
-        // Found against a real wadm 0.21, which answered:
-        //   "The following capability component(s) are missing from the manifest"
+        // Found against wadm 0.21: "capability component(s) are missing from the manifest".
         let s = spec("components = [\"gate-domain\", \"record-store\"]\n");
         let y = render(&s, Topology::Linked, ApiVersion::V1, &Target::default(), Some(&graph()))
             .unwrap();
         assert!(y.contains("name: keyvalue-nats"), "{y}");
         assert!(y.contains("image: ghcr.io/wasmcloud/keyvalue-nats"), "{y}");
 
-        // ...and an app whose edges reach nothing stateful carries no provider it
-        // never calls. The GRAPH decides that, not the spec's component list: the
-        // edges are read from the built artifacts, and the list is a hint for the
-        // fused set.
+        // The graph, not the component list, decides whether a provider is needed.
         let pure_graph: Graph = serde_json::from_str(
             r#"{"interfaces":[{"interface":"shaper:limit/limiter@0.1.0",
                  "provider":"shaper","consumers":["gate-domain"]}]}"#,
@@ -794,9 +638,7 @@ mod tests {
 
     #[test]
     fn each_stateful_capability_gets_its_own_bucket() {
-        // ADR-0015: a bucket name is not a boundary, so sharing one is sharing state.
         let s = spec("components = [\"gate-domain\", \"record-store\", \"session-store\"]\n");
-        // Both are stateful and both appear as edges in the fixture graph.
         let y = render(&s, Topology::Linked, ApiVersion::V1, &Target::default(), Some(&graph()))
             .unwrap();
         assert!(y.contains("bucket: record-store"), "{y}");
@@ -805,9 +647,7 @@ mod tests {
 
     #[test]
     fn the_rendered_api_version_is_stamped_because_wadm_will_not_complain() {
-        // A real wadm 0.21 accepted a v2 manifest, deployed it, and silently created
-        // no scalers — it ignores an unknown trait type. So "which version is this"
-        // has to be answerable from the file rather than from the deploy result.
+        // wadm 0.21 silently accepts a v2 manifest with no scalers, so the file must say its version.
         let s = spec("components = [\"gate-domain\", \"record-store\"]\n");
         let t = Target::default();
         let v1 = render(&s, Topology::Fused, ApiVersion::V1, &t, None).unwrap();
@@ -819,10 +659,6 @@ mod tests {
 
     #[test]
     fn v1_and_v2_are_different_documents_not_two_envelopes() {
-        // v1 and v2 are different KINDS of document: v1 is an OAM Application for wadm
-        // over NATS; v2 is a Workload for the Kubernetes API (wadm and OAM are gone).
-        // Verified against wadm 0.21 + wasmCloud 1.6.0 and runtime-operator 2.8.0 +
-        // wash 2.8.0 respectively.
         let s = spec("components = [\"gate-domain\", \"record-store\"]\n");
         let t = Target::default();
 
@@ -834,24 +670,19 @@ mod tests {
         let v2 = render_workload(&s, "wasmcloud-v2", &t, Some(&graph()), false).unwrap();
         assert!(v2.contains("apiVersion: runtime.wasmcloud.dev/v1alpha1"), "{v2}");
         assert!(v2.contains("kind: Workload"), "{v2}");
-        // No traits at all in v2 — replicas live on a WorkloadDeployment.
         assert!(!v2.contains("spreadscaler") && !v2.contains("traits"), "{v2}");
     }
 
     #[test]
     fn a_v2_workload_carries_what_the_host_refused_without() {
-        // Each of these was a real failure from a 2.8.0 host before it was a test.
         let s = spec(
             "components = [\"gate-domain\", \"record-store\"]\n[config]\ngrace-period-secs = \"5\"\n",
         );
         let v2 =
             render_workload(&s, "wasmcloud-v2", &Target::default(), Some(&graph()), true).unwrap();
 
-        // "invalid reference format" — v1 needs the oci:// prefix and v2 rejects it.
         assert!(!v2.contains("oci://"), "{v2}");
-        // "no host header found" — the host routes by Host on one shared port.
         assert!(v2.contains("host: gate.example.com"), "{v2}");
-        // An undeclared import fails at LINK time, so every one must be declared.
         assert!(v2.contains("package: keyvalue"), "{v2}");
         assert!(v2.contains("package: config"), "{v2}");
         assert!(v2.contains("grace-period-secs"), "{v2}");
@@ -859,10 +690,6 @@ mod tests {
 
     #[test]
     fn wasi_config_is_declared_from_the_artifact_not_the_spec_table() {
-        // `flags` imports `wasi:config/store` (pulled in by a shared dependency)
-        // with an empty `[config]` table of its own. Gating on `spec.config.is_empty()`
-        // skipped the interface and the workload failed at link time on a real
-        // 2.9.0 host: "function implementation is missing".
         let s = spec("components = [\"flags-domain\"]\n");
         let with_import = render_workload(&s, "ns", &Target::default(), None, true).unwrap();
         assert!(with_import.contains("package: config"), "{with_import}");
@@ -873,12 +700,6 @@ mod tests {
 
     #[test]
     fn a_daemon_gets_its_own_deployment_and_a_rewritten_config_url() {
-        // fs-watcher's real shape: a `[[daemon]]` plus the `<name>-url` `[config]`
-        // key `check()` requires to agree with it — written for tier 1, where
-        // `comp-fswatch` is a sibling process on 127.0.0.1. On this lane it is its
-        // own Deployment, so the value that keeps tier 1's agreement true here
-        // would be wrong: nothing on this lane is listening on the workload's own
-        // loopback.
         let s = spec(
             "components = [\"fs-watcher-domain\"]\n\
              [config]\n\
@@ -891,23 +712,18 @@ mod tests {
         );
         let y = render_workload(&s, "ns", &Target::default(), None, true).unwrap();
 
-        // Not the tier-1 loopback value — the daemon's own Service.
         assert!(!y.contains("127.0.0.1:8000"), "{y}");
         assert!(
             y.contains("fswatch-url: \"http://fswatch-daemon.ns.svc.cluster.local:8000\""),
             "{y}"
         );
 
-        // Egress is fail-closed on this lane the same way it is on comp-host's
-        // own `--egress` — reaching the daemon and resolving its name are both
-        // grants the component needs spelled out, not assumed.
         assert!(y.contains("localResources:\n        allowedHosts:\n          - fswatch-daemon.ns.svc.cluster.local:8000"), "{y}");
         assert!(
             y.contains("allowedIpNameLookups:\n          - fswatch-daemon.ns.svc.cluster.local"),
             "{y}"
         );
 
-        // The daemon's own Deployment + Service, appended as further documents.
         assert!(y.contains("kind: Deployment"), "{y}");
         assert!(y.contains("name: fswatch-daemon"), "{y}");
         assert!(
@@ -921,9 +737,6 @@ mod tests {
 
     #[test]
     fn a_worker_gets_a_deployment_and_no_service_and_no_egress() {
-        // `comp-resume` pulls from NATS and pushes to a sink and listens on nothing: nothing
-        // dials it, so there is no Service to grant reaching, no name to resolve and no
-        // `<name>-url` to rewrite — and no `--addr` to give it.
         let s = spec(
             "components = [\"park-gateway\"]\n\
              [config]\n\
@@ -937,7 +750,6 @@ mod tests {
         );
         let y = render_workload(&s, "ns", &Target::default(), None, true).unwrap();
 
-        // The component may reach the daemon that listens, and nothing else.
         assert!(
             y.contains("allowedHosts:\n          - park-daemon.ns.svc.cluster.local:8015\n"),
             "{y}"
@@ -945,7 +757,6 @@ mod tests {
         assert!(!y.contains("resume-daemon.ns.svc"), "no grant to reach a worker: {y}");
         assert!(y.contains("park-url: \"http://park-daemon.ns.svc.cluster.local:8015\""), "{y}");
 
-        // Its own Deployment, with its own flags and without `--addr`...
         assert!(y.contains("name: resume-daemon"), "{y}");
         assert!(
             y.contains("image: registry.wasmcloud.svc.cluster.local:5000/comp-resume:latest"),
@@ -958,22 +769,16 @@ mod tests {
         );
         let resume = y.split("---\n").find(|d| d.contains("name: resume-daemon")).unwrap();
         assert!(!resume.contains("--addr") && !resume.contains("kind: Service"), "{resume}");
-        // ...while the daemon that listens still has its Service, and there is only the one.
         assert_eq!(y.matches("kind: Service").count(), 1, "{y}");
         assert_eq!(y.matches("kind: Deployment").count(), 2, "{y}");
     }
 
     #[test]
     fn the_root_component_comes_from_the_spec_rather_than_a_guessed_suffix() {
-        // Most apps name it `<app>-domain`, but lan-scanner's component is just
-        // `lan-scanner`. The guess deploys either way — neither wadm nor the
-        // operator resolves by that name — so it fails as a misleading manifest
-        // rather than as an error.
         let named = spec("components = [\"lan-scanner\"]\n");
         let v2 = render_workload(&named, "ns", &Target::default(), None, false).unwrap();
         assert!(v2.contains("- name: lan-scanner\n"), "{v2}");
 
-        // With no list, the convention is still the best available answer.
         let bare = spec("");
         let v2b = render_workload(&bare, "ns", &Target::default(), None, false).unwrap();
         assert!(v2b.contains("- name: gate-domain\n"), "{v2b}");
@@ -981,13 +786,10 @@ mod tests {
 
     #[test]
     fn a_graph_too_big_to_fuse_is_refused_here_rather_than_on_the_cluster() {
-        // wac builds it; wasmtime refuses it at start. Saying so now is the whole
-        // reason the linked manifest exists (gen-manifest.py: 104 core modules).
         let many: Vec<String> = (0..31).map(|i| format!("\"cap-{i}\"")).collect();
         let s = spec(&format!("components = [{}]\n", many.join(", ")));
         let err = check_fusable(&s, Topology::Fused).unwrap_err().to_string();
         assert!(err.contains("nested instances"), "{err}");
-        // The same graph is fine linked — that is the escape hatch.
         assert!(check_fusable(&s, Topology::Linked).is_ok());
     }
 
@@ -1002,8 +804,6 @@ mod tests {
 
     #[test]
     fn the_host_config_says_why_this_lane_is_not_the_default() {
-        // ADR-0021 removed Kubernetes on purpose. A generated file that did not say
-        // so would quietly contradict the tree.
         let h = render_host_config("holon", "prod", "1.6.0", &Target::default());
         assert!(h.contains("k8s.wasmcloud.dev/v1alpha1"), "{h}");
         assert!(h.contains("ADR-0021"), "{h}");

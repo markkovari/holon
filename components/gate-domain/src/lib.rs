@@ -1,10 +1,4 @@
-//! `gate-domain` — a durable traffic-shaping gateway (docs/apps/GATE.md) as ONE composed
-//! wasm HTTP component. Exports `wasi:http`; imports only WIT contracts:
-//! `records:store` (the durable per-key state — the "worker" memory) and
-//! `shaper:limit` (the stateless token-bucket / GCRA math). Per-key records are
-//! updated under a revision compare-and-set, so concurrent requests to one key
-//! serialize like a single-writer Golem worker; batch flush is one CAS update
-//! (the atomic region). No auth — a gateway keys by a client-supplied API key.
+//! Per-key state is updated under a revision CAS, so concurrent requests to one key serialise.
 
 #[allow(warnings)]
 mod bindings {
@@ -26,20 +20,19 @@ mod bindings {
         world: "gate:app/gate-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
     }
 }
 
 use serde_json::{json, Map, Value};
 
 use bindings::comp::store::cas;
+use bindings::p3::clocks::system_clock;
 use bindings::records::store::store as records;
 use bindings::shaper::limit::limiter as shaper;
-use bindings::p3::clocks::system_clock;
 use bindings::wasi::keyvalue::store as kv;
 
 use bindings::p3::handler::Guest;
@@ -49,10 +42,7 @@ struct Component;
 
 const GCRA: &str = "gcra";
 const BATCHES: &str = "batches";
-/// How many times a contended compare-and-set is retried. With N concurrent writers on one key
-/// exactly one wins each round, so a request fails after K rounds with probability
-/// ((N-1)/N)^K: at 20 writers and 40 rounds that is 12.9% (9.7% of hot-key requests measured
-/// 503). At 200 it is 0.0035%, and an attempt is cheap (two store operations).
+/// One writer wins per round, so failure after K rounds is ((N-1)/N)^K: 12.9% at 20 writers, 40 tries.
 const CAS_TRIES: u32 = 200;
 
 impl Guest for Component {
@@ -100,8 +90,7 @@ fn usage() -> Outcome {
     )
 }
 
-/// The current record for `key` in `coll`: (id, revision, data). `find_by`
-/// returns id-ordered, so racers converge on the same (earliest) record.
+/// `find_by` is id-ordered, so racers converge on the same (earliest) record.
 fn state_of(coll: &str, key: &str) -> Option<(String, u64, Value)> {
     records::find_by(coll, "key", &json!(key).to_string())
         .ok()?
@@ -110,9 +99,7 @@ fn state_of(coll: &str, key: &str) -> Option<(String, u64, Value)> {
         .and_then(|e| serde_json::from_str::<Value>(&e.data).ok().map(|v| (e.id, e.revision, v)))
 }
 
-/// Where one key's bucket lives. Not a record: a bucket has no identity beyond its key, is
-/// never listed, and is rewritten every request, so a record's id and secondary indexes are
-/// pure overhead on the hottest path in this component.
+/// Not a record: rewritten every request, so a record's id and indexes are pure overhead here.
 fn bucket_key(key: &str) -> String {
     let mut out = String::from("rl_");
     for b in key.bytes() {
@@ -148,8 +135,6 @@ async fn ratelimit(request: Request) -> Outcome {
     };
     let bkey = bucket_key(&key);
 
-    // Two store operations per request: the guarded read and the guarded write. The revision
-    // comes from the store, so this is an optimistic-concurrency loop that pays for no index.
     for _ in 0..CAS_TRIES {
         let (rev, state) = match cas::get(&bucket, &bkey) {
             Ok(Some(v)) => {
@@ -162,8 +147,7 @@ async fn ratelimit(request: Request) -> Outcome {
                     },
                 )
             }
-            // uninitialized -> starts full (updated_ms 0). Revision 0 is "must
-            // not exist yet", so two racing first-requests cannot both create it.
+            // Revision 0 is "must not exist", so two racing first requests cannot both create it.
             Ok(None) => (0, shaper::Bucket { tokens: 0.0, updated_ms: 0 }),
             Err(e) => return Outcome::Err(503, format!("store unavailable: {e:?}")),
         };
@@ -171,8 +155,6 @@ async fn ratelimit(request: Request) -> Outcome {
         let nv = json!({ "key": key, "tokens": next.tokens, "updated_ms": next.updated_ms });
         match cas::set(&bucket, &bkey, nv.to_string().as_bytes(), rev) {
             Ok(cas::Outcome::Committed(_)) => return decide_response(&dec, "token-bucket", &key),
-            // Someone else moved it between the read and the write: re-read and
-            // decide again on what they left behind.
             Ok(cas::Outcome::Conflict(_)) => continue,
             Err(e) => return Outcome::Err(503, format!("store unavailable: {e:?}")),
         }
@@ -219,12 +201,10 @@ fn decide_response(dec: &shaper::Decision, algo: &str, key: &str) -> Outcome {
         "remaining": dec.remaining, "algo": algo, "key": key
     })
     .to_string();
-    // a real gateway answers 429 on a denial.
     Outcome::Json(if dec.allowed { 200 } else { 429 }, body)
 }
 
-/// The "downstream work" a batch performs, per item — here an uppercase to make
-/// the coalescing visible. In a real gateway this is the one batched call.
+/// Stand-in for the one batched downstream call; uppercasing makes the coalescing visible.
 fn process(item: &str) -> String {
     item.to_uppercase()
 }
@@ -287,8 +267,7 @@ async fn batch_submit(request: Request) -> Outcome {
                     v["flushed"] = json!(true);
                     v["flushed_ms"] = json!(now);
                 }
-                // ATOMIC REGION: the append (and, if tripped, the flush) commit as
-                // one revision-guarded update — a crash can't flush twice or lose items.
+                // One revision-guarded update: a crash cannot flush twice or lose items.
                 if records::update(BATCHES, &id, &v.to_string(), rev).is_ok() {
                     return Outcome::Json(
                         201,
@@ -322,9 +301,7 @@ async fn reset(request: Request) -> Outcome {
         Some(k) => k.to_string(),
         None => return Outcome::Err(422, "key required".into()),
     };
-    // The bucket is no longer a record, so it is no longer reachable by the loop
-    // below — and a reset that silently stopped resetting the rate limit would be
-    // the worst kind of quiet.
+    // The bucket is not a record, so the loop below would not reset it.
     if let Ok(bucket) = kv::open("default") {
         let _ = bucket.delete(&bucket_key(&key));
     }
@@ -337,15 +314,15 @@ async fn reset(request: Request) -> Outcome {
 }
 
 async fn body(request: Request) -> Result<Value, Outcome> {
-    let raw = read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
+    let raw =
+        read_body(request).await.map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
         return Ok(Value::Object(Map::new()));
     }
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
-/// guest traps and the caller just sees a closed connection.
+/// Backstop below wasmtime's 64 MiB per-store cap, past which the guest traps.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

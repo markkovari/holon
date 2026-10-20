@@ -1,10 +1,3 @@
-//! `agent-matrix`: the Matrix bridge for the agent runtime.
-//!
-//!   agent-matrix init  --server-name malna.tail3a9c.ts.net --homeserver https://malna.tail3a9c.ts.net \
-//!                      --runtime-url http://127.0.0.1:18017 --runtime-token-file <state>/admin-token \
-//!                      --appservice-url http://100.81.10.8:9009        # owner password in $HOLON_OWNER_PASSWORD
-//!   agent-matrix run   [--config ~/.holon-matrix/bridge.json]
-
 use std::path::PathBuf;
 
 use agent_matrix::init::{init, read_token, InitArgs};

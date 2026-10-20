@@ -1,11 +1,4 @@
-//! Connectors: a tool backed by a program on this machine (a calendar, a mail client, a
-//! home-automation CLI). The agent calls it like any tool; the runtime runs the program with
-//! the call's arguments as JSON on stdin and hands back whatever it prints.
-//!
-//! A connector is configuration, not code in this repo: define it inline on an agent's
-//! capability (`exec`), or once in `<state>/connectors/<name>.json` and name it in the
-//! capability list. Mark it `sensitive` and every call waits for the owner's approval, the same
-//! as writing a file does.
+//! A tool backed by a local program, configured not coded: the call's arguments go to it as JSON on stdin.
 
 use std::io::{Read, Write};
 use std::path::Path;
@@ -19,10 +12,9 @@ use serde_json::Value;
 pub struct Exec {
     /// Program and fixed arguments; never run through a shell.
     pub command: Vec<String>,
-    /// How the model should write the call: `{"from": "<ISO date>", "to": "<ISO date>"}`.
+    /// A hint for the model, e.g. `{"from": "<ISO date>", "to": "<ISO date>"}`.
     #[serde(default)]
     pub args: String,
-    /// Arguments a call cannot work without.
     #[serde(default)]
     pub required: Vec<String>,
     /// Needs the owner's approval for every call.
@@ -36,7 +28,6 @@ fn default_timeout() -> u64 {
     30
 }
 
-/// A connector defined once, in `<state>/connectors/<name>.json`.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Definition {
     #[serde(default)]
@@ -54,9 +45,6 @@ pub fn load(dir: &Path, name: &str) -> Option<Definition> {
 
 const MAX_OUT: usize = 64 * 1024;
 
-/// `workspace` is the calling agent's workspace directory, handed to the program as
-/// `HOLON_WORKSPACE` so a connector can read the files that were put there for that agent
-/// (a photo sent in chat) and nobody else's.
 pub fn run(exec: &Exec, args: &Value, workspace: Option<&Path>) -> Result<String, String> {
     let (prog, fixed) = exec.command.split_first().ok_or("connector has no command")?;
     let mut child = Command::new(prog)
@@ -139,12 +127,10 @@ mod tests {
         let mut slow = exec(&["sleep", "5"]);
         slow.timeout_secs = 1;
         assert!(run(&slow, &json!({}), None).unwrap_err().contains("timed out"));
-        // a hostile argument is just text on stdin, never a command
         assert!(run(&exec(&["cat"]), &json!({"x": "; rm -rf /"}), None)
             .unwrap()
             .contains("rm -rf"));
         assert!(run(&exec(&["/nonexistent/program"]), &json!({}), None).is_err());
-        // the calling agent's workspace is handed over, and only when there is one
         let ws = std::path::Path::new("/tmp/some-agent-workspace");
         let sh = exec(&["sh", "-c", "printf %s \"${HOLON_WORKSPACE:-unset}\""]);
         assert_eq!(run(&sh, &json!({}), Some(ws)).unwrap(), "/tmp/some-agent-workspace");

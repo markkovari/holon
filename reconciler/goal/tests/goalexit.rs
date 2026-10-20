@@ -1,16 +1,10 @@
-//! `comp-goald` must tell "the gate refused to run" apart from a real search exhaustion or success: a
-//! REFUSED gate (a check's command not in the tree yet) exited 0 like success, so `comp-goald` reported
-//! `awaiting-human` with no branch run and no PR opened (see the `ponytail:` note beside
-//! `gate_can_judge`'s call site in `reconciler/goal/src/bin/goalrun.rs`).
-//!
-//! The held-out judge for that fix: `comp_goal::goalexit` must exist with these exact names and
-//! behavior. A plain unit test of a pure module, so it stays fast and reliable.
+//! Held-out judge for `comp_goal::goalexit`: a refused gate once exited 0 like success.
 
 use comp_goal::goalexit;
 
 #[test]
 fn success_is_the_reserved_zero() {
-    // `comp-goald`'s `status.success()` check depends on this staying 0 (the OS's own convention).
+    // `comp-goald`'s `status.success()` depends on this staying 0.
     assert_eq!(goalexit::SUCCESS, 0);
 }
 
@@ -45,8 +39,7 @@ fn an_unrecognised_code_still_names_the_number() {
 
 #[test]
 fn a_signal_kill_reports_something_rather_than_panicking() {
-    // `ExitStatus::code()` is `None` when a process died to a signal; this must not unwrap and crash the
-    // daemon reporting on ANOTHER goal's outcome.
+    // A signal death is `None`; unwrapping would crash the daemon reporting another goal.
     let reason = goalexit::failure_reason(None);
     assert!(!reason.is_empty());
 }

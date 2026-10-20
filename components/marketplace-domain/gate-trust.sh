@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# marketplace-domain's PART gate — trust.rs alone, judged against
-# scenario-trust.hurl. Uses /test/seed and the raw /test/* read routes so
-# this part is judgeable before fulfillment/trust/ledger/messaging exist.
-# Deliberately NOT writable by the goal it judges — see CONTRACT.md.
+# /test/seed and the raw /test/* routes let one part be judged before the others exist.
+# Not writable by the goal it judges (CONTRACT.md).
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 

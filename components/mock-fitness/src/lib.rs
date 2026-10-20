@@ -1,16 +1,4 @@
-//! `mock-fitness` — `graph:fitness`, scored by a scripted rule (see wit/fitness.wit).
-//!
-//! The real gate runs commands and needs egress the platform gives only a graph's front door. This one reaches
-//! nothing: it scores a candidate from a `gate-script` config value (as `mock-provider` scripts a completion), so a
-//! whole driver loop can be deployed as a linked graph with no egress and driven one branch per environment.
-//!
-//! `gate-script` is JSON: for each check id, the substring a candidate's changed files must contain to pass it.
-//!
-//! ```json
-//! { "has-two": "step_two", "be-42": "42" }
-//! ```
-//!
-//! A check whose id is not in the map fails: a gate that passes what it was not told about is how a swarm accepts everything.
+//! Scores from a `gate-script` config (check id -> substring the changed files must contain), with no egress.
 
 #[allow(warnings)]
 mod bindings;
@@ -27,8 +15,7 @@ fn script() -> serde_json::Value {
     serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null)
 }
 
-/// Everything the candidate would write, concatenated: what a rule matches on. The base tree is deliberately NOT
-/// included: a scripted gate judges the change, and matching the base would pass a candidate for what it inherited.
+/// The base tree is deliberately excluded: matching it would pass a candidate for what it inherited.
 fn changed_text(c: &Candidate) -> String {
     c.changes.iter().map(|f| f.content.clone()).collect::<Vec<_>>().join("\n")
 }
@@ -59,9 +46,7 @@ impl Guest for Component {
             })
             .collect();
 
-        // The same arithmetic the real evaluator recomputes: the gate is every required check, the score the weighted
-        // fraction of all of them. The graph is honoured too: a mock that ran everything regardless would let a test pass
-        // against a gate the real evaluator would block.
+        // Same arithmetic as the real evaluator, graph included: ignoring it would pass a test against a gate the real one blocks.
         let mut stopped: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();
         for o in outcomes.iter() {
@@ -128,7 +113,6 @@ mod tests {
                 }
             })
             .collect();
-        // The graph, here too: a helper that ran everything would let a test pass against a gate the component would block.
         let mut stopped: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();
         for o in outcomes.iter() {
@@ -173,7 +157,6 @@ mod tests {
         assert_eq!(v.score, 500, "but half the checks is half the score — the selection signal");
     }
 
-    /// A check the script never mentions fails: a gate that passed the unscripted would prove nothing.
     #[test]
     fn an_unscripted_check_fails_rather_than_passes() {
         let v = with_script(

@@ -14,5 +14,4 @@ guestio = { path = "../guestio" }
 wit-bindgen = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-# The contract's records as serde types — see park-store's Cargo.toml.
 holon-park = { path = "../../crates/holon-park" }

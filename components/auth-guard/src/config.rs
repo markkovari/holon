@@ -1,12 +1,4 @@
-//! Deployment policy, read from `wasi:config/store` (set per-deployment in the
-//! component's config — see infra/k8s/app.yaml). Every knob has a sane default
-//! so the component runs with zero config; operators override as needed.
-//!
-//! Keys (all string-valued):
-//!   session-ttl        seconds a session lives        (default 3600)
-//!   password-min-len   minimum password length        (default 8)
-//!   jwks-cache-ttl     seconds to cache OIDC JWKS      (default 3600)  [reserved]
-//!   default-tenant     tenant when none in token/req   (default "")
+//! Every knob has a default, so the component runs with zero config.
 
 use crate::bindings::wasi::config::store;
 
@@ -40,23 +32,17 @@ pub fn default_tenant() -> String {
     get_str("default-tenant", "")
 }
 
-/// Expected JWT issuer (`iss`). When set, tokens whose `iss` differs are
-/// rejected. Empty (default) disables the check — convenient for local/dev,
-/// but operators SHOULD set this in production to prevent cross-issuer reuse.
+/// Empty disables the check; production should set it to prevent cross-issuer reuse.
 pub fn expected_issuer() -> String {
     get_str("expected-issuer", "")
 }
 
-/// Expected JWT audience (`aud`). When set, a token is accepted only if this
-/// value appears in its `aud`. Empty (default) disables the check.
+/// Empty disables the check.
 pub fn expected_audience() -> String {
     get_str("expected-audience", "")
 }
 
-/// Comma-separated allow-list of JWS algorithms. Pinning the algorithm prevents
-/// algorithm-confusion attacks (e.g. a token forged with HS256 against a public
-/// RSA key). Default allows the asymmetric algs only; add `HS256` explicitly to
-/// enable shared-secret tokens (dev/test).
+/// Pinned against algorithm confusion; asymmetric only by default, add `HS256` for dev/test.
 pub fn allowed_algs() -> Vec<String> {
     get_str("allowed-algs", "RS256,ES256")
         .split(',')
@@ -69,8 +55,6 @@ pub fn clock_skew() -> u64 {
     get_u64("clock-skew", 60)
 }
 
-/// Whether to emit structured (JSON) audit events for auth decisions to stderr
-/// (host-captured / scrapable by OTel collectors). Default on. Set "false" off.
 pub fn audit_enabled() -> bool {
     get_str("audit-enabled", "true") != "false"
 }

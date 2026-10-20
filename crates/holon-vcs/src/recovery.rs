@@ -1,66 +1,5 @@
-//! Crash consistency: the order every op writes the three stores in, how any
-//! reader finishes or undoes an op a crash left half-done, and `verify` /
-//! `repair`.
-//!
-//! # The write order
-//!
-//! Pointers (NATS KV), the oplog (NATS KV) and the graph (SurrealDB) share no
-//! transaction. Every op therefore writes in this order (`Engine::execute`):
-//!
-//! 1. **Intent.** The op is appended to the log in state `pending`, carrying
-//!    each pointer move with the revision its CAS expects and the op the value
-//!    it replaces names ([`Guard`](crate::oplog::Guard)), and every record it introduces — patch
-//!    records, conflict records, conflict effects ([`Intent`](crate::oplog::Intent)).
-//! 2. **Write-ahead graph.** Patch records (status `pending`), the symbol's
-//!    index entry, and conflict records (uncommitted, `opened-at: 0`, with the
-//!    op in their `pending` set) are written.
-//! 3. **Claims.** Name pointers the op takes are CASed to the symbol key, their
-//!    value naming the op.
-//! 4. **Commit point: the primary CAS.** The symbol's tip pointer is CASed from
-//!    the revision read to the new value, naming the op. Exactly one op can
-//!    ever land from a given revision, and revisions never repeat.
-//! 5. **Finish.** Patch status and op, the symbol mirror, conflict effects,
-//!    and name releases — every one idempotent and monotone in op id
-//!    ([`crate::graph`]) — then the op is CASed `pending → committed`.
-//!
-//! A lost CAS at 3 or 4 undoes the op's claims (each only if the pointer still
-//! names the op), abandons its uncommitted conflicts, and CASes it `pending →
-//! aborted`.
-//!
-//! # Why every crash point is recoverable
-//!
-//! The one fact recovery needs is whether step 4 happened, and the pointer
-//! answers it: its value names the op that last wrote it, and each op's guard
-//! names the op before that, so the ops that wrote a pointer form a chain with
-//! strictly decreasing ids (an op reads the pointer before it is appended, so
-//! the op it read is older). Op `k` landed iff `k` is on the chain from the
-//! pointer's current value (`Engine::landed`). With that, `Engine::settle`
-//! decides every pending op:
-//!
-//! * **Landed** → roll forward: redo 2 and 5 (idempotent, monotone — a late
-//!   finisher never overwrites a newer op's state), mark `committed`.
-//! * **Not landed, pointer moved past the guard's revision** → it can never
-//!   land (its CAS expects a revision that is gone): roll back (undo claims
-//!   still naming it, abandon its uncommitted conflicts), mark `aborted`.
-//! * **Not landed, pointer untouched** → in flight, or its writer died between
-//!   1 and 4. Within the lease it is left alone. After it, the pointer is
-//!   *fenced* — CASed to the value it already holds, which bumps the revision —
-//!   and the op is then in the case above. Fencing a writer that is merely slow
-//!   is safe: its CAS loses, and it retries as a new op.
-//!
-//! Crash points, then: before 1 — nothing was written but content-addressed
-//! blobs. Between 1 and 4 — a pending op whose pointer is untouched: aborted
-//! (after the lease, or at once if anything moved the pointer); its graph
-//! records are a pending patch nothing names and an uncommitted conflict that
-//! is abandoned with it. Between 4 and the end of 5 — a pending op on the chain:
-//! rolled forward, by the next reader of that pointer (reading a tip whose
-//! patch is still `pending` finishes its op first, so decisions are only made
-//! on finished state), by the oplog, or by repair. The log is dense and
-//! `oplog`/`oplog-head` stop at the first op still in flight, so no committed
-//! op is ever skipped by a reader paging through; aborted ops are skipped, so
-//! none is duplicated. And because an intent carries every record it adds, the
-//! graph can be rebuilt from the log and the blobs alone: repair re-finishes
-//! every committed op in order.
+//! Crash consistency (ADR-0099): intent, write-ahead graph, claims, primary CAS (the commit point),
+//! finish. Op `k` landed iff it is on the writer chain from the pointer's current value.
 
 use std::collections::BTreeSet;
 
@@ -99,9 +38,7 @@ where
     G: Graph,
     L: OpLog,
 {
-    /// Carry out an op in the write order above. `Ok(None)`: a CAS lost, and
-    /// the op is aborted. `Err`: a store failed, and the op may be left pending
-    /// — which is exactly what `Engine::settle` exists for.
+    /// `Ok(None)`: a CAS lost and the op is aborted; `Err` may leave it pending for `settle`.
     pub(crate) async fn execute(&self, ws: &str, new: NewOp) -> Result<Option<StoredOp>> {
         let op = self.log.append(ws, new).await?;
         self.write_ahead(ws, &op).await?;
@@ -135,7 +72,7 @@ where
         Ok(Some(op))
     }
 
-    /// Step 2: the records an op writes before its pointer writes. Idempotent.
+    /// Step 2, write-ahead; idempotent.
     async fn write_ahead(&self, ws: &str, op: &StoredOp) -> Result<()> {
         let pi = primary(op)?;
         let m = &op.entry.moves[pi];
@@ -153,11 +90,8 @@ where
         Ok(())
     }
 
-    /// Step 5 (after re-doing step 2): everything a landed op writes after its
-    /// commit point. Idempotent and monotone, so any number of finishers may
-    /// run it, late or twice. The LAST write is the mark on the patch the
-    /// pointer now names, so a tip whose record is `landed` by the op the
-    /// pointer names is a finished tip (`Engine::read_tip` relies on it).
+    /// Step 5; idempotent and monotone, so finishers may run late or twice. The LAST write marks the
+    /// tip's patch `landed`: `Engine::read_tip` treats that as a finished tip.
     pub(crate) async fn roll_forward(&self, ws: &str, op: &StoredOp) -> Result<()> {
         self.write_ahead(ws, op).await?;
         let k = op.id();
@@ -172,8 +106,7 @@ where
                 continue;
             }
             let g = &op.intent.guards[i];
-            // Only if the pointer still holds what this op released: anything
-            // else there was written by a later op.
+            // Only if it still holds what this op released; anything else is a later op's.
             for _ in 0..self.cas_tries {
                 let Some((cur, rev)) = self.pointers.get(&m.pointer).await? else { break };
                 if cur.value != m.before || cur.op != g.op {
@@ -214,8 +147,7 @@ where
         Ok(())
     }
 
-    /// Undo what an op that will never land wrote: its claims (each only if the
-    /// pointer still names it) and its uncommitted conflicts. Idempotent.
+    /// Undoes a never-landing op's claims (only those still naming it) and uncommitted conflicts.
     pub(crate) async fn roll_back(&self, ws: &str, op: &StoredOp) -> Result<()> {
         let k = op.id();
         for (i, m) in op.entry.moves.iter().enumerate() {
@@ -275,8 +207,7 @@ where
         self.graph.update_symbol(ws, key, update).await
     }
 
-    /// Whether op `k`'s write to `pointer` happened, given the op the pointer's
-    /// value names now: walk the chain of writers back until it passes `k`.
+    /// Walks the writer chain back from the op the pointer names until it passes `k`.
     pub(crate) async fn landed(
         &self,
         ws: &str,
@@ -303,9 +234,7 @@ where
         Ok(false)
     }
 
-    /// Decide a pending op (see the module notes): roll it forward if it
-    /// landed, abort it if it never can, fence it off if it is past the lease.
-    /// Returns the op's state afterwards; `pending` means in flight.
+    /// Rolls forward, aborts, or fences past the lease; `Pending` means still in flight.
     pub(crate) async fn settle(&self, ws: &str, k: OpId) -> Result<OpState> {
         self.settle_with(ws, k, self.lease_ms).await
     }
@@ -386,16 +315,15 @@ where
             let Some((cur, _)) = self.pointers.get(pointer).await? else { continue };
             let state =
                 PointerState { pointer: pointer.clone(), value: cur.value.clone(), op: cur.op };
-            // A tombstone naming nothing is what a fence of a never-written key,
-            // or a rolled-back first claim, leaves: the same as never written.
+            // A tombstone naming nothing (a fenced never-written key, a rolled-back first claim)
+            // is the same as never written.
             let explained = match cur.op.and_then(by_id) {
                 None => cur.value.is_none() && cur.op.is_none(),
                 Some(o) if o.state == OpState::Committed => {
                     let mv = o.entry.moves.iter().find(|m| &m.pointer == pointer);
                     mv.is_some_and(|m| m.after == cur.value)
                 }
-                // Pending in flight is not (yet) an inconsistency; past the
-                // lease it is reported as stale-pending above.
+                // Past the lease it is reported as stale-pending above.
                 Some(o) if o.state == OpState::Pending => true,
                 Some(_) => false,
             };
@@ -491,10 +419,8 @@ where
         }
     }
 
-    /// Make a workspace consistent: settle every pending op (fencing those past
-    /// the lease), re-finish every committed op and re-undo every aborted one in
-    /// log order — which rebuilds any graph record the graph lost from the
-    /// intents and the blobs — then verify again.
+    /// Settles pending ops, then re-finishes committed and re-undoes aborted ones in log order,
+    /// which rebuilds lost graph records from the intents and blobs.
     pub async fn repair(&self, ws: &str) -> Result<RepairReport> {
         let before = self.verify(ws).await?;
         let mut rolled_forward = Vec::new();

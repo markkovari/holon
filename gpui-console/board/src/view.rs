@@ -1,20 +1,5 @@
-//! The board as GPUI draws it: a header that says how the whole is doing, and under it each tree of
-//! agents as cards joined by the line from whatever started them.
-//!
-//! ## Motion
-//!
-//! Everything that moves says something and nothing moves to be looked at.
-//!
-//! * A card that appears fades in and rises a few pixels, each level a beat after the one above,
-//!   so a tree reads as being started from the top.
-//! * A running badge turns; a card that needs a person breathes in the one colour the board keeps
-//!   for asking, and nothing else on it does.
-//! * A cost counts to its new value rather than jumping, and a badge whose state changed arrives
-//!   rather than being swapped.
-//!
-//! Every one of these is a one-shot or a slow loop, ends in the state a still frame shows, and is
-//! keyed by what it is about (a node, a status, a value), so a change restarts the right one and a
-//! re-render restarts none.
+//! Every motion is a one-shot or a slow loop ending in the still-frame state, keyed by what it is
+//! about (a node, a status, a value), so a change restarts the right one and a re-render none.
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -40,54 +25,38 @@ use super::store::{self, Store};
 use super::theme::{Mode, Theme};
 use super::tree::{AgentTree, Kind, Node, Pending, SessionRow, Status, Summary, Waiting};
 
-// -- metrics ------------------------------------------------------------------------------------
-
-/// A card's width, and the gap between two columns of them.
 const CARD_W: f32 = 284.0;
 const GAP: f32 = 36.0;
-/// From a parent's bottom edge to the bar its children hang from.
 const STEM: f32 = 44.0;
 const LINE: f32 = 1.5;
-/// The radius of a connector's corner.
 const R: f32 = 14.0;
-/// How far a nested card is pushed in, and the space above it.
 const INDENT: f32 = 40.0;
 const NEST_GAP: f32 = 14.0;
-/// From the top of a card to the middle of its first row, where a nested connector arrives.
+/// must match the middle of a card's first row, where a nested connector arrives
 const HEADER_MID: f32 = 31.0;
-/// Where a nested connector's line runs, from the parent's left edge.
 const NEST_X: f32 = 27.0;
 const DOT: f32 = 9.0;
-/// More children than this are stacked, not laid out in a row.
 const ROW_MAX: usize = 4;
-/// The list of sessions down the left.
 const SIDEBAR_W: f32 = 264.0;
 
-/// An agent a goal can be given to.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AgentChoice {
     pub name: String,
     pub about: String,
-    /// Whether it can start a coding session (it has `session_start`).
     pub codes: bool,
 }
 
-/// What the board asks of whoever hosts it: the answer to a person's yes or no, and a goal started.
 pub trait Actions {
-    /// Answers an approval, and says how far a yes reaches.
     fn answer(&self, id: u64, approve: bool, scope: Scope, cx: &mut App);
 
-    /// The agents a goal can be given to, best first.
     fn agents(&self, _cx: &App) -> Vec<AgentChoice> {
         Vec::new()
     }
 
-    /// Gives `goal` to `agent`. `Err` is why not, in words to show a person.
     fn start(&self, _agent: &str, _goal: &str, _cx: &mut App) -> Result<(), String> {
         Err("this board cannot start anything".into())
     }
 
-    /// Every conversational agent, as its spec says it: the Agents tab.
     fn roster(&self, _cx: &App) -> Vec<AgentInfo> {
         Vec::new()
     }
@@ -114,9 +83,7 @@ pub fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-// -- what the numbers say -----------------------------------------------------------------------
-
-/// `$0.29`; under a cent, three places, because "$0.00" says nothing was spent.
+/// Under a cent, three places, because "$0.00" says nothing was spent.
 pub fn money(micros: u64) -> String {
     let usd = micros as f64 / 1e6;
     if micros == 0 {
@@ -128,8 +95,7 @@ pub fn money(micros: u64) -> String {
     }
 }
 
-/// A model as a person says it: `claude-sonnet-5-5` is `Sonnet 5.5`, `gpt-5-mini` is `GPT-5 Mini`,
-/// `local/system` is `On-device`. The provider is the glyph's job, not the words'.
+/// No provider in the words: that is the glyph's job.
 pub fn model_name(label: &str) -> String {
     let m = label.rsplit('/').next().unwrap_or(label);
     if label.starts_with("local/") && m == "system" {
@@ -168,7 +134,6 @@ pub fn model_name(label: &str) -> String {
         .replacen("GPT ", "GPT-", 1)
 }
 
-/// `just now`, `5m ago`, `3h ago`.
 pub fn ago(ms: u64) -> String {
     let s = ms / 1000;
     match s {
@@ -180,7 +145,6 @@ pub fn ago(ms: u64) -> String {
     }
 }
 
-/// `45s`, `1m 09s`, `2h 05m`.
 pub fn clock(ms: u64) -> String {
     let s = ms / 1000;
     match s {
@@ -190,8 +154,6 @@ pub fn clock(ms: u64) -> String {
     }
 }
 
-/// What a session's row says under its goal: who was asked, how many agents it took, what it cost,
-/// and how long it has been going, how long ago it ended, or that it is waiting for a person.
 pub fn meta(r: &SessionRow, now: u64) -> String {
     let when = match (r.status, r.finished_ms) {
         (Status::NeedsYou, _) => "needs you".to_string(),
@@ -202,8 +164,6 @@ pub fn meta(r: &SessionRow, now: u64) -> String {
     format!("{} · {agents} · {} · {when}", r.lead, money(r.cost_micros))
 }
 
-/// The session on show: with `follow`, the first one not seen before (the goal just given); else the
-/// one picked, while it is still listed; else the newest.
 pub fn pick<'a>(
     rows: &'a [SessionRow],
     selected: Option<&str>,
@@ -217,7 +177,6 @@ pub fn pick<'a>(
         .or(rows.first())
 }
 
-/// `12.4k tok`, for a model whose price is not known.
 pub fn tokens(n: u64) -> String {
     if n >= 1000 {
         format!("{:.1}k tok", n as f64 / 1000.0)
@@ -226,8 +185,7 @@ pub fn tokens(n: u64) -> String {
     }
 }
 
-/// How much slower than real time everything moves, from `BOARD_SLOWMO` (default 1). For looking at a
-/// motion frame by frame; never set in use.
+/// `BOARD_SLOWMO` slows every motion, to look at one frame by frame; never set in use.
 fn slowmo() -> f32 {
     static F: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
     *F.get_or_init(|| {
@@ -239,7 +197,6 @@ fn slowmo() -> f32 {
     })
 }
 
-/// A duration in milliseconds, at the speed the board is running at.
 fn ms(n: u64) -> Duration {
     Duration::from_millis((n as f32 * slowmo()) as u64)
 }
@@ -253,8 +210,7 @@ fn with_alpha(c: Rgba, a: f32) -> Hsla {
     h.alpha(a)
 }
 
-/// An easing that waits `delay_ms` and then runs `ease` over `ms`: one animation of `delay + ms`,
-/// because an animation has a duration and no delay of its own.
+/// The delay is folded into the easing because a GPUI animation has a duration but no delay.
 fn after(
     delay_ms: u64,
     ms: u64,
@@ -266,15 +222,13 @@ fn after(
     })
 }
 
-// -- a snapshot of the tree, so that drawing holds no borrow ------------------------------------
-
+/// A snapshot of the tree, so drawing holds no borrow.
 struct Branch {
     node: Node,
     kids: Vec<Branch>,
-    /// How many children the node has, shown or not.
+    /// shown or not
     kid_count: usize,
     collapsed: bool,
-    /// How many levels below the root.
     depth: usize,
 }
 
@@ -289,61 +243,42 @@ fn branch(tree: &AgentTree, n: &Node, collapsed: &HashSet<String>, depth: usize)
     Branch { node: n.clone(), kids, kid_count, collapsed: hidden, depth }
 }
 
-// -- the view -----------------------------------------------------------------------------------
-
 pub struct Board {
     tree: Entity<AgentTree>,
     actions: Rc<dyn Actions>,
     theme: Theme,
     collapsed: HashSet<String>,
     open: bool,
-    /// Wall clock at the last tick: what "running for 45s" is measured against.
     now: u64,
     /// The cost each node last showed, so a new one is counted to from there.
     shown_cost: HashMap<String, (u64, u64)>,
-    /// The width of each tree's row of children as it was and is: when a child joins, the parent
-    /// glides to the new middle instead of jumping there.
+    /// (was, is), so a parent glides to its new middle when a child joins
     row_width: HashMap<String, (f32, f32)>,
-    /// The session on show: the root of a tree. The newest until a person picks one.
     selected: Option<String>,
-    /// The roots seen so far, so that the one a goal was just given to can be followed.
     known: HashSet<String>,
     follow_newest: bool,
-    /// The form that states a goal, and what it is made of: the agents it can go to are read once,
-    /// when it opens, and not on every frame.
     form: bool,
     field: Entity<TextField>,
     choices: Vec<AgentChoice>,
     lead: Option<String>,
     problem: Option<String>,
-    /// What had the keyboard before the form took it, given back on the frame after it closes.
     return_focus: Option<FocusHandle>,
-    /// Room above everything, for a window whose title bar the board is drawn under.
     inset: f32,
-    /// Which of the three is showing: the sessions, one thing and what it is joined to, the whole.
     tab: Tab,
-    /// The whole system, grouped: the zoom-out.
     components: Entity<MapView>,
-    /// The goal runs as the store holds them, which the graph joins to the rest.
     knowledge: maps::Map,
     explore: Entity<ExploreView>,
-    /// What Explore's list is narrowed to, as it is typed.
     search: Entity<TextField>,
     query: String,
-    /// The tree's revision and the maps' load the graph was built from.
     graph_at: (u64, u64),
     maps_loaded: u64,
-    /// The conversational agents, read again with the graph; the one on show; what to say to it.
     roster: Vec<AgentInfo>,
     agent: Option<String>,
     say: Entity<TextField>,
     unsaid: Option<String>,
-    /// Where the agents are in Element, when the board knows.
     element: Option<Element>,
-    /// The conversation's scroll, and which agent and how long it was when it was last sent to the end.
     talk: gpui::ScrollHandle,
     talk_seen: (String, usize),
-    /// The frames whose items the list beside a map shows.
     expanded: HashSet<String>,
     _tick: Task<()>,
 }
@@ -399,7 +334,6 @@ impl Board {
                 this.query = q.clone();
                 cx.notify();
             }
-            // enter looks at the best match
             FieldEvent::Submit(q) => {
                 if let Some(k) = this.explore.read(cx).graph().search(q, 1).pop() {
                     this.explore.update(cx, |e, cx| e.show(&k, cx));
@@ -408,7 +342,7 @@ impl Board {
             FieldEvent::Cancel => this.search.update(cx, |f, cx| f.clear(cx)),
         })
         .detach();
-        // The one clock: once a second, so "45s" reads 46s without anything having happened.
+        // once a second, so "45s" reads 46s without any event
         let tick = cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(Duration::from_millis(1000)).await;
             if this
@@ -469,11 +403,9 @@ impl Board {
         self
     }
 
-    /// Reads both maps from the store again, off the window's thread.
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         let comps = self.components.clone();
         cx.spawn(async move |this, cx| {
-            // natively the store is asked from a thread, and what proves each thing is found on disk
             #[cfg(not(target_family = "wasm"))]
             let (c, k) = cx
                 .background_executor()
@@ -490,7 +422,6 @@ impl Board {
                     )
                 })
                 .await;
-            // in a browser it is fetched, and the page has no disk to look for proofs on
             #[cfg(target_family = "wasm")]
             let (c, k) = {
                 let store = Store::from_env();
@@ -512,7 +443,6 @@ impl Board {
                     Ok(m) => v.set_map(m, cx),
                     Err(e) => v.set_problem(Some(e), cx),
                 });
-                // a store with no runs is no runs; a store that did not answer has said so above
                 b.knowledge = k.unwrap_or_default();
                 b.maps_loaded += 1;
                 cx.notify();
@@ -521,7 +451,6 @@ impl Board {
         .detach();
     }
 
-    /// Shows what a reference names, on its own tab.
     fn open_ref(&mut self, r: &Ref, cx: &mut Context<Self>) {
         self.tab = r.tab;
         match r.tab {
@@ -538,8 +467,6 @@ impl Board {
         cx.notify();
     }
 
-    /// Where the agents are in Element: what the bridge recorded, or, told only a server (a page is),
-    /// their users there.
     pub fn with_element(mut self, element: Option<Element>) -> Self {
         if element.is_some() {
             self.element = element;
@@ -547,8 +474,6 @@ impl Board {
         self
     }
 
-    /// Says `text` to the agent on show, as a person in its room would: it is given it as a goal, and
-    /// what it answers comes back into the conversation.
     fn say_to(&mut self, text: String, cx: &mut Context<Self>) {
         let Some(agent) = self.agent.clone() else { return };
         let actions = self.actions.clone();
@@ -562,7 +487,6 @@ impl Board {
         cx.notify();
     }
 
-    /// Shows `key` on `tab`, as following a reference to it would.
     pub fn show(&mut self, tab: Tab, key: &str, cx: &mut Context<Self>) {
         let r = Ref { tab, key: key.to_string(), frame: None, label: String::new() };
         self.open_ref(&r, cx);
@@ -579,12 +503,10 @@ impl Board {
         cx.notify();
     }
 
-    /// The field the form's goal is typed into.
     pub fn field(&self) -> Entity<TextField> {
         self.field.clone()
     }
 
-    /// Room above everything: the traffic lights of a window drawn under its title bar, or nothing.
     pub fn with_inset(mut self, inset: f32) -> Self {
         self.inset = inset;
         self
@@ -608,7 +530,6 @@ impl Board {
         cx.notify();
     }
 
-    /// Opens the form that states a goal, with the field ready to be typed in.
     pub fn open_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.form = true;
         self.problem = None;
@@ -621,7 +542,6 @@ impl Board {
         cx.notify();
     }
 
-    /// Start, pressed rather than typed: the same as enter in the field.
     fn start_typed(&mut self, cx: &mut Context<Self>) {
         let goal = self.field.read(cx).text().trim().to_string();
         if goal.is_empty() {
@@ -637,7 +557,6 @@ impl Board {
         cx.notify();
     }
 
-    /// Gives the goal to the chosen agent. The new session is followed when it appears.
     pub fn submit(&mut self, goal: String, cx: &mut Context<Self>) {
         let Some(lead) = self.lead.clone() else {
             self.problem = Some("There is no agent to give it to.".into());
@@ -669,9 +588,6 @@ impl Board {
         cx.notify();
     }
 
-    // -- pieces ---------------------------------------------------------------------------------
-
-    /// The pill that says how a card stands.
     fn badge(&self, id: &str, s: Status) -> impl IntoElement {
         let t = &self.theme;
         let (bg, ink) = t.badge(s);
@@ -707,7 +623,6 @@ impl Board {
             .font_weight(FontWeight::MEDIUM)
             .child(mark)
             .child(label);
-        // A status that has just changed arrives; one that has not is simply there.
         let (dur, ease) = after(0, 260, ease_out_quint());
         pill.relative().with_animation(
             SharedString::from(format!("badge-{id}-{s:?}")),
@@ -716,7 +631,6 @@ impl Board {
         )
     }
 
-    /// The tile that says which model, drawn as its maker's glyph.
     fn tile(&self, model: &str, kind: Kind) -> impl IntoElement {
         let t = &self.theme;
         let (glyph, tint) = if kind == Kind::Session {
@@ -737,7 +651,6 @@ impl Board {
             .child(icon(glyph).size(px(19.0)).text_color(tint))
     }
 
-    /// The tools used so far, as small tiles; the last few, and how many came before.
     fn chips(&self, tools: &[String]) -> impl IntoElement {
         let t = &self.theme;
         const SHOWN: usize = 5;
@@ -764,7 +677,6 @@ impl Board {
         row
     }
 
-    /// The cost, counting to its new value.
     fn cost(&mut self, n: &Node) -> impl IntoElement {
         let t = self.theme;
         let target = n.cost_micros.unwrap_or(0);
@@ -796,8 +708,6 @@ impl Board {
             )
     }
 
-    /// One agent: who it is, what state it is in, what it was asked, what it is using and what it
-    /// has cost.
     fn card(&mut self, b: &Branch, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let n = &b.node;
@@ -846,9 +756,7 @@ impl Board {
             .line_clamp(2)
             .child(task);
 
-        // What a card says it is doing or concluded, in the row under its task: the tool it is on,
-        // or once it is over, how it ended. The row is always there, so a card is the same height
-        // all its life and what is under it never moves.
+        // the row is always there, so a card keeps one height and nothing under it moves
         let activity = if !activity.is_empty() {
             activity
         } else if let (true, Some(r)) = (n.status.is_over(), n.result.as_ref()) {
@@ -908,9 +816,8 @@ impl Board {
                                 SharedString::from(format!("chev-{id}-{open}")),
                                 Animation::new(self::ms(220)).with_easing(ease_in_out),
                                 move |svg, p| {
-                                    // down when open, a quarter turn to the right when folded
-                                    // a percentage cannot be negative: a quarter turn back is three
-                                    // quarters forward
+                                    // a percentage cannot be negative: a quarter turn back is
+                                    // three quarters forward
                                     let turn = if open { 1.0 - p } else { p } * 0.25;
                                     svg.with_transformation(Transformation::rotate(percentage(
                                         1.0 - turn,
@@ -952,7 +859,6 @@ impl Board {
             .child(used)
             .child(footer);
 
-        // A card that needs a person breathes; nothing else on the board does.
         let shell = if attention {
             let glow = t.attention();
             shell
@@ -986,28 +892,21 @@ impl Board {
     }
 }
 
-// -- layout -------------------------------------------------------------------------------------
-
-/// A hollow circle where a line leaves a card.
 fn dot(color: Rgba, bg: Rgba) -> impl IntoElement {
     div().size(px(DOT)).rounded(px(DOT)).border(px(LINE)).border_color(color).bg(bg)
 }
 
-/// A point `(x, y)` from `origin`, in layout pixels.
 fn at(origin: gpui::Point<Pixels>, x: f32, y: f32) -> gpui::Point<Pixels> {
     point(origin.x + px(x), origin.y + px(y))
 }
 
-/// The line from a parent down to a row of `n` children: a stem, a bar with rounded ends, and a
-/// drop onto each card. Children are one card wide with a gap between, so where each hangs is
-/// arithmetic.
+/// Children are one card wide with a gap between, so where each hangs is arithmetic.
 fn bracket(n: usize, line: Rgba) -> gpui::Canvas<()> {
     canvas(
         |_, _, _| (),
         move |bounds, _, window, _| {
             let o = bounds.origin;
             let mid = STEM / 2.0;
-            // where the parent is: the middle of the row as wide as it is right now
             let centre = f32::from(bounds.size.width) / 2.0;
             let x = |i: usize| i as f32 * (CARD_W + GAP) + CARD_W / 2.0;
             let mut b = PathBuilder::stroke(px(LINE));
@@ -1038,10 +937,7 @@ fn bracket(n: usize, line: Rgba) -> gpui::Canvas<()> {
     .h(px(STEM))
 }
 
-/// The line down the left of a stack, as it reaches one child: it comes from the card above (or the
-/// parent's dot), turns into this card at the middle of its first row and, unless this is the last
-/// child, goes on down past the card to the next. It is sized by the child it belongs to, so it is as
-/// tall as that child is, whatever is stacked under it.
+/// Sized by its own child, so it is as tall as that child whatever is stacked under it.
 fn elbow(goes_on: bool, line: Rgba) -> gpui::Canvas<()> {
     let w = INDENT - NEST_X;
     canvas(
@@ -1073,7 +969,6 @@ fn elbow(goes_on: bool, line: Rgba) -> gpui::Canvas<()> {
 }
 
 impl Board {
-    /// One tree: the root, and everything it started.
     fn block(&mut self, b: &Branch, cx: &mut Context<Self>) -> gpui::AnyElement {
         if b.kids.is_empty() {
             return div()
@@ -1108,8 +1003,7 @@ impl Board {
             })
             .collect();
         let card = self.card(b, cx);
-        // The bracket is one stroke, so its corners and its joins are the same line and not
-        // several boxes that nearly meet.
+        // one stroke, so corners and joins are one line, not boxes that nearly meet
         let (dur, ease) = after(60, 420, ease_out_quint());
         let bracket = bracket(n, line).with_animation(
             SharedString::from(format!("bracket-{}", b.node.id)),
@@ -1127,7 +1021,6 @@ impl Board {
                     .pt(px(STEM))
                     .child(bracket)
                     .child(
-                        // the dot under the parent: at the middle of the row, as wide as it is now
                         div()
                             .absolute()
                             .top(px(-DOT / 2.0))
@@ -1146,9 +1039,6 @@ impl Board {
             .into_any_element()
     }
 
-    /// A card with its children stacked under it, each tucked in and joined to the line down the
-    /// left: how everything below the first level is drawn, and the first level when it is too wide
-    /// for a row.
     fn stack(&mut self, b: &Branch, cx: &mut Context<Self>) -> gpui::AnyElement {
         let (line, bg) = (self.theme.line, self.theme.bg);
         let last = b.kids.len().saturating_sub(1);
@@ -1196,9 +1086,6 @@ impl Board {
             .into_any_element()
     }
 
-    // -- the header -----------------------------------------------------------------------------
-
-    /// A button that is a word.
     fn chip_button(
         &self,
         id: SharedString,
@@ -1323,7 +1210,6 @@ impl Board {
             )
     }
 
-    /// What a session names on the other tabs, as chips under its goal: each opens it there.
     fn ref_chips(&self, key: &str, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let t = self.theme;
         let refs: Vec<(String, String)> = {
@@ -1367,8 +1253,6 @@ impl Board {
         Some(row.into_any_element())
     }
 
-    /// The selected session's header: its goal, and how the agents in it are doing. `root` keys the
-    /// total, so another session's total is shown as it is rather than counted to from this one's.
     fn header(
         &mut self,
         s: &Summary,
@@ -1538,9 +1422,6 @@ impl Board {
 }
 
 impl Board {
-    // -- the sessions -----------------------------------------------------------------------------
-
-    /// One goal in the list: a dot for how it stands, what was asked, and the line under it.
     fn session_row(
         &self,
         r: &SessionRow,
@@ -1550,7 +1431,6 @@ impl Board {
         let t = self.theme;
         let ink = t.badge(r.status).1;
         let dot = div().mt(px(5.0)).size(px(8.0)).flex_none().rounded(px(4.0)).bg(ink);
-        // A goal still being worked on breathes; one that has ended is still.
         let dot = if r.status == Status::Running {
             dot.with_animation(
                 SharedString::from(format!("pulse-{}", r.root)),
@@ -1675,7 +1555,6 @@ impl Board {
             })
     }
 
-    /// The three tabs, as one control.
     fn tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let mut strip = div()
@@ -1720,12 +1599,9 @@ impl Board {
         strip
     }
 
-    /// A map's frames as a list beside it, each opening onto its items: where a person goes from, without
-    /// hunting the canvas.
     fn contents(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let view = self.components.clone();
-        // each frame's key, title, sub and its items' keys, labels and weights
         type Entry = (String, String, String, Vec<(String, String, u32)>);
         let frames: Vec<Entry> = view
             .read(cx)
@@ -1850,13 +1726,10 @@ impl Board {
         list
     }
 
-    /// Explore's side: a search, and while nothing is typed, where to start from: what was done lately,
-    /// and what most of the system is built on.
     fn explore_side(&self, rows: &[SessionRow], cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let explore = self.explore.read(cx);
         let (g, current) = (explore.graph(), explore.subject().cloned());
-        // (key, label, what it is) per entry, under its heading
         type Entry = (String, String, String, maps::Kind);
         let mut groups: Vec<(String, Vec<Entry>)> = Vec::new();
         let entry = |k: &str| {
@@ -1976,8 +1849,6 @@ impl Board {
             .child(list)
     }
 
-    /// The agents down the left, grouped as Element groups their rooms: a project's agents under it,
-    /// the rest under Agents, and the control room first when the bridge has made one.
     fn agents_side(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let waiting: HashSet<String> = self
@@ -2039,7 +1910,6 @@ impl Board {
                     .on_click(move |_, _, cx| cx.open_url(&url)),
             );
         }
-        // the agents in no project last, as Element lists the Agents Space after a person's own
         let mut order: Vec<String> = groups.keys().filter(|k| !k.is_empty()).cloned().collect();
         if groups.contains_key("") {
             order.push(String::new());
@@ -2117,8 +1987,6 @@ impl Board {
         list
     }
 
-    /// One agent: what was said to it and what it answered, a field to say more, and who it is: its
-    /// model, what it may use, its projects, and where it is in Element.
     fn agent_page(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let t = self.theme;
         if self.agent.as_ref().is_none_or(|a| !self.roster.iter().any(|r| &r.name == a)) {
@@ -2142,7 +2010,6 @@ impl Board {
                 .into_any_element();
         };
         let talk = agents::conversation(self.tree.read(cx), &a.name, 30);
-        // the newest exchange in view: on opening an agent, and when one arrives
         if self.talk_seen != (a.name.clone(), talk.len()) {
             self.talk.scroll_to_bottom();
             self.talk_seen = (a.name.clone(), talk.len());
@@ -2395,7 +2262,6 @@ impl Board {
             .into_any_element()
     }
 
-    /// A map tab's header: what it is, how big, and a way to read it again.
     fn map_header(&self, title: &str, sub: String, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let mode_glyph = if t.mode == Mode::Dark { "sun" } else { "moon" };
@@ -2450,9 +2316,6 @@ impl Board {
             )
     }
 
-    // -- the form -------------------------------------------------------------------------------
-
-    /// The goal, whom it goes to, and what went wrong if anything did, over everything else.
     fn form_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let (pick_bg, pick_ink) = t.badge(Status::Running);
@@ -2626,7 +2489,6 @@ impl Render for Board {
             self.follow_newest = false;
         }
         self.known.extend(rows.iter().map(|r| r.root.clone()));
-        // the graph Explore walks, built again when the tree or the maps it is made of have changed
         let at = (self.tree.read(cx).revision, self.maps_loaded);
         if at != self.graph_at {
             self.roster = self.actions.roster(cx);
@@ -2742,7 +2604,6 @@ impl Render for Board {
             .child(header)
             .child(
                 div()
-                    // keyed by the session, so each keeps its own scroll
                     .id(SharedString::from(format!("canvas-{root}")))
                     .flex_1()
                     .min_h(px(0.0))

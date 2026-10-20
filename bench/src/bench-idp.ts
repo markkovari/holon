@@ -1,10 +1,4 @@
-// IdP JWT verification benchmark (in-process). Mints a REAL Ory Hydra RS256 JWT,
-// primes the JWKS cache (first introspect fetches Hydra's JWKS over wasi:http),
-// then times warm verifications — the per-request cost of validating an
-// external-IdP token against cached keys.
-//
-// Needs Hydra up (compose --profile ory, STRATEGIES_ACCESS_TOKEN=jwt) and the
-// idp-oidc example transpiled (gen/). Appends to results-inproc.json.
+// Needs Hydra up (compose --profile ory, STRATEGIES_ACCESS_TOKEN=jwt) and the idp-oidc example transpiled (gen/).
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { measure, type Result } from "./measure.js";
@@ -65,7 +59,6 @@ async function main() {
   } catch {
     doc = { kind: "in-process", node: process.version, when: Date.now(), results: [] };
   }
-  // replace any prior idp row, then append
   doc.results = doc.results.filter((r) => !r.op.startsWith("idp.")).concat(results);
   writeFileSync(path, JSON.stringify(doc, null, 2));
 

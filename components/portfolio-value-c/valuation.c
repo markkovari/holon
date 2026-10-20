@@ -1,19 +1,5 @@
-// `portfolio:value`, in C — the same WIT `components/portfolio-value` exports.
-//
-// One of four languages this interface is implemented in. It goes into the SAME
-// binder composition and is judged by the SAME unedited e2e; see
-// ../portfolio-value-go/README.md for what that is meant to prove.
-//
-// C is here for one number: whether the 19 WASI imports Go forces onto a
-// pure-compute capability are a COMPONENT MODEL cost or a LANGUAGE cost. The WIT
-// world imports nothing; if a C build's import section is empty, they are the
-// language's.
-//
-// The canonical ABI's memory rule, which is the whole of the difficulty here:
-// everything returned is handed to the runtime, which frees it after lifting via
-// the generated `cabi_post_*`. So returned strings must be `malloc`'d — `string_set`
-// (borrow) is wrong for a return value and `string_dup` (copy) is right. Arguments
-// are borrowed for the duration of the call and must not be freed or kept.
+// C is here for one number: are Go's 19 WASI imports a component-model cost or a language cost?
+// Returned memory must be malloc'd (the runtime frees it via cabi_post_*); arguments are borrowed.
 
 #include "portfolio_value.h"
 #include <stdlib.h>
@@ -35,7 +21,7 @@ static bool str_eq(const str_t *a, const str_t *b) {
     return a->len == b->len && memcmp(a->ptr, b->ptr, a->len) == 0;
 }
 
-/// Copy a borrowed argument string into memory the runtime will free.
+/// Into memory the runtime will free.
 static void str_own(str_t *out, const str_t *in) {
     portfolio_value_string_dup_n(out, (const char *)in->ptr, in->len);
 }
@@ -45,7 +31,7 @@ typedef struct {
     int64_t unit_minor;
 } lot_t;
 
-/// The open lots of one item, oldest first. FIFO consumes from the front.
+/// Oldest first; FIFO consumes from the front.
 typedef struct {
     const str_t *item_id;
     lot_t *lots;
@@ -72,8 +58,7 @@ static bool push_lot(holding_t *h, uint32_t quantity, int64_t unit_minor) {
     return true;
 }
 
-/// The numbers, without the currency string — so `series` can call this once per
-/// sample without allocating and freeing a copy of the currency each time.
+/// No currency string, so `series` samples without allocating a copy each time.
 typedef struct {
     int64_t cost_basis, market_value, realised;
     uint32_t unquoted;
@@ -109,10 +94,7 @@ static bool totals_at(
         }
     }
 
-    // Events are SORTED by `at`, never trusted in the order given: backfilling an
-    // old purchase must not change the answer. Insertion sort over indices —
-    // STABLE, which matters because two events in the same second must keep their
-    // given order to agree with the other three implementations.
+    // Sorted by `at` (a backfill must not change the answer), STABLE so same-second events agree with the other three.
     size_t *order = malloc(events->len * sizeof(size_t));
     holding_t *holdings = calloc(events->len, sizeof(holding_t));
     if (!order || !holdings) {
@@ -152,8 +134,7 @@ static bool totals_at(
         uint32_t held = 0;
         for (size_t i = h->head; i < h->len; i++) held += h->lots[i].quantity;
         if (held < e->quantity) {
-            // The event log is wrong. Guessing which event is the lie is a bigger
-            // lie than refusing.
+            // Guessing which event is the lie is a bigger lie than refusing.
             err->tag = ERR_OVERSOLD_AT;
             str_own(&err->val.oversold_at.f0, &e->item_id);
             err->val.oversold_at.f1 = e->at;

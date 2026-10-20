@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
-# ADR-0023's falsifying measurement: two tenants in ONE comp-host process, one of
-# them adversarial, isolation and throughput taken from the SAME run.
+# ADR-0023's falsifying measurement: isolation and throughput from the SAME run.
 set -uo pipefail
-# The repo this script lives in, not whatever the caller happened to be in — and
-# not a hardcoded path either. This read `cd /Users/…/experiments/comp` for a
-# long time: a SIBLING checkout, which meant `just adversarial` built artifacts
-# here and then measured the ones over there. A number from the wrong tree is
-# worse than no number.
 cd "$(dirname "$0")/../.."
 SP=${SP:-$(mktemp -d)}
 HERE=bench/adversarial
@@ -55,9 +49,7 @@ oha -z 20s -c 50 --no-tui -m POST -d '{"key":"load"}' \
 OHA=$!
 sleep 6
 echo "--- sweep, taken mid-load ---"
-# The sweep result is one document; jq formats it and flags the breaches. Saved to
-# sweep.json as well, because ADR-0023's claim is "zero", and a claim like that
-# should have the raw evidence beside it.
+# Kept in sweep.json: ADR-0023 claims zero breaches, so the raw evidence stays beside it.
 if ! curl -sf --max-time 60 -H 'Host: probe.alice.test' \
      "http://127.0.0.1:3401/sweep?neighbour=eve/shop" > sweep.json; then
   echo "  SWEEP FAILED"; exit 1

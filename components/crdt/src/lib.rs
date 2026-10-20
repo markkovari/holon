@@ -1,27 +1,4 @@
-//! `crdt` — merge concurrent replicas with no lock — state-based CRDTs that converge whatever order updates arrive in
-//!
-//! State-based CvRDTs. Each value is an opaque, self-describing JSON string
-//! with a `"type"` tag; `merge` and `value` dispatch on it. The invariant that
-//! makes replication work: `merge` computes a least-upper-bound in a
-//! join-semilattice, so it is commutative, associative, and idempotent — merge
-//! order and delivery order don't matter, replicas always converge. Output is
-//! canonical (serde_json with `preserve_order` off ⇒ sorted object keys, and
-//! every collection here is a `BTreeMap`/`BTreeSet`), so equal merges are
-//! byte-equal and equality can be checked on the string.
-//!
-//! Four types, one per CRDT family plus the map `scribe` builds on:
-//!   - `lww`    last-writer-wins register: `(value, ts, replica)`, higher
-//!     `(ts, replica)` wins.
-//!   - `pn`     PN-counter: two grow-only per-replica maps (P increments, N
-//!     decrements); merge = per-replica max; value = ΣP − ΣN.
-//!   - `orset`  observed-remove set: per-element add-tags + a removed-tag set;
-//!     an element is present iff it has an add-tag not yet removed. A remove
-//!     tombstones only the tags it observed, so a concurrent add survives —
-//!     add wins.
-//!   - `lwwmap` per-key LWW register map (tombstones for deletes).
-//!
-//! Timestamps + replica ids are caller-supplied (no wall clock inside), so
-//! everything is pure and deterministic. No state, no host imports.
+//! State-based CRDTs. Output is canonical (sorted keys, BTree collections), so equal merges are byte-equal.
 
 #[allow(warnings)]
 mod bindings;
@@ -48,10 +25,7 @@ enum State {
     Rga { elems: BTreeMap<String, RgaElem> },
 }
 
-/// One character in an RGA sequence: its char, the id it was inserted *after*
-/// (`""` = the start), and a delete tombstone. The element's own id (the map
-/// key) is caller-supplied and must be globally unique + sortable — concurrent
-/// inserts at the same anchor order by id (descending), so replicas agree.
+/// Ids must be globally unique and sortable: concurrent inserts at one anchor order by id, descending.
 #[derive(Serialize, Deserialize, Clone)]
 struct RgaElem {
     ch: String,
@@ -59,7 +33,7 @@ struct RgaElem {
     del: bool,
 }
 
-/// One LWW slot: a value (or `None` = tombstone) stamped `(ts, replica)`.
+/// `None` is a tombstone.
 #[derive(Serialize, Deserialize, Clone)]
 struct Reg {
     v: Option<Value>,
@@ -68,9 +42,7 @@ struct Reg {
 }
 
 impl Reg {
-    /// Total order deciding which write wins: `(ts, replica, set?, value)`.
-    /// The value is the last tiebreak so merge stays commutative even if two
-    /// replicas somehow share a `(ts, replica)` stamp with different values.
+    /// The value is the last tiebreak, so merge stays commutative if two replicas share a stamp.
     fn key(&self) -> (u64, String, u8, String) {
         (
             self.ts,
@@ -95,7 +67,6 @@ fn parse_val(s: &str) -> Result<Value, CrdtError> {
     serde_json::from_str(s).map_err(|e| CrdtError::InvalidJson(format!("value-json: {e}")))
 }
 
-/// Canonical (sorted-key) serialization, used only for the LWW value tiebreak.
 fn canon(v: &Value) -> String {
     serde_json::to_string(v).unwrap_or_default()
 }
@@ -110,8 +81,7 @@ fn max_merge(mut a: BTreeMap<String, u64>, b: BTreeMap<String, u64>) -> BTreeMap
     a
 }
 
-/// The CvRDT join: least-upper-bound of two same-type states. `None` means the
-/// two states are different CRDT types. Commutative, associative, idempotent.
+/// `None`: different CRDT types.
 fn merge_states(a: State, b: State) -> Option<State> {
     Some(match (a, b) {
         (State::Lww { v: va, ts: ta, replica: ra }, State::Lww { v: vb, ts: tb, replica: rb }) => {
@@ -148,8 +118,7 @@ fn merge_states(a: State, b: State) -> Option<State> {
             State::LwwMap { entries }
         }
         (State::Rga { elems: ea }, State::Rga { elems: eb }) => {
-            // Union elements by id; a tombstone anywhere wins (delete is
-            // monotonic). Both concurrent inserts are kept — that's the point.
+            // A tombstone anywhere wins (delete is monotonic); both concurrent inserts are kept.
             let mut elems = ea;
             for (id, e) in eb {
                 match elems.get_mut(&id) {
@@ -165,9 +134,7 @@ fn merge_states(a: State, b: State) -> Option<State> {
     })
 }
 
-/// The sequence order of ALL elements (tombstoned included): a preorder walk of
-/// the "inserted-after" tree, siblings sharing an anchor ordered by id
-/// descending. Iterative (no recursion) so a long document can't overflow.
+/// Iterative, so a long document cannot overflow the stack.
 fn rga_sequence(elems: &BTreeMap<String, RgaElem>) -> Vec<String> {
     let mut children: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (id, e) in elems {
@@ -187,7 +154,6 @@ fn rga_sequence(elems: &BTreeMap<String, RgaElem>) -> Vec<String> {
     out
 }
 
-/// The ids of the live (non-tombstoned) elements, in sequence order.
 fn rga_visible(elems: &BTreeMap<String, RgaElem>) -> Vec<String> {
     rga_sequence(elems)
         .into_iter()
@@ -250,7 +216,6 @@ impl Guest for Component {
         replica: String,
     ) -> Result<String, CrdtError> {
         let cand = Self::lww_new(value_json, timestamp, replica)?;
-        // Same-type join with a fresh single-value register = "set if newer".
         Self::merge(state, cand)
     }
 
@@ -284,8 +249,7 @@ impl Guest for Component {
         let State::OrSet { adds, mut removes } = parse_state(&state, "state")? else {
             return Err(CrdtError::InvalidState("expected an orset".into()));
         };
-        // Observed-remove: tombstone exactly the tags we currently see. Any tag
-        // added concurrently (not in `adds` yet) is untouched, so it survives.
+        // Tombstone only the observed tags, so a concurrent add survives.
         if let Some(tags) = adds.get(&element) {
             removes.extend(tags.iter().cloned());
         }
@@ -330,12 +294,9 @@ impl Guest for Component {
             return Err(CrdtError::InvalidState("expected an rga".into()));
         };
         let visible = rga_visible(&elems);
-        // insert BEFORE visible[index]; anchor = the element just before it.
         let idx = (index as usize).min(visible.len());
         let mut anchor = if idx == 0 { String::new() } else { visible[idx - 1].clone() };
-        // Each char becomes an element chained after the previous, so a
-        // multi-char insert stays contiguous. Ids must be unique + sortable;
-        // `id_base` carries the (ts, replica) order, the `:k` keeps chars apart.
+        // `id_base` carries the (ts, replica) order; `:k` keeps the chars apart.
         for (k, ch) in text.chars().enumerate() {
             let id = format!("{id_base}:{k:04}");
             elems.insert(
@@ -411,8 +372,6 @@ impl Guest for Component {
     }
 }
 
-/// Apply a single register to a key iff it beats the current stamp (the
-/// per-key case of the LWW-map join).
 fn lwwmap_put(state: String, key: String, cand: Reg) -> Result<String, CrdtError> {
     let State::LwwMap { mut entries } = parse_state(&state, "state")? else {
         return Err(CrdtError::InvalidState("expected a lwwmap".into()));
@@ -431,8 +390,6 @@ bindings::export!(Component with_types_in bindings);
 
 #[cfg(test)]
 mod tests {
-    //! Rust-side checks of the pure join-semilattice core. The convergence
-    //! property is the point: any order of merges yields the same state.
     use super::*;
 
     fn s(json: &str) -> State {
@@ -452,12 +409,8 @@ mod tests {
         s(&ser(st))
     }
 
-    /// Every permutation of the same states folds to identical bytes
-    /// (commutative + associative), and re-merging any part is a no-op
-    /// (idempotent).
     fn assert_converges(states: &[State]) {
         let expected = fold(states);
-        // all 6 orderings of 3 states
         let idx = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
         for order in idx {
             let permuted: Vec<State> = order.iter().map(|&i| clone(&states[i])).collect();
@@ -484,12 +437,11 @@ mod tests {
         let b = s(r#"{"type":"pn","p":{"B":4},"n":{"B":2}}"#);
         let c = s(r#"{"type":"pn","p":{},"n":{"C":1}}"#);
         assert_converges(&[clone(&a), clone(&b), clone(&c)]);
-        assert_eq!(value_of(s(&fold(&[a, b, c]))), Value::from(6i64)); // 5+4-2-1
+        assert_eq!(value_of(s(&fold(&[a, b, c]))), Value::from(6i64));
     }
 
     #[test]
     fn orset_add_wins_over_concurrent_remove() {
-        // base: x added with tag A:1; A removes it, B re-adds with unseen tag B:1
         let removed = s(r#"{"type":"orset","adds":{"x":["A:1"]},"removes":["A:1"]}"#);
         let readded = s(r#"{"type":"orset","adds":{"x":["A:1","B:1"]},"removes":[]}"#);
         assert_eq!(
@@ -509,7 +461,6 @@ mod tests {
         let remover = s(r#"{"type":"lwwmap","entries":{"k":{"v":null,"ts":2,"replica":"B"}}}"#);
         let other = s(r#"{"type":"lwwmap","entries":{"j":{"v":"j","ts":1,"replica":"C"}}}"#);
         assert_converges(&[clone(&setter), clone(&remover), clone(&other)]);
-        // k tombstoned (ts 2 beats 1), j survives
         assert_eq!(value_of(s(&fold(&[setter, remover, other]))), serde_json::json!({"j": "j"}));
     }
 
@@ -534,26 +485,21 @@ mod tests {
     fn rga_builds_and_edits_text() {
         let a = ins(Component::rga_new(), 0, "hello", "0001-a");
         assert_eq!(text(&a), "hello");
-        let a = ins(a, 5, " world", "0002-a"); // append
+        let a = ins(a, 5, " world", "0002-a");
         assert_eq!(text(&a), "hello world");
-        let a = ins(a, 0, "say ", "0003-a"); // prepend
+        let a = ins(a, 0, "say ", "0003-a");
         assert_eq!(text(&a), "say hello world");
-        let a = Component::rga_delete(a, 0, 4).unwrap(); // drop "say "
+        let a = Component::rga_delete(a, 0, 4).unwrap();
         assert_eq!(text(&a), "hello world");
     }
 
-    /// The headline: two replicas insert at the SAME position concurrently.
-    /// Both characters survive (neither is lost, unlike LWW), and every replica
-    /// orders them identically — deterministic interleaving.
     #[test]
     fn rga_concurrent_inserts_both_survive_and_converge() {
         let base = ins(Component::rga_new(), 0, "AC", "0000-seed");
-        // both insert between A and C, from different replicas
         let rx = ins(base.clone(), 1, "X", "0001-x");
         let ry = ins(base.clone(), 1, "Y", "0002-y");
-        // higher id sorts first among same-anchor siblings -> Y before X
+        // Higher id sorts first among same-anchor siblings.
         assert_eq!(text(&Component::merge(rx.clone(), ry.clone()).unwrap()), "AYXC");
-        // commutative: merge order doesn't matter
         assert_eq!(
             Component::merge(rx.clone(), ry.clone()).unwrap(),
             Component::merge(ry.clone(), rx.clone()).unwrap()
@@ -561,19 +507,15 @@ mod tests {
         assert_converges(&[s(&rx), s(&ry), s(&base)]);
     }
 
-    /// Id-anchored ops: what a real editor sends. A concurrent insert elsewhere
-    /// can't shift where this one lands, because it anchors to a stable id.
     #[test]
     fn rga_id_anchored_ops_are_unambiguous() {
         let base = ins(Component::rga_new(), 0, "AC", "0000-seed");
-        // find the ids of A and C
         let elems: Value =
             serde_json::from_str(&Component::rga_elements(base.clone()).unwrap()).unwrap();
         let arr = elems.as_array().unwrap();
         assert_eq!(arr.len(), 2);
         let id_a = arr[0]["id"].as_str().unwrap().to_string();
         assert_eq!(arr[0]["ch"], "A");
-        // two replicas insert AFTER A concurrently — both survive, deterministic
         let rx =
             Component::rga_insert_after(base.clone(), id_a.clone(), "X".into(), "0001-x".into())
                 .unwrap();
@@ -581,19 +523,16 @@ mod tests {
             Component::rga_insert_after(base.clone(), id_a.clone(), "Y".into(), "0002-y".into())
                 .unwrap();
         assert_eq!(text(&Component::merge(rx.clone(), ry.clone()).unwrap()), "AYXC");
-        // delete by id
         let del = Component::rga_delete_ids(base.clone(), vec![id_a]).unwrap();
         assert_eq!(text(&del), "C");
-        // inserting after an unknown id is rejected
         assert!(Component::rga_insert_after(base, "nope".into(), "z".into(), "9-z".into()).is_err());
     }
 
     #[test]
     fn rga_delete_and_concurrent_edit_both_apply() {
         let base = ins(Component::rga_new(), 0, "abc", "0000-s");
-        let deleted = Component::rga_delete(base.clone(), 1, 1).unwrap(); // "ac"
-        let edited = ins(base.clone(), 3, "d", "0001-e"); // "abcd"
-                                                          // merge: b stays deleted, d survives -> "acd"
+        let deleted = Component::rga_delete(base.clone(), 1, 1).unwrap();
+        let edited = ins(base.clone(), 3, "d", "0001-e");
         assert_eq!(text(&Component::merge(deleted.clone(), edited.clone()).unwrap()), "acd");
         assert_converges(&[s(&deleted), s(&edited), s(&base)]);
     }

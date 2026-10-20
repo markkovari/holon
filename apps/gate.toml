@@ -1,33 +1,15 @@
-# An app, as a person writes it. This is the ONLY hand-authored file in the
-# self-hosting lane — `selfhost` renders everything else (docs/SELFHOST.md).
-#
-#   holon node render apps/gate.toml --out target/selfhost   # write the unit/env/route
-#   then copy target/selfhost/gate/* to the box and `systemctl enable --now comp-gate.service`
 name = "gate"
-# Tailnet-only, which is the default — a forgotten `access` must not put an app on
-# the public internet. The name has to resolve to the box's Tailscale address (a custom
-# DNS record in the tailnet, or split DNS); MagicDNS alone gives one name per machine.
 access = "tailnet"
+# Must resolve to the box's Tailscale address (custom DNS or split DNS): MagicDNS gives one name per machine.
 domain = "gate.example.com"
 artifact = "components/target/gate_domain.composed.wasm"
 
-# Loopback port. Omit it and one is derived from the name, stably — `selfhost
-# validate` is what refuses two apps landing on the same one.
-# port = 30011
-
-# sqlite is the default: one file in this unit's StateDirectory, so it survives the
-# restarts `Restart=always` guarantees. `memory` is honest only for a cache; redis and
-# nats need a `kv_url` and a daemon.
 kv = "sqlite"
 
-# Read by the Kubernetes lane (tier 3), ignored here. Present so that moving this app
-# up a tier is an edit rather than a rewrite.
+# Read only by the Kubernetes lane (tier 3), so moving up a tier is an edit, not a rewrite.
 components = ["gate-domain", "record-store", "shaper"]
 strategy = "fused"
 
-# KEEP TABLES LAST. In TOML every key after a `[table]` header belongs to that table,
-# so a `components = [...]` line below this point would be parsed as config and
-# rejected. `wasi:config` keys go here: `grace-period-secs` arrives as
-# CFG_GRACE_PERIOD_SECS, which is what comp-host maps back to the config key.
+# Tables last: every key after a `[table]` header belongs to that table.
 [config]
 grace-period-secs = "5"

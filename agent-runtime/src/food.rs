@@ -1,16 +1,5 @@
-//! Food photos, read by Jev, remembered per person.
-//!
-//! Jev answers typed questions about a picture; it does not write text. So a photo goes in with
-//! four questions at once: is there food, which dish from the person's *pool* is it (each pool
-//! entry offered with its own reference photo), what kind of dish is it, and about how much
-//! energy is on the plate. A dish that matches the pool is counted again. One that does not is
-//! *added* to the pool with its kind, its estimated kcal and the photo as a reference, so the next
-//! picture of it is recognised. Either way the meal is logged.
-//!
-//! Everything for a person lives in the shared store under `food.<user>`:
-//! `pool/f<n>` (an [`Item`]) and `meal/<unix time>` (what was eaten). The reference photos are
-//! small pictures in the calling agent's workspace (`food-pool/f<n>.jpg`, or `.png` where the picture could not be converted). An estimate is a guess
-//! made from a band of energies; `food_correct` replaces it with what the person says it is.
+//! Food photos read by Jev, which only answers typed questions: a dish not in the person's pool
+//! joins it, with its photo as the reference for next time.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -20,7 +9,6 @@ use crate::jev::{self, Jev};
 use crate::model::Image;
 use crate::spec::validate_topic;
 
-/// The kinds of dish Jev picks among. A dish that fits none is `other`.
 pub const VARIETIES: &[&str] = &[
     "salad",
     "soup or stew",
@@ -40,8 +28,7 @@ pub const VARIETIES: &[&str] = &[
     "other",
 ];
 
-/// Energy bands, lowest first, with the kcal a plate in the band is taken to hold. Jev's score is
-/// the probability-weighted band number, so a fraction lands between two bands.
+/// Jev's score is the probability-weighted band number, so a fraction lands between two bands.
 const BANDS: &[(&str, f64)] = &[
     ("a drink or a bite, under 150 kcal", 75.0),
     ("a small portion, 150 to 300 kcal", 225.0),
@@ -54,13 +41,10 @@ const BANDS: &[(&str, f64)] = &[
 ];
 
 const NONE: &str = "none of these";
-/// Pool entries offered to Jev with a photo each; the most eaten first.
 const MAX_CANDIDATES: usize = 12;
-/// A food or a match counts at this probability or above.
 const FOOD_AT: f64 = 0.5;
 const MATCH_AT: f64 = 0.5;
-/// The longest side of the photo asked about, and of a pool reference. Jev's cost grows with the
-/// pixels (1568 px costs about four times 784 px), and a plate is clear at this size.
+/// Jev's cost grows with the pixels, and a plate is clear at this size.
 pub const QUERY_PX: u32 = 800;
 const REFERENCE_PX: u32 = 400;
 const DAY: u64 = 86_400;
@@ -71,7 +55,6 @@ pub struct Item {
     pub variety: String,
     pub kcal: u32,
     pub seen: u32,
-    /// True until the person says what it really is (`food_correct`).
     pub estimated: bool,
     pub photo: Option<String>,
     pub first: u64,
@@ -85,7 +68,6 @@ pub fn namespace(user: &str) -> Result<String, String> {
     Ok(ns)
 }
 
-/// kcal for a fractional band number, rounded to ten.
 pub fn kcal_at(score: f64) -> u32 {
     let top = (BANDS.len() - 1) as f64;
     let s = score.clamp(0.0, top);
@@ -123,7 +105,7 @@ fn photo_dir(host: &dyn Host, agent: &str) -> Result<std::path::PathBuf, String>
     Ok(dir)
 }
 
-/// A reference no other text will contain: `ref-` and sixteen hex digits.
+/// A reference no other text will contain.
 fn reference(tag: &str, n: usize) -> String {
     use sha2::{Digest, Sha256};
     let h = Sha256::digest(format!("{tag}/{n}").as_bytes());
@@ -134,7 +116,7 @@ fn percent(p: f64) -> u32 {
     (p * 100.0).round().clamp(0.0, 100.0) as u32
 }
 
-/// Kcal and meals eaten in the last day.
+/// (kcal, meals) in the last day.
 fn last_day(host: &dyn Host, ns: &str, now: u64) -> (u32, usize) {
     let meals = host.kv_list(ns, "meal/").unwrap_or_default();
     meals
@@ -158,7 +140,6 @@ fn log_meal(
     host.kv_put(agent, ns, &format!("meal/{now:012}"), &meal.to_string(), None, cause).map(|_| ())
 }
 
-/// What is on this photo: from the pool, or new (and then added to it).
 pub fn identify(
     host: &dyn Host,
     jev: &dyn Jev,
@@ -176,7 +157,6 @@ pub fn identify(
     let q_ref = reference("photo", 0);
     assets.insert(q_ref.clone(), jev::asset(&photo.media_type, &photo.data));
 
-    // The pool as the options of a choice, each with its picture when it has one.
     let candidates: Vec<&(String, Item)> =
         all.iter().filter(|(_, i)| i.name != NONE).take(MAX_CANDIDATES).collect();
     let mut options = Map::new();
@@ -243,7 +223,6 @@ pub fn identify(
         ));
     }
 
-    // A dish already in the pool is counted again.
     if let Some((picked, p)) = jev::choice(&answers, "match") {
         if picked != NONE && p >= MATCH_AT {
             if let Some((key, item)) = candidates.iter().find(|(_, i)| i.name == picked) {
@@ -267,7 +246,6 @@ pub fn identify(
         }
     }
 
-    // Not in the pool: estimate its kind and energy and add it.
     let (variety, v_p) = jev::choice(&answers, "variety")
         .filter(|(v, _)| VARIETIES.contains(&v.as_str()))
         .unwrap_or(("other".into(), 0.0));
@@ -311,7 +289,6 @@ pub fn identify(
     ))
 }
 
-/// The pool, most eaten first, and what was eaten in the last day.
 pub fn list(host: &dyn Host, user: &str) -> Result<String, String> {
     let ns = namespace(user)?;
     let items = pool(host, &ns)?;
@@ -338,7 +315,6 @@ pub fn list(host: &dyn Host, user: &str) -> Result<String, String> {
     Ok(out.join("\n"))
 }
 
-/// Replace an estimate with what the person says: `kcal`, a new `new_name`, or a `variety`.
 pub fn correct(
     host: &dyn Host,
     agent: &str,
@@ -393,7 +369,6 @@ mod tests {
     use crate::agent::testkit::Fake;
     use std::sync::Mutex;
 
-    /// A Jev that answers with what the test set and remembers what it was asked.
     struct FakeJev {
         reply: Mutex<Value>,
         asked: Mutex<Vec<Value>>,
@@ -471,7 +446,6 @@ mod tests {
         );
         assert_eq!(h.kv.list("food.mark", "meal/").unwrap().len(), 1, "the meal is logged");
 
-        // with nothing in the pool, no `match` question is asked, and the photo goes as an asset
         let asked = &jev.asked.lock().unwrap()[0];
         assert!(asked["questions"].get("match").is_none());
         assert_eq!(asked["assets"].as_object().unwrap().len(), 1);
@@ -498,7 +472,6 @@ mod tests {
         assert_eq!((items.len(), items[0].1.seen), (1, 2), "the pool did not grow");
         assert_eq!(h.kv.list("food.mark", "meal/").unwrap().len(), 1, "same second, same key");
 
-        // the known dish was offered with its reference photo
         let asked = &again.asked.lock().unwrap()[0];
         assert_eq!(asked["assets"].as_object().unwrap().len(), 2, "the photo and one reference");
         assert!(asked["questions"]["match"]["criteria"].get(NONE).is_some());
@@ -608,7 +581,6 @@ mod tests {
             (item.name.as_str(), item.kcal, item.estimated),
             ("Mum's carbonara", 640, false)
         );
-        // found again by its new name
         assert!(correct(
             &h,
             "n",

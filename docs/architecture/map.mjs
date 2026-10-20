@@ -1,28 +1,8 @@
-/* The map: every system, what it is made of, and everything it says to another.
- *
- * This is the one file a person edits. `build.mjs` turns it into docs/ARCHITECTURE.md (Mermaid
- * diagrams and tables) and docs/architecture/index.html (the interactive page), and refuses a map
- * that names a path or an ADR that does not exist, so it cannot quietly drift from the tree.
- *
- *   node docs/architecture/build.mjs           write both
- *   node docs/architecture/build.mjs --check   fail if either is stale, or the map names something missing
- *
- * It holds no counts. How many components or interfaces there are is a number a test cannot keep
- * honest; `comp-capgraph` derives it from the built artifacts, which is why the README does not
- * copy it either. Say what a thing is, not how many there are.
- *
- * Two kinds of line on the diagrams: a `DIA[system].edges` entry is inside the system, and a
- * `DIA[system].x` entry is a correspondence with the outside, numbered on the drawing and listed
- * from COR under it.
- */
+/* The one file a person edits; build.mjs generates docs/ARCHITECTURE.md and index.html from it.
+ * No counts here: a test cannot keep them honest (comp-capgraph derives them from the artifacts). */
 
-/** When the map was last read against the repository: the newest ADR it knows about. */
+/** The newest ADR the map was last checked against. */
 export const META = { revisedAfter: '0114' };
-
-/* ============ DATA ============
-   Everything on the page is drawn from this block. Systems, parts and correspondences
-   were read from the repository (README, docs/CURRENT.md, the ADR index and the source
-   headers of each binary), not invented; each part names the path it stands for. */
 
 export const KINDS = [
   ['wasm','Wasm component, a sandboxed guest'],
@@ -40,7 +20,6 @@ export const PROTO = {
   call: {name:'Call or file', dash:''}
 };
 
-/* Substrates: shared state the systems sit on. `uses` chips on each card point here. */
 export const SUB = [
   {id:'nats',   t:'NATS JetStream', s:['inventory · commands · wRPC','KV · tickets · oplog · queues'], chip:'NATS'},
   {id:'surreal',t:'SurrealDB',      s:['knowledge graph · run traces','code-store graph · kv backend'], chip:'SURREAL'},
@@ -58,7 +37,6 @@ export const ACTORS = [
   {id:'element', t:'Element (Matrix)',       s:'talk to agents, vote on approvals', touch:['agents']}
 ];
 
-/* The systems. `parts` become the chips on the overview card. */
 export const SYS = [
  {id:'library', name:'Library & Build', short:'components, contracts, composition',
   purpose:'Wasm components and the WIT contracts between them, composed into one artifact per app.',
@@ -163,7 +141,6 @@ export const SYS = [
   code:['reconciler/tests/','reconciler/fleet/','e2e/','bench/','xtask/','reconciler/src/bin/{bench,planscale,stub}.rs','reconciler/measure/','.github/workflows/ci.yml']}
 ];
 
-/* Overview: where the cards sit (column, row) and the primary correspondences drawn between them. */
 export const OV_POS = {library:[0,0],delivery:[1,0],loop:[2,0],control:[0,1],runtime:[1,1],daemons:[2,1],agents:[0,2],durable:[1,2],proof:[2,2]};
 export const OV_EDGES = [
   {a:'library',b:'delivery',as:'r',bs:'l',lab:'spec + composed .wasm',p:'art'},
@@ -181,9 +158,6 @@ export const OV_EDGES = [
   {a:'proof',b:'runtime',as:'t',bs:'b',lab:'load · e2e · bench',p:'http'}
 ];
 
-/* ============ CORRESPONDENCES ============
-   One row per thing one system says to another. `a` and `b` are [system or substrate, part].
-   p is the line style on the diagrams. ADR numbers are the decisions that define the contract. */
 export const COR = [
  {id:'L1',a:['library','apps/<name>.toml'],b:['delivery','holon … render'],p:'art',over:'file',contract:'A pure function from the spec to systemd units, env files and a Caddy route; wadm Applications for lanes 3 and 4.',adr:'0021'},
  {id:'L2',a:['library','comp-oci'],b:['oci','registry'],p:'art',over:'OCI',contract:'Push and pull by digest. A tag is a human convenience and is never what gets deployed.',adr:'0006 · 0024'},
@@ -244,10 +218,7 @@ export const COR = [
  {id:'X2',a:['proof','e2e fleets'],b:['control','platform · reconciler · ingress'],p:'nats',over:'NATS · HTTP',contract:'Whole fleets in tests: several manifests on one fleet, two reconcilers with one leader, two ingresses and one dies.',adr:'0035'}
 ];
 
-/* ============ ISOLATION DIAGRAMS ============
-   A grid per system: nodes sit on columns c0..c2 and rows r0..; peers are dashed "ghost"
-   boxes at the sides. `x` edges are correspondences with the outside, numbered and listed
-   under the drawing from COR; plain edges are inside the system. */
+/* `x` edges cross the system boundary (numbered, listed from COR); plain edges stay inside. */
 const N = (id,c,r,k,t,s,o) => Object.assign({id,c,r,k,t,s},o||{});
 const G = (id,sys,t,s,side,o) => Object.assign({id,sys,t,s,side},o||{});
 
@@ -570,7 +541,6 @@ export const DIA = {
   ]}
 };
 
-/* ============ BOUNDARIES ============ */
 export const GUEST_NAMES = [
   ['a store name ("default")','a BucketId','0023'],
   ['an import interface','an InstanceId in the link table','0013'],
@@ -586,8 +556,7 @@ export const CREDS = [
   ['The deploy pointer','the deploy branch of the repository','comp-agent holds no CI credential and opens no inbound port; it pulls.','0006']
 ];
 
-/* ============ BOUNDARIES ============
-   Outermost first. Each zone sits inside the one before it. */
+/* Outermost first: each zone sits inside the one before it. */
 export const ZONES = [
   {id:'z1', t:'Public internet', d:'Reachable only where an app says so: a generated file never makes an app public. access = "public" puts it behind Caddy and ACME.',
    items:['End users','GitHub','GHCR','LLM APIs','S3 / R2']},

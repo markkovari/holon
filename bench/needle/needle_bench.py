@@ -14,10 +14,7 @@ HERE = pathlib.Path(__file__).parent
 DATA = json.loads((HERE / "cases.json").read_text())
 GOALS = DATA["titles"]
 
-# Described as well as the docs ask for: a sentence per tool saying WHEN to use
-# it, a sentence per argument, and an enum on every one — which compiles into the
-# decode grammar, so a title it has never seen cannot be emitted. A weaker
-# declaration would be benchmarking the description, not the model.
+# Enums compile into the decode grammar, so a title it has never seen cannot be emitted.
 TOOLS = [
     {
         "name": "filter_state",
@@ -65,11 +62,8 @@ def main():
     agent = needle.Needle(tools=TOOLS)
     rows = []
     for case in DATA["cases"]:
-        # Each query is its own turn. A session SHARES one conversation
-        # (doc/apis.md: "later turns are bare queries against the same tools"), so
-        # without this the 256-token window fills with earlier questions and every
-        # answer is read in the context of the last one. Scored 5/25 before this
-        # line and 11/25 after it — a harness bug worth more than any tuning.
+        # A session shares one conversation: without a reset the 256-token window fills
+        # with earlier questions (5/25 without it, 11/25 with).
         agent.reset()
         t = time.time()
         r = agent.complete(case["q"])

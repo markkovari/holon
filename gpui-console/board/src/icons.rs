@@ -1,8 +1,5 @@
-//! The icons the board draws with, and what each tool and each model is drawn as.
-//!
-//! The SVGs are [Lucide](https://lucide.dev) (ISC, `assets/icons/LICENSE`), embedded, so the
-//! binary needs nothing beside it. GPUI renders an SVG as a mask tinted with the text colour, so one
-//! file serves every theme and every state.
+//! Lucide SVGs (ISC, `assets/icons/LICENSE`), embedded so the binary needs nothing beside it.
+//! GPUI draws an SVG as a mask tinted with the text colour, so one file serves every theme.
 
 use std::borrow::Cow;
 
@@ -11,7 +8,6 @@ use gpui::{svg, AssetSource, Rgba, SharedString, Svg};
 
 macro_rules! icons {
     ($($name:literal),* $(,)?) => {
-        /// Every icon by path, as `AssetSource::load` is asked for them.
         const FILES: &[(&str, &[u8])] = &[
             $((concat!("icons/", $name, ".svg"),
                include_bytes!(concat!("../assets/icons/", $name, ".svg")).as_slice())),*
@@ -62,7 +58,6 @@ icons![
     "zap",
 ];
 
-/// What `Application::with_assets` is given.
 pub struct Assets;
 
 impl AssetSource for Assets {
@@ -79,12 +74,10 @@ impl AssetSource for Assets {
     }
 }
 
-/// An icon by name, ready to be sized and tinted: `icon("check").size_4().text_color(..)`.
 pub fn icon(name: &str) -> Svg {
     svg().path(SharedString::from(format!("icons/{name}.svg")))
 }
 
-/// The icon a tool is drawn as. A tool this does not know is a wrench, which says "a tool".
 pub fn tool_icon(tool: &str) -> &'static str {
     match tool {
         "read_file" | "transcribe" => "file-text",
@@ -107,8 +100,7 @@ pub fn tool_icon(tool: &str) -> &'static str {
     }
 }
 
-/// The glyph and tint a model's maker is drawn as: enough to tell a row of agents apart at a glance
-/// without borrowing anybody's logo.
+/// Deliberately not anybody's logo: just enough to tell a row of agents apart.
 pub fn model_glyph(model: &str) -> (&'static str, Rgba) {
     let m = model.to_lowercase();
     let hex = |c: u32| gpui::rgb(c);
@@ -168,7 +160,6 @@ mod tests {
         ] {
             assert!(have(model_glyph(m).0), "{m} -> {}", model_glyph(m).0);
         }
-        // and the ones the chrome itself uses
         for n in [
             "check",
             "clock",

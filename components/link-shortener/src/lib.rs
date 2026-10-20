@@ -1,8 +1,3 @@
-//! shortlink:app — link shortener over composed capability contracts.
-//!
-//! Hot path (`GET /{code}`): cache read -> atomic click bump -> 302. A miss falls back to the `code` index in
-//! records:store and warms the cache, so steady-state redirects never touch the record store.
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -26,7 +21,6 @@ mod bindings {
         world: "shortlink:app/shortlink-app",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -87,7 +81,6 @@ impl Guest for Component {
 enum Outcome {
     Json(u16, String),
     Redirect(String),
-    /// 429 with a Retry-After of the payload seconds.
     Limited(u32),
     Bad(String),
     Err(u16, String),
@@ -104,7 +97,7 @@ struct CreateReq {
 }
 
 async fn create_link(request: Request) -> Outcome {
-    // fixed-window create limit per client; no auth, so the client IP (or a shared anonymous key behind proxies that strip it) is the identity.
+    // No auth, so the client IP is the rate-limit identity.
     let client = format!(
         "shortlink:create:{}",
         header(&request, "x-forwarded-for").unwrap_or_else(|| "anon".to_string())
@@ -140,15 +133,14 @@ async fn create_link(request: Request) -> Outcome {
         Err(e) => return store_err(e),
     };
 
-    // warm the redirect cache; the redirect path can rebuild it, so a cache failure does not fail the create.
+    // Best-effort: the redirect path rebuilds the cache on a miss.
     let _ = cache::set(&code, req.url.as_bytes(), 0);
-    // count this create against the window (the limiter is a failure counter; every create "spends" one attempt).
+    // The limiter only counts failures, so every create spends one.
     let _ = limiter::record_failure(&client);
 
     Outcome::Json(201, link_json(&entry, None).to_string())
 }
 
-/// Custom alias -> slugify + suffix past collisions; no alias -> nanoid.
 fn mint_code(alias: Option<&str>) -> Result<String, Outcome> {
     match alias {
         Some(raw) => {
@@ -220,7 +212,7 @@ fn redirect(code: &str) -> Outcome {
     Outcome::Redirect(url)
 }
 
-/// Fire-and-forget atomic click counter — a lost bump beats a slow redirect.
+/// Fire-and-forget: a lost bump beats a slow redirect.
 fn bump_clicks(code: &str) {
     if let Ok(bucket) = kv::open("shortlink") {
         let _ = atomics::increment(&bucket, &format!("clicks:{code}"), 1);
@@ -300,9 +292,7 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-/// The most a request body may be, before the component stops reading it. Without a ceiling a guest
-/// accumulated until wasmtime's 64 MiB per-store cap TRAPPED, reaching the caller as a bare closed
-/// connection. Generous: a backstop, not a content policy; uploads police themselves with a 413.
+/// Backstop below wasmtime's 64 MiB per-store cap, past which the guest traps.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

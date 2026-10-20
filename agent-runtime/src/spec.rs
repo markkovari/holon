@@ -1,25 +1,18 @@
-//! What an agent IS: a name, a description, the capabilities it may use, how
-//! it is triggered, and which model drives it. Persisted as one JSON file per
-//! agent, so editing an agent is editing a file — nothing is rebuilt.
+//! One JSON file per agent, so editing an agent rebuilds nothing.
 
 use serde::{Deserialize, Serialize};
 
-/// One thing an agent may do. `description` is what the MODEL reads when
-/// choosing; `wit` is what the PLATFORM can check — a ref like
-/// `os:fs/watcher.changes` naming the interface function this binds to. Text
-/// alone is unenforceable; WIT alone is not something a model can choose
-/// from. `wit` is optional so a capability can start as prose.
+/// `description` is what the model chooses by; `wit` (e.g. `os:fs/watcher.changes`) is what the
+/// platform can check, optional so a capability can start as prose.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct Capability {
-    /// Matches a built-in tool name (`remember`, `http_get`, ...) or an
-    /// agent name prefixed `agent:` to delegate to another agent.
+    /// A built-in tool name, or `agent:<name>` to delegate to another agent.
     pub name: String,
     #[serde(default)]
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wit: Option<String>,
-    /// A program that implements this capability as a tool (see `connector.rs`). Either
-    /// written here or filled in from `<state>/connectors/<name>.json`.
+    /// Or filled in from `<state>/connectors/<name>.json`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exec: Option<crate::connector::Exec>,
 }
@@ -30,41 +23,28 @@ impl Capability {
     }
 }
 
-/// When an agent runs without anyone typing at it. Every agent ALSO answers
-/// over HTTP through the lattice ingress (the gateway component) — that
-/// trigger needs no declaration.
+/// HTTP through the gateway needs no trigger: every agent answers it.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Trigger {
-    /// `cron` is a 5-field expression (UTC), an `@hourly`-style macro, or
-    /// `@every 30s|5m|2h`. `prompt` is the task given to the agent. `notify`
-    /// asks a chat bridge to post each result to the owner; the runtime only
-    /// records it (the run is logged either way), so it costs nothing to leave
-    /// off on a schedule nobody needs to read.
+    /// `cron`: 5-field UTC, an `@hourly`-style macro, or `@every 30s|5m|2h`. `notify` only asks a
+    /// chat bridge to post the result; the run is logged either way.
     Schedule {
         cron: String,
         prompt: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         notify: bool,
-        /// The project the work is for. The run is told, only a member is woken for it, and
-        /// a chat bridge posts the result in that project's room. `None`: the agent's own.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         project: Option<String>,
     },
-    /// Runs when `topic` is emitted (by another agent, or `POST /events/<topic>`);
-    /// the event payload is the task input. Durable: events published while the
-    /// agent is paused or the runtime is down are delivered later, in order.
-    /// `filter`, when set, only wakes the agent for payloads containing that
-    /// text (case-insensitive).
+    /// Durable: events published while paused or down arrive later, in order. `filter` is a
+    /// case-insensitive substring.
     Event {
         topic: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         filter: Option<String>,
     },
-    /// Runs when a `store_put` CHANGES a value in shared store `ns` (an
-    /// identical write wakes nobody) under `key_prefix`. The task input is a
-    /// JSON object `{ns, key, version, value, by}`. This is how an agent can
-    /// say "tell me when X changes" without anyone remembering to announce it.
+    /// Fires when a write CHANGES a value under `key_prefix` (an identical write wakes nobody).
     StoreChange {
         ns: String,
         #[serde(default)]
@@ -81,7 +61,6 @@ impl Trigger {
         }
     }
 
-    /// Does an envelope on this trigger's topic actually concern it?
     pub fn matches(&self, payload: &str) -> bool {
         match self {
             Trigger::Event { filter, .. } => {
@@ -98,9 +77,7 @@ impl Trigger {
     }
 }
 
-/// Which SHARED store namespaces an agent may touch. Its own `private`
-/// namespace is always readable and writable and needs no entry here; write
-/// implies read.
+/// Shared namespaces only: its own `private` one needs no entry. Write implies read.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct StoreAccess {
     #[serde(default)]
@@ -112,38 +89,34 @@ pub struct StoreAccess {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ModelSpec {
-    /// The runtime's local model (Apple `fm serve`, or any OpenAI-compatible
-    /// server it was pointed at).
     Local,
-    /// Any OpenAI-compatible `/v1/chat/completions` server. The key is read
-    /// from the environment variable named here, never stored in the spec.
+    /// Keys are read from the environment or a file, never stored in the spec.
     OpenAi {
         base_url: String,
         model: String,
         #[serde(default)]
         api_key_env: String,
-        /// Or a file holding the key, read at each call and never stored in the spec. Wins
-        /// over `api_key_env` when both are given.
+        /// Read at each call; wins over `api_key_env`.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         api_key_file: String,
-        /// The launchd label of the service that runs this server (`io.holon.qwen`). When set,
-        /// the runtime starts it on first use and stops it after it has sat idle.
+        /// launchd label (`io.holon.qwen`): started on first use, stopped when idle.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         service: String,
-        /// Whether this server accepts images (an `image_url` part in a message). A photo
-        /// attached to a run is sent only to models that say so; one that cannot see is told a
-        /// photo was attached and to ask for it in words, which is better than a 400.
+        /// A model without it is told a photo was attached instead (better than a 400).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         vision: bool,
     },
-    /// Anthropic's Messages API. Same rule for the key. It sees images.
-    Anthropic { model: String, api_key_env: String },
-    /// Try each model in order and use the first that answers: a hosted one first, a local one
-    /// as the floor. A model that errors (down, out of quota, over its limit) is skipped for
-    /// this call only.
-    Fallback { models: Vec<ModelSpec> },
-    /// Scripted replies, for tests.
-    Mock { replies: Vec<String> },
+    Anthropic {
+        model: String,
+        api_key_env: String,
+    },
+    /// The first that answers wins; one that errors is skipped for this call only.
+    Fallback {
+        models: Vec<ModelSpec>,
+    },
+    Mock {
+        replies: Vec<String>,
+    },
 }
 
 fn default_steps() -> u32 {
@@ -162,27 +135,20 @@ fn default_result_chars() -> usize {
     8_000
 }
 
-/// What an agent granted `session_start` may open (docs/adr/0119): where, with which model, for how
-/// much, and which of the session's tools run without a person saying yes. The agent chooses a task;
-/// everything on this page is the spec author's, and none of it is a tool argument.
+/// What `session_start` may open (ADR-0119). The spec author's, never a tool argument.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SessionPolicy {
-    /// Directories, besides the agent's own workspace, a session may be opened in. Absolute paths:
-    /// the agent names one of them (or `own`); it never writes a path of its own.
+    /// The agent picks one of these (or `own`); it never writes a path of its own.
     #[serde(default)]
     pub workspaces: Vec<String>,
-    /// The model a session uses, as `comp-agentd`'s provider names it. Empty: the runtime's own
-    /// (`--session-model`).
+    /// Empty: the runtime's `--session-model`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub model: String,
-    /// What one session may spend, in dollars. The daemon stops a task at this ceiling.
     #[serde(default = "default_session_budget")]
     pub budget_usd: f64,
-    /// The session's tools that run without asking: any of `list_dir`, `read_file`, `write_file`,
-    /// `run`. None: every call waits for a person, who sees it where approvals are shown.
+    /// Empty: every call waits for a person.
     #[serde(default)]
     pub auto_approve: Vec<String>,
-    /// Sessions this agent may have open at once.
     #[serde(default = "default_session_concurrency")]
     pub max_concurrent: u32,
 }
@@ -206,7 +172,7 @@ impl Default for SessionPolicy {
     }
 }
 
-/// The tools `comp-agentd` gives a session (`reconciler/daemons/agentd/src/tools.rs`).
+/// Must match `reconciler/daemons/agentd/src/tools.rs`.
 pub const SESSION_TOOLS: [&str; 4] = ["list_dir", "read_file", "write_file", "run"];
 
 impl SessionPolicy {
@@ -214,8 +180,6 @@ impl SessionPolicy {
         *self == Self::default()
     }
 
-    /// Checked with the rest of a spec, so a typo is an error now and not a session that asks about
-    /// everything or a budget that is a negative number.
     pub fn validate(&self) -> Result<(), String> {
         if !(self.budget_usd > 0.0 && self.budget_usd <= 100.0) {
             return Err("sessions.budget_usd must be above 0 and at most 100".into());
@@ -243,69 +207,50 @@ impl SessionPolicy {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AgentSpec {
     pub name: String,
-    /// The agent's purpose; becomes the system prompt.
+    /// Becomes the system prompt.
     pub description: String,
     #[serde(default)]
     pub capabilities: Vec<Capability>,
-    /// Tool names that may run without asking a human. Anything sensitive
-    /// (`write_file`, `http_get`) that is NOT listed waits for approval.
+    /// A sensitive tool not listed here waits for approval.
     #[serde(default)]
     pub auto_approve: Vec<String>,
-    /// Hosts `http_get` may reach. Empty = none; there is no wildcard.
+    /// Empty = none; there is no wildcard.
     #[serde(default)]
     pub allow_hosts: Vec<String>,
     #[serde(default)]
     pub triggers: Vec<Trigger>,
     #[serde(default = "default_model")]
     pub model: ModelSpec,
-    /// Model calls per run before the agent is told to answer now.
     #[serde(default = "default_steps")]
     pub max_steps: u32,
-    /// Tokens (in + out) one run may spend before it is stopped.
     #[serde(default = "default_tokens")]
     pub max_tokens: u64,
-    /// How many of this agent's last runs its prompt recalls ("[http] question →
-    /// answer"). Useful for an agent that works in a continuing way; harmful for one
-    /// that must look the answer up each time, because a small model repeats a wrong
-    /// earlier answer it can see. 0 turns it off.
+    /// 0 for an agent that must look answers up: a small model repeats a wrong earlier one it sees.
     #[serde(default = "default_recent_runs")]
     pub recent_runs: usize,
-    /// Tools every run must call (successfully) before its plain-text reply
-    /// counts as finished. A model that writes an intermediate note as prose
-    /// otherwise ends its own task early; this turns "do these steps" into
-    /// something the runtime checks. A reply that comes too soon is answered
-    /// with a reminder (twice); a run that still never calls them FAILS, so
-    /// the gap is visible rather than a quiet no-op.
+    /// A reply before these were called gets two reminders, then the run FAILS rather than
+    /// quietly ending early.
     #[serde(default)]
     pub must_call: Vec<String>,
-    /// Longest tool result, in characters, shown to the model; the rest is cut.
-    /// Lower it for small-context models (Apple's on-device model has about 4k
-    /// tokens, and a page of numbers costs far more than its length suggests).
+    /// Lower it for small-context models (Apple's on-device one has about 4k tokens).
     #[serde(default = "default_result_chars")]
     pub max_result_chars: usize,
-    /// Tokens per rolling 24h across all runs; 0 = unlimited.
+    /// Rolling 24h; 0 = unlimited.
     #[serde(default)]
     pub daily_token_budget: u64,
-    /// Topics this agent may `emit_event` to: exact names or globs with `*`
-    /// (`deploy.*`). Empty means it may emit nothing — waking another agent
-    /// is something a spec grants, not a side effect of having the tool.
+    /// Exact names or `*` globs; empty = may emit nothing.
     #[serde(default)]
     pub topics_out: Vec<String>,
     #[serde(default)]
     pub store: StoreAccess,
-    /// Runs this agent will start per rolling minute, whatever woke it; 0 =
-    /// unlimited. A flood of events is dropped (and logged), not queued
-    /// forever behind a model that takes seconds per call.
+    /// 0 = unlimited. Over it, runs are dropped and logged, not queued behind a slow model.
     #[serde(default = "default_rate")]
     pub max_runs_per_min: u32,
-    /// A paused agent fires no schedule or event triggers and refuses HTTP.
     #[serde(default)]
     pub paused: bool,
-    /// What `session_start` may open, when the agent has it (docs/adr/0119).
     #[serde(default, skip_serializing_if = "SessionPolicy::is_default")]
     pub sessions: SessionPolicy,
-    /// Filled in at run time from the project registry (`projects::effective`);
-    /// never read from or written to the spec file.
+    /// From the project registry at run time (`projects::effective`).
     #[serde(skip)]
     pub projects: Vec<crate::projects::ProjectInfo>,
 }
@@ -348,8 +293,7 @@ impl AgentSpec {
     }
 }
 
-/// `*` matches any run of characters (including none); everything else is
-/// literal. Enough for topic names like `deploy.*` without a regex engine.
+/// `*` matches any run of characters (including none); everything else is literal.
 pub fn glob_match(pattern: &str, text: &str) -> bool {
     let parts: Vec<&str> = pattern.split('*').collect();
     if parts.len() == 1 {
@@ -372,7 +316,6 @@ pub fn glob_match(pattern: &str, text: &str) -> bool {
     true
 }
 
-/// Topic and store-namespace names: lowercase letters, digits, `.`, `-`, `_`.
 /// They become file names, so nothing path-like gets through.
 pub fn validate_topic(t: &str) -> Result<(), String> {
     let ok = !t.is_empty()
@@ -388,8 +331,7 @@ pub fn validate_topic(t: &str) -> Result<(), String> {
     }
 }
 
-/// WIT-kebab-safe, and safe as a file name and a host label: lowercase
-/// letters/digits, dash-separated, every word starting with a letter.
+/// Must be safe as a WIT kebab name, a file name and a host label.
 pub fn validate_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err("name is empty".into());

@@ -1,12 +1,4 @@
-//! The person's own view of their notifications: the badge, the list, and the tail.
-//!
-//! The stream is served here, not by the capability: `notify:inbox` holds notes and hands them
-//! back by cursor but holds no socket, so the SSE endpoint is a loop over `since(after)`, like
-//! `flags-domain`'s.
-//!
-//! The stream needs a ticket because `EventSource` cannot set an `Authorization` header, and a
-//! bearer in the query string would land in every access log and `Referer`. An authenticated
-//! POST mints a short-lived, single-subject ticket signed by `webhook:sign`; the GET presents it.
+//! The stream takes a ticket: `EventSource` cannot set `Authorization`, and a query bearer lands in logs.
 
 use serde_json::json;
 
@@ -36,30 +28,23 @@ fn channels(v: &serde_json::Value) -> Vec<prefs::Channel> {
         .unwrap_or_default()
 }
 
-/// The secret the stream ticket is signed with. Config, not a `comp:secrets` reference,
-/// deliberately: this signs a 60-second read-only capability over one person's own
-/// notifications, whose leak is a minute of somebody else's notifications, not a breach.
+/// Config, not a secret: it signs a 60-second read-only view of one person's own notifications.
 fn ticket_secret() -> String {
     crate::bindings::wasi::config::store::get("stream-ticket-secret")
         .ok()
         .flatten()
         .filter(|s| !s.is_empty())
-        // A deployment that sets none still gets a working stream, signed with a
-        // constant. Named so that it is obvious in a config dump that nobody set it.
+        // Named so a config dump shows nobody set it.
         .unwrap_or_else(|| "unset-stream-ticket-secret".to_string())
 }
 
-/// Sixty seconds: long enough for a browser to open the connection, short enough that a
-/// ticket in a log is worthless.
 const TICKET_TTL: u64 = 60;
 
 fn ticket_body(subject: &str, expires: u64) -> String {
     format!("{subject}.{expires}")
 }
 
-/// Mint one. The signature is over subject AND expiry, so neither can be edited
-/// without invalidating it — a ticket for `ada` cannot be turned into one for `bob`
-/// by changing the query string.
+/// Signed over subject and expiry, so neither can be edited.
 fn mint_ticket(subject: &str) -> String {
     let expires = crate::remind::now() + TICKET_TTL;
     let body = ticket_body(subject, expires);
@@ -91,7 +76,6 @@ fn redeem_ticket(ticket: &str) -> Option<String> {
     Some(subject.to_string())
 }
 
-/// `POST /api/notifications/stream-ticket` — authenticated the normal way.
 fn stream_ticket(route: &Route) -> Reply {
     let p = match require(route, "ticket", "read") {
         Ok(p) => p,
@@ -158,8 +142,6 @@ fn read(route: &Route, body: &str) -> Reply {
         Err(r) => return r,
     };
     let input: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
-    // `through: 0` from mark-all-read means everything, which is what a "mark all
-    // read" button sends and what the capability already understands.
     let r = if input.get("seqs").is_some() {
         let seqs: Vec<u64> = input["seqs"]
             .as_array()
@@ -203,9 +185,7 @@ fn put_prefs(route: &Route, body: &str) -> Reply {
     let Ok(input) = serde_json::from_str::<serde_json::Value>(body) else {
         return Reply::err(400, "malformed_body");
     };
-    // The SUBJECT is the caller's, never the body's. Taking it from the body would
-    // let anyone rewrite anyone else's preferences — including the address their
-    // email goes to.
+    // The caller's subject, never the body's, or anyone could rewrite anyone's email address.
     let pref = prefs::Preference {
         subject: p.subject.clone(),
         default_channels: channels(&input["default_channels"]),
@@ -221,20 +201,13 @@ fn put_prefs(route: &Route, body: &str) -> Reply {
     }
 }
 
-/// How long a stream lives before the browser is asked to reconnect. A component
-/// invocation that never returns is one the host can never reclaim, so the stream
-/// ends politely and `EventSource` reopens — which is what it does natively.
+/// A never-returning invocation cannot be reclaimed, so the stream ends and `EventSource` reopens.
 const MAX_TICKS: u32 = 300;
 const POLL_MS: u64 = 1000;
 
-/// Hold the connection open and push each new note as an SSE frame. This bypasses `Reply`:
-/// the response has to be SET before the first frame and then written to for as long as it
-/// lasts. It reads `notify:inbox` by cursor; `since(after)` is exactly "what is new", the
-/// call a page uses to load.
 pub fn stream(route: &Route) -> Result<Response, ErrorCode> {
     let Some(subject) = stream_subject(route) else {
-        // A bad or expired ticket gets a 401 and no stream. Not a 200 with an error
-        // frame: `EventSource` would reconnect forever against it.
+        // 401, not a 200 with an error frame: `EventSource` would reconnect forever.
         return crate::respond(401, "application/json", br#"{"error":"bad_ticket"}"#.to_vec());
     };
 
@@ -243,8 +216,7 @@ pub fn stream(route: &Route) -> Result<Response, ErrorCode> {
     let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);
 
     let mut cursor = route.param("after").parse::<u64>().unwrap_or(0);
-    // `write_all` hands back what the reader did not take: non-empty means the
-    // client went away, which ends the stream.
+    // `write_all` returns what the reader did not take: non-empty means the client left.
     let (mut out, rx) = crate::bindings::wit_stream::new();
     wit_bindgen::spawn_local(async move {
         if !out.write_all(b": connected\n\n".to_vec()).await.is_empty() {
@@ -253,8 +225,7 @@ pub fn stream(route: &Route) -> Result<Response, ErrorCode> {
         for _ in 0..MAX_TICKS {
             let notes = inbox::since(&subject, cursor, 50).unwrap_or_default();
             let frame = if notes.is_empty() {
-                // A comment, not data: it keeps the connection alive through any
-                // proxy with an idle timeout without the browser seeing an event.
+                // A comment keeps proxy idle timeouts away without the browser seeing an event.
                 ": ping\n\n".to_string()
             } else {
                 notes

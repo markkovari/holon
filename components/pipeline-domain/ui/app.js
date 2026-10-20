@@ -16,7 +16,6 @@ async function api(path, method = 'GET', body = null) {
 
 function connectSSE() {
   if (es) es.close();
-  // Get latest events
   es = new EventSource('/api/stream');
   
   es.onmessage = (event) => {
@@ -71,7 +70,7 @@ function updateStats(data) {
     if (inflightCount > 0) inflightCount--;
     if (pendingCount > 0) pendingCount--;
     deadCount++;
-    loadDeadLetters(); // refresh list
+    loadDeadLetters();
   }
   
   document.getElementById('statPending').innerText = pendingCount;
@@ -134,6 +133,5 @@ async function replayDead(id) {
 function openEnqueueModal() { document.getElementById('enqueueModal').style.display = 'flex'; }
 function closeModal(id) { document.getElementById(id).style.display = 'none'; }
 
-// Init
 connectSSE();
 loadDeadLetters();

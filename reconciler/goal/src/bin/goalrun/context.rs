@@ -1,22 +1,10 @@
-//! What a branch or a part is SHOWN — its writable files, its read-only
-//! context, and (for a part) what the pool already has.
-
 use serde_json::{json, Value};
 
 use crate::pool;
 use crate::PartSpec;
 
-/// The files a branch is shown: what it may write, then what it may only read.
-///
-/// One function because `run_parts` builds the same thing for a part, and two builders drift (the
-/// rehearsal and `goalrun` disagreed about `component =`).
-///
-/// Writable files keep every comment: there the comments are the brief. Read-only `.wit` context is
-/// trimmed by `lean_context`; a `.rs` held-out test is not, because its doc comments are the
-/// specification.
-///
-/// Deduped, and `writable` wins: a path in both lists would be sent twice, paid for on every attempt,
-/// with the second copy stripped differently from the first.
+/// Shared with `run_parts`: two builders drift. Writable files keep every comment (the brief), and
+/// `writable` wins a duplicate, which would otherwise be paid for on every attempt.
 pub(crate) fn branch_context(
     checkout: &std::path::Path,
     writable: &[String],
@@ -35,8 +23,7 @@ pub(crate) fn branch_context(
                 "path": path,
                 "content": if strip { pool::lean_context(path, c) } else { c },
             })),
-            // Loud, because a typo'd context path is otherwise silent: the branch is not shown the file and
-            // writes blind again.
+            // Loud: a typo'd context path otherwise leaves the branch writing blind.
             Err(e) => {
                 println!("context: `{path}` could not be read ({e}) — the branch will not see it")
             }
@@ -45,11 +32,7 @@ pub(crate) fn branch_context(
     out
 }
 
-/// What a PART is shown: its own files, plus what the pool already has.
-///
-/// A function so a test can ask whether a part reads the capability search without a fleet, registry
-/// and model; the decomposed path shipped without it because nothing could see a part told about
-/// `auth-guard` from one not told (ADR-0094).
+/// Testable without a fleet: parts once shipped never told about `auth-guard` (ADR-0094).
 pub(crate) fn part_context(
     checkout: &std::path::Path,
     writable: &[String],
@@ -57,8 +40,7 @@ pub(crate) fn part_context(
     pool: Option<Value>,
 ) -> Vec<Value> {
     let mut out = branch_context(checkout, writable, readonly);
-    // LAST, and appended rather than merged: it is prose about other components, not a file the part
-    // may read.
+    // Last, appended not merged: it is prose about other components, not a file.
     out.extend(pool);
     out
 }
@@ -67,12 +49,7 @@ pub(crate) fn first_line(s: &str) -> &str {
     s.lines().next().unwrap_or(s).trim()
 }
 
-/// Which part a join failure is about.
-///
-/// A join failure is the one verdict no part owns: the halves each passed and the whole did not.
-/// Attribution is by evidence only: a part owns it if the text names one of its writable paths or
-/// the part itself; a failure naming nothing owned belongs to the JOIN (the contract, or the
-/// composition check), which is more useful than picking the likeliest part.
+/// By evidence only: a failure naming no part's path or name belongs to the join itself.
 pub(crate) fn join_failure_owners(failure: &str, parts: &[PartSpec]) -> Vec<String> {
     let owners: Vec<String> = parts
         .iter()
@@ -88,8 +65,6 @@ pub(crate) fn join_failure_owners(failure: &str, parts: &[PartSpec]) -> Vec<Stri
 mod tests {
     use super::*;
 
-    /// A path in both `writable` and `context` is sent once, as the WRITABLE (untrimmed) copy; sent twice
-    /// it is paid for on every attempt and the copies are stripped differently.
     #[test]
     fn a_path_in_both_lists_is_shown_once_and_unstripped() {
         let dir = std::env::temp_dir().join("holon-branch-context-test"); // nosemgrep: rust.lang.security.temp-dir.temp-dir
@@ -108,7 +83,7 @@ mod tests {
         let readonly = branch_context(&dir, &[], &both);
         assert!(!readonly[0]["content"].as_str().expect("content").contains("// a comment"));
 
-        // A `.rs` held-out test is never stripped, in either position: its doc comments are the specification.
+        // A held-out `.rs` test is never stripped: its doc comments are the spec.
         std::fs::write(dir.join("t.rs"), "//! the spec\nfn x() {}\n").expect("write");
         let rs = branch_context(&dir, &[], &["t.rs".to_string()]);
         assert!(rs[0]["content"].as_str().expect("content").contains("//! the spec"));
@@ -117,11 +92,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A PART reads what the pool already has, and reads it last.
-    ///
-    /// The capability search is mandatory in both directions (ADR-0094) and the decomposed path skipped
-    /// it, so a two-part run asked nothing and every part wrote blind; an absent question looks exactly
-    /// like one with no answer.
     #[test]
     fn a_part_is_told_what_the_pool_already_has() {
         let dir = std::env::temp_dir().join("holon-part-context-test"); // nosemgrep: rust.lang.security.temp-dir.temp-dir
@@ -135,15 +105,12 @@ mod tests {
         assert_eq!(with[1], pool, "the pool entry is last");
         assert!(with[0]["content"].as_str().expect("content").contains("fn stub"));
 
-        // No hits is no entry: "the pool has:" followed by nothing reads as an empty pool rather than a
-        // question that found no answer.
+        // No hits, no entry: a heading over nothing reads as an empty pool.
         let without = part_context(&dir, &own, &[], None);
         assert_eq!(without.len(), 1, "nothing appended: {without:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A join failure is attributed by EVIDENCE (a path the part owns, or its name); one naming neither
-    /// belongs to the join itself, since guessing would send the reader to the wrong diff.
     #[test]
     fn a_join_failure_names_the_part_that_owns_it_or_says_it_owns_none() {
         let part = |name: &str, w: &str| PartSpec {

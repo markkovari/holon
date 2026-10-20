@@ -1,14 +1,3 @@
-//! `login-app` — a consumer component that composes three universal capabilities into one login surface.
-//!
-//! It imports `session:store`, `config:store` and `secrets:vault`; `wac plug` satisfies them with the real capability
-//! components at build time (see `cargo xtask compose login`). The multi-capability counterpart to auth-guard composing rate-limiter.
-//!
-//! Flow:
-//!   login  -> config:store gives the session ttl; secrets:vault supplies an auth "pepper" (proving the vault is wired
-//!             in; a real app would use it to verify a credential MAC); session:store mints the server-side session.
-//!   whoami -> session:store lookup -> identity.
-//!   logout -> session:store revoke.
-
 #[allow(warnings)]
 mod bindings;
 
@@ -21,29 +10,27 @@ use bindings::session::store::store as sessions;
 struct Component;
 
 const DEFAULT_SESSION_TTL: u64 = 3600;
-/// Name of the secret holding the per-deployment auth pepper, seeded by the host / a bootstrap.
 const PEPPER_SECRET: &str = "auth-pepper";
 
-/// Read the session ttl from config:store (`app`/`session-ttl`), falling back to the default if unset or non-integer.
 fn session_ttl() -> u64 {
     match cfg::get("app", "session-ttl") {
         Ok(entry) => match entry.value {
             cfg::Value::Integer(n) if n > 0 => n as u64,
             _ => DEFAULT_SESSION_TTL,
         },
-        // not-found (or any error) -> default: an unset knob is normal, not fatal.
+        // An unset knob is normal, not fatal.
         Err(_) => DEFAULT_SESSION_TTL,
     }
 }
 
-/// Fetch the auth pepper from secrets:vault; if not seeded, fall back to an empty pepper so the demo runs with a bare vault. (A production policy might refuse to start.)
+/// Unseeded vault -> empty pepper, so the demo runs with a bare vault.
 fn pepper() -> Vec<u8> {
     secrets::get(PEPPER_SECRET).unwrap_or_default()
 }
 
 impl Guest for Component {
     fn login(user: String, password: String) -> Result<LoginResult, AuthError> {
-        // Credential "check": this demo only proves composition, so it rejects empty inputs and accepts the rest. A real app would verify against an accounts store and MAC the password with the pepper.
+        // Demo only proves composition: any non-empty credential is accepted.
         if user.is_empty() || password.is_empty() {
             return Err(AuthError::InvalidCredentials);
         }
@@ -52,7 +39,6 @@ impl Guest for Component {
 
         let ttl = session_ttl();
 
-        // session:store — mint the server-side session; the payload is an opaque app blob.
         let payload = format!("{{\"user\":\"{user}\",\"peppered\":{peppered}}}");
         let s = sessions::create(payload.as_bytes(), ttl)
             .map_err(|e| AuthError::Capability(format!("session.create: {e:?}")))?;

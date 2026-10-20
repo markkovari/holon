@@ -1,13 +1,4 @@
-//! `mdns-discovery` — what a printer, speaker or other device is announcing
-//! on the local network
-//!
-//! Browsing mDNS/DNS-SD needs multicast on the host network, which a `wasm32-wasip2` guest does not have (ADR-0095). This is
-//! the component side: it holds the contract and reaches the daemon over HTTP, as `fs-watcher` reaches `comp-fswatch`.
-//! What it may dial is a MANIFEST decision (ADR-0008): the daemon's address is `mdns-url` in `wasi:config` and the
-//! deployment's egress allow-list decides whether the call leaves at all.
-//!
-//! Config (wasi:config/store):
-//!   mdns-url    where `comp-mdns` is listening, e.g. http://127.0.0.1:8007
+//! No multicast in a wasm32-wasip2 guest (ADR-0095): this reaches the comp-mdns daemon over HTTP at `mdns-url`.
 
 #[allow(warnings)]
 mod bindings;
@@ -50,7 +41,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), MdnsError> {
     Ok((scheme, authority, path))
 }
 
-/// POST the request and return the body. Every failure is `unavailable`: the daemon's own refusals arrive as JSON with a 200, so anything at this level is the transport.
+/// Every failure is `unavailable`: the daemon's own refusals arrive as JSON with a 200.
 fn post(body: Vec<u8>) -> Result<Vec<u8>, MdnsError> {
     let url = daemon_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
@@ -58,7 +49,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, MdnsError> {
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // A shared secret, if the deployment set one (see `comp_daemon_kit` for why loopback binding alone is not a boundary). Absent means the daemon runs with no --token.
+    // Optional shared secret: loopback binding alone is not a boundary (see `comp_daemon_kit`).
     if let Ok(Some(token)) = config::get("mdns-token") {
         if !token.is_empty() {
             let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
@@ -102,7 +93,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, MdnsError> {
         match stream.blocking_read(8192) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went wrong, and returning what arrived would present a truncated answer as whole.
+            // Any other error would present a truncated answer as whole.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -110,7 +101,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, MdnsError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser: the daemon's replies have two flat shapes, so serde would be more code than the thing it reads.
+/// No parser: the daemon's replies have two flat shapes.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];

@@ -1,17 +1,6 @@
 #!/usr/bin/env node
-// A local `/v1/messages` and `/v1/chat/completions` endpoint backed by `gemini -p` CLI
-// instead of direct API HTTP calls — mirroring `tools/claude-shim.mjs`.
-//
-// Point `anthropic:base-url` or `openai:base-url` at this and the loop's inference
-// runs through the Gemini CLI on your subscription/credentials.
-//
-//   node tools/gemini-shim.mjs                     # 127.0.0.1:8788
+// `/v1/messages` and `/v1/chat/completions` backed by `gemini -p`; one process per request isolates branches.
 //   PORT=9000 GEMINI_MODEL=gemini-2.5-pro node tools/gemini-shim.mjs
-//
-// ## One CLI process per request (Snapshot & Branch Isolation)
-//
-// Every incoming request spawns a fresh `gemini -p` (or `node tools/gemini-cli.mjs -p`)
-// subprocess. This ensures isolation across swarm branches and generation tasks.
 
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -26,12 +15,10 @@ const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 240_000);
 const LIMIT = Number(process.env.GEMINI_CONCURRENCY || 4);
 
-// Determine CLI binary: system `gemini`, or `tools/gemini-cli.mjs`
 const GEMINI_BIN = process.env.GEMINI_CLI_BIN || 'gemini';
 const FALLBACK_CLI = join(__dirname, 'gemini-cli.mjs');
 
 let active = 0;
-/** Resolvers for calls that arrived while every slot was busy. FIFO. */
 const waiting = [];
 
 const acquire = () => {
@@ -48,16 +35,12 @@ const release = () => {
   else active--;
 };
 
-/** Anthropic's error envelope — `codec.rs` keys on `type == "error"`. */
+// `codec.rs` keys on `type == "error"`.
 const apiError = (type, message) => JSON.stringify({ type: 'error', error: { type, message } });
 
-/** OpenAI error envelope */
 const openAiError = (message) =>
   JSON.stringify({ error: { message, type: 'invalid_request_error', code: null } });
 
-/**
- * Flatten a request into one prompt plus a system string.
- */
 function render(body) {
   let system = '';
   if (Array.isArray(body.system)) {
@@ -92,7 +75,6 @@ function render(body) {
   return { system, prompt };
 }
 
-/** Run one `gemini -p` CLI subprocess and resolve with its stdout. */
 function runGeminiCli({ system, prompt, model }) {
   return new Promise((resolve, reject) => {
     const args = ['-p'];
@@ -100,11 +82,9 @@ function runGeminiCli({ system, prompt, model }) {
     if (targetModel) args.push('--model', targetModel);
     if (system) args.push('--system-prompt', system);
 
-    // If global `gemini` executable exists in PATH, spawn it; else spawn node gemini-cli.mjs
     let cmd = GEMINI_BIN;
     let cmdArgs = args;
 
-    // Check if `gemini` is in PATH or use our node CLI runner
     const isNodeScript = cmd.endsWith('.mjs') || cmd.endsWith('.js') || !existsSync(cmd);
     if (isNodeScript && existsSync(FALLBACK_CLI)) {
       cmd = process.execPath;
@@ -237,7 +217,7 @@ const server = createServer((req, res) => {
         `[gemini-shim (cli)] FAILED after ${Date.now() - started}ms` +
           ` [queued ${started - arrived}ms]: ${e.message}`,
       );
-      // 529 / 500 retryable error
+      // 529 -> ProviderUnavailable, which the driver retries.
       send(529, isAnthropic ? apiError('overloaded_error', e.message) : openAiError(e.message));
     } finally {
       release();

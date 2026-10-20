@@ -33,14 +33,12 @@ POST {{base}}/test/seed
 {"vendor_a": "{{vendor_subject}}"}
 HTTP 201
 
-# a vendor with no postings at all has a zero balance, not an error
 GET {{base}}/api/vendors/nobody-ever-heard-of/balance
 Authorization: Bearer {{admin_token}}
 HTTP 200
 [Asserts]
 jsonpath "$.balance" == 0
 
-# only the vendor themself, or admin, may read their balance
 GET {{base}}/api/vendors/{{vendor_subject}}/balance
 Authorization: Bearer {{vendor_token}}
 HTTP 200
@@ -53,7 +51,6 @@ HTTP 200
 [Asserts]
 jsonpath "$.balance" == 900
 
-# platform ledger is admin-only
 GET {{base}}/api/ledger/platform
 Authorization: Bearer {{vendor_token}}
 HTTP 403
@@ -65,7 +62,6 @@ HTTP 200
 jsonpath "$.cash" == 1000
 jsonpath "$.fees" == 100
 
-# a vendor with nothing owed cannot be paid out
 POST {{base}}/api/vendors/nobody-ever-heard-of/payout
 Authorization: Bearer {{admin_token}}
 HTTP 400

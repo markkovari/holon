@@ -1,13 +1,4 @@
-//! Taking a service request in — `POST /api/requests`, the list, and one document.
-//!
-//! Shape of this file: every route is a `Result<Reply, Reply>` function and every
-//! refusal is an early `Err(Reply)` returned by `?`, so the validation order the
-//! contract fixes (invalid → bad_coordinate → duplicate) is literally the order of
-//! the lines, and `handle` is one `unwrap_or_else(|e| e)`.
-//!
-//! `notes` never reaches the store raw: `pii::redact` with empty `kinds` (= every
-//! kind) runs before the document is built, so there is no code path that could
-//! write the caller's phone number into a manifest anyone can read.
+//! Each refusal is an early `Err`, so the contract's validation order is the line order.
 
 use crate::bindings::p3::http::types::Method;
 use crate::bindings::pii::redact::redactor as pii;
@@ -16,8 +7,7 @@ use crate::{Reply, Route};
 use serde_json::{json, Map, Value};
 
 const COLLECTION: &str = "requests";
-/// Not `done` and not `cancelled` — the states in which a request still blocks a
-/// duplicate. A finished job does not block a new one.
+/// A finished job does not block a new duplicate.
 const LIVE: [&str; 3] = ["new", "assigned", "enroute"];
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
@@ -57,7 +47,7 @@ fn create(body: &str) -> Result<Reply, Reply> {
         return Err(Reply::json(409, json!({ "error": "duplicate", "existing": existing })));
     }
 
-    // Masked here, once, before anything can persist it.
+    // Masked before anything can persist it.
     let notes = pii::redact(
         input.get("notes").and_then(Value::as_str).unwrap_or(""),
         &pii::Options { kinds: Vec::new() },
@@ -74,8 +64,7 @@ fn create(body: &str) -> Result<Reply, Reply> {
         "created": "",
     });
 
-    // `created` is the store's own timestamp, which does not exist until the record
-    // does — so: create, then write the stamp back at the revision we were handed.
+    // `created` is the store's stamp, which exists only after create.
     let entry = records::create(
         COLLECTION,
         &doc.to_string(),
@@ -102,10 +91,9 @@ fn store_error() -> Reply {
     Reply::err(500, "store_error")
 }
 
-/// The id of a live request with the same title and the same point, if there is one.
 fn duplicate_of(title: &str, lat: f64, lon: f64) -> Result<Option<String>, Reply> {
     for state in LIVE {
-        // The value is the JSON ENCODING — `new` is indexed as `"new"`.
+        // Indexed by JSON encoding: `new` is `"new"`.
         let filters = vec![records::Filter {
             field: "state".to_string(),
             value: Value::String(state.to_string()).to_string(),
@@ -124,8 +112,7 @@ fn duplicate_of(title: &str, lat: f64, lon: f64) -> Result<Option<String>, Reply
     Ok(None)
 }
 
-/// Coordinates come back through JSON, so compare within a tolerance far finer than
-/// any distinct address rather than betting on exact float equality.
+/// Within a tolerance: coordinates come back through JSON.
 fn close(v: Option<&Value>, want: f64) -> bool {
     v.and_then(Value::as_f64).is_some_and(|got| (got - want).abs() < 1e-9)
 }
@@ -165,13 +152,11 @@ fn one(id: &str) -> Result<Reply, Reply> {
     }
 }
 
-/// Every record, paged. No filter means no index to ask, so this walks the
-/// collection instead of guessing what an empty filter vector means.
+/// Walked, not filtered: no filter means no index to ask.
 fn every() -> Result<Vec<records::Entry>, Reply> {
     let mut out = Vec::new();
     let mut after = String::new();
-    // ponytail: a page cap instead of an unbounded loop — raise it if a day ever has
-    // more than 100k requests in it.
+    // ponytail: a 100-page cap, not an unbounded loop; raise it past 100k requests a day.
     for _ in 0..100 {
         let page = records::list_records(COLLECTION, 1000, &after).map_err(|_| store_error())?;
         let empty = page.entries.is_empty();
@@ -188,7 +173,6 @@ fn parse(data: &str) -> Value {
     serde_json::from_str(data).unwrap_or_else(|_| json!({}))
 }
 
-/// The stored document with `"id"` merged in.
 fn merged(e: &records::Entry) -> Value {
     let mut map: Map<String, Value> = match parse(&e.data) {
         Value::Object(m) => m,
@@ -198,11 +182,9 @@ fn merged(e: &records::Entry) -> Value {
     Value::Object(map)
 }
 
-/// The store's `created` as RFC3339 UTC. This world imports no wall clock, so the
-/// calendar arithmetic is here: days-from-civil, run backwards (Hinnant).
+/// No wall clock in this world: days-from-civil backwards (Hinnant).
 fn rfc3339(stamp: u64) -> String {
-    // The store's unit is not in the contract, so normalise by magnitude rather than
-    // assuming: anything far past a plausible epoch-seconds value is a finer unit.
+    // The store's unit is not in the contract, so normalise by magnitude.
     let secs = match stamp {
         s if s >= 1_000_000_000_000_000_000 => s / 1_000_000_000,
         s if s >= 1_000_000_000_000_000 => s / 1_000_000,
@@ -242,7 +224,6 @@ mod tests {
     #[test]
     fn stamps_render_as_rfc3339_utc() {
         assert_eq!(rfc3339(1_756_800_000), "2025-09-02T08:00:00Z");
-        // Same instant in millis and nanos must render the same.
         assert_eq!(rfc3339(1_756_800_000_000), rfc3339(1_756_800_000));
         assert_eq!(rfc3339(1_756_800_000_000_000_000), rfc3339(1_756_800_000));
         assert_eq!(rfc3339(0), "1970-01-01T00:00:00Z");

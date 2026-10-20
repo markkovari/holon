@@ -1,8 +1,4 @@
-//! Part 5 — inquiries and threaded messages (CONTRACT.md "Part 5 — `messaging.rs`").
-//!
-//! A buyer opens an inquiry on a listing; this part reads the `listings` collection `catalog.rs` writes
-//! DIRECTLY (parts meet in `records:store`), to 404 a missing/delisted listing and to copy the listing's
-//! `vendor` onto the inquiry at creation, as `orders.items[].unit_price` is copied.
+//! Reads catalog's `listings` directly (parts meet in records:store) and copies `vendor` onto the inquiry.
 
 use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
@@ -22,7 +18,7 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     }
 }
 
-/// The `"body"` field of a request body, `""` when absent or unparseable; nothing here warrants a 400.
+/// `""` when absent or unparseable: nothing here warrants a 400.
 fn body_field(raw: &str) -> String {
     serde_json::from_str::<Value>(raw)
         .ok()
@@ -30,20 +26,18 @@ fn body_field(raw: &str) -> String {
         .unwrap_or_default()
 }
 
-/// The stored inquiry document, or `None` when there is no such inquiry (an unreadable one is the same 404).
+/// An unreadable inquiry is the same 404 as a missing one.
 fn inquiry_doc(id: &str) -> Option<Value> {
     let entry = records::get("inquiries", id).ok()?;
     Some(serde_json::from_str::<Value>(&entry.data).unwrap_or_else(|_| json!({})))
 }
 
-/// Either party to the inquiry (`buyer` or `vendor`) or an admin; anyone else gets the `403`.
 fn is_party(admin: bool, subject: &str, inquiry: &Value) -> bool {
     admin
         || inquiry.get("buyer").and_then(Value::as_str) == Some(subject)
         || inquiry.get("vendor").and_then(Value::as_str) == Some(subject)
 }
 
-/// A stored document with its own store id merged in.
 fn with_id(data: &str, id: &str) -> Value {
     let mut v: Value = serde_json::from_str(data).unwrap_or_else(|_| json!({}));
     if let Value::Object(ref mut map) = v {
@@ -52,10 +46,7 @@ fn with_id(data: &str, id: &str) -> Value {
     v
 }
 
-/// `POST /api/listings/{id}/inquiries` `{"body"}` — creates the `inquiries`
-/// document (`vendor` copied off the listing) plus its first `messages`
-/// document. `404` if the listing is missing OR delisted: a delisted listing
-/// "cannot be ordered or messaged about".
+/// A delisted listing "cannot be ordered or messaged about" (CONTRACT.md), so it 404s.
 fn open_inquiry(route: &Route, listing_id: &str, raw: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let listing = match records::get("listings", listing_id) {
@@ -94,9 +85,7 @@ fn open_inquiry(route: &Route, listing_id: &str, raw: &str) -> Reply {
     Reply::json(201, with_id(&inquiry.data, &inquiry.id))
 }
 
-/// `GET /api/inquiries` — admin sees all; everyone else the inquiries they are a party to. The store is
-/// asked for BOTH indexed fields rather than branching on role: a buyer has no rows under `vendor` and
-/// vice versa, so the union is each one's scope.
+/// Both indexed fields are queried, not a role branch: a buyer has no rows under `vendor` and vice versa.
 fn list_inquiries(route: &Route) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let entries = if is_admin(&principal) {
@@ -114,8 +103,6 @@ fn list_inquiries(route: &Route) -> Reply {
     Reply::json(200, json!({"inquiries": entries_json(&entries)}))
 }
 
-/// `GET /api/inquiries/{id}/messages` — either party or an admin, oldest
-/// first, `403` for anyone else.
 fn list_messages(route: &Route, inquiry_id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let inquiry = match inquiry_doc(inquiry_id) {
@@ -133,8 +120,6 @@ fn list_messages(route: &Route, inquiry_id: &str) -> Reply {
     Reply::json(200, json!({"messages": entries_json(&entries)}))
 }
 
-/// `POST /api/inquiries/{id}/messages` `{"body"}` — either party (or an
-/// admin) may post, `403` for anyone else, `201` with the new message.
 fn post_message(route: &Route, inquiry_id: &str, raw: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let inquiry = match inquiry_doc(inquiry_id) {

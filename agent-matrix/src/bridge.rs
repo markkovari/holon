@@ -1,17 +1,5 @@
-//! The bridge: every agent is a Matrix user, every project a Space.
-//!
-//! * **Agent → user.** `@agent-<name>:<server>`, with a direct room with the owner.
-//! * **Project → Space** with a `general` room (talk to its agents) and a `feed`
-//!   room (agents report; read-only by convention).
-//! * **Membership is mutual.** Inviting an agent's user to a project room adds it
-//!   to the project in the runtime (granting its store and topics); removing it
-//!   takes that away. The runtime's registry is the truth; each reconcile pass
-//!   makes Matrix match it.
-//! * **Who answers** in a project room: the agents you mention; else the lead;
-//!   else nobody (so five agents do not all reply to every message).
-//! * **Approvals** appear as a poll in the agent's room; your vote answers them.
-//!
-//! Only the owner can talk to the agents. Everyone else's messages are ignored.
+//! The runtime's registry is the truth: each reconcile makes Matrix match it (ADR-0105).
+//! Only the owner can talk to the agents.
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -33,11 +21,9 @@ pub struct Bridge {
     pub rt: Runtime,
     pub state: State,
     seen_events: Mutex<(HashSet<String>, VecDeque<String>)>,
-    /// Serialises reconcile passes: one is enough, and two would race on room creation.
+    /// Two reconcile passes at once would race on room creation.
     reconciling: Mutex<()>,
-    /// How many passes each agent the bridge keeps a room for has been missing from the runtime.
     absence: Mutex<crate::retire::Absence>,
-    /// Whether the owner has been told that a mass disappearance was left alone.
     refusal_told: Mutex<bool>,
 }
 
@@ -53,8 +39,6 @@ pub fn clip(s: &str, n: usize) -> String {
     }
 }
 
-/// Agents mentioned in a message: structured `m.mentions` first (what Element
-/// sends when you pick a user), then `@name` / `@agent-name` in the text.
 pub fn mentioned_agents(cfg: &Config, content: &Value) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut push = |a: String| {
@@ -76,7 +60,6 @@ pub fn mentioned_agents(cfg: &Config, content: &Value) -> Vec<String> {
         if let Some(name) = w.strip_prefix('@') {
             let name = name.trim_end_matches(':');
             let name = name.strip_prefix("agent-").unwrap_or(name);
-            // `@agent-x:server` written out in full
             let name = name.split(':').next().unwrap_or(name);
             if !name.is_empty() {
                 push(name.to_string());
@@ -86,8 +69,7 @@ pub fn mentioned_agents(cfg: &Config, content: &Value) -> Vec<String> {
     out
 }
 
-/// The top-ranked member, but only when it beats the runner-up by a clear margin. Embedding
-/// scores of unrelated text sit high, so a bare top-1 is a guess; a near tie goes to the lead.
+/// Embedding scores of unrelated text sit high, so a bare top-1 is a guess; a near tie goes to the lead.
 pub fn clear_winner(ranked: &[(String, f32)]) -> Option<String> {
     const MARGIN: f32 = 0.04;
     match ranked {
@@ -97,9 +79,6 @@ pub fn clear_winner(ranked: &[(String, f32)]) -> Option<String> {
     }
 }
 
-/// The recent messages as `name: text` lines, oldest first, at most `budget` characters
-/// (the newest are kept), each message trimmed; the message `skip` and empty ones left out.
-/// `msgs` is the Matrix `/messages` chunk, newest first.
 pub fn history_lines(cfg: &Config, msgs: &[Value], skip: &str, budget: usize) -> String {
     const PER_MESSAGE: usize = 400;
     let mut picked: Vec<String> = Vec::new();
@@ -108,8 +87,7 @@ pub fn history_lines(cfg: &Config, msgs: &[Value], skip: &str, budget: usize) ->
         if m["event_id"].as_str() == Some(skip) {
             continue;
         }
-        // A photo is its caption (or nothing) and not its file name: "image.png" tells the agent
-        // nothing and reads as a message that failed to arrive.
+        // Not the file name: "image.png" reads to the agent like a message that failed to arrive.
         let photo_line;
         let body = if m["content"]["msgtype"].as_str() == Some("m.image") {
             let caption = photo_caption(&m["content"]);
@@ -142,8 +120,6 @@ pub fn history_lines(cfg: &Config, msgs: &[Value], skip: &str, budget: usize) ->
     picked.join("\n")
 }
 
-/// Who answers a message in a project room: the agents mentioned, else the lead, else a
-/// lone member, else nobody.
 pub fn project_targets(
     members: &[String],
     lead: Option<&str>,
@@ -164,9 +140,7 @@ pub fn project_targets(
     }
 }
 
-/// What an approval would do, in words, for the tools whose name alone says too little
-/// (`agent_delete` reads like "remove it from the list" and destroys the run history).
-/// `None` for any other tool: the poll then shows the call as it is.
+/// For tools whose name says too little: `agent_delete` reads like "unlist" and destroys the history.
 pub fn describe_approval(tool: &str, args: &Value) -> Option<String> {
     let name = args["name"].as_str().unwrap_or("?");
     Some(match tool {
@@ -254,13 +228,9 @@ pub fn describe_approval(tool: &str, args: &Value) -> Option<String> {
     })
 }
 
-/// A photo is still the subject for this long: past it, a text message is about something else.
 const PHOTO_FOLLOW_UP_MS: u64 = 15 * 60 * 1000;
 
-/// The photo a text message is probably about: the newest message from `owner` in `msgs` (newest
-/// first), when it is a photo, is recent, and `agent` was given it. Returns its file name in that
-/// agent's inbox and its age in minutes. Only the newest photo is considered: if that one did not
-/// reach this agent, an older one is not dug up.
+/// Only the newest photo counts: if it did not reach this agent, an older one is not dug up.
 pub fn recent_photo(
     msgs: &[Value],
     owner: &str,
@@ -283,8 +253,7 @@ pub fn recent_photo(
     Some((file, age / 60_000))
 }
 
-/// The words a person wrote with a photo: Element puts the file name in `body` unless there is
-/// a caption, in which case `filename` holds the name and `body` the caption.
+/// Element puts the file name in `body` unless captioned; then `filename` is the name.
 pub fn photo_caption(content: &Value) -> String {
     let body = content["body"].as_str().unwrap_or_default().trim();
     match content["filename"].as_str() {
@@ -305,8 +274,7 @@ fn looks_like_file_name(s: &str) -> bool {
         })
 }
 
-/// The name to keep a photo under: its own, with an extension the runtime accepts (from its
-/// type when the name has none, as a camera roll upload sometimes does).
+/// The runtime needs an extension, and a camera-roll upload sometimes has none.
 pub fn photo_name(content: &Value) -> String {
     let given = content["filename"]
         .as_str()
@@ -332,8 +300,6 @@ pub fn photo_name(content: &Value) -> String {
     format!("{name}.{ext}")
 }
 
-/// What to say aloud of a written answer: the start of it, cut at a sentence end, short
-/// enough to listen to. The full text is always in the room.
 pub fn spoken_excerpt(answer: &str) -> String {
     const LIMIT: usize = 700;
     let a = answer.trim();
@@ -346,9 +312,7 @@ pub fn spoken_excerpt(answer: &str) -> String {
     format!("{} The rest is in the message.", head[..cut].trim())
 }
 
-/// A project name from a Space's display name: lowercase words joined by dashes, each
-/// starting with a letter ("Nutrition & Meals 2" -> "nutrition-meals-n2"). Empty when the
-/// name has nothing usable (all symbols, or no ASCII letters or digits).
+/// Each word starts with a letter: "Nutrition & Meals 2" -> "nutrition-meals-n2".
 pub fn slug(name: &str) -> String {
     let words: Vec<String> = name
         .split(|c: char| !c.is_ascii_alphanumeric())
@@ -383,15 +347,12 @@ impl Bridge {
         })
     }
 
-    /// A note to the owner, in the control room.
     fn tell_owner(&self, text: &str) {
         if let Some(room) = self.state.read(|d| d.control_room.clone()) {
             let _ = self.mx.send_text(&room, &self.bridge_user(), text, None);
         }
     }
 
-    /// Puts the owner into a room the bridge made, so there is no invite to find.
-    /// If that fails the invite is still pending, so say why and carry on.
     fn place_owner(&self, room: &str) {
         if let Err(e) = self.mx.join_as_owner(room) {
             log(&format!(
@@ -405,12 +366,10 @@ impl Bridge {
         self.cfg.bridge_user()
     }
 
-    /// Registers the bridge's own user. Called once at start.
     pub fn ensure_bridge_user(&self) -> R<()> {
         self.mx.register("holon-bridge")?;
         self.mx.set_displayname(&self.bridge_user(), "holon")
     }
-
 
     pub fn reconcile(&self) -> Result<(), String> {
         let _one = self.reconciling.lock().unwrap();
@@ -426,7 +385,6 @@ impl Bridge {
             }
         }
         for p in &projects {
-            // The runtime says whether a project is archived; the rooms follow it.
             if p.archived {
                 self.archive_rooms(p);
                 continue;
@@ -439,9 +397,6 @@ impl Bridge {
         Ok(())
     }
 
-
-    /// Retires the rooms of agents the runtime no longer lists, brings back the room of one
-    /// that was restored, and lets go of the room of one that left the trash.
     fn retire_gone_agents(&self, active: &[AgentInfo]) {
         let live: HashSet<String> = active.iter().map(|a| a.name.clone()).collect();
         for (name, room) in self.state.read(|d| d.retired.clone()) {
@@ -461,7 +416,7 @@ impl Bridge {
             *self.refusal_told.lock().unwrap() = false;
             return;
         }
-        // What the trash holds decides what a farewell can promise. Without it, try again.
+        // The farewell depends on the trash; without it, try next pass.
         let Ok(trash) = self.rt.trash() else { return };
         let in_trash = |n: &str| trash.iter().any(|t| t.name == n);
         for (name, room) in waiting {
@@ -494,9 +449,7 @@ impl Bridge {
         }
     }
 
-    /// Ends an agent's direct room: it says so, its name shows it, and the owner leaves.
-    /// A deleted agent still in the trash keeps its user in the room, so that restoring it
-    /// can invite the owner back to the same room. Otherwise its user leaves too.
+    /// A trashed agent's user stays in the room, so a restore can invite the owner back to it.
     fn retire(&self, name: &str, in_trash: bool) {
         let Some(room) = self.state.read(|d| d.dms.get(name).cloned()) else { return };
         let ghost = self.cfg.ghost(name);
@@ -529,15 +482,13 @@ impl Bridge {
         ));
     }
 
-    /// Lists `room` in the Agents Space, or takes it out (an empty child event removes it),
-    /// so a retired agent's room is not left behind as an entry nobody can open.
+    /// An empty `m.space.child` event takes the room out of the Space.
     fn set_agents_space_child(&self, room: &str, listed: bool) {
         let Some(space) = self.state.read(|d| d.agents_space.clone()) else { return };
         let content = if listed { json!({"via": [self.cfg.server_name]}) } else { json!({}) };
         let _ = self.mx.set_state(&space, &self.bridge_user(), "m.space.child", room, content);
     }
 
-    /// A restored agent: the same room, the same user, the owner invited back.
     fn revive(&self, name: &str, room: &str) {
         let ghost = self.cfg.ghost(name);
         let _ = self.mx.set_displayname(&ghost, name);
@@ -554,8 +505,7 @@ impl Bridge {
         self.tell_owner(&format!("{name} was restored; its old room is back in your list."));
     }
 
-    /// `!agent retire <agent>`: retire the room of an agent the runtime does not list, for
-    /// when the automatic pass refused to.
+    /// For when the automatic pass refused.
     pub fn retire_now(&self, name: &str) -> String {
         match self.rt.agents() {
             Err(e) => return format!("could not read the agents: {e}"),
@@ -591,7 +541,6 @@ impl Bridge {
         Ok(())
     }
 
-    /// The Space that holds the room of every agent that is in no project.
     fn ensure_agents_space(&self) -> R<String> {
         if let Some(s) = self.state.read(|d| d.agents_space.clone()) {
             return Ok(s);
@@ -611,9 +560,7 @@ impl Bridge {
         Ok(space)
     }
 
-    /// An agent that is in no project gets a room in the Agents Space. One that is in a
-    /// project needs none: it is in that project's rooms. An agent that already has a
-    /// room (a direct room from before the Agents Space) keeps it.
+    /// An agent in a project lives in its rooms; one with an older direct room keeps it.
     fn ensure_agent(&self, a: &AgentInfo, in_project: bool) -> R<()> {
         if in_project || self.state.read(|d| d.dms.contains_key(&a.name)) {
             return Ok(());
@@ -650,7 +597,7 @@ impl Bridge {
         let owner = self.cfg.owner.clone();
         let server = self.cfg.server_name.clone();
         let existing = self.state.read(|d| d.projects.get(&p.name).cloned());
-        // A Space the owner made themselves: its rooms are whatever the owner put in it.
+        // An adopted Space.
         if let Some(r) = existing.as_ref().filter(|r| r.general.is_empty() && r.feed.is_empty()) {
             return self.sync_adopted(p, &r.space);
         }
@@ -682,9 +629,7 @@ impl Bridge {
         let mut rooms = match existing {
             Some(r) => r,
             None => {
-                // A project of none or one agent is one room: with no one else to keep a
-                // report apart from, a feed would only be a second place to look. The
-                // feed appears when a second agent joins.
+                // A lone agent needs no separate feed; it appears when a second joins.
                 let space = make(p.name.clone(), &p.description, true)?;
                 let general = make(
                     format!("{} · general", p.name),
@@ -703,7 +648,6 @@ impl Bridge {
             let r = rooms.clone();
             self.state.write(|d| d.projects.insert(p.name.clone(), r));
         }
-        // Membership: the runtime's list is the truth; the rooms follow it.
         for room in [&rooms.general, &rooms.feed].into_iter().filter(|r| !r.is_empty()) {
             let joined = self.mx.joined(room, &bridge)?;
             for agent in &p.agents {
@@ -726,9 +670,6 @@ impl Bridge {
         Ok(())
     }
 
-    /// Keeps an adopted Space and every room in it matching the runtime's member list:
-    /// member agents are invited in (as the owner: the bridge is not in these rooms),
-    /// agents that are no longer members are removed.
     fn sync_adopted(&self, p: &ProjectInfo, space: &str) -> R<()> {
         let st = self.mx.room_state_as_owner(space)?;
         let children: Vec<String> = st
@@ -743,7 +684,7 @@ impl Bridge {
             }
         });
         for room in std::iter::once(space.to_string()).chain(children) {
-            // a child the owner has since left cannot be managed; skip it
+            // The owner may have left a child room since.
             let Ok(joined) = self.mx.joined_as_owner(&room) else { continue };
             for agent in &p.agents {
                 let ghost = self.cfg.ghost(agent);
@@ -764,9 +705,7 @@ impl Bridge {
         Ok(())
     }
 
-    /// `agent` was invited to `room` (which it has joined) and the room is not one the
-    /// bridge knows. If it is a Space, the Space becomes a project named after it, with
-    /// `agent` as its first member. Returns whether it was adopted.
+    /// `true` when `room` is a Space, adopted or not: the caller is done with it.
     fn adopt_space(&self, room: &str, agent: &str) -> bool {
         let ghost = self.cfg.ghost(agent);
         let Ok(st) = self.mx.room_state(room, &ghost) else { return false };
@@ -823,7 +762,6 @@ impl Bridge {
         true
     }
 
-    /// The project whose Space is a parent of `room`, if any (by its `m.space.parent` state).
     fn parent_project(&self, room: &str, as_user: &str) -> Option<String> {
         let st = self.mx.room_state(room, as_user).ok()?;
         let parents: Vec<String> = st
@@ -836,8 +774,7 @@ impl Bridge {
         })
     }
 
-
-    /// True the first time an event id is seen (Synapse can deliver one twice).
+    /// Synapse can deliver an event twice.
     fn first_time(&self, event_id: &str) -> bool {
         if event_id.is_empty() {
             return true;
@@ -866,7 +803,7 @@ impl Bridge {
 
     fn on_event(self: &Arc<Self>, ev: &Value) {
         let sender = ev["sender"].as_str().unwrap_or_default();
-        // Our own voices are not input: the bridge, and every agent's user.
+        // Our own voices are not input.
         if sender == self.bridge_user() || self.cfg.agent_of(sender).is_some() {
             return;
         }
@@ -898,9 +835,6 @@ impl Bridge {
             _ => None,
         };
         match ev["content"]["membership"].as_str().unwrap_or_default() {
-            // The owner invited an agent. In a project's room or Space it joins the project;
-            // in a Space the bridge does not know yet, that Space BECOMES a project; in any
-            // other room it just joins (and answers when addressed).
             "invite" => {
                 if let Some(p) = project_of(self.state.kind_of(room)) {
                     match self.rt.add_to_project(&p, &agent) {
@@ -922,7 +856,6 @@ impl Bridge {
                 if self.adopt_space(room, &agent) {
                     return;
                 }
-                // a room inside an adopted Space: inviting an agent to it joins the project too
                 if let Some(p) = self.parent_project(room, target) {
                     match self.rt.add_to_project(&p, &agent) {
                         Ok(()) => {
@@ -933,7 +866,6 @@ impl Bridge {
                     }
                 }
             }
-            // The owner removed an agent: in a project room or Space it leaves the project.
             "leave" => {
                 if let Some(p) = project_of(self.state.kind_of(room)) {
                     match self.rt.remove_from_project(&p, &agent) {
@@ -951,8 +883,6 @@ impl Bridge {
             return;
         };
         let content = &ev["content"];
-        // A voice message (or any audio) is heard, a photo is kept for the agent, text is read.
-        // Nothing else is input.
         let msgtype = content["msgtype"].as_str();
         let heard = msgtype == Some("m.audio");
         let photo = msgtype == Some("m.image");
@@ -970,7 +900,6 @@ impl Bridge {
             return;
         }
         let agents: Vec<String> = match self.state.kind_of(room) {
-            // commands are typed; a voice message or a photo here is ignored
             Some(RoomKind::Control) if heard || photo => return,
             Some(RoomKind::Control) => {
                 let me = self.clone();
@@ -994,10 +923,7 @@ impl Bridge {
                 };
                 let mentioned = mentioned_agents(&self.cfg, content);
                 let named = mentioned.iter().any(|a| info.agents.contains(a));
-                // Nobody named: when an embedding service is configured and one member
-                // fits clearly better than the rest, that member answers; else the lead.
-                // Jev first when a key file is configured; else (or when it cannot say) the
-                // embedding margin.
+                // Nobody named: Jev if configured, else a clear embedding winner, else the lead.
                 let jev_key = std::env::var("HOLON_JEV_KEY_FILE").unwrap_or_default();
                 let by_jev = if named || jev_key.is_empty() || info.agents.len() < 2 {
                     None
@@ -1016,7 +942,6 @@ impl Bridge {
                 let judged = if by_jev.is_some() {
                     None
                 } else {
-                    // the runtime owns the embedding service (and starts it when needed)
                     match (!named && info.agents.len() > 1).then_some(()) {
                         Some(()) => {
                             let known = self.rt.agents().unwrap_or_default();
@@ -1040,7 +965,7 @@ impl Bridge {
                     project_targets(&info.agents, info.lead.as_deref(), &mentioned)
                 })
             }
-            // A room the owner made by hand: whichever agents are in it and addressed.
+            // A room the owner made by hand.
             None => {
                 let in_room: Vec<String> = self
                     .mx
@@ -1356,7 +1281,6 @@ impl Bridge {
         }
     }
 
-
     /// Posts a poll for every pending approval that has none yet, and forgets the
     /// polls of approvals that are no longer pending (answered elsewhere, or timed out).
     pub fn poll_approvals(&self) {
@@ -1438,7 +1362,6 @@ impl Bridge {
             Err(e) => log(&format!("approval {approval}: {e}")),
         }
     }
-
 
     /// Every room of a project, its children first and its Space last, so leaving them in
     /// this order never leaves a room whose Space is gone.
@@ -1557,7 +1480,6 @@ impl Bridge {
         }
     }
 
-
     /// Posts what the runtime ran on its own and the owner wants to read: see
     /// `scheduled::due`. An agent the bridge has not seen before is only marked as
     /// seen, so its history is not posted all at once.
@@ -1604,7 +1526,6 @@ impl Bridge {
             }
         }
     }
-
 
     /// Starts the reconcile, approval and scheduled-result loops on their own threads.
     pub fn spawn_loops(self: &Arc<Self>) {

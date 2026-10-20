@@ -1,11 +1,5 @@
-//! mfa:app — TOTP 2FA enrollment + challenge-response login over composed contracts.
-//!
-//! 1. **enroll** — `otp::provision` mints a random shared secret + an `otpauth://` URI (the QR an authenticator
-//!    scans). The secret is sealed in `secrets:vault` (only ciphertext hits the store); the account is `pending`.
-//! 2. **activate** — the user types the first code; we `vault::get` the secret and `otp::verify` it. Only a correct
-//!    first code flips the account to `enrolled` and issues single-use **recovery codes** (stored as SHA-256 hashes).
-//! 3. **login** — a live TOTP code (or a not-yet-burned recovery code) is verified; on success `session::create`
-//!    mints an opaque server-side session + CSRF token. The secret is write-once, read-only-to-verify.
+//! TOTP 2FA: the secret is sealed in secrets:vault (write-once, read-only-to-verify);
+//! recovery codes are single-use and stored only as SHA-256 hashes.
 
 #[allow(warnings)]
 mod bindings {
@@ -30,7 +24,6 @@ mod bindings {
         world: "mfa:app/mfa-authgate",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -99,7 +92,7 @@ fn secret_name(account: &str) -> String {
     format!("totp/{account}")
 }
 
-/// Look up the enrollment record by account (a secondary index; the store keys by its own minted id). Returns the entry so callers can `update` at the right revision.
+/// By secondary index: the store keys by its own minted id.
 fn find_account(account: &str) -> Result<Option<records::Entry>, records::StoreError> {
     let hits = records::find_by(ACCOUNTS, "account", &json!(account).to_string())?;
     Ok(hits.into_iter().next())
@@ -167,9 +160,7 @@ async fn enroll(request: Request) -> Outcome {
     if let Err(e) = write {
         return store_err(e);
     }
-    // render the otpauth:// URI as a scannable QR so the authenticator app can
-    // scan it instead of the user typing the secret. Fall back to just the URI
-    // if the (bounded) input somehow doesn't fit a QR.
+    // Falls back to the bare URI if the input somehow doesn't fit a QR.
     let qr_svg = qr::svg(&prov.uri, qr::Ecc::Medium, 4).unwrap_or_default();
     Outcome::Json(
         201,
@@ -212,7 +203,6 @@ async fn activate(request: Request) -> Outcome {
         Ok(false) => return Outcome::err(401, "code did not verify"),
         Err(e) => return otp_err(e),
     }
-    // first code proven — issue recovery codes, store only their hashes.
     let codes = otp::recovery_codes(RECOVERY_COUNT);
     let hashes: Vec<String> = codes.iter().map(|c| hash_code(c)).collect();
     rec["state"] = json!("enrolled");
@@ -253,7 +243,6 @@ async fn login(request: Request) -> Outcome {
         Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
         Err(e) => return vault_err(e),
     };
-    // try a live TOTP code first; fall back to burning a recovery code.
     let totp_ok = matches!(otp::verify(&secret, &code, PERIOD, DIGITS, SKEW), Ok(true));
     if !totp_ok {
         let h = hash_code(&code);
@@ -262,7 +251,7 @@ async fn login(request: Request) -> Outcome {
             .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
             .unwrap_or_default();
         if let Some(pos) = remaining.iter().position(|x| *x == h) {
-            remaining.remove(pos); // single-use: burn it
+            remaining.remove(pos);
             rec["recovery"] = json!(remaining);
             used_recovery = true;
         } else {
@@ -270,12 +259,10 @@ async fn login(request: Request) -> Outcome {
         }
     }
     if used_recovery {
-        // persist the burned recovery code.
         if let Err(e) = records::update(ACCOUNTS, &entry.id, &rec.to_string(), entry.revision) {
             return store_err(e);
         }
     }
-    // challenge passed — mint a server-side session carrying the account.
     let data = json!({"account": account, "mfa": true}).to_string();
     match session::create(data.as_bytes(), SESSION_TTL) {
         Ok(s) => Outcome::Json(
@@ -380,9 +367,7 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
         .map_err(|e| Outcome::Json(400, json!({"error": format!("bad json: {e}")}).to_string()))
 }
 
-/// The most a request body may be, before the component stops reading it. Without a ceiling a guest
-/// accumulated until wasmtime's 64 MiB per-store cap TRAPPED, reaching the caller as a bare closed
-/// connection. Generous: a backstop, not a content policy; uploads police themselves with a 413.
+/// Backstop under wasmtime's 64 MiB per-store cap, which traps instead of erroring.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

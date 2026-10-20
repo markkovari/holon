@@ -159,7 +159,6 @@ function App() {
         <div className="space-y-8">
           {posts.map(post => (
             <article key={post.id} className="bg-white border border-gray-300 rounded-lg post-container">
-              {/* Post Header */}
               <div className="flex items-center justify-between p-3">
                 <div className="flex items-center space-x-3">
                   <div className="w-8 h-8 bg-gradient-to-tr from-yellow-400 to-fuchsia-600 p-[2px] rounded-full">
@@ -172,12 +171,10 @@ function App() {
                 <MoreHorizontal className="text-gray-500 w-5 h-5 cursor-pointer" />
               </div>
 
-              {/* Post Image */}
               <div className="relative pb-[100%] bg-gray-100">
                 <img src={post.image_url} alt="Post content" className="absolute top-0 left-0 w-full h-full object-cover" />
               </div>
 
-              {/* Post Actions */}
               <div className="p-3">
                 <div className="flex justify-between mb-2">
                   <div className="flex space-x-4">

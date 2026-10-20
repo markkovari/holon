@@ -6,18 +6,8 @@ kv = "sqlite"
 components = ["jev-router", "mock-jev-provider"]
 strategy = "fused"
 
-# Wired to `mock-jev-provider` for a free, deterministic, runnable demo — the
-# same choice `apps/intent-router.toml` makes for `llm:inference`. The real
-# backend for production is `typesafe-provider`; see `fixtures/jev-secret.yaml`
-# for how that's wired with a secret reference.
-
-# `jev:confidence-threshold` is left unset (defaults to 650/1000 in
-# jev-router's own code) — a colon-namespaced key cannot survive this tier's
-# CFG_<KEY> env-var translation (see `cli/src/selfhost.rs::check`), the same
-# reason `openai-provider`/`anthropic-provider`'s own colon-namespaced config
-# is only ever wired through the `comp/v1` reconciler tier, never this one.
-
-# KEEP TABLES LAST
+# `mock-jev-provider` keeps the demo free and deterministic; production uses `typesafe-provider`.
+# `jev:confidence-threshold` is unset: a colon-namespaced key cannot survive this tier's CFG_<KEY> env translation.
 [config]
 mock-model = "mock-jev-1"
 mock-script = '''{"rules": [

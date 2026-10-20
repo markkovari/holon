@@ -1,18 +1,4 @@
-//! `comp-mailrelay` — HTTP in, real SMTP out. The piece that lets a wasm component
-//! reach MailHog.
-//!
-//! `comp-host` wires no `wasi:sockets`, so a component cannot speak SMTP, and MailHog only ingests SMTP
-//! (its HTTP API is read-only). Something outside the sandbox has to bridge the two.
-//!
-//! It is NOT a mock: it accepts the JSON body `mail-http` POSTs to Resend and turns it into a genuine
-//! SMTP session that MailHog receives and serves back, so the component under test is
-//! byte-identical whether pointed here or at Resend.
-//!
-//! std only, in the shape of `examples/mesh/src/bin/flaky.rs`: SMTP submission is four commands and a
-//! dot, and a crate would be a dependency for sixty lines.
-//!
-//!   comp-mailrelay 127.0.0.1:3390 127.0.0.1:1025
-//!   POST /  {"from","to":[…],"subject","text"}  ->  201 {"id":"…"}
+//! HTTP in, real SMTP out: comp-host wires no `wasi:sockets` and MailHog only ingests SMTP.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -45,8 +31,7 @@ fn reply(stream: &mut TcpStream, code: u16, body: &str) {
 }
 
 fn serve(mut stream: TcpStream, smtp: &str) {
-    // Read the head, then exactly `content-length` more: "until the socket closes" would hang, since the
-    // client keeps it open waiting for us.
+    // Read exactly `content-length`: the client keeps the socket open, so reading to EOF would hang.
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
     let head_end = loop {
@@ -96,19 +81,16 @@ fn serve(mut stream: TcpStream, smtp: &str) {
     let subject = json_str(&body, "subject").unwrap_or_default();
     let text = json_str(&body, "text").or_else(|| json_str(&body, "body")).unwrap_or_default();
 
-    // The id goes ON the message as its Message-ID and is also returned, so a gate can find this exact
-    // send in the mailbox.
+    // Also the Message-ID, so a gate can find this exact send in the mailbox.
     let id = format!("{}.{}@relay.local", std::process::id(), now_nanos());
     match send_smtp(smtp, &from, &to, &subject, &text, &id) {
-        // 502 rather than 500: the relay is fine and the thing behind it is not, which is what `mail:send`'s
-        // `unavailable` means and a retry might fix.
+        // 502: the relay is fine, the SMTP server behind it is not, which a retry might fix.
         Err(e) => reply(&mut stream, 502, &format!(r#"{{"error":"smtp: {}"}}"#, esc(&e))),
         Ok(()) => reply(&mut stream, 201, &format!(r#"{{"id":"{id}"}}"#)),
     }
 }
 
-/// SMTP submission: greet, envelope, DATA, dot. Every reply must start with a 2 or a 3; anything else
-/// and the message did not arrive, which a relay must never report as success.
+/// Any reply not starting with 2 or 3 means the message did not arrive.
 fn send_smtp(
     addr: &str,
     from: &str,
@@ -152,8 +134,7 @@ fn send_smtp(
     cmd(&mut r, &format!("RCPT TO:<{to}>"), "RCPT TO")?;
     cmd(&mut r, "DATA", "DATA")?;
 
-    // Dot-stuffing: a line that is exactly "." would end the message early, so a leading dot is doubled
-    // (RFC 5321).
+    // Dot-stuffing (RFC 5321): a lone "." line would end the message early.
     let mut data = format!(
         "From: {from}\r\nTo: {to}\r\nSubject: {subject}\r\nMessage-ID: <{id}>\r\n\
          Content-Type: text/plain; charset=utf-8\r\n\r\n"
@@ -174,14 +155,12 @@ fn send_smtp(
     Ok(())
 }
 
-// The smallest JSON reading that does the job: three fields out of a body this program also defines;
-// serde_json would be a dependency for `"to":[" ... "]`.
+// Hand-rolled JSON reading: serde_json would be a dependency for three fields.
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
-/// The string value of `"key"`, with escapes undone.
 fn json_str(body: &str, key: &str) -> Option<String> {
     let at = body.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = body[at..].trim_start().strip_prefix(':')?.trim_start();
@@ -204,7 +183,6 @@ fn json_str(body: &str, key: &str) -> Option<String> {
     None
 }
 
-/// The first string in `"key": [ "…" ]`.
 fn json_first_of_array(body: &str, key: &str) -> Option<String> {
     let at = body.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = body[at..].trim_start().strip_prefix(':')?.trim_start();

@@ -87,5 +87,4 @@ async function reviewItem(id) {
   await loadQueue();
 }
 
-// Init
 loadQueue();

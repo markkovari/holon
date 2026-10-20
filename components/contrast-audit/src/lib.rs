@@ -1,14 +1,4 @@
-//! `contrast-audit` — a WCAG contrast auditor that runs on the lattice.
-//!
-//! Exports HTTP: `GET /` serves the page (which samples the screenshot's pixels
-//! in the browser), `POST /audit` takes `{pairs:[{fg,bg,share}]}`, recomputes
-//! every contrast ratio here (`wcag`), and asks Claude — reached by EGRESS, with
-//! the API key from the vault — which failures to fix first and what to change
-//! them to, returning `{report}`.
-//!
-//! Same two grants as `photo-critic` (a secret and egress), opposite payload: this one
-//! MEASURES in the browser and sends no image at all, only the colours found. A screenshot
-//! of an unreleased product cannot leave the device even by accident.
+//! Only colours leave the browser, never the screenshot, so an unreleased UI cannot leak by accident.
 
 #[allow(warnings)]
 mod bindings {
@@ -27,7 +17,6 @@ mod bindings {
         world: "demo:contrastaudit/contrast-audit",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -48,19 +37,10 @@ struct Component;
 
 const DEFAULT_MODEL: &str = "claude-sonnet-5";
 
-/// How many pairs reach the model.
-///
-/// A quantised screenshot yields dozens of near-duplicate pairs and the tail is
-/// all sampling noise. `wcag::audit` sorts worst-first, so this keeps the
-/// findings and drops the ones that already pass comfortably.
+/// `wcag::audit` sorts worst-first, so this keeps the findings and drops sampling noise.
 const MAX_PAIRS: usize = 12;
 
-/// The reply budget. A report is a few hundred tokens, so this is nearly all headroom,
-/// deliberately: `max_tokens` is a cap, not a reservation, and a large one buys room for a
-/// model that thinks before it writes (`goalrun`'s `--max-tokens` documents `["thinking"]`
-/// with `stop_reason: max_tokens` at 4096 on claude-sonnet-5). `the model returned no text`
-/// was seen once at 1500 and has not recurred, so the budget was probably not the cause;
-/// the error below says which empty it is.
+/// A cap, not a reservation: headroom for a model that thinks before it writes.
 const MAX_TOKENS: u32 = 16000;
 
 const PROMPT: &str = "You are an accessibility engineer reviewing the colour contrast of a user \
@@ -99,9 +79,7 @@ fn json_str(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
 }
 
-/// A ceiling on a body read into memory, not a policy. Far smaller than
-/// `photo-critic`'s: this endpoint takes a list of colours, so anything
-/// approaching a megabyte is not a request this app has a use for.
+/// The body is a colour list; anything near a megabyte is not a request.
 const MAX_BODY_BYTES: usize = 256 * 1024;
 
 async fn post_anthropic(body: Vec<u8>) -> Result<(u16, Vec<u8>), String> {
@@ -139,8 +117,7 @@ async fn post_anthropic(body: Vec<u8>) -> Result<(u16, Vec<u8>), String> {
         buf.reserve(8192);
         let (st, b) = stream.read(buf).await;
         buf = b;
-        // The same ceiling on the way back: a reply far larger than its request is a
-        // mistake or an attack.
+        // A reply far larger than its request is a mistake or an attack.
         if buf.len() > MAX_BODY_BYTES * 8 {
             return Err(e("the response body is too large"));
         }
@@ -150,19 +127,15 @@ async fn post_anthropic(body: Vec<u8>) -> Result<(u16, Vec<u8>), String> {
         }
     }
     drop(res_tx);
-    // Like the p2 loop's `Err(_) => break`: what arrived is returned, and a
-    // truncated reply fails loudly as bad JSON in `audit`.
+    // What arrived is returned; a truncated reply fails loudly as bad JSON in `audit`.
     let _ = trailers.await;
     Ok((status, buf))
 }
 
-// Read the whole incoming request body. An over-long or failed read is EMPTY
-// rather than a plausible prefix of itself — a truncated pair list would audit
-// some of an interface and report as though it had seen all of it.
+// Over-long or failed reads are empty: a truncated pair list would audit part of a UI as the whole.
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
-/// Render the audited pairs as the table the model reads: a table, not JSON, so a reader
-/// of the transcript can check it by eye against the report.
+/// A table, not JSON, so a transcript reader can check it by eye.
 fn table(pairs: &[wcag::Pair]) -> String {
     let mut s =
         String::from("| text | background | ratio | grade | share |\n|---|---|--:|---|--:|\n");
@@ -191,8 +164,6 @@ async fn audit(request: Request) -> Result<String, String> {
             Some((
                 p["fg"].as_str()?.to_string(),
                 p["bg"].as_str()?.to_string(),
-                // Absent is not zero-weighted-out, it is simply unknown; a
-                // missing share must not silently sort a pair last.
                 p["share"].as_f64().unwrap_or(0.0),
             ))
         })
@@ -200,7 +171,6 @@ async fn audit(request: Request) -> Result<String, String> {
     if claims.is_empty() {
         return Err("no colour pairs in the request".into());
     }
-    // EVERY ratio recomputed here. See `wcag`'s module docs for why.
     let mut pairs = wcag::audit(&claims);
     if pairs.is_empty() {
         return Err("none of those pairs were two different colours".into());
@@ -211,8 +181,7 @@ async fn audit(request: Request) -> Result<String, String> {
     let failing = pairs.iter().filter(|p| !p.passes_aa()).count();
     let mut prompt = format!("{PROMPT}\n\n{} pair(s) sampled, {failing} below 4.5:1.", pairs.len());
     if dropped > 0 {
-        // Said out loud, because a report that silently saw two thirds of the
-        // evidence reads exactly like one that saw all of it.
+        // Said out loud: a report that saw two thirds reads exactly like one that saw all.
         prompt.push_str(&format!(
             " {dropped} further pair(s) with better contrast were not included."
         ));
@@ -246,8 +215,7 @@ async fn audit(request: Request) -> Result<String, String> {
     if !text.is_empty() {
         return Ok(text);
     }
-    // Say WHICH empty this is: a thinking model out of budget returns a valid 200 with no
-    // text block.
+    // A thinking model out of budget returns a valid 200 with no text block.
     let kinds: Vec<&str> = parsed["content"]
         .as_array()
         .map(|b| b.iter().filter_map(|b| b["type"].as_str()).collect())

@@ -1,28 +1,5 @@
-//! The structural graph: `symbol`, `patch`, `conflict`, and the `depends_on` /
-//! `implements` / `conflicts_with` edges — as a trait, implemented in memory
-//! ([`crate::mem::MemGraph`]) and on SurrealDB (`surreal::SurrealGraph`).
-//!
-//! # What is authoritative
-//!
-//! The graph is an INDEX. What a symbol *is* right now is its tip pointer in the
-//! [`crate::store::PointerStore`]; the graph holds the immutable patch records
-//! those pointers name, the conflict records, and mirrors (a symbol's current
-//! name, tip, position) that make listing a component possible without scanning
-//! pointers. The engine always re-reads the pointer and verifies against the
-//! patch it names, so a mirror that lags a pointer can make a lookup miss for a
-//! moment, never make a write land on the wrong state.
-//!
-//! Every record is per workspace: the same patch hash in two workspaces is two
-//! records (its landing op and status differ).
-//!
-//! # Writes are monotone in op id
-//!
-//! Every mutable field an op sets — a patch's status, a symbol's mirror, a
-//! conflict's state — records the op that set it (`status_op`, `last_op`,
-//! `state_op`), and a write from an older op than the one recorded is ignored.
-//! Finishing an op is idempotent and may be done by its writer, by a reader
-//! that found it half-done, or by repair, in any order and more than once
-//! ([`crate::recovery`]); monotonicity is what makes a late finisher harmless.
+//! An index: a symbol's truth is its tip pointer, so a lagging mirror here can miss, never mislead.
+//! Every mutable field records the op that set it; a write from an older op is ignored.
 
 use std::future::Future;
 
@@ -31,8 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::Result;
 use crate::model::{Agent, ConflictId, ConflictState, Hash, OpId, Placement, SymbolId, SymbolKind};
 
-/// A patch's change, normalised: content is always a blob hash, never inline.
-/// This (with the symbol key and the parents) is what a patch hash covers.
+/// Normalised (content is a blob hash); with the key and parents, what a patch hash covers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Change {
@@ -40,8 +16,7 @@ pub enum Change {
     Replace(Hash),
     Delete,
     Rename(String),
-    /// Same content, new place: the placement as requested (what is hashed);
-    /// the order key it resolved to is [`PatchRecord::order`].
+    /// As requested (hashed); the resolved order key is [`PatchRecord::order`].
     Move(Placement),
 }
 
@@ -50,28 +25,24 @@ pub enum Change {
 pub enum PatchStatus {
     /// Written before the compare-and-set that would land it; not (yet) anything.
     Pending,
-    /// Was a symbol's tip as of `PatchRecord::op` (a later revert does not change
-    /// this — the oplog says what is live).
+    /// Was a tip as of `PatchRecord::op`; a later revert does not change this.
     Landed,
     /// Recorded as the right side of this conflict.
     Conflicted(ConflictId),
 }
 
-/// An immutable patch, plus the metadata that is not part of its hash.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PatchRecord {
     pub hash: Hash,
-    /// The stable symbol key (see [`crate::patch::symbol_key`]).
     pub key: String,
     /// The symbol's identity AFTER this patch (a rename's new name).
     pub symbol: SymbolId,
     pub parents: Vec<Hash>,
     pub change: Change,
-    /// The symbol's content after this patch; `None` for a delete.
     pub content: Option<Hash>,
     pub agent: Agent,
     pub message: Option<String>,
-    /// Unix ms the engine recorded it.
+    /// Unix ms.
     pub at: u64,
     /// The op that landed it (or opened its conflict).
     pub op: Option<OpId>,
@@ -79,12 +50,9 @@ pub struct PatchRecord {
     pub depends_on: Vec<SymbolId>,
     pub implements: Vec<SymbolId>,
     pub wit_binding: Option<String>,
-    /// The op whose write set `status` (monotone; see the module notes).
     #[serde(default)]
     pub status_op: OpId,
-    /// The symbol's explicit order key within its file after this patch
-    /// ([`crate::order`]); `None`: ordered by creation op. Carried forward by
-    /// every patch that does not set it.
+    /// `None`: ordered by creation op; carried forward by patches that do not set it.
     #[serde(default)]
     pub order: Option<String>,
     /// The placement a `create` asked for (hashed, with the change).
@@ -98,8 +66,7 @@ impl PatchRecord {
     }
 }
 
-/// A symbol's index entry. `component`, `path` and `kind` never change; `name`
-/// and the rest mirror the tip.
+/// `component`, `path` and `kind` never change; the rest mirror the tip.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymbolRecord {
     pub key: String,
@@ -107,30 +74,24 @@ pub struct SymbolRecord {
     pub path: String,
     pub kind: SymbolKind,
     pub name: String,
-    /// Every name this symbol has been written under — what a lookup by name
-    /// searches, so a rename is findable before its mirror update lands.
+    /// Every name it has had, so a rename is findable before its mirror update lands.
     pub aliases: Vec<String>,
     pub tip: Option<Hash>,
     pub deleted: bool,
-    /// The op that first created it: its order within the file when no patch
-    /// set an explicit order key. `None` until that op is finished.
+    /// The creating op, its file order absent an order key; `None` until that op finishes.
     pub position: Option<OpId>,
     pub wit_binding: Option<String>,
-    /// The op whose update this mirror reflects (monotone).
     #[serde(default)]
     pub last_op: OpId,
 }
 
-/// The mirror fields an op updates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolUpdate {
     pub name: String,
     pub tip: Option<Hash>,
     pub deleted: bool,
     pub wit_binding: Option<String>,
-    /// Set as the position only if the symbol has none yet.
     pub position_if_unset: Option<OpId>,
-    /// The op making this update; ignored if the mirror reflects a later one.
     pub op: OpId,
 }
 
@@ -138,7 +99,6 @@ pub struct SymbolUpdate {
 pub struct SideRecord {
     pub patch: Hash,
     pub agent: Agent,
-    /// Content blob; `None` when this side deleted the symbol.
     pub content: Option<Hash>,
 }
 
@@ -151,15 +111,12 @@ pub struct ConflictRecord {
     pub left: SideRecord,
     pub right: SideRecord,
     pub state: ConflictState,
-    /// 0 until the op that opened it is committed (see the engine's notes on
-    /// uncommitted conflicts).
+    /// 0 until the opening op commits.
     pub opened_at: OpId,
     pub resolved_by: Option<Hash>,
-    /// While uncommitted: the pending ops that wrote it ahead of their pointer
-    /// write. It is abandoned only when the last of them aborts.
+    /// While uncommitted, the ops that wrote it; abandoned only when the last of them aborts.
     #[serde(default)]
     pub pending: Vec<OpId>,
-    /// The op whose effect set `state` (monotone).
     #[serde(default)]
     pub state_op: OpId,
 }
@@ -186,18 +143,15 @@ impl ConflictEffect {
     }
 }
 
-/// The graph store.
 pub trait Graph: Send + Sync {
-    /// Create the symbol's index entry if absent (tip `none`, deleted, no
-    /// position), and add `name` to its aliases either way.
+    /// Creates it if absent (no tip, deleted, no position); adds `name` to aliases either way.
     fn ensure_symbol(
         &self,
         ws: &str,
         key: &str,
         id: &SymbolId,
     ) -> impl Future<Output = Result<()>> + Send;
-    /// Apply `update` if `update.op` is at least the mirror's `last_op`; set the
-    /// position if unset either way.
+    /// Applies only if `update.op` >= `last_op`; sets an unset position either way.
     fn update_symbol(
         &self,
         ws: &str,
@@ -209,8 +163,7 @@ pub trait Graph: Send + Sync {
         ws: &str,
         key: &str,
     ) -> impl Future<Output = Result<Option<SymbolRecord>>> + Send;
-    /// Keys of symbols with this component, path and kind that have EVER been
-    /// called `name` (candidates; the caller verifies against the tip).
+    /// Keys ever called `name` (candidates; the caller verifies against the tip).
     fn symbols_named(
         &self,
         ws: &str,
@@ -223,16 +176,14 @@ pub trait Graph: Send + Sync {
         component: &str,
     ) -> impl Future<Output = Result<Vec<SymbolRecord>>> + Send;
 
-    /// Insert a patch record; if one with this hash exists it is replaced only
-    /// while it is still `Pending`. Replaces its `depends_on`/`implements` edges.
+    /// Replaces an existing record only while it is `Pending`; replaces its edges.
     fn put_patch(&self, ws: &str, patch: &PatchRecord) -> impl Future<Output = Result<()>> + Send;
     fn patch(
         &self,
         ws: &str,
         hash: &str,
     ) -> impl Future<Output = Result<Option<PatchRecord>>> + Send;
-    /// Set a patch's status (and, with `set_op`, its `op`) — if `op` is at
-    /// least its `status_op`.
+    /// Only if `op` >= `status_op`; `set_op` also sets the patch's `op`.
     fn mark_patch(
         &self,
         ws: &str,
@@ -248,26 +199,22 @@ pub trait Graph: Send + Sync {
         target: &SymbolId,
     ) -> impl Future<Output = Result<Vec<Hash>>> + Send;
 
-    /// Write a conflict ahead of `op`'s pointer write, uncommitted
-    /// (`opened_at: 0`, `open`). If it exists uncommitted and open, `op` joins
-    /// its `pending`; if it exists abandoned and `op` is newer than its
-    /// `state_op`, it is written afresh; otherwise it is left alone.
+    /// Writes it uncommitted (`opened_at: 0`, `open`) ahead of `op`'s pointer write. If it exists:
+    /// uncommitted and open, `op` joins `pending`; abandoned and older than `op`, rewritten; else kept.
     fn put_conflict(
         &self,
         ws: &str,
         c: &ConflictRecord,
         op: OpId,
     ) -> impl Future<Output = Result<()>> + Send;
-    /// `op` aborted: drop it from `pending`; abandon the conflict if it is
-    /// still uncommitted, open, and no pending op is left.
+    /// Drops `op` from `pending`; abandons it if uncommitted, open, and nothing is left pending.
     fn abandon_if_uncommitted(
         &self,
         ws: &str,
         id: &str,
         op: OpId,
     ) -> impl Future<Output = Result<()>> + Send;
-    /// Apply one effect of committed `op` — if `op` is at least `state_op`. An
-    /// effect to `open` on an uncommitted conflict commits it (`opened_at: op`).
+    /// Only if `op` >= `state_op`; an effect to `open` on an uncommitted conflict commits it.
     fn apply_conflict_effect(
         &self,
         ws: &str,

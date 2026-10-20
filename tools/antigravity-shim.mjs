@@ -1,24 +1,6 @@
 #!/usr/bin/env node
-// A local `/v1/messages` and `/v1/chat/completions` endpoint backed by Antigravity / Gemini
-// for Holon's reconciler and goal-run inference loop.
-//
-// Point `anthropic:base-url` or `openai:base-url` at this and the loop's inference runs
-// through Antigravity / Gemini on your local setup or API credentials.
-//
-//   node tools/antigravity-shim.mjs                         # 127.0.0.1:8789
+// `/v1/messages` and `/v1/chat/completions` backed by the Gemini API, `agy -p`, or tools/gemini-cli.mjs.
 //   PORT=8789 ANTIGRAVITY_MODEL=gemini-2.5-flash node tools/antigravity-shim.mjs
-//
-// ## Execution Backends
-//
-// 1. Antigravity CLI (`agy -p` or custom `ANTIGRAVITY_CLI_BIN`) if available.
-// 2. Google Generative AI / Gemini API (via ANTIGRAVITY_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY,
-//    or ~/.comp-secrets/gemini) supporting both text and inline image blocks.
-// 3. Fallback to `tools/gemini-cli.mjs` if configured.
-//
-// ## Concurrency & Snapshot Isolation
-//
-// Concurrency is bounded by `ANTIGRAVITY_CONCURRENCY` (default 4) with FIFO queueing so swarm
-// branches remain isolated without dropping or failing requests due to rate limits.
 
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -34,11 +16,9 @@ const MODEL = process.env.ANTIGRAVITY_MODEL || process.env.GEMINI_MODEL || 'gemi
 const TIMEOUT_MS = Number(process.env.ANTIGRAVITY_TIMEOUT_MS || 300_000);
 const LIMIT = Number(process.env.ANTIGRAVITY_CONCURRENCY || 4);
 
-// CLI binaries & paths
 const AGY_BIN = process.env.ANTIGRAVITY_CLI_BIN || process.env.AGY_BIN || 'agy';
 const GEMINI_CLI = join(__dirname, 'gemini-cli.mjs');
 
-// Discover API key from environment or secrets directory
 function getApiKey() {
   if (process.env.ANTIGRAVITY_API_KEY) return process.env.ANTIGRAVITY_API_KEY.trim();
   if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY.trim();
@@ -61,7 +41,6 @@ function getApiKey() {
 }
 
 let active = 0;
-/** Resolvers for calls that arrived while every slot was busy. FIFO. */
 const waiting = [];
 
 const acquire = () => {
@@ -78,14 +57,12 @@ const release = () => {
   else active--;
 };
 
-/** Anthropic's error envelope — `codec.rs` keys on `type == "error"`. */
+// `codec.rs` keys on `type == "error"`.
 const apiError = (type, message) => JSON.stringify({ type: 'error', error: { type, message } });
 
-/** OpenAI error envelope */
 const openAiError = (message) =>
   JSON.stringify({ error: { message, type: 'invalid_request_error', code: null } });
 
-/** Extension map for supported images. */
 const EXT = {
   'image/jpeg': 'jpg',
   'image/jpg': 'jpg',
@@ -94,9 +71,6 @@ const EXT = {
   'image/webp': 'webp',
 };
 
-/**
- * Flatten incoming request body into system text, turn-based prompt, and image list.
- */
 function render(body) {
   let system = '';
   if (Array.isArray(body.system)) {
@@ -145,15 +119,11 @@ function render(body) {
   return { system, prompt, images, turns };
 }
 
-/**
- * Direct invocation of Google Generative AI / Gemini API.
- */
 async function callGenerativeApi({ system, prompt, images = [], model, key }) {
   const targetModel = model || MODEL;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${key}`;
 
   const parts = [];
-  // Add images as inline data parts
   for (const img of images) {
     parts.push({
       inline_data: {
@@ -206,9 +176,6 @@ async function callGenerativeApi({ system, prompt, images = [], model, key }) {
   }
 }
 
-/**
- * Fallback CLI invocation (agy or gemini-cli).
- */
 function runCli({ system, prompt, model, binary, extraArgs = [] }) {
   return new Promise((resolve, reject) => {
     const args = ['-p', ...extraArgs];
@@ -255,18 +222,14 @@ function runCli({ system, prompt, model, binary, extraArgs = [] }) {
   });
 }
 
-/**
- * Dispatch inference through available backend.
- */
+// The API first: only it takes images.
 async function dispatchInference({ system, prompt, images, model }) {
   const apiKey = getApiKey();
 
-  // 1. Direct API if key is available (handles multimodal images natively)
   if (apiKey) {
     return await callGenerativeApi({ system, prompt, images, model, key: apiKey });
   }
 
-  // 2. Antigravity CLI binary if present
   try {
     const isNode = AGY_BIN.endsWith('.mjs') || AGY_BIN.endsWith('.js');
     if (isNode ? existsSync(AGY_BIN) : true) {
@@ -274,7 +237,6 @@ async function dispatchInference({ system, prompt, images, model }) {
     }
   } catch {}
 
-  // 3. Fallback to bundled gemini-cli.mjs if present
   if (existsSync(GEMINI_CLI)) {
     return await runCli({ system, prompt, model, binary: GEMINI_CLI });
   }
@@ -300,7 +262,6 @@ const server = createServer((req, res) => {
     return;
   }
 
-  // Health check endpoint
   if (req.method === 'GET' && (req.url === '/health' || req.url === '/')) {
     const apiKey = getApiKey();
     send(
@@ -403,7 +364,7 @@ const server = createServer((req, res) => {
         `[antigravity-shim] FAILED after ${Date.now() - started}ms` +
           ` [queued ${started - arrived}ms]: ${e.message}`
       );
-      // 529 overloaded / retryable error
+      // 529 -> ProviderUnavailable, which the driver retries.
       send(529, isAnthropic ? apiError('overloaded_error', e.message) : openAiError(e.message));
     } finally {
       release();

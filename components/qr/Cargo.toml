@@ -11,8 +11,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 wit-bindgen-rt = { workspace = true }
-# Vetted pure-Rust QR (Reed-Solomon + masking). Encoder only — we render the
-# module grid ourselves (svg/unicode/matrix), so no renderer features / `image`.
+# Encoder only: the module grid is rendered here, so no renderer features or `image`.
 qrcode = { version = "0.14", default-features = false }
 
 [package.metadata.component]

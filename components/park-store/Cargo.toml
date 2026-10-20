@@ -13,10 +13,7 @@ crate-type = ["cdylib"]
 wit-bindgen-rt = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-# The contract's records as serde types (`holon_park::model`, `::wire`): the
-# JSON this component sends comp-park is exactly what the daemon deserializes,
-# from ONE definition. Default features only — no I/O, which is what builds
-# for wasm32-wasip2 (ADR-0095); nothing here calls the engine.
+# Default features only: no I/O, so it builds for wasm32-wasip2 (ADR-0095).
 holon-park = { path = "../../crates/holon-park" }
 
 [package.metadata.component]

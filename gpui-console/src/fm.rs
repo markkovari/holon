@@ -1,11 +1,5 @@
-//! Local AI inference via Apple's on-device Foundation Models CLI (`fm`): an
-//! OpenAI-compatible HTTP server, spawned once as a child process (killed on drop)
-//! and talked to over `/v1/chat/completions`.
-//!
-//! macOS/Apple Silicon only, so this is an optional host-specific capability.
-//! `lattice.rs`'s `boot()` starts one (if `is_available()`) and shares its URL with
-//! every agent via the deployment's `fm-url` config; a wasm guest dials that URL
-//! itself and cannot call back into the host process.
+//! Apple's on-device `fm serve` (macOS only). Agents get its URL as `fm-url` config because a
+//! wasm guest cannot call back into the host process.
 
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -13,8 +7,7 @@ use std::time::{Duration, Instant};
 use comp_fleet::fleet::free_port;
 use serde_json::{json, Value};
 
-/// A running `fm serve` process, killed on drop — same shape as
-/// `reconciler::fleet::Kill`, so it cannot leave an orphan behind.
+/// Killed on drop, like `reconciler::fleet::Kill`, so it cannot leave an orphan.
 pub struct FmServer {
     child: Child,
     base_url: String,
@@ -27,16 +20,12 @@ impl Drop for FmServer {
     }
 }
 
-/// True only on macOS, and only if `fm` actually runs there. Callers check this
-/// and skip rather than exec a binary that cannot exist.
 pub fn is_available() -> bool {
     cfg!(target_os = "macos")
         && Command::new("fm").arg("available").output().is_ok_and(|o| o.status.success())
 }
 
 impl FmServer {
-    /// Spawns `fm serve --port <port>` on a freshly-picked free port and blocks until
-    /// `/health` answers (or `timeout` elapses). Refuses on anything but macOS.
     pub fn start(timeout: Duration) -> Result<Self, String> {
         if !is_available() {
             return Err("fm (Apple on-device Foundation Models) is not available on this platform"
@@ -68,9 +57,7 @@ impl FmServer {
         &self.base_url
     }
 
-    /// One-shot, non-streaming chat completion: an optional system instruction plus
-    /// the user's prompt in, the reply text out. Not called from `lattice.rs`; kept
-    /// as tested surface for a direct console feature.
+    /// Unused by `lattice.rs`; kept as tested surface for a direct console feature.
     #[allow(dead_code)]
     pub fn ask(&self, instructions: Option<&str>, prompt: &str) -> Result<String, String> {
         ask(&self.base_url, instructions, prompt)
@@ -81,8 +68,7 @@ fn client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder().timeout(Duration::from_secs(2)).build().unwrap()
 }
 
-/// Free function so a caller that already knows a running `fm serve`'s URL
-/// (not necessarily one this process itself spawned) can use it too.
+/// Free, so a caller can use any running `fm serve`, not only one this process spawned.
 #[allow(dead_code)]
 pub fn ask(base_url: &str, instructions: Option<&str>, prompt: &str) -> Result<String, String> {
     let mut messages = Vec::new();
@@ -131,8 +117,6 @@ mod tests {
         }
     }
 
-    /// End-to-end against the real on-device model; slow, and skipped if `fm` isn't
-    /// on this machine.
     #[test]
     fn fm_serve_spawns_answers_and_is_killed_on_drop() {
         if !is_available() {

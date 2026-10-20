@@ -1,19 +1,4 @@
-//! `comp-uinotify` — raise a notification on the user's desktop, for a
-//! component that cannot reach the notification bus.
-//!
-//! ## Why this is a process and not a component
-//!
-//! Raising a desktop notification needs the platform's notification bus (D-Bus on Linux, native APIs
-//! elsewhere), which a `wasm32-wasip2` guest lacks (ADR-0095). `components/ui-notifier` is the
-//! component side and dials this over HTTP.
-//!
-//! ## What "unavailable" means here
-//!
-//! This needs a real, running notification bus. Headless environments (most CI, servers, containers)
-//! have none, and `notify-rust` reports an error: `unavailable` is the honest answer, since a
-//! notification with nowhere to appear was never going to be delivered.
-//!
-//!   comp-uinotify --addr 127.0.0.1:8009
+//! Native side of components/ui-notifier (ADR-0095); headless boxes have no notification bus.
 
 use anyhow::Result;
 use axum::{routing::post, Json, Router};
@@ -24,21 +9,14 @@ use serde_json::{json, Value};
 #[derive(Parser)]
 #[command(name = "comp-uinotify", about = "Native daemon for ui-notifier")]
 struct Args {
-    /// Shared secret a caller must send as `Authorization: Bearer
-    /// <token>`. Loopback binding alone is not a boundary — see
-    /// `comp_daemon_kit`'s own doc for why. No token means
-    /// no check, logged loudly rather than silently.
+    /// Shared secret callers must send as `Authorization: Bearer <token>`; unset means no check.
     #[arg(long)]
     token: Option<String>,
-    /// Same, but read from a file (a systemd `LoadCredential` path)
-    /// rather than passed as a value — `--token` is `ps`-readable by
-    /// any local user, which is most of what this exists to close.
-    /// Wins over `--token` when both are given.
+    /// Like `--token` but read from a file, since a flag is `ps`-readable; takes precedence.
     #[arg(long)]
     token_file: Option<std::path::PathBuf>,
 
-    /// Where to listen. Loopback by default: this has no authentication of
-    /// its own.
+    /// Where to listen; loopback by default.
     #[arg(long, default_value = "127.0.0.1:8009")]
     addr: String,
 }
@@ -74,8 +52,7 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
 
-    /// The request body round-trips through serde as the component's own JSON does: a quote or backslash
-    /// in the message must survive intact.
+    /// A quote or backslash in the message must survive the serde round-trip.
     #[test]
     fn a_message_with_quotes_round_trips() {
         let body = r#"{"msg":"say \"hi\""}"#;

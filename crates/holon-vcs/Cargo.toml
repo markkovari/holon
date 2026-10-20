@@ -6,14 +6,7 @@ license.workspace = true
 publish.workspace = true
 description = "An agent-native code store: an operation log over a commutative, symbol-level patch graph (ADR-0099)."
 
-# Two layers, one crate:
-#
-#   default     the core — patch algebra, conflict detection, the oplog — over
-#               storage TRAITS. No I/O, no async runtime, so it compiles for
-#               wasm32-wasip2 and runs inside a component.
-#   native      the adapters behind those traits: NATS JetStream ObjectStore (blobs)
-#               and KV (CAS pointers), and SurrealDB (the symbol/patch graph).
-#               Sockets and a runtime, so native only (ADR-0095).
+# default is I/O-free so it builds for wasm32-wasip2; native adds the NATS/SurrealDB adapters (ADR-0095).
 [features]
 default = []
 native = ["dep:tokio", "dep:async-nats", "dep:surrealdb", "dep:futures"]

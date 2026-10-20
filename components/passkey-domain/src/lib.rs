@@ -1,21 +1,5 @@
-//! `passkey-domain` — passwordless sign-in (docs/apps/PASSKEY.md) as ONE composed wasm HTTP component.
-//! Exports `wasi:http`; imports only WIT contracts: `webauthn:verify`, `records:store` (accounts +
-//! credentials), `cache:store` (single-use challenges with a TTL), `session:store`.
-//!
-//! The app's job is the bookkeeping around two ceremonies: `begin` mints a random challenge and remembers
-//! what it was issued FOR; `finish` spends it (single use), verifies, then persists.
-//!
-//! Two rules easy to get wrong:
-//!
-//!   * the RP ID and origin come from `wasi:config`, never the request: a client-supplied origin would
-//!     make the anti-phishing check meaningless;
-//!   * adding a passkey to an account that already has one requires a SESSION for that account, or anyone
-//!     could enrol their own authenticator on your name.
-//!
-//! Config (wasi:config/store):
-//!   rp-id        the RP ID credentials are scoped to (default `localhost`)
-//!   origin       the exact origin the browser must report (default `http://localhost:3053`)
-//!   require-uv   demand the UV flag (biometric/PIN), not just user presence (default false)
+//! RP ID and origin come from wasi:config, never the request, or the anti-phishing check is meaningless.
+//! Adding a passkey to an existing account requires a session for it, or anyone could enrol on your name.
 
 #[allow(warnings)]
 mod bindings {
@@ -39,7 +23,6 @@ mod bindings {
         world: "passkey:app/passkey-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -67,7 +50,7 @@ struct Component;
 
 const ACCOUNTS: &str = "accounts";
 const CREDENTIALS: &str = "credentials";
-/// A ceremony must be completed promptly; the browser's own timeout is 60s.
+/// The browser's own timeout is 60s.
 const CHALLENGE_TTL: u64 = 300;
 const SESSION_TTL: u64 = 3600;
 
@@ -152,7 +135,7 @@ fn random_b64u(n: u64) -> String {
     b64u(&random::get_random_bytes(n))
 }
 
-/// Mint a challenge and remember what it was issued for. Keyed BY the challenge, so spending it is a delete: no way to use one twice.
+/// Keyed BY the challenge, so spending it is a delete: no way to use one twice.
 fn issue_challenge(purpose: &str, username: &str, user_handle: &str) -> String {
     let challenge = random_b64u(32);
     let meta =
@@ -161,7 +144,6 @@ fn issue_challenge(purpose: &str, username: &str, user_handle: &str) -> String {
     challenge
 }
 
-/// Spend a challenge: read it, delete it, and require it to have been issued for this purpose.
 fn spend_challenge(challenge: &str, purpose: &str) -> Result<Value, Outcome> {
     let key = format!("chal:{challenge}");
     let raw = cache::get(&key)
@@ -200,7 +182,6 @@ fn credentials_of(username: &str) -> Vec<Value> {
         .collect()
 }
 
-/// A credential as the WIT record, rebuilt from what we stored.
 fn stored_credential(v: &Value) -> Option<wa::Credential> {
     Some(wa::Credential {
         id: v["id"].as_str()?.to_string(),
@@ -215,7 +196,7 @@ fn stored_credential(v: &Value) -> Option<wa::Credential> {
     })
 }
 
-/// What the UI shows about a passkey — never the key material.
+/// Never the key material.
 fn credential_view(v: &Value) -> Value {
     json!({
         "id": v["id"], "aaguid": v["aaguid"], "alg": v["alg"],
@@ -229,7 +210,6 @@ fn credential_view(v: &Value) -> Value {
 guestio::guest_p3_bearer!();
 guestio::guest_p3_respond!();
 
-/// The account this request is authenticated as, if any.
 fn session_user(request: &Request) -> Option<String> {
     let token = bearer(request)?;
     let s = sessions::get(&token).ok()?;
@@ -278,7 +258,6 @@ async fn register_begin(request: Request) -> Outcome {
     // The handle rides with the challenge, so the account created on finish stores the handle the authenticator remembers.
     let challenge = issue_challenge("register", &username, &user_handle);
 
-    // The `publicKey` options the browser needs, for navigator.credentials.create() once the SPA decodes the base64url fields.
     Outcome::Json(
         200,
         json!({
@@ -465,7 +444,7 @@ async fn login_finish(request: Request) -> Outcome {
         Err(e) => return ceremony_error(e),
     };
 
-    // Persist the new counter (and the backup state, which can change when a passkey syncs to a second device).
+    // The backup state can change when a passkey syncs to a second device.
     let mut next = doc.clone();
     next["sign_count"] = json!(assertion.sign_count);
     next["backed_up"] = json!(assertion.backed_up);
@@ -482,7 +461,7 @@ async fn login_finish(request: Request) -> Outcome {
     }
 }
 
-/// Map a verification failure onto HTTP. Everything is a 401, but the reason is reported: "wrong origin" and "bad signature" mean different things to an operator.
+/// All 401, but the reason is reported: "wrong origin" and "bad signature" mean different things to an operator.
 fn ceremony_error(e: wa::VerifyError) -> Outcome {
     let (reason, detail) = match e {
         wa::VerifyError::BadEncoding(m) => ("bad_encoding", m),
@@ -539,7 +518,6 @@ fn logout(request: &Request) -> Outcome {
     Outcome::Json(200, json!({ "ok": true }).to_string())
 }
 
-/// A base64url (or base64) field the browser sent as an ArrayBuffer.
 fn field_bytes(b: &Value, key: &str) -> Result<Vec<u8>, Outcome> {
     let s =
         b[key].as_str().ok_or_else(|| Outcome::Err(422, format!("{key} required (base64url)")))?;
@@ -562,9 +540,7 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it. Without a ceiling a guest
-/// accumulated until wasmtime's 64 MiB per-store cap TRAPPED, reaching the caller as a bare closed
-/// connection. Generous: a backstop, not a content policy; uploads police themselves with a 413.
+/// Backstop under wasmtime's 64 MiB per-store cap, which traps instead of erroring.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

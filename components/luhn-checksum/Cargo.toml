@@ -7,8 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [lib]
-# See `components/bytes-codec`: the bindings are gated on wasm32 so `cargo test`
-# can link the crate for the held-out specification.
+# The rlib + wasm32-gated bindings let `cargo test` link the crate for the held-out spec.
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

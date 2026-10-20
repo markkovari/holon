@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Organisations end to end: two people share one org, a third is refused, and the
-# deployment lands under the ORG rather than under whoever typed the command.
+# Organisations end to end: two people share one org, a third is refused.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)/comp"
 SP=${SP:-$(mktemp -d)}
@@ -43,9 +42,8 @@ run grace component push components/target/gate_domain.composed.wasm --id gate >
 sleep 8
 run grace app create shop --strategy fused --component gate --org acme-corp | sed 's/^/  /'
 ID=$(run grace app ls | awk 'NR==2{print $1}')
-# A fused deployment composes on the first save and needs one distribution pass
-# before the composed artifact has a content address (ADR-0028). Two saves, by
-# design — retried here rather than papered over.
+# A fused deployment needs one distribution pass before its composed artifact has
+# a content address (ADR-0028), so the first deploy can fail by design.
 for attempt in 1 2 3; do
   if run grace app deploy "$ID" 2>/dev/null | sed 's/^/  /'; then break; fi
   echo "  (waiting for the composed artifact to be distributed)"; sleep 8
@@ -63,7 +61,5 @@ run linus app create sneak --component gate --org acme-corp 2>&1 | head -2 | sed
 
 echo
 echo "=== whose storage bucket did it get? ==="
-# jq rather than a language runtime: this is one field out of one document, which
-# is what jq is for.
 run ada app manifest "$ID" 2>/dev/null | jq -r '.manifest |
   "    \(.tenant)/\(.app) -> env \(.env) | ingress \(.ingress.host)"' 

@@ -1,25 +1,15 @@
-//! The pure half of `concept2-logbook`: turn a Concept2 logbook page into the short text a small
-//! model reads whole. No I/O and no bindings, so it is unit-tested on the host.
-//!
-//! It is a hand port of the regular expressions in the Python connector this replaces, and the
-//! output is meant to be IDENTICAL to what that script printed. The page is untrusted data from
-//! another site, so every function here is total: nothing indexes past a length it did not check,
-//! and a page that does not look like a logbook yields a plain "nothing found" rather than a panic.
+//! Port of the Python connector's regexes, output identical. The page is untrusted: every fn is total.
 
-/// The one host this component talks to.
 pub const HOST: &str = "log.concept2.com";
 
-/// `profile` is the number in the logbook URL: 1 to 12 digits.
 pub fn valid_profile(s: &str) -> bool {
     (1..=12).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// A workout id, as `list` prints it: 4 to 12 digits.
 pub fn valid_id(s: &str) -> bool {
     (4..=12).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// `limit`, clamped to 1..=30 like the script did; `None` when it is not a number.
 pub fn clamp_limit(s: Option<&str>) -> Option<usize> {
     match s {
         None => Some(10),
@@ -30,7 +20,6 @@ pub fn clamp_limit(s: Option<&str>) -> Option<usize> {
     }
 }
 
-/// `page`, at least 1; `None` when it is not a number.
 pub fn clamp_page(s: Option<&str>) -> Option<usize> {
     match s {
         None => Some(1),
@@ -53,19 +42,10 @@ pub fn workout_path(profile: &str, id: &str) -> String {
     format!("/profile/{profile}/log/{id}")
 }
 
-/// What to do with a request, decided before anything is fetched.
 #[derive(Debug, PartialEq)]
 pub enum Plan {
-    List {
-        profile: String,
-        limit: usize,
-        page: usize,
-    },
-    Workout {
-        profile: String,
-        id: String,
-    },
-    /// A 400, with the reason.
+    List { profile: String, limit: usize, page: usize },
+    Workout { profile: String, id: String },
     Bad(String),
     NotFound,
     MethodNotAllowed,
@@ -75,9 +55,7 @@ fn param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
     query.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == key).map(|(_, v)| v)
 }
 
-/// `GET /list?profile=…[&limit=…][&page=…]` and `GET /workout/<id>?profile=…`; anything else is
-/// refused. Nothing but digits ever reaches the path that is fetched, so the request cannot steer
-/// the fetch anywhere but a logbook page.
+/// Only digits reach the fetched path, so a request cannot steer the fetch off a logbook page.
 pub fn plan(is_get: bool, route: &str, query: &str) -> Plan {
     let route = route.trim_end_matches('/');
     let wants_workout = route.strip_prefix("/workout/");
@@ -101,9 +79,7 @@ pub fn plan(is_get: bool, route: &str, query: &str) -> Plan {
     }
 }
 
-/// Where a redirect may go: a path on the same host, written relative or in full. Anything else
-/// (another host, a scheme-relative `//x`, plain http) is refused, so a redirect cannot be used to
-/// reach a host this component was never meant to.
+/// Same host only; another host, `//x` or plain http is refused, so a redirect cannot escape.
 pub fn redirect_target(location: &str) -> Option<String> {
     if location.starts_with('/') && !location.starts_with("//") {
         return Some(location.to_string());
@@ -121,15 +97,13 @@ fn is_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
 
-/// Everything between the first `open` at or after `from` and the next `close`, removed. `None`
-/// when there is no such pair (a lone `<script` with no end is left as it is, like the regex).
+/// A lone `<script` with no end is left as it is, like the regex.
 fn cut_block(s: &str, from: usize, open: &str, close: &str) -> Option<(usize, usize)> {
     let start = from + s[from..].find(open)?;
     let end = start + s[start..].find(close)? + close.len();
     Some((start, end))
 }
 
-/// `<script>…</script>` and `<style>…</style>` blocks replaced by a space.
 fn drop_blocks(h: &str) -> String {
     let mut out = String::with_capacity(h.len());
     let mut pos = 0;
@@ -154,7 +128,7 @@ fn drop_blocks(h: &str) -> String {
     }
 }
 
-/// Every `<…>` replaced by a space. A `<` with no `>` after it, or `<>`, is left as text.
+/// A `<` with no `>` after it, or `<>`, is left as text.
 fn strip_tags(h: &str) -> String {
     let mut out = String::with_capacity(h.len());
     let mut rest = h;
@@ -176,8 +150,7 @@ fn strip_tags(h: &str) -> String {
     out
 }
 
-/// Windows-1252 for the C1 range, which is what a browser (and Python's `html.unescape`) makes of
-/// `&#150;` and friends.
+/// Windows-1252 for the C1 range, as browsers and `html.unescape` read `&#150;`.
 fn cp1252(n: u32) -> Option<char> {
     const TABLE: [u32; 32] = [
         0x20AC, 0x81, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160,
@@ -199,8 +172,7 @@ fn numeric_entity(body: &str) -> Option<char> {
     })
 }
 
-/// The named entities a logbook page uses, with their terminating `;`. A subset of HTML5, on
-/// purpose: the page is ASCII apart from these.
+/// A subset of HTML5 on purpose: the page is ASCII apart from these.
 fn named_entity(name: &str) -> Option<char> {
     Some(match name {
         "amp" => '&',
@@ -220,7 +192,6 @@ fn named_entity(name: &str) -> Option<char> {
     })
 }
 
-/// `&amp;`, `&#38;`, `&#x26;` and the legacy names that browsers also accept without the `;`.
 fn unescape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
@@ -256,8 +227,6 @@ fn unescape(s: &str) -> String {
     out
 }
 
-/// The visible text of a page: scripts and styles dropped, tags removed, entities decoded, runs of
-/// whitespace made one space.
 pub fn text(h: &str) -> String {
     let flat = unescape(&strip_tags(&drop_blocks(h)));
     let mut out = String::with_capacity(flat.len());
@@ -276,8 +245,7 @@ pub fn text(h: &str) -> String {
     out
 }
 
-/// Each `<tr …>…</tr>`: `<tr` then a space or `>` (not a newline, as in the script), up to the
-/// first `</tr>`.
+/// `<tr` then a space or `>` (not a newline, as in the script).
 fn rows(h: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut pos = 0;
@@ -297,7 +265,6 @@ fn rows(h: &str) -> Vec<&str> {
     out
 }
 
-/// The text of each `<td …>…</td>` in a row.
 fn cells(row: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut pos = 0;
@@ -312,7 +279,6 @@ fn cells(row: &str) -> Vec<String> {
     out
 }
 
-/// The first `/log/<digits>` in a row.
 fn log_id(row: &str) -> Option<&str> {
     let mut pos = 0;
     while let Some(i) = row[pos..].find("/log/") {
@@ -326,7 +292,6 @@ fn log_id(row: &str) -> Option<&str> {
     None
 }
 
-/// `MM/DD/YY`, as the logbook prints a date.
 fn short_date(s: &str) -> Option<(&str, &str, &str)> {
     let b = s.as_bytes();
     let digit = |i: usize| b.get(i).is_some_and(u8::is_ascii_digit);
@@ -334,7 +299,6 @@ fn short_date(s: &str) -> Option<(&str, &str, &str)> {
         .then(|| (&s[0..2], &s[3..5], &s[6..8]))
 }
 
-/// The newest `limit` workouts, one line each, with the id `workout` takes.
 pub fn listing(html: &str, limit: usize) -> String {
     let mut out = Vec::new();
     for r in rows(html) {
@@ -357,8 +321,7 @@ pub fn listing(html: &str, limit: usize) -> String {
     out.join("\n")
 }
 
-/// The maximal run of `set` characters that is followed by `suffix`: `(\d+) Heart Rate`,
-/// `([\d:.]+) Pace` and friends. The first run that is followed by the suffix wins.
+/// The first run followed by `suffix` wins: `(\d+) Heart Rate`, `([\d:.]+) Pace`.
 fn run_before<'a>(t: &'a str, set: fn(char) -> bool, suffix: &str) -> Option<&'a str> {
     let mut start = None;
     for (i, c) in t.char_indices().chain(std::iter::once((t.len(), ' '))) {
@@ -419,7 +382,6 @@ fn workout_date(t: &str) -> Option<&str> {
     for (i, c) in t.char_indices() {
         let word = is_word(c);
         if word && !prev_word {
-            // the maximal run of word characters starting here
             let run_end = t[i..].find(|ch: char| !is_word(ch)).map_or(t.len(), |k| i + k);
             let j = run_end;
             // " dd, dddd dd:dd:dd Workout"
@@ -463,7 +425,6 @@ fn splits_body(t: &str) -> Option<&str> {
     None
 }
 
-/// Maximal runs of digits, colons, dots and commas: the cells of the splits table.
 fn number_runs(s: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut start = None;
@@ -480,7 +441,6 @@ fn number_runs(s: &str) -> Vec<&str> {
     out
 }
 
-/// One session: totals, then its splits (time | metres | pace | watts | spm).
 pub fn workout(html: &str, id: &str) -> String {
     let t = text(html);
     let fields: [(&str, Option<&str>, &str); 9] = [
@@ -508,8 +468,7 @@ pub fn workout(html: &str, id: &str) -> String {
     );
     if let Some(body) = splits_body(&t) {
         let nums = number_runs(body);
-        // Whole rows of 8 cells (with the HR column); only when there are fewer than 8 numbers
-        // does the script try rows of 7, which is a single row at most. Kept as it was.
+        // Rows of 7 only when there are fewer than 8 numbers, as the script did.
         let width = if nums.len() >= 8 { 8 } else { 7 };
         let rows: Vec<&[&str]> =
             (0..nums.len() / width).map(|i| &nums[i * width..(i + 1) * width]).collect();
@@ -536,7 +495,6 @@ mod tests {
         id: Option<&str>,
         note: &str,
     ) -> String {
-        // the link is on the row itself, as the logbook does it, not inside a cell
         let href = id.map(|i| format!(" data-href=\"/profile/1/log/{i}\"")).unwrap_or_default();
         format!(
             "<tr class=\"x\"{href}><td>{date}</td><td>{time}</td><td>{m}</td><td>{pace}</td><td>{kind}</td><td>{note}</td></tr>"
@@ -588,7 +546,6 @@ mod tests {
             plan(true, "/workout/121601263", "profile=2586473"),
             Plan::Workout { profile: "2586473".into(), id: "121601263".into() }
         );
-        // refused: no / bad profile, bad id, bad numbers, another route, another method
         assert!(matches!(plan(true, "/list", ""), Plan::Bad(_)));
         assert!(matches!(plan(true, "/list", "profile=../../x"), Plan::Bad(_)));
         assert!(matches!(plan(true, "/list", "profile=1234567890123"), Plan::Bad(_)));
@@ -630,10 +587,8 @@ mod tests {
     fn text_drops_scripts_and_styles_strips_tags_decodes_entities_and_collapses_space() {
         let h = "<style>p{x:y}</style><p>Tom &amp;  Jerry</p>\n<script>var a = '<b>';</script><b>2:22.0</b>&nbsp;/500m &#150; &#x41;&lt;&gt;";
         assert_eq!(text(h), "Tom & Jerry 2:22.0 /500m \u{2013} A<>");
-        // a lone `<script` with no end stays, as the regex would leave it; `<>` and a bare `<` are text
         assert_eq!(text("a <script b"), "a <script b");
         assert_eq!(text("1 <> 2 < 3"), "1 <> 2 < 3");
-        // unknown entities are left alone; the old `&amp` without `;` still decodes
         assert_eq!(text("&bogus; &amp x"), "&bogus; & x");
         assert_eq!(text("  \u{a0}x\u{a0}  y \n"), "x y");
     }
@@ -652,7 +607,6 @@ mod tests {
                 Some("121601263"),
                 "felt good ",
             ),
-            // no link: dropped. non-numeric date: dropped. too few cells: dropped.
             row("10/11/26", "1:00:00", "12,104", "2:28.7", "RowErg", None, ""),
             row("Oct 10", "30:00", "7,000", "2:08.0", "RowErg", Some("111111111"), ""),
             "<tr><td>10/09/26</td><td>x</td><td>y</td><a href=\"/log/222222222\"></a></tr>"
@@ -671,7 +625,6 @@ mod tests {
         );
         assert_eq!(listing("<html>nothing here</html>", 10), "no workouts found on that page");
         assert_eq!(listing("", 10), "no workouts found on that page");
-        // `<tr` must be followed by a space or `>`: a newline is not, exactly as in the script
         assert_eq!(
             listing("<tr\nclass=x><td>10/13/26</td></tr>", 5),
             "no workouts found on that page"
@@ -709,7 +662,7 @@ mod tests {
             "700",
             "734",
             "19",
-            "128", // the totals row
+            "128",
             "12:00.0",
             "2,655",
             "2:15.5",
@@ -739,9 +692,7 @@ mod tests {
 
     #[test]
     fn a_seven_column_table_prints_no_splits_exactly_as_the_script_did() {
-        // Without the HR column a table has 7 cells per row. The script's 7-column branch can
-        // only run when there are fewer than 8 numbers, which is one row, which prints nothing:
-        // so no splits section, and this port keeps that so its output stays identical.
+        // The script's 7-column branch prints nothing for a table without HR; kept for identical output.
         let cells = [
             "30:00.0", "7,000", "2:08.0", "190", "900", "450", "24", // totals
             "10:00.0", "2,350", "2:07.5", "195", "910", "150", "24",
@@ -753,7 +704,6 @@ mod tests {
             out.starts_with("1:00:00 row (October 12, 2026, id 5555)\ndistance 12,671m;"),
             "{out}"
         );
-        // and with a header that has no HR but the optional ` HR ` absent from the text:
         assert_eq!(
             splits_body("x Splits Time Meters Pace Watts Cal/Hr Cal S/M 1 2 Click and drag y"),
             Some("1 2")
@@ -762,7 +712,6 @@ mod tests {
             splits_body("Splits Time Meters Pace Watts Cal/Hr Cal S/M HR 1 2 Click and drag"),
             Some("1 2")
         );
-        // `HR` straight before the end marker is a number-less body, not the optional header
         assert_eq!(
             splits_body("Splits Time Meters Pace Watts Cal/Hr Cal S/M HR Click and drag"),
             Some("HR")
@@ -777,21 +726,17 @@ mod tests {
             &["1:00:00.0", "12,671", "2:22.0", "122", "700", "734", "19", "128"],
         );
         assert!(!workout(&page, "1234").contains("splits"));
-        // no title, no date, only a pace and a drag factor
         let t = "<div>2:20.5 Pace</div><div>Drag Factor 130</div>";
         assert_eq!(workout(t, "9999"), "workout (?, id 9999)\npace 2:20.5/500m; drag factor 130");
-        // an entirely different page
         assert_eq!(workout("<html>404 not found</html>", "1234"), "workout (?, id 1234)\n");
     }
 
     #[test]
     fn the_leftmost_matching_run_wins_like_the_regular_expressions() {
-        // a number not followed by the label is skipped; the first one that is, is taken
         let t = "5 Stuff 1,234,567 Meters 9 Meters Watts x Watts 77 Watts 88";
         assert_eq!(run_before(t, is_digit_comma, " Meters"), Some("1,234,567"));
         assert_eq!(digits_after(t, "Watts "), Some("77"));
         assert_eq!(run_before("no numbers Meters", is_digit_comma, " Meters"), None);
-        // a run at the very end of the text, with no suffix to follow, is no match
         assert_eq!(run_before("ends in 42", is_digit, " Heart Rate"), None);
         assert_eq!(workout_date("x October 12, 2026 18:00:00 Workout"), Some("October 12, 2026"));
         assert_eq!(workout_date("October 12, 2026 18:00:00 Session"), None);

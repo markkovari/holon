@@ -1,10 +1,3 @@
-//! `quiz-grade` — grade answers against an answer key, and roll a cohort's scores into statistics
-//!
-//! Grade one submission against an answer key (integer-percent score + pass/fail),
-//! and roll a cohort's percentage scores into gradebook stats (mean, median,
-//! spread, pass count, and a 5-bin distribution). Pure compute — no state, no
-//! host imports, integer math throughout.
-
 #[allow(warnings)]
 mod bindings;
 

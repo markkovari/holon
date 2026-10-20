@@ -1,8 +1,4 @@
-//! Stateless JWS (JWT) verification: RS256, ES256, HS256.
-//!
-//! Signing key material is resolved from the issuer's JWKS (cached in kv by
-//! `oidc_client`). HS256 uses a shared secret supplied via the "hs256-secret"
-//! kv key (set out-of-band by config), enabling local/test tokens.
+//! HS256 uses the "hs256-secret" kv key, set out of band, for local/test tokens.
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -29,7 +25,6 @@ struct Payload {
     exp: u64,
     #[serde(default)]
     iat: u64,
-    /// Not-before: token is invalid until this time.
     #[serde(default)]
     nbf: u64,
     #[serde(default)]
@@ -40,7 +35,7 @@ struct Payload {
     rest: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
-/// `aud` may be a string or an array of strings per RFC 7519.
+/// A string or an array of strings (RFC 7519).
 #[derive(Deserialize, Default)]
 #[serde(untagged)]
 enum Aud {
@@ -74,8 +69,6 @@ fn b64(part: &str) -> Result<Vec<u8>, AuthError> {
         .map_err(|_| AuthError::Malformed("jwt segment not base64url".into()))
 }
 
-/// Claim-validation policy. Built from `config` at runtime; constructed directly
-/// in tests so claim checks are exercised without a wasi:config host.
 pub struct Policy {
     pub allowed_algs: Vec<String>,
     pub expected_issuer: String,
@@ -110,9 +103,7 @@ pub fn verify(token: &str) -> Result<Claims, AuthError> {
         .map_err(|e| AuthError::Malformed(format!("jwt payload: {e}")))?;
     let signature = b64(s)?;
 
-    // 1. Pin the algorithm BEFORE verifying — refuse any alg not on the
-    //    allow-list. This blocks algorithm-confusion (e.g. HS256-signed token
-    //    forged against an RSA public key when only RS256 is expected).
+    // Pin the algorithm before verifying: blocks algorithm confusion (HS256 forged against an RSA key).
     if !policy.allowed_algs.iter().any(|a| a == &header.alg) {
         return Err(AuthError::InvalidToken(format!("algorithm {} not allowed", header.alg)));
     }
@@ -130,8 +121,6 @@ pub fn verify(token: &str) -> Result<Claims, AuthError> {
     Ok(payload_to_claims(payload))
 }
 
-/// Reason a token's claims were rejected; bindings-free so claim validation is
-/// host-unit-testable. Mapped to `AuthError` at the call site.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ClaimError {
     NotYetValid,
@@ -153,9 +142,7 @@ impl ClaimError {
     }
 }
 
-/// Pure claim validation (no I/O, no bindings types) so it is unit-tested directly.
-/// Checks, in order: not-before, expiry, issuer, audience; time checks allow
-/// `clock_skew` seconds of tolerance.
+/// Time checks allow `clock_skew` seconds of tolerance.
 fn validate_claims(p: &Payload, now: u64, policy: &Policy) -> Result<(), ClaimError> {
     let skew = policy.clock_skew;
 
@@ -240,8 +227,6 @@ mod tests {
 
     #[test]
     fn rejects_wrong_audience() {
-        // token for svc-b presented where svc-a is expected -> the core
-        // audience-confusion check.
         let p = payload("https://idp", Aud::One("svc-b".into()), NOW + 60, 0);
         assert_eq!(
             validate_claims(&p, NOW, &policy("https://idp", "svc-a")),
@@ -264,7 +249,6 @@ mod tests {
 }
 
 fn payload_to_claims(p: Payload) -> Claims {
-    // Scopes: prefer OAuth `scope` (space-delimited) then `scp` (array).
     let scopes = if let Some(scope) = &p.scope {
         scope.split_whitespace().map(str::to_string).collect()
     } else {
@@ -326,8 +310,7 @@ fn verify_es256(
         .map_err(|_| AuthError::InvalidToken("es256 verify failed".into()))
 }
 
-/// HS256 via a shared secret in kv, using the vetted `hmac` crate (RFC 2104)
-/// with its built-in constant-time `verify_slice` — no hand-rolled MAC.
+/// The `hmac` crate's constant-time `verify_slice`, not a hand-rolled MAC.
 fn verify_hs256(signing_input: &str, signature: &[u8]) -> Result<(), AuthError> {
     use hmac::{Hmac, Mac};
 

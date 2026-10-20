@@ -1,12 +1,4 @@
-//! eshop:ordering — the eShopOnDapr Ordering.API over composed contracts.
-//!
-//! Every order is an fsm:workflow instance (the Dapr-actor stand-in): event
-//! consumers and HTTP verbs FIRE transitions, the machine validates legality
-//! and records history, and the order record mirrors the state (indexed) so
-//! list/filter stays a lookup. The grace period is a pump-driven sweep over
-//! `status == "submitted"` records instead of an actor reminder — same
-//! observable behavior: a submitted order is cancellable until the window
-//! elapses, then moves to stock validation on its own.
+//! Every order is an fsm:workflow instance; the grace period is a pump-driven sweep, not an actor reminder.
 
 #[allow(warnings)]
 mod bindings {
@@ -35,7 +27,6 @@ mod bindings {
         world: "eshop:ordering/ordering-service",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -63,8 +54,7 @@ struct Component;
 const ORDERS: &str = "orders";
 const MACHINE: &str = "order";
 const GROUP: &str = "ordering";
-/// eShopOnDapr's default GracePeriodTime is 1 minute; overridable so the
-/// smoke test doesn't have to wait it out.
+/// eShopOnDapr's default; overridable so the smoke test need not wait it out.
 const DEFAULT_GRACE_SECS: u64 = 60;
 
 impl Guest for Component {
@@ -110,7 +100,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-/// Idempotent: register the order lifecycle machine, helpdesk-domain style.
 fn ensure_seeded() {
     if records::count("meta").map(|n| n > 0).unwrap_or(false) {
         return;
@@ -171,7 +160,7 @@ fn introspect(request: &Request) -> Result<Principal, Outcome> {
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
-/// Load an order; buyers only see their own (404, existence not leaked).
+/// Buyers see only their own: 404, so existence is not leaked.
 fn load_order(p: &Principal, id: &str) -> Result<(records::Entry, Value), Outcome> {
     let entry = match records::get(ORDERS, id) {
         Ok(e) => e,
@@ -270,8 +259,6 @@ fn ship(request: &Request, id: &str) -> Outcome {
     fire_and_mirror(&entry, &data, "ship", "OrderStatusChangedToShipped")
 }
 
-/// Fire one FSM event; on success mirror the state onto the record and
-/// publish the matching integration event. 409 on an illegal transition.
 fn fire_and_mirror(entry: &records::Entry, data: &Value, event: &str, topic: &str) -> Outcome {
     match fsm::fire(MACHINE, &entry.id, event) {
         Ok(status) => {
@@ -294,7 +281,7 @@ fn fire_and_mirror(entry: &records::Entry, data: &Value, event: &str, topic: &st
 fn mirror_status(entry: &records::Entry, data: &Value, state: &str) {
     let mut data = data.clone();
     data["status"] = json!(state);
-    // revision 0 = last-write-wins; the FSM already serialized the transition.
+    // Revision 0 is last-write-wins; the FSM already serialised the transition.
     let _ = records::update(ORDERS, &entry.id, &data.to_string(), 0);
 }
 
@@ -332,12 +319,8 @@ fn pump() -> Outcome {
     let mut created = 0;
     let mut advanced = 0;
 
-    // 1. checkout -> new submitted order (+ OrderStarted clears the basket).
-    // Order creation is the one non-idempotent consumer here (the FSM naturally
-    // dedupes everything else), so it's guarded per BUS EVENT ID: a duplicate
-    // delivery of the same publish must not mint a second order, while two
-    // distinct checkouts (distinct event ids) both must. The ack offset is a
-    // watermark, so the pass stops at the first skippable event.
+    // Creation is the one non-idempotent consumer, so it is guarded per bus event id; the ack offset
+    // is a watermark, so the pass stops at the first skippable event.
     match bus::poll("UserCheckoutAccepted", GROUP, 32) {
         Ok(events) => {
             let mut acked: Vec<String> = Vec::new();
@@ -364,7 +347,6 @@ fn pump() -> Outcome {
         Err(e) => return bus_err(e),
     }
 
-    // 2. stock + payment answers -> FSM transitions + follow-on events.
     for (topic, event, next_topic) in [
         ("OrderStockConfirmed", "stock-confirmed", "OrderStatusChangedToValidated"),
         ("OrderStockRejected", "stock-rejected", "OrderStatusChangedToCancelled"),
@@ -389,7 +371,6 @@ fn pump() -> Outcome {
         }
     }
 
-    // 3. grace sweep: submitted orders past the window go to stock validation.
     let grace = grace_secs();
     let submitted =
         records::find_by(ORDERS, "status", &json!("submitted").to_string()).unwrap_or_default();
@@ -410,7 +391,6 @@ fn pump() -> Outcome {
     Outcome::Json(200, json!({"created": created, "advanced": advanced}).to_string())
 }
 
-/// UserCheckoutAccepted -> order record + FSM instance + OrderStarted.
 fn start_order(co: &CheckoutEvent) -> bool {
     if co.basket.items.is_empty() {
         return false;
@@ -453,8 +433,7 @@ fn start_order(co: &CheckoutEvent) -> bool {
     true
 }
 
-/// Fire `event` on an order; on success mirror + publish `next_topic` with the
-/// stock items attached (catalog and payment both key off them).
+/// Stock items attached: catalog and payment both key off them.
 fn advance_order(order_id: &str, event: &str, next_topic: &str) -> bool {
     let Ok(entry) = records::get(ORDERS, order_id) else { return false };
     let data: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);

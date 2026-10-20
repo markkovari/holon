@@ -6,10 +6,6 @@ license.workspace = true
 publish.workspace = true
 description = "Anthropic's Messages API and the OpenAI-compatible chat/completions API as data: build a request, read a reply, assemble a stream. No I/O."
 
-# A pure encode/decode crate, built for BOTH targets like its siblings in this workspace: inside a
-# wasm32-wasip2 component (which speaks HTTP through wasi:http and has no runtime) and inside a native
-# daemon (reqwest). Everything about the two wire dialects that does not depend on how bytes reach the
-# server lives here, once; sending them, keys, retries and what to do with an error stay with the caller.
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true

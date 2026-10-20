@@ -1,6 +1,4 @@
-//! In-memory backends: for tests, and for an engine running inside a component
-//! with nothing behind it. A `std::sync::Mutex` per store; no await point is ever
-//! held under a lock, so these are fine on any executor (and on wasm32-wasip2).
+//! No await is ever held under a lock, so a std `Mutex` is fine on any executor (and wasm32-wasip2).
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
@@ -38,9 +36,7 @@ impl BlobStore for MemBlobs {
     }
 }
 
-/// A CAS map. Revisions come from one counter across all keys, like a JetStream
-/// stream sequence — so a key's revision is never reused, even across keys.
-/// The revision counter, and each key's value and revision.
+/// One revision counter across all keys, like a JetStream stream sequence, so a revision is never reused.
 type KvState = (u64, HashMap<String, (Vec<u8>, Revision)>);
 
 #[derive(Default)]
@@ -105,8 +101,7 @@ impl MemGraph {
         Self::default()
     }
 
-    /// Forget everything — what losing the graph database looks like, for the
-    /// tests that rebuild it from the oplog.
+    /// Simulates losing the graph database, for tests that rebuild it from the oplog.
     pub fn wipe(&self) {
         *self.s.lock().unwrap() = GraphState::default();
     }

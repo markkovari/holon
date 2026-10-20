@@ -1,13 +1,4 @@
-//! The connections themselves: which apps carry which components, and which components import which
-//! interfaces. `capgraph_store.rs` checks the projection round-trips; this checks it is *right*.
-//!
-//! Two sources: component -> interface from `plug::Catalog` (library code), app -> component from
-//! `comp-capgraph --format json` (the Justfile parsing is private to the binary).
-//!
-//! **Named relationships** are asserted exactly (stable apps the roadmap calls done). **Totals** are
-//! floors, never equalities: `records:store/store` having 37 consumers is the day it was counted.
-//! **Invariants** hold however the catalogue grows: every composed part exists, every consumed
-//! interface has an exporter, every app's own root is a real component.
+//! The projected connections are right: named ones exactly, totals as floors, invariants always.
 
 use std::collections::BTreeSet;
 use std::process::Command;
@@ -16,8 +7,7 @@ use comp_fleet::fleet::repo_root;
 use comp_fleet::plug::{default_dirs, Catalog};
 use serde_json::Value;
 
-/// The catalogue, or `None` when nothing is built. Skipped loudly: a fresh clone has no artifacts, and
-/// silently passing on an empty catalogue would assert nothing.
+/// Skipped loudly: a fresh clone has no artifacts, and an empty catalogue asserts nothing.
 fn catalogue() -> Option<Catalog> {
     let catalog = Catalog::scan(&default_dirs(&repo_root()));
     if catalog.is_empty() {
@@ -46,8 +36,7 @@ fn names(v: &Value, key: &str) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
-/// The relationships ADR-0090 and the Conduit showcase are written about. If one disappears, the
-/// component was rewritten or the surface reader stopped seeing imports.
+/// If one disappears, the component was rewritten or the surface reader stopped seeing imports.
 #[test]
 fn conduit_domain_imports_the_capabilities_it_is_composed_with() {
     let Some(catalog) = catalogue() else { return };
@@ -68,11 +57,7 @@ fn conduit_domain_imports_the_capabilities_it_is_composed_with() {
     }
 }
 
-/// Every interface anything imports comes from a package something exports: an import from a package
-/// nothing provides is an app that cannot be plugged.
-///
-/// Checked per PACKAGE, not interface: a bare `types` interface is normally imported and never
-/// exported (`audit:log/recorder` `use`s `audit:log/types`), which is how WIT type-only interfaces work.
+/// Per package, not interface: type-only interfaces are imported and never exported.
 #[test]
 fn every_consumed_package_has_an_exporter() {
     let Some(catalog) = catalogue() else { return };
@@ -89,8 +74,7 @@ fn every_consumed_package_has_an_exporter() {
         let Some(surface) = catalog.surface(name) else { continue };
         for iface in &surface.imports {
             let pkg = package(iface);
-            // Host-provided packages (`wasi:*` and this repo's host capabilities) are imported
-            // without any component exporting them.
+            // Host-provided packages are imported without any component exporting them.
             if pkg.starts_with("wasi:") || pkg.starts_with("comp:") {
                 continue;
             }
@@ -103,8 +87,7 @@ fn every_consumed_package_has_an_exporter() {
     assert!(unsatisfiable.is_empty(), "unsatisfiable imports:\n  {}", unsatisfiable.join("\n  "));
 }
 
-/// `records:store/store` is the most-consumed interface in the repository, by a distance. A floor, not
-/// an equality: the claim is "changing this interface in place is not safe".
+/// A floor: the claim is "changing this interface in place is not safe".
 #[test]
 fn record_store_is_the_most_consumed_interface() {
     let Some(catalog) = catalogue() else { return };
@@ -131,8 +114,7 @@ fn record_store_is_the_most_consumed_interface() {
     );
 }
 
-/// The compositions of four apps the roadmap calls done. A subset, not an equality: gaining a
-/// capability is progress, silently LOSING one is a regression.
+/// A subset: gaining a capability is progress, losing one is a regression.
 #[test]
 fn apps_carry_the_components_they_are_composed_from() {
     let Some(graph) = graph_json() else { return };
@@ -159,9 +141,7 @@ fn apps_carry_the_components_they_are_composed_from() {
     }
 }
 
-/// Everything an app is composed from is a component that exists. The app list is parsed out of the
-/// Justfile and the parts come from artifacts, so a renamed component leaves a recipe pointing at a
-/// name nothing builds, invisible in the markdown report.
+/// A renamed component would leave a recipe naming nothing, invisible in the markdown report.
 #[test]
 fn every_composed_part_is_a_real_component() {
     let (Some(catalog), Some(graph)) = (catalogue(), graph_json()) else { return };
@@ -184,16 +164,8 @@ fn every_composed_part_is_a_real_component() {
     assert!(missing.is_empty(), "the app list has drifted:\n  {}", missing.join("\n  "));
 }
 
-/// **A divergence between two formats of the same graph, pinned deliberately.**
-///
-/// `--format json` reports what an app was composed FROM (`Catalog::closure`, excluding the app's own
-/// root); `--format surql` includes the root, because ADR-0091's query walks
-/// `app -> carries -> artifact -> imports` and the root's imports are what a lesson is most likely
-/// about. As a result no `*-domain` component appears in `component_in_apps`, so `comp-capgraph --find`
-/// ranks every domain component as carried by zero apps, plausibly correct since a domain component is
-/// app-specific.
-///
-/// This fails the day somebody changes it: change it on purpose, and update this test in the same commit.
+/// Pinned on purpose: `--format json` excludes an app's own root and `surql` includes it.
+/// Change it deliberately, and this test in the same commit.
 #[test]
 fn json_omits_an_apps_own_root_while_surql_includes_it() {
     let Some(graph) = graph_json() else { return };

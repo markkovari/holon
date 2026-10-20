@@ -1,15 +1,7 @@
-//! The specification, held out: this file is not writable by the goal.
-//!
-//! Corrected against `cucumber/gherkin`'s `testdata/` (see `corpus.rs`): `*` is a step keyword rather than a
-//! continuation, a plain `Scenario:` with an `Examples:` under it is an outline, and a scenario with no steps parses.
-//!
-//! The cases that decide this component are the quiet ones (an `Examples` row one cell short, a typo'd
-//! `<placeholder>`, a `Given` inside a docstring); a suite proving only that valid files pass would be green
-//! for a useless implementation.
+//! The held-out specification, corrected against cucumber/gherkin's `testdata/` (see `corpus.rs`).
 
 use gherkin_validate::{validate, Kind, Problem, Severity};
 
-/// The kinds, in order, so a test can say what it means in one line.
 fn kinds(source: &str) -> Vec<Kind> {
     validate(source).into_iter().map(|p| p.kind).collect()
 }
@@ -18,7 +10,7 @@ fn at(source: &str) -> Vec<(u32, u32)> {
     validate(source).into_iter().map(|p| (p.line, p.column)).collect()
 }
 
-/// A feature file with every construct in it at once. It has to be clean, or every other assertion measures a parser that cannot read Gherkin.
+/// Must be clean, or every other assertion measures a parser that cannot read Gherkin.
 #[test]
 fn a_real_feature_file_is_valid() {
     let src = r#"# language: en
@@ -74,7 +66,6 @@ fn content_before_the_feature_is_refused_but_tags_and_comments_are_not() {
     let bad = "Some notes I pasted here\nFeature: Thing\n  Scenario: S\n    Given a\n";
     assert_eq!(kinds(bad), vec![Kind::ContentBeforeFeature("Some notes I pasted here".into())]);
 
-    // Tags, comments and the language header are all legal above `Feature:`.
     let good = "# a note\n@tagged\n# language: en\nFeature: Thing\n  Scenario: S\n    Given a\n";
     assert!(validate(good).is_empty(), "{:?}", validate(good));
 }
@@ -99,7 +90,7 @@ fn a_step_with_no_scenario_above_it() {
     assert_eq!(kinds(src), vec![Kind::StepOutsideScenario]);
 }
 
-/// `And` first parses fine in cucumber and continues nothing. Warned about here.
+/// Cucumber parses a leading `And`, so this only warns.
 #[test]
 fn a_continuation_with_nothing_to_continue() {
     for kw in ["And", "But"] {
@@ -110,11 +101,10 @@ fn a_continuation_with_nothing_to_continue() {
             "{kw} as the first step"
         );
     }
-    // Legal once something precedes it.
     let ok = "Feature: T\n  Scenario: S\n    Given a\n    And b\n    But not c\n    * d\n";
     assert!(validate(ok).is_empty(), "{:?}", validate(ok));
 
-    // `*` is NOT a continuation: a file of bullets is idiomatic Gherkin (`testdata/good/star-keywords.feature`).
+    // `*` is not a continuation (`good/star-keywords.feature`).
     let stars =
         "Feature: Stars\n  Scenario: Beautiful tonight\n    * Betelgeuse\n    * Alpha Centauri\n";
     assert!(validate(stars).is_empty(), "a bullet needs nothing above it: {:?}", validate(stars));
@@ -130,7 +120,6 @@ fn an_outline_with_no_examples_can_never_run() {
     );
 }
 
-/// `Examples:` under a plain `Scenario:` PROMOTES it to an outline (`testdata/good/scenario_outline.feature`).
 #[test]
 fn examples_promote_a_plain_scenario_to_an_outline() {
     let promoted = "Feature: T\n  Scenario: S\n    Given the <what>\n\n    Examples:\n      | what |\n      | this |\n";
@@ -140,7 +129,6 @@ fn examples_promote_a_plain_scenario_to_an_outline() {
     assert_eq!(kinds(typo), vec![Kind::UnknownPlaceholder("waht".into())]);
 }
 
-/// With no scenario above it at all, though, an `Examples:` has nothing to fill.
 #[test]
 fn examples_with_no_scenario_at_all() {
     let src = "Feature: T\n  Examples:\n    | x |\n    | 1 |\n";
@@ -156,7 +144,6 @@ fn a_scenario_with_no_steps() {
     assert_eq!(kinds(bg), vec![Kind::EmptyScenario("Background".into())]);
 }
 
-/// THE case. One cell short in an `Examples` row is the failure this exists for.
 #[test]
 fn an_examples_row_of_the_wrong_width() {
     let src = "\
@@ -241,7 +228,6 @@ fn a_background_has_to_come_first_and_come_once() {
     let twice = "Feature: T\n  Background:\n    Given a\n  Background:\n    Given b\n";
     assert_eq!(kinds(twice), vec![Kind::MultipleBackgrounds]);
 
-    // A `Rule:` is its own container, so a second background under one is legal.
     let ruled = "\
 Feature: T
   Background:
@@ -270,7 +256,6 @@ fn an_unterminated_docstring() {
     }
 }
 
-/// Gherkin keywords inside a docstring are text.
 #[test]
 fn gherkin_inside_a_docstring_is_text() {
     let src = "\
@@ -288,7 +273,6 @@ Feature: T
     assert!(validate(src).is_empty(), "{:?}", validate(src));
 }
 
-/// A language this component cannot read is a file it must DECLINE, not fail.
 #[test]
 fn a_language_it_cannot_read_is_declined_rather_than_buried() {
     let src = "# language: de\nFunktionalität: Etwas\n  Szenario: S\n    Gegeben sei a\n";
@@ -300,7 +284,6 @@ fn a_language_it_cannot_read_is_declined_rather_than_buried() {
     assert_eq!(at(src)[0].0, 1);
 }
 
-/// Every problem, not the first. A validator that reports one per run gets run once.
 #[test]
 fn every_problem_is_reported() {
     let src = "\
@@ -322,7 +305,7 @@ Feature: T
 
 #[test]
 fn positions_are_one_based_and_counted_in_characters() {
-    // `é` is one character and two bytes. A byte-based column reports 17 here.
+    // `é` is one character, two bytes: a byte-based column reports 17.
     let src = "\
 Feature: T
   Scenario Outline: O
@@ -350,9 +333,6 @@ Feature: T
     assert!(validate(src).is_empty(), "an escaped pipe is one cell: {:?}", validate(src));
 }
 
-/// `testdata/bad/unfinished_datatable.feature` (a cut row) and `backslash_at_end_of_line_in_datatable.feature`
-/// (a trailing backslash eats the closing pipe). Only what is BETWEEN pipes is a cell, so a cut row yields fewer
-/// and the width check does the work, which is also why `good/extra_table_content.feature` stays clean.
 #[test]
 fn only_what_is_between_pipes_is_a_cell() {
     let cut = "Feature: T\n  Scenario: S\n    When I press\n      | foo |\n      | bar\n";
@@ -361,7 +341,6 @@ fn only_what_is_between_pipes_is_a_cell() {
     let backslash = "Feature: T\n  Scenario: S\n    When I press\n      | foo |\n      | bar \\\n";
     assert_eq!(kinds(backslash), vec![Kind::RowWidth { expected: 1, found: 0 }]);
 
-    // Trailing content outside the pipes is ignored, not counted.
     let extra = "\
 Feature: Extra table content
   Scenario: We are a bit extra
@@ -372,7 +351,6 @@ Feature: Extra table content
     assert!(validate(extra).is_empty(), "{:?}", validate(extra));
 }
 
-/// `testdata/bad/whitespace_in_tags.feature`: `@a tag containing whitespace` is four broken tags.
 #[test]
 fn a_tag_line_has_to_be_tags() {
     let src = "Feature: T\n\n  @a tag containing whitespace\n  Scenario: S\n    Given a\n";
@@ -382,7 +360,6 @@ fn a_tag_line_has_to_be_tags() {
     assert!(validate(ok).is_empty(), "{:?}", validate(ok));
 }
 
-/// A dialect that exists is declined; one that does not is the file being wrong about itself (`testdata/bad/invalid_language.feature`).
 #[test]
 fn a_real_dialect_is_declined_and_a_made_up_one_is_an_error() {
     let real = validate("# language: fr\nFonctionnalité: X\n");
@@ -397,31 +374,26 @@ fn a_real_dialect_is_declined_and_a_made_up_one_is_an_error() {
     assert_eq!(fake[0].severity(), Severity::Error);
 }
 
-/// `testdata/bad/repeated_step_docstring.feature`. The first docstring is the step's argument; a second has nowhere to go.
 #[test]
 fn one_docstring_per_step() {
     let src =
         "Feature: T\n  Scenario: S\n    Given a step\n\"\"\"\none\n\"\"\"\n\"\"\"\ntwo\n\"\"\"\n";
     assert!(kinds(src).contains(&Kind::RepeatedDocstring), "{:?}", kinds(src));
 
-    // Two steps may each have one.
     let ok = "Feature: T\n  Scenario: S\n    Given a:\n      \"\"\"\none\n      \"\"\"\n    Then b:\n      \"\"\"\ntwo\n      \"\"\"\n";
     assert!(validate(ok).is_empty(), "{:?}", validate(ok));
 }
 
-/// `testdata/bad/unexpected_eof.feature` is a feature, a blank line, and a tag.
 #[test]
 fn a_tag_with_nothing_to_tag() {
     let src =
         "Feature: T\n\n  Scenario Outline: minimalistic\n    Given the minimalism\n\n    @tag\n";
     assert!(kinds(src).contains(&Kind::DanglingTag), "{:?}", kinds(src));
 
-    // A tag that does tag something is fine.
     let ok = "Feature: T\n\n  @tag\n  Scenario: S\n    Given a\n";
     assert!(validate(ok).is_empty(), "{:?}", validate(ok));
 }
 
-/// The severity split exists because cucumber's GOOD corpus contains files with an empty scenario and an outline with no examples.
 #[test]
 fn what_parses_is_a_warning_and_what_does_not_is_an_error() {
     let parses_but_pointless =
@@ -437,7 +409,6 @@ fn what_parses_is_a_warning_and_what_does_not_is_an_error() {
     let will_not_parse = "Feature: T\n  Scenario: S\n    Given a\n      | x | y |\n      | 1 |\n";
     assert!(validate(will_not_parse).iter().any(|x| x.severity() == Severity::Error));
 
-    // And a language it cannot read is neither.
     let declined = validate("# language: fr\nFonctionnalité: X\n");
     assert_eq!(declined.len(), 1);
     assert_eq!(declined[0].severity(), Severity::Declined);

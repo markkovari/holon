@@ -1,6 +1,3 @@
-//! The agent runtime's HTTP API, as the bridge uses it. The bridge shares no code
-//! with the runtime: this contract (agents, projects, run, approvals) is all it knows.
-
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -11,26 +8,22 @@ pub struct AgentInfo {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    /// The agent's triggers as the runtime stores them (`kind`, `cron`, `notify`...).
     #[serde(default)]
     pub triggers: Vec<Value>,
 }
 
-/// One finished run, as `GET /agents/<name>/runs` reports it.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 pub struct RunInfo {
     pub id: String,
-    /// `http`, `schedule: <cron>`, `timer`, `event: <topic>`, ...
     pub trigger: String,
     pub status: String,
     #[serde(default)]
     pub answer: String,
-    /// Seconds. `finished_ms` is the precise one but older records lack it.
+    /// Seconds; older records lack `finished_ms`.
     #[serde(default)]
     pub finished: u64,
     #[serde(default)]
     pub finished_ms: u64,
-    /// The project the run was for; empty for none.
     #[serde(default)]
     pub project: String,
 }
@@ -54,7 +47,7 @@ pub struct ProjectInfo {
     pub agents: Vec<String>,
     #[serde(default)]
     pub lead: Option<String>,
-    /// Shelved in the runtime; round-tripped so a `put_project` never un-archives one.
+    /// Round-tripped so a `put_project` never un-archives one.
     #[serde(default)]
     pub archived: bool,
     #[serde(default)]
@@ -71,14 +64,12 @@ pub struct Approval {
     pub chain: Vec<String>,
 }
 
-/// Speech the runtime produced, with what a chat client shows for a voice message.
 pub struct Spoken {
     pub audio: Vec<u8>,
     pub duration_ms: u64,
     pub waveform: Vec<u16>,
 }
 
-/// A deleted agent in the runtime's trash.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 pub struct Trashed {
     pub id: String,
@@ -145,8 +136,6 @@ impl Runtime {
         self.admin("/agents")
     }
 
-    /// Rank `candidates` (name, description) by how well each fits `message`, best first,
-    /// using the runtime's embedding service. `None` when it has none or cannot answer.
     pub fn rank(
         &self,
         message: &str,
@@ -185,22 +174,18 @@ impl Runtime {
         Some(out)
     }
 
-    /// The newest `n` runs of `agent`, newest first.
     pub fn runs(&self, agent: &str, n: usize) -> Result<Vec<RunInfo>, String> {
         self.admin(&format!("/agents/{agent}/runs?limit={n}"))
     }
 
-    /// The deleted agents still in the runtime's trash, newest first.
     pub fn trash(&self) -> Result<Vec<Trashed>, String> {
         self.admin("/trash")
     }
 
-    /// Brings a deleted agent back (`id` is a trash id or the agent's name).
     pub fn restore(&self, id: &str) -> Result<Trashed, String> {
         self.call(reqwest::Method::POST, &format!("/trash/{id}/restore"))
     }
 
-    /// Removes a deleted agent from the trash for good.
     pub fn purge(&self, id: &str) -> Result<Trashed, String> {
         self.call(reqwest::Method::DELETE, &format!("/trash/{id}"))
     }
@@ -222,8 +207,6 @@ impl Runtime {
         r.json().map_err(|e| e.to_string())
     }
 
-    /// Archives a project in the runtime: its agents that no live project holds are paused.
-    /// The agents paused.
     pub fn archive_project(&self, name: &str) -> Result<Vec<String>, String> {
         let v: Value = self.call(reqwest::Method::POST, &format!("/projects/{name}/archive"))?;
         Ok(v["paused"]
@@ -232,7 +215,6 @@ impl Runtime {
             .unwrap_or_default())
     }
 
-    /// Brings an archived project back and resumes the agents an archive paused.
     pub fn unarchive_project(&self, name: &str) -> Result<Vec<String>, String> {
         let v: Value = self.call(reqwest::Method::POST, &format!("/projects/{name}/unarchive"))?;
         Ok(v["resumed"]
@@ -277,8 +259,6 @@ impl Runtime {
         self.send(reqwest::Method::DELETE, &format!("/projects/{project}/agents/{agent}"), None)
     }
 
-    /// Puts a photo into the agent's inbox in the runtime (`POST /agents/<name>/inbox`) and
-    /// returns the file name it was stored under, which is what the agent's tools take.
     pub fn upload_inbox(
         &self,
         agent: &str,
@@ -304,7 +284,7 @@ impl Runtime {
             .ok_or_else(|| "unexpected reply".into())
     }
 
-    /// Whether the runtime can transcribe and speak (`GET /speech`).
+    /// (transcribe, speak)
     pub fn speech_caps(&self) -> (bool, bool) {
         match self.admin::<Value>("/speech") {
             Ok(v) => {
@@ -314,8 +294,6 @@ impl Runtime {
         }
     }
 
-    /// Audio to text. `Err` carries the runtime's reason (not configured, bad audio,
-    /// a language it has no model for).
     pub fn transcribe(&self, audio: Vec<u8>) -> Result<String, String> {
         let r = self
             .runner
@@ -335,7 +313,6 @@ impl Runtime {
             .ok_or_else(|| "unexpected reply".into())
     }
 
-    /// Text to a voice message (Opus in Ogg), with its length and waveform.
     pub fn speak(&self, text: &str) -> Result<Spoken, String> {
         let r = self
             .runner
@@ -363,9 +340,6 @@ impl Runtime {
         Ok(Spoken { audio, duration_ms, waveform })
     }
 
-    /// Runs `agent` on `text`. The runtime's answer, or its error, as text; the
-    /// bool says whether it succeeded. `traceparent` joins an existing trace. `attach` names
-    /// photos in the agent's inbox that came with the message: they go to its model.
     pub fn run(
         &self,
         agent: &str,

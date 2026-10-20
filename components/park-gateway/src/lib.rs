@@ -1,18 +1,5 @@
-//! `park-gateway` — the parking lot as HTTP routes, for agents and tests
-//! (ADR-0100).
-//!
-//! It imports `holon:park/lot` and serves each function at `POST /v1/<function>` with the same JSON `comp-park` takes
-//! (`holon_park::wire`): parse the body into the contract's records, make ONE import call, write the result back.
-//! Composed with `park-store` the chain is
-//!
-//!   agent → comp-host (park-gateway ⊕ park-store) → comp-park → NATS JetStream
-//!
-//! so every request is a real round trip through the component model (as `vcs-gateway`'s doc explains for e2e suites).
-//!
-//! Errors are `{error, detail, message}` with the status `holon_park::wire` gives each `park-error` case, as the daemon sends them.
-//!
-//! No auth of its own: whoever can reach this may park, wake, or cancel any session's ticket. It is a tailnet app for
-//! agents on that network (see `apps/vcs.toml`).
+//! `holon:park/lot` as `POST /v1/<function>` with comp-park's JSON (ADR-0100).
+//! No auth of its own: anyone who can reach it may park, wake or cancel any ticket (a tailnet app).
 
 #[allow(warnings)]
 mod bindings {
@@ -30,7 +17,6 @@ mod bindings {
         world: "holon:park-gateway/gateway",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -49,13 +35,11 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use witconv::{ToModel, ToWit};
 
-/// The binding module `witconv` is compiled against.
 mod wit {
     pub use crate::bindings::holon::park::types as t;
 }
 use wit::t;
 
-/// Generous and irrelevant in practice: every body here is small JSON (a ticket id, a call description).
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 struct Component;
@@ -71,7 +55,6 @@ fn refusal(e: t::ParkError) -> Answer {
     (wire::status_of(&body.error), to_json(&body))
 }
 
-/// The import's result, as the daemon would have written it.
 fn answer<W: ToModel>(r: Result<W, t::ParkError>) -> Answer
 where
     W::Out: Serialize,
@@ -87,7 +70,6 @@ fn parse<T: DeserializeOwned>(body: &[u8]) -> Result<T, Answer> {
         .map_err(|e| (400, to_json(&wire::ErrorBody::new("bad-request", e.to_string()))))
 }
 
-/// One contract function, by its WIT name, over a JSON body.
 fn dispatch(func: &str, body: &[u8]) -> Answer {
     match route(func, body) {
         Ok(a) | Err(a) => a,
@@ -184,7 +166,6 @@ guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 mod tests {
     use super::*;
 
-    /// A malformed body never reaches the import: it is refused here, in the daemon's own words.
     #[test]
     fn a_body_that_is_not_the_routes_json_is_a_bad_request() {
         let (s, v) = dispatch("park", b"{\"session\": 1}");
@@ -196,7 +177,6 @@ mod tests {
         assert_eq!((s, v["error"].as_str()), (404, Some("not-found")));
     }
 
-    /// A refusal from the import is written with the case, payload and status the daemon uses, so an agent reads one format.
     #[test]
     fn import_refusals_are_written_as_the_daemon_writes_them() {
         let (s, v) = refusal(t::ParkError::NotFound("t1".into()));

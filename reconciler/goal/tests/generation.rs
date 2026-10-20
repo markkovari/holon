@@ -1,16 +1,4 @@
-//! A generation, end to end: one goal, four branches at once, one pull request.
-//!
-//! The whole loop with nothing stubbed between its parts: four CONCURRENT branches each write a candidate
-//! with a model, are judged by real commands and repair from what they said; the results are compared and
-//! only the winner is proposed to a forge that records what it was asked.
-//!
-//! | the model | scripted, so a generation has a reproducible answer |
-//! | the checks | real commands, so the feedback is not planted |
-//! | the forge | a stand-in, so it can be asked what it received |
-//! | the fan-out | real threads against a real fleet, because sequence is not parallelism |
-//!
-//! The branches DISAGREE: one wins outright, one is hopeless, two reach the same answer by different
-//! routes, so `distinct` is legitimately lower than the branch count.
+//! A generation end to end: four concurrent branches, real checks, scripted model, stand-in forge.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -22,7 +10,7 @@ use comp_fleet::fleet::{bin_path, free_port, repo_root, Fleet};
 use comp_goal::generation::{fan_out, land};
 use serde_json::{json, Value};
 
-// The shared test module of the root's suites, included rather than copied (docs/adr/0115).
+// Shared harness, included rather than copied (docs/adr/0115).
 #[path = "../../tests/harness/mod.rs"]
 mod harness;
 use harness::read_chunked;
@@ -191,8 +179,7 @@ fn specs(checks_port: u16, forge_port: u16) -> Vec<std::path::PathBuf> {
     .collect()
 }
 
-/// The goal every branch is given. Three checks, two required and one optional, so branches that all
-/// pass the gate can still be ordered by score.
+/// One optional check, so branches that all pass can still be ordered by score.
 fn plan() -> Value {
     json!({
         "text": "make the answer 42",
@@ -233,7 +220,7 @@ fn one_goal_four_branches_at_once_and_one_pull_request() {
     let select_url = format!("http://127.0.0.1:{}/land", fleet.ingress_port);
     let timeout = Duration::from_secs(120);
 
-    // Both apps up, proven by the first real call to each, not a readiness signal.
+    // Proven by the first real call to each, not a readiness signal.
     fleet.until("both apps serving", Duration::from_secs(180), || {
         let mut warm = plan();
         warm["seed"] = json!(100);
@@ -274,9 +261,7 @@ fn one_goal_four_branches_at_once_and_one_pull_request() {
     );
     assert_eq!(entries[3].stopped, "exhausted", "the hopeless branch should spend its budget");
 
-    // --- AT ONCE, not one after another ---
-    // Comparing ATTEMPT COUNTS passed a deliberately sequential `fan_out`; only time tells them apart
-    // (parallel is about the slowest branch, sequential about the sum).
+    // Only time tells a parallel fan-out from a sequential one: attempt counts did not.
     let total_attempts: u64 = entries.iter().map(|e| e.attempts).sum();
     let sum_alone: u64 = entries.iter().map(|e| e.elapsed_ms).sum();
     let slowest: u64 = entries.iter().map(|e| e.elapsed_ms).max().unwrap_or(0);
@@ -292,9 +277,7 @@ fn one_goal_four_branches_at_once_and_one_pull_request() {
          of branch time (slowest alone {slowest}ms)"
     );
 
-    // --- TWO BRANCHES AGREED, WITHOUT ANYTHING GOING WRONG ---
-    // Branch 0 writes 42; branch 2 writes 41, fails `be-42`, and repairs to 42: identical candidates by
-    // different routes.
+    // Branch 2 writes 41, fails `be-42`, and repairs to 42: same candidate, different route.
     assert_eq!(
         entries[0].digest, entries[2].digest,
         "these two were scripted to converge, and if they did not the `distinct` assertion \
@@ -341,7 +324,7 @@ fn one_goal_four_branches_at_once_and_one_pull_request() {
     println!("    branch-1 won on the optional check and opened PR #11");
 }
 
-/// Minimal base64, so the test can read what the forge was actually sent.
+/// So the test can read what the forge was actually sent.
 fn base64_decode(s: &str) -> Vec<u8> {
     const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let (mut out, mut acc, mut bits) = (Vec::new(), 0u32, 0u32);

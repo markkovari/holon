@@ -1,6 +1,4 @@
-//! Part 4 — the payout ledger. Balances and payouts all read `ledger_entries` back through
-//! `ledger:doubleentry/ledger`'s `trial-balance`, never a hand-rolled sum (CONTRACT.md): that is how two
-//! parts silently disagree about "the same" balance.
+//! Balances come from `trial-balance`, never a hand-rolled sum (CONTRACT.md), or two parts disagree.
 
 use crate::bindings::ledger::doubleentry::ledger as doubleentry;
 use crate::bindings::p3::http::types::Method;
@@ -19,8 +17,6 @@ pub fn handle(method: &Method, route: &Route, _body: &str) -> Reply {
     }
 }
 
-/// Every stored `ledger_entries` document, converted into a `ledger:doubleentry/ledger` `entry`
-/// (`records:store` is the only surface shared between parts).
 fn load_entries() -> Result<Vec<doubleentry::Entry>, ()> {
     let mut out = Vec::new();
     for stored in crate::list_all("ledger_entries")? {
@@ -43,8 +39,7 @@ fn load_entries() -> Result<Vec<doubleentry::Entry>, ()> {
     Ok(out)
 }
 
-/// The trial balance over EVERY stored entry, the one source all three routes read. An account with
-/// nothing posted is absent from `accounts`; callers read that as `0`.
+/// An account with nothing posted is absent from `accounts`; callers read that as `0`.
 fn trial_accounts() -> Result<Vec<doubleentry::AccountBalance>, Reply> {
     let entries = load_entries().map_err(|_| Reply::err(500, "store_error"))?;
     match doubleentry::trial_balance(&entries) {
@@ -55,15 +50,11 @@ fn trial_accounts() -> Result<Vec<doubleentry::AccountBalance>, Reply> {
     }
 }
 
-/// `trial-balance`'s `net` is debit-positive (debits − credits): natural for an ASSET like `platform:cash`,
-/// opposite for liability/income accounts (a vendor with 900 credited is owed +900). Same result, read
-/// from the account's facing; not a second hand-rolled sum.
+/// `net` is debit-positive: natural for an asset like `platform:cash`, inverted for liability/income accounts.
 fn net_for(accounts: &[doubleentry::AccountBalance], account: &str) -> i64 {
     accounts.iter().find(|a| a.account == account).map(|a| a.net).unwrap_or(0)
 }
 
-/// The same account read credit-positive: what the platform owes a vendor,
-/// and what the platform has earned in fees.
 fn owed_for(accounts: &[doubleentry::AccountBalance], account: &str) -> i64 {
     -net_for(accounts, account)
 }

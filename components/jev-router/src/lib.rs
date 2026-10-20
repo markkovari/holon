@@ -1,26 +1,4 @@
-//! `jev-router` — deterministic intent-routing gateway over `jev:decision`.
-//!
-//! `intent-router` classifies by prompting a chat model; this component classifies with a discrete decision call
-//! (`jev:decision/decision`): no prompt, a closed set of candidate domains and a typed confidence. The "System One"
-//! fast path; nothing generative runs in it.
-//!
-//! ## The routing contract
-//!
-//! `POST /api/route {"query": "..."}` always returns 200 with one of:
-//!   - `{"domain": <domain>, "decision": "route", "confidence": <0.0-1.0>}`
-//!     when the provider is confident and its distribution isn't flat.
-//!   - `{"domain": "unknown", "decision": "disambiguate", "confidence": <c>,
-//!      "distribution": [...]}` otherwise.
-//!
-//! Dispatching to the selected domain is deliberately NOT this component's job: the Component Model requires static
-//! imports and the plausible targets export incompatible interfaces (`graph:agent/writer` vs. `wasi:http/incoming-handler`),
-//! so no single generic call exists. As in `intent-router`, a router's contract ends at the decision.
-//!
-//! Config (wasi:config/store):
-//!   jev:confidence-threshold  milli-units, 0-1000 (default 650). Below this,
-//!                             or when the provider itself reports a flat
-//!                             distribution, the caller gets "disambiguate"
-//!                             instead of a route.
+//! Routing ends at the decision: plausible targets export incompatible interfaces, so no generic dispatch.
 
 #[allow(warnings)]
 mod bindings {
@@ -39,7 +17,6 @@ mod bindings {
         world: "holon:jev-router/jev-router",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -81,15 +58,13 @@ struct RouteReq {
     query: String,
 }
 
-/// The only domains this router offers a decision provider. Unlike `intent-router`'s `KNOWN_DOMAINS`, `"unknown"` is
-/// never *selected* by a provider, only reported when the router is not confident enough.
+/// `"unknown"` is never selected by a provider, only reported when not confident enough.
 const ROUTABLE_DOMAINS: &[&str] =
     &["helpdesk-domain", "clinic-domain", "studio-domain", "grocery-domain"];
 
-/// The Choice question's `instructions`: what the provider is deciding, distinct from `state` (the query text).
 const ROUTING_INSTRUCTIONS: &str = "Which backend domain should handle this query?";
 
-/// Milli-units, 0..=1000. Below this, or on a provider-reported flat distribution, the caller gets "disambiguate".
+/// Milli-units; below this, or on a flat distribution, the caller gets "disambiguate".
 const DEFAULT_THRESHOLD: u32 = 650;
 
 fn confidence_threshold() -> u32 {
@@ -101,7 +76,7 @@ fn confidence_threshold() -> u32 {
         .unwrap_or(DEFAULT_THRESHOLD)
 }
 
-/// 1 to 1000 characters: long enough for a real question, too short to paste a document.
+/// Long enough for a real question, too short to paste a document.
 fn validate_query(query: &str) -> Result<(), String> {
     if query.is_empty() || query.len() > 1000 {
         return Err("query must be between 1 and 1000 characters".into());
@@ -116,7 +91,6 @@ fn distribution_json(dist: &[jev::OptionScore]) -> Value {
         .collect::<Vec<_>>())
 }
 
-/// Turn a `choice-result` into the JSON this endpoint promises, gated on the confidence threshold and the provider's flat-distribution judgment.
 fn shape_decision(result: &jev::ChoiceResult, threshold: u32) -> Value {
     if result.flat || result.confidence < threshold {
         return json!({
@@ -231,7 +205,7 @@ mod tests {
 
     #[test]
     fn a_flat_distribution_forces_disambiguate_regardless_of_confidence() {
-        // High confidence number, but the provider says the distribution carries no signal: that overrides the number.
+        // A flat distribution overrides a high confidence number.
         let out = shape_decision(&result("helpdesk-domain", 900, true), 650);
         assert_eq!(out["domain"], "unknown");
         assert_eq!(out["decision"], "disambiguate");

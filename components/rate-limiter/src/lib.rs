@@ -1,14 +1,5 @@
-//! `rate-limiter` — stop a caller making too many requests — count attempts against a key and lock it out after too many
-//!
-//! Fixed-window failure counter with lockout on `wasi:keyvalue`: `rlc_{key}` is the failure count
-//! (mutated via the ATOMIC `increment`, so concurrent `record-failure` calls never lose an
-//! update), `rlw_{key}` the window-start unix seconds. At `max-attempts` within `lockout-window`
-//! the key is locked until the window expires. Clearing the counter when the window elapses is a
-//! rare, benign race: at worst it briefly under-counts at a boundary.
-//!
-//! Config (wasi:config/store):
-//!   max-attempts     failures allowed per window before lockout (default 5; 0 = disabled)
-//!   lockout-window   window / lockout duration, seconds          (default 300)
+//! Fixed-window failure counter: the count is an atomic increment; clearing it at a window boundary
+//! is a rare, benign race that can briefly under-count.
 
 #[allow(warnings)]
 mod bindings;
@@ -119,7 +110,7 @@ impl Guest for Component {
             Some(start) if now.saturating_sub(start) < window => {}
             _ => {
                 write_u64(&bucket, &wk, now)?;
-                let _ = bucket.delete(&ck); // reset count for the new window
+                let _ = bucket.delete(&ck);
             }
         }
 

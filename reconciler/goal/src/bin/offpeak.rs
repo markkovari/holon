@@ -1,10 +1,4 @@
-//! `comp-offpeak` — is DeepSeek off-peak right now? Exits 0 if so, 1 if not.
-//!
-//! For gating a scheduled `comp-goalrun` invocation (cron / systemd timer) so
-//! it only fires during DeepSeek's cheap window, instead of running a
-//! long-sleeping foreground process that busy-waits for the clock:
-//!
-//!     * * * * * comp-offpeak --holidays cn-holidays.txt && comp-goalrun ...
+//! Exits 0 when DeepSeek is off-peak: a cron gate, `comp-offpeak && comp-goalrun ...`.
 
 use clap::Parser;
 use comp_fuel::offpeak::{deepseek_off_peak, parse_holidays};
@@ -14,13 +8,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Parser)]
 #[command(name = "comp-offpeak", about = "Is DeepSeek off-peak right now?")]
 struct Args {
-    /// A file of `YYYY-MM-DD` lines (Chinese public holidays / adjusted
-    /// working days) that are off-peak all day regardless of weekday or hour.
-    /// Omit for weekday/weekend-only rules with no holiday calendar.
+    /// A file of `YYYY-MM-DD` days (Chinese holidays, adjusted workdays) that are off-peak all day.
     #[arg(long)]
     holidays: Option<PathBuf>,
-    /// Check this Unix timestamp (seconds, UTC) instead of the current time —
-    /// for testing the gate against a specific moment.
+    /// Check this Unix timestamp (seconds, UTC) instead of now.
     #[arg(long)]
     at: Option<u64>,
     /// Print the timestamp and verdict, not just the exit code.

@@ -1,12 +1,4 @@
-//! `llm-probe` — an instrument for `llm:inference` (see wit/probe.wit).
-//!
-//!   GET  /chat?q=…    one user message in the query string, the model's reply
-//!   POST /chat?seed=  the same, with the message as the BODY (a prompt outgrew a URL: the contract-negotiation call, ADR-0086,
-//!                     carries a whole interface definition and a candidate's failures)
-//!   GET  /describe    what the provider says it is
-//!
-//! Errors come back as JSON with a 200: the `infer-error` cases are the interesting output (`provider-denied` = wrong
-//! key, `provider-unavailable` = egress refused or nothing listening, `bad-response`) and want different fixes, which a status code flattens.
+//! Errors come back as JSON with a 200: each `infer-error` case wants a different fix, which a status code flattens.
 
 #[allow(warnings)]
 mod bindings {
@@ -25,7 +17,6 @@ mod bindings {
         world: "comp:llmprobe/llm-probe",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -49,7 +40,7 @@ fn param(query: &str, key: &str) -> String {
         .unwrap_or_default()
 }
 
-/// A ceiling on a request body, not a policy: past this the read gives up and the body reads as empty.
+/// A ceiling, not a policy: past it the body reads as empty.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
@@ -69,7 +60,7 @@ fn err(e: llm::InferError) -> String {
     format!("{{\"error\":\"{kind}\",\"detail\":\"{}\"}}", esc(&msg))
 }
 
-/// The SEED exists in the contract for reproducibility; a swarm uses it in reverse: N branches with N seeds explore differently while staying replayable.
+/// N branches with N seeds explore differently while staying replayable.
 fn options(seed: u64) -> llm::Options {
     llm::Options { model: String::new(), temperature: 0, max_tokens: 0, stop: Vec::new(), seed }
 }
