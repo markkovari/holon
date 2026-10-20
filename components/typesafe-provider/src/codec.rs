@@ -1,41 +1,11 @@
-//! Pure TypeSafe/Jev request-building + response-parsing, decoupled from the
-//! WIT bindings so it is unit-testable on the host (`cargo test`). The Guest
-//! impl in `lib.rs` converts the WIT records to/from these plain types at the
-//! edges.
-//!
-//! ## Wire shape (from docs.typesafe.ai/api, docs.typesafe.ai/primitives/*)
-//!
-//! One endpoint, `POST /v1/systemone`, takes a `state` and a `questions` map (id -> Question) and
-//! returns an `answers` map keyed the same way. `choose`/`score`/`gate` send one question under
-//! [`QUESTION_ID`]; `evaluate` batches the caller's own ids in one request.
-//!
-//! ```json
-//! // -> {"state": "...", "model": "jev-latest",
-//! //     "questions": {"q": {"type": "choice", "instructions": "...",
-//! //                          "criteria": {"a": null, "b": null}}}}
-//! // <- {"model": "jev-latest",
-//! //     "answers": {"q": {"type": "choice", "choice": "a",
-//! //                       "probabilities": {"a": 0.87, "b": 0.13},
-//! //                       "confidence": 0.87}},
-//! //     "usage": {"input_tokens": 12, "output_tokens": 4}}
-//! ```
-//!
-//! Score's `criteria` is the ordered `levels` array; its answer's `probabilities` are keyed by
-//! the level's 0-based position stringified (`"0"`, `"1"`), which this module maps back to the
-//! by-name distribution.
-//! `probabilities` on a `score` answer may be absent (the docs' quickstart omits it), so it is optional.
-//! Jev reports no flat-distribution flag; `flat` in `choice-result` is computed here: true when
-//! the top two candidates are within [`FLAT_MARGIN_MILLI`].
+//! Plain types for `POST /v1/systemone` (docs.typesafe.ai/api), testable without the WIT bindings.
 
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-/// The fixed question id `choose`/`score`/`gate` use — `evaluate` uses the
-/// caller's own ids instead.
 const QUESTION_ID: &str = "q";
 
-/// Milli-probability margin below which the top two candidates in a
-/// `choose` distribution are considered indistinguishable.
+/// Jev reports no flat flag: the top two `choose` candidates within this margin are `flat`.
 const FLAT_MARGIN_MILLI: u32 = 100;
 
 pub struct ParsedChoice {
@@ -56,7 +26,6 @@ pub enum ParseError {
     BadResponse(String),
 }
 
-/// A 0.0..=1.0 float from the wire -> milli-units (0..=1000), clamped.
 fn frac_to_milli(f: f64) -> u32 {
     (f.clamp(0.0, 1.0) * 1000.0).round() as u32
 }
@@ -70,9 +39,7 @@ fn score_question(instructions: &str, levels: &[String]) -> Value {
     json!({ "type": "score", "instructions": instructions, "criteria": levels })
 }
 
-/// `true_hint`/`false_hint` are omitted individually when empty, and
-/// `criteria` is omitted entirely when both are — Jev's own hints are
-/// optional.
+/// Jev's hints are optional: each is omitted when empty, `criteria` when both are.
 fn gate_question(instructions: &str, true_hint: &str, false_hint: &str) -> Value {
     let mut question = Map::new();
     question.insert("type".to_string(), Value::String("noul".to_string()));
@@ -118,8 +85,6 @@ pub fn gate_body(
     systemone_body(model, state, questions)
 }
 
-/// One question inside a batch — a plain mirror of the WIT `question`/
-/// `question-kind`, so this module stays free of WASI bindings.
 pub struct QuestionItem {
     pub id: String,
     pub instructions: String,
@@ -132,7 +97,6 @@ pub enum QuestionSpec {
     Gate { true_hint: String, false_hint: String },
 }
 
-/// One answer inside a batch — a plain mirror of the WIT `answer-kind`.
 pub enum AnswerSpec {
     Choice(ParsedChoice),
     Score(ParsedScore),
@@ -140,8 +104,6 @@ pub enum AnswerSpec {
     Gate(u32),
 }
 
-/// Build the `/v1/systemone` request body for a whole batch — every
-/// `questions` entry keyed by the caller's own id, in ONE request.
 pub fn evaluate_body(model: &str, state: &str, questions: &[QuestionItem]) -> String {
     let mut map = Map::new();
     for q in questions {
@@ -163,8 +125,6 @@ struct SystemOneResp {
     answers: Map<String, Value>,
 }
 
-/// Parse the response envelope once; callers look their own id(s) up in what
-/// this returns.
 fn answers_of(body: &[u8]) -> Result<Map<String, Value>, ParseError> {
     let parsed: SystemOneResp = serde_json::from_slice(body)
         .map_err(|e| ParseError::BadResponse(format!("systemone json: {e}")))?;
@@ -178,8 +138,7 @@ fn find_answer(answers: &Map<String, Value>, id: &str) -> Result<Value, ParseErr
         .ok_or_else(|| ParseError::BadResponse(format!("no answer for question {id:?}")))
 }
 
-/// A Choice answer. `options` is the request's own option list — a `choice`
-/// value outside it is a bad response, not a value to trust.
+/// A `choice` outside the request's own `options` is a bad response, not a value to trust.
 fn choice_from_value(answer: &Value, options: &[String]) -> Result<ParsedChoice, ParseError> {
     let selected = answer["choice"]
         .as_str()
@@ -207,9 +166,7 @@ fn choice_from_value(answer: &Value, options: &[String]) -> Result<ParsedChoice,
     Ok(ParsedChoice { selected, confidence, distribution, flat })
 }
 
-/// A Score answer. `levels` is the request's own rubric — the distribution is
-/// reconstructed from the wire's index-keyed `probabilities` (`"0"`, `"1"`,
-/// ...) back into `levels` order.
+/// The wire keys `probabilities` by stringified level index (and may omit them).
 fn score_from_value(answer: &Value, levels: &[String]) -> Result<ParsedScore, ParseError> {
     let value = answer["score"]
         .as_f64()
@@ -231,7 +188,6 @@ fn score_from_value(answer: &Value, levels: &[String]) -> Result<ParsedScore, Pa
     Ok(ParsedScore { value, confidence, distribution })
 }
 
-/// A Noul answer, as a milli-probability.
 fn gate_from_value(answer: &Value) -> Result<u32, ParseError> {
     let noul = answer["noul"]
         .as_f64()
@@ -254,13 +210,9 @@ pub fn parse_gate(body: &[u8]) -> Result<u32, ParseError> {
     gate_from_value(&find_answer(&answers, QUESTION_ID)?)
 }
 
-/// Parse a whole batch response — one entry per `questions`, in the same
-/// order, each independently `Ok`/`Err` (a provider that left one id out of
-/// its `answers` map fails only that entry, not the whole batch). Only the
-/// envelope itself (bad JSON) fails the whole call.
-/// One question's id, and its independently-parsed answer.
 type AnswerResult = (String, Result<AnswerSpec, ParseError>);
 
+/// A provider that left one id out fails only that entry; only a bad envelope fails the call.
 pub fn parse_evaluate(
     body: &[u8],
     questions: &[QuestionItem],

@@ -1,8 +1,4 @@
 //! `webhook-sign` — sign an outbound webhook the way the major providers do — HMAC-SHA256 over a timestamped payload
-//!
-//! The SEND side matching `webhook:ingest`'s verify side. Two header styles: Stripe
-//! `t={ts},v1={hex}` (MAC over `{ts}.{body}`) and GitHub `sha256={hex}` (MAC over the raw body).
-//! Pure crypto + clock; the secret comes from the caller (store it in `secrets:vault`).
 
 #[allow(warnings)]
 mod bindings;
@@ -23,8 +19,7 @@ fn hmac_hex(secret: &str, msg: &[u8]) -> String {
     mac.finalize().into_bytes().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Constant-time comparison of two hex strings: XOR-accumulate over every byte so timing does not
-/// reveal the first mismatch.
+/// Every byte is folded in, so timing does not reveal the first mismatch.
 fn ct_eq(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
     if a.len() != b.len() {
@@ -126,9 +121,7 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::*;
 
-    /// The comparison a signature check hangs on must be constant-time in the CONTENT (no early
-    /// return), or a timing attacker recovers a signature byte by byte. Timing cannot be
-    /// asserted; the shape can: every byte is folded into one accumulator.
+    /// Timing cannot be asserted, but the shape can: every byte folds into one accumulator.
     #[test]
     fn ct_eq_agrees_with_equality_on_every_edge() {
         assert!(ct_eq("", ""));

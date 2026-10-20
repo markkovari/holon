@@ -1,12 +1,5 @@
-//! The same graph, written three ways.
-//!
-//! Three different deployment models, not three formats for one idea: `plug_script` is imperative
-//! `wac plug` (each socket gets its OWN instance of every plug); `wac_file` is declarative `wac
-//! compose` (a capability instantiated once is SHARED, the only static form that can express a
-//! diamond); `workload` is a wasmCloud v2 `WorkloadDeployment` (nothing fused: composable edges
-//! leave no trace, only host capabilities appear).
-//! YAML is written by hand with `format!` rather than serde, since every value is an identifier,
-//! small integer or registry path. The shape is pinned by `emits_a_workload_manifest`.
+//! Three deployment models, not three formats: `wac plug` gives each socket its OWN plug instance,
+//! `wac compose` SHARES one (the only static diamond), a workload fuses nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -16,8 +9,7 @@ fn artifact_stem(id: &str) -> String {
     id.replace('-', "_")
 }
 
-/// A wac-safe identifier for a `let` binding: wac identifiers are kebab-case, an underscore is a
-/// parse error.
+/// wac identifiers are kebab-case; an underscore is a parse error.
 fn ident(id: &str) -> String {
     let s: String = id.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
     let s = s.trim_matches('-').to_string();
@@ -91,9 +83,8 @@ pub(crate) fn plug_script(plan: &CompositionPlan, out_dir: &str) -> String {
     s
 }
 
-/// The wac package name to instantiate a node as: a capability's identity is its exported
-/// interface (`records:store/store@0.1.0` -> `records:store`); an app exporting only `wasi:http`
-/// gets `<id>:component`.
+/// A capability's identity is its exported interface; an app exporting only `wasi:http` gets
+/// `<id>:component`.
 fn wac_package(node: &Node) -> String {
     for e in &node.surface.exports {
         if e.namespace != "wasi" && !e.namespace.is_empty() {
@@ -155,12 +146,10 @@ pub(crate) fn wac_file(
             Some(args) => {
                 s.push_str(&format!("let {var} = new {pkg} {{\n"));
                 for (iface, plug) in args {
-                    // Bracket indexing, not dot access: interface names carry `:`
-                    // `/` and `@`, none of which are identifier characters.
+                    // Bracket indexing: interface names carry `:`, `/` and `@`, which identifiers can't.
                     s.push_str(&format!("  \"{iface}\": {}[\"{iface}\"],\n", ident(plug)));
                 }
-                // `...` fills the remaining imports from the enclosing scope, so
-                // host capabilities pass straight through to the final component.
+                // `...` passes the remaining imports, host capabilities included, through from the enclosing scope.
                 s.push_str("  ...\n};\n");
             }
         }

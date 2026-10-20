@@ -1,11 +1,4 @@
 //! `vet-domain` — the vet-clinic domain as a WIT HTTP component (FULL PARITY).
-//!
-//! Maps HTTP onto the capability contracts it imports; owns NO storage and NO auth logic.
-//! Every mutating route authorizes the bearer and validates bodies via validate:schema; owners
-//! are scoped to their own pets/appointments, doctors/admins see all.
-//! Backends and the LLM provider are a compose-time choice, never in this code.
-//!
-//! Routes — see the match in `handle` for the full list.
 
 #[allow(warnings)]
 mod bindings {
@@ -51,7 +44,6 @@ mod bindings {
         world: "vet:domain/vet-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -74,7 +66,6 @@ use bindings::search::index::index as search;
 use bindings::validate::schema::validator as validate;
 use bindings::validate::schema::validator::{Kind, Rule};
 
-// full-parity capability imports.
 use bindings::ai::inference::inference as ai;
 use bindings::blob::store::blobstore as blob;
 use bindings::cache::store::cache;
@@ -122,8 +113,7 @@ impl Guest for Component {
             (Method::Post, "/register") => register(request).await,
             (Method::Post, "/login") => login(request).await,
             (Method::Get, "/me") => me(&request),
-            // `/auth/*` aliases so the existing React SPA (built against the jco
-            // app's paths) works unmodified against this Rust backend.
+            // `/auth/*` aliases so the React SPA, built against the jco app's paths, works unmodified.
             (Method::Post, "/auth/register") => register(request).await,
             (Method::Post, "/auth/login") => login(request).await,
             (Method::Get, "/auth/me") => me(&request),
@@ -145,7 +135,6 @@ impl Guest for Component {
             (Method::Post, "/auth/2fa/verify") => twofa_verify(request).await,
             (Method::Get, "/auth/2fa/status") => twofa_status(&request),
 
-            // segment-matched routes.
             _ => match (&method, seg.as_slice()) {
                 (Method::Get, ["admin", "export", file]) if file.ends_with(".csv") => {
                     admin_export_csv(&request, file.trim_end_matches(".csv"))
@@ -172,7 +161,6 @@ impl Guest for Component {
                 }
                 (Method::Get, ["appointments", id, "summary"]) => get_summary(&request, id),
 
-                // not an API route — try serving the embedded SPA (GET only).
                 (Method::Get, _) => serve_static(&route),
                 _ => Outcome::NotFound,
             },
@@ -184,11 +172,9 @@ impl Guest for Component {
 
 enum Outcome {
     Json(u16, String),
-    /// raw body with an explicit content-type (csv / image bytes).
     Raw(u16, String, Vec<u8>),
     Auth(AuthError),
     Bad(String),
-    /// {code, error-string} for the simple business-rule errors.
     Err(u16, String),
     NotFound,
 }
@@ -200,8 +186,7 @@ fn emit(result: Outcome) -> Result<Response, ErrorCode> {
         }
         Outcome::Raw(code, ct, bytes) => respond(code, &ct, bytes),
         Outcome::Auth(e) => {
-            // rate-limited carries a retry-after (seconds) — surface it as the
-            // Retry-After header AND a retryAfter JSON field so the UI can show it.
+            // Also a retryAfter JSON field so the UI can show it.
             if let AuthError::RateLimited(secs) = e {
                 let body = format!("{{\"error\":\"rate_limited\",\"retryAfter\":{secs}}}");
                 let headers = Fields::new();
@@ -224,11 +209,10 @@ fn emit(result: Outcome) -> Result<Response, ErrorCode> {
 }
 
 fn ensure_seeded() {
-    // Idempotent seeding gated on one KV read (a marker in a `meta` collection). Called ONLY from
-    // routes that consume the seeded state: running it in the global handler charged every
-    // request, static assets included, a KV round-trip.
+    // Called ONLY from routes that need the seed: in the global handler it cost every request,
+    // static assets included, a KV round-trip.
     if records::count("meta").map(|n| n > 0).unwrap_or(false) {
-        return; // already seeded
+        return;
     }
 
     let def = fsm::Definition {
@@ -269,7 +253,6 @@ fn ensure_seeded() {
 
 const APPT_EVENTS: [&str; 3] = ["confirm", "complete", "cancel"];
 
-/// (locale, key, value) tuples for the UI catalog — en + es, matching the TS.
 fn ui_strings() -> Vec<(&'static str, &'static str, &'static str)> {
     vec![
         ("en", "app.title", "Acme Vet Clinic"),
@@ -299,9 +282,8 @@ const UI_KEYS: [&str; 7] = [
     "notes.title",
 ];
 
-/// The clinic's single tenant. The SPA omits `tenant` on register/login, so an
-/// empty value must resolve to this — otherwise accounts land under tenant ""
-/// and can never be found again. (Mirrors the jco app's `default-tenant`.)
+/// The SPA omits `tenant`, so empty must resolve here or accounts land under "" and are never
+/// found again (as the jco app's `default-tenant`).
 const DEFAULT_TENANT: &str = "acme-vet";
 
 fn tenant_or_default(t: &Option<String>) -> String {
@@ -379,8 +361,6 @@ fn logout(request: &Request) -> Outcome {
     }
 }
 
-/// Authorize the bearer for {target, action}; returns the principal or an Auth
-/// outcome the caller can early-return.
 fn require(request: &Request, target: &str, action: &str) -> Result<Principal, Outcome> {
     let token = match bearer(request) {
         Some(t) => t,
@@ -408,8 +388,7 @@ fn is_doctor(p: &Principal) -> bool {
     p.roles.iter().any(|r| r == "doctor")
 }
 
-// Serve the built React app via static:assets: exact path match, else fall back to index.html for
-// client-side routing. The bytes live in the linked component, keeping this artifact slim.
+// The SPA bytes live in the linked static:assets component, keeping this artifact slim.
 
 fn serve_static(path: &str) -> Outcome {
     let want = if path == "/" { "/index.html" } else { path };
@@ -525,8 +504,7 @@ fn list_pets(request: &Request, query: &str) -> Outcome {
     let limit = query_param(query, "limit");
     let cursor = query_param(query, "cursor");
 
-    // ?limit (and no ?q) -> a cursor-paginated page (paginate:cursor); else the
-    // full list/search, matching the TS back-compat behaviour.
+    // TS back-compat: only ?limit without ?q is a cursor page.
     if limit.is_some() && q.is_none() {
         let n: u32 = limit.and_then(|l| l.parse().ok()).unwrap_or(10);
         return paginate_pets(scope_owner.as_deref(), n, cursor.as_deref(), &principal.subject);
@@ -608,7 +586,6 @@ fn paginate_pets(owner: Option<&str>, limit: u32, cursor: Option<&str>, viewer: 
     )
 }
 
-/// Owner-scoped; doctors/admins may view any.
 fn get_pet_detail(request: &Request, pet_id: &str) -> Outcome {
     let principal = match require(request, "pets", "read") {
         Ok(p) => p,
@@ -718,8 +695,6 @@ async fn upload_pet_photo(request: Request, pet_id: &str) -> Outcome {
     Outcome::Json(201, "{\"ok\":true}".into())
 }
 
-/// Serve the raw photo bytes with the stored content-type. Any authed user with
-/// pets:read may read; this writes the response directly (binary body).
 fn serve_pet_photo(request: &Request, pet_id: &str) -> Result<Response, ErrorCode> {
     let _principal = match require(request, "pets", "read") {
         Ok(p) => p,
@@ -807,7 +782,6 @@ fn list_appointments(request: &Request) -> Outcome {
     let entries = if is_admin(&principal) {
         records::list_records("appointments", 0, "").map(|p| p.entries).unwrap_or_default()
     } else if is_doctor(&principal) {
-        // a doctor sees their own assigned appointments PLUS the unassigned pool.
         records::list_records("appointments", 0, "")
             .map(|p| p.entries)
             .unwrap_or_default()
@@ -827,7 +801,6 @@ fn list_appointments(request: &Request) -> Outcome {
     )
 }
 
-/// Cancel (delete) an appointment — only when it is more than 24h away. Owner-scoped.
 fn delete_appointment(request: &Request, appt_id: &str) -> Outcome {
     let principal = match require(request, "appointments", "write") {
         Ok(p) => p,
@@ -861,8 +834,6 @@ struct TransitionReq {
     event: String,
 }
 
-/// Advance an appointment through its lifecycle via fsm:workflow. confirm/complete
-/// are doctor/admin; cancel may also be done by the appointment's owner.
 async fn transition_appointment(request: Request, appt_id: &str) -> Outcome {
     ensure_seeded(); // fsm machine must exist before fire/allowed-events
     let principal = match require(&request, "appointments", "write") {
@@ -939,7 +910,7 @@ async fn put_invoice(request: Request, appt_id: &str) -> Outcome {
     if req.items.is_empty() {
         return Outcome::Err(400, "no_items".into());
     }
-    // sum from an explicit zero (parse("0") is rejected), then add each line.
+    // From an explicit zero: parse("0") is rejected.
     let mut total = money::Amount { units: 0, currency: CURRENCY.to_string() };
     for it in &req.items {
         let amt = money::Amount { units: it.cents, currency: CURRENCY.to_string() };
@@ -1009,8 +980,7 @@ async fn add_note(request: Request, appt_id: &str) -> Outcome {
     if req.text.trim().is_empty() {
         return Outcome::Err(400, "empty_note".into());
     }
-    // writing a note claims the appointment for this doctor (if unassigned),
-    // fenced by lock:mutex so two doctors can't both win the claim.
+    // Writing a note claims the appointment for this doctor if it is unassigned.
     assign_doctor(appt_id, &principal.subject);
     let data = format!(
         "{{\"appointment\":{},\"author\":{},\"text\":{},\"at\":{}}}",
@@ -1058,23 +1028,21 @@ fn render_markdown(text: &str) -> String {
     markdown::to_html(text)
 }
 
-/// Claim an appointment for a doctor, fenced by lock:mutex so two doctors can't
-/// both win an unassigned appointment. No-op if already this doctor's; on
-/// contention the loser yields to whoever holds the claim.
+/// Fenced by lock:mutex so two doctors can't both win; on contention the loser yields.
 fn assign_doctor(appt_id: &str, doctor: &str) {
     let appt = match records::get("appointments", appt_id) {
         Ok(e) => e,
         Err(_) => return,
     };
     if json_field(&appt.data, "doctor").as_deref() == Some(doctor) {
-        return; // already mine
+        return;
     }
     let key = format!("claim/{appt_id}");
     let lease = match lock::acquire(&key, doctor, 10) {
         Ok(l) => l,
-        Err(_) => return, // held by another claimer -> yield
+        Err(_) => return,
     };
-    // re-read inside the lock: someone may have claimed it just now.
+    // Re-read inside the lock: someone may have claimed it just now.
     if let Ok(fresh) = records::get("appointments", appt_id) {
         let cur = json_field(&fresh.data, "doctor").unwrap_or_default();
         if cur.is_empty() || cur == doctor {
@@ -1089,8 +1057,6 @@ fn aisum_key(appt_id: &str) -> String {
     format!("aisum_{appt_id}")
 }
 
-/// Generate (and cache) a clinical summary for an appointment via ai:inference.
-/// Doctor/admin (notes:write). ?force=1 re-runs even if cached.
 fn post_summary(request: &Request, appt_id: &str, query: &str) -> Outcome {
     let _principal = match require(request, "notes", "write") {
         Ok(p) => p,
@@ -1184,11 +1150,8 @@ fn reminder_key(appt_id: &str) -> String {
     format!("appt-reminder-{appt_id}")
 }
 
-/// Run the appointment-reminder relay (sched:timer). Admin-triggered (audit:read,
-/// which admin's *:* covers). `?now=<unix>` overrides the clock for testing.
-/// Fires every reminder due at `now`: collects what it would notify (the
-/// notify sink is a compose-time concern, out of this domain), then acks the
-/// timer jobs. A reminder for a gone/cancelled appointment is acked, not fired.
+/// The notify sink is a compose-time concern, so this only collects; a reminder for a gone or
+/// cancelled appointment is acked, not fired.
 fn admin_run_reminders(request: &Request, query: &str) -> Outcome {
     let _principal = match require(request, "audit", "read") {
         Ok(p) => p,
@@ -1226,8 +1189,6 @@ fn admin_run_projection(request: &Request) -> Outcome {
     };
     let batch = events::poll(APPT_TOPIC, PROJECTION_GROUP, 100).unwrap_or_default();
     let ids: Vec<String> = batch.iter().map(|e| e.id.clone()).collect();
-    // count is the projection group's total acked offset — we maintain a durable
-    // counter in records:store (collection "projections", a single row).
     let mut total = read_booked_count();
     if !ids.is_empty() {
         total += ids.len() as u64;
@@ -1253,10 +1214,7 @@ fn write_booked_count(count: u64) {
     let _ = records::create("projections", &data, &["name".to_string()]);
 }
 
-/// PII-redacted audit trail (admin-only). The composed auth-guard's recorder
-/// writes events to the shared KV under `al_*` keys; we read them straight from
-/// the bucket (audit:log does not re-export its query interface), newest-first,
-/// and mask PII in the detail + subject fields via pii:redact.
+/// Reads the `al_*` keys straight from the bucket: audit:log does not re-export its query interface.
 fn admin_audit(request: &Request) -> Outcome {
     let _principal = match require(request, "audit", "read") {
         Ok(p) => p,
@@ -1284,8 +1242,7 @@ fn read_audit_events(max: usize) -> Vec<AuditEvent> {
     };
     let mut keys: Vec<String> = Vec::new();
     let mut cursor: Option<u64> = None;
-    // page through all keys (the in-process shim returns them in one page, but
-    // honour the cursor protocol so a paged backend works too).
+    // The in-process shim returns one page; honour the cursor so a paged backend works too.
     while let Ok(resp) = bucket.list_keys(cursor) {
         keys.extend(resp.keys.into_iter().filter(|k| k.starts_with("al_")));
         match resp.cursor {
@@ -1412,7 +1369,7 @@ fn twofa_enroll(request: &Request) -> Outcome {
         Ok(p) => p,
         Err(e) => return Outcome::Err(500, format!("otp: {e:?}")),
     };
-    // seal the base32 TOTP secret — only ciphertext touches the store.
+    // Only ciphertext touches the store.
     let _ = vault::put(&otp_secret_name(&me.subject), p.secret.as_bytes());
     Outcome::Json(200, format!("{{\"secret\":{},\"uri\":{}}}", js(&p.secret), js(&p.uri)))
 }
@@ -1472,11 +1429,8 @@ async fn parse<T: for<'de> Deserialize<'de>>(request: Request) -> Result<T, Stri
     serde_json::from_slice(&body).map_err(|e| format!("bad json: {e}"))
 }
 
-/// The most a request body may be before the component stops reading it. Without a ceiling,
-/// components accumulated input until the guest hit wasmtime's 64 MiB per-store cap and TRAPPED,
-/// which reaches the caller as a closed connection.
-/// A backstop against an unbounded read, not a content policy; uploads police their own size with
-/// a 413.
+/// Without a ceiling a read grew to wasmtime's 64 MiB per-store cap and TRAPPED (a closed
+/// connection). A backstop, not a content policy: uploads 413 on their own.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
@@ -1551,7 +1505,6 @@ fn jget_str(v: &serde_json::Value, key: &str) -> String {
     }
 }
 
-/// Set/replace a top-level string field in a flat JSON object string.
 fn set_json_field(obj: &str, key: &str, value: &str) -> String {
     let mut v: serde_json::Value =
         serde_json::from_str(obj).unwrap_or_else(|_| serde_json::json!({}));
@@ -1609,8 +1562,7 @@ fn auth_error(e: &AuthError) -> (u16, &'static str) {
     match e {
         AuthError::InvalidCredentials => (401, "invalid_credentials"),
         AuthError::AlreadyExists => (409, "already_exists"),
-        // RateLimited(_) is handled in `emit` (adds Retry-After); this arm is a
-        // fallback so the match stays exhaustive.
+        // Handled in `emit` (adds Retry-After); kept so the match stays exhaustive.
         AuthError::RateLimited(_) => (429, "rate_limited"),
         AuthError::InsufficientScope(_) => (403, "insufficient_scope"),
         AuthError::Expired => (401, "expired"),
@@ -1626,8 +1578,7 @@ fn store_err(e: StoreError) -> Outcome {
     match e {
         StoreError::NotFound => Outcome::NotFound,
         StoreError::InvalidJson(m) => Outcome::Bad(format!("invalid_json: {m}")),
-        // 409, not 400: a client retrying on a compare-and-set conflict (ADR-0065) does not retry
-        // a 400.
+        // 409, not 400: clients retry a compare-and-set conflict (ADR-0065) but not a 400.
         StoreError::RevisionConflict(_) => Outcome::Err(409, "revision_conflict".into()),
         StoreError::BackendUnavailable(m) => {
             Outcome::Json(503, format!("{{\"error\":\"backend: {}\"}}", esc(&m)))

@@ -1,9 +1,5 @@
-//! Projects (shared) and time entries (`pending -> approved`/`rejected`). A
-//! `member` logs and edits only their own entries; a `manager` approves only
-//! entries routed to THEM (the `manager` field the member names when logging
-//! one) — the row-level rule `auth:identity/rbac` cannot express, enforced
-//! with `policy:guard` exactly as `crm-domain`/`ats-domain` enforce their own
-//! ownership rule.
+//! A manager approves only entries routed to THEM: a row-level rule `auth:identity/rbac` cannot
+//! express, so `policy:guard` enforces it.
 
 use crate::bindings::auth::identity::types::Principal;
 use crate::bindings::p3::http::types::Method;
@@ -30,9 +26,7 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     }
 }
 
-/// Idempotent: ONLY the manager an entry is routed to may decide it —
-/// deliberately not the member who logged it (self-approval would defeat
-/// the point of routing it to someone else at all).
+/// Deliberately not the member who logged it: self-approval would defeat the routing.
 fn ensure_policy_rules() {
     match records::find_by("meta", "kind", "\"policy_rules\"") {
         Ok(entries) if !entries.is_empty() => {}
@@ -108,8 +102,7 @@ struct EntryReq {
     hours: f64,
     #[serde(default)]
     note: String,
-    /// The manager's subject id this entry is routed to for approval (from
-    /// their `/register` or `/me` response).
+    /// The approving manager's subject id (from their `/register` or `/me` response).
     #[serde(default)]
     manager: String,
 }
@@ -139,8 +132,6 @@ fn create_entry(route: &Route, body: &str) -> Reply {
     }
 }
 
-/// A member sees their own entries; a manager sees the ones routed to them —
-/// two different equals-filters on the same collection, never both at once.
 fn list_entries(route: &Route) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let subject_json = serde_json::to_string(&principal.subject).unwrap_or_default();

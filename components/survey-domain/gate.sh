@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# survey-domain's held-out-spec gate: compose the real capability graph, host it, and
-# assert real HTTP behavior — register, login, roles, and the one-response-per-survey
-# uniqueness rule. Deliberately NOT writable by the goal it judges (.comp/goals/
-# survey-domain.toml) — a candidate that could write its own gate could always pass it.
+# Held-out-spec gate: compose the real capability graph, host it, assert real HTTP behaviour.
+# Not writable by the goal it judges: a candidate that could write its own gate could always pass it.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 

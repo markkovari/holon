@@ -1,8 +1,5 @@
-//! The day's reports, counted and tabulated.
-//!
-//! The CSV table IS the intermediate representation: `table()` builds the five columns once,
-//! sorted, and the JSON digest is read back from them (`tally(col)`), so summary and CSV cannot
-//! disagree. `csv:codec::format` does the quoting.
+//! The CSV table IS the intermediate representation: the JSON digest is read back from it, so
+//! summary and CSV cannot disagree.
 use crate::bindings::csv::codec::codec as csv;
 use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
@@ -26,9 +23,7 @@ fn valid_day(d: &str) -> bool {
         && (1..=31).contains(&d[8..10].parse::<u8>().unwrap_or(0))
 }
 
-/// ponytail: whole-collection walk. `reported_at` is not an index field in the
-/// contract, so `query` would scan anyway; index it and switch to `find-by` if a
-/// day ever costs more than a page or two.
+/// ponytail: walks the whole collection (`reported_at` isn't indexed); index it if a day outgrows a page.
 fn table(day: &str) -> Vec<Vec<String>> {
     let mut keyed: Vec<(String, Vec<String>)> = Vec::new();
     let mut after = String::new();

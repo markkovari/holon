@@ -1,26 +1,16 @@
-//! Taking a defect report in. **This file is the goal of the `intake` part.**
-//!
-//! `body` is stored MASKED, via `pii:redact` — the raw text never reaches the
-//! store, because the digest is readable by anyone.
-//!
-//! Every read goes through ONE store call, `query`: it ANDs a list of filters and re-checks each
-//! candidate against all of them, so the list filters and the duplicate lookup (`component` +
-//! `title`, and `title` is not indexed) differ only in the filter vector. `query` indexes the
-//! JSON ENCODING of a value (`"billing"`, quotes included); `filter()` does that encoding and
-//! nothing passes a bare string.
+//! `body` is stored MASKED, since the digest is readable by anyone. `query` indexes a value's JSON
+//! ENCODING (`"billing"`, quotes included), so every filter goes through `filter()`.
 use crate::bindings::p3::http::types::Method;
 use crate::bindings::pii::redact::redactor as pii;
 use crate::bindings::records::store::store as records;
 use crate::{Reply, Route};
 use serde_json::{json, Map, Value};
 
-/// A ceiling far above any test collection: `query` applies no cap of its own and a limit of 0
-/// would silently mean "50".
+/// `query` has no cap of its own, and a limit of 0 would silently mean "50".
 const LIMIT: u32 = 10_000;
 
 const INDEXES: [&str; 2] = ["component", "state"];
 
-/// A filter on the JSON encoding of a string value — the form the store indexes.
 fn filter(field: &str, value: &str) -> records::Filter {
     records::Filter {
         field: field.to_string(),
@@ -47,8 +37,7 @@ fn field(v: &Value, key: &str) -> Option<String> {
     v.get(key).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
 }
 
-/// Epoch seconds → RFC3339 UTC. The world has no wall clock, so the timestamp
-/// comes from the store's own `created` on the record it just wrote.
+/// No wall clock here: the time comes from the store's own `created` on the record.
 fn rfc3339(secs: u64) -> String {
     let (days, tod) = ((secs / 86400) as i64, secs % 86400);
     let z = days + 719468;
@@ -86,8 +75,7 @@ fn create(body: &str) -> Reply {
         return Reply::err(400, "invalid");
     };
 
-    // Duplicate: same component AND same title, on a report that is not closed. A
-    // closed one does not block — the bug came back.
+    // A closed duplicate does not block: the bug came back.
     let existing = records::query(
         "reports",
         &[filter("component", &component), filter("title", &title)],
@@ -100,8 +88,7 @@ fn create(body: &str) -> Reply {
         return Reply::json(409, json!({ "error": "duplicate", "existing": e.id }));
     }
 
-    // Masked before it is written: emails, cards, SSNs, phones, IPs. Empty `kinds`
-    // is every kind, which is what a body pasted by a reporter needs.
+    // Empty `kinds` is every kind, which a body pasted by a reporter needs.
     let masked = pii::redact(&raw, &pii::Options { kinds: Vec::new() });
 
     let mut document = json!({

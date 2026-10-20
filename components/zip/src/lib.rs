@@ -1,16 +1,11 @@
 //! `zip` — write a .zip archive from a list of named byte blobs
-//!
-//! A dependency-free ZIP writer using STORE (no compression): per file a local header + raw
-//! bytes, then a central directory and end-of-central-directory record. Little-endian; each entry
-//! carries a CRC-32 (bit-by-bit, fine for the small blobs this bundles).
 
 mod inflate;
 mod read;
 
 pub use read::{extract, ZipError};
 
-/// One archive member: the plain-Rust twin of the WIT record, so the held-out specification can
-/// judge this crate without a component runtime.
+/// The plain-Rust twin of the WIT record, so `tests/` can judge this crate without a runtime.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct File {
     pub name: String,
@@ -39,7 +34,6 @@ fn u32le(out: &mut Vec<u8>, v: u32) {
 const DOS_TIME: u16 = 0;
 const DOS_DATE: u16 = 0x0021;
 
-/// Build a complete ZIP archive (STORE method) from `files`.
 pub fn archive(files: &[File]) -> Vec<u8> {
     {
         let mut out = Vec::new();
@@ -103,10 +97,6 @@ pub fn archive(files: &[File]) -> Vec<u8> {
         out
     }
 }
-
-//
-// A mapping between the WIT types and the ones above, and nothing else — the logic
-// is judged by `tests/` against the plain functions.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]

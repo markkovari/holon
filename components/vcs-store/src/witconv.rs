@@ -1,11 +1,5 @@
-//! The contract's records, between this crate's generated bindings and
-//! `holon_vcs::model` (the serde types the wire is made of) — both directions.
-//!
-//! Shared by `vcs-store` and `vcs-gateway` as a SOURCE file (`#[path]`), not a
-//! library: each crate's `bindings.rs` makes its own Rust types for the same
-//! WIT types (ADR-0095), so this is compiled once per crate against
-//! `crate::wit::t` (the `holon:vcs/types` bindings) and `crate::wit::files`
-//! (the `holon:vcs/files` ones), which each crate points at its own.
+//! A SOURCE file shared via `#[path]` by `vcs-store` and `vcs-gateway`: each crate's bindings make
+//! their own Rust types for the same WIT types (ADR-0095).
 
 use holon_vcs::model as m;
 use holon_vcs::wire;
@@ -57,7 +51,6 @@ impl<T: ToModel> ToModel for Vec<T> {
     }
 }
 
-/// A record with the same name and fields on both sides.
 macro_rules! record {
     ($name:ident { $($field:ident),* $(,)? }) => {
         impl ToWit for m::$name {
@@ -71,8 +64,7 @@ macro_rules! record {
     };
 }
 
-/// A variant or enum with the same name and cases on both sides; a case has
-/// no payload or one.
+/// A case has no payload or one.
 macro_rules! variant {
     ($name:ident { $($case:ident $(($x:ident))?),* $(,)? }) => {
         impl ToWit for m::$name {

@@ -1,13 +1,4 @@
 //! `vgit-probe` — an instrument for `vgit:store` (see wit/probe.wit).
-//!
-//!   POST /commit   {base, message, changes:[{path, content, remove}]} -> {commit, tree}
-//!   GET  /read     ?commit=&path=
-//!   GET  /paths    ?commit=
-//!   GET  /diff     ?before=&after=
-//!   GET  /tree     ?commit=&path=   the subtree id at a path, for reuse checks
-//!   POST /ref      ?name=&to=[&expect=]
-//!   GET  /ref      ?name=
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -28,7 +19,6 @@ mod bindings {
         world: "comp:vgitprobe/vgit-probe",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -63,8 +53,7 @@ fn err(e: objects::GitError) -> String {
     json!({ "error": kind, "detail": msg }).to_string()
 }
 
-/// A ceiling on a request body, not a policy: past this the body reads as empty rather than
-/// growing until the memory cap traps the component.
+/// Past this the body reads as empty, instead of growing until the memory cap traps the component.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
@@ -114,9 +103,7 @@ impl Guest for Component {
                     .collect();
                 let base = v["base"].as_str().unwrap_or_default().to_string();
                 let message = v["message"].as_str().unwrap_or("change").to_string();
-                // A fixed author and a fixed time: the test compares this id with
-                // one `git commit-tree` produces from the same inputs, and either
-                // moving would make that impossible.
+                // Fixed author and time: the test compares this id with `git commit-tree` on the same inputs.
                 match worktree::commit_changes(
                     &base,
                     &changes,

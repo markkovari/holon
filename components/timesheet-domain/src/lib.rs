@@ -1,9 +1,4 @@
 //! `timesheet-domain` — router: auth (register/login/logout/me) and dispatch
-//! into `handlers.rs` for the domain routes. The whole router is
-//! `guestauth`/`guestio` macro expansions; nothing domain-specific lives
-//! here — see `handlers.rs` for the actual timesheet logic (including its
-//! own policy check, deliberately NOT a `guestauth` macro — see there).
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -29,7 +24,6 @@ mod bindings {
         world: "timesheet:tracking/timesheet-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -41,8 +35,7 @@ mod handlers;
 pub use guestauth::Route;
 
 pub const TENANT: &str = "timesheet";
-/// The only roles this app grants. Anything else in a register request falls
-/// back to `member` — a role is a privilege, not a free-text field.
+/// Anything else falls back to `member`: a role is a privilege, not a free-text field.
 const ROLES: &[&str] = &["manager", "member"];
 
 guestio::guest_p3_bearer!();

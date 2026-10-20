@@ -1,23 +1,5 @@
 //! `webauthn` — the server half of passkey login — verify a WebAuthn registration and an assertion
-//!
-//! The relying-party half of a passkey ceremony: decode the authenticator's CBOR,
-//! check every binding the spec requires, and verify the signature. Stateless —
-//! the RP issues the challenge, stores the credential, and persists the counter.
-//!
-//! The checks, in the order the spec (W3C WebAuthn L2, §7.1 / §7.2) puts them:
-//!
-//! | check | why it exists |
-//! |---|---|
-//! | `clientData.type` | stops a registration response being replayed as a login |
-//! | `clientData.challenge` | stops replay of an old ceremony |
-//! | `clientData.origin` | stops a phishing site from using its own ceremony |
-//! | `authData.rpIdHash` | stops a credential for another RP being presented |
-//! | `UP` flag | someone was actually present at the authenticator |
-//! | `UV` flag | ...and was verified (biometric / PIN), when the RP requires it |
-//! | signature | the private key — which never left the authenticator — signed it |
-//! | counter | strictly increasing, or the authenticator was cloned |
-//!
-//! Skipping any single one of these turns a passkey into a bearer token.
+//! Skipping any single check turns a passkey into a bearer token.
 
 #[allow(warnings)]
 mod bindings;
@@ -79,11 +61,8 @@ impl Guest for Component {
         // Fail here rather than at first login if the key itself is unusable.
         verifying_key(&cose_bytes, alg)?;
 
-        // `packed` SELF-attestation (an attStmt with a sig and no x5c) signs the
-        // same message a login does, with the key being registered — so we can and
-        // do check it. A statement with an x5c certificate chain is a trust
-        // decision we deliberately don't make (see the WIT doc): report the
-        // format, don't pretend to have validated a chain.
+        // `packed` SELF-attestation signs what a login signs, so it is checked; an x5c chain is a trust
+        // decision deliberately not made (see the WIT doc).
         if fmt == "packed" {
             if let (Some(att_stmt), None) =
                 (att.get("attStmt"), att.get("attStmt").and_then(|s| s.get("x5c")))
@@ -129,9 +108,7 @@ impl Guest for Component {
         signed.extend_from_slice(&Sha256::digest(&client_data_json));
         verify_signature(&cred.public_key, alg, &signed, &signature)?;
 
-        // The counter must strictly increase. Both zero means the authenticator
-        // does not implement a counter at all (permitted, and common for
-        // platform passkeys) — then there is nothing to compare.
+        // Both zero: the authenticator has no counter (permitted, common for platform passkeys).
         if !(ad.sign_count == 0 && cred.sign_count == 0) && ad.sign_count <= cred.sign_count {
             return Err(VerifyError::CounterRegressed(ad.sign_count));
         }
@@ -152,8 +129,7 @@ fn check_client_data(json: &[u8], want_type: &str, exp: &Expectations) -> Result
     if ty != want_type {
         return Err(VerifyError::BadType(ty.to_string()));
     }
-    // Both sides are base64url of the same bytes; compare the bytes so padding
-    // differences between libraries can't fail a valid ceremony.
+    // Compare bytes, so padding differences between libraries can't fail a valid ceremony.
     let got = b64url(v["challenge"].as_str().unwrap_or_default())?;
     let want = b64url(&exp.challenge)?;
     if got.is_empty() || got != want {
@@ -166,8 +142,7 @@ fn check_client_data(json: &[u8], want_type: &str, exp: &Expectations) -> Result
     Ok(())
 }
 
-/// Decode base64url, with or without padding (browsers omit it, some client
-/// libraries add it back).
+/// With or without padding: browsers omit it, some client libraries add it back.
 fn b64url(s: &str) -> Result<Vec<u8>, VerifyError> {
     let trimmed = s.trim_end_matches('=');
     URL_SAFE_NO_PAD
@@ -186,10 +161,8 @@ struct AuthData {
     cose: Option<Vec<u8>>,
 }
 
-/// Parse authenticatorData (WebAuthn §6.1):
-/// `rpIdHash(32) || flags(1) || signCount(4) [|| attestedCredentialData]`
-/// where attested credential data is
-/// `aaguid(16) || credentialIdLength(2) || credentialId || COSEPublicKey`.
+/// WebAuthn §6.1: `rpIdHash(32) || flags(1) || signCount(4) [|| aaguid(16) ||
+/// credentialIdLength(2) || credentialId || COSEPublicKey]`.
 fn parse_auth_data(buf: &[u8]) -> Result<AuthData, VerifyError> {
     if buf.len() < 37 {
         return Err(VerifyError::Malformed(format!("authData is {} bytes, need >= 37", buf.len())));
@@ -214,8 +187,7 @@ fn parse_auth_data(buf: &[u8]) -> Result<AuthData, VerifyError> {
     if id_len == 0 || id_len > 1023 || buf.len() < id_end {
         return Err(VerifyError::Malformed(format!("credential id length {id_len} does not fit")));
     }
-    // The COSE key runs to the end unless extensions follow, so decode it and use
-    // exactly the bytes it consumed — never `&buf[id_end..]` blindly.
+    // The COSE key runs to the end unless extensions follow: use exactly the bytes it consumed.
     let (_, used) = cbor::decode(&buf[id_end..])
         .map_err(|e| VerifyError::BadEncoding(format!("COSE key: {e}")))?;
     ad.aaguid = Some(aaguid);
@@ -242,8 +214,7 @@ enum Key {
     Rs256(Box<rsa::RsaPublicKey>),
 }
 
-/// Build a verifying key from a COSE_Key (RFC 8152): EC2 keys carry `crv`(-1),
-/// `x`(-2), `y`(-3); RSA keys carry `n`(-1), `e`(-2).
+/// COSE_Key (RFC 8152): EC2 has `crv`(-1) `x`(-2) `y`(-3); RSA has `n`(-1) `e`(-2).
 fn verifying_key(cose_bytes: &[u8], alg: i64) -> Result<Key, VerifyError> {
     let (cose, _) = cbor::decode(cose_bytes).map_err(VerifyError::BadEncoding)?;
     let field = |label: i64, what: &str| -> Result<Vec<u8>, VerifyError> {
@@ -312,9 +283,7 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::*;
 
-    // A virtual authenticator: the same construction a real one performs, with a
-    // key we hold so the test can also produce INVALID ceremonies on purpose.
-    // (The e2e in examples/passkey does the same over real HTTP.)
+    // A virtual authenticator with a key we hold, so tests can also forge INVALID ceremonies.
     use p256::ecdsa::{signature::Signer, Signature, SigningKey};
 
     const RP: &str = "localhost";
@@ -430,7 +399,6 @@ mod tests {
         let (sk, cred) = register_ok();
         let good = client_data("webauthn.get", CHALLENGE, ORIGIN);
 
-        // wrong ceremony type
         let cd = client_data("webauthn.create", CHALLENGE, ORIGIN);
         let (ad, sig) = assert_with(&sk, RP, FLAG_UP | FLAG_UV, 1, &cd);
         assert!(matches!(
@@ -438,7 +406,6 @@ mod tests {
             Err(VerifyError::BadType(_))
         ));
 
-        // replayed / wrong challenge
         let cd = client_data("webauthn.get", "b3RoZXItY2hhbGxlbmdl", ORIGIN);
         let (ad, sig) = assert_with(&sk, RP, FLAG_UP, 1, &cd);
         assert!(matches!(
@@ -446,7 +413,6 @@ mod tests {
             Err(VerifyError::ChallengeMismatch)
         ));
 
-        // phishing origin
         let cd = client_data("webauthn.get", CHALLENGE, "http://evil.example");
         let (ad, sig) = assert_with(&sk, RP, FLAG_UP, 1, &cd);
         assert!(matches!(
@@ -454,28 +420,24 @@ mod tests {
             Err(VerifyError::OriginMismatch(o)) if o == "http://evil.example"
         ));
 
-        // a credential minted for a different RP
         let (ad, sig) = assert_with(&sk, "other.example", FLAG_UP, 1, &good);
         assert!(matches!(
             <Component as Guest>::authenticate(exp(false), cred.clone(), good.clone(), ad, sig),
             Err(VerifyError::RpIdMismatch)
         ));
 
-        // nobody touched it
         let (ad, sig) = assert_with(&sk, RP, 0, 1, &good);
         assert!(matches!(
             <Component as Guest>::authenticate(exp(false), cred.clone(), good.clone(), ad, sig),
             Err(VerifyError::UserNotPresent)
         ));
 
-        // present but not verified, while the RP demands verification
         let (ad, sig) = assert_with(&sk, RP, FLAG_UP, 1, &good);
         assert!(matches!(
             <Component as Guest>::authenticate(exp(true), cred.clone(), good.clone(), ad, sig),
             Err(VerifyError::UserNotVerified)
         ));
 
-        // a signature from the wrong key
         let other = SigningKey::from_bytes(&[9u8; 32].into()).unwrap();
         let (ad, sig) = assert_with(&other, RP, FLAG_UP, 1, &good);
         assert!(matches!(
@@ -483,7 +445,7 @@ mod tests {
             Err(VerifyError::BadSignature)
         ));
 
-        // a tampered authData (flip a byte of the counter after signing)
+        // flip a counter byte after signing
         let (mut ad, sig) = assert_with(&sk, RP, FLAG_UP, 9, &good);
         ad[36] ^= 0xff;
         assert!(matches!(
@@ -511,8 +473,7 @@ mod tests {
             Err(VerifyError::CounterRegressed(4))
         ));
 
-        // A counter-less authenticator (always 0) is permitted — but only if it
-        // was registered at 0 too.
+        // A counter-less authenticator (always 0) is permitted only if it was registered at 0 too.
         let (sk0, cred0) = register_ok();
         let (ad, sig) = assert_with(&sk0, RP, FLAG_UP, 0, &cd);
         assert!(<Component as Guest>::authenticate(exp(false), cred0, cd, ad, sig).is_ok());

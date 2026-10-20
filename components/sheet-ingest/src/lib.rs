@@ -1,22 +1,11 @@
 //! `sheet-ingest` — a `.csv` or `.xlsx` someone exported, turned into rows
-//!
-//! `tests/xlsx.rs` is the specification and is not writable from here.
-//!
-//! It does not parse CSV or open ZIP archives: `csv:codec` and `zip:archive` are imported, and
-//! what is left is the OOXML shape of a worksheet.
-//! A gap is an omission, not a blank: `<c r="A1"/><c r="C1"/>` is three columns, and pushing
-//! cells in document order shifts values into the wrong column (a bulk insert writing price into
-//! quantity, with nothing failing). The column letter in the cell reference decides position,
-//! never the order.
-//! Text lives elsewhere: a `t="s"` cell holds an INDEX into `xl/sharedStrings.xml`, not a string.
+//! never document order (or price lands in quantity with nothing failing).
 
-/// One row, already lined up with the header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
     pub cells: Vec<String>,
 }
 
-/// A sheet in the shape a bulk insert wants.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sheet {
     pub header: Vec<String>,
@@ -24,7 +13,6 @@ pub struct Sheet {
     pub sheet_name: String,
 }
 
-/// Why a file could not be read as a sheet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImportError {
     UnknownFormat(String),
@@ -37,7 +25,7 @@ pub enum ImportError {
     Csv(String),
 }
 
-/// `A` -> 0, `Z` -> 25, `AA` -> 26: the letters of a cell reference like `BC12`. This decides a cell's column; a row with a gap omits the cell rather than emitting an empty one.
+/// `A` -> 0, `Z` -> 25, `AA` -> 26.
 pub fn column_of(reference: &str) -> Option<usize> {
     let letters: String = reference
         .chars()
@@ -57,7 +45,7 @@ pub fn column_of(reference: &str) -> Option<usize> {
 fn tag_text(xml: &str, tag: &str, from: usize) -> Option<(String, usize)> {
     let open = xml[from..].find(&format!("<{tag}"))? + from;
     let gt = xml[open..].find('>')? + open;
-    // `<t/>` — an empty element, which is how a blank shared string is stored.
+    // `<t/>`: how a blank shared string is stored.
     if xml.as_bytes().get(gt - 1) == Some(&b'/') {
         return Some((String::new(), gt + 1));
     }
@@ -65,8 +53,7 @@ fn tag_text(xml: &str, tag: &str, from: usize) -> Option<(String, usize)> {
     Some((unescape(&xml[gt + 1..close]), close + tag.len() + 3))
 }
 
-/// The five XML entities. Not a general parser: OOXML writes these and nothing
-/// else, and a sheet full of `&amp;` where an `&` belongs is a visible bug.
+/// OOXML writes only these five entities, so this is not a general parser.
 fn unescape(s: &str) -> String {
     if !s.contains('&') {
         return s.to_string();
@@ -79,10 +66,7 @@ fn unescape(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
-/// `xl/sharedStrings.xml` — the strings a sheet refers to by index.
-///
-/// A `<si>` may hold one `<t>` or several inside `<r>` runs when the text was
-/// formatted mid-cell; the runs concatenate, which is what the spreadsheet shows.
+/// Rich-text `<r>` runs inside one `<si>` concatenate, which is what the spreadsheet shows.
 pub fn shared_strings(xml: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut at = 0usize;
@@ -107,7 +91,6 @@ pub fn shared_strings(xml: &str) -> Vec<String> {
     out
 }
 
-/// `xl/worksheets/sheetN.xml` into rows of cells, positioned by column letter.
 pub fn worksheet_rows(xml: &str, shared: &[String]) -> Vec<Vec<String>> {
     let mut rows = Vec::new();
     let mut at = 0usize;
@@ -116,7 +99,7 @@ pub fn worksheet_rows(xml: &str, shared: &[String]) -> Vec<Vec<String>> {
             Some(i) => i + open,
             None => break,
         };
-        // `<row r="3"/>` — an empty row, which some writers emit for styling.
+        // Some writers emit an empty `<row r="3"/>` for styling.
         let (body, next) = if xml.as_bytes()[head_end - 1] == b'/' {
             ("", head_end + 1)
         } else {
@@ -164,10 +147,8 @@ pub fn worksheet_rows(xml: &str, shared: &[String]) -> Vec<Vec<String>> {
                     .and_then(|(v, _)| v.trim().parse::<usize>().ok())
                     .and_then(|i| shared.get(i).cloned())
                     .unwrap_or_default(),
-                // Text stored in the cell itself.
                 Some("inlineStr") => tag_text(cbody, "t", 0).map(|(v, _)| v).unwrap_or_default(),
-                // Everything else (numbers, serial dates, booleans) comes back as the literal
-                // `<v>`; formatting is a rendering concern.
+                // Numbers, serial dates and booleans come back as the literal `<v>`; formatting is rendering.
                 _ => tag_text(cbody, "v", 0).map(|(v, _)| v).unwrap_or_default(),
             };
 
@@ -183,8 +164,7 @@ pub fn worksheet_rows(xml: &str, shared: &[String]) -> Vec<Vec<String>> {
 }
 
 pub fn shape(mut rows: Vec<Vec<String>>, sheet_name: &str) -> Result<Sheet, ImportError> {
-    // Trailing blank rows are what a spreadsheet leaves behind when someone deletes
-    // content without deleting the row.
+    // Left behind when someone deletes content without deleting the row.
     while rows.last().is_some_and(|r| r.iter().all(|c| c.trim().is_empty())) {
         rows.pop();
     }
@@ -195,8 +175,7 @@ pub fn shape(mut rows: Vec<Vec<String>>, sheet_name: &str) -> Result<Sheet, Impo
     if header.iter().all(|h| h.is_empty()) {
         return Err(ImportError::NoHeader);
     }
-    // Trailing empty header columns: a spreadsheet's used range often runs wider
-    // than the data. Named columns are the contract; unnamed ones are noise.
+    // A used range often runs wider than the data; unnamed columns are noise.
     let width = header.iter().rposition(|h| !h.is_empty()).map(|i| i + 1).unwrap_or(0);
     let header: Vec<String> = header.into_iter().take(width).collect();
 
@@ -209,8 +188,7 @@ pub fn shape(mut rows: Vec<Vec<String>>, sheet_name: &str) -> Result<Sheet, Impo
 
     let mut out = Vec::with_capacity(rows.len());
     for (i, mut cells) in rows.into_iter().enumerate() {
-        // A row longer than the header, once its trailing blanks are gone, is a
-        // cell nobody asked to drop.
+        // A row longer than the header, once its trailing blanks are gone, is a cell nobody asked to drop.
         while cells.len() > width && cells.last().is_some_and(|c| c.trim().is_empty()) {
             cells.pop();
         }
@@ -229,16 +207,13 @@ pub fn shape(mut rows: Vec<Vec<String>>, sheet_name: &str) -> Result<Sheet, Impo
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
-    /// Comma-delimited.
     Csv,
-    /// Tab-delimited. Same parser, different dialect.
     Tsv,
     Xlsx,
 }
 
-/// By EXTENSION, not by sniffing. The bytes of a CSV are not reliably
-/// distinguishable from any other text, and guessing gives a confident wrong answer
-/// on the first semicolon-delimited European export.
+/// By extension, not sniffing: guessing is confidently wrong on the first semicolon-delimited
+/// European export.
 pub fn format_of(name: &str) -> Result<Format, ImportError> {
     let lower = name.to_lowercase();
     if lower.ends_with(".csv") {
@@ -252,9 +227,8 @@ pub fn format_of(name: &str) -> Result<Format, ImportError> {
     }
 }
 
-/// The worksheet part of an `.xlsx`, given its already-extracted members. `sheet1.xml` rather
-/// than the workbook's first sheet, since the relationship graph is two more files to parse and
-/// writers number the first sheet 1. Named in the WIT as a limit.
+/// `sheet1.xml`, not the workbook's first sheet: that needs two more files parsed, and writers
+/// number the first sheet 1 (a limit named in the WIT).
 pub fn xlsx_from_parts(parts: &[(String, Vec<u8>)]) -> Result<Sheet, ImportError> {
     let find = |want: &str| {
         parts.iter().find(|(n, _)| n == want).map(|(_, d)| String::from_utf8_lossy(d).to_string())
@@ -269,9 +243,6 @@ pub fn xlsx_from_parts(parts: &[(String, Vec<u8>)]) -> Result<Sheet, ImportError
     let short = name.rsplit('/').next().unwrap_or(&name).trim_end_matches(".xml").to_string();
     shape(worksheet_rows(&sheet_xml, &shared), &short)
 }
-
-// The two IMPORTS are the point: `csv:codec` parses the CSV and `zip:archive` opens the
-// container; only the OOXML shape is written here.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]
@@ -310,9 +281,8 @@ impl w::Guest for Component {
                 let delimiter =
                     if matches!(format_of(&name), Ok(Format::Tsv)) { "\t" } else { "," };
                 let text = String::from_utf8_lossy(&bytes).to_string();
-                // `has-header: false` on purpose: the header is the FIRST ROW here,
-                // and `shape` takes it. Asking csv:codec to consume it would leave
-                // this component unable to report a duplicate column name.
+                // `has-header: false`: `shape` takes the first row itself, so it can report a duplicate
+                // column name.
                 let dialect = csv::Dialect {
                     delimiter: delimiter.to_string(),
                     has_header: false,

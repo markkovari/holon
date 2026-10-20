@@ -1,22 +1,15 @@
-//! A minimal CBOR (RFC 8949) reader — only what WebAuthn actually sends.
-//!
-//! CTAP2 requires *canonical* CBOR, so this handles unsigned/negative integers, byte and text
-//! strings, arrays and maps, and refuses everything else (indefinite lengths, tags, floats)
-//! instead of guessing. Decoding reports how many bytes an item consumed, which is how `authData`
-//! finds where the COSE public key ends.
-//! ponytail: hand-rolled for a closed subset (~100 lines) to keep the no-new-dependency property;
-//! swap in `ciborium` if a full decoder is needed.
+//! CTAP2 requires canonical CBOR, so anything else (indefinite lengths, tags, floats) is refused.
+//! ponytail: hand-rolled for a closed subset to avoid a dependency; swap in `ciborium` if needed.
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Cbor {
     Uint(u64),
-    /// Negative integer; stored as the value itself (e.g. -7).
+    /// The value itself (-7), not CBOR's `-1 - n` argument.
     Nint(i64),
     Bytes(Vec<u8>),
     Text(String),
     Array(Vec<Cbor>),
-    /// Keys are kept as `Cbor` because COSE keys are ints and attestation
-    /// objects are text — a `BTreeMap` would need one key type.
+    /// COSE keys are ints and attestation objects text, so keys stay `Cbor`.
     Map(Vec<(Cbor, Cbor)>),
 }
 
@@ -109,7 +102,6 @@ pub fn decode(buf: &[u8]) -> Result<(Cbor, usize), String> {
     }
 }
 
-/// Read the initial byte plus any following length/value bytes.
 fn head(buf: &[u8]) -> Result<(u8, u64, usize), String> {
     let b0 = *buf.first().ok_or("empty cbor buffer")?;
     let major = b0 >> 5;

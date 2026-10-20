@@ -1,33 +1,5 @@
 //! `search-index` — let users search their own data — a full-text inverted index with ranked results
-//!
-//! A small full-text inverted index living entirely in a `wasi:keyvalue` store; the app owns its
-//! documents, this owns only the index.
-//!
-//! TF-IDF ranking over an inverted index. All keys live in the `default` bucket; raw strings are
-//! folded into kv-legal keys with the byte-escape scheme of idempotency-guard (`_XX`), each
-//! behind a namespace prefix:
-//!
-//!   si_count            -> ASCII integer: number of documents indexed.
-//!   si_t_{token}        -> posting list, newline-joined "{docid}:{tf}" entries
-//!                          (tf = term frequency of `token` within that doc).
-//!   si_d_{docid}        -> forward record for a doc, two lines:
-//!                            line 1: space-joined "tok:tf ..." (the doc's terms)
-//!                            line 2: space-joined tags
-//!                          The forward record is what lets re-index / remove
-//!                          clean up the postings a doc previously contributed.
-//!   si_tag_{tag}        -> newline-joined docids carrying that tag.
-//!
-//! Tokenizer: lowercase, fold non-ascii-alphanumeric bytes to spaces, split, drop tokens under 2
-//! chars; the term set is deduped but per-doc tf is kept.
-//! Ranking (`query`): candidates come from the query terms' posting lists (ANY = union, ALL =
-//! intersection), optionally intersected with docs carrying ALL given `tags`. Score is TF-IDF,
-//! score(d) += tf(d,t) * idf(t), idf(t) = ln((N + 1) / (df(t) + 1)) + 1, sorted descending,
-//! truncated to `limit`.
-//!
-//! Single-writer caveat: posting lists, tag indexes and forward records are read-modify-write,
-//! which `wasi:keyvalue@0.2.0-draft` cannot make atomic (no compare-and-swap), so concurrent
-//! writers to the same term or tag can lose an update. Fine for one logical writer per index;
-//! reads are always consistent with the store.
+//! `wasi:keyvalue@0.2.0-draft` cannot make atomic (no CAS), so concurrent writers can lose updates.
 
 #[allow(warnings)]
 mod bindings;
@@ -228,9 +200,7 @@ fn store_forward(
     set_string(bucket, &doc_key(id), &format!("{tok_line}\n{tag_line}"))
 }
 
-/// Tear down all postings + tag entries a doc currently contributes, using its
-/// forward record. Does NOT touch `si_count` or the forward record itself —
-/// callers decide whether this is a replace (re-index) or a real removal.
+/// Leaves `si_count` and the forward record alone: the caller decides replace vs removal.
 fn cleanup_postings(bucket: &kv::Bucket, id: &str) -> Result<bool, SearchError> {
     let (tokens, tags) = match load_forward(bucket, id)? {
         Some(v) => v,
@@ -249,8 +219,6 @@ impl Guest for Component {
     fn index_doc(id: String, text: String, tags: Vec<String>) -> Result<(), SearchError> {
         let bucket = open()?;
 
-        // Replace semantics: strip the postings and tags the doc previously contributed before
-        // re-indexing; `si_count` is left untouched.
         let existed = cleanup_postings(&bucket, &id)?;
 
         let terms = term_freqs(&text);
@@ -302,8 +270,6 @@ impl Guest for Component {
 
         let n = read_count(&bucket)?;
 
-        // For each distinct query term, load its posting list once: the set of
-        // (docid, tf) plus df for idf. Accumulate per-doc contributions.
         struct Cand {
             score: f64,
             matched_terms: u32,

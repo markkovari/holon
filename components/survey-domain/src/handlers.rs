@@ -1,6 +1,5 @@
-//! Surveys (`open -> closed`) and their responses. Authorization is a plain role check
-//! (`is_admin`) plus one business rule, at most one answer per subject per survey, enforced
-//! against `responses` directly rather than with `policy:guard`.
+//! At most one answer per subject per survey, enforced against `responses` rather than with
+//! `policy:guard`.
 
 use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
@@ -31,8 +30,6 @@ struct SurveyReq {
     questions: Vec<String>,
 }
 
-/// `admin` only: a non-admin is refused before any storage is touched. The
-/// survey is created `open` — `close` is the only transition out of that.
 fn create_survey(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "survey.create", "");
@@ -55,8 +52,7 @@ fn create_survey(route: &Route, body: &str) -> Reply {
     }
 }
 
-/// Every OPEN survey for anyone authenticated; an admin also sees closed ones. Filtered in Rust
-/// so both callers share one list.
+/// Filtered in Rust so both callers share one list.
 fn list_surveys(route: &Route) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let admin = is_admin(&principal);
@@ -88,11 +84,6 @@ struct ResponseReq {
     answers: Vec<String>,
 }
 
-/// Any authenticated subject may answer, but only an existing, still-`open`
-/// survey (400 otherwise), only with exactly as many answers as the survey
-/// has questions (400 otherwise), and at most once per survey (409) — that
-/// last one is a uniqueness check against the `responses` collection, not a
-/// policy call.
 fn create_response(route: &Route, id: &str, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let req = guestauth::guest_parse_body!(body, ResponseReq);
@@ -107,8 +98,7 @@ fn create_response(route: &Route, id: &str, body: &str) -> Reply {
         return Reply::err(400, "wrong number of answers");
     }
 
-    // Both `survey_id` and `respondent` are indexed on create, so one query
-    // answers "has this subject already replied to this survey?".
+    // Both fields are indexed on create, so one query answers "already replied?".
     let survey_id_json = serde_json::to_string(id).unwrap_or_default();
     let respondent_json = serde_json::to_string(&principal.subject).unwrap_or_default();
     let filters = vec![

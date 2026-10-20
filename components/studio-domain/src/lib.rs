@@ -1,18 +1,5 @@
 //! `studio-domain` — the composition studio (docs/apps/STUDIO.md) as ONE composed wasm HTTP
-//! component. Exports `wasi:http`; imports only contracts: `wit:reflect` (every
-//! interesting answer), `records:store` (surfaces + saved canvases), `blob:store`
-//! (the uploaded bytes, needed again at compose time).
-//!
-//! The app is deliberately thin. It does three things `wit:reflect` shouldn't:
-//! remembers what you uploaded, resolves canvas node ids to stored surfaces and
-//! bytes, and turns results into JSON. Every decision — does this plug fit, what
-//! order do these build in, what does the manifest look like, what are the
-//! composed bytes — belongs to the component.
-//!
-//! One deliberate shape: `/api/plan`, `/api/emit` and `/api/compose` take node
-//! IDS, not surfaces. The browser sends `["mesh-domain", "record-store"]` and the
-//! server rehydrates from storage, so a canvas of 20 components is a 200-byte
-//! request instead of a megabyte of duplicated WIT.
+//! 20-component canvas is a 200-byte request, not a megabyte of duplicated WIT.
 
 #[allow(warnings)]
 mod bindings {
@@ -35,7 +22,6 @@ mod bindings {
         world: "studio:app/studio-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -92,7 +78,6 @@ impl Guest for Component {
 
 enum Outcome {
     Json(u16, String),
-    /// status, headers, bytes — the composed component and the text forms.
     Raw(u16, Vec<(String, String)>, Vec<u8>),
     Err(u16, String),
 }
@@ -179,7 +164,6 @@ fn surface_from(v: &Value) -> inspector::Surface {
     }
 }
 
-/// Upload a component: reflect it, keep the surface for the palette and the bytes for composing.
 /// The id defaults to the component's own name section.
 async fn component_add(request: Request, query: &Map<String, Value>) -> Outcome {
     let bytes = match read_body(request).await {
@@ -188,8 +172,7 @@ async fn component_add(request: Request, query: &Map<String, Value>) -> Outcome 
         Err(_) => return Outcome::Err(400, "could not read body".into()),
     };
 
-    // Reflection doubles as validation: a truncated upload fails here rather than
-    // becoming a broken palette entry.
+    // Reflection doubles as validation: a truncated upload fails here, not as a broken palette entry.
     let surface = match inspector::inspect(&bytes) {
         Ok(s) => s,
         Err(e) => return Outcome::Err(422, reflect_error(&e)),
@@ -260,9 +243,7 @@ fn stored_surface(id: &str) -> Option<inspector::Surface> {
     find_one(COMPONENTS, "id", id).map(|(_, _, doc)| surface_from(&doc["surface"]))
 }
 
-/// The canvas as the component wants it: nodes rehydrated from storage, edges
-/// verbatim. Missing ids are reported rather than silently dropped — a plan over
-/// a partially-resolved graph would be a lie.
+/// Missing ids are reported, not dropped: a plan over a partially-resolved graph would be a lie.
 fn resolve(b: &Value) -> Result<(Vec<composer::Node>, Vec<composer::Edge>), Outcome> {
     let ids: Vec<String> = b["nodes"]
         .as_array()
@@ -341,8 +322,7 @@ async fn plan_route(request: Request) -> Outcome {
     Outcome::Json(200, plan_json(&plan).to_string())
 }
 
-/// The UI's connection guard: which interfaces `wac` would wire between these two. An empty list
-/// means the edge must not be drawn.
+/// An empty list means the UI must not draw the edge.
 async fn satisfies_route(request: Request) -> Outcome {
     let b = match body(request).await {
         Ok(v) => v,
@@ -445,8 +425,7 @@ async fn compose_route(request: Request) -> Outcome {
 
     match composer::compose(&parts, &edges, &root) {
         Ok(bytes) => {
-            // Reflect the result so the caller learns what it still imports —
-            // the composed artifact is only useful with its remaining host needs.
+            // Reflected so the caller learns what the artifact still imports.
             let left = inspector::inspect(&bytes)
                 .map(|s| s.host_imports.iter().map(|h| h.raw.clone()).collect::<Vec<_>>().join(","))
                 .unwrap_or_default();
@@ -550,11 +529,8 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// Read the whole body. A read error is an ERROR, not a short body: truncating silently turns a
-/// .wasm into a corrupt component that looks fine until it doesn't.
-/// The most a request body may be before the component stops reading it. Without a ceiling,
-/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
-/// A backstop, not a content policy; uploads police their own size with a 413.
+/// Without a ceiling a read grew to wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy: uploads 413 on their own.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

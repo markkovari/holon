@@ -61,8 +61,7 @@ def _price_at(quotes: list[Quote], kind: QuoteKind, instant: int) -> Observed:
     for q in matching:
         if q.at > instant:
             continue
-        # Ties on `at` go to the lower source name, so the answer does not depend
-        # on the order two disagreeing sources were fetched in.
+        # Lower source name wins ties on `at`, so fetch order of disagreeing sources cannot matter.
         if best is None or q.at > best.at or (q.at == best.at and q.source < best.source):
             best = q
     if best is None:

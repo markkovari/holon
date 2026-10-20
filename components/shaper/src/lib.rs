@@ -1,15 +1,4 @@
 //! `shaper` — the arithmetic behind rate limiting — token bucket and GCRA, as pure functions whose state the caller holds
-//!
-//! Pure functions: the caller owns the per-key state and passes it in; each returns the decision
-//! plus the state to persist.
-//!
-//! * `token_bucket` — refill to `capacity` at `refill_per_sec`, spend `cost`.
-//!   Bursty: a full bucket lets `capacity` requests through at once.
-//! * `gcra` — the Generic Cell Rate Algorithm: one "theoretical arrival time"
-//!   (TAT) timestamp gives smooth spacing with a burst budget, no queue/timer.
-//!   A request is allowed when `now >= tat - burst*period`; on accept the TAT
-//!   advances by `cost*period`. Denied requests get an exact `retry_after`.
-
 #[allow(warnings)]
 mod bindings;
 
@@ -25,7 +14,7 @@ impl Guest for Component {
         refill_per_sec: f64,
         cost: f64,
     ) -> (Decision, Bucket) {
-        // Refill from elapsed time (uninitialized state starts full).
+        // Uninitialized state starts full.
         let tokens = if state.updated_ms == 0 {
             capacity
         } else {
@@ -40,7 +29,6 @@ impl Guest for Component {
                 Bucket { tokens: left, updated_ms: now_ms },
             )
         } else {
-            // time to accumulate the shortfall.
             let need = cost - tokens;
             let retry = if refill_per_sec > 0.0 {
                 (need / refill_per_sec * 1000.0).ceil() as u64
@@ -49,14 +37,14 @@ impl Guest for Component {
             };
             (
                 Decision { allowed: false, retry_after_ms: retry, remaining: tokens },
-                // persist the refilled tokens (don't spend on a denial).
+                // Don't spend on a denial, but persist the refill.
                 Bucket { tokens, updated_ms: now_ms },
             )
         }
     }
 
     fn gcra(tat_ms: u64, now_ms: u64, period_ms: u64, burst: u32, cost: u32) -> (Decision, u64) {
-        let inc = cost as u64 * period_ms; // this request's TAT advance
+        let inc = cost as u64 * period_ms;
         let limit = burst as u64 * period_ms; // how far early a request may arrive
         let tat = if tat_ms == 0 { now_ms } else { tat_ms };
         let allow_at = tat.saturating_sub(limit); // earliest `now` that's accepted

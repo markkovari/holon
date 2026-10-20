@@ -1,12 +1,5 @@
 //! `ui-notifier` — raise a notification on the user's desktop
-//!
-//! Raising a desktop notification needs the platform's notification bus, which a `wasm32-wasip2`
-//! guest lacks (ADR-0095). This is the component side: it holds the contract and reaches the
-//! daemon over HTTP, as `fs-watcher` reaches `comp-fswatch`. What this may dial is a MANIFEST
-//! decision (ADR-0008): `uinotify-url` in `wasi:config` plus the egress allow-list.
-//!
-//! Config (wasi:config/store):
-//!   uinotify-url    where `comp-uinotify` is listening, e.g. http://127.0.0.1:8009
+//! over HTTP (ADR-0095).
 
 #[allow(warnings)]
 mod bindings;
@@ -21,15 +14,13 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Ten seconds: raising a notification is a bounded local call, so slower means a daemon in
-/// trouble.
+/// Raising a notification is a bounded local call, so slower means a daemon in trouble.
 const TIMEOUT_NS: u64 = 10_000_000_000;
 
 fn daemon_url() -> Result<String, NotifyError> {
     match config::get("uinotify-url") {
         Ok(Some(u)) if !u.is_empty() => Ok(u),
-        // Unavailable rather than not-permitted: nobody refused anything, the
-        // deployment simply never said where the notifier is.
+        // Unavailable, not not-permitted: the deployment never said where the notifier is.
         _ => Err(NotifyError::Unavailable(
             "uinotify-url is not set — this notifier has nowhere to ask".into(),
         )),
@@ -51,9 +42,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), NotifyError> {
     Ok((scheme, authority, path))
 }
 
-/// POST the request and return the body. Every failure is `unavailable`: the
-/// daemon's own refusals arrive as JSON with a 200, so anything at this level
-/// is the transport rather than an answer.
+/// Every failure is `unavailable`: the daemon's own refusals arrive as JSON with a 200.
 fn post(body: Vec<u8>) -> Result<Vec<u8>, NotifyError> {
     let url = daemon_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
@@ -61,10 +50,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, NotifyError> {
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // A shared secret, if the deployment set one — see
-    // `comp_daemon_kit`'s own doc for why loopback
-    // binding alone is not a boundary. Absent means the daemon was
-    // started with no --token, so there is nothing to send.
+    // Loopback binding alone is not a boundary (see `comp_daemon_kit`); absent means no --token.
     if let Ok(Some(token)) = config::get("uinotify-token") {
         if !token.is_empty() {
             let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
@@ -108,9 +94,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, NotifyError> {
         match stream.blocking_read(8192) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went
-            // wrong, and returning what arrived would be a truncated answer
-            // presented as a whole one.
+            // Anything else would present a truncated answer as a whole one.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -118,8 +102,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, NotifyError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser: the replies are flat, so serde would be more
-/// code than what it reads.
+/// No parser: the replies are flat.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];
@@ -167,8 +150,6 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::*;
 
-    /// A message is caller-supplied and goes into a JSON request. A quote in
-    /// it would end the string early and the rest would be read as structure.
     #[test]
     fn a_message_cannot_break_out_of_the_request_it_is_put_in() {
         assert_eq!(json_str("hello"), r#""hello""#);

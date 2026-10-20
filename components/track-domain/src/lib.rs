@@ -1,13 +1,5 @@
 //! track:app — a Linear-lite project tracker over composed contracts.
-//!
-//! Five axes in one component (see wit/track.wit): write (records + ids + md), auth (auth-guard
-//! introspect + role gating; project membership via policy:guard), read (search:index +
-//! paginate), stream (mutations publish to event:bus; /api/stream is SSE), bg (/api/tick sweeps
-//! stale in_progress issues), out (an issue move fires a signed notify:dispatch webhook), AI
-//! (/api/issues/{id}/summarize).
-//! Auth: an account has a global role (admin can create projects); write access to a project's
-//! issues is a per-project membership decision by policy:guard. The issue lifecycle is an
-//! fsm:workflow machine mirrored onto the issue record.
+//! only gates creating projects.
 
 #[allow(warnings)]
 mod bindings {
@@ -44,7 +36,6 @@ mod bindings {
         world: "track:app/track-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -90,7 +81,7 @@ const MACHINE: &str = "issue";
 const ACTIVITY: &str = "activity"; // event-bus topic driving the SSE feed
 const POLICY_DOMAIN: &str = "project-write";
 const WEBHOOK_SECRET: &str = "track-outbound-webhook-secret";
-const STALE_SECS: u64 = 7 * 24 * 3600; // in_progress older than a week is flagged
+const STALE_SECS: u64 = 7 * 24 * 3600;
 const POLL_MS: u64 = 1000;
 const MAX_TICKS: u32 = 3600;
 
@@ -101,7 +92,7 @@ impl Guest for Component {
         let route = path.split('?').next().unwrap_or("/").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
-        // SSE is written directly to the response stream — handle before `emit`.
+        // SSE writes the response stream directly, so handle it before `emit`.
         if let (Method::Get, ["api", "stream"]) = (&method, seg.as_slice()) {
             return stream_events(&path);
         }
@@ -135,7 +126,6 @@ impl Guest for Component {
 
 enum Outcome {
     Json(u16, String),
-    /// Raw bytes + content-type (the served SPA assets).
     Raw(u16, String, Vec<u8>),
     Auth(AuthError),
     Bad(String),
@@ -196,7 +186,6 @@ fn ensure_seeded() {
     };
     let _ = fsm::define(MACHINE, &def);
 
-    // policy: a principal whose `role` attr is member|lead for the project may write.
     let rule = policy::Rule {
         id: "member-can-write".into(),
         action: "write".into(),
@@ -297,8 +286,7 @@ fn may_write_project(p: &Principal, project: &str) -> bool {
     if role.is_empty() {
         return false;
     }
-    // attr keys are the bare names; policy resolves a condition's `principal.role`
-    // reference by stripping the prefix and looking up `role` here.
+    // Bare attr keys: policy resolves `principal.role` by stripping the prefix.
     policy::enforce(
         POLICY_DOMAIN,
         "write",
@@ -693,8 +681,7 @@ fn do_search(request: &Request, path: &str) -> Outcome {
     Outcome::Json(200, json!({"hits": rows}).to_string())
 }
 
-/// The timer pump (wasip2 has no background tasks). Flag in_progress issues
-/// older than STALE_SECS that aren't already flagged, publishing an event each.
+/// The timer pump (wasip2 has no background tasks).
 fn tick() -> Outcome {
     let entries =
         records::find_by(ISSUES, "status", &json!("in_progress").to_string()).unwrap_or_default();
@@ -729,7 +716,7 @@ fn stream_events(path: &str) -> Result<Response, ErrorCode> {
     let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
 
-    // default: only activity produced after we connect; ?after= catches up.
+    // Default: only activity after connecting; ?after= catches up.
     let mut cursor = query_i64(path, "after").unwrap_or_else(current_seq);
     let (mut stream, rx) = bindings::wit_stream::new();
     wit_bindgen::spawn_local(async move {
@@ -790,7 +777,6 @@ fn activity_after(cursor: i64) -> (Vec<String>, i64) {
     (rows, max)
 }
 
-/// Fire a signed outbound webhook via notify:dispatch (target URL from config `notify:*-url`).
 /// Best-effort: a delivery failure never fails the request.
 fn fire_webhook(event: &str, detail: &Value) {
     let body = json!({"event": event, "detail": detail, "at": now()}).to_string();
@@ -798,8 +784,8 @@ fn fire_webhook(event: &str, detail: &Value) {
         Ok(s) => s.header,
         Err(_) => String::new(),
     };
-    // the signature travels in the body envelope for the demo (notify:dispatch's
-    // webhook channel posts the raw body); a real integration puts it in a header.
+    // The signature rides in the body for the demo (the webhook channel posts the raw body); a
+    // real integration puts it in a header.
     let envelope = json!({"signature": sig, "payload": body});
     let msg = notify::Message {
         channel: notify::Channel::Webhook,
@@ -862,9 +848,8 @@ async fn parse<T: for<'a> Deserialize<'a>>(request: Request) -> Result<T, String
     serde_json::from_slice(&body).map_err(|e| format!("bad json: {e}"))
 }
 
-/// The most a request body may be before the component stops reading it. Without a ceiling,
-/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
-/// A backstop, not a content policy; uploads police their own size with a 413.
+/// Without a ceiling a read grew to wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy: uploads 413 on their own.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

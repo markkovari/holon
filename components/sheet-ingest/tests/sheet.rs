@@ -1,8 +1,4 @@
-//! The specification, held out.
-//!
-//! Judges what this component WRITES natively: the OOXML shape and the row/header discipline. The
-//! CSV and ZIP paths are delegated to `csv:codec` and `zip:archive` and judged by their own specs
-//! and the app's e2e. The fixture is a real deflated `.xlsx` written by another tool.
+//! The fixture is a real deflated `.xlsx` written by another tool.
 
 use sheet_ingest::{
     column_of, format_of, shape, shared_strings, worksheet_rows, xlsx_from_parts, Format,
@@ -28,9 +24,7 @@ fn a_real_xlsx_becomes_a_header_and_rows() {
     assert_eq!(sheet.rows[3].cells, ["Mewtwo", "Base Set", "10/102", "3", "18000", "EUR"]);
 }
 
-/// Numbers come back as their literal `<v>`, not as shared-string indices. Getting
-/// this wrong turns a spreadsheet of prices into a spreadsheet of small integers
-/// that all look plausible.
+/// Getting this wrong turns prices into plausible-looking small integers.
 #[test]
 fn a_numeric_cell_is_its_value_and_a_text_cell_is_looked_up() {
     let sheet = xlsx_from_parts(&parts()).expect("read");
@@ -38,9 +32,7 @@ fn a_numeric_cell_is_its_value_and_a_text_cell_is_looked_up() {
     assert_eq!(sheet.rows[0].cells[0], "Charizard", "the name, not an index");
 }
 
-/// THE case. `<c r="A1"/><c r="C1"/>` is three columns with the middle one empty.
-/// A reader that appends in document order shifts every later value one place left
-/// — a bulk insert writing the price into the quantity column, with nothing failing.
+/// THE case: `<c r="A1"/><c r="C1"/>` is three columns, the middle one empty.
 #[test]
 fn a_gap_is_an_empty_column_not_a_missing_one() {
     let xml = r#"<worksheet><sheetData>
@@ -62,7 +54,6 @@ fn column_letters_are_base_26_from_one() {
     assert_eq!(column_of("1"), None);
 }
 
-/// A `<si>` may be several formatted runs, and the spreadsheet shows them joined.
 #[test]
 fn shared_strings_join_their_runs() {
     let xml = r#"<sst><si><t>plain</t></si><si><r><t>bold</t></r><r><t> and not</t></r></si><si><t/></si></sst>"#;
@@ -129,7 +120,6 @@ fn nothing_at_all() {
     assert_eq!(shape(vec![vec!["".into()], vec!["x".into()]], "s"), Err(ImportError::NoHeader));
 }
 
-/// By extension, never by sniffing bytes.
 #[test]
 fn the_format_comes_from_the_name() {
     assert_eq!(format_of("cards.csv"), Ok(Format::Csv));

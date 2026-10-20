@@ -27,7 +27,6 @@ body {
     flex-direction: column;
 }
 
-/* Header */
 .app-header {
     display: flex;
     justify-content: space-between;
@@ -62,7 +61,6 @@ body {
     display: none !important;
 }
 
-/* Main */
 .app-main {
     flex: 1;
     padding: 3rem;
@@ -90,7 +88,6 @@ body {
     color: var(--text-secondary);
 }
 
-/* Dashboard */
 .dashboard-header {
     display: flex;
     justify-content: space-between;
@@ -118,7 +115,6 @@ body {
     border-color: var(--primary-btn);
 }
 
-/* Buttons */
 button {
     font-family: inherit;
     cursor: pointer;
@@ -151,7 +147,6 @@ button {
     background: rgba(255, 255, 255, 0.1);
 }
 
-/* Devices Grid */
 .devices-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -239,7 +234,6 @@ button {
     transform: translateX(28px);
 }
 
-/* Toast */
 #toast-container {
     position: fixed;
     bottom: 2rem;

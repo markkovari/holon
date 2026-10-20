@@ -1,9 +1,4 @@
 //! `transit-domain` — a public-transport ticketing service (docs/apps/TRANSIT.md) as ONE
-//! composed wasm HTTP component. Exports `wasi:http`; imports only WIT contracts:
-//! the composed auth-guard (`auth:identity`), `records:store`, `qr:encode` (the
-//! scannable ticket), `lock:mutex` (single-use under concurrency) and the wall
-//! clock. No bespoke auth, storage, QR encoder, or locking.
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -29,7 +24,6 @@ mod bindings {
         world: "transit:app/transit-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -57,8 +51,8 @@ const TENANT: &str = "transit";
 const FARES: &str = "fares";
 const TICKETS: &str = "tickets";
 
-/// The seeded fare catalog: (key, name, kind, minutes, price-cents).
-/// kind: "single" = one validation; "duration"/"pass" = unlimited within window.
+/// (key, name, kind, minutes, price-cents); "single" is one validation, "duration"/"pass" are
+/// unlimited within the window.
 const CATALOG: &[(&str, &str, &str, i64, i64)] = &[
     ("single", "Single ride", "single", 0, 250),
     ("t60", "60-minute ticket", "duration", 60, 350),
@@ -249,9 +243,6 @@ fn get_ticket(id: &str) -> Option<Value> {
     records::get(TICKETS, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok())
 }
 
-/// Compute (status, valid_until, remaining_min) from a ticket's stored fields. status: "valid"
-/// (bought, unused), "active" (duration/pass, in window), "used" (single, consumed), "expired"
-/// (window lapsed).
 fn status_of(t: &Value) -> (String, Option<u64>, Option<i64>) {
     let kind = t["kind"].as_str().unwrap_or("single");
     let activated = t["activated"].as_u64().unwrap_or(0);
@@ -342,13 +333,12 @@ async fn validate(request: Request) -> Outcome {
     };
     let code = b["code"].as_str().unwrap_or("").trim().to_string();
 
-    // Single-use under concurrency via record-revision CAS: read the ticket and revision, decide,
-    // write back guarded by the revision. A losing writer re-reads, sees "already used", so
-    // exactly one concurrent scan accepts.
+    // Record-revision CAS: a losing writer re-reads and sees "already used", so exactly one
+    // concurrent scan accepts.
     for _ in 0..32 {
         let entry = match records::get(TICKETS, &code) {
             Ok(e) => e,
-            // a fabricated code matches no record -> reject (still 200 for the scanner).
+            // A fabricated code matches no record: reject, still 200 for the scanner.
             Err(_) => return reject("unknown ticket", &Value::Null),
         };
         let t: Value = serde_json::from_str(&entry.data).unwrap_or_else(|_| json!({}));
@@ -357,7 +347,7 @@ async fn validate(request: Request) -> Outcome {
             Step::Commit(next, outcome) => {
                 match records::update(TICKETS, &code, &next.to_string(), entry.revision) {
                     Ok(_) => return outcome,
-                    Err(records::StoreError::RevisionConflict(_)) => continue, // lost the race; re-read
+                    Err(records::StoreError::RevisionConflict(_)) => continue,
                     Err(e) => return store_err(e),
                 }
             }
@@ -366,8 +356,6 @@ async fn validate(request: Request) -> Outcome {
     Outcome::Err(503, "validation contended, please retry".into())
 }
 
-/// The result of applying the fare rules: either a final answer (no write) or a
-/// new ticket state to commit plus the response to return once it commits.
 enum Step {
     Done(Outcome),
     Commit(Value, Outcome),
@@ -455,9 +443,8 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be before the component stops reading it. Without a ceiling,
-/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
-/// A backstop, not a content policy; uploads police their own size with a 413.
+/// Without a ceiling a read grew to wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy: uploads 413 on their own.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

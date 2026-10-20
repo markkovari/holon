@@ -1,12 +1,10 @@
 //! `roman` — convert a number to Roman numerals and read Roman numerals back
-
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::demo::roman::numerals::Guest;
 struct Component;
 
-/// Integer -> Roman numeral, subtractive notation (4=IV, 9=IX, 40=XL, 900=CM),
-/// for 1..=3999. UNIMPLEMENTED — the tests are the exact spec.
+/// For 1..=3999.
 pub fn to_roman(n: u32) -> String {
     let values: [(u32, &str); 13] = [
         (1000, "M"),
@@ -34,7 +32,6 @@ pub fn to_roman(n: u32) -> String {
     result
 }
 
-/// Roman numeral -> integer.
 pub fn from_roman(s: &str) -> u32 {
     let mut total = 0u32;
     let mut prev = 0u32;

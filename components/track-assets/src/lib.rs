@@ -1,9 +1,5 @@
 //! `track-assets` — the track (project tracker) SPA embedded as `ui:assets`.
-//!
-//! The built Vite+TS SPA embedded at build time (build.rs walks `static/` and `include_bytes!`s
-//! every file), in its own component so track-domain stays slim: bytes in its artifact inflate
-//! per-request instantiation on hosts that instantiate per request (wasmCloud). Pure compute:
-//! exact-path lookup over a static table.
+//! instantiation on hosts that instantiate per request (wasmCloud).
 
 #[allow(warnings)]
 mod bindings;

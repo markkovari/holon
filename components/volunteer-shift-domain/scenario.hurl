@@ -57,8 +57,7 @@ POST {{base}}/api/shifts/{{shift_id}}/signup
 Authorization: Bearer {{vol_b_token}}
 HTTP 201
 
-# vol_a spends her weekly quota (3/week; 1 used above, cancelled but still
-# counted since quota:meter tracks cumulative reservations, not net-of-cancel)
+# vol_a spends her 3/week quota; the cancelled signup still counts (quota:meter is cumulative)
 POST {{base}}/api/shifts
 Authorization: Bearer {{coord_token}}
 {"title": "extra 1", "slots": 5}
