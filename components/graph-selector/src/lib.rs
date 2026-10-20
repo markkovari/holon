@@ -1,4 +1,4 @@
-//! Gate, score, smaller change, cheaper run, earlier branch. The attempt log is unseen: effort earns nothing.
+//! `graph-selector` — which branch won, and the only path to a pull request.
 
 #[allow(warnings)]
 mod bindings;

@@ -1,4 +1,4 @@
-//! OpenAI-compatible HTTP (OpenAI, Azure, Together, Groq, vLLM, Ollama); endpoint and models from wasi:config.
+//! `openai-provider` — chat, completion and embeddings over an OpenAI-compatible HTTP API.
 //! The API key is a secret by reference (ADR-0051): it spends money. A keyless local server gets no header.
 
 #[allow(warnings)]

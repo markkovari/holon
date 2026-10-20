@@ -1,4 +1,4 @@
-//! Config `routes`: `prefix=upstream` comma-separated, longest prefix wins; an upstream ending in `/` strips the prefix.
+//! `proxy-route` — forward a request to an upstream by path prefix — a config-driven reverse proxy
 
 #[allow(warnings)]
 mod bindings;

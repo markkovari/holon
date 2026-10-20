@@ -1,4 +1,4 @@
-//! Never invents a field: an absent one stays absent and is listed in `needs_review`.
+//! `card-identify` — read a photo of a Pokémon card into its name, set, number and condition, and say which parts are a guess
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Variant {

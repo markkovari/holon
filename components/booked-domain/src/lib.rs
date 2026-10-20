@@ -1,4 +1,4 @@
-//! Calendly-lite (docs/apps/BOOKED.md); `lock:mutex` is the no-double-book guarantee.
+//! `booked-domain` — a Calendly-lite booking service (docs/apps/BOOKED.md) as ONE composed
 
 #[allow(warnings)]
 mod bindings {

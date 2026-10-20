@@ -1,3 +1,4 @@
+//! `photo-critic` — a photo-critique app that runs on the lattice.
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({

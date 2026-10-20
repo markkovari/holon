@@ -1,4 +1,4 @@
-//! Component face of comp-park (ADR-0100, ADR-0095): a guest cannot hold a NATS JetStream connection.
+//! `park-store` — `holon:park/lot` for components, each call one HTTP request to `comp-park` (ADR-0100, ADR-0095).
 //! Non-daemon failures are `storage-error`, which the contract says a caller may retry.
 
 #[allow(warnings)]

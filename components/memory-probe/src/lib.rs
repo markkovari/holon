@@ -1,4 +1,4 @@
-//! Errors come back as JSON with a 200, as `graph-probe`: a status code would flatten
+//! `memory-probe` — an instrument for `knowledge:memory` (see wit/probe.wit).
 //! "the policy refused this" into "the host refused the link".
 
 #[allow(warnings)]

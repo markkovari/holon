@@ -1,4 +1,4 @@
-//! Scores from a `gate-script` config (check id -> substring the changed files must contain), with no egress.
+//! `mock-fitness` — `graph:fitness`, scored by a scripted rule (see wit/fitness.wit).
 
 #[allow(warnings)]
 mod bindings;

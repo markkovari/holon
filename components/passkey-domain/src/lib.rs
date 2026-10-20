@@ -1,4 +1,4 @@
-//! RP ID and origin come from wasi:config, never the request, or the anti-phishing check is meaningless.
+//! `passkey-domain` — passwordless sign-in (docs/apps/PASSKEY.md) as ONE composed wasm HTTP component.
 //! Adding a passkey to an existing account requires a session for it, or anyone could enrol on your name.
 
 #[allow(warnings)]

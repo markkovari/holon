@@ -1,4 +1,4 @@
-//! The four-copy rule counts names, not printings; Basic Energy is uncapped, Special Energy is not.
+//! `deck-build` — is this deck legal to play, and what is missing from your collection to build it
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CardKind {

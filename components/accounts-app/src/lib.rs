@@ -1,4 +1,4 @@
-//! Owns no auth logic: it maps HTTP onto the auth:identity contract.
+//! HTTP JSON register/login app. Owns NO auth logic — it maps HTTP onto the
 
 #[allow(warnings)]
 mod bindings;

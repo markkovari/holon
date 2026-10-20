@@ -1,3 +1,4 @@
+//! `quiz-grade` — grade answers against an answer key, and roll a cohort's scores into statistics
 #[allow(warnings)]
 mod bindings;
 

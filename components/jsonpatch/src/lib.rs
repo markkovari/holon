@@ -1,4 +1,4 @@
-//! RFC 6902 patches are atomic: ops run on a clone, returned only if all succeed.
+//! `jsonpatch` — apply a partial change to a JSON document — RFC 6902 JSON Patch and RFC 7386 merge patch
 
 #[allow(warnings)]
 mod bindings;

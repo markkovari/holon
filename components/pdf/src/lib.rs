@@ -1,4 +1,4 @@
-//! Byte offsets are recorded while serializing: a wrong xref offset is the classic way to get a file readers reject.
+//! `pdf` — write a PDF document — text laid onto pages, with no native library and no headless browser
 //! ponytail: Latin-1 text only (code points > 255 become `?`); embed a font subset if Unicode reports matter.
 
 #[allow(warnings)]

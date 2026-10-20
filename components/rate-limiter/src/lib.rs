@@ -1,4 +1,4 @@
-//! Fixed-window failure counter: the count is an atomic increment; clearing it at a window boundary
+//! `rate-limiter` — stop a caller making too many requests — count attempts against a key and lock it out after too many
 //! is a rare, benign race that can briefly under-count.
 
 #[allow(warnings)]

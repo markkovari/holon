@@ -1,4 +1,4 @@
-//! Every order is an fsm:workflow instance; the grace period is a pump-driven sweep, not an actor reminder.
+//! eshop:ordering — the eShopOnDapr Ordering.API over composed contracts.
 
 #[allow(warnings)]
 mod bindings {

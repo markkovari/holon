@@ -1,4 +1,4 @@
-//! Probes graph:agent: an identical answer to a goal with a `previous` failure means repair is a re-roll.
+//! `agent-probe` — an instrument for `graph:agent` (see wit/probe.wit).
 
 #[allow(warnings)]
 mod bindings {

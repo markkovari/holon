@@ -1,4 +1,4 @@
-//! Row-level ABAC beside auth-guard's RBAC: default-deny, and deny-overrides at equal priority (lower wins).
+//! `policy-guard` — does this principal own THIS row? — attribute-based, row-level authorization beyond roles
 
 #[allow(warnings)]
 mod bindings;

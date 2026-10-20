@@ -1,4 +1,4 @@
-//! Acronym boundary: `HTTPServer` splits as `HTTP`, `Server`; camel/pascal normalise acronyms (`Http`).
+//! `case-conv` — turn an identifier written in one case convention into another.
 
 fn words(s: &str) -> Vec<String> {
     let chars: Vec<char> = s.chars().collect();

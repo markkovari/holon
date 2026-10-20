@@ -1,4 +1,4 @@
-//! Neither side trusts the request's url (it can come from a model); egress is the manifest's call (ADR-0008).
+//! `browser-automation` — capture a page's rendered content, since a wasm guest cannot render one
 
 #[allow(warnings)]
 mod bindings;

@@ -1,4 +1,4 @@
-//! ADR-0023's adversary: store-reach and egress sweeps, built so a wrong answer is loud.
+//! `adversary` — the component ADR-0023 asks for: two sweeps (store reach, egress) that
 
 #[allow(warnings)]
 mod bindings {

@@ -1,4 +1,4 @@
-//! Owns every decision, none of the infrastructure access: it stores desired-state revisions and the
+//! `platform-domain` — the platform control plane as ONE composed wasm HTTP component.
 //! native reconciler makes the lattice match (ADR-0022); it holds no lattice credential (ADR-0003).
 
 #[allow(warnings)]

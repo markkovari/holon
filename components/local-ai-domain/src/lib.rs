@@ -1,3 +1,4 @@
+//! `local-ai-domain` — ask a locally-hosted language model a question over HTTP
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({

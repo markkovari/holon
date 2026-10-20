@@ -1,4 +1,4 @@
-//! Component side of comp-media (ADR-0098): one HTTP request per call, and no call carries pixels.
+//! `media-pipeline` — presigned uploads and evaluation jobs for large photos
 //! CONTRACT.md's wire shapes are authoritative.
 
 #[allow(warnings)]

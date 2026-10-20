@@ -1,4 +1,4 @@
-//! Keyset pagination: the cursor holds the boundary (sort_key, id), so mid-scroll inserts/deletes cannot skip or repeat rows.
+//! `pagination` — paginate a long list without drift — encode a sort position into an opaque cursor
 
 #[allow(warnings)]
 mod bindings;

@@ -1,4 +1,4 @@
-//! Neither side trusts the request's path (it can come from a model); egress is the manifest's call (ADR-0008).
+//! `fs-watcher` — report what changed in a directory, since a cursor
 
 #[allow(warnings)]
 mod bindings;

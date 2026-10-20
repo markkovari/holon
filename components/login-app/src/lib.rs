@@ -1,3 +1,4 @@
+//! `login-app` — a consumer component that composes three universal capabilities into one login surface.
 #[allow(warnings)]
 mod bindings;
 

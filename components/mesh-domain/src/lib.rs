@@ -1,4 +1,4 @@
-//! Resilience playground (docs/apps/MESH.md): admit, forward via proxy:route, judge, observe, back off.
+//! `mesh-domain` — the resilience playground (docs/apps/MESH.md) as ONE composed wasm HTTP component.
 //! Every circuit mutation is a revision-guarded records:store update, so concurrent callers converge.
 
 #[allow(warnings)]

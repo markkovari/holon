@@ -1,4 +1,4 @@
-//! Errors come back as JSON with a 200: each `infer-error` case wants a different fix, which a status code flattens.
+//! `llm-probe` — an instrument for `llm:inference` (see wit/probe.wit).
 
 #[allow(warnings)]
 mod bindings {

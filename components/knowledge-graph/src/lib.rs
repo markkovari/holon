@@ -1,4 +1,4 @@
-//! Nothing a caller supplies is interpolated raw (ids quoted, kinds/edges must be table names); `query` excepted.
+//! `knowledge-graph` — nodes, edges and traversal over SurrealDB's HTTP API.
 
 #[allow(warnings)]
 mod bindings;

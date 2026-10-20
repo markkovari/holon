@@ -1,4 +1,4 @@
-//! Advisory lease mutex on wasi:keyvalue. Best-effort: keyvalue@0.2.0-draft has no CAS,
+//! `lock-mutex` — stop two workers doing the same job — a distributed mutex / advisory lease with an expiry
 //! so two simultaneous acquires of a free key can both win.
 
 #[allow(warnings)]

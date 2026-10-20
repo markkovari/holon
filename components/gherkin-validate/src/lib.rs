@@ -1,4 +1,4 @@
-//! Severity follows cucumber/gherkin's `testdata/`: what its GOOD corpus contains only warns.
+//! `gherkin-validate` — is this `.feature` file actually Gherkin, and will it run?
 
 use std::collections::BTreeSet;
 

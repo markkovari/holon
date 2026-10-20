@@ -1,4 +1,4 @@
-//! Routing ends at the decision: plausible targets export incompatible interfaces, so no generic dispatch.
+//! `jev-router` — deterministic intent-routing gateway over `jev:decision`.
 
 #[allow(warnings)]
 mod bindings {

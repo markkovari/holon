@@ -1,4 +1,4 @@
-//! The prompt comes from the caller because the caller must parse the answer.
+//! `anthropic-vision` — show a model a picture and get back what it says, over Anthropic's Messages API
 
 #[allow(warnings)]
 mod bindings;

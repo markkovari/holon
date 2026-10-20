@@ -1,4 +1,4 @@
-//! `holon:park/lot` as `POST /v1/<function>` with comp-park's JSON (ADR-0100).
+//! `park-gateway` — the parking lot as HTTP routes, for agents and tests
 //! No auth of its own: anyone who can reach it may park, wake or cancel any ticket (a tailnet app).
 
 #[allow(warnings)]

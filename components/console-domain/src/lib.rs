@@ -1,4 +1,4 @@
-//! Holon console. The token lives in an HttpOnly cookie, never in JS: this page renders model prose.
+//! `console-domain` — the Holon console (see `wit/console.wit` for why it is a
 
 #[allow(warnings)]
 mod bindings {

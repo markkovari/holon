@@ -1,4 +1,4 @@
-//! User Markdown -> HTML: raw HTML is escaped before inline formatting,
+//! `markdown` — render user-supplied Markdown to HTML safely, escaping raw HTML instead of trusting it
 //! and only http(s)/mailto/relative hrefs survive.
 
 #[allow(warnings)]

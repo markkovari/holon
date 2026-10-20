@@ -1,4 +1,4 @@
-//! At-least-once fan-out over per-group offsets. Offsets are read-modify-write: one writer per group assumed.
+//! `event-bus` — publish an event and let several unrelated things react — in-app publish/subscribe over topics
 
 #[allow(warnings)]
 mod bindings;

@@ -1,4 +1,4 @@
-//! Scaffold router; `src/handlers.rs` is the goal.
+//! `oncall-schedule-domain` — router (scaffold, not part of the goal).
 
 #[allow(warnings)]
 mod bindings {
