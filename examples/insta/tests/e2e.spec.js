@@ -31,12 +31,10 @@ test('create post and like it in feed', async ({ page }) => {
 
   await page.goto('http://localhost:5173');
   
-  // Login
   await expect(page.locator('h2')).toHaveText('Instaclone');
   await page.locator('input[name="username"]').fill('test_user');
   await page.locator('button[type="submit"]').click();
   
-  // Feed view
   await expect(page.locator('nav span.font-serif')).toHaveText('Instaclone');
   
   await page.getByTestId('create-post-btn').click();

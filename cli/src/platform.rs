@@ -1,9 +1,3 @@
-//! `comp` talking to the platform: one HTTP call and a bit of printing, deliberately
-//! thin so the platform's rules live in one place.
-//!
-//! The session token lives in `~/.config/comp/credentials.json`, mode 0600 — not a
-//! keyring, matching `~/.netrc` and `~/.docker/config.json`.
-
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -38,7 +32,6 @@ fn save(s: &Session) -> Result<()> {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     }
     std::fs::write(&p, serde_json::to_vec_pretty(s)?)?;
-    // The token is a credential. 0600 before anyone else on the box can read it.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -47,8 +40,6 @@ fn save(s: &Session) -> Result<()> {
     Ok(())
 }
 
-/// One request. Returns the parsed body, or an error carrying whatever the platform
-/// said — its 422s name the component and the interface.
 fn call(
     s: &Session,
     method: &str,
@@ -83,8 +74,6 @@ fn call(
     }
 }
 
-/// Turn the platform's error body into something worth reading. The structured 422
-/// is a list of gaps with the components that would fill each; print it as such.
 fn explain(v: &Value) -> String {
     if v["error"] == json!("unsatisfied_imports") {
         let mut out = String::from("the graph has unsatisfied imports:");
@@ -148,8 +137,7 @@ pub fn whoami() -> Result<()> {
 pub fn component_push(file: &PathBuf, id: Option<String>) -> Result<()> {
     let s = load()?;
     let bytes = std::fs::read(file).with_context(|| format!("reading {}", file.display()))?;
-    // The default id is the filename, minus the `.composed` `cargo xtask compose` adds,
-    // so `comp component push target/gate_domain.composed.wasm` does the obvious.
+    // Strip the `.composed` that `cargo xtask compose` adds.
     let id = id.unwrap_or_else(|| {
         file.file_stem()
             .and_then(|s| s.to_str())
@@ -204,8 +192,6 @@ pub fn app_create(
     let edges: Result<Vec<Value>> = links
         .iter()
         .map(|l| {
-            // `plug:socket:iface` — the same triple the canvas draws and the
-            // reconciler turns into a link table.
             let parts: Vec<&str> = l.splitn(3, ':').collect();
             match parts.as_slice() {
                 [plug, socket, iface] => {
@@ -219,7 +205,6 @@ pub fn app_create(
         "name": name, "strategy": strategy,
         "nodes": components, "edges": edges?,
     });
-    // `?org=` selects whose deployment this is; omitted means the caller's own.
     let path = match org {
         Some(o) => format!("/api/deployments?org={o}"),
         None => "/api/deployments".to_string(),
@@ -287,9 +272,7 @@ pub fn app_manifest(id: &str) -> Result<()> {
 
 pub fn app_rm(id: &str, confirm: &str) -> Result<()> {
     let s = load()?;
-    // The confirmation is the platform's rule (ADR-0016), not this tool's — it is
-    // passed straight through so the refusal comes from the one place that knows
-    // what deleting actually destroys.
+    // The platform owns the confirmation rule (ADR-0016); pass it straight through.
     let v = call(
         &s,
         "DELETE",
@@ -391,43 +374,34 @@ pub fn org_remove(org: &str, subject: &str) -> Result<()> {
     Ok(())
 }
 
-/// Store a secret, reading the VALUE from a file or stdin — never from argv, where it
-/// would land in shell history and `ps` output. The printed reference is what a
-/// manifest carries (ADR-0010).
+/// The value comes from a file or stdin, never argv (shell history, `ps`).
 pub fn secret_set(name: &str, from: Option<&PathBuf>, org: Option<&str>) -> Result<()> {
     let s = load()?;
     let value = match from {
         Some(p) => {
             std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?
         }
-        // Not a terminal: something is piping. Read it and stay silent, so this
-        // composes in a script.
+        // Piped: read silently so this composes in a script.
         None if !stdin_is_a_terminal() => {
             let mut buf = String::new();
             std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
                 .context("reading the value from stdin")?;
             buf
         }
-        // A person is here. Ask, with the echo off — a key pasted into a visible
-        // prompt is a key in the scrollback, on the screen behind them, and in
-        // any terminal recording.
+        // Echo off: a pasted key would otherwise land in scrollback and recordings.
         None => {
             let first = rpassword::prompt_password(format!("value for {name}: "))
                 .context("reading the value")?;
             let again =
                 rpassword::prompt_password("again: ").context("reading the confirmation")?;
             if first != again {
-                // Worth confirming precisely BECAUSE it is hidden: a mistyped key
-                // that nobody can see fails later, at a provider, with a message
-                // about authentication rather than about typing.
+                // Confirmed because hidden: a mistyped key fails later as an auth error.
                 anyhow::bail!("the two values differ — nothing was stored");
             }
             first
         }
     };
-    // Trailing newlines are what `echo` and every editor add, and a bearer token
-    // with one on the end fails authentication in a way whose error message says
-    // nothing about a newline.
+    // `echo` and editors add a newline, which then fails auth with no hint why.
     let value = value.trim_end_matches(['\n', '\r']).to_string();
     if value.is_empty() {
         anyhow::bail!("the value is empty — nothing was stored");
@@ -452,7 +426,6 @@ pub fn secret_set(name: &str, from: Option<&PathBuf>, org: Option<&str>) -> Resu
     Ok(())
 }
 
-/// Names, never values. There is no endpoint that returns one.
 pub fn secret_ls(org: Option<&str>) -> Result<()> {
     let s = load()?;
     let path = match org {
@@ -479,13 +452,11 @@ pub fn secret_rm(name: &str, org: Option<&str>) -> Result<()> {
         None => format!("/api/secrets/{name}"),
     };
     call(&s, "DELETE", &path, None, "application/json")?;
-    // Deliberately blunt: an instance granted this reference will fail to START
-    // on its next reconcile, rather than failing on its first request (ADR-0051).
+    // Blunt on purpose: a granted instance fails to start, not at first request (ADR-0051).
     println!("deleted {name} — any component granted it will stop starting");
     Ok(())
 }
 
-/// Is stdin a terminal? Decides between prompting and reading a pipe.
 fn stdin_is_a_terminal() -> bool {
     #[cfg(unix)]
     {
@@ -584,14 +555,10 @@ pub fn goal_add(
     )?;
     let id = v["id"].as_str().unwrap_or("?");
     println!("queued {id}: {}", v["title"].as_str().unwrap_or(title));
-    // Nothing drains this queue. Saying so here is the difference between a
-    // person waiting for something that will never happen and a person starting
-    // it (ADR-0082).
     println!("  nothing starts it on its own — `comp goal start {id}` when you are ready");
     Ok(())
 }
 
-/// Shared by `goal ls` (once) and `goal watch` (every refresh).
 fn print_goals(project: &str, rows: &[Value]) {
     if rows.is_empty() {
         println!("no goals — `comp goal add {project} \"what to do\"` queues one");
@@ -601,8 +568,6 @@ fn print_goals(project: &str, rows: &[Value]) {
     for r in rows {
         let title = r["title"].as_str().unwrap_or("?");
         let reason = r["reason"].as_str().unwrap_or_default();
-        // Which pull request an `awaiting-human` goal is actually waiting on —
-        // without this a person has to go find it by guessing a branch name.
         let pr = r["pr"].as_str().unwrap_or_default();
         let suffix = if !reason.is_empty() {
             format!("  ({reason})")
@@ -631,10 +596,8 @@ pub fn goal_ls(project: &str, state: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// `goal watch`: list, then poll the event log as a fast path, then re-list on a
-/// timer regardless — events only decide how soon to refresh, never what to show.
-/// Each invocation gets its own consumer group (`watch-<pid>`) so concurrent
-/// watchers do not steal events from each other.
+/// Events only decide how soon to refresh, never what to show; a per-process consumer
+/// group keeps concurrent watchers from stealing each other's events.
 pub fn goal_watch(project: &str, interval: u64, full_refresh: u64) -> Result<()> {
     let s = load()?;
     let group = format!("watch-{}", std::process::id());
@@ -685,8 +648,7 @@ pub fn goal_watch(project: &str, interval: u64, full_refresh: u64) -> Result<()>
             refresh(&s)?;
             last_full = std::time::Instant::now();
         } else if last_full.elapsed().as_secs() >= full_refresh {
-            // The safety net: a bus outage, a restart, or an event this
-            // client dropped must not mean the view silently goes stale.
+            // Safety net: a dropped event or bus outage must not leave the view stale.
             refresh(&s)?;
             last_full = std::time::Instant::now();
         }
@@ -702,7 +664,6 @@ fn now_hms() -> String {
     format!("{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60)
 }
 
-/// The one transition a person must make for work to happen.
 pub fn goal_start(id: &str) -> Result<()> {
     let s = load()?;
     let v = call(
@@ -726,9 +687,7 @@ pub fn goal_fail(id: &str, reason: &str) -> Result<()> {
         "application/json",
     )?;
     println!("failed {id}: {}", v["title"].as_str().unwrap_or("?"));
-    // A dead letter is terminal on purpose: re-running an LLM goal unchanged
-    // costs money and fails the same way. A retry is a NEW goal, so the history
-    // of what was tried stays honest.
+    // Terminal on purpose: re-running an LLM goal unchanged costs money and fails the same way.
     println!("  it stays in the dead-letter queue — requeue by adding a new goal");
     Ok(())
 }

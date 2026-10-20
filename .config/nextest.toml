@@ -1,26 +1,16 @@
-# Nextest configuration for Holon
-# Documentation: https://nexte.st/book/configuration.html
-
 [profile.default]
-# Run all tests even if some fail, giving a complete diagnostic report
 fail-fast = false
-
-# Per-test timeout: flag slow tests at 15s and terminate at 60s
 slow-timeout = { period = "15s", terminate-after = 4 }
-
-# Default filter expression:
-# - Exclude offline databases (SurrealDB is not running locally by default)
-# - Exclude held-out goal stubs (semver-range is an open goal with intentionally failing stubs)
+# surrealkv_test needs a running SurrealDB; semver_range is an open goal whose stubs fail on purpose.
 default-filter = 'not test(surrealkv_test) and not test(semver_range)'
 
-# CI profile: fail fast to conserve runner minutes, enable 1 retry for transient network calls
 [profile.ci]
 fail-fast = true
 retries = 1
 slow-timeout = { period = "30s", terminate-after = 3 }
 default-filter = 'not test(surrealkv_test) and not test(semver_range)'
 
-# Test groups: constrain tests that bind local ports or temporary daemons
+# Tests that bind local ports or spawn daemons run one at a time.
 [test-groups]
 isolated-ports = { max-threads = 1 }
 
@@ -32,11 +22,7 @@ test-group = 'isolated-ports'
 filter = 'test(inventory_ttl) or test(gate_) or test(coldstart)'
 test-group = 'isolated-ports'
 
-# This one spins up TWO full fleet replicas rather than one, and has genuinely
-# taken 94s on a loaded CI runner against the blanket 90s (default) / 90s (ci)
-# ceiling above — without this override the default slow-timeout would kill the
-# process before the test's own 150s `serves()` deadline ever got a chance to
-# fail on its own terms.
+# Two fleet replicas: needs more than the blanket ceiling so its own 150s deadline can fail first.
 [[profile.default.overrides]]
 filter = 'test(a_shared_store_lets_two_replicas_continue_one_count)'
 slow-timeout = { period = "30s", terminate-after = 6 }

@@ -1,7 +1,3 @@
-# Grocery shop app with barcode scanning & dual-audience RBAC (Admin / Shopper)
-#
-#   cargo xtask host grocery            # runs locally on :3055
-#
 name = "grocery"
 domain = "grocery.example.com"
 artifact = "components/target/grocery_domain.composed.wasm"

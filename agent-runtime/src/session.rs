@@ -1,20 +1,4 @@
-//! Coding sessions: an agent starts one on `comp-agentd` and the runtime watches it (docs/adr/0119).
-//!
-//! The agent decides THAT some coding should happen and what it is. The daemon does it, in a
-//! workspace, with tools that ask a person first (ADR-0102). The runtime's part is the hand-off and
-//! the watching: it opens the session under the limits the agent's spec grants (`SessionPolicy`),
-//! sends the task, keeps a [`SessionView`] fresh from the daemon's state snapshot and says so as an
-//! [`Event`], and turns the daemon's pending approvals into the runtime's own. Every place that
-//! already shows an approval (the console, the chat bridge, `GET /approvals`) then shows a session's
-//! without learning anything, and answering one reaches the daemon through `resolve_approval`.
-//!
-//! ## Polled, not streamed
-//!
-//! The daemon has a resumable event stream, and a watcher could hold one per session. This reads the
-//! state snapshot on a timer instead, for the reason `console/ui` polls: it is the cut that is one
-//! request and no reconnect logic, and it is the same document a stream would be resumed from. The
-//! cost is that a long session's snapshot grows with its transcript; the cursor in it
-//! (`seq`) is what turns this into a tail when that matters.
+//! Coding sessions on `comp-agentd` (ADR-0119), polled rather than streamed: no reconnect logic.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -26,16 +10,11 @@ use crate::agent::{Cause, Event, Host};
 use crate::runtime::{unix_now_ms, Pending, Runtime};
 use crate::spec::AgentSpec;
 
-/// Where the daemon is, and how to talk to it.
 #[derive(Clone, Debug)]
 pub struct AgentdConfig {
-    /// `http://127.0.0.1:8016`
     pub url: String,
-    /// The bearer token the daemon was started with, if it was.
     pub token: Option<String>,
-    /// The model a session uses unless the agent's spec names one.
     pub model: String,
-    /// How often a live session's state is read.
     pub poll: Duration,
 }
 
@@ -72,7 +51,6 @@ impl Describe for SessionView {
         })
     }
 
-    /// What the model that started it is told: the state, and the answer once there is one.
     fn for_model(&self) -> String {
         let spent = format!("${:.2}, {} tool call(s)", self.cost_micros as f64 / 1e6, self.calls);
         match self.phase {
@@ -105,10 +83,7 @@ impl Describe for SessionView {
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-// The daemon's documents. Only what is read; unknown fields and entry kinds are ignored, as the
-// contract asks of every client.
-// ---------------------------------------------------------------------------------------------
+// Unknown fields and entry kinds are ignored, as the daemon's contract asks of every client.
 
 #[derive(Deserialize, Default, Clone, Debug)]
 pub(crate) struct UsageDoc {
@@ -194,7 +169,7 @@ pub(crate) struct StateDoc {
     pending_approvals: Vec<PendingDoc>,
 }
 
-/// A `Problem` (RFC 9457), when the daemon answered with one.
+/// RFC 9457.
 #[derive(Deserialize, Default)]
 struct Problem {
     #[serde(default)]
@@ -203,7 +178,7 @@ struct Problem {
     detail: String,
 }
 
-/// The daemon's REST API (`api/openapi.yaml`), the part a session needs.
+/// The part of the daemon's `api/openapi.yaml` a session needs.
 pub struct Agentd {
     cfg: AgentdConfig,
     http: reqwest::blocking::Client,
@@ -256,7 +231,11 @@ impl Agentd {
         } else {
             text
         };
-        Err(format!("comp-agentd refused {path} ({}): {}", status.as_u16(), if why.trim().is_empty() { "no reason given" } else { why.trim() }))
+        Err(format!(
+            "comp-agentd refused {path} ({}): {}",
+            status.as_u16(),
+            if why.trim().is_empty() { "no reason given" } else { why.trim() }
+        ))
     }
 
     pub(crate) fn create(
@@ -336,11 +315,6 @@ impl Agentd {
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Reading a snapshot.
-// ---------------------------------------------------------------------------------------------
-
-/// What a tool call is about, in a few words: the path it touches or the command it runs.
 fn brief(tool: &str, input: &Value) -> String {
     let key = if tool == "run" { "command" } else { "path" };
     let s = input.get(key).and_then(Value::as_str).unwrap_or("");
@@ -348,11 +322,9 @@ fn brief(tool: &str, input: &Value) -> String {
     one
 }
 
-/// How a task ended, as the transcript says: the outcome, the answer, the failure's code and message.
 type Ended<'a> = (&'a str, &'a Option<String>, &'a Option<String>, &'a Option<String>);
 
-/// Folds the daemon's snapshot into this session's view. Pure: the clock is a parameter and the
-/// approvals' runtime ids are not decided here (`pending` is left as it was).
+/// Pure: `pending` is left as it was, since approval ids are the runtime's to assign.
 pub(crate) fn fold(prev: &SessionView, st: &StateDoc, task: &str, now_ms: u64) -> SessionView {
     let mut v = prev.clone();
     let u = &st.session.usage;
@@ -423,29 +395,20 @@ pub(crate) fn fold(prev: &SessionView, st: &StateDoc, task: &str, now_ms: u64) -
     v
 }
 
-// ---------------------------------------------------------------------------------------------
-// What the runtime keeps.
-// ---------------------------------------------------------------------------------------------
-
-/// A session the runtime started, and what it has told the world about it.
 pub(crate) struct Tracked {
     pub view: SessionView,
-    /// The task this session was opened for: the one whose end is the session's.
+    /// The task whose end is the session's.
     pub task: String,
-    /// The approvals shown to people, by the id the runtime gave each and the daemon's call id.
+    /// (runtime approval id, daemon call id).
     pub approvals: Vec<(u64, String)>,
-    /// Polls in a row that could not reach the daemon.
     pub misses: u32,
 }
 
-/// Polls without an answer before a session is given up on.
 const MAX_MISSES: u32 = 8;
 
-/// The longest `session_result` waits for the daemon, whatever the model asked for.
 pub const MAX_WAIT: Duration = Duration::from_secs(60);
 
 impl Runtime {
-    /// Every session this runtime has started, newest first.
     pub fn sessions(&self) -> Vec<SessionView> {
         let mut v: Vec<SessionView> =
             self.sessions.lock().unwrap().iter().map(|t| t.view.clone()).collect();
@@ -453,7 +416,6 @@ impl Runtime {
         v
     }
 
-    /// Approvals the daemons are waiting on, shaped as the runtime's own.
     pub(crate) fn session_pending(&self) -> Vec<Pending> {
         self.sessions.lock().unwrap().iter().flat_map(|t| t.view.pending.clone()).collect()
     }
@@ -462,7 +424,6 @@ impl Runtime {
         Host::observe(self, ev);
     }
 
-    /// Where an agent's sessions may be opened: its own workspace, or one its spec lists.
     fn session_workspace(&self, spec: &AgentSpec, asked: &str) -> Result<String, String> {
         let asked = asked.trim();
         if asked.is_empty() || asked == "own" {
@@ -491,7 +452,6 @@ impl Runtime {
         }
     }
 
-    /// Opens a session and sends it the task. Returns at once with the session's id.
     pub(crate) fn start_session(
         &self,
         spec: &AgentSpec,
@@ -581,8 +541,7 @@ impl Runtime {
         Ok(session.id)
     }
 
-    /// The session a call means: the one it names, or — when it names none, as a small model
-    /// often does not — the only one the agent still has going, or else the only one it has.
+    /// A small model often names no session: then the only live one, else the only one at all.
     fn pick_session(&self, agent: &str, id: &str) -> Result<String, String> {
         if !id.trim().is_empty() {
             return Ok(id.trim().to_string());
@@ -601,7 +560,6 @@ impl Runtime {
         }
     }
 
-    /// The latest view of one of `agent`'s sessions, waiting up to `wait` for it to end.
     pub(crate) fn session_result(
         &self,
         agent: &str,
@@ -627,7 +585,6 @@ impl Runtime {
         }
     }
 
-    /// Stops one of `agent`'s sessions and whatever it is doing.
     pub(crate) fn close_session(&self, agent: &str, id: &str) -> Result<(), String> {
         let agentd = self.agentd.as_ref().ok_or("no comp-agentd is configured")?;
         let picked = self.pick_session(agent, id)?;
@@ -649,7 +606,6 @@ impl Runtime {
         Ok(())
     }
 
-    /// Ends a session the daemon will say nothing more about, and takes its approvals away.
     fn finish_session(&self, id: &str, phase: Phase, result: Option<String>) {
         let mut events = Vec::new();
         {
@@ -675,7 +631,6 @@ impl Runtime {
         }
     }
 
-    /// One pass over the sessions still going: read each one's state, say what changed.
     pub(crate) fn poll_sessions(&self) {
         let Some(agentd) = &self.agentd else { return };
         let live: Vec<(String, String)> = self
@@ -717,9 +672,6 @@ impl Runtime {
             t.misses = 0;
             let mut view = fold(&t.view, &st, task, unix_now_ms());
 
-            // Approvals: a new call the daemon is waiting on gets an id of the runtime's and is
-            // announced; one it is no longer waiting on is taken away, and how it was decided is
-            // read from the transcript.
             let waiting: Vec<&PendingDoc> = st
                 .pending_approvals
                 .iter()
@@ -773,7 +725,7 @@ impl Runtime {
         }
     }
 
-    /// Answers an approval a session is waiting on. `None`: `id` is not one of those.
+    /// `None`: `id` is not a session's approval.
     pub(crate) fn resolve_session_approval(
         &self,
         id: u64,
@@ -790,8 +742,7 @@ impl Runtime {
                     .map(|(_, c)| (t.view.id.clone(), c.clone()))
             })?
         };
-        // The daemon first: if it will not take the answer, the approval stays where it is and
-        // can be answered again.
+        // The daemon first: if it refuses, the approval stays and can be answered again.
         if agentd.approve(&session, &call, approved, scope).is_err() {
             return Some(false);
         }
@@ -806,8 +757,6 @@ impl Runtime {
         Some(true)
     }
 
-    /// Starts the watcher that keeps every live session's view fresh. Called by
-    /// `start_scheduler`; does nothing when no daemon is configured.
     pub(crate) fn start_session_watcher(self: &std::sync::Arc<Self>) {
         let Some(agentd) = &self.agentd else { return };
         let poll = agentd.config().poll;
@@ -821,7 +770,7 @@ impl Runtime {
         });
     }
 
-    /// Best effort at shutdown: a session left open keeps a task running with nobody to answer it.
+    /// A session left open keeps a task running with nobody to answer it.
     pub fn close_all_sessions(&self) {
         let Some(agentd) = &self.agentd else { return };
         let live: Vec<String> = self
@@ -930,7 +879,6 @@ mod tests {
         assert_eq!(v.phase, Phase::Done);
         assert_eq!(v.result.as_deref(), Some("fixed it"));
         assert_eq!(v.finished_ms, Some(7_000));
-        // folding again later does not move the end of a session that has ended
         let again = fold(&v, &st, "t1", 9_000);
         assert_eq!(again.finished_ms, Some(7_000));
         assert!(again.for_model().starts_with("done: fixed it"));

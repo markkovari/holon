@@ -6,8 +6,7 @@ license = "MIT"
 publish = false
 description = "The Holon CLI: push components, deploy apps onto the lattice, and render the files a bare-metal node needs."
 
-# Native, and deliberately outside the components/ (wasm32) workspace — same reason
-# as host/ and reconciler/.
+# Native: deliberately outside the wasm32 components/ workspace.
 [workspace]
 
 [[bin]]
@@ -20,11 +19,7 @@ clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 serde_json = "1"
-# Blocking HTTP with rustls and no async runtime. The whole client is a dozen
-# one-shot calls, so a tokio reactor would be the largest thing in the binary.
+# Blocking HTTP, no async runtime: a dozen one-shot calls don't warrant tokio.
 ureq = { version = "2", features = ["json", "tls"] }
-# Reading a credential without echoing it. Not hand-rolled: doing this correctly
-# means talking to /dev/tty rather than stdin, restoring the terminal on Ctrl-C,
-# and not leaving the tty muted if the process dies mid-prompt. Getting any of
-# those wrong is worse than the dependency.
+# Not hand-rolled: /dev/tty, terminal restore on Ctrl-C and dying mid-prompt are easy to get wrong.
 rpassword = "7"

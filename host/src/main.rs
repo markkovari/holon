@@ -1,18 +1,4 @@
-//! `comp-host` — a NATIVE Rust server that runs ANY composed wasm component over
-//! wasmtime. No Node, no Kubernetes, no wasmCloud, no NATS required: this binary IS
-//! the host.
-//!
-//! It serves a composed artifact's `wasi:http/incoming-handler` export over a hyper
-//! TCP listener and satisfies the component's imports host-side: standard WASI,
-//! wasi:http, wasi:keyvalue (memory, sqlite, redis or NATS via `--kv`; `memory` and
-//! `sqlite` are NODE-LOCAL, so the reconciler refuses to spread a stateful app onto
-//! them, docs/adr/0027) and wasi:config (per-instance, from the start command or
-//! `--config`/`--config-file`; NOT the process environment, which in a shared host
-//! would be a cross-tenant read).
-//!
-//! Two lanes, one binary: without `--lattice-nats` it serves one `--component`;
-//! with it, instances arrive as start commands and it holds every tenant on the
-//! node at once (docs/adr/0021, 0023).
+//! Native wasmtime host for composed components: one `--component`, or every tenant on the node with `--lattice-nats` (ADR-0021, 0023).
 
 mod agent;
 mod kv;
@@ -23,8 +9,7 @@ mod rpc;
 mod secrets;
 mod sync;
 mod tenant;
-// The gate for `--kv surreal`/`--kv turso`, kept out of `kv.rs` on purpose:
-// the file that implements a backend must not be the file that judges it.
+// Backend gates live outside `kv.rs`: the file that implements a backend must not judge it.
 #[cfg(test)]
 mod objkv_test;
 #[cfg(test)]
@@ -52,20 +37,12 @@ use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestC
 use wasmtime_wasi_http::p2::{HttpResult, WasiHttpCtxView, WasiHttpHooks, WasiHttpView};
 use wasmtime_wasi_http::WasiHttpCtx;
 
-// Generate host traits for the non-standard imports from host/wit/host.wit.
 mod bindings {
     wasmtime::component::bindgen!({
         path: "wit",
         world: "host-imports",
-        // wasmtime >=34 folded `async` + `trappable_imports` into one knob;
-        // sync is the default, `trappable` keeps imports returning Result.
-        //
-        // `reveal` is the one import that talks to the network — it fetches the
-        // plaintext from the platform on first use (ADR-0051) — so it is the one
-        // import that must not block the executor thread it runs on. A named rule
-        // REPLACES the default rather than adding to it, so `trappable` is repeated
-        // here; and an unmatched rule is a compile error, so a typo cannot silently
-        // leave this synchronous.
+        // `trappable` keeps imports returning Result. `reveal` fetches over the network (ADR-0051), so it is async;
+        // a named rule replaces the default, hence `trappable` again.
         imports: {
             default: trappable,
             "comp:secrets/reader.reveal": async | trappable,
@@ -89,65 +66,33 @@ use bindings::wasi::keyvalue::batch;
 use bindings::wasi::keyvalue::store;
 
 pub type Kv = Arc<dyn KvBackend>;
-/// The `cache:store` component's backing map (flat guest key -> bytes).
-///
-/// One per INSTANCE, not one per process — `cache:store`'s own WIT carries no
-/// bucket/name parameter the way `wasi:keyvalue::store::open` does, so nothing
-/// stops two different tenants composing the same cache component and
-/// choosing the same key. A process-global map here would let that collide;
-/// each `Instance` getting its own means there is nothing to collide with.
+/// `cache:store` backing, one per instance: its WIT has no bucket parameter, so a process-global map lets tenants collide.
 pub type CacheBacking = Arc<Mutex<HashMap<String, Vec<u8>>>>;
 
-/// One running component: its scope, and the pre-instantiated world it serves.
-///
-/// `InstancePre` is built once, when the instance starts — not per request. That
-/// is the single biggest difference from the old one-app host, which did it at
-/// boot for the only component it would ever run.
+/// One running component; its `InstancePre` is built once at start, not per request.
 pub struct Instance {
     pub scope: SharedScope,
-    /// This instance's own `cache:store` backing — never shared with another
-    /// instance. See `CacheBacking`'s own doc for why that matters.
     pub cache_backing: CacheBacking,
-    /// The HTTP world, when this component exports one.
-    ///
-    /// `None` for a plug: it exports interfaces other components call, not a door
-    /// requests arrive at. It serves its exports over the bus and never appears in
-    /// the route table.
+    /// `None` for a plug: it serves its exports over the bus and has no route.
     pub(crate) pre: Option<HttpPre>,
-    /// Clients for this instance's REMOTE imports, keyed by interface. Built once
-    /// at start, because resolving a target per request would put a lookup on the
-    /// hot path for something that only changes when placement does.
+    /// Remote-import clients, built at start to keep target lookup off the hot path.
     pub remotes: std::collections::BTreeMap<String, wrpc_transport_nats::Client>,
-    /// How many replicas this node was asked for.
-    ///
-    /// Not N copies of anything: one `InstancePre` already serves concurrent
-    /// requests, so on this runtime a replica is a share of the pool rather than a
-    /// process. It is tracked because the reconciler counts replicas per node, and
-    /// a host that always reported 1 would be asked to start a second one forever.
+    /// Replicas asked for. One `InstancePre` serves them all; tracked because the reconciler counts per node.
     pub count: u32,
 }
 
-/// The HTTP door, in whichever generation the component exports: p2's
-/// `incoming-handler@0.2` or p3's async `handler@0.3.0-rc`. Picked from the
-/// component itself, so nothing is configured and both run side by side.
+/// The HTTP door, p2 `incoming-handler@0.2` or p3 `handler@0.3.0-rc`, picked from the component itself.
 #[derive(Clone)]
 pub(crate) enum HttpPre {
     P2(ProxyPre<Host>),
-    /// The worker pool is built on the first request, which is the first point the
-    /// host has the kv backend and platform url to make its stores with.
+    /// Worker pool built on first request: the first point the kv backend and platform url are at hand.
     P3(wasmtime_wasi_http::p3::bindings::ServicePre<Host>, std::sync::OnceLock<P3Handler>),
 }
 
 type P3Handler = wasmtime_wasi_http::handler::ProxyHandler<P3Stores>;
 
-/// How a p3 worker gets its store: the same `store_for` a p2 request gets, so the
-/// tenant boundary, memory cap, CPU slice and egress policy are identical.
-///
-/// A p3 store is NOT per request. One instance serves up to `REUSE` requests, at
-/// most `CONCURRENT` at a time, and is dropped after `IDLE` without work — which
-/// is the whole point of p3. So the secret cache and memory cap cover that
-/// instance's requests, not one: ADR-0037's "an instance is per-request" holds
-/// for p2 only.
+/// Same `store_for` as p2, so tenant boundary, caps and egress match. A p3 instance is reused across requests,
+/// so its secret cache and memory cap span them (ADR-0037's per-request rule is p2 only).
 pub(crate) struct P3Stores {
     engine: Arc<Engine>,
     scope: SharedScope,
@@ -175,8 +120,7 @@ impl wasmtime_wasi_http::handler::HandlerState for P3Stores {
             write_profile: Box::new(|_| {}),
         })
     }
-    // ponytail: no per-request wall-clock timeout, same as the p2 path; the epoch
-    // slice keeps a hot loop from starving others. Add one if a hung guest shows up.
+    // ponytail: no per-request wall-clock timeout, as on p2; add one if a hung guest shows up.
     fn request_timeout(&self) -> std::time::Duration {
         std::time::Duration::MAX
     }
@@ -196,7 +140,6 @@ impl wasmtime_wasi_http::handler::HandlerState for P3Stores {
 }
 
 impl HttpPre {
-    /// `None` for a plug — it exports neither door.
     pub(crate) fn new(ipre: wasmtime::component::InstancePre<Host>) -> Option<Self> {
         ProxyPre::new(ipre.clone()).map(Self::P2).ok().or_else(|| {
             let pre = wasmtime_wasi_http::p3::bindings::ServicePre::new(ipre).ok()?;
@@ -205,24 +148,14 @@ impl HttpPre {
     }
 }
 
-/// Everything running on this node, by `<tenant>/<app>/<component>`.
-///
-/// An `RwLock<HashMap>` because reads are the hot path — every request takes one —
-/// and a read is ~20ns against the millisecond it guards. Writes happen at
-/// start-command rates, which is to say almost never.
-// ponytail: RwLock<HashMap>; arc-swap if start/stop ever contends with traffic,
-// which at these write rates it will not.
+/// Keyed by `<tenant>/<app>/<component>`; RwLock because every request reads and writes are start-command rare.
+// ponytail: RwLock<HashMap>; arc-swap if start/stop ever contends with traffic.
 pub type Instances = Arc<RwLock<HashMap<InstanceId, Arc<Instance>>>>;
 
-/// `Host` header -> instance. The door into the node.
+/// `Host` header -> instance.
 pub type Routes = Arc<RwLock<HashMap<String, InstanceId>>>;
 
-/// A host resource handed to the guest when it calls `store.open(name)`.
-///
-/// It carries a `BucketId`, not the name the guest asked for. That is the whole
-/// ADR-0012 fix, and putting it on the RESOURCE rather than in each method is what
-/// makes `atomics` and `batch` inherit it — they re-read the handle, so there is no
-/// sibling caller left holding a guest string.
+/// Carries a `BucketId`, not the guest's name (ADR-0012); on the resource so `atomics` and `batch` inherit it.
 pub struct HostBucket {
     id: BucketId,
 }
@@ -231,26 +164,18 @@ struct Host {
     table: ResourceTable,
     wasi: WasiCtx,
     http: WasiHttpCtx,
-    /// Outbound HTTP policy. This used to be `[(); 0]` — upstream's zero-sized
-    /// default, i.e. unrestricted egress. In a process shared by every tenant on
-    /// the node, unrestricted egress reaches the NATS bus, this host's own
-    /// listener, and every other node on the tailnet.
+    /// Never unrestricted: in a process shared by every tenant, open egress reaches NATS, this listener and the tailnet.
     hooks: Egress,
     kv: Kv,
     cache_backing: CacheBacking,
-    /// Who this instance is and what it may touch. Built by the host at start time
-    /// from a control-plane record; never from guest input, never from `std::env`.
+    /// Built by the host from a control-plane record; never from guest input or `std::env`.
     scope: SharedScope,
-    /// Secrets this instance has already fetched. Dropped — and overwritten — with
-    /// the Store, which is per request (ADR-0037).
+    /// Dropped with the Store (ADR-0037).
     secret_cache: secrets::SecretCache,
-    /// Where to fetch a granted secret, and the client to do it with.
     platform_url: String,
     fetch_http: reqwest::Client,
-    /// Per-store resource ceiling. Set from the scope in `handle_request`.
     limits: wasmtime::StoreLimits,
-    /// How this store reaches components on other nodes. `Solo` off a lattice, so
-    /// the single-app lane needs no broker and says so if something tries.
+    /// `Solo` off a lattice, so the single-app lane needs no broker.
     rpc: rpc::RpcCtx,
 }
 
@@ -262,13 +187,10 @@ impl wrpc_runtime_wasmtime::WrpcView for Host {
     }
 }
 
-/// Map a backend error to the wasi:keyvalue `error` variant.
 fn kv_err(e: anyhow::Error) -> store::Error {
     store::Error::Other(format!("{e:#}"))
 }
 
-// wasmtime 47 projects the ctx AND the resource table together, so a host can
-// hand out both with one borrow instead of two methods that alias `self`.
 impl WasiView for Host {
     fn ctx(&mut self) -> WasiCtxView<'_> {
         WasiCtxView { ctx: &mut self.wasi, table: &mut self.table }
@@ -290,16 +212,8 @@ impl wasmtime_wasi_http::p3::WasiHttpView for Host {
 }
 
 impl store::Host for Host {
-    /// The one function ADR-0012 was about.
-    ///
-    /// It used to push `HostBucket { name: identifier }` — the guest's own string
-    /// became the bucket, so two tenants running the same component read the same
-    /// records. Now the string is a KEY INTO HOST STATE and nothing else: a hit
-    /// yields the store the platform assigned, a miss yields `no-such-store`.
-    ///
-    /// A miss must never fall back to the default. A fallback would mean a guest
-    /// naming its neighbour's bucket gets *a* bucket rather than an error, which is
-    /// the same class of bug wearing an apology.
+    /// The guest's string is a key into host state, never the bucket itself (ADR-0012).
+    /// A miss is `no-such-store`, never a fallback: a fallback hands a guest naming its neighbour's bucket *a* bucket.
     fn open(
         &mut self,
         identifier: String,
@@ -381,9 +295,7 @@ impl atomics::Host for Host {
     }
 }
 
-// One guest call instead of N for multi-key reads/writes. The backend loop is
-// host-side, so even without a backend-native multi-get this removes the
-// per-key guest<->host round-trips.
+// One guest call instead of N: the per-key loop is host-side, saving guest<->host round-trips.
 
 impl batch::Host for Host {
     fn get_many(
@@ -457,9 +369,7 @@ impl config::Host for Host {
     }
 }
 
-// The guard, enforced where the data is (ADR-0065). Both calls take the same
-// `HostBucket` resource `wasi:keyvalue` hands out, so the guest still cannot name
-// a store it was not given — the ADR-0012 boundary is untouched by this.
+// The guard, enforced where the data is (ADR-0065); same `HostBucket` resource, so the ADR-0012 boundary holds.
 
 impl cas::Host for Host {
     fn get(
@@ -494,7 +404,7 @@ impl cas::Host for Host {
     }
 }
 
-// Mock implementation to satisfy the compiler and capability graph.
+// Stub: only here to satisfy the capability graph.
 
 impl bindings::actor::entity::actor::Host for Host {
     fn spawn(
@@ -527,13 +437,10 @@ impl bindings::actor::entity::actor::Host for Host {
     }
 }
 
-// The guest names a KEY; `Scope::secret` is the only way from that string to a
-// `SecretRef`, and `SecretRef` cannot be built outside `tenant.rs` (ADR-0051).
-// Same shape as buckets and links, for the third time.
+// The guest names a key; only `Scope::secret` maps it to a `SecretRef` (ADR-0051).
 
 impl reader::HostSecret for Host {
-    /// The manifest's name for this secret, not the value. The only thing about a
-    /// secret that is safe to log, which is why it is the only thing exposed.
+    /// The manifest's name, never the value: the only safe-to-log part of a secret.
     fn key(&mut self, self_: Resource<secrets::SecretHandle>) -> wasmtime::Result<String> {
         Ok(self.table.get(&self_)?.key.clone())
     }
@@ -545,8 +452,7 @@ impl reader::HostSecret for Host {
 }
 
 impl reader::Host for Host {
-    /// Holding a secret. `none` is "not granted", and deliberately not an error:
-    /// a component may legitimately run with an optional secret absent.
+    /// `none` is "not granted", not an error: an optional secret may be absent.
     fn get(
         &mut self,
         key: String,
@@ -559,13 +465,8 @@ impl reader::Host for Host {
         Ok(Ok(Some(res)))
     }
 
-    /// Reading one. The audit point, and the only path to a plaintext.
-    ///
-    /// The value is fetched on FIRST reveal, then cached for this instance — a
-    /// secret on a code path that never runs never enters this process, and an
-    /// instance is per-request anyway (ADR-0037), so the cache is short by
-    /// construction. `expired` is told apart from `unavailable` because one is a
-    /// restart and the other is a manifest problem.
+    /// Fetched on first reveal, then cached: a secret on a path never run never enters this process.
+    /// `expired` (restart) is kept apart from `unavailable` (manifest problem).
     async fn reveal(
         &mut self,
         s: Resource<secrets::SecretHandle>,
@@ -573,10 +474,7 @@ impl reader::Host for Host {
         let handle = self.table.get(&s)?;
         let (key, reference) = (handle.key.clone(), handle.reference.clone());
 
-        // Audited before the value is known, so a failed read is on the record too:
-        // "which component tried to read this, and when" is asked after a leak, and
-        // the attempts matter as much as the successes. Key and identity only —
-        // never a value (ADR-0051).
+        // Audited before the fetch, so failed attempts are on record too; key and identity only, never a value.
         eprintln!(
             "{}",
             serde_json::json!({
@@ -604,9 +502,7 @@ impl reader::Host for Host {
                 Ok(Ok(v))
             }
             Err(e) if e == "expired" => Ok(Err(reader::SecretError::Expired)),
-            // Vague on purpose: the guest learns its secret is unavailable, not
-            // which of the platform's answers produced that. The detail goes to the
-            // node's log, where an operator can act on it.
+            // Vague on purpose: the detail goes to the node log, not the guest.
             Err(e) => {
                 eprintln!("comp-host: {} could not read secret {key:?}: {e}", self.scope.id());
                 Ok(Err(reader::SecretError::Unavailable("the platform did not supply it".into())))
@@ -615,24 +511,14 @@ impl reader::Host for Host {
     }
 }
 
-/// Outbound HTTP policy for one instance.
-///
-/// Two checks, because one is not enough. The **name** must be on the app's
-/// allow-list, which is what an operator can reason about. Then every address it
-/// **resolves to** must be outside the ranges no tenant may reach — because a name
-/// check alone is satisfied by pointing an allow-listed name at `169.254.169.254`.
+/// The name must be allow-listed AND every resolved address outside the denied ranges: a name check alone is
+/// beaten by pointing an allow-listed name at `169.254.169.254`.
 struct Egress {
     scope: SharedScope,
 }
 
 impl WasiHttpHooks for Egress {
-    /// How many outgoing-body write calls the host buffers before the guest's
-    /// next write blocks. The default is 1 — a channel of two chunks — and a
-    /// guest that writes its whole request body BEFORE calling `handle` (the
-    /// normal pattern) then deadlocks the moment the body exceeds that: the
-    /// writes block waiting for a consumer that only runs once `handle` is
-    /// called, which never happens. A gate posting a base tree of a real repo
-    /// hit exactly this at ~8 KB. Raised so a many-KB request body flows.
+    /// The default of 1 deadlocks a guest that writes a many-KB body before calling `handle` (hit at ~8 KB).
     fn outgoing_body_buffer_chunks(&mut self) -> usize {
         8192
     }
@@ -655,8 +541,7 @@ impl WasiHttpHooks for Egress {
             })
             .unwrap_or_default();
 
-        // Fail closed and fail early: no allow-list entry means no connection is
-        // ever opened, so this costs nothing when it refuses.
+        // Fail closed before any connection opens.
         if !self.scope.egress.permits_authority(&authority) {
             eprintln!(
                 "comp-host: {} denied egress to {authority:?} (not on its allow-list)",
@@ -667,8 +552,6 @@ impl WasiHttpHooks for Egress {
 
         let scope = self.scope.clone();
         let port = if config.use_tls { 443 } else { 80 };
-        // Opt-in wire tracing for diagnosing a stalled outbound call. Off unless
-        // COMP_TRACE_EGRESS is set, so it costs nothing in a normal run.
         let trace = std::env::var_os("COMP_TRACE_EGRESS").is_some();
         let who = scope.id();
         let handle = wasmtime_wasi::runtime::spawn(async move {
@@ -685,19 +568,10 @@ impl WasiHttpHooks for Egress {
             if trace {
                 eprintln!("comp-host: [egress] {who} dialing {target} (tls={})", config.use_tls);
             }
-            // ponytail: the connect re-resolves, so a DNS-rebinding attacker who
-            // controls an allow-listed name can still land on a denied address
-            // between this check and the dial. The real fix is a connector pinned
-            // to the address we checked; do it if egress ever guards something an
-            // attacker would spend a rebind on.
-            //
-            // The outbound goes through reqwest and the WHOLE response body is
-            // buffered here, rather than through wasmtime's streaming handler.
-            // That handler hands the guest a body backed by a live connection a
-            // background worker must keep pumping; against a real TLS remote that
-            // stalled — the response headers arrived and the body never did. A
-            // buffered response has no worker to starve. The cost is holding the
-            // response in host memory, which for a model answer is kilobytes.
+            // ponytail: the connect re-resolves, so DNS rebinding can still land on a denied address;
+            // pin the connector to the checked address if egress ever guards something worth a rebind.
+            // Buffered through reqwest, not wasmtime's streaming handler: that stalled against a real TLS remote
+            // (headers arrived, body never did). The cost is holding the response in memory.
             let scheme = if config.use_tls { "https" } else { "http" };
             let t0 = std::time::Instant::now();
             let out = reqwest_send(scheme, &authority, request, &config).await;
@@ -719,10 +593,7 @@ impl WasiHttpHooks for Egress {
     }
 }
 
-/// p3 egress: the same two checks as p2 — the name on the allow-list, then every
-/// resolved address outside the denied ranges — and the same buffered reqwest
-/// fetch. It must be overridden either way: upstream's default `send_request` is
-/// unrestricted egress.
+/// p3 egress: same two checks and buffered fetch as p2; must be overridden, upstream's default is unrestricted.
 type P3Body = http_body_util::combinators::UnsyncBoxBody<bytes::Bytes, P3ErrorCode>;
 type P3ErrorCode = wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 type P3Io = Box<dyn std::future::Future<Output = Result<(), P3ErrorCode>> + Send>;
@@ -799,13 +670,7 @@ impl wasmtime_wasi_http::p3::WasiHttpHooks for Egress {
     }
 }
 
-/// Make one outbound request through reqwest and buffer the whole response into a
-/// wasi:http `IncomingResponse`.
-///
-/// This is the reliable half of the egress path: reqwest owns the connection, the
-/// TLS, and the body read to completion, then hands back bytes. The guest sees a
-/// finished in-memory body with no background worker to stall — which is exactly
-/// the failure the streaming handler hit against a real TLS remote.
+/// Buffered fully by reqwest, so the guest gets a finished body with no background worker to stall.
 async fn reqwest_send(
     scheme: &str,
     authority: &str,
@@ -815,7 +680,6 @@ async fn reqwest_send(
     use http_body_util::{BodyExt, Full};
 
     let (parts, body) = request.into_parts();
-    // Collect the request body the guest wrote.
     let body_bytes = body
         .collect()
         .await
@@ -840,15 +704,12 @@ async fn reqwest_send(
     })
 }
 
-/// Why a name's resolved addresses were refused.
 enum AddrDenied {
     Prohibited,
     Unresolvable,
 }
 
-/// The second egress check: every address `target` (`host:port`) resolves to must
-/// be outside the ranges no tenant may reach. Shared by p2 and p3, because a copy
-/// of a security check is a second place for it to be wrong.
+/// Every resolved address must be outside the denied ranges; shared by p2 and p3 so the check exists once.
 async fn resolved_addrs_permitted(scope: &SharedScope, target: &str) -> Result<(), AddrDenied> {
     let addrs = tokio::net::lookup_host(target).await.map_err(|_| AddrDenied::Unresolvable)?;
     for a in addrs {
@@ -864,8 +725,6 @@ async fn resolved_addrs_permitted(scope: &SharedScope, target: &str) -> Result<(
     Ok(())
 }
 
-/// The outbound request itself, through reqwest, with the WHOLE response body
-/// buffered — the generation-neutral half of egress (see `reqwest_send`).
 async fn reqwest_fetch(
     scheme: &str,
     authority: &str,
@@ -881,9 +740,7 @@ async fn reqwest_fetch(
         .unwrap_or_else(|| "/".to_string());
     let url = format!("{scheme}://{authority}{path}");
 
-    // Copy the guest's headers, minus the ones a client library owns: host and
-    // content-length are set by reqwest from the URL and the body, and the
-    // hop-by-hop headers describe a connection reqwest manages itself.
+    // Skip headers reqwest owns: host/content-length come from URL and body, hop-by-hop from its connection.
     let mut headers = reqwest::header::HeaderMap::new();
     for (k, v) in parts.headers.iter() {
         let name = k.as_str().to_ascii_lowercase();
@@ -917,13 +774,11 @@ async fn reqwest_fetch(
 
     let status = resp.status();
     let resp_headers = resp.headers().clone();
-    // The whole body, read to completion here.
     let bytes = resp.bytes().await.map_err(|e| format!("reqwest body: {e}"))?;
 
     let mut builder = hyper::Response::builder().status(status);
     for (k, v) in resp_headers.iter() {
-        // content-length/transfer-encoding described reqwest's framing; the guest
-        // gets a fixed in-memory body, so let hyper compute its own.
+        // The guest gets a fixed in-memory body, so hyper recomputes framing.
         let name = k.as_str().to_ascii_lowercase();
         if matches!(name.as_str(), "content-length" | "transfer-encoding" | "connection") {
             continue;
@@ -933,10 +788,7 @@ async fn reqwest_fetch(
     builder.body(bytes).map_err(|_| "response build".to_string())
 }
 
-// There is deliberately no process-environment `wasi:config`: in a process shared
-// by every tenant on the node that is a cross-tenant read by construction. Config
-// arrives per component in the start command and lives on the `Scope`; for a
-// single-app run, `--config k=v` supplies it (see `Args`).
+// No process-environment `wasi:config`: in a shared process that is a cross-tenant read.
 
 #[derive(Parser)]
 #[command(name = "comp-host", about = "Run the composed vet-domain wasm over wasmtime")]
@@ -947,9 +799,7 @@ struct Args {
     /// Address to listen on.
     #[arg(long, default_value = "127.0.0.1:3007")]
     addr: String,
-    /// Where to fetch granted secrets from (ADR-0051). Empty means a component that
-    /// asks for one is told its secret is unavailable — which is the right answer
-    /// for a node with no platform, and better than a node that silently has none.
+    /// Where to fetch granted secrets from (ADR-0051). Empty: every secret is unavailable.
     #[arg(long, default_value = "")]
     platform_url: String,
     /// Optional directory of static files (a built SPA) to serve for GET
@@ -957,40 +807,22 @@ struct Args {
     #[arg(long)]
     static_dir: Option<String>,
     /// Key-value backend: memory | sqlite | redis | nats | surreal | turso.
-    /// The wasm component is identical for all six — only the host store changes.
-    ///
-    /// Defaults to `nats` on a lattice node and `memory` for a single-app run. That
-    /// difference is deliberate: NATS is already mandatory on a lattice, and it is
-    /// the only backend where two replicas of one app share a store, so defaulting a
-    /// node to anything else hands you either silent divergence (ADR-0027) or, with
-    /// `memory`, silent loss on the next restart.
+    /// Defaults to `nats` on a lattice node (the only store replicas share, ADR-0027) and `memory` otherwise.
     #[arg(long)]
     kv: Option<String>,
     /// Redis URL for --kv redis.
     #[arg(long, default_value = "redis://127.0.0.1:6379")]
     redis_url: String,
-    /// File for `--kv sqlite`. Defaults to `$STATE_DIRECTORY/kv.db`, which systemd
-    /// sets for a unit with `StateDirectory=` — private to the app's uid under
-    /// `DynamicUser=yes`. Falls back to ./comp-kv.db when run by hand.
-    ///
-    /// Doubles as the HTTP endpoint for `--kv surreal` (e.g.
-    /// `http://127.0.0.1:8000`) and `--kv turso` (e.g. `https://<db>.turso.io`)
-    /// — neither backend has a dedicated flag, the same way neither has a
-    /// dedicated slot in `kv::build`. Only one is ever active per process.
+    /// File for `--kv sqlite` (default `$STATE_DIRECTORY/kv.db`, else ./comp-kv.db);
+    /// also the HTTP endpoint for `--kv surreal` / `--kv turso`.
     #[arg(long)]
     sqlite_path: Option<String>,
-    /// Auth token, as a FILE path, for `--kv surreal` (optional — an
-    /// `--unauthenticated` server takes none) or `--kv turso` (required for
-    /// hosted Turso; a self-hosted `sqld` usually takes none either).
+    /// Auth token FILE for `--kv surreal` or `--kv turso` (required for hosted Turso).
     #[arg(long)]
     kv_token: Option<String>,
 
-    // ---- object bytes -----------------------------------------------------
-    /// Where object bytes live — what `blob-store` puts in its `blobs` bucket:
-    /// unset keeps them on the `--kv` backend; `s3` puts them in an
-    /// S3-compatible bucket (Cloudflare R2, AWS S3, MinIO) while keyed state
-    /// stays where `--kv` put it. The store must enforce conditional writes —
-    /// checked at startup, refused if not.
+    /// Where object bytes live: unset keeps them on `--kv`; `s3` uses an S3-compatible bucket.
+    /// The store must enforce conditional writes (checked at startup).
     #[arg(long)]
     blob: Option<String>,
     /// S3 API endpoint for `--blob s3`, e.g.
@@ -1003,9 +835,7 @@ struct Args {
     /// Signing region. R2 takes `auto`; RustFS and MinIO take `us-east-1`.
     #[arg(long, default_value = "us-east-1")]
     s3_region: String,
-    /// Files holding the access key id and secret. Files, not flags, so they do
-    /// not show up in `ps`; `S3_ACCESS_KEY` / `S3_SECRET_KEY` are read when the
-    /// files are not given.
+    /// Access key id / secret files (not flags, so they stay out of `ps`); else `S3_ACCESS_KEY` / `S3_SECRET_KEY`.
     #[arg(long)]
     s3_access_key_file: Option<String>,
     #[arg(long)]
@@ -1015,97 +845,57 @@ struct Args {
     s3_path_style: bool,
     /// NATS URL for `--kv nats`, or a comma-separated list of them.
     ///
-    /// List every server in the cluster. A client given one address does learn the
-    /// others from the INFO the server sends, and fails over to them — but only
-    /// after it has connected to something, so a host starting while its one
-    /// listed server is the one that is down cannot bootstrap (ADR-0067).
-    ///
-    /// Defaults to the lattice's own NATS when `--lattice-nats` is given, because
-    /// running a node's store on a different cluster from its control bus is a
-    /// thing to do on purpose, not by default.
+    /// List every server: a client learns the others only after connecting once (ADR-0067).
+    /// Defaults to the `--lattice-nats` URL.
     #[arg(long)]
     nats_url: Option<String>,
-    /// Fall back to wasmtime's on-demand allocator. The POOLING allocator
-    /// (pre-reserved instance/memory slots, reused across requests) is the
-    /// default because ADR-0054 measured it 21–46% faster at identical idle
-    /// memory; this flag exists to reproduce the on-demand baseline.
+    /// Use wasmtime's on-demand allocator; pooling is the default (ADR-0054: 21–46% faster).
     #[arg(long = "no-pool", action = clap::ArgAction::SetFalse)]
     pool: bool,
     /// Count and time every store operation, and report on shutdown.
-    ///
-    /// For answering what a REAL application asks the store for, which is the one
-    /// input every caching decision here has been missing — all of them were
-    /// measured on a component that writes on every request (ADR-0059). Off the
-    /// request path entirely when off: the backend is handed out unwrapped.
     #[arg(long)]
     kv_profile: bool,
     /// Serve repeat reads from a per-node cache for this many milliseconds.
     ///
-    /// 0 (the default) is off. ADR-0062 measured 264 reads per write on a real
-    /// app, which is why a TTL and no coherence protocol is the trade worth making
-    /// — but it IS a trade: a write on another node stays invisible here until the
-    /// entry expires. Sound for reads that tolerate a bounded lag, unsound
-    /// otherwise, and nothing about the number changes which one an app is.
+    /// 0 = off. A write on another node stays invisible here until the entry expires (ADR-0062).
     #[arg(long, default_value = "0")]
     kv_cache_ms: u64,
     /// How many copies of each `--kv nats` bucket JetStream keeps.
     ///
-    /// **0 (the default) means as many as this NATS can hold, up to 3** — it asks
-    /// for 3, and falls back to 1 with a warning if the server is not clustered.
-    /// So a single-node deployment still works and a clustered one is replicated
-    /// without anyone remembering to ask, which is the right way round: one copy
-    /// is a total, silent loss the day that disk dies (ADR-0067).
-    ///
-    /// An explicit number is taken literally and does NOT fall back — asking for
-    /// 3 and quietly getting 1 is how you think you are safe when you are not.
-    ///
-    /// Applies to buckets created from now on. An existing one keeps what it was
-    /// made with; `nats stream update` or `DIR=… REPLICAS=3 just restore` moves it.
+    /// 0 asks for 3 and falls back to 1 if NATS is not clustered; an explicit number never falls back (ADR-0067).
+    /// Applies to new buckets only.
     #[arg(long, default_value = "0")]
     kv_replicas: usize,
 
-    /// Tenant this component belongs to. With `--app` it decides the store the
-    /// guest's `open("default")` resolves to, so two hosts started with different
-    /// tenants cannot see each other's records even on one backend.
+    /// Tenant; with `--app` it decides the store `open("default")` resolves to.
     #[arg(long, default_value = "local")]
     tenant: String,
     /// Application name. See `--tenant`.
     #[arg(long, default_value = "app")]
     app: String,
     /// Config for `wasi:config`, repeatable: `--config grace-period-secs=5`.
-    /// Replaces the old `CFG_*`/`VET_*` environment scrape, which in a shared
-    /// process was a cross-tenant read.
     #[arg(long = "config", value_parser = parse_kv)]
     configs: Vec<(String, String)>,
-    /// A file of `key = value` lines to seed config from, applied BEFORE `--config`
-    /// so individual flags win. This is how the example suites get the block of
-    /// defaults `build_config()` used to hardcode, without a host that knows
-    /// anything about any particular app.
+    /// A file of `key = value` lines to seed config from, applied before `--config`.
     #[arg(long)]
     config_file: Option<String>,
-    /// Authorities this component may reach over `wasi:http`, repeatable.
-    /// DEFAULT-DENY: with none given the component has no outbound HTTP at all.
-    /// `--egress '*'` opts out of the name check (never out of the address one).
+    /// Authorities this component may reach over `wasi:http`, repeatable; none means no outbound HTTP.
+    /// `--egress '*'` skips the name check, never the address one.
     #[arg(long = "egress")]
     egress: Vec<String>,
-    /// Let a component reach private networks — loopback, RFC1918, link-local,
-    /// and Tailscale's CGNAT range. Off by default because on a lattice node those
-    /// are the NATS bus, the cloud metadata endpoint, and every other node.
-    /// Development only.
+    /// Let a component reach private networks (loopback, RFC1918, link-local, Tailscale CGNAT).
+    /// Development only: on a node those are the NATS bus, cloud metadata and every other node.
     #[arg(long)]
     allow_private_egress: bool,
     /// Per-instance linear memory ceiling, in MiB.
     #[arg(long, default_value = "64")]
     mem_cap_mb: usize,
     /// How long a guest may run before it is made to yield, in milliseconds.
-    /// Fairness, not a request timeout: one tenant's hot loop must not starve the
-    /// node it shares.
+    /// Fairness, not a request timeout.
     #[arg(long, default_value = "50")]
     slice_ms: u64,
 
-    /// Join a lattice at this NATS URL and take instances from start commands
-    /// instead of `--component`. Omit for the single-app lane, which is unchanged
-    /// and needs no NATS at all.
+    /// Join a lattice at this NATS URL and take instances from start commands instead of `--component`.
     #[arg(long)]
     lattice_nats: Option<String>,
     /// This node's name on the lattice. Defaults to the machine's hostname.
@@ -1118,32 +908,25 @@ struct Args {
     /// A deployment's placement constraints are matched against these.
     #[arg(long = "label", value_parser = parse_kv)]
     labels: Vec<(String, String)>,
-    /// Where artifacts and the instance ledger live. Defaults to
-    /// `$STATE_DIRECTORY`, which systemd sets for a unit with `StateDirectory=`.
+    /// Where artifacts and the instance ledger live. Defaults to `$STATE_DIRECTORY`.
     #[arg(long)]
     state_dir: Option<String>,
     /// Seconds between inventory publications. The bucket expires an entry after
     /// three of these, which is how a departed node disappears.
     #[arg(long, default_value = "5")]
     heartbeat_secs: u64,
-    /// Where an ingress can reach this node, `host:port`. Defaults to `--addr`,
-    /// which is right for a loopback or explicit bind and wrong for `0.0.0.0` — a
-    /// node bound to every interface knows its port and not its address, so a real
-    /// deployment passes this.
+    /// Where an ingress can reach this node, `host:port`. Defaults to `--addr`; set it when bound to `0.0.0.0`.
     #[arg(long)]
     advertise_addr: Option<String>,
 }
 
-/// `k=v`, for `--config`.
 fn parse_kv(s: &str) -> std::result::Result<(String, String), String> {
     s.split_once('=')
         .map(|(k, v)| (k.trim().to_string(), v.to_string()))
         .ok_or_else(|| format!("expected key=value, got {s:?}"))
 }
 
-/// `key = value` lines, `#` comments, blanks ignored. Deliberately not TOML: the
-/// values are all strings (that is what `wasi:config` is), so a parser would only
-/// add a dependency and a way to write something that cannot be represented.
+/// `key = value` lines, `#` comments. Not TOML: `wasi:config` values are all strings.
 fn parse_config_file(text: &str) -> std::result::Result<Vec<(String, String)>, String> {
     let mut out = Vec::new();
     for (i, raw) in text.lines().enumerate() {
@@ -1159,18 +942,12 @@ fn parse_config_file(text: &str) -> std::result::Result<Vec<(String, String)>, S
     Ok(out)
 }
 
-/// The one place host capabilities are granted.
-///
-/// Everything a tenant's component can reach is on this list and nothing else is —
-/// an import with no entry here and no link-table entry means the instance refuses
-/// to start. `agent::HOST_IFACES` is the advertised form of the same list; the two
-/// must agree, and a test asserts the shape of it.
+/// The one place host capabilities are granted; must agree with `agent::HOST_IFACES`.
 pub(crate) fn build_linker(engine: &Engine) -> Result<Linker<Host>> {
     let mut linker: Linker<Host> = Linker::new(engine);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
     wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
-    // p3, beside p2 rather than instead of it: distinct package versions, so one
-    // linker serves both generations and a p3 guest's libstd `wasi:cli@0.2` too.
+    // p3 beside p2: distinct package versions, so one linker serves both and a p3 guest's `wasi:cli@0.2`.
     wasmtime_wasi_http::p3::add_to_linker(&mut linker)?;
     wasmtime_wasi::p3::clocks::add_to_linker(&mut linker)?;
     wasmtime_wasi::p3::random::add_to_linker(&mut linker)?;
@@ -1186,8 +963,7 @@ pub(crate) fn build_linker(engine: &Engine) -> Result<Linker<Host>> {
     Ok(linker)
 }
 
-/// `--blob s3`'s settings, with the secrets read from their files (or the
-/// environment) and never from a flag.
+/// Secrets come from files or the environment, never a flag.
 fn s3_config(args: &Args) -> Result<objkv::S3Config> {
     let secret = |file: &Option<String>, env: &str| -> Result<String> {
         match file {
@@ -1218,19 +994,12 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     let mut wt_config = Config::new();
-    // A guest that will not yield must be made to. One tenant's hot loop is now
-    // one tenant's hot loop on a box holding everyone else's apps, so this is
-    // fairness rather than a nicety. Epoch, not fuel: fuel meters instructions,
-    // which is the right tool for a bill and the wrong one for a scheduler.
+    // Make a non-yielding guest yield: fairness on a shared box. Epoch, not fuel: fuel is for billing.
     wt_config.epoch_interruption(true);
     // The async component ABI — what a p3 guest's `handler@0.3` export is lifted with.
     wt_config.wasm_component_model_async(true);
-    // (wasmtime >=47: async support is unconditional; `async_support` is a no-op.)
     if args.pool {
-        // wasmtime's pooling allocator: pre-reserve a fixed set of instance +
-        // memory + table slots and recycle them, so instantiating the
-        // 19-component graph per request costs a slot grab, not fresh mmaps.
-        // (The strategy wasmCloud uses.) Generous caps for a composed app.
+        // Pooling: instantiating the component graph per request costs a slot grab, not fresh mmaps.
         let mut pool = wasmtime::PoolingAllocationConfig::default();
         pool.total_component_instances(1000);
         pool.total_core_instances(10_000);
@@ -1241,7 +1010,6 @@ async fn main() -> Result<()> {
     }
     let engine = Engine::new(&wt_config)?;
 
-    // shared, process-lifetime state.
     let sqlite_path = args.sqlite_path.clone().unwrap_or_else(kv::SqliteKv::default_path);
     let lattice_mode = args.lattice_nats.is_some();
     let kv_kind = args.kv.clone().unwrap_or_else(|| {
@@ -1265,9 +1033,7 @@ async fn main() -> Result<()> {
     let kv_backend: Kv =
         kv::build(&kv_kind, &args.redis_url, &nats_url, &sqlite_path, args.kv_replicas, &kv_token)
             .await?;
-    // An explicit 1 is a choice, and it is still worth saying out loud once. The
-    // automatic path warns from inside `store_for`, where it knows whether the
-    // fallback actually happened rather than guessing here.
+    // Explicit 1 warns here; the automatic fallback warns in `store_for`, where it knows it happened.
     if kv_kind == "nats" && args.kv_replicas == 1 {
         eprintln!(
             "comp-host: WARNING --kv-replicas 1 was asked for explicitly. Every bucket \
@@ -1275,10 +1041,7 @@ async fn main() -> Result<()> {
              the data. Drop the flag to take as many copies as this NATS can hold."
         );
     }
-    // The profiler ends up OUTSIDE the cache, so it keeps counting what the guest
-    // asked for rather than what survived the cache. That is what makes a cached
-    // run comparable to an uncached one — the demand is the same number in both —
-    // and the cache reports its own hit rate separately.
+    // Profiler outside the cache: it counts guest demand, comparable across cached and uncached runs.
     let cache = (args.kv_cache_ms > 0)
         .then(|| kvcache::CacheKv::wrap(kv_backend.clone(), args.kv_cache_ms));
     let kv_backend: Kv = match &cache {
@@ -1300,8 +1063,7 @@ async fn main() -> Result<()> {
         }
         Some(other) => anyhow::bail!("unknown --blob backend: {other} (use s3, or leave it unset)"),
     };
-    // Wrapped, not replaced: `shared()` and every answer come from the real backend,
-    // so a profiled run is the same run with a clock on it.
+    // Wrapped, not replaced: a profiled run is the same run with a clock on it.
     let profile = args.kv_profile.then(|| kvprofile::ProfileKv::wrap(kv_backend.clone()));
     let kv_backend: Kv = match &profile {
         Some(p) => p.clone(),
@@ -1328,9 +1090,7 @@ async fn main() -> Result<()> {
             std::process::exit(0);
         });
     } else if let Some(p) = profile.clone() {
-        // On the way out, because warm-up and steady state have different mixes and
-        // a running total is the honest summary of the whole run. SIGTERM as well as
-        // Ctrl-C: every script here stops a host with `kill`.
+        // Report on exit, SIGTERM too: every script here stops a host with `kill`.
         tokio::spawn(async move {
             let mut term =
                 tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
@@ -1344,9 +1104,7 @@ async fn main() -> Result<()> {
     }
     let kv_shared = kv_backend.shared();
     if lattice_mode && !kv_shared {
-        // Not fatal: a single-replica app on a node-local store is a legitimate
-        // arrangement, and the reconciler refuses the spread case on its own. But it
-        // is never what someone means by accident, so it says so.
+        // Not fatal: the reconciler refuses the spread case itself.
         eprintln!(
             "comp-host: WARNING --kv {kv_kind} is node-local. A spread stateful app will be \
              refused placement here, and anything running here loses its store if this node \
@@ -1363,11 +1121,7 @@ async fn main() -> Result<()> {
         mem_cap: args.mem_cap_mb << 20,
         slice_ms: args.slice_ms,
         allow_private_egress: args.allow_private_egress,
-        // This host's own listener is never a legitimate egress target: reaching it
-        // would let a component call back in as though it were a client. The
-        // SOCKET, not the address — everything else on the same machine is the
-        // range check's business, and denying the whole IP silently took out any
-        // colocated service a component was meant to reach.
+        // Never this host's own listener; the socket, not the IP, so colocated services stay reachable.
         denied_addrs: vec![addr],
     };
     // File first, flags second, so an explicit `--config` always wins.
@@ -1383,8 +1137,7 @@ async fn main() -> Result<()> {
     let instances: Instances = Arc::new(RwLock::new(HashMap::new()));
     let routes: Routes = Arc::new(RwLock::new(HashMap::new()));
 
-    // The other half of `epoch_interruption`: something has to advance the clock.
-    // One task for the whole process, since the epoch is per-Engine.
+    // The other half of `epoch_interruption`: one ticker per process, since the epoch is per-Engine.
     {
         let engine = engine.clone();
         tokio::task::spawn(async move {
@@ -1396,9 +1149,7 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Two lanes, one table. A single-app run puts exactly one instance in it from
-    // flags; a lattice node fills it from start commands. Everything downstream —
-    // routing, scoping, limits — cannot tell the difference, which is the point.
+    // Two lanes, one table: routing, scoping and limits cannot tell a solo run from a lattice node.
     match &args.lattice_nats {
         None => {
             let scope: SharedScope = Arc::new(
@@ -1410,9 +1161,7 @@ async fn main() -> Result<()> {
                     count: 1,
                     config: cfg,
                     links: Default::default(),
-                    // Solo mode has no platform to fetch from, so a component run
-                    // this way is granted nothing rather than being handed a token
-                    // that cannot work.
+                    // Solo mode has no platform, so nothing is granted.
                     secrets: Default::default(),
                     fetch_token: String::new(),
                     host_needs: Vec::new(),
@@ -1437,9 +1186,7 @@ async fn main() -> Result<()> {
                     count: 1,
                 }),
             );
-            // The catch-all exists ONLY here. A lattice node routes by Host header
-            // and 404s on a miss — a fallback there would send one tenant's traffic
-            // into another tenant's component on a bad DNS record.
+            // Catch-all only in solo mode: on a lattice a fallback would route one tenant's traffic to another.
             crate::sync::writing(&routes).insert(CATCH_ALL.into(), id.clone());
             println!("comp-host: serving {} on http://{} as {id}", args.component, addr);
             println!(
@@ -1453,10 +1200,7 @@ async fn main() -> Result<()> {
             let node = args.node.clone().unwrap_or_else(|| {
                 hostname().unwrap_or_else(|| format!("node-{}", std::process::id()))
             });
-            // The node's own NATS connection, shared with the agent so wRPC clients
-            // ride the same link rather than opening a second one per instance.
-            // Every server in the list, for the same reason the store takes a list:
-            // failover only helps a process that managed to connect once.
+            // Shared with the agent so wRPC rides one connection; every server listed, since failover needs one connect.
             let lattice_servers = comp_lattice::nats::servers(nats_url_for_lattice);
             let raw_nats =
                 Arc::new(async_nats::connect(lattice_servers.clone()).await.with_context(
@@ -1492,8 +1236,6 @@ async fn main() -> Result<()> {
                     "NODE-LOCAL — this node will not accept a spread stateful app"
                 }
             );
-            // One implementation today. The agent takes three trait objects and
-            // never learns which broker is underneath them.
             let fabric = Arc::new(
                 comp_lattice::nats::NatsLattice::connect(
                     nats_url_for_lattice,
@@ -1509,9 +1251,7 @@ async fn main() -> Result<()> {
             };
             tokio::spawn(async move {
                 if let Err(e) = agent::run(ag, fab).await {
-                    // Deliberately not fatal. Losing the bus degrades cross-node
-                    // work; it does not mean this node should stop serving what it
-                    // already has (see agent.rs).
+                    // Not fatal: losing the bus must not stop serving what this node already has.
                     eprintln!("comp-host: lattice agent stopped: {e:#}");
                 }
             });
@@ -1530,8 +1270,6 @@ async fn main() -> Result<()> {
         println!("comp-host: serving static SPA from {}", d.display());
     }
 
-    // Captured once for the serve loop; every store this host builds fetches from
-    // the same platform.
     let platform_url = args.platform_url.clone();
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
@@ -1554,8 +1292,6 @@ async fn main() -> Result<()> {
                 let static_dir = static_dir.clone();
                 let platform_url = platform_url.clone();
                 async move {
-                    // static SPA first (GET, non-API). Falls through to the
-                    // component for API routes + all non-GET.
                     if let Some(dir) = static_dir.as_ref() {
                         if let Some(resp) = try_static(dir, &req) {
                             return Ok::<_, anyhow::Error>(resp);
@@ -1574,12 +1310,9 @@ async fn main() -> Result<()> {
     }
 }
 
-/// The single-app lane's route key. A lattice node never has one.
 const CATCH_ALL: &str = "*";
 
-/// Which instance answers this request: the `Host` header, lower-cased, port
-/// stripped. A miss is a 404 and **never** a fallback to "the only app"; the
-/// catch-all is inserted only by the single-app lane.
+/// By `Host` header; a miss is a 404, never a fallback (the catch-all exists only in solo mode).
 fn resolve(
     routes: &Routes,
     instances: &Instances,
@@ -1598,8 +1331,7 @@ fn resolve(
 
     let routes = crate::sync::reading(routes);
     let id = routes.get(&host).or_else(|| routes.get(CATCH_ALL))?;
-    // A plug is in the instance table but has no HTTP world, so it can never be
-    // reached through the door even if something routed to it by mistake.
+    // A plug has no HTTP world, so it is never reachable through the door.
     crate::sync::reading(instances).get(id).filter(|i| i.pre.is_some()).cloned()
 }
 
@@ -1616,7 +1348,6 @@ fn not_found() -> hyper::Response<HyperOutgoingBody> {
         .unwrap()
 }
 
-/// This node's name on the lattice, when `--node` is not given.
 fn hostname() -> Option<String> {
     std::process::Command::new("hostname")
         .output()
@@ -1626,8 +1357,6 @@ fn hostname() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// Where a systemd unit's state belongs, with no configuration — the same
-/// `StateDirectory=` convention `SqliteKv::default_path` follows.
 fn state_dir_default() -> String {
     match std::env::var("STATE_DIRECTORY") {
         Ok(dirs) if !dirs.is_empty() => dirs.split(':').next().unwrap_or(&dirs).to_string(),
@@ -1635,13 +1364,10 @@ fn state_dir_default() -> String {
     }
 }
 
-/// API route prefixes that must go to the wasm component, never to static files.
 const API_PREFIXES: &[&str] =
     &["/register", "/login", "/me", "/auth", "/api", "/pets", "/appointments", "/admin", "/i18n"];
 
-/// Serve a static file from `dir` for a non-API GET, with an index.html SPA
-/// fallback (client-side routing). Returns None to let the component handle it
-/// (any non-GET, or an API path).
+/// SPA fallback to index.html; `None` hands the request to the component.
 fn try_static(
     dir: &std::path::Path,
     req: &hyper::Request<hyper::body::Incoming>,
@@ -1656,7 +1382,6 @@ fn try_static(
     }) {
         return None;
     }
-    // resolve a file; "/" -> index.html. Reject path traversal.
     let rel = path.trim_start_matches('/');
     if rel.contains("..") {
         return None;
@@ -1664,7 +1389,6 @@ fn try_static(
     let candidate = if rel.is_empty() { dir.join("index.html") } else { dir.join(rel) };
     let (bytes, ctype) = match std::fs::read(&candidate) {
         Ok(b) => (b, content_type(&candidate)),
-        // SPA fallback: unknown non-asset path -> index.html (client router).
         Err(_) => {
             let idx = dir.join("index.html");
             match std::fs::read(&idx) {
@@ -1673,7 +1397,6 @@ fn try_static(
             }
         }
     };
-    // wasmtime 47's HyperOutgoingBody is an UnsyncBoxBody, not a BoxBody.
     let body = Full::new(bytes::Bytes::from(bytes)).map_err(|never| match never {}).boxed_unsync();
     Some(hyper::Response::builder().status(200).header("content-type", ctype).body(body).unwrap())
 }
@@ -1694,17 +1417,14 @@ fn content_type(p: &std::path::Path) -> &'static str {
     }
 }
 
-/// One `Store` with this instance's scope, limits and egress policy. Shared by the
-/// HTTP and wRPC paths so the tenant boundary, memory cap, CPU slice and allow-list
-/// cannot diverge between them (ADR-0023).
+/// Shared by the HTTP and wRPC paths so the tenant boundary, caps and allow-list cannot diverge (ADR-0023).
 pub(crate) fn store_for(
     engine: &Engine,
     scope: SharedScope,
     kv: Kv,
     cache_backing: CacheBacking,
     remotes: std::collections::BTreeMap<String, wrpc_transport_nats::Client>,
-    // Where a granted secret is fetched from. Empty in solo mode, where there is no
-    // platform and a component is granted nothing anyway.
+    // Empty in solo mode, where nothing is granted.
     platform_url: String,
 ) -> Store<Host> {
     let (mem_cap, slice_ms) = (scope.mem_cap, scope.slice_ms);
@@ -1718,8 +1438,7 @@ pub(crate) fn store_for(
         scope,
         secret_cache: Default::default(),
         platform_url,
-        // One client per store is wasteful; reqwest pools internally and a store is
-        // per request. ponytail: hoist to a shared client if a profile ever shows it.
+        // ponytail: a client per store (per request); hoist to a shared one if a profile ever shows it.
         fetch_http: reqwest::Client::new(),
         limits: wasmtime::StoreLimits::default(),
         rpc: rpc::RpcCtx::new(
@@ -1728,10 +1447,7 @@ pub(crate) fn store_for(
             } else {
                 rpc::Transport::Lattice(remotes)
             },
-            // A wrpc call's budget. 30s is right for a store read; it is far too
-            // short for a graph where one guest call fans out to a language model
-            // and a test suite over several nested wrpc hops. Raised via env for
-            // those runs — `data receipt timed out` is this firing.
+            // 30s suits a store read; deep LLM/test fan-outs raise it (`data receipt timed out` is this firing).
             Some(std::time::Duration::from_secs(
                 std::env::var("COMP_RPC_TIMEOUT_SECS")
                     .ok()
@@ -1749,7 +1465,6 @@ pub(crate) fn store_for(
     store
 }
 
-/// Drive one HTTP request through the component's incoming-handler.
 async fn handle_request(
     engine: Arc<Engine>,
     instance: Arc<Instance>,
@@ -1790,7 +1505,6 @@ async fn handle_request(
     );
 
     let (sender, receiver) = tokio::sync::oneshot::channel();
-    // hyper::body::Incoming is already Body<Data=Bytes, Error=hyper::Error>.
     let req = WasiHttpView::http(store.data_mut())
         .new_incoming_request(wasmtime_wasi_http::p2::bindings::http::types::Scheme::Http, req)?;
     let out = WasiHttpView::http(store.data_mut()).new_response_outparam(sender)?;
@@ -1811,10 +1525,8 @@ async fn handle_request(
     }
 }
 
-/// The p3 door. `handler@0.3` is an async export, so a request is a task queued
-/// onto a live worker instance (upstream's `ProxyHandler`), not a fresh
-/// instantiation — the store must outlive the response, since the guest is still
-/// writing the body into its `stream<u8>` after `handle` returns.
+/// p3: a request is a task on a live worker instance; the store outlives the response,
+/// since the guest keeps writing its body after `handle` returns.
 async fn handle_request_p3(
     handler: &P3Handler,
     req: hyper::Request<hyper::body::Incoming>,

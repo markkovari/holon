@@ -1,13 +1,6 @@
 #!/usr/bin/env node
-/* Builds docs/ARCHITECTURE.md and docs/architecture/index.html from map.mjs, and checks the map.
- *
- *   node docs/architecture/build.mjs                    write both
- *   node docs/architecture/build.mjs --check            exit 1 if either is stale, or the map names something that is not there
- *   node docs/architecture/build.mjs --fragment <file>  write the page without a document wrapper, for a host that supplies one
- *
- * Node only, no dependencies. The docs test (reconciler/tests/docs.rs) runs --check, so a stale
- * output or a renamed file is a failing test instead of a quietly wrong map.
- */
+/* --check (run by reconciler/tests/docs.rs) fails on stale output or a path/ADR the map names that is missing.
+ * --fragment <file> writes the page without a document wrapper, for a host that supplies one. */
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -27,9 +20,6 @@ const SYS_BY = Object.fromEntries(M.SYS.map(s => [s.id, s]));
 const SUB_BY = Object.fromEntries(M.SUB.map(s => [s.id, s]));
 const ACTOR_BY = Object.fromEntries(M.ACTORS.map(a => [a.id, a]));
 
-/* ------------------------------------------------------------------ the check */
-
-/** ADR number -> file name, read from docs/adr so a link can only name an ADR that exists. */
 const ADR = Object.fromEntries(
   readdirSync(join(ROOT, 'docs', 'adr'))
     .filter(f => /^\d{4}-.*\.md$/.test(f))
@@ -37,7 +27,6 @@ const ADR = Object.fromEntries(
     .map(f => [f.slice(0, 4), f])
 );
 
-/** What a path in the map stands for: one file or directory, or a wildcard that matches something. */
 function pathExists(p) {
   const rel = p.replace(/\/$/, '');
   if (!rel.includes('*')) return existsSync(join(ROOT, rel));
@@ -75,7 +64,6 @@ function validate() {
     if (!protos.has(c.p)) problem(`${c.id}: ${c.p} is not in PROTO`);
     for (const n of c.adr.match(/\d{4}/g) || []) if (!ADR[n]) problem(`${c.id}: ADR ${n} does not exist`);
   }
-  // Every ADR the prose names.
   const prose = JSON.stringify([M.SYS, M.COR, M.DIA, M.ZONES, M.RULE, M.CREDS, M.GUEST_NAMES]);
   for (const m of prose.matchAll(/ADR-(\d{4})/g)) if (!ADR[m[1]]) problem(`the map names ADR-${m[1]}, which does not exist`);
   if (!ADR[M.META.revisedAfter]) problem(`META.revisedAfter: ADR ${M.META.revisedAfter} does not exist`);
@@ -108,9 +96,7 @@ function validate() {
   return bad;
 }
 
-/* ------------------------------------------------------------------ the page */
-
-/** `const NAME = <json>;` for every export the page's scripts read, with `<` escaped so a string can never close the script. */
+/** `<` is escaped so a string can never close the script. */
 function prelude() {
   const names = ['META', 'KINDS', 'PROTO', 'SUB', 'ACTORS', 'SYS', 'OV_POS', 'OV_EDGES', 'COR', 'DIA', 'GUEST_NAMES', 'CREDS', 'ZONES', 'TENANTS', 'RULE'];
   return names.map(n => `const ${n} = ${JSON.stringify(M[n]).replace(/</g, '\\u003c')};`).join('\n');
@@ -137,20 +123,16 @@ ${body}${script}</body>
 `;
 }
 
-/* ------------------------------------------------------------------ markdown */
-
 const adrFile = n => ADR[n];
 const adrLink = n => `[${n}](adr/${adrFile(n)})`;
 const adrCell = s => (s ? s.split(/\s*·\s*/).map(adrLink).join(' · ') : '');
 
-/** Prose to markdown text: nothing in it may be read as markup or as an HTML tag. */
 function text(s) {
   return String(s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/([*[\]|`])/g, '\\$1')
     .replace(/ADR-(\d{4})/g, (m, n) => `[ADR-${n}](adr/${adrFile(n)})`);
 }
-/** The same inside a table cell, where `|` ends the cell. */
 const cell = s => text(s);
 
 const sysLink = id => `[${SYS_BY[id].name}](#${slug(SYS_BY[id].name)})`;
@@ -159,8 +141,6 @@ const peerCell = side => {
   const [id, part] = side;
   return `${SYS_BY[id] ? sysLink(id) : text(nameOf(id))}<br>${text(part)}`;
 };
-
-/* -------- mermaid */
 
 const mq = s => String(s).replace(/&/g, '#amp;').replace(/"/g, '#quot;').replace(/</g, '#lt;').replace(/>/g, '#gt;');
 const label = (title, lines) => `<b>${mq(title)}</b>${lines.map(l => '<br/>' + mq(l)).join('')}`;
@@ -229,7 +209,6 @@ function mermaidBoundaries() {
   M.ZONES.forEach((z, i) => {
     out.push(`${pad(i)}subgraph ${z.id}["${mq(z.t)}"]`);
     if (z.items.length) out.push(`${pad(i + 1)}${z.id}_items["${mq(z.items.join(' · '))}"]`);
-    // the innermost zone holds the tenants
     if (i === M.ZONES.length - 1) M.TENANTS.names.forEach((name, k) => out.push(`${pad(i + 1)}${z.id}_t${k}["${label(name, ['component instances'])}"]`));
   });
   for (let i = M.ZONES.length - 1; i >= 0; i--) out.push(`${pad(i)}end`);
@@ -237,8 +216,6 @@ function mermaidBoundaries() {
 }
 
 const fence = body => '```mermaid\n' + body + '\n```';
-
-/* -------- sections */
 
 function table(head, rows) {
   return [`| ${head.join(' | ')} |`, `|${head.map(() => ' --- ').join('|')}|`, ...rows.map(r => `| ${r.join(' | ')} |`)].join('\n');
@@ -376,8 +353,6 @@ function markdown() {
   );
   return lines.join('\n');
 }
-
-/* ------------------------------------------------------------------ main */
 
 const args = process.argv.slice(2);
 const problems = validate();

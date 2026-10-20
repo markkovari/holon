@@ -1,11 +1,4 @@
-//! `ai:assist` — domain-level AI verbs over a provider-agnostic LLM.
-//!
-//! Apps want "summarize this" / "classify that" / "pull these fields", not "call an
-//! LLM". Each verb builds a system + user prompt, calls `inference::complete` (or
-//! `embed`) through the `llm:inference` boundary (provider composed in via `wac`), and
-//! parses the reply. The prompts deliberately include the directive words the mock keys
-//! off ("Summarize", "Classify" + "labels:", "Extract" + "fields:") so the composed
-//! graph is deterministic and testable offline.
+//! Prompts carry the directive words the mock keys off, so the composed graph is testable offline.
 
 #[allow(warnings)]
 mod bindings;
@@ -20,14 +13,12 @@ fn default_options() -> Options {
     Options { model: String::new(), temperature: 0, max_tokens: 0, stop: Vec::new(), seed: 0 }
 }
 
-/// Map an inference-layer error into `inference-failed`, keeping the provider's reason.
 fn infer_failed(e: InferError) -> AssistError {
     AssistError::InferenceFailed(format!("{e:?}"))
 }
 
 impl Guest for Component {
     fn summarize(text: String, len: Length, focus: String) -> Result<String, AssistError> {
-        // The length/focus hints steer a real provider and are harmless to the mock.
         let mut system = String::from("Summarize the following text.");
         if !focus.is_empty() {
             system.push_str(&format!(" Focus on: {focus}."));
@@ -72,10 +63,7 @@ impl Guest for Component {
         if fields.is_empty() {
             return Err(AssistError::InvalidRequest("no fields".to_string()));
         }
-        // "Extract" + a "fields:" line makes the mock return a JSON object. The field
-        // list is the LAST thing on its line and ends with a period so the mock (which
-        // flattens whitespace) cuts it at the sentence boundary and the user text can't
-        // glue onto the last field name.
+        // "Extract" + "fields:" makes the mock return JSON; the list ends its line with a period so the mock cuts it there.
         let system = format!(
             "Extract the requested fields and reply with only a JSON object. fields: {}.",
             fields.join(", ")

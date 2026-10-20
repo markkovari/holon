@@ -1,56 +1,9 @@
 #!/usr/bin/env bash
-# Rehearse a goal's gates in a reconstruction of the sandbox the loop will run them in.
-#
-#   bash tools/goal-rehearse.sh .comp/goals/social-feed.toml              # must FAIL
-#   REF=/path/to/reference bash tools/goal-rehearse.sh .comp/goals/…      # must PASS
-#
-# WHY THIS EXISTS. A gate that passes in the repository can still fail in the loop, and
-# it fails identically for every branch: the sandbox holds only the goal's `base_paths`
-# with `keep_members` applied, and anything the build reaches for outside that list is
-# simply absent. Run 1 of docs/measure/complex-five.md lost 36 model calls to one
-# missing directory — `components/llm-inference/`, needed by a WIT dependency path in a
-# manifest, listed nowhere. Every branch was told its part did not compile, several
-# spent their generation arguing with the contract about a Cargo.toml that was right
-# there, and the loop's own base-tree precheck reported all four checks failing as
-# healthy, because a check that fails for the WRONG reason still fails.
-#
-# So this rebuilds that tree and runs the goal's checks under the same cleared
-# environment `comp-checks` uses. Twice, and both directions matter:
-#
-#   without REF  every check must fail, and the reason must be the part being
-#                unimplemented — not a build error
-#   with REF     every check must pass, which is the only evidence the gates are
-#                passable at all in that environment
-#
-# And a third direction, which is the one that matters most:
-#
-#   VIOLATORS=<dir>   every subdirectory of <dir> is an implementation that BREAKS one
-#                     stated rule on purpose, and the check named in its `must-fail` file
-#                     must reject it.
-#
-# And with REF set, one more, run automatically because it is the condition the loop itself
-# creates: ISOLATION. Each part is applied ALONE, with its siblings left as stubs, and that
-# part's own check must pass. A part gate that reads a route a sibling owns cannot be satisfied
-# by any implementation — and `REF`, which applies every part at once, is blind to it. App 6's
-# `transfers` gate asked `/api/journal`, a route `reconcile` owns; the reference direction was
-# green and the run spent three generations of six branches on an impossible check.
-#
-# WHY THAT THIRD DIRECTION EXISTS. App 4's contract claimed `notify::send` answers
-# `Ok(500)` when the far end refuses, and built the courier's central rule on it. The
-# component does the opposite (`Err(DeliveryFailed)`, notify-dispatch/src/lib.rs:142), so
-# the rule described a component that does not exist — and neither the stub direction nor
-# the reference direction could tell: the reference was correct under EITHER reading, so
-# the gate never distinguished anything. Four rehearsals passed. One run of six agents read
-# the component's own doc comment and filed a contract request.
-#
-# A violator is how a rule becomes falsifiable. If a violator passes, the rule it breaks is
-# either untestable by this gate or not true of the components involved, and both of those
-# are worth knowing before a run rather than after it.
+# Rehearse a goal's gates in a rebuilt loop sandbox: without REF every check must fail, with REF every
+# check must pass (and each part alone), and each VIOLATORS=<dir>/* must be rejected by its `must-fail` check.
 set -uo pipefail
 GOAL="${1:?usage: goal-rehearse.sh <goal.toml> (REF=<dir with the part files> to rehearse a passing tree)}"
-# Absolute before anything cds anywhere: the checks run from inside the sandbox, and a relative
-# goal path silently stopped resolving there — which made the isolation step below print a
-# traceback and pass anyway.
+# Absolute: the checks run from inside the sandbox, where a relative path stops resolving.
 case "$GOAL" in /*) ;; *) GOAL="$PWD/$GOAL" ;; esac
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d -t goal-rehearse-XXXX)"
@@ -159,13 +112,11 @@ open(os.path.join(dst, '.rehearse-checks'), 'w').write(
 print(f"sandbox: {len(d.get('base_paths', []))} base path(s), {len(checks)} check(s)")
 PY
 
-# A pristine copy of the base tree, kept before anything is applied: the isolation direction
-# needs "every part a stub" to start from, and by then $WORK has the reference in it.
+# Kept before REF is applied: isolation starts from every part a stub.
 BASE="$(mktemp -d -t goal-base-XXXX)"
 cp -R "$WORK"/. "$BASE"/
 trap 'rm -rf "$WORK" "$BASE"' EXIT
 
-# The part files a branch would have written. Without them the tree is the base tree.
 if [ -n "${REF:-}" ]; then
   for f in "$REF"/*.rs; do
     [ -e "$f" ] || continue
@@ -175,21 +126,10 @@ if [ -n "${REF:-}" ]; then
   echo "reference applied from $REF"
 fi
 
-# What `comp-checks` passes a check, and nothing else — with ONE deliberate difference: a
-# target directory of its own. A live run builds the same crate name into
-# `comp-goalrun/cargo-target`, and two processes writing one artifact means each is testing
-# whatever the other wrote last. `CARGO_HOME` is still shared, because a package registry is
-# read-only to both. `HOME` is the sandbox, so a
-# check that reaches into the real home is a check that will not work in the loop.
+# The env `comp-checks` gives a check, except an own CARGO_TARGET_DIR so a live run's builds don't collide.
 crashed_check() { # crashed_check <output-file>
   grep -q "Traceback (most recent call last)" "$1" || return 1
-  # An AssertionError is this gate's verdict. Any other exception type is the check itself
-  # failing, and a branch would receive that stack trace as its only feedback.
-  #
-  # The LAST exception line, not any of them: a guard that catches a parse error and raises
-  # AssertionError with something readable prints BOTH — python chains them, oldest first —
-  # and that is a gate doing exactly the right thing. Only what terminated the process
-  # decides whether it judged or broke.
+  # Only the LAST exception counts: a guard re-raising as AssertionError prints a chained one first.
   local last
   last=$(grep -oE "^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception):" "$1" | tail -1)
   [ -n "$last" ] && [ "$last" != "AssertionError:" ]
@@ -212,21 +152,12 @@ while read -r cmd; do
     bash -c "$cmd" >"$out" 2>&1
   status=$?
   tail -3 "$out"
-  # 127 is "command not found" and 126 is "found but not executable". Neither is a
-  # verdict — the shell never reached the gate — and both look exactly like a failing
-  # check to everything downstream. This is how an UNTRACKED `gate.sh` reached a real
-  # run: the sandbox did not contain it, every branch scored zero, and both this script
-  # and the loop's own precheck called that healthy.
-  #
-  # Exact status codes rather than a grep for "No such file", so it holds for a gate
-  # whose interpreter is missing, or one that lost its +x, in any language.
+  # 127/126: the gate never ran, yet downstream it looks exactly like a failing check.
   if [ "$status" = 127 ] || [ "$status" = 126 ]; then
     echo "    CANNOT RUN (exit $status) — the shell never reached this gate."
     echo "    Either the script is not in the sandbox (an untracked file is not in the base"
     echo "    tree; \`git add\` it, or widen base_paths) or it is not executable."
     crashed=$((crashed + 1))
-  # A gate that raises is a gate that did not judge, whichever direction we are in: the
-  # branch is handed a stack trace and told its work failed.
   elif crashed_check "$out"; then
     echo "    CRASHED — this check raised instead of failing with a sentence."
     echo "    Whatever a branch did, the feedback it gets is a stack trace. Guard the parse"
@@ -238,12 +169,10 @@ while read -r cmd; do
   echo "    exit $status"
 done < .rehearse-checks
 
-# --- isolation: each part alone, which is how the loop judges it -------------------
+# The loop judges each part with its siblings stubbed.
 if [ -n "${REF:-}" ]; then
   echo
   lonely=0
-  # Which reference file belongs to which part, and which check judges it, straight from the
-  # goal: `writable` names the file, `[[part.check]]` names the command.
   python3 - "$GOAL" "$WORK/.rehearse-parts" <<'PY'
 import sys, tomllib
 goal = tomllib.load(open(sys.argv[1], 'rb'))
@@ -264,7 +193,7 @@ PY
   while IFS=$'\t' read -r name files check; do
     [ -n "$name" ] || continue
     tree="$(mktemp -d -t goal-isolate-XXXX)"
-    cp -R "$BASE"/. "$tree"/          # the base tree: every part still a stub
+    cp -R "$BASE"/. "$tree"/
     dest=$(find "$tree" -type d -name src -path '*-domain*' | head -1)
     for f in ${files//,/ }; do
       base=$(basename "$f")
@@ -299,7 +228,6 @@ PY
   fi
 fi
 
-# --- violators: rules that must be enforceable ------------------------------------
 if [ -n "${VIOLATORS:-}" ]; then
   echo
   broken=0
@@ -311,7 +239,7 @@ if [ -n "${VIOLATORS:-}" ]; then
       echo "SKIP $name — no \`must-fail\` file naming the check that should reject it"
       continue
     fi
-    # A violator is the reference with one rule broken, so it is applied ON TOP of REF.
+    # A violator is applied on top of REF.
     tree="$(mktemp -d -t goal-violator-XXXX)"
     cp -R "$WORK"/. "$tree"/
     dest=$(find "$tree" -type d -name src -path '*-domain*' | head -1)
@@ -365,8 +293,6 @@ if [ -n "${REF:-}" ]; then
   echo "REHEARSAL FAILED — $failed check(s) cannot pass even with the reference: the gates are not passable in the sandbox"
   exit 1
 fi
-# A build error here is the failure this script exists for: it fails every branch
-# identically, and the loop cannot tell it apart from an unimplemented part.
 if [ "$crashed" -gt 0 ]; then
   echo "REHEARSAL FAILED — $crashed check(s) crashed rather than failing cleanly on the base"
   echo "tree. A branch would receive that stack trace as its only feedback."

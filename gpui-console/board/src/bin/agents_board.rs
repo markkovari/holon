@@ -1,12 +1,4 @@
 #![cfg_attr(target_family = "wasm", no_main)]
-//!
-//!   cargo run --bin agents-board                       # watch it
-//!   cargo run --bin agents-board -- --mode light
-//!   cargo run --bin agents-board -- --shoot /tmp/shots --at 4,10,20,30   # photograph it
-//!
-//! `--shoot DIR` writes `DIR/board-<mode>-<seconds>.png` at each time in `--at` (seconds after
-//! start) from inside the process, approves the approval itself after `--auto` seconds, and exits
-//! after the last shot. `--film START:COUNT:STEP_MS` instead takes COUNT shots, STEP_MS apart,
 
 use std::rc::Rc;
 use std::time::Duration;

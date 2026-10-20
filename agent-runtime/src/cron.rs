@@ -1,6 +1,4 @@
-//! Schedule expressions: 5-field cron (UTC), `@hourly|@daily|@weekly|@monthly`,
-//! and `@every <N>s|m|h`. Day-of-month vs day-of-week follows Vixie cron: if
-//! both are restricted a day matches when EITHER does.
+//! Cron in UTC; with both day-of-month and day-of-week restricted, either matches (Vixie cron).
 
 #[derive(Debug, PartialEq)]
 pub enum Schedule {
@@ -10,11 +8,11 @@ pub enum Schedule {
 
 #[derive(Debug, PartialEq)]
 pub struct Fields {
-    min: Vec<bool>,  // 60
-    hour: Vec<bool>, // 24
-    dom: Vec<bool>,  // 32 (1..=31)
-    mon: Vec<bool>,  // 13 (1..=12)
-    dow: Vec<bool>,  // 7  (0 = Sunday)
+    min: Vec<bool>,
+    hour: Vec<bool>,
+    dom: Vec<bool>, // 32 (1..=31)
+    mon: Vec<bool>, // 13 (1..=12)
+    dow: Vec<bool>, // 7  (0 = Sunday)
     dom_star: bool,
     dow_star: bool,
 }
@@ -153,9 +151,7 @@ impl Fields {
 }
 
 impl Schedule {
-    /// Should this schedule fire at `now`, given when it last fired (`None` =
-    /// never, in which case an `@every` waits one full interval from
-    /// `started` rather than firing the instant the runtime boots)?
+    /// With `last` `None`, an `@every` waits one interval from `started` rather than firing at boot.
     pub fn due(&self, now: u64, last: Option<u64>, started: u64) -> bool {
         match self {
             Schedule::Every(n) => now >= last.unwrap_or(started) + n,

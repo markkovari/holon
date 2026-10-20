@@ -1,13 +1,4 @@
-//! The event bus: durable topics with per-consumer offsets, so an event
-//! published while an agent is paused — or while the whole runtime is down —
-//! is still there when it comes back.
-//!
-//! The shape is `components/event-bus` (an append-only log per topic, each
-//! consumer acking its own offset, at-least-once), kept behind a trait so a
-//! lattice-backed implementation can replace the file one without touching the
-//! runtime. Every event travels in an [`Envelope`] that says who sent it and
-//! what chain of wake-ups led here — which is what loop detection and the
-//! trace view are built on.
+//! Durable topics with per-consumer offsets, so an event published while an agent or the runtime is down still arrives.
 
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
@@ -19,22 +10,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::spec::validate_topic;
 
-/// Where an event came from and how it got here.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Draft {
     pub from: String,
     pub payload: String,
-    /// W3C trace id (32 hex): shared by every run one original trigger set off.
-    /// Empty only for a draft not yet attached to any trace.
+    /// Shared by every run one original trigger set off; empty only before it joins a trace.
     pub trace_id: String,
-    /// The span that emitted this (an agent's `emit_event` / `store_put` tool
-    /// call), if one did. Whatever this wakes becomes its child.
     pub parent_span_id: Option<String>,
-    /// Wake-ups so far in this chain.
     pub hops: u32,
     /// `agent|topic` for each wake-up so far; repeating one is a cycle.
     pub chain: Vec<String>,
-    /// Tokens the rest of the chain may still spend.
+    /// In tokens, for the rest of the chain.
     pub budget: Option<u64>,
     pub ts: u64,
 }
@@ -49,13 +35,10 @@ pub struct Envelope {
 }
 
 pub trait Bus: Send + Sync {
-    /// Appends to `topic`'s log and returns the stored envelope.
     fn publish(&self, topic: &str, draft: Draft) -> Result<Envelope, String>;
-    /// Up to `max` envelopes with `seq > after`, oldest first.
     fn read_after(&self, topic: &str, after: u64, max: usize) -> Result<Vec<Envelope>, String>;
-    /// Newest sequence number (0 for an empty or unknown topic).
     fn head(&self, topic: &str) -> Result<u64, String>;
-    /// `None` until the consumer has an offset (it has never subscribed).
+    /// `None`: the consumer has never subscribed.
     fn offset(&self, topic: &str, consumer: &str) -> Result<Option<u64>, String>;
     fn set_offset(&self, topic: &str, consumer: &str, seq: u64) -> Result<(), String>;
     fn topics(&self) -> Vec<String>;
@@ -63,7 +46,7 @@ pub trait Bus: Send + Sync {
 
 pub struct FileBus {
     dir: PathBuf,
-    /// Serialises writers; also guards the cached heads.
+    /// Also the writers' lock.
     heads: Mutex<HashMap<String, u64>>,
 }
 
@@ -143,8 +126,7 @@ impl Bus for FileBus {
         Ok(self.offsets(topic).get(consumer).copied())
     }
 
-    /// Offsets only move forward: acking an older event after a newer one is
-    /// a no-op, so a slow retry can never replay what was already handled.
+    /// Only moves forward, so a slow retry's older ack can never replay what was handled.
     fn set_offset(&self, topic: &str, consumer: &str, seq: u64) -> Result<(), String> {
         validate_topic(topic)?;
         let _g = self.heads.lock().unwrap();

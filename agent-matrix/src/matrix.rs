@@ -1,6 +1,4 @@
-//! A thin Matrix client for an application service. Everything here acts as a
-//! user in the appservice's namespace (the `user_id` query parameter), except
-//! `join_as_owner`, which uses the owner's own session token.
+//! Acts as a namespace user via `user_id`; the `*_as_owner` calls use the owner's session.
 
 use std::time::Duration;
 
@@ -35,7 +33,7 @@ pub struct Matrix {
 }
 
 fn enc(s: &str) -> String {
-    // percent-encode everything but unreserved characters (room ids contain `!` and `:`)
+    // Room ids contain `!` and `:`.
     s.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
@@ -114,7 +112,6 @@ impl Matrix {
         )
     }
 
-    /// Registers a user in the appservice's namespace. Already existing is fine.
     pub fn register(&self, localpart: &str) -> R<()> {
         match self.call(
             reqwest::Method::POST,
@@ -161,7 +158,6 @@ impl Matrix {
             Some(json!({"user_id": target})),
         ) {
             Ok(_) => Ok(()),
-            // already in or already invited
             Err(e)
                 if e.msg.contains("already in the room") || e.msg.contains("is already joined") =>
             {
@@ -222,8 +218,6 @@ impl Matrix {
         Ok(v["event_id"].as_str().unwrap_or_default().to_string())
     }
 
-    /// An agent's answer: its own text as the `body`, and the HTML for any markdown in it as the
-    /// `formatted_body`, which a client renders (a table, bold) and one that does not ignores.
     pub fn send_markdown(
         &self,
         room: &str,
@@ -291,7 +285,6 @@ impl Matrix {
         );
     }
 
-    /// Users currently joined to the room.
     pub fn joined(&self, room: &str, as_user: &str) -> R<Vec<String>> {
         let v = self.as_call(
             reqwest::Method::GET,
@@ -302,7 +295,6 @@ impl Matrix {
         Ok(v["joined"].as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default())
     }
 
-    /// A room's full state, as seen by `as_user` (who must be in it).
     pub fn room_state(&self, room: &str, as_user: &str) -> R<Vec<Value>> {
         let v = self.as_call(
             reqwest::Method::GET,
@@ -313,7 +305,7 @@ impl Matrix {
         Ok(v.as_array().cloned().unwrap_or_default())
     }
 
-    /// The same, as the owner (for rooms the owner made and no agent is in yet).
+    /// For rooms the owner made that no agent is in yet.
     pub fn room_state_as_owner(&self, room: &str) -> R<Vec<Value>> {
         let v = self.call(
             reqwest::Method::GET,
@@ -325,8 +317,7 @@ impl Matrix {
         Ok(v.as_array().cloned().unwrap_or_default())
     }
 
-    /// The latest messages of a room, newest first, as the owner (who is in every room the
-    /// bridge manages). Only `m.room.message` events.
+    /// The owner is in every room the bridge manages.
     pub fn messages_as_owner(&self, room: &str, limit: usize) -> R<Vec<Value>> {
         let filter = enc(&json!({"types": ["m.room.message"]}).to_string());
         let v = self.call(
@@ -353,9 +344,7 @@ impl Matrix {
         Ok(v["joined"].as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default())
     }
 
-    /// Invites `target` to a room the OWNER is in (a Space or room they made in their
-    /// own client), as the owner. The bridge is not a member of those rooms, so this
-    /// is how agents get into them.
+    /// For rooms the owner made: the bridge is not a member of those.
     pub fn invite_as_owner(&self, room: &str, target: &str) -> R<()> {
         match self.call(
             reqwest::Method::POST,
@@ -385,7 +374,6 @@ impl Matrix {
         .map(|_| ())
     }
 
-    /// Downloads media by `mxc://server/id` (authenticated media, as the bridge).
     pub fn download(&self, mxc: &str, as_user: &str) -> R<Vec<u8>> {
         let rest = mxc.strip_prefix("mxc://").ok_or(MxErr {
             status: 0,
@@ -409,7 +397,6 @@ impl Matrix {
         Ok(r.bytes()?.to_vec())
     }
 
-    /// Uploads media as `as_user`; returns its `mxc://` uri.
     pub fn upload(
         &self,
         bytes: Vec<u8>,
@@ -447,8 +434,7 @@ impl Matrix {
         }
     }
 
-    /// The owner leaves `room` and forgets it, so it drops out of the room list. The
-    /// server keeps the history; an agent's user still in the room can invite the owner back.
+    /// History stays: an agent's user still in the room can invite the owner back.
     pub fn leave_and_forget_as_owner(&self, room: &str) -> R<()> {
         for verb in ["leave", "forget"] {
             self.call(
@@ -462,9 +448,7 @@ impl Matrix {
         Ok(())
     }
 
-    /// Accepts the owner's pending invite to `room`, using the owner's own session, so
-    /// the room is already in their list. (Synapse's admin-join API refuses invite-only
-    /// rooms it has no member to invite from.)
+    /// Synapse's admin-join API refuses invite-only rooms it has no member to invite from.
     pub fn join_as_owner(&self, room: &str) -> R<()> {
         self.call(
             reqwest::Method::POST,

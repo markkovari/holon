@@ -1,22 +1,5 @@
-//! `anthropic-provider` — `llm:inference` over Anthropic's Messages API.
-//!
-//! The Anthropic side of the swap point: request shaping and response parsing live in
-//! `codec` (host-testable); this file is config, the secret, HTTP and Anthropic's headers.
-//!
-//! Config (wasi:config/store):
-//!   anthropic:base-url    default "https://api.anthropic.com"
-//!   anthropic:model       default "claude-haiku-4-5-20251001"
-//!   anthropic:version     default "2023-06-01"
-//!   anthropic:max-tokens  default "4096", used when the caller sets none
-//!   anthropic:timeout     seconds to wait for the first response byte, default "180".
-//!                         Raise it when `base-url` points at something slower than the
-//!                         API: `claude -p` behind `tools/claude-shim.mjs` has a tail
-//!                         past 300s.
-//!
-//! Secret (comp:secrets/reader):
-//!   anthropic-api-key     the x-api-key value, granted by reference in the
-//!                         manifest. A token that spends money is a secret, never
-//!                         config (ADR-0051).
+//! Raise `anthropic:timeout` when base-url is tools/claude-shim.mjs: `claude -p` has a tail past 300s.
+//! The API key is a secret, never config: a token that spends money (ADR-0051).
 
 #[allow(warnings)]
 mod bindings;
@@ -40,7 +23,6 @@ const DEFAULT_BASE: &str = "https://api.anthropic.com";
 const DEFAULT_MODEL: &str = "claude-haiku-4-5-20251001";
 const DEFAULT_VERSION: &str = "2023-06-01";
 const DEFAULT_MAX_TOKENS: u32 = 4096;
-/// Seconds to wait for the first response byte; see `anthropic:timeout` in the module docs.
 const DEFAULT_TIMEOUT_SECS: u64 = 180;
 
 fn cfg(key: &str) -> Option<String> {
@@ -67,8 +49,7 @@ fn api_version() -> String {
     cfg("anthropic:version").unwrap_or_else(|| DEFAULT_VERSION.to_string())
 }
 
-/// The `max_tokens` to send when the caller asked for none: Anthropic requires a
-/// positive value, so the WIT's 0 ("no cap") is resolved here.
+/// Anthropic requires a positive max_tokens, so the WIT's 0 ("no cap") is resolved here.
 fn default_max_tokens() -> u32 {
     cfg("anthropic:max-tokens")
         .and_then(|s| s.parse().ok())
@@ -76,8 +57,7 @@ fn default_max_tokens() -> u32 {
         .unwrap_or(DEFAULT_MAX_TOKENS)
 }
 
-/// The x-api-key, from the vault. `none` is not an error here: the call goes out keyless
-/// and Anthropic's 401 becomes `provider-denied`.
+/// `None` is not an error: the call goes out keyless and Anthropic's 401 becomes `provider-denied`.
 fn api_key() -> Option<String> {
     match secrets::get("anthropic-api-key") {
         Ok(Some(s)) => secrets::reveal(&s).ok().filter(|v| !v.is_empty()),
@@ -100,16 +80,12 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), InferError> {
     Ok((scheme, authority, path))
 }
 
-/// POST `body` to `base_url + path` with Anthropic's auth and version headers, with one
-/// retry when the SEND itself fails. A request that failed to send never reached the
-/// server, so resending cannot duplicate anything. (Six concurrent branches from wasm
-/// saw about half die on `error sending request`.) A status-carrying answer (429, 500)
-/// is NOT retried: the caller decides.
+/// Retries once when the send itself fails: it never reached the server, so nothing duplicates.
+/// A status answer (429, 500) is not retried; the caller decides.
 fn post_json(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
     match post_once(path, body) {
         Err(InferError::ProviderUnavailable(first)) => match post_once(path, body) {
             Ok(ok) => Ok(ok),
-            // Both attempts failed: report the SECOND and say there were two.
             Err(InferError::ProviderUnavailable(second)) => {
                 Err(InferError::ProviderUnavailable(format!("{second} (and once before: {first})")))
             }
@@ -125,12 +101,9 @@ fn post_once(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // An explicit Content-Length so the body is framed by length, not chunked: a real
-    // API's edge can mishandle chunked POSTs (`IncompleteMessage`), which a local test
-    // server never shows.
+    // Length-framed, not chunked: a real API edge can mishandle chunked POSTs (`IncompleteMessage`).
     let _ = headers.set("content-length", &[body.len().to_string().into_bytes()]);
-    // Connection close so the host is not left reading a keep-alive socket that never
-    // signals end-of-message.
+    // Close, so the host is not left reading a keep-alive socket that never signals end-of-message.
     let _ = headers.set("connection", &[b"close".to_vec()]);
     let _ = headers.set("anthropic-version", &[api_version().into_bytes()]);
     if let Some(key) = api_key() {
@@ -157,12 +130,10 @@ fn post_once(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
         OutgoingBody::finish(out, None).map_err(|_| net("finish body"))?;
     }
 
-    // Generous, and all three set explicitly: a short unset default kills a slow call
-    // as "data receipt timed out". The read side is configurable (`anthropic:timeout`)
-    // because the right value depends on what `base-url` points at.
+    // All three set explicitly: a short unset default kills a slow call as "data receipt timed out".
     let read_ns = timeout_ns();
     let opts = RequestOptions::new();
-    let _ = opts.set_connect_timeout(Some(30_000_000_000)); // 30s
+    let _ = opts.set_connect_timeout(Some(30_000_000_000));
     let _ = opts.set_first_byte_timeout(Some(read_ns));
     let _ = opts.set_between_bytes_timeout(Some(read_ns));
     let future = outgoing_handler::handle(req, Some(opts))
@@ -191,9 +162,7 @@ fn post_once(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
     Ok((status, buf))
 }
 
-/// Map a non-2xx status to the right infer-error. 429 and 529 ("overloaded") are
-/// UNAVAILABLE, not denied: the driver retries those and treats denied as terminal.
-/// 401/403 are denied.
+/// 429 and 529 are unavailable (the driver retries them); 401/403 are denied (terminal).
 fn status_error(status: u16, body: &[u8]) -> InferError {
     let snippet = String::from_utf8_lossy(body).chars().take(300).collect::<String>();
     match status {
@@ -225,7 +194,6 @@ impl Guest for Component {
             return Err(InferError::InvalidRequest("no messages".into()));
         }
         let model = if opts.model.is_empty() { default_model() } else { opts.model.clone() };
-        // The API requires a positive max_tokens; the WIT's 0 means "no cap".
         let max_tokens = if opts.max_tokens > 0 { opts.max_tokens } else { default_max_tokens() };
 
         let msgs: Vec<codec::Msg> = messages
@@ -262,7 +230,7 @@ impl Guest for Component {
     }
 
     fn embed(_text: String, _opts: Options) -> Result<Vec<f32>, InferError> {
-        // Anthropic has no embeddings endpoint. Refused rather than faked.
+        // Anthropic has no embeddings endpoint; refused rather than faked.
         Err(InferError::InvalidRequest(
             "anthropic has no embeddings endpoint — link a dedicated embedding provider".into(),
         ))

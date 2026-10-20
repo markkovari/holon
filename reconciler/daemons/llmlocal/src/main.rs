@@ -1,18 +1,4 @@
-//! `comp-llmlocal` — a prompt in, a completion out, for a component that cannot run a model.
-//!
-//! ## Why this is a process and not a component
-//!
-//! Running a model needs a runtime and weights on disk, which a `wasm32-wasip2` guest lacks
-//! (ADR-0095). `components/llm-local` is the component side and dials this over HTTP.
-//!
-//! ## What "native" buys here, honestly
-//!
-//! This daemon does not run a model either: it proxies to a locally-running **Ollama** server, the
-//! simplest real local-LLM backend without a heavy inference dependency (no bundled weights, no
-//! llama.cpp binding, no GPU code). `--ollama-url` must point at an Ollama (or API-compatible)
-//! server already running, or every request answers `unavailable`.
-//!
-//!   comp-llmlocal --addr 127.0.0.1:8006 --ollama-url http://127.0.0.1:11434 --model llama3.2
+//! Native side of components/llm-local (ADR-0095): proxies to a running Ollama, no model runtime here.
 
 use anyhow::Result;
 use axum::{extract::State, routing::post, Json, Router};
@@ -23,21 +9,14 @@ use serde_json::{json, Value};
 #[derive(Parser)]
 #[command(name = "comp-llmlocal", about = "Proxy a prompt to a local Ollama server.")]
 struct Args {
-    /// Shared secret a caller must send as `Authorization: Bearer
-    /// <token>`. Loopback binding alone is not a boundary — see
-    /// `comp_daemon_kit`'s own doc for why. No token means
-    /// no check, logged loudly rather than silently.
+    /// Shared secret callers must send as `Authorization: Bearer <token>`; unset means no check.
     #[arg(long)]
     token: Option<String>,
-    /// Same, but read from a file (a systemd `LoadCredential` path)
-    /// rather than passed as a value — `--token` is `ps`-readable by
-    /// any local user, which is most of what this exists to close.
-    /// Wins over `--token` when both are given.
+    /// Like `--token` but read from a file, since a flag is `ps`-readable; takes precedence.
     #[arg(long)]
     token_file: Option<std::path::PathBuf>,
 
-    /// Where to listen. Loopback by default: this has no authentication of
-    /// its own and is meant to be reached only from the sandbox host.
+    /// Where to listen; loopback by default, reached only from the sandbox host.
     #[arg(long, default_value = "127.0.0.1:8006")]
     addr: String,
 
@@ -61,14 +40,11 @@ struct InferReq {
     prompt: String,
 }
 
-/// The body Ollama's `/api/generate` wants, with `stream: false` so the reply is one JSON object; this
-/// daemon has no caller that could consume a stream.
+/// `stream: false`: no caller here could consume a stream.
 fn ollama_request_body(model: &str, prompt: &str) -> Value {
     json!({ "model": model, "prompt": prompt, "stream": false })
 }
 
-/// Ollama's non-streaming reply is a JSON object with a `response` field carrying the whole
-/// completion. Any other shape is treated as no answer rather than guessed at.
 fn ollama_response_text(body: &str) -> Option<String> {
     let v: Value = serde_json::from_str(body).ok()?;
     v.get("response")?.as_str().map(str::to_string)

@@ -1,20 +1,10 @@
-//! Which finished runs the bridge posts to the owner without being asked.
-//!
-//! The runtime runs a schedule or a reminder on its own and only logs the result;
-//! a chat message exists only when someone wrote one. So the bridge watches the
-//! runs and posts the ones the owner opted into: a schedule trigger with
-//! `"notify": true`, and every `schedule_self` reminder (asking to be reminded is
-//! asking to be told). Everything here is pure; `Bridge::deliver_scheduled` does
-//! the talking.
+//! Unasked posts: schedules marked `notify`, and every reminder (asking to be reminded is asking to be told).
 
 use serde_json::Value;
 
 use crate::runtime::{ProjectInfo, RunInfo};
 use crate::state::Data;
 
-/// The runs to post, oldest first: finished after `after_ms`, woken by a reminder or
-/// by a schedule `triggers` marks `notify`. A `dropped` run (refused by a loop guard
-/// or a rate limit) is not a result and is left out.
 pub fn due<'a>(triggers: &[Value], runs: &'a [RunInfo], after_ms: u64) -> Vec<&'a RunInfo> {
     // A schedule is the pair (cron, project): the same cron for two projects is two triggers.
     let notified = |cron: &str, project: &str| {
@@ -40,8 +30,7 @@ pub fn due<'a>(triggers: &[Value], runs: &'a [RunInfo], after_ms: u64) -> Vec<&'
     out
 }
 
-/// The room a project's agents report in: its feed, or its only room when it has no feed
-/// (a project of one agent, or a Space the owner made).
+/// A one-agent project or an adopted Space has no feed.
 fn report_room(project: &str, data: &Data) -> Option<String> {
     let r = data.projects.get(project)?;
     [&r.feed, &r.general].into_iter().find(|room| !room.is_empty()).cloned()
@@ -54,16 +43,13 @@ fn member_projects<'a>(agent: &str, projects: &'a [ProjectInfo]) -> Vec<&'a Proj
     mine
 }
 
-/// Where a result for no particular project goes: the agent's own room, and for an agent
-/// in a project (which has none) the report room of its first project by name.
+/// An agent in a project has no room of its own.
 pub fn room_for(agent: &str, projects: &[ProjectInfo], data: &Data) -> Option<String> {
     data.dms.get(agent).cloned().or_else(|| {
         member_projects(agent, projects).iter().find_map(|p| report_room(&p.name, data))
     })
 }
 
-/// Where the result of `run` goes: the report room of the project it was for, else
-/// `room_for`.
 pub fn room_for_run(
     run: &RunInfo,
     agent: &str,
@@ -76,8 +62,6 @@ pub fn room_for_run(
         .or_else(|| room_for(agent, projects, data))
 }
 
-/// Where `agent`'s approval poll goes: its own room; an agent in a project has none, so
-/// the project's general room, where you talk to it; else the control room.
 pub fn approval_room(agent: &str, projects: &[ProjectInfo], data: &Data) -> Option<String> {
     data.dms
         .get(agent)
@@ -90,7 +74,6 @@ pub fn approval_room(agent: &str, projects: &[ProjectInfo], data: &Data) -> Opti
         .or_else(|| data.control_room.clone())
 }
 
-/// The message: the answer as it is, or why there is none.
 pub fn render(run: &RunInfo, max: usize) -> String {
     let answer = run.answer.trim();
     match run.status.as_str() {

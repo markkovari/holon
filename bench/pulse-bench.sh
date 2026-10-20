@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# pulse app-path bench (docs/apps/REALTIME.md rung 4). The new dimension isn't rps — it's
-# CONCURRENT SUSTAINED CONNECTIONS: how many held-open SSE streams the host
-# fans a message out to. Plus post/history throughput for reference.
-#
 # Usage: bench/pulse-bench.sh [memory|nats]
 set -euo pipefail
 KV="${1:-memory}"
@@ -17,13 +13,12 @@ VET_TENANT=pulse "$BIN" "${args[@]}" >/tmp/pulse-bench-host.log 2>&1 &
 HPID=$!; trap 'kill $HPID 2>/dev/null || true; rm -f /tmp/pulse-r*.txt' EXIT
 for _ in $(seq 1 100); do curl -sf "$B/" >/dev/null 2>&1 && break; sleep 0.1; done
 
-# seed a small, bounded history so the GET row reads ~20 messages, not whatever
-# the POST row floods into its (separate) room.
+# A bounded history, so the GET row reads ~20 messages.
 for i in $(seq 1 20); do
   curl -s -X POST "$B/api/rooms/hist/messages" -d '{"user":"seed","text":"hello"}' >/dev/null
 done
 
-oha_row() { # name method path [body]
+oha_row() {
   local name="$1" method="$2" path="$3" body="${4:-}"; local h=()
   [ -n "$body" ] && h=(-H 'content-type: application/json' -d "$body")
   local j; j=$(oha --output-format json -z 8s -c 20 -m "$method" ${h[@]+"${h[@]}"} "$B$path")
@@ -33,10 +28,9 @@ oha_row() { # name method path [body]
     "$(echo "$j" | jget '.latencyPercentiles.p99*1000')"
 }
 
-fanout() { # N concurrent SSE readers all receive one broadcast?
+fanout() {
   local n="$1"
-  # --max-time (not `timeout`): curl exits cleanly and FLUSHES its stdout to the
-  # file; a SIGTERM from `timeout` would drop curl's block-buffered output.
+  # --max-time, not `timeout`: a SIGTERM would drop curl's block-buffered output.
   for i in $(seq 1 "$n"); do curl -sN --max-time 6 "$B/api/rooms/fan/events" >"/tmp/pulse-r$i.txt" 2>/dev/null & done
   sleep 2   # let all readers connect + pin their cursor
   curl -s -X POST "$B/api/rooms/fan/messages" -d '{"user":"bench","text":"BROADCAST-MARKER"}' >/dev/null

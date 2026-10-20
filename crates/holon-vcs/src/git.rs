@@ -1,14 +1,5 @@
-//! Git object ids for a snapshot — the SHA-1 names `git` (and `vgit:store`) would
-//! give the same files, so a forge or a checkout can take a snapshot by id.
-//!
-//! * blob: `sha1("blob <len>\0" ++ bytes)`
-//! * tree: `sha1("tree <len>\0" ++ entries)`, each entry `"<mode> <name>\0"` ++ the
-//!   20 raw id bytes; mode `100644` (file), `100755` (executable), `40000`
-//!   (directory — git writes it without the leading zero, and the id depends on
-//!   that); entries in git's order: by name bytes, a directory compared as if its
-//!   name ended in `/`.
-//!
-//! Verified against the `git` binary in `tests/`.
+//! Git blob/tree ids exactly as `git` computes them (checked against the binary in tests/).
+//! The ids depend on git's quirks: dir mode `40000` has no leading zero; dirs sort as if named `name/`.
 
 use std::collections::BTreeMap;
 
@@ -17,8 +8,7 @@ use sha1::{Digest, Sha1};
 use crate::error::{Result, VcsError};
 
 pub fn blob_id(bytes: &[u8]) -> [u8; 20] {
-    // SHA-1 here IS the git object id, not a security hash — git's own blob id
-    // format, so a different digest would name a blob nothing else can look up.
+    // SHA-1 is git's object id format, not a security hash.
     let mut h = Sha1::new(); // nosemgrep: rust.lang.security.insecure-hashes.insecure-hashes
     h.update(format!("blob {}\0", bytes.len()).as_bytes());
     h.update(bytes);
@@ -30,8 +20,6 @@ enum Node {
     Dir(BTreeMap<String, Node>),
 }
 
-/// Check a component-relative path: non-empty `/`-separated segments, none of
-/// them `.` or `..`, no leading `/`, no NUL.
 pub fn validate_path(path: &str) -> Result<()> {
     let bad = path.is_empty()
         || path.contains('\0')
@@ -42,7 +30,6 @@ pub fn validate_path(path: &str) -> Result<()> {
     Ok(())
 }
 
-/// The git tree id of `files` (`(path, bytes, executable)`), as lower-case hex.
 pub fn tree_id(files: &[(String, Vec<u8>, bool)]) -> Result<String> {
     let mut root = BTreeMap::new();
     for (path, bytes, executable) in files {
@@ -99,7 +86,7 @@ fn write_tree(dir: &BTreeMap<String, Node>) -> [u8; 20] {
         body.push(0);
         body.extend_from_slice(&id);
     }
-    // Same reasoning as blob_id: this SHA-1 IS git's tree object id.
+    // SHA-1 is git's object id format, not a security hash.
     let mut h = Sha1::new(); // nosemgrep: rust.lang.security.insecure-hashes.insecure-hashes
     h.update(format!("tree {}\0", body.len()).as_bytes());
     h.update(&body);

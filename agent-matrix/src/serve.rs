@@ -1,5 +1,4 @@
-//! The appservice HTTP side: Synapse pushes events here. Loopback or tailnet
-//! only (the registration file says where); every request must carry the `hs_token`.
+//! Synapse pushes appservice events here; listen on loopback or tailnet only.
 
 use std::net::SocketAddr;
 use std::sync::mpsc::{channel, Sender};
@@ -46,8 +45,7 @@ fn authorised(req: &Request, query: &str, hs_token: &str) -> bool {
         || query.split('&').any(|p| p == format!("access_token={hs_token}"))
 }
 
-/// Starts serving; returns the bound address. Events are handed to one worker
-/// thread so they are processed in the order Synapse sent them.
+/// One worker thread handles events, so they run in the order Synapse sent them.
 pub fn serve(bridge: Arc<Bridge>) -> Result<SocketAddr, String> {
     let server =
         Server::http(&bridge.cfg.listen).map_err(|e| format!("bind {}: {e}", bridge.cfg.listen))?;
@@ -100,8 +98,7 @@ fn handle(bridge: &Arc<Bridge>, tx: &Sender<Vec<Value>>, mut req: Request) {
             }
             reply(req, 200, json!({}))
         }
-        // "Does this user exist?" — asked when someone refers to a user in our namespace
-        // that was never registered, e.g. the owner inviting `@agent-coach` first.
+        // Synapse's user query for a never-registered id, e.g. the owner inviting `@agent-coach` first.
         (Method::Get, ["users", user]) => {
             let user = percent_decode(user);
             let known = bridge.cfg.agent_of(&user).is_some_and(|a| {

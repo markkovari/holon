@@ -5,8 +5,7 @@ edition = "2021"
 publish = false
 description = "A GPUI desktop console for autonomous agents: create them with capabilities and schedule/event triggers, watch them work, approve what they ask to do. Boots its own local dev lattice (reconciler/fleet/src/fleet.rs's Fleet) and embeds the agent runtime."
 
-# Native, and deliberately outside the components/ (wasm32) workspace — same
-# arrangement as cli/, host/ and reconciler/. Path-depends on comp-fleet, which is a
+# native, so outside the components/ (wasm32) workspace, like cli/, host/ and reconciler/
 [workspace]
 members = ["board"]
 
@@ -16,15 +15,10 @@ path = "src/main.rs"
 
 [dependencies]
 comp-fleet = { path = "../reconciler/fleet" }
-# Agents are specs + a tool-using loop + triggers, run by this crate (also
-# available headless as `agent-runtime`). The console embeds it in-process.
 agent-runtime = { path = "../agent-runtime" }
 agent-board = { path = "board" }
 gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", default-features = false, features = ["runtime_shaders", "font-kit"] }
-# For the spawn-progress channel: the background build/upload/deploy work
-# reports checkpoints ("building…", "deploying…") back to the foreground
-# entity as they happen, rather than only a single result at the end.
 futures = "0.3"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

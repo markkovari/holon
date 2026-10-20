@@ -1,26 +1,4 @@
-//! NATS JetStream adapter (`native` feature): ticket records and two indexes in
-//! one KV bucket, plus `PARK_WAKE` — a work-queue stream a resumer pulls from
-//! (same shape as `comp-media`'s `MEDIA_JOBS`; ADR-0100).
-//!
-//! # Keys
-//!
-//! Caller-supplied strings are always hashed, never escaped: none is read back
-//! out of the key.
-//!
-//! * `ticket.<ticket>` — the [`Record`], JSON (`ticket` is already hex SHA-256).
-//! * `correlation.<sha256>` — the ticket it was claimed for, UTF-8 bytes.
-//! * `session.<sha256>` — the session's ticket list, JSON, grown by CAS. It is
-//!   the index itself, so [`NatsParkStore::list_session`] is one read, no scan.
-//! * `children.<sha256>` — a group's child list (ADR-0109), the same shape, grown
-//!   by the same loop with a bound on how long it may get.
-//! * `batch.<id>` — a commit's intent (ADR-0110), JSON, moved by CAS like a ticket.
-//!
-//! # The notification is not the durability boundary
-//!
-//! `PARK_WAKE` is an optimization ("look at this ticket, don't poll"); the KV
-//! record is the answer. `pending`/`oplog` still find a `ready` ticket if a
-//! publish fails. `comp-park` publishes once per real transition
-//! (`WakeOutcome::freshly_woken`), never on a redelivered webhook.
+//! JetStream adapter: `PARK_WAKE` is only a nudge, the KV record is the answer (ADR-0100).
 
 use std::time::Duration;
 
@@ -35,12 +13,10 @@ use crate::model::TicketId;
 pub use crate::model::{WakeKind, WakeMessage};
 use crate::store::{Batch, IndexChild, ParkStore, Record, Revision};
 
-/// Retry bound for a list's CAS. A session's list is contended by that session's own concurrent
-/// `park` calls, and a group's (ADR-0109) by a fan-out registering its children at once, which
-/// is the point of one: a thousand children may race for one list. Each lost race backs off a
-/// few milliseconds so the racers spread out instead of colliding again together.
+/// A group's children (ADR-0109) may race a thousand at once for one list; lost races back off.
 const MAX_INDEX_RETRIES: u32 = 64;
 
+/// Caller-supplied strings are hashed, never escaped: none is read back out of a key.
 fn sha256_hex(s: &str) -> String {
     hex::encode(Sha256::digest(s.as_bytes()))
 }
@@ -69,7 +45,6 @@ fn batch_key(id: &str) -> String {
 /// The most copies JetStream keeps of a stream.
 pub const MAX_REPLICAS: usize = 5;
 
-/// What was asked for has to be something a stream can be.
 fn check_asked(replicas: usize) -> Result<()> {
     if (1..=MAX_REPLICAS).contains(&replicas) {
         return Ok(());
@@ -77,15 +52,8 @@ fn check_asked(replicas: usize) -> Result<()> {
     Err(ParkError::Invalid(format!("replicas is 1 to {MAX_REPLICAS}, not {replicas}")))
 }
 
-/// `get_key_value` and `get_or_create_stream` hand back what is already there, whatever it
-/// was made with, so asking for three copies of a stream that has one would be a flag that
-/// changes nothing while saying it did. It is refused instead, with the command that raises
-/// it. More copies than were asked for is fine: the number is a floor, so a process left on
-/// the default never lowers what another asked for.
-///
-/// This does not raise it for the caller. Going from one copy to three moves the stream's whole
-/// contents across the cluster, which is the operator's to schedule and not a side effect of
-/// whichever process happened to start first.
+/// An existing stream comes back as it was made, so asking for more copies is refused, not
+/// ignored; raising it moves the whole stream across the cluster, which is the operator's call.
 fn check_kept(what: &str, have: usize, want: usize, remedy: &str) -> Result<()> {
     if have >= want {
         return Ok(());
@@ -97,9 +65,7 @@ fn check_kept(what: &str, have: usize, want: usize, remedy: &str) -> Result<()> 
     )))
 }
 
-/// One server or several, comma-separated. A stray comma is refused: `async-nats` accepts an
-/// empty address (an empty host, port 4222) as a server like any other, so a typo in a list
-/// would become a server nobody named and not an error.
+/// `async-nats` accepts an empty address as a server, so a stray comma is refused, not dialled.
 fn server_list(url: &str) -> Result<Vec<async_nats::ServerAddr>> {
     url.split(',')
         .map(|one| match one.trim() {
@@ -109,13 +75,8 @@ fn server_list(url: &str) -> Result<Vec<async_nats::ServerAddr>> {
         .collect()
 }
 
-/// Connect and open (creating if needed) the KV bucket and the `PARK_WAKE`
-/// stream, each kept in one copy.
-///
-/// Callers go through this and never import `async-nats` themselves: two crates
-/// pinning different `async-nats` versions make `jetstream::Context` two
-/// different nominal types, so every `async_nats` type stays inside this module
-/// (and `holon_vcs::nats`) so both engines can live in one binary.
+/// Callers never import `async-nats`: two crates on different versions would make
+/// `jetstream::Context` two types, and both engines must live in one binary.
 pub async fn connect(
     url: &str,
     bucket: &str,
@@ -124,11 +85,8 @@ pub async fn connect(
     connect_with_replicas(url, bucket, wake_stream_name, 1).await
 }
 
-/// [`connect`], with the bucket and the stream kept in `replicas` copies (ADR-0111).
-///
-/// `url` is one server or several, comma-separated: a client that was only told about one
-/// cannot start while that one is down, however many copies there are of what it would read.
-/// A client given all of them reconnects to whichever is up when the one it was talking to dies.
+/// Give `url` every server, comma-separated: a client told about one cannot start while that
+/// one is down, however many copies there are (ADR-0111).
 pub async fn connect_with_replicas(
     url: &str,
     bucket: &str,
@@ -149,15 +107,10 @@ pub struct NatsParkStore {
 }
 
 impl NatsParkStore {
-    /// Open `bucket`, creating it (history 1: a ticket's past is the oplog) if
-    /// missing, in one copy.
     pub async fn open(js: &jetstream::Context, bucket: &str) -> Result<Self> {
         Self::open_with_replicas(js, bucket, 1).await
     }
 
-    /// [`open`](Self::open), creating the bucket in `replicas` copies. A bucket that already
-    /// exists is used as it is, and is refused if it keeps fewer copies than that (see
-    /// `check_kept`).
     pub async fn open_with_replicas(
         js: &jetstream::Context,
         bucket: &str,
@@ -169,6 +122,7 @@ impl NatsParkStore {
             Err(_) => {
                 let cfg = kv::Config {
                     bucket: bucket.to_string(),
+                    // A ticket's past is the oplog.
                     history: 1,
                     num_replicas: replicas,
                     ..Default::default()
@@ -195,10 +149,7 @@ impl NatsParkStore {
         Ok(NatsParkStore { kv })
     }
 
-    /// Add `item` to the JSON list at `key`, if it is not there already and, when
-    /// `max` is set, only while the list has room: one read, then a create or a
-    /// compare-and-set, retried when it loses the race. The bound and the write are
-    /// one step, so racers for the last place cannot both have it.
+    /// The bound and the write are one CAS, so racers for the last place cannot both have it.
     async fn grow(
         &self,
         key: &str,
@@ -294,8 +245,6 @@ impl ParkStore for NatsParkStore {
         }
     }
 
-    /// Read-modify-CAS-write loop over the session's ticket list; no `Engine`
-    /// sits above to retry it.
     async fn index_session(&self, session: &str, ticket: &str) -> Result<()> {
         self.grow(&session_key(session), ticket, None, || {
             format!("session {session:?}'s ticket index")
@@ -359,8 +308,6 @@ impl ParkStore for NatsParkStore {
         Ok(keys.into_iter().filter_map(|k| k.strip_prefix("batch.").map(str::to_string)).collect())
     }
 
-    /// One pass over the bucket's keys, keeping the `ticket.` ones. Reads keys
-    /// only, never a value; the engine fetches each record it wants.
     async fn list_tickets(&self) -> Result<Vec<TicketId>> {
         let keys = self.kv.keys().await.map_err(ParkError::storage)?;
         let keys: Vec<String> = keys.try_collect().await.map_err(ParkError::storage)?;
@@ -375,21 +322,12 @@ pub struct WakeStream {
 }
 
 impl WakeStream {
-    /// Open `name` as a `WorkQueue` stream, creating it if missing, in one copy. Its one
-    /// subject is `<name>.ticket`, the `filter_subject` of a resumer's durable
-    /// pull consumer.
     pub async fn open(js: &jetstream::Context, name: &str) -> Result<Self> {
         Self::open_with_replicas(js, name, 1).await
     }
 
-    /// [`open`](Self::open), creating the stream in `replicas` copies. A stream that already
-    /// exists is used as it is, and is refused if it keeps fewer copies than that.
-    ///
-    /// The stream is only a nudge — the record is the answer, and a recovery pass finds a ticket
-    /// whose announcement was lost — so losing it costs latency, not tickets. It is kept in the
-    /// same number of copies anyway: with one, the node holding it going down stops every
-    /// announcement and delivery until it is back, and the copies of the bucket would protect
-    /// the tickets and not the service.
+    /// As many copies as the bucket, though only a nudge: with one, losing its node stops every
+    /// delivery until it is back.
     pub async fn open_with_replicas(
         js: &jetstream::Context,
         name: &str,
@@ -421,13 +359,8 @@ impl WakeStream {
         Ok(WakeStream { js: js.clone(), name: name.to_string(), subject })
     }
 
-    /// Tell a resumer something about a ticket. Waits for the JetStream ack, so
-    /// `Ok` means durably queued.
-    ///
-    /// The message id (`Nats-Msg-Id`) names the ticket and what is being said,
-    /// so announcing the same thing twice inside the stream's duplicate window
-    /// queues it once: a recovery pass and a `wake` that both announce one
-    /// answer do not hand a resumer two copies.
+    /// `Nats-Msg-Id` names the ticket and what is said, so a recovery pass and a `wake` that
+    /// both announce one answer queue it once (within the duplicate window).
     pub async fn publish(&self, msg: &WakeMessage) -> Result<()> {
         let payload = serde_json::to_vec(msg).map_err(ParkError::storage)?;
         let id = match msg.kind {
@@ -447,12 +380,7 @@ impl WakeStream {
 }
 
 impl WakeStream {
-    /// A durable pull consumer on this stream, created if missing. Every
-    /// resumer that opens the same `name` shares one position in the stream, so
-    /// a message goes to one of them, not all.
-    ///
-    /// `ack_wait` is how long a delivered message may go unanswered before the
-    /// server hands it to someone else: it must outlast one sink call.
+    /// Resumers opening the same `name` share one position, so a message goes to one of them.
     pub async fn consumer(&self, name: &str, ack_wait: Duration) -> Result<WakeConsumer> {
         let stream = self.js.get_stream(&self.name).await.map_err(ParkError::storage)?;
         let consumer = stream
@@ -479,28 +407,21 @@ impl crate::resume::Announcer for WakeStream {
     }
 }
 
-/// A resumer's view of `PARK_WAKE`: messages, one at a time, each to be
-/// acknowledged or sent back.
 pub struct WakeConsumer {
     messages: pull::Stream,
 }
 
-/// One delivered message. Dropping it without answering lets the server
-/// redeliver it after the consumer's `ack_wait`.
+/// Dropping it unanswered lets the server redeliver it after the consumer's `ack_wait`.
 pub struct WakeDelivery {
     msg: jetstream::Message,
     pub wake: WakeMessage,
-    /// Which delivery this is: 1 the first time, 2 the second, and so on.
+    /// 1 on the first delivery.
     pub delivered: u64,
 }
 
 impl WakeConsumer {
-    /// The next message. `Ok(None)` means the stream ended, which a live
-    /// consumer does not do: treat it as the connection being gone.
-    ///
-    /// A message that is not a [`WakeMessage`] is terminated here (it would
-    /// never become one) and skipped, and a transient fetch error is returned so
-    /// the caller can log it and call again.
+    /// `Ok(None)`: the stream ended, which a live consumer never does. An unreadable message is
+    /// terminated, since it would never become a [`WakeMessage`].
     pub async fn next(&mut self) -> Result<Option<WakeDelivery>> {
         loop {
             let Some(item) = self.messages.next().await else { return Ok(None) };
@@ -520,12 +441,10 @@ impl WakeConsumer {
 }
 
 impl WakeDelivery {
-    /// Finished with: the message leaves the stream.
     pub async fn ack(self) -> Result<()> {
         self.msg.ack().await.map_err(ParkError::storage)
     }
 
-    /// Not finished: send it back, to arrive again after `delay`.
     pub async fn nak(self, delay: Duration) -> Result<()> {
         self.msg.ack_with(AckKind::Nak(Some(delay))).await.map_err(ParkError::storage)
     }

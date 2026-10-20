@@ -1,6 +1,3 @@
-// Shared measurement: warm up, then time N iterations with nanosecond precision,
-// report ns/op (mean), ops/sec, and p50/p95/p99.
-
 export interface Result {
   op: string;
   iters: number;

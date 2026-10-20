@@ -1,10 +1,4 @@
-//! The records `holon:vcs/types` declares, one Rust type per WIT type, field for
-//! field. Serde names follow the WIT (kebab-case), so a JSON rendering of any of
-//! these reads like the contract.
-//!
-//! Nothing in here has behaviour. The decisions live in [`crate::patch`] and
-//! [`crate::engine`]; the records the *graph* keeps (which carry more than the
-//! contract shows) live in [`crate::graph`].
+//! The records `holon:vcs/types` declares, one Rust type per WIT type.
 
 use serde::{Deserialize, Serialize};
 
@@ -12,13 +6,10 @@ use serde::{Deserialize, Serialize};
 pub type Hash = String;
 /// A conflict is named by the hash of its two sides.
 pub type ConflictId = String;
-/// Position in a workspace's operation log. Strictly increasing per workspace,
-/// starting at 1.
+/// Strictly increasing per workspace, starting at 1.
 pub type OpId = u64;
-/// A mutable line of work.
 pub type WorkspaceId = String;
 
-/// Who made a change.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Agent {
     pub id: String,
@@ -27,13 +18,11 @@ pub struct Agent {
 }
 
 impl Agent {
-    /// An agent with only an id — what tests and simple callers need.
     pub fn named(id: impl Into<String>) -> Self {
         Agent { id: id.into(), goal: None, model: None }
     }
 }
 
-/// What kind of thing a symbol is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SymbolKind {
@@ -51,13 +40,11 @@ pub enum SymbolKind {
     WitInterface,
     WitWorld,
     WitType,
-    /// A whole file.
     File,
 }
 
 impl SymbolKind {
-    /// The WIT spelling (`struct-item`), used in canonical encodings — stable
-    /// because the contract is.
+    /// The WIT spelling; canonical encodings use it, so it must stay stable.
     pub fn as_str(self) -> &'static str {
         match self {
             SymbolKind::Module => "module",
@@ -79,7 +66,6 @@ impl SymbolKind {
     }
 }
 
-/// A symbol's identity: the file within the component, and the item path inside it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SymbolId {
     pub component: String,
@@ -98,7 +84,6 @@ impl SymbolId {
         }
     }
 
-    /// The same symbol under another name (what `rename` produces).
     pub fn renamed(&self, name: &str) -> Self {
         SymbolId { name: name.to_string(), ..self.clone() }
     }
@@ -110,7 +95,6 @@ impl std::fmt::Display for SymbolId {
     }
 }
 
-/// Content, inline or already in the object store.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Content {
@@ -118,13 +102,10 @@ pub enum Content {
     Blob(Hash),
 }
 
-/// Where a symbol sits in its file, relative to the file's other live symbols.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Placement {
-    /// Before every other symbol of the file.
     First,
-    /// After every other symbol of the file.
     Last,
     /// Immediately after this symbol (same component and path, live).
     After(SymbolId),
@@ -132,7 +113,6 @@ pub enum Placement {
     Before(SymbolId),
 }
 
-/// What an edit does to its symbol.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Transformation {
@@ -140,11 +120,9 @@ pub enum Transformation {
     Replace(Content),
     Delete,
     Rename(String),
-    /// Same content, new place in the file.
     Move(Placement),
 }
 
-/// One edit, as an agent submits it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct PatchRequest {
@@ -157,13 +135,10 @@ pub struct PatchRequest {
     pub depends_on: Vec<SymbolId>,
     pub implements: Vec<SymbolId>,
     pub wit_binding: Option<String>,
-    /// The oplog position the agent's view reflects (a `symbol-view`'s `as-of`,
-    /// or `oplog-head`). `None`: unknown, and `commuted` is measured from the
-    /// parent's op instead (an over-approximation).
+    /// A `symbol-view`'s `as-of`; `None` measures `commuted` from the parent's op (over-approximates).
     #[serde(default)]
     pub read_at: Option<OpId>,
-    /// Where a `create` goes in its file. `None` appends. Only `create` takes
-    /// one; a `move` carries its own.
+    /// `create` only (`None` appends); a `move` carries its own.
     #[serde(default)]
     pub position: Option<Placement>,
 }
@@ -280,8 +255,7 @@ pub struct SymbolView {
     pub dependents: Vec<SymbolId>,
     pub implements: Vec<SymbolId>,
     pub open_conflicts: Vec<ConflictId>,
-    /// The settled oplog head read before this view: every op at or below it
-    /// is reflected. Pass it back as `patch-request.read-at`.
+    /// Every op at or below it is reflected; pass it back as `patch-request.read-at`.
     pub as_of: OpId,
 }
 
@@ -302,7 +276,6 @@ pub struct Snapshot {
     pub git_tree: Option<String>,
 }
 
-/// The pointer and the two values a compare-and-set disagreed on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CasFailure {
     pub pointer: String,
@@ -310,7 +283,6 @@ pub struct CasFailure {
     pub actual: Option<Hash>,
 }
 
-/// A pointer, what it holds, and the op its value names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PointerState {
     pub pointer: String,
@@ -324,12 +296,10 @@ pub struct PointerState {
 pub struct StaleOp {
     pub op: OpId,
     pub age_ms: u64,
-    /// Whether its pointer write happened (repair rolls it forward) or not
-    /// (repair aborts it).
+    /// Its pointer write happened: repair rolls it forward, else aborts it.
     pub landed: bool,
 }
 
-/// A record the graph should have and does not.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MissingRecord {
     /// The pointer (or conflict id) that names it.
@@ -337,26 +307,19 @@ pub struct MissingRecord {
     pub hash: Hash,
 }
 
-/// One way the three stores can disagree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Inconsistency {
-    /// A pointer whose value no committed op explains: it names no op, a pending
-    /// or aborted one, or one whose logged move wrote something else.
+    /// Names no op, a pending or aborted one, or one whose logged move wrote something else.
     UnexplainedPointer(PointerState),
-    /// An op still pending past the lease.
     StalePending(StaleOp),
-    /// A tip whose patch record the graph lacks.
     MissingPatch(MissingRecord),
     /// A symbol whose graph index entry is missing, or behind its pointer.
     StaleMirror(String),
-    /// A conflict naming a patch the graph lacks.
     DanglingConflict(MissingRecord),
-    /// An open conflict nothing committed opened, or whose `left` is no longer
-    /// its symbol's tip.
+    /// Nothing committed opened it, or its `left` is no longer its symbol's tip.
     OrphanConflict(ConflictId),
-    /// A name reservation held for a symbol no longer called that, or a live
-    /// symbol whose name is not reserved for it.
+    /// A name reserved for a symbol no longer called that, or a live symbol's name not reserved.
     StaleName(String),
 }
 
@@ -375,9 +338,7 @@ pub struct ConsistencyReport {
 #[serde(rename_all = "kebab-case")]
 pub struct RepairReport {
     pub workspace: WorkspaceId,
-    /// Pending ops whose pointer write had happened: finished.
     pub rolled_forward: Vec<OpId>,
-    /// Pending ops whose pointer write had not (and now cannot) happen.
     pub aborted: Vec<OpId>,
     /// Issues the first verify found that the second did not.
     pub fixed: Vec<Inconsistency>,

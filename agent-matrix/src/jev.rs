@@ -1,9 +1,4 @@
-//! Ask Jev (TypeSafe's System One) which agents a message concerns, directly over HTTPS.
-//!
-//! Jev answers typed questions with probabilities; it does not write text, so it is the router
-//! here, not a chat model. The wire format is the `typesafe-provider` component's own codec,
-//! included by path so there is one definition of it. The API key is read from the file named
-//! by `HOLON_JEV_KEY_FILE` at each call; it is never stored, logged or put in the bridge config.
+//! Jev (TypeSafe's System One) routes a message to agents; its key is read per call, never stored or logged.
 
 #[allow(dead_code)]
 #[path = "../../components/typesafe-provider/src/codec.rs"]
@@ -15,11 +10,9 @@ use codec::{AnswerSpec, QuestionItem, QuestionSpec};
 
 const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
 const MODEL: &str = "jev-latest";
-/// Milli-probability at or above which a member counts as affected.
+/// In milli-probability.
 const THRESHOLD: u32 = 500;
 
-/// The members (of `candidates`: name, description) the message concerns, or `None` when Jev
-/// cannot be reached or answers unusably: the caller then falls back to its next rule.
 pub fn affected(
     key_file: &str,
     message: &str,

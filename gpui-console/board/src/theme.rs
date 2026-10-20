@@ -1,9 +1,4 @@
-//! The colours the board is drawn in, dark and light.
-//!
-//! Every colour the view uses comes from here and nothing in the view names one, so the two themes
-//! cannot drift apart and a third is a function. Status is the one thing colour carries on its own
-//! (a person scanning a wall of cards reads green, blue, orange before they read a word), so each
-//! status has its own pair: a tinted ground and the ink that goes on it.
+//! Every colour the view uses comes from here, so the two themes cannot drift apart.
 
 use gpui::{rgb, rgba, Rgba};
 
@@ -27,7 +22,6 @@ impl Mode {
 #[derive(Clone, Copy)]
 pub struct Theme {
     pub mode: Mode,
-    /// The window.
     pub bg: Rgba,
     pub sidebar: Rgba,
     pub row_hover: Rgba,
@@ -37,9 +31,7 @@ pub struct Theme {
     pub text: Rgba,
     pub muted: Rgba,
     pub faint: Rgba,
-    /// The connectors between a card and what it started.
     pub line: Rgba,
-    /// The tile behind a model's glyph, and a tool's.
     pub tile: Rgba,
     pub tile_border: Rgba,
     pub popover: Rgba,
@@ -109,7 +101,6 @@ impl Theme {
         }
     }
 
-    /// The ground and the ink of a status badge.
     pub fn badge(&self, s: Status) -> (Rgba, Rgba) {
         let dark = self.mode == Mode::Dark;
         match (s, dark) {
@@ -126,8 +117,7 @@ impl Theme {
         }
     }
 
-    /// The colour a card's edge takes while it needs a person: the one thing on the board that is
-    /// allowed to ask for attention.
+    /// The one colour on the board allowed to ask for attention.
     pub fn attention(&self) -> Rgba {
         self.badge(Status::NeedsYou).1
     }

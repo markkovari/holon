@@ -1,28 +1,5 @@
-//! `comp-lanscan` — which hosts on the local network answer, for a component that cannot look.
-//!
-//! ## Why this is a process and not a component
-//!
-//! Scanning a LAN means opening many outbound TCP connections against addresses a caller does not
-//! supply, which a `wasm32-wasip2` guest cannot do (ADR-0095). So the part that needs an operating
-//! system is native and reached over HTTP like the gate, the database and the model provider.
-//!
-//! `components/lan-scanner` is the component side: it holds the WIT contract and dials this.
-//!
-//! ## An allow-list, for the same reason `comp-fswatch` has one
-//!
-//! A scan's scope is not something a caller may set (the request carries no target): `--allow-cidr
-//! 192.168.1.0/24` permits scanning that network, and nothing is permitted by default. A CIDR
-//! broader than /24 is refused rather than scanned, to keep a scan bounded (/24 is at most 254
-//! hosts, a /16 is 65534).
-//!
-//! ## No raw ICMP
-//!
-//! A true ping needs a raw socket, which needs root this daemon does not assume. Reachability here is
-//! a TCP-connect probe against `--port` (default 80): a connect means "something is listening", a
-//! refused or timed-out one means "unreachable", and neither is a scan failure; only "no
-//! --allow-cidr configured" or an unparseable CIDR is.
-//!
-//!   comp-lanscan --addr 127.0.0.1:8005 --allow-cidr 192.168.1.0/24 --port 80 --timeout-ms 200
+//! Native side of components/lan-scanner (ADR-0095). Reachability is a TCP connect to `--port`: a
+//! real ping needs a raw socket, and so root.
 
 use std::net::Ipv4Addr;
 use std::time::Duration;
@@ -39,27 +16,18 @@ use tokio::net::TcpStream;
     about = "Report which LAN hosts answer, for a component that cannot look."
 )]
 struct Args {
-    /// Shared secret a caller must send as `Authorization: Bearer
-    /// <token>`. Loopback binding alone is not a boundary — see
-    /// `comp_daemon_kit`'s own doc for why. No token means
-    /// no check, logged loudly rather than silently.
+    /// Shared secret callers must send as `Authorization: Bearer <token>`; unset means no check.
     #[arg(long)]
     token: Option<String>,
-    /// Same, but read from a file (a systemd `LoadCredential` path)
-    /// rather than passed as a value — `--token` is `ps`-readable by
-    /// any local user, which is most of what this exists to close.
-    /// Wins over `--token` when both are given.
+    /// Like `--token` but read from a file, since a flag is `ps`-readable; takes precedence.
     #[arg(long)]
     token_file: Option<std::path::PathBuf>,
 
-    /// Where to listen. Loopback by default: this hands out a picture of the
-    /// local network and has no authentication of its own.
+    /// Where to listen; loopback by default, since this maps the local network.
     #[arg(long, default_value = "127.0.0.1:8005")]
     addr: String,
 
-    /// A CIDR this may scan, repeatable. Empty means nothing is permitted,
-    /// which is what a capability nobody has scoped should do. Anything
-    /// broader than /24 is refused rather than silently truncated.
+    /// A CIDR this may scan, repeatable; none permits nothing, broader than /24 is refused.
     #[arg(long = "allow-cidr")]
     allow_cidr: Vec<String>,
 
@@ -72,8 +40,7 @@ struct Args {
     timeout_ms: u64,
 }
 
-/// Every host address in `cidr`, or `None` if it does not parse or is broader than /24 (so a scan
-/// stays bounded, at most 254 hosts).
+/// `None` if unparseable or broader than /24, so a scan stays bounded.
 fn hosts_in_cidr(cidr: &str) -> Option<Vec<Ipv4Addr>> {
     let (addr, prefix) = cidr.split_once('/')?;
     let base: Ipv4Addr = addr.parse().ok()?;
@@ -163,8 +130,7 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
 
-    /// A /24 enumerates 256 addresses: network and broadcast are not special-cased, they get probed too
-    /// and read as unreachable.
+    /// Network and broadcast are not special-cased: they are probed too and read as unreachable.
     #[test]
     fn a_slash_24_enumerates_its_256_addresses() {
         let hosts = hosts_in_cidr("192.168.1.0/24").expect("parses");
@@ -179,7 +145,6 @@ mod tests {
         assert_eq!(hosts, vec![Ipv4Addr::new(10, 0, 0, 5)]);
     }
 
-    /// Anything broader than /24 is refused rather than scanned, to keep a scan bounded.
     #[test]
     fn a_cidr_broader_than_slash_24_is_refused() {
         assert!(hosts_in_cidr("10.0.0.0/16").is_none());

@@ -1,12 +1,4 @@
-//! The agent board: a live tree of the agents that are working, what each is doing with which model
-//! and tools, what it has cost, and the ones that are waiting for a person (docs/adr/0119).
-//!
-//! Three layers, so the one that is hard to see (the tree) can be tested without a window and the
-//! one that is easy to see (the pixels) can be changed without touching it:
-//!
-//! * [`tree`] is the model: nodes keyed by id, built by feeding it the runtime's [`Event`]s. Pure.
-//! * [`theme`] and [`icons`] are what it is drawn with.
-//!
+//! The agent board (ADR-0119).
 
 pub mod agents;
 pub mod canvas;

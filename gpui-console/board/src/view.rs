@@ -1,20 +1,5 @@
-//! The board as GPUI draws it: a header that says how the whole is doing, and under it each tree of
-//! agents as cards joined by the line from whatever started them.
-//!
-//! ## Motion
-//!
-//! Everything that moves says something and nothing moves to be looked at.
-//!
-//! * A card that appears fades in and rises a few pixels, each level a beat after the one above,
-//!   so a tree reads as being started from the top.
-//! * A running badge turns; a card that needs a person breathes in the one colour the board keeps
-//!   for asking, and nothing else on it does.
-//! * A cost counts to its new value rather than jumping, and a badge whose state changed arrives
-//!   rather than being swapped.
-//!
-//! Every one of these is a one-shot or a slow loop, ends in the state a still frame shows, and is
-//! keyed by what it is about (a node, a status, a value), so a change restarts the right one and a
-//! re-render restarts none.
+//! Every motion is a one-shot or a slow loop ending in the still-frame state, keyed by what it is
+//! about (a node, a status, a value), so a change restarts the right one and a re-render none.
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -40,25 +25,17 @@ use super::store::{self, Store};
 use super::theme::{Mode, Theme};
 use super::tree::{AgentTree, Kind, Node, Pending, SessionRow, Status, Summary, Waiting};
 
-// -- metrics ------------------------------------------------------------------------------------
-
-/// A card's width, and the gap between two columns of them.
 const CARD_W: f32 = 284.0;
 const GAP: f32 = 36.0;
-/// From a parent's bottom edge to the bar its children hang from.
 const STEM: f32 = 44.0;
 const LINE: f32 = 1.5;
-/// The radius of a connector's corner.
 const R: f32 = 14.0;
-/// How far a nested card is pushed in, and the space above it.
 const INDENT: f32 = 40.0;
 const NEST_GAP: f32 = 14.0;
-/// From the top of a card to the middle of its first row, where a nested connector arrives.
+/// must match the middle of a card's first row, where a nested connector arrives
 const HEADER_MID: f32 = 31.0;
-/// Where a nested connector's line runs, from the parent's left edge.
 const NEST_X: f32 = 27.0;
 const DOT: f32 = 9.0;
-/// More children than this are stacked, not laid out in a row.
 const ROW_MAX: usize = 4;
 const SIDEBAR_W: f32 = 264.0;
 
@@ -106,9 +83,7 @@ pub fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-// -- what the numbers say -----------------------------------------------------------------------
-
-/// `$0.29`; under a cent, three places, because "$0.00" says nothing was spent.
+/// Under a cent, three places, because "$0.00" says nothing was spent.
 pub fn money(micros: u64) -> String {
     let usd = micros as f64 / 1e6;
     if micros == 0 {
@@ -120,8 +95,7 @@ pub fn money(micros: u64) -> String {
     }
 }
 
-/// A model as a person says it: `claude-sonnet-5-5` is `Sonnet 5.5`, `gpt-5-mini` is `GPT-5 Mini`,
-/// `local/system` is `On-device`. The provider is the glyph's job, not the words'.
+/// No provider in the words: that is the glyph's job.
 pub fn model_name(label: &str) -> String {
     let m = label.rsplit('/').next().unwrap_or(label);
     if label.starts_with("local/") && m == "system" {
@@ -171,7 +145,6 @@ pub fn ago(ms: u64) -> String {
     }
 }
 
-/// `45s`, `1m 09s`, `2h 05m`.
 pub fn clock(ms: u64) -> String {
     let s = ms / 1000;
     match s {
@@ -204,7 +177,6 @@ pub fn pick<'a>(
         .or(rows.first())
 }
 
-/// `12.4k tok`, for a model whose price is not known.
 pub fn tokens(n: u64) -> String {
     if n >= 1000 {
         format!("{:.1}k tok", n as f64 / 1000.0)
@@ -213,8 +185,7 @@ pub fn tokens(n: u64) -> String {
     }
 }
 
-/// How much slower than real time everything moves, from `BOARD_SLOWMO` (default 1). For looking at a
-/// motion frame by frame; never set in use.
+/// `BOARD_SLOWMO` slows every motion, to look at one frame by frame; never set in use.
 fn slowmo() -> f32 {
     static F: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
     *F.get_or_init(|| {
@@ -226,7 +197,6 @@ fn slowmo() -> f32 {
     })
 }
 
-/// A duration in milliseconds, at the speed the board is running at.
 fn ms(n: u64) -> Duration {
     Duration::from_millis((n as f32 * slowmo()) as u64)
 }
@@ -240,8 +210,7 @@ fn with_alpha(c: Rgba, a: f32) -> Hsla {
     h.alpha(a)
 }
 
-/// An easing that waits `delay_ms` and then runs `ease` over `ms`: one animation of `delay + ms`,
-/// because an animation has a duration and no delay of its own.
+/// The delay is folded into the easing because a GPUI animation has a duration but no delay.
 fn after(
     delay_ms: u64,
     ms: u64,
@@ -253,15 +222,13 @@ fn after(
     })
 }
 
-// -- a snapshot of the tree, so that drawing holds no borrow ------------------------------------
-
+/// A snapshot of the tree, so drawing holds no borrow.
 struct Branch {
     node: Node,
     kids: Vec<Branch>,
-    /// How many children the node has, shown or not.
+    /// shown or not
     kid_count: usize,
     collapsed: bool,
-    /// How many levels below the root.
     depth: usize,
 }
 
@@ -276,20 +243,16 @@ fn branch(tree: &AgentTree, n: &Node, collapsed: &HashSet<String>, depth: usize)
     Branch { node: n.clone(), kids, kid_count, collapsed: hidden, depth }
 }
 
-// -- the view -----------------------------------------------------------------------------------
-
 pub struct Board {
     tree: Entity<AgentTree>,
     actions: Rc<dyn Actions>,
     theme: Theme,
     collapsed: HashSet<String>,
     open: bool,
-    /// Wall clock at the last tick: what "running for 45s" is measured against.
     now: u64,
     /// The cost each node last showed, so a new one is counted to from there.
     shown_cost: HashMap<String, (u64, u64)>,
-    /// The width of each tree's row of children as it was and is: when a child joins, the parent
-    /// glides to the new middle instead of jumping there.
+    /// (was, is), so a parent glides to its new middle when a child joins
     row_width: HashMap<String, (f32, f32)>,
     selected: Option<String>,
     known: HashSet<String>,
@@ -379,7 +342,7 @@ impl Board {
             FieldEvent::Cancel => this.search.update(cx, |f, cx| f.clear(cx)),
         })
         .detach();
-        // The one clock: once a second, so "45s" reads 46s without anything having happened.
+        // once a second, so "45s" reads 46s without any event
         let tick = cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(Duration::from_millis(1000)).await;
             if this
@@ -625,9 +588,6 @@ impl Board {
         cx.notify();
     }
 
-    // -- pieces ---------------------------------------------------------------------------------
-
-    /// The pill that says how a card stands.
     fn badge(&self, id: &str, s: Status) -> impl IntoElement {
         let t = &self.theme;
         let (bg, ink) = t.badge(s);
@@ -663,7 +623,6 @@ impl Board {
             .font_weight(FontWeight::MEDIUM)
             .child(mark)
             .child(label);
-        // A status that has just changed arrives; one that has not is simply there.
         let (dur, ease) = after(0, 260, ease_out_quint());
         pill.relative().with_animation(
             SharedString::from(format!("badge-{id}-{s:?}")),
@@ -672,7 +631,6 @@ impl Board {
         )
     }
 
-    /// The tile that says which model, drawn as its maker's glyph.
     fn tile(&self, model: &str, kind: Kind) -> impl IntoElement {
         let t = &self.theme;
         let (glyph, tint) = if kind == Kind::Session {
@@ -693,7 +651,6 @@ impl Board {
             .child(icon(glyph).size(px(19.0)).text_color(tint))
     }
 
-    /// The tools used so far, as small tiles; the last few, and how many came before.
     fn chips(&self, tools: &[String]) -> impl IntoElement {
         let t = &self.theme;
         const SHOWN: usize = 5;
@@ -720,7 +677,6 @@ impl Board {
         row
     }
 
-    /// The cost, counting to its new value.
     fn cost(&mut self, n: &Node) -> impl IntoElement {
         let t = self.theme;
         let target = n.cost_micros.unwrap_or(0);
@@ -752,8 +708,6 @@ impl Board {
             )
     }
 
-    /// One agent: who it is, what state it is in, what it was asked, what it is using and what it
-    /// has cost.
     fn card(&mut self, b: &Branch, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let n = &b.node;
@@ -802,9 +756,7 @@ impl Board {
             .line_clamp(2)
             .child(task);
 
-        // What a card says it is doing or concluded, in the row under its task: the tool it is on,
-        // or once it is over, how it ended. The row is always there, so a card is the same height
-        // all its life and what is under it never moves.
+        // the row is always there, so a card keeps one height and nothing under it moves
         let activity = if !activity.is_empty() {
             activity
         } else if let (true, Some(r)) = (n.status.is_over(), n.result.as_ref()) {
@@ -864,9 +816,8 @@ impl Board {
                                 SharedString::from(format!("chev-{id}-{open}")),
                                 Animation::new(self::ms(220)).with_easing(ease_in_out),
                                 move |svg, p| {
-                                    // down when open, a quarter turn to the right when folded
-                                    // a percentage cannot be negative: a quarter turn back is three
-                                    // quarters forward
+                                    // a percentage cannot be negative: a quarter turn back is
+                                    // three quarters forward
                                     let turn = if open { 1.0 - p } else { p } * 0.25;
                                     svg.with_transformation(Transformation::rotate(percentage(
                                         1.0 - turn,
@@ -908,7 +859,6 @@ impl Board {
             .child(used)
             .child(footer);
 
-        // A card that needs a person breathes; nothing else on the board does.
         let shell = if attention {
             let glow = t.attention();
             shell
@@ -942,28 +892,21 @@ impl Board {
     }
 }
 
-// -- layout -------------------------------------------------------------------------------------
-
-/// A hollow circle where a line leaves a card.
 fn dot(color: Rgba, bg: Rgba) -> impl IntoElement {
     div().size(px(DOT)).rounded(px(DOT)).border(px(LINE)).border_color(color).bg(bg)
 }
 
-/// A point `(x, y)` from `origin`, in layout pixels.
 fn at(origin: gpui::Point<Pixels>, x: f32, y: f32) -> gpui::Point<Pixels> {
     point(origin.x + px(x), origin.y + px(y))
 }
 
-/// The line from a parent down to a row of `n` children: a stem, a bar with rounded ends, and a
-/// drop onto each card. Children are one card wide with a gap between, so where each hangs is
-/// arithmetic.
+/// Children are one card wide with a gap between, so where each hangs is arithmetic.
 fn bracket(n: usize, line: Rgba) -> gpui::Canvas<()> {
     canvas(
         |_, _, _| (),
         move |bounds, _, window, _| {
             let o = bounds.origin;
             let mid = STEM / 2.0;
-            // where the parent is: the middle of the row as wide as it is right now
             let centre = f32::from(bounds.size.width) / 2.0;
             let x = |i: usize| i as f32 * (CARD_W + GAP) + CARD_W / 2.0;
             let mut b = PathBuilder::stroke(px(LINE));
@@ -994,10 +937,7 @@ fn bracket(n: usize, line: Rgba) -> gpui::Canvas<()> {
     .h(px(STEM))
 }
 
-/// The line down the left of a stack, as it reaches one child: it comes from the card above (or the
-/// parent's dot), turns into this card at the middle of its first row and, unless this is the last
-/// child, goes on down past the card to the next. It is sized by the child it belongs to, so it is as
-/// tall as that child is, whatever is stacked under it.
+/// Sized by its own child, so it is as tall as that child whatever is stacked under it.
 fn elbow(goes_on: bool, line: Rgba) -> gpui::Canvas<()> {
     let w = INDENT - NEST_X;
     canvas(
@@ -1029,7 +969,6 @@ fn elbow(goes_on: bool, line: Rgba) -> gpui::Canvas<()> {
 }
 
 impl Board {
-    /// One tree: the root, and everything it started.
     fn block(&mut self, b: &Branch, cx: &mut Context<Self>) -> gpui::AnyElement {
         if b.kids.is_empty() {
             return div()
@@ -1064,8 +1003,7 @@ impl Board {
             })
             .collect();
         let card = self.card(b, cx);
-        // The bracket is one stroke, so its corners and its joins are the same line and not
-        // several boxes that nearly meet.
+        // one stroke, so corners and joins are one line, not boxes that nearly meet
         let (dur, ease) = after(60, 420, ease_out_quint());
         let bracket = bracket(n, line).with_animation(
             SharedString::from(format!("bracket-{}", b.node.id)),
@@ -1083,7 +1021,6 @@ impl Board {
                     .pt(px(STEM))
                     .child(bracket)
                     .child(
-                        // the dot under the parent: at the middle of the row, as wide as it is now
                         div()
                             .absolute()
                             .top(px(-DOT / 2.0))
@@ -1102,9 +1039,6 @@ impl Board {
             .into_any_element()
     }
 
-    /// A card with its children stacked under it, each tucked in and joined to the line down the
-    /// left: how everything below the first level is drawn, and the first level when it is too wide
-    /// for a row.
     fn stack(&mut self, b: &Branch, cx: &mut Context<Self>) -> gpui::AnyElement {
         let (line, bg) = (self.theme.line, self.theme.bg);
         let last = b.kids.len().saturating_sub(1);
@@ -1152,9 +1086,6 @@ impl Board {
             .into_any_element()
     }
 
-    // -- the header -----------------------------------------------------------------------------
-
-    /// A button that is a word.
     fn chip_button(
         &self,
         id: SharedString,

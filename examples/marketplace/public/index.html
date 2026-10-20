@@ -67,7 +67,6 @@
   <main>
     <div class="tabs" id="tabs"></div>
 
-    <!-- LISTINGS (everyone) -->
     <section id="tab-listings">
       <h2>Listings</h2>
       <div id="vendor-new-listing" hidden>
@@ -90,7 +89,6 @@
         <tbody id="listings-table"></tbody></table>
     </section>
 
-    <!-- CART (buyer) -->
     <section id="tab-cart" hidden>
       <h2>Cart &amp; place order</h2>
       <table><thead><tr><th>Item</th><th>Qty</th><th></th></tr></thead><tbody id="cart-table"></tbody></table>
@@ -98,29 +96,23 @@
       <div id="order-err" class="err"></div>
     </section>
 
-    <!-- ORDERS -->
     <section id="tab-orders" hidden>
       <h2>Orders</h2>
       <table><thead><tr><th>Id</th><th>Total</th><th>Status</th><th></th></tr></thead>
         <tbody id="orders-table"></tbody></table>
     </section>
 
-    <!-- INQUIRIES -->
     <section id="tab-inquiries" hidden>
       <h2>Inquiries</h2>
       <div id="inquiries-list"></div>
     </section>
 
-    <!-- DISPUTES (admin) -->
     <section id="tab-disputes" hidden>
       <h2>Disputes</h2>
       <table><thead><tr><th>Order</th><th>Reason</th><th>Jev</th><th>Status</th><th></th></tr></thead>
         <tbody id="disputes-table"></tbody></table>
     </section>
 
-    <!-- RETURNS (admin, folded into orders actions) -->
-
-    <!-- LEDGER -->
     <section id="tab-ledger" hidden>
       <h2>Ledger</h2>
       <div id="ledger-view"></div>
@@ -222,7 +214,6 @@ async function showApp() {
   renderTabs();
 }
 
-// ---- listings ----
 async function createListing() {
   const title = document.getElementById('l-title').value;
   const description = document.getElementById('l-desc').value;
@@ -271,7 +262,6 @@ async function askVendor(id) {
   alert('Sent.');
 }
 
-// ---- cart / orders ----
 function refreshCart() {
   document.getElementById('cart-table').innerHTML = cart.map((c, i) => {
     const l = listingsById[c.listing_id] || {};
@@ -338,7 +328,6 @@ async function openDispute(id) {
   refreshOrders();
 }
 
-// ---- inquiries ----
 async function refreshInquiries() {
   const r = await api('/api/inquiries');
   const list = r.inquiries || [];
@@ -365,7 +354,6 @@ async function reply(id) {
   refreshInquiries();
 }
 
-// ---- disputes (admin) ----
 async function refreshDisputes() {
   const r = await api('/api/disputes');
   document.getElementById('disputes-table').innerHTML = (r.disputes || []).map(d => {
@@ -383,7 +371,6 @@ async function resolveDispute(id, resolution) {
   refreshDisputes();
 }
 
-// ---- ledger ----
 async function refreshLedger() {
   const el = document.getElementById('ledger-view');
   if (role() === 'admin') {

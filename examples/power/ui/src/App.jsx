@@ -22,10 +22,9 @@ function App() {
   const handleCalculate = async () => {
     if (!token) return;
     
-    // Simulating backend call with token validation
-    // In a real app, this would be an HTTP request to the backend passing the token
+    // Simulated client-side; a real app would send the token to the backend.
     const kwh = (parseFloat(wattage || 0) * parseFloat(hours || 0)) / 1000;
-    setCost(kwh * 0.15); // The backend would calculate this
+    setCost(kwh * 0.15);
   };
 
   if (!token) {
@@ -74,7 +73,6 @@ function App() {
     <div className="min-h-screen bg-gray-100 p-4">
       <div className="max-w-2xl mx-auto">
         <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-          {/* Header */}
           <div className="bg-blue-600 p-6 flex justify-between items-center">
             <div className="flex items-center space-x-3">
               <Zap className="w-6 h-6 text-white" />
@@ -89,7 +87,6 @@ function App() {
             </button>
           </div>
 
-          {/* Body */}
           <div className="p-6 md:p-8">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-4">
@@ -125,7 +122,6 @@ function App() {
                 </button>
               </div>
 
-              {/* Results */}
               <div className="bg-gray-50 rounded-lg border border-gray-100 p-6 flex flex-col justify-center items-center text-center">
                 <h3 className="text-sm font-medium text-gray-500 mb-2">Estimated Cost</h3>
                 {cost !== null ? (

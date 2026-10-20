@@ -1,18 +1,4 @@
-//! `agent-gateway` — HTTP in, the agent runtime out.
-//!
-//! Config (`wasi:config/store`, set per deployment):
-//!   runtime-url   where the agent runtime listens, e.g. `http://127.0.0.1:8017`
-//!   agent         which agent this deployment fronts
-//!
-//! W3C Trace Context passes straight through: an incoming `traceparent` (and
-//! `tracestate`) is forwarded to the runtime, so the agent's run joins the
-//! caller's trace, and the run's own `traceparent` comes back on the response.
-//!
-//! `GET /ping` is forwarded as a liveness check that costs no model call.
-//!
-//! The caller chooses only the task text (`?q=` or a POST body). It does NOT
-//! choose the path: the agent name comes from config, so a request to one
-//! agent's hostname can never reach another agent or the runtime's admin API.
+//! The agent name comes from config, never the request, so a caller cannot reach another agent or the admin API.
 #[allow(warnings)]
 mod bindings;
 
@@ -29,8 +15,7 @@ guestio::guest_write_all!();
 
 struct Component;
 
-/// An agent run can take a while (model + tools); a caller would rather wait
-/// than get an error while the agent is mid-thought.
+// A run (model + tools) can take minutes; a caller would rather wait than get an error.
 const TIMEOUT_NS: u64 = 120_000_000_000;
 const MAX_BODY: usize = 1 << 20;
 
@@ -64,26 +49,21 @@ fn parse_url(url: &str) -> Option<(Scheme, String, String)> {
     }
 }
 
-/// The raw (still percent-encoded) `q=` pair of a query string, if any.
 fn raw_q(path_with_query: &str) -> Option<&str> {
     let query = path_with_query.split_once('?')?.1;
     query.split('&').find(|p| p.starts_with("q="))
 }
 
-/// What came back from the runtime.
 struct Reply {
     status: u16,
     body: Vec<u8>,
-    /// The run's own `traceparent`, to hand back to the caller.
     traceparent: Option<Vec<u8>>,
 }
 
-/// The first value of header `name`, if present.
 fn first_header(h: &Fields, name: &str) -> Option<Vec<u8>> {
     h.get(&name.to_string()).into_iter().next()
 }
 
-/// The runtime's reply, or an error for the caller.
 fn forward(request: &IncomingRequest) -> Result<Reply, (u16, String)> {
     let cfg = |k: &str| config::get(k).ok().flatten().filter(|v| !v.is_empty());
     let runtime =
@@ -108,8 +88,7 @@ fn forward(request: &IncomingRequest) -> Result<Reply, (u16, String)> {
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"text/plain".to_vec()]);
-    // Join the caller's trace. `request.headers()` is a child of `request`;
-    // it is dropped at the end of this block, before anything else is touched.
+    // Scoped: `request.headers()` is a child resource and must drop before `request` is used again.
     {
         let incoming_headers = request.headers();
         for name in ["traceparent", "tracestate"] {
@@ -149,9 +128,7 @@ fn forward(request: &IncomingRequest) -> Result<Reply, (u16, String)> {
         let h = resp.headers();
         first_header(&h, "traceparent")
     };
-    // The body must outlive its stream: dropping a parent resource while a
-    // child still exists traps with "resource has children". `body` is
-    // declared first, so it is dropped last.
+    // `body` must outlive its stream: dropping a parent with live children traps.
     let body = resp.consume().ok();
     let bytes = match body.as_ref().and_then(|b| b.stream().ok()) {
         Some(s) => {

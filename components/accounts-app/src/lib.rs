@@ -1,12 +1,4 @@
-//! HTTP JSON register/login app. Owns NO auth logic — it maps HTTP onto the
-//! auth:identity contract:
-//!
-//!   POST /register {email,password,tenant?}  -> 201 {subject,tenant}
-//!   POST /login    {email,password,tenant?}  -> 200 {access_token,refresh_token,...}
-//!   GET  /me       (Authorization: Bearer)   -> 200 {subject,tenant,roles}
-//!   POST /logout   (Authorization: Bearer)   -> 204
-//!
-//! /me and /logout use the session token returned by /login.
+//! Owns no auth logic: it maps HTTP onto the auth:identity contract.
 
 #[allow(warnings)]
 mod bindings;
@@ -126,9 +118,6 @@ struct VerifyReq {
     action: String,
 }
 
-/// Generic guard endpoint for downstream apps: verify the bearer token AND
-/// require permission {target, action}. 200 + principal if allowed, 403 if
-/// authenticated-but-unauthorized, 401 on bad/expired token.
 fn verify(request: &IncomingRequest) -> Outcome {
     let token = match bearer_token(request) {
         Some(t) => t,
@@ -149,9 +138,7 @@ fn verify(request: &IncomingRequest) -> Outcome {
     }
 }
 
-// NOTE: these routes are UNAUTHENTICATED in this example for simplicity. In a
-// real deployment, guard them (e.g. `authorizer.authorize(token, {target:
-// "rbac", action: "admin"})`) or expose them only on an internal network.
+// Unauthenticated for the example's simplicity: guard these, or keep them internal, in a real deployment.
 
 #[derive(Deserialize)]
 struct PermDto {
@@ -173,7 +160,6 @@ struct AssignRoleReq {
     role: String,
 }
 
-/// POST /admin/role-permissions — define what a role grants. 204 on success.
 fn admin_set_role_perms(request: &IncomingRequest) -> Outcome {
     let body = match read_body(request) {
         Ok(b) => b,
@@ -194,7 +180,6 @@ fn admin_set_role_perms(request: &IncomingRequest) -> Outcome {
     }
 }
 
-/// POST /admin/assign-role — grant a role to a subject. 204 on success.
 fn admin_assign_role(request: &IncomingRequest) -> Outcome {
     let body = match read_body(request) {
         Ok(b) => b,
@@ -215,8 +200,7 @@ fn parse_credentials(request: &IncomingRequest) -> Result<Credentials, String> {
     serde_json::from_slice(&body).map_err(|e| format!("bad json: {e}"))
 }
 
-/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
-/// guest traps and the caller just sees a closed connection.
+/// Backstop below wasmtime's 64 MiB per-store cap, past which the guest traps.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_read_body!(MAX_BODY_BYTES);

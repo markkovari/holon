@@ -1,13 +1,4 @@
-//! `anthropic-vision` — show a model a picture and get back what it says, over Anthropic's Messages API
-//!
-//! The provider half of `vision:describe`: a guest hands over image bytes and a prompt
-//! and never learns which vendor looked. Egress to exactly one authority, the key
-//! REVEALED from the vault (not read from config), model chosen at deploy time.
-//!
-//! The base URL is config (`vision:base-url`), so a deployment can point at
-//! `tools/claude-shim.mjs` (same `/v1/messages` subset, image blocks included) and run
-//! on a subscription with NO key in the tenant. The key is required only against the
-//! real API. The prompt comes from the caller because the caller must parse the answer.
+//! The prompt comes from the caller because the caller must parse the answer.
 
 #[allow(warnings)]
 mod bindings;
@@ -27,13 +18,10 @@ struct Component;
 const DEFAULT_MODEL: &str = "claude-sonnet-5";
 const DEFAULT_BASE: &str = "https://api.anthropic.com";
 
-/// A ceiling on what is held in memory, not a policy: past this the read gives up
-/// rather than growing until the store's memory cap traps the component and the
-/// connection simply closes.
+/// Backstop below wasmtime's 64 MiB per-store cap, past which the guest traps.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-/// What Anthropic's vision accepts, checked here: the far end's error for an unsupported
-/// type is a 400 about a field, a bad place to learn a `.heic` was uploaded.
+/// Checked here: the far end's 400 about a field is a bad place to learn a `.heic` was uploaded.
 const MEDIA_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 fn model() -> String {
@@ -52,8 +40,7 @@ fn base_url() -> String {
         .unwrap_or_else(|| DEFAULT_BASE.to_string())
 }
 
-/// Split a base URL into (https?, authority, path-prefix); handles only what a
-/// deployment writes in config.
+/// Handles only what a deployment writes in config.
 fn split_base(base: &str) -> (bool, String, String) {
     let (tls, rest) = match base.split_once("://") {
         Some(("http", r)) => (false, r),
@@ -67,8 +54,7 @@ fn split_base(base: &str) -> (bool, String, String) {
     (tls, authority.to_string(), path.to_string())
 }
 
-/// Whether a key is REQUIRED: the real API refuses without one, the shim ignores auth,
-/// so a deployment pointed at a shim needs no secret.
+/// The real API refuses without a key; the shim ignores auth, so it needs no secret.
 fn key_required(authority: &str) -> bool {
     authority.ends_with("anthropic.com")
 }
@@ -109,8 +95,7 @@ fn post(body: &[u8]) -> Result<(u16, Vec<u8>), String> {
     }
     let opts = RequestOptions::new();
     let _ = opts.set_connect_timeout(Some(30_000_000_000));
-    // A vision call on a large photograph is slow; a shorter timeout fails on exactly
-    // the pictures worth sending.
+    // Large photographs are slow; a shorter timeout fails on exactly the pictures worth sending.
     let _ = opts.set_first_byte_timeout(Some(180_000_000_000));
     let _ = opts.set_between_bytes_timeout(Some(180_000_000_000));
 
@@ -145,7 +130,6 @@ fn post(body: &[u8]) -> Result<(u16, Vec<u8>), String> {
     Ok((status, buf))
 }
 
-/// The request: the picture, then what to do with it. The dialect is `holon-llm`'s (ADR-0116).
 fn request_body(model: &str, media_type: &str, image: Vec<u8>, prompt: &str) -> String {
     let messages = [Message::new(
         Role::User,
@@ -158,8 +142,7 @@ fn request_body(model: &str, media_type: &str, image: Vec<u8>, prompt: &str) -> 
     anthropic::body(&request).to_string()
 }
 
-/// What the model wrote: every text block, joined. A model may answer in several, and taking only
-/// the first silently truncates a reply in the middle of its JSON.
+/// Joins every text block: taking only the first truncates a reply mid-JSON.
 fn reply_text(bytes: &[u8]) -> String {
     anthropic::parse(bytes).map(|reply| reply.text).unwrap_or_default()
 }
@@ -171,7 +154,8 @@ mod tests {
 
     #[test]
     fn the_request_is_the_picture_then_what_to_do_with_it() {
-        let body = request_body("claude-x", "image/png", b"\x00\xffabc".to_vec(), "what is \"it\"?\n");
+        let body =
+            request_body("claude-x", "image/png", b"\x00\xffabc".to_vec(), "what is \"it\"?\n");
         let body: serde_json::Value = serde_json::from_str(&body).expect("the body is JSON");
         assert_eq!(
             body,
@@ -199,7 +183,10 @@ mod tests {
 
     #[test]
     fn a_reply_with_no_text_is_empty_and_so_is_one_that_is_not_json() {
-        assert_eq!(reply_text(json!({"content": [{"type": "thinking"}]}).to_string().as_bytes()), "");
+        assert_eq!(
+            reply_text(json!({"content": [{"type": "thinking"}]}).to_string().as_bytes()),
+            ""
+        );
         assert_eq!(reply_text(b"not json"), "");
     }
 }
@@ -223,9 +210,7 @@ impl Guest for Component {
                 MEDIA_TYPES.join(", ")
             )));
         }
-        // Refused HERE, and only when a key is needed (not for a shim): the far end's
-        // 401 about `x-api-key` would read as a bug in this component rather than a
-        // secret that was never granted.
+        // Refused here, and only when a key is needed: the far end's 401 would read as a bug in this component.
         let (_, authority, _) = split_base(&base_url());
         if key_required(&authority) && api_key().is_none() {
             return Err(DescribeError::ProviderDenied(format!(
@@ -243,8 +228,6 @@ impl Guest for Component {
 
         if status != 200 {
             let detail = parsed["error"]["message"].as_str().unwrap_or("no message").to_string();
-            // 401/403 is a deployment problem, 429 and 5xx are worth retrying, a 400 is
-            // this request.
             return Err(match status {
                 400 => DescribeError::InvalidRequest(detail),
                 401 | 403 => DescribeError::ProviderDenied(detail),
@@ -256,8 +239,7 @@ impl Guest for Component {
         let text = reply_text(&bytes);
 
         if text.trim().is_empty() {
-            // It looked and said nothing — a safety filter, or an empty reply. Not a
-            // transport failure, and not something a retry fixes.
+            // A safety filter or empty reply: not a transport failure, and no retry fixes it.
             return Err(DescribeError::NoContent);
         }
         Ok(text)

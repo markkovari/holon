@@ -1,6 +1,4 @@
-// In-cluster HTTP bench: runs inside a pod, hits the host pod IP directly, so
-// there is no flaky port-forward. Prints a single JSON line (RESULTS:{...}) the
-// outer script greps from pod logs. TARGET env = http://<host-pod-ip>:8001.
+// Runs inside a pod against TARGET=http://<host-pod-ip>:8001: no flaky port-forward.
 
 const BASE = process.env.TARGET;
 const ITERS = Number(process.env.ITERS ?? 120);

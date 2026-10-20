@@ -6,8 +6,7 @@ license = "MIT"
 publish = false
 description = "Native Rust host for ANY composed wasm component: serves its wasi:http/incoming-handler over wasmtime and satisfies its wasi:keyvalue / wasi:config / wasi:blobstore imports host-side. No Kubernetes, no NATS required."
 
-# This is a NATIVE binary (aarch64/x86_64), NOT a wasm component — it is its own
-# crate, deliberately OUTSIDE the components/ (wasm32) workspace.
+# Native binary, deliberately outside the components/ (wasm32) workspace.
 [workspace]
 
 [[bin]]
@@ -16,68 +15,40 @@ path = "src/main.rs"
 
 [dependencies]
 # PINNED TO 45 BY wrpc-runtime-wasmtime, not by choice.
-#
-# wrpc 0.31 builds against wasmtime 45; taking 47 would put two incompatible
-# `Store`/`Linker`/`Component` types in one tree, which is the same shape of
-# problem the old `nats`/`rand` conflict was. Downgrading cost nothing measurable
-# — every API this host uses is identical across 45 and 47, and the whole suite
-# passed unchanged — so the cheap direction is to follow wrpc and bump when it
-# does, rather than reimplement its wasmtime glue to stay one minor ahead.
-#
-# Bump all four together when wrpc supports a newer one.
+# wrpc 0.31 builds against 45 and two wasmtimes mean incompatible types; bump all four together with wrpc.
 wasmtime = { version = "45", features = ["component-model", "async"] }
-# `p3` is opt-in on 45 (default from 49). 45 implements the
-# `0.3.0-rc-2026-03-15` WIT, not final `0.3.0` — a p3 guest must be built
-# against the rc until wrpc lets this host move past 45.
+# `p3` is opt-in on 45 and implements the `0.3.0-rc-2026-03-15` WIT, so p3 guests build against that rc.
 wasmtime-wasi = { version = "45", features = ["p3"] }
 wasmtime-wasi-http = { version = "45", features = ["p3", "component-model-async"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "signal"] }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
-# Fetching a granted secret from the platform (ADR-0051). rustls rather than the
-# system store so a node needs no OpenSSL wherever it is installed.
+# rustls: a node needs no system OpenSSL.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 # For SurrealKv: values are arbitrary bytes, SurrealQL string literals are not.
 base64 = "0.22"
-# `reqwest::blocking` spins up its own tokio runtime, which panics when called
-# from inside one that's already running (every KvBackend method is sync, but
-# the host itself is async) — SurrealKv needs a client with no such conflict.
+# Sync client for KvBackend: `reqwest::blocking` panics inside a running tokio runtime.
 ureq = { version = "2", features = ["json", "tls"] }
 http-body-util = "0.1"
 bytes = "1"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-# TLS (rustls + webpki roots) so `--kv redis` can dial managed `rediss://`
-# endpoints (DO Managed Valkey, Upstash, …) from a minimal container.
+# rustls + webpki roots: dial managed `rediss://` endpoints from a minimal container.
 redis = { version = "1.5", features = ["tls-rustls", "tls-rustls-webpki-roots"] }
-# The fabric between a node and the reconciler, as three traits (inventory,
-# commands, artifacts) with one implementation over NATS. The host holds
-# `Arc<dyn ...>` and never names a broker.
 comp-lattice = { path = "../lattice" }
-# Still direct for `--kv nats`, which is a STORE and not the transport — see
-# docs/adr/0027 on why conflating those two was the mistake.
+# Direct only for `--kv nats`, a store and not the transport (ADR-0027).
 async-nats = "0.49"
 futures = "0.3"
-# `bundled` compiles SQLite itself: no system libsqlite3 to match, which keeps the
-# static musl cross-build for a VPS working (`cross build --release --target x86_64-unknown-linux-musl`, docs/SELFHOST.md).
+# `bundled`: no system libsqlite3, which keeps the static musl cross-build working.
 rusqlite = { version = "0.32", features = ["bundled"] }
-# Artifacts are content-addressed; the digest is verified before anything is
-# compiled, because the object store is not a trust boundary and the digest is.
+# Digests are verified before compiling: the object store is not a trust boundary.
 sha2 = "0.10"
-# `--blob s3`: signs S3 requests (R2, S3, RustFS, MinIO) and does nothing else —
-# sans-IO, so the sync `ureq` client above sends them from inside a KvBackend.
+# Sans-IO S3 signing, so the sync `ureq` client sends from inside a KvBackend.
 rusty-s3 = "0.10"
 url = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Component-native RPC: the component model's own value encoding on the wire,
-# with dynamic (runtime type introspection) invocation — which is exactly what
-# binding an unsatisfied import at start time needs. This replaces a hand-rolled
-# `Val` <-> JSON codec that was going to be a worse version of something already
-# specified, and that could not represent the type set faithfully anyway.
-#
-# It is a bytecodealliance project rather than a wasmCloud one: adopting it does
-# not re-adopt the provider model ADR-0012 was about.
+# Component-model value encoding with dynamic invocation, for binding unsatisfied imports at start.
 wrpc-runtime-wasmtime = "0.31"
 wrpc-transport-nats = "0.31"
 wrpc-transport = "0.29"

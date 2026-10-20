@@ -1,20 +1,7 @@
-// holon-calendar: the Calendar connector for the agent runtime, over EventKit.
-//
-// EventKit reads every calendar the Mac has — iCloud, Google, Exchange, subscribed — so
-// adding a Google account in System Settings > Internet Accounts (Calendars on) makes it
-// available here, with no OAuth app of our own.
-//
-//   holon-calendar calendars                       stdin ignored
-//   holon-calendar list     {"from":"2026-10-06","to":"2026-10-13","calendar":"Work"}
-//   holon-calendar add      {"title":"Row","start":"2026-10-07T06:30","end":"2026-10-07T07:30",
-//                            "calendar":"Home","notes":"UT2"}
-//
-// Dates are ISO 8601 in local time ("2026-10-07" or "2026-10-07T06:30"). Output is plain text.
-// First run asks macOS for Calendar access: run it once from a terminal and allow it.
-//
+// EventKit sees every account in System Settings > Internet Accounts, so Google needs no OAuth app of our own.
+// The first run asks for Calendar access: run it once from a terminal and allow it.
 // Build:  swiftc -parse-as-library -O -o holon-calendar holon-calendar.swift \
 //           -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker calendar-info.plist
-
 import EventKit
 import Foundation
 

@@ -1,5 +1,3 @@
-//! The provider-neutral shapes both dialects are written from and read into.
-
 use std::fmt;
 
 use base64::engine::general_purpose::STANDARD as B64;
@@ -7,7 +5,6 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// A tool call the model made.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Call {
     pub id: String,
@@ -15,7 +12,6 @@ pub struct Call {
     pub input: Value,
 }
 
-/// What a tool call came to, handed back to the model.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ToolResult {
     pub call_id: String,
@@ -23,7 +19,6 @@ pub struct ToolResult {
     pub is_error: bool,
 }
 
-/// A picture that goes to the model with a message.
 #[derive(Clone, PartialEq)]
 pub struct Image {
     /// `image/jpeg`, `image/png`, `image/webp` or `image/gif`.
@@ -49,8 +44,7 @@ impl Image {
     }
 }
 
-/// Who spoke. The system prompt is not a message: it is `Request::system`, because one dialect puts it
-/// in the list and the other beside it.
+/// No system role: one dialect lists the system prompt and the other puts it beside, so it is `Request::system`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Role {
     User,
@@ -66,15 +60,13 @@ impl Role {
     }
 }
 
-/// One piece of a message. Parts keep the order the caller gave them: some dialects want the pictures
-/// before the words about them and some after, and that is the caller's to say.
+/// Order is kept as given: dialects disagree on whether pictures go before or after the words.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Part {
     Text(String),
     Image(Image),
-    /// An assistant's tool call.
     ToolUse(Call),
-    /// A tool's answer, which travels in a user message.
+    /// Travels in a user message.
     ToolResult(ToolResult),
 }
 
@@ -98,7 +90,6 @@ impl Message {
     }
 }
 
-/// A tool the model may call: a name, what it is for, and the JSON Schema of its input.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tool {
     pub name: String,
@@ -106,11 +97,7 @@ pub struct Tool {
     pub schema: Value,
 }
 
-/// Token counts of one reply, priced apart by the caller: pricing is not the wire's business.
-///
-/// `input` is what was read fresh. The prompt as a whole is `total_input()`: Anthropic reports the
-/// cached prefix beside `input_tokens`, OpenAI reports cached tokens as a subset of `prompt_tokens`,
-/// and both are normalised here to the same four numbers.
+/// `input` excludes cached tokens in both dialects (OpenAI's `prompt_tokens` includes them).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Usage {
     pub input: u64,
@@ -120,39 +107,32 @@ pub struct Usage {
 }
 
 impl Usage {
-    /// Every prompt token, however it was billed.
     pub fn total_input(&self) -> u64 {
         self.input.saturating_add(self.cache_read).saturating_add(self.cache_write)
     }
 }
 
-/// What a model said, in either dialect.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Reply {
-    /// All the text, in order, with nothing else mixed in (no tool calls, no thinking).
+    /// No tool calls or thinking mixed in.
     pub text: String,
     pub calls: Vec<Call>,
-    /// The provider's own reason it stopped (`end_turn`, `max_tokens`, `tool_use`, `stop`, `length`,
-    /// `tool_calls`, …), as it said it.
+    /// The provider's own word (`end_turn`, `length`, …), not normalised.
     pub finish: Option<String>,
     pub model: String,
     pub usage: Usage,
 }
 
 impl Reply {
-    /// The model ran out of tokens, in either dialect's word for it.
     pub fn hit_token_limit(&self) -> bool {
         matches!(self.finish.as_deref(), Some("max_tokens") | Some("length"))
     }
 }
 
-/// Why a response could not be read.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ParseError {
-    /// Not the JSON the dialect promises.
     Malformed(String),
-    /// The provider answered with an error, possibly under a success status (Anthropic does when it
-    /// throttles) or in the middle of a stream.
+    /// Also sent under a success status (Anthropic when it throttles) or mid-stream.
     Api(String),
 }
 
@@ -167,27 +147,21 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-/// One request, written once and encoded for either dialect.
 pub struct Request<'a> {
     pub model: &'a str,
     pub system: Option<&'a str>,
     pub messages: &'a [Message],
     pub tools: &'a [Tool],
-    /// Anthropic requires it (a request without is a 400), so its encoder falls back to
-    /// [`crate::anthropic::DEFAULT_MAX_TOKENS`]; OpenAI leaves it to the server when unset.
+    /// Anthropic requires it, so its encoder falls back to [`crate::anthropic::DEFAULT_MAX_TOKENS`].
     pub max_tokens: Option<u32>,
-    /// A JSON number as the server will read it: pass `0.7`, not a fraction of a thousand.
     pub temperature: Option<f64>,
     pub stop: &'a [String],
     /// OpenAI only; Anthropic's API has none.
     pub seed: Option<u64>,
     pub stream: bool,
-    /// Anthropic only: mark the system block as a cache breakpoint and ask for automatic caching of
-    /// the growing tail. The system prompt is the part identical across every call.
+    /// Anthropic only: cache breakpoint on the system block plus automatic caching of the tail.
     pub cache: bool,
-    /// Anthropic only: write every message's content as a list of blocks, even a lone piece of text.
-    /// The API takes either form; a server that stands in for it and reads only blocks needs this
-    /// (this repository's `tools/claude-shim.mjs` is one).
+    /// Anthropic only: content always as blocks, for stand-ins that read only blocks (`tools/claude-shim.mjs`).
     pub blocks: bool,
 }
 
@@ -209,8 +183,7 @@ impl<'a> Request<'a> {
     }
 }
 
-/// Tool arguments as the model sent them. Unparseable JSON is kept, as a string under `_raw`, so the
-/// tool fails on it visibly instead of silently.
+/// Unparseable JSON is kept under `_raw` so the tool fails on it visibly.
 pub fn parse_args(json: &str) -> Value {
     if json.trim().is_empty() {
         return serde_json::json!({});

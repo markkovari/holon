@@ -1,11 +1,3 @@
-//! `selfhost` — renders one app spec into the three files a box needs to serve it:
-//! a systemd unit, an environment file, and a reverse-proxy site with automatic TLS.
-//!
-//! Tier 1 of `docs/SELFHOST.md`: `comp-host` + systemd + Caddy (or Traefik). Like the
-//! platform's `render.rs`, a pure function from an app definition to the artifacts a
-//! substrate needs, so port collisions, unescaped values and misrouted proxies are
-//! caught by tests rather than on a box.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -13,140 +5,78 @@ use anyhow::{bail, Result};
 use clap::ValueEnum;
 use serde::Deserialize;
 
-/// One application, as a person writes it. The only hand-authored file in the lane.
 #[derive(Debug, Deserialize)]
 pub struct Spec {
-    /// DNS-label name. Becomes the unit name, the state directory and the route id.
     pub name: String,
-    /// The URL this app answers on. The whole point of the tier — one hostname per
-    /// app, TLS handled by the proxy.
     pub domain: String,
-    /// The composed `.wasm` to serve, relative to the repo root
-    /// (`cargo xtask compose <app>` produces these).
+    /// Relative to the repo root; `cargo xtask compose <app>` produces it.
     pub artifact: String,
 
-    /// Loopback port. Derived from the name when absent, so a spec need not carry
-    /// bookkeeping — but an explicit one always wins, and `validate` refuses
-    /// duplicates either way.
+    /// Derived from the name when absent; `validate` refuses duplicates either way.
     #[serde(default)]
     pub port: Option<u16>,
-    /// Where the app is mounted under `--router tailscale-serve`. Defaults to
-    /// `/<name>`, because that router gets ONE hostname per machine and apps have
-    /// to share it.
-    ///
-    /// A single-page app cannot take that default. Its `/api/...` calls and its
-    /// `/assets/...` bundle are absolute, so mounted under `/events` every one of
-    /// them misses — the page loads and nothing on it works, which is a worse
-    /// failure than not deploying. Set `mount = "/"` on the one app that owns a
-    /// box. Ignored by the other routers, which give a hostname per app and have
-    /// no such choice to make.
+    /// The `--router tailscale-serve` mount, `/<name>` by default since apps share one hostname.
+    /// An SPA needs `mount = "/"`: its absolute `/api` and `/assets` paths miss under a prefix.
     #[serde(default)]
     pub mount: Option<String>,
-    /// `sqlite` (default: one file under `StateDirectory`, survives a restart),
-    /// `memory` (lost on restart — honest only for caches), `redis` or `nats`.
     #[serde(default = "default_kv")]
     pub kv: String,
-    /// Backend URL for `kv = "redis" | "nats"`. `sqlite` and `memory` need none.
     #[serde(default)]
     pub kv_url: Option<String>,
-    /// Optional built SPA directory to serve for non-API GETs.
     #[serde(default)]
     pub static_dir: Option<String>,
-    /// Pre-reserve instance slots. On by default, as on the host itself — `false`
-    /// emits `comp-host --no-pool`. Measured at 3.1× with storage out of the way
-    /// (ADR-0057), so turning it off wants a reason.
+    /// `false` emits `--no-pool`; pooling measured 3.1x faster (ADR-0057).
     #[serde(default = "default_true")]
     pub pooling: bool,
 
-    /// Who can reach it. Defaults to `tailnet` — a forgotten field must not be the
-    /// reason an app ends up on the public internet.
-    ///
-    /// * `tailnet` — bound to the box's Tailscale address only, HTTPS from Caddy's
-    ///   own local CA (`tls internal`). No public DNS, no ACME, no DNS provider.
-    /// * `public`  — bound to every interface, certificate from Let's Encrypt over
-    ///   HTTP-01. For the few things strangers must reach.
+    /// `tailnet` (default, fail closed: Tailscale address, Caddy's local CA) or `public` (ACME).
     #[serde(default = "default_access")]
     pub access: String,
 
-    /// `wasi:config` keys the component reads, delivered as `CFG_*` env.
     #[serde(default)]
     pub config: BTreeMap<String, String>,
 
-    /// Component ids and strategy, for the Kubernetes lane (tier 3). Unused here,
-    /// and present so that moving a spec up a tier is not a rewrite.
+    /// For tier 3 (Kubernetes); present so moving a spec up a tier is not a rewrite.
     #[serde(default)]
     pub components: Vec<String>,
-    // Read (by tier 3) and round-tripped (by this file's own test), never by
-    // this tier's renderer — see the doc comment above.
+    // Read by tier 3 and round-tripped by this file's test, never by this renderer.
     #[serde(default)]
     #[allow(dead_code)]
     pub strategy: Option<String>,
 
-    /// What drives this app's timers and topics, if anything does.
-    ///
-    /// `sched:timer`, `event:bus` and `cron:expr` are all PULL — each says in its
-    /// own WIT that a relay must drive it. An app that imports one of them and has
-    /// no `[triggers]` table is an app whose timers never fire, so this is where a
-    /// deployment says "and run the poker too".
+    /// `sched:timer`, `event:bus` and `cron:expr` are pull: without a relay, timers never fire.
     #[serde(default)]
     pub triggers: Option<Triggers>,
 
-    /// The native daemons behind ADR-0095's twelve host capabilities that this
-    /// app's component dials over loopback HTTP (`comp-fswatch`, `comp-docker`,
-    /// ...). A component with no daemon started answers `unavailable` forever —
-    /// this is where a deployment says "and start those too".
+    /// Native daemons (ADR-0095) the component dials over loopback; absent, it answers `unavailable`.
     #[serde(default, rename = "daemon")]
     pub daemons: Vec<Daemon>,
 }
 
-/// One native daemon this app needs running alongside it.
-///
-/// Deliberately carries only what a DEPLOYMENT decides — where it listens and
-/// what it may touch — not what the daemon defaults to on its own: that lives
-/// in the daemon's own package (`reconciler/`, ADR-0115) and this file has no
-/// business knowing all twelve of them, the same reason `Spec` does not know what `comp-host`
-/// itself defaults to.
+/// Only what a deployment decides; daemon defaults live in the daemon's package (ADR-0115).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Daemon {
-    /// `comp-<name>` is the binary; `<name>-url` is the `[config]` key this
-    /// daemon's own component reads. `check()` refuses a daemon whose `addr`
-    /// disagrees with that key — the two are written in two different places
-    /// on purpose (one is "where a process listens", the other is "what a
-    /// wasm guest was told"), and nothing stops them drifting apart by hand.
+    /// `comp-<name>` is the binary; `check()` makes `addr` agree with `[config]`'s `<name>-url`.
     pub name: String,
-    /// Where it listens. Absent makes it a WORKER: a daemon that listens on nothing and that
-    /// no component dials (`comp-resume`, ADR-0106, which pulls from NATS and pushes to a
-    /// sink). A worker is rendered without `--addr`, has no `<name>-url` for `check()` to
-    /// agree with and no token to require, and is not something the app's own unit is
-    /// given egress to: there is nothing there to reach.
+    /// Absent makes it a worker that listens on nothing (`comp-resume`, ADR-0106): no `--addr`,
+    /// no `<name>-url`, no token, no egress from the app.
     #[serde(default)]
     pub addr: Option<String>,
-    /// The flag name for this daemon's own allow-list, if it has one —
-    /// `allow-path`, `allow-host`, `allow-cidr`, `allow-interface`. Named
-    /// rather than inferred: only the caller knows which one its daemon
-    /// takes, and four of the twelve take none at all.
+    /// Named, not inferred: only the caller knows which allow-list flag its daemon takes.
     #[serde(default)]
     pub allow_flag: Option<String>,
     #[serde(default)]
     pub allow: Vec<String>,
-    /// Any other flags this daemon needs, verbatim and already `--flag value`
-    /// shaped (`--ollama-url ...`, `--model ...`, `--max-width ...`).
+    /// Passed verbatim, already `--flag value` shaped.
     #[serde(default)]
     pub extra_args: Vec<String>,
-    /// Shared secret the daemon requires as `Authorization: Bearer <token>`.
-    /// Loopback binding alone is not a boundary — any other local process can
-    /// otherwise reach it with no caller-identity check at all. Absent means
-    /// the daemon runs with no check, same `check()`-enforced agreement with
-    /// `[config]`'s `<name>-token` as `addr` has with `<name>-url`.
+    /// Loopback alone is not a boundary; must agree with `[config]`'s `<name>-token`.
     #[serde(default)]
     pub token: Option<String>,
 }
 
-/// The unit file for a daemon: `comp-<name>.service`, except when the daemon is named like its
-/// own app (`park` and `comp-park`, `vcs` and `comp-vcs`). The app's unit is already
-/// `comp-<app>.service`, and writing both under that name put the daemon's text over the app's:
-/// a deployment with nothing serving the app, and a daemon unit that was `BindsTo` itself.
+/// `-daemon` suffix when named like its app, or it would overwrite the app's `comp-<app>.service`.
 pub fn daemon_unit_name(spec: &Spec, d: &Daemon) -> String {
     if d.name == spec.name {
         format!("comp-{}-daemon.service", d.name)
@@ -155,8 +85,6 @@ pub fn daemon_unit_name(spec: &Spec, d: &Daemon) -> String {
     }
 }
 
-/// Every unit file one spec renders: the app's, the relay's if it has `[triggers]`, and one per
-/// daemon.
 pub fn unit_names(spec: &Spec) -> Vec<String> {
     let mut v = vec![format!("comp-{}.service", spec.name)];
     if spec.triggers.is_some() {
@@ -166,17 +94,12 @@ pub fn unit_names(spec: &Spec) -> Vec<String> {
     v
 }
 
-/// The relay's half of an app spec.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Triggers {
-    /// The path to POST. Every app in this tree that drains anything calls it
-    /// `/internal/pump` (`saga-domain`, the four `eshop-*` services), so that is the
-    /// default and naming it is for the app that chose otherwise.
     #[serde(default = "default_pump")]
     pub pump: String,
-    /// Seconds between sweeps. The completeness path: it must be short enough that a
-    /// missed push is a delay rather than a stall.
+    /// Short enough that a missed push is a delay, not a stall.
     #[serde(default = "default_sweep")]
     pub interval: u64,
 }
@@ -189,9 +112,7 @@ fn default_sweep() -> u64 {
 }
 
 fn default_kv() -> String {
-    // sqlite, not memory: `Restart=always` means restarts are routine, so a default
-    // that silently loses data is the wrong one. comp-host puts the file in
-    // $STATE_DIRECTORY, which the unit already declares — so this needs no path.
+    // Durable default: `Restart=always` makes restarts routine; comp-host uses $STATE_DIRECTORY.
     "sqlite".into()
 }
 fn default_access() -> String {
@@ -212,7 +133,6 @@ pub enum Router {
     TailscaleServe,
 }
 
-/// Which background-job mechanism `comp-goald` gets rendered for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum GoaldFormat {
     /// A hardened unit for tier 1's own box: `docs/SELFHOST.md`'s
@@ -222,8 +142,6 @@ pub enum GoaldFormat {
     Launchd,
 }
 
-/// Where an app's files live on the box. One prefix, so removing an app is
-/// removing four paths rather than remembering four conventions.
 pub struct Layout {
     pub bin: PathBuf,
     pub app_dir: PathBuf,
@@ -247,12 +165,7 @@ fn is_dns_label(s: &str) -> bool {
         && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-/// A stable loopback port for an app that did not name one.
-///
-/// Deterministic so that rendering twice produces the same unit, and re-deploying
-/// does not silently move an app to a new port while the proxy still points at the
-/// old one. Collisions are possible in principle and `validate` is what catches
-/// them — a hash is a convenience, not a registry.
+/// Deterministic so a re-render never moves a running app; `validate` catches collisions.
 pub fn derived_port(name: &str) -> u16 {
     let mut h: u32 = 2166136261;
     for b in name.as_bytes() {
@@ -276,8 +189,6 @@ pub fn check(spec: &Spec) -> Result<()> {
     if !matches!(spec.access.as_str(), "tailnet" | "public") {
         bail!("access must be tailnet|public, got {:?}", spec.access);
     }
-    // A `.ts.net` name is issued by Tailscale and resolves only inside the tailnet;
-    // asking for a public Let's Encrypt certificate for it cannot work.
     if spec.access == "public" && spec.domain.ends_with(".ts.net") {
         bail!(
             "domain {:?} is a Tailscale name, which cannot be reached or certified publicly — use access = \"tailnet\"",
@@ -287,14 +198,10 @@ pub fn check(spec: &Spec) -> Result<()> {
     if !matches!(spec.kv.as_str(), "memory" | "sqlite" | "redis" | "nats") {
         bail!("kv must be memory|sqlite|redis|nats, got {:?}", spec.kv);
     }
-    // Only the network backends need an address. sqlite derives its path from the
-    // unit's StateDirectory, which is the point of it.
     if matches!(spec.kv.as_str(), "redis" | "nats") && spec.kv_url.is_none() {
         bail!("kv = {:?} needs kv_url", spec.kv);
     }
     for k in spec.config.keys() {
-        // These become `CFG_<UPPER_SNAKE>` env names; anything else would silently
-        // produce a variable the component cannot read.
         if k.is_empty()
             || !k.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         {
@@ -302,11 +209,7 @@ pub fn check(spec: &Spec) -> Result<()> {
         }
     }
     for d in &spec.daemons {
-        // `render_daemon_unit` interpolates these straight into `ExecStart=`.
-        // Operator-authored today, not attacker input — but `%` is a systemd
-        // specifier and a newline would inject a second directive, so a spec
-        // that somehow got machine-generated from something less trusted
-        // fails here rather than writing a unit that means something else.
+        // Interpolated into `ExecStart=`: `%` is a systemd specifier and a newline injects a directive.
         let clean = |v: &str| !v.contains('%') && !v.contains('\n');
         if !clean(&d.name)
             || !d.allow.iter().all(|a| clean(a))
@@ -315,9 +218,7 @@ pub fn check(spec: &Spec) -> Result<()> {
             bail!("daemon {:?}: name/allow/extra_args may not contain '%' or a newline", d.name);
         }
         let Some(addr) = &d.addr else {
-            // A worker listens on nothing: no component is told where it is, and there is
-            // no request for it to authenticate. Either would be a spec that means
-            // something the unit cannot do, so it is refused rather than half-honoured.
+            // A worker listens on nothing, so a token or a `<name>-url` would mean something the unit can't do.
             if d.token.is_some() {
                 bail!(
                     "daemon {:?} has no addr, so nothing connects to it and there is no token \
@@ -338,11 +239,7 @@ pub fn check(spec: &Spec) -> Result<()> {
         if !addr.contains(':') {
             bail!("daemon {:?} addr {:?} is not host:port", d.name, addr);
         }
-        // The unit binds `addr`; the component reads `<name>-url` from
-        // `[config]` to find it. Nothing enforces those agree by construction
-        // — they are written in two different tables for two different
-        // readers — so this is the one check standing between "the daemon is
-        // up" and "the component was never told where".
+        // The unit binds `addr`, the component reads `<name>-url`: nothing else makes them agree.
         let key = format!("{}-url", d.name);
         match spec.config.get(&key) {
             Some(v) if *v == format!("http://{addr}") => {}
@@ -353,14 +250,7 @@ pub fn check(spec: &Spec) -> Result<()> {
             ),
             None => bail!("daemon {:?} has no matching [config] {key}", d.name),
         }
-        // Same agreement as `addr`/`<name>-url`, for the same reason: `token`
-        // is what the unit passes the daemon on its command line, `<name>-token`
-        // is what `[config]` hands the wasm guest — nothing but this check
-        // stops the two drifting apart by hand. Absent on both sides is fine
-        // (the daemon runs with no auth, its own loud warning says so); present
-        // on one side and not the other is a component that will send a
-        // header the daemon does not expect, or a daemon that will reject a
-        // component sending none.
+        // Same for `token` vs `<name>-token`; absent on both sides means no auth.
         if let Some(want) = &d.token {
             let key = format!("{}-token", d.name);
             match spec.config.get(&key) {
@@ -376,8 +266,7 @@ pub fn check(spec: &Spec) -> Result<()> {
             }
         }
     }
-    // Units are files with one name each, and writing two under the same name keeps the last:
-    // quietly, and with nothing left to start for the one that lost.
+    // Two units under one file name: the last write silently wins.
     let mut seen = BTreeSet::new();
     for u in unit_names(spec) {
         if !seen.insert(u.clone()) {
@@ -390,11 +279,6 @@ pub fn check(spec: &Spec) -> Result<()> {
     Ok(())
 }
 
-/// The app's `wasi:config`, as `comp-host --config-file` reads it.
-///
-/// `key = value` and `--config-file`, not repeated `--config` flags: config holds
-/// things like an admin's address, and argv is world-readable in `ps`. The file is
-/// written 0600; root ownership depends on where the deploy step copies it.
 pub fn write_secret_file(path: &Path, content: &[u8]) -> Result<()> {
     std::fs::write(path, content)?;
     #[cfg(unix)]
@@ -410,8 +294,7 @@ pub fn render_env(spec: &Spec) -> String {
     s.push_str("# Generated by selfhost — do not edit; edit the app spec and re-deploy.\n");
     s.push_str("# `wasi:config` for this app, read by `comp-host --config-file`.\n");
     for (k, v) in &spec.config {
-        // One line per key, so a newline in a value would silently become a second
-        // key. It is the one character that has to go.
+        // One line per key, so a newline in a value would forge a second key.
         let clean = v.replace('\n', " ");
         s.push_str(&format!("{k} = {clean}\n"));
     }
@@ -429,24 +312,18 @@ pub fn render_unit(spec: &Spec, layout: &Layout) -> String {
         spec.kv
     );
     if let Some(url) = &spec.kv_url {
-        // comp-host names the URL flag after the backend.
         let flag = if spec.kv == "redis" { "--redis-url" } else { "--nats-url" };
         args.push_str(&format!(" {flag} {url}"));
     }
     if spec.static_dir.is_some() {
         args.push_str(&format!(" --static-dir {}/{}/static", layout.app_dir.display(), app));
     }
-    // Pooling is the default, so only `--no-pool` is emitted (ADR-0057). The test
-    // below catches a renamed flag, but only on a box that has the host built.
+    // Pooling is the default, so only `--no-pool` is emitted (ADR-0057).
     if !spec.pooling {
         args.push_str(" --no-pool");
     }
-    // comp-host denies all outbound HTTP by default, and its address check
-    // refuses loopback — so a component whose daemon was started beside it
-    // still answered `unavailable` without these. The allow-list is only the
-    // daemon addresses (IP literals, `check()` insists on host:port), so
-    // `--allow-private-egress` opens nothing a name could resolve into.
-    // Only the daemons that listen: a worker has nothing for the component to dial.
+    // comp-host denies egress and loopback by default; the allow-list is only daemon IP literals,
+    // so `--allow-private-egress` opens nothing a name could resolve into.
     let reachable: Vec<&str> = spec.daemons.iter().filter_map(|d| d.addr.as_deref()).collect();
     for addr in &reachable {
         args.push_str(&format!(" --egress {addr}"));
@@ -460,18 +337,8 @@ pub fn render_unit(spec: &Spec, layout: &Layout) -> String {
     s.push_str(&format!("[Unit]\nDescription=comp-host: {app} ({})\n", spec.domain));
     s.push_str("After=network-online.target\nWants=network-online.target\n\n");
     s.push_str("[Service]\nType=simple\n");
-    // Through a systemd CREDENTIAL, not a path.
-    //
-    // The config file is 0600 and owned by root, and this unit runs `DynamicUser=yes`
-    // — so the process cannot open it. `EnvironmentFile` could, because systemd reads
-    // that as root BEFORE dropping privileges; `--config-file` is opened by the
-    // process afterwards, and pointing it straight at /etc/comp gave
-    // `Permission denied (os error 13)` in a restart loop.
-    //
-    // `LoadCredential` is the mechanism for exactly this: systemd reads the file as
-    // root and drops a copy into a private directory the service can read and nobody
-    // else can. `%d` expands to that directory. The alternative — `--config k=v` on
-    // ExecStart — puts every value in `ps` for every user on the box.
+    // Via a systemd credential: the 0600 root-owned file is unreadable under DynamicUser, and
+    // `--config k=v` would put every value in `ps`. `%d` is the credential directory.
     if !spec.config.is_empty() {
         args.push_str(" --config-file %d/config");
     }
@@ -480,9 +347,6 @@ pub fn render_unit(spec: &Spec, layout: &Layout) -> String {
     }
     s.push_str(&format!("ExecStart={} {}\n", layout.bin.display(), args));
     s.push_str("Restart=always\nRestartSec=2\n");
-    // Hardening. Cheap, and this process runs code from a wasm artifact on a box
-    // reachable from the internet — `DynamicUser` gives it a throwaway uid and
-    // `StateDirectory` the one writable path it is allowed.
     s.push_str("DynamicUser=yes\n");
     s.push_str(&format!("StateDirectory=comp/{app}\n"));
     s.push_str("NoNewPrivileges=yes\n");
@@ -495,23 +359,14 @@ pub fn render_unit(spec: &Spec, layout: &Layout) -> String {
     s.push_str("RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\n");
     s.push_str("RestrictNamespaces=yes\n");
     s.push_str("LockPersonality=yes\n");
-    // On its OWN line: systemd has no inline comments, so `key=value # why` makes
-    // the comment part of the value and the directive invalid.
+    // Own line: systemd has no inline comments, so `key=value # why` would join the value.
     s.push_str("# wasmtime JITs, so it needs W^X — this one cannot be tightened.\n");
     s.push_str("MemoryDenyWriteExecute=no\n");
     s.push_str("\n[Install]\nWantedBy=multi-user.target\n");
     s
 }
 
-/// The per-app URL. Caddy obtains and renews the certificate on its own, which is
-/// the entire reason to put a proxy in front rather than binding `:443` per app.
-/// A Caddy site that fronts `comp-ingress` with TLS.
-///
-/// One site for the whole lattice rather than one per app: the ingress already
-/// routes by `Host` header from inventory, so Caddy needs to know nothing about
-/// which apps exist and never needs regenerating when one is deployed. That is the
-/// difference between this and `render_route`, which fronts a single app on a
-/// single box.
+/// One site for the whole lattice: the ingress routes by `Host`, so this never needs regenerating.
 pub fn render_ingress_route(domain: &str, upstream: &str, tailnet: bool) -> String {
     let head = "# Generated by `comp node ingress` — do not edit.\n\
                 #\n\
@@ -535,15 +390,7 @@ pub fn render_ingress_route(domain: &str, upstream: &str, tailnet: bool) -> Stri
     }
 }
 
-/// The hardening every rendered unit shares except `comp-host`'s own, which
-/// JITs and so cannot take the one line this deliberately leaves out —
-/// `MemoryDenyWriteExecute=yes`, appended separately by each caller since
-/// that is the one thing that differs between them.
-///
-/// `restart_sec` is the other difference worth naming: 2s suits a sidecar
-/// that should come back fast, but `comp-goald` passes a longer one whose
-/// own doc names why (a platform session lasts ~1h; a tight restart loop
-/// would just spend CPU while that same clock keeps ticking).
+/// All but `MemoryDenyWriteExecute`, which each caller adds since comp-host JITs and needs it off.
 fn hardening(restart_sec: u64) -> String {
     format!(
         "Restart=always\nRestartSec={restart_sec}\nDynamicUser=yes\nNoNewPrivileges=yes\n\
@@ -554,16 +401,8 @@ fn hardening(restart_sec: u64) -> String {
     )
 }
 
-/// The relay unit for an app that declares `[triggers]`.
-///
-/// A SECOND unit rather than a second process inside the app's: it restarts
-/// independently, it is `systemctl stop`-able on its own when a pump is misbehaving,
-/// and its journal is separate — the same argument tier 1 makes for one unit per app.
-///
-/// It dials `127.0.0.1:<port>` directly, not the app's public hostname. The proxy is
-/// for the outside; a poker on the same box has no reason to leave it, and going out
-/// through Caddy would make an internal endpoint reachable from wherever the route
-/// is reachable from.
+/// A separate unit dialling loopback, not the public hostname: going through Caddy would
+/// expose an internal endpoint wherever the route is reachable.
 pub fn render_relay_unit(spec: &Spec, t: &Triggers, l: &Layout) -> String {
     let mut s =
         String::from("# Generated by selfhost — do not edit; edit the app spec and re-deploy.\n");
@@ -582,9 +421,7 @@ pub fn render_relay_unit(spec: &Spec, t: &Triggers, l: &Layout) -> String {
         t.pump,
         t.interval
     ));
-    // No lease: tier 1 is one box running one copy of one app, so there is nothing to
-    // elect between. The lattice lane is where two relays can exist and where the
-    // lease stops them racing a consumer group's offset.
+    // No lease: tier 1 runs one copy of one app, so there is nothing to elect between.
     s.push_str(&hardening(2));
     // Unlike comp-host, this one JITs nothing — it is an HTTP client with a clock.
     s.push_str("MemoryDenyWriteExecute=yes\n");
@@ -592,14 +429,7 @@ pub fn render_relay_unit(spec: &Spec, t: &Triggers, l: &Layout) -> String {
     s
 }
 
-/// The unit for one native daemon behind ADR-0095 (see `Daemon`'s own doc), or for a worker,
-/// which differs in one respect: it is rendered without `--addr`, because it listens on nothing.
-///
-/// A SECOND unit per daemon, same reasoning as the relay: `container-docker`
-/// and `ui-notifier` do not deserve the same blast radius, and one shared
-/// runner for all twelve would give them one. `BindsTo`/`After` the app unit
-/// for the same reason the relay does — tier 1 is one box running one copy of
-/// one app, so a daemon this app started has no reason to outlive it.
+/// One unit per daemon so they don't share a blast radius, bound to the app like the relay.
 pub fn render_daemon_unit(spec: &Spec, d: &Daemon, l: &Layout) -> String {
     let bin_dir =
         l.bin.parent().map(|p| p.display().to_string()).unwrap_or_else(|| "/usr/local/bin".into());
@@ -613,10 +443,7 @@ pub fn render_daemon_unit(spec: &Spec, d: &Daemon, l: &Layout) -> String {
         }
     }
     parts.extend(d.extra_args.iter().cloned());
-    // `--token-file %d/token`, not `--token <value>`: the same reason
-    // `comp-host`'s own unit reads its config through `LoadCredential` rather
-    // than argv — a value on the command line is `ps`-readable by any local
-    // user, which is most of what a token exists to close.
+    // `--token-file`, not `--token`: argv is `ps`-readable by any local user.
     if d.token.is_some() {
         parts.push("--token-file %d/token".into());
     }
@@ -644,14 +471,9 @@ pub fn render_daemon_unit(spec: &Spec, d: &Daemon, l: &Layout) -> String {
     }
     s.push_str(&format!("ExecStart={bin_dir}/comp-{} {args}\n", d.name));
     s.push_str(&hardening(2));
-    // None of the twelve JIT — they are plain Rust binaries, not a wasmtime
-    // host — so unlike comp-host's unit this one is not the exception.
+    // Plain Rust binaries, no JIT, so W^X stays on.
     s.push_str("MemoryDenyWriteExecute=yes\n");
-    // `ProtectSystem=strict` makes everything but a few pseudo-filesystems
-    // read-only. A daemon whose allow-list names real directories on disk
-    // (fs-watcher/image-optimizer/video-ffmpeg's `--allow-path`) needs those
-    // specific paths writable back through it, or its own allow-list would
-    // permit a read/write that the unit itself refuses first.
+    // `ProtectSystem=strict` would refuse the very paths the daemon's `--allow-path` grants.
     if d.allow_flag.as_deref() == Some("allow-path") && !d.allow.is_empty() {
         s.push_str(&format!("ReadWritePaths={}\n", d.allow.join(" ")));
     }
@@ -659,51 +481,33 @@ pub fn render_daemon_unit(spec: &Spec, d: &Daemon, l: &Layout) -> String {
     s
 }
 
-/// One `comp-goald` deployment: a process that continuously drains ONE
-/// project's goal queue (ADR-0082 + ADR-0096's "no cron was ever written").
-///
-/// Deliberately its own spec, not a field on [`Spec`]: `comp-goald` is not
-/// scoped to a deployed app at all — it watches a git repository's `.comp/`
-/// goals and opens PRs against it, which has no `domain`, no `artifact`, and
-/// no reason to share a lifecycle with anything `comp-host` serves.
+/// One `comp-goald` deployment draining one project's goal queue (ADR-0082, ADR-0096).
+/// Its own spec: it is scoped to a repository, not to a deployed app.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GoaldSpec {
-    /// The project whose queue this drains — `holon goal ls <project>`.
     pub project: String,
-    /// A local checkout of that project's repository, on the box the unit runs on.
     pub checkout: String,
-    /// `owner/name` of the repository the PRs open on.
     pub repo: String,
     #[serde(default)]
     pub platform_url: Option<String>,
-    /// The account to sign back in as when the platform session expires
-    /// (~1h) — required together with `password_file`, or the daemon dies
-    /// silently on the first renewal (`comp-goald`'s own doc comment).
+    /// Re-login account for when the ~1h platform session expires; requires `password_file`.
     #[serde(default)]
     pub email: Option<String>,
-    /// A path on the box holding that account's password — never the value
-    /// itself. Read into the unit through `LoadCredential`, the same
-    /// reasoning as `Daemon::token`: a value on `ExecStart` is `ps`-readable
-    /// by any local user, and this unit runs `DynamicUser=yes`.
+    /// A path, never the value; read through `LoadCredential` like `Daemon::token`.
     #[serde(default)]
     pub password_file: Option<String>,
     #[serde(default = "default_max_runs")]
     pub max_runs: u32,
     #[serde(default = "default_poll")]
     pub poll: u64,
-    /// Hold a DeepSeek-backed run until DeepSeek's off-peak window opens
-    /// (`comp_fuel::offpeak`) instead of spending it at up to 2x the
-    /// price. Off by default — see `comp-goald --help`.
+    /// Hold DeepSeek runs until its off-peak window (`comp_fuel::offpeak`), up to 2x cheaper.
     #[serde(default)]
     pub enforce_deepseek_offpeak: bool,
-    /// A file of `YYYY-MM-DD` off-peak-all-day lines. Only meaningful with
-    /// `enforce_deepseek_offpeak = true`.
+    /// `YYYY-MM-DD` off-peak-all-day lines; only with `enforce_deepseek_offpeak`.
     #[serde(default)]
     pub holidays: Option<String>,
-    /// Flags for `comp-goalrun`, handed through verbatim — the model, the
-    /// budget, the pool, the branch count. `comp-goald` grows no opinion
-    /// about any of these, and neither does this renderer.
+    /// Passed verbatim to `comp-goalrun`.
     #[serde(default)]
     pub goalrun_args: Vec<String>,
 }
@@ -725,15 +529,11 @@ pub fn check_goald(spec: &GoaldSpec) -> Result<()> {
     if !spec.repo.contains('/') {
         bail!("repo {:?} must be owner/name", spec.repo);
     }
-    // `comp-goald` itself: `(Some(email), Some(password_file))` is the only
-    // combination that renews a session; either alone silently becomes
-    // `login: None` and the daemon dies on the first renewal instead of
-    // refusing to start.
+    // Either alone silently becomes `login: None` in comp-goald, which dies on the first renewal.
     if spec.email.is_some() != spec.password_file.is_some() {
         bail!("email and password_file must be set together, or not at all");
     }
-    // These are interpolated straight into `ExecStart=`, same hazard
-    // `render_daemon_unit`'s own check guards against.
+    // Interpolated into `ExecStart=`, same hazard as `render_daemon_unit`.
     let clean = |v: &str| !v.contains('%') && !v.contains('\n');
     let mut fields = vec![spec.project.as_str(), spec.checkout.as_str(), spec.repo.as_str()];
     fields.extend(spec.platform_url.as_deref());
@@ -745,12 +545,7 @@ pub fn check_goald(spec: &GoaldSpec) -> Result<()> {
     Ok(())
 }
 
-/// The unit for one `comp-goald` deployment.
-///
-/// Not `BindsTo`/`After` any app unit — unlike the relay or the twelve
-/// ADR-0095 daemons, this is not a sidecar to something `comp-host` serves.
-/// It outlives any single app's lifecycle, so it gets the same
-/// `After=network-online.target` as `render_unit`'s own `comp-host` unit.
+/// Not bound to any app unit: it is not a sidecar and outlives any single app.
 pub fn render_goald_unit(spec: &GoaldSpec, l: &Layout) -> String {
     let bin_dir =
         l.bin.parent().map(|p| p.display().to_string()).unwrap_or_else(|| "/usr/local/bin".into());
@@ -764,8 +559,7 @@ pub fn render_goald_unit(spec: &GoaldSpec, l: &Layout) -> String {
         args.push_str(&format!(" --email {email}"));
     }
     if spec.password_file.is_some() {
-        // Through the credential systemd drops in, not the real path — the
-        // same indirection `render_daemon_unit` uses for a daemon's token.
+        // The systemd credential, not the real path, as for a daemon's token.
         args.push_str(" --password-file %d/password");
     }
     args.push_str(&format!(" --max-runs {} --poll {}", spec.max_runs, spec.poll));
@@ -794,29 +588,18 @@ pub fn render_goald_unit(spec: &GoaldSpec, l: &Layout) -> String {
         ));
     }
     s.push_str(&format!("ExecStart={bin_dir}/comp-goald {args}\n"));
-    // The daemon's own doc comment names the failure this survives: a run
-    // that outlives a one-hour platform session with no --email/--password-file
-    // to renew it dies, and a restart is the whole recovery story tier 1 has.
+    // Restart is tier 1's only recovery when a run outlives its ~1h session; 5s rather than 2s
+    // so a tight loop doesn't burn CPU while that clock ticks.
     s.push_str(&hardening(5));
-    // A plain Rust binary that shells out to comp-goalrun and comp-checks —
-    // no wasmtime host inside it — so unlike comp-host's unit this one has no
-    // reason to leave W^X open.
+    // Shells out to plain binaries, no wasmtime inside, so W^X stays on.
     s.push_str("MemoryDenyWriteExecute=yes\n");
-    // The checkout is a real working tree comp-goalrun commits branches into
-    // and comp-checks materialises candidates under — `ProtectSystem=strict`
-    // would make that read-only and every run would fail before a model was
-    // ever called.
+    // comp-goalrun commits into the checkout; `ProtectSystem=strict` would make it read-only.
     s.push_str(&format!("ReadWritePaths={}\n", spec.checkout));
     s.push_str("\n[Install]\nWantedBy=multi-user.target\n");
     s
 }
 
-/// The `comp-goald` flags common to every deployment format, already split
-/// into argv-style tokens, in the order `comp-goald --help` lists them.
-/// `password_value` is what `--password-file` should point AT — the real
-/// path for launchd (a LaunchAgent already runs at its owner's own uid, so it
-/// can read a file that uid owns directly), or `%d/password` for systemd's
-/// `render_goald_unit`, which needs the credential indirection instead.
+/// `password_value`: the real path for launchd (runs as the owning uid), `%d/password` for systemd.
 fn goald_argv(spec: &GoaldSpec, password_value: Option<&str>) -> Vec<String> {
     let mut a = vec![
         "--project".to_string(),
@@ -860,13 +643,7 @@ fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
-/// A macOS `launchd` LaunchAgent for `comp-goald` — the background-job mechanism on
-/// a box with no systemd.
-///
-/// Runs at the signed-in user's own uid — no `DynamicUser`, no
-/// `LoadCredential`: a personal LaunchAgent already has exactly the access
-/// that uid does, which is also all `comp-goald` itself ever assumed.
-/// `RunAtLoad` starts it at login; `KeepAlive` restarts it if it exits.
+/// A macOS LaunchAgent: runs as the user's own uid, so no `DynamicUser`/`LoadCredential`.
 pub fn render_goald_launchd(spec: &GoaldSpec, bin_dir: &Path, log_dir: &Path) -> String {
     let mut argv = vec![format!("{}/comp-goald", bin_dir.display())];
     argv.extend(goald_argv(spec, spec.password_file.as_deref()));
@@ -959,15 +736,13 @@ mod ingress_route_tests {
         let c = render_ingress_route("lattice.example.com", "127.0.0.1:8088", false);
         assert!(c.contains("lattice.example.com {"));
         assert!(c.contains("reverse_proxy 127.0.0.1:8088"));
-        // No `tls` directive: Caddy's default IS ACME, and spelling it out wrongly
-        // is how you end up with a self-signed cert on a public name.
+        // No `tls` directive: Caddy's default is ACME.
         assert!(!c.contains("tls internal"));
     }
 
     #[test]
     fn the_tailnet_front_is_unreachable_publicly_and_still_a_secure_context() {
-        // Both halves matter. `bind` alone leaves it on http; `tls internal` alone
-        // leaves it listening on every interface.
+        // `bind` alone leaves it on http; `tls internal` alone listens everywhere.
         let c = render_ingress_route("lattice.ts.net", "127.0.0.1:8088", true);
         assert!(c.contains("bind {$TS_IP}"), "must not listen publicly");
         assert!(c.contains("tls internal"), "passkeys need a secure context");
@@ -975,8 +750,6 @@ mod ingress_route_tests {
 
     #[test]
     fn one_site_fronts_the_whole_lattice_not_one_app() {
-        // The ingress routes by Host from inventory, so this file never mentions an
-        // app and never needs regenerating when one is deployed.
         let c = render_ingress_route("lattice.example.com", "127.0.0.1:8088", false);
         assert!(c.contains("does NOT require regenerating"));
     }
@@ -1001,8 +774,6 @@ artifact = "components/target/gate_domain.composed.wasm"
     #[test]
     fn a_minimal_spec_needs_three_lines() {
         let s = spec(MINIMAL);
-        // Durable by default: a spec that says nothing must not lose data on the
-        // first restart, and `Restart=always` makes restarts routine.
         assert_eq!(s.kv, "sqlite");
         assert!(
             s.pooling,
@@ -1013,8 +784,6 @@ artifact = "components/target/gate_domain.composed.wasm"
 
     #[test]
     fn the_derived_port_is_stable_and_in_range() {
-        // Stability is the point: a re-render must not move a running app to a new
-        // port while the proxy still points at the old one.
         for name in ["gate", "stash", "mesh", "a", "very-long-application-name"] {
             let p = derived_port(name);
             assert!((30000..31000).contains(&p), "{name} -> {p}");
@@ -1030,18 +799,14 @@ artifact = "components/target/gate_domain.composed.wasm"
         assert!(out.contains("--addr 127.0.0.1:"), "loopback only — the proxy is the front door");
         assert!(!out.contains("--addr 0.0.0.0"), "must never bind publicly: {out}");
         assert!(out.contains("Restart=always"));
-        // MINIMAL declares no config, so no --config-file: a unit naming a file the
-        // deploy had no reason to write is a unit that fails to start.
+        // No config, so no --config-file: a unit naming an unwritten file fails to start.
         assert!(!out.contains("--config-file"), "{out}");
-        // Hardening, and the one exception that has to be there.
         assert!(out.contains("DynamicUser=yes"));
         assert!(out.contains("ProtectSystem=strict"));
         assert!(out.contains("NoNewPrivileges=yes"));
         assert!(out.contains("StateDirectory=comp/gate"));
         assert!(out.contains("\nMemoryDenyWriteExecute=no\n"), "wasmtime JITs: {out}");
 
-        // systemd has no inline comments: `key=value # why` would make the comment
-        // part of the value. Every directive line must be bare.
         for line in out.lines() {
             if line.starts_with('#') || line.starts_with('[') || line.trim().is_empty() {
                 continue;
@@ -1053,8 +818,6 @@ artifact = "components/target/gate_domain.composed.wasm"
         }
     }
 
-    /// A spec with config gets a unit that READS it: a key that is never read looks
-    /// exactly like a key left at its default.
     #[test]
     fn config_reaches_the_host_through_the_start_command() {
         let with = spec(
@@ -1062,9 +825,6 @@ artifact = "components/target/gate_domain.composed.wasm"
              [config]\nk = \"v\"\n",
         );
         let unit = render_unit(&with, &Layout::default());
-        // Through a credential, because the unit is DynamicUser and the file is
-        // root-owned 0600 — pointing --config-file at /etc/comp directly is a
-        // restart loop on `Permission denied`.
         assert!(unit.contains("LoadCredential=config:/etc/comp/gate.env"), "{unit}");
         assert!(unit.contains("--config-file %d/config"), "{unit}");
     }
@@ -1118,10 +878,7 @@ routes = "upstream=http://127.0.0.1:9000"
     #[test]
     fn a_tailnet_app_binds_the_tailscale_address_and_uses_a_local_ca() {
         let out = render_route(&spec(MINIMAL), Router::Caddy);
-        // Without the bind it would listen on the VPS's public interface too, which
-        // is the difference between "private" and "accidentally on the internet".
         assert!(out.contains("bind {$TS_IP}"), "{out}");
-        // No ACME, no DNS provider — the constraint that ruled out DNS-01.
         assert!(out.contains("tls internal"), "{out}");
         assert!(out.contains("reverse_proxy 127.0.0.1:"), "{out}");
     }
@@ -1140,8 +897,6 @@ routes = "upstream=http://127.0.0.1:9000"
 
     #[test]
     fn a_ts_net_name_cannot_be_public() {
-        // Tailscale issues the name and it resolves only inside the tailnet, so a
-        // public certificate for it is impossible. Refuse rather than fail at ACME.
         let s: Spec = toml::from_str(
             "name = \"g\"\ndomain = \"box.tail1234.ts.net\"\nartifact = \"a.wasm\"\n\
              access = \"public\"\n",
@@ -1149,7 +904,6 @@ routes = "upstream=http://127.0.0.1:9000"
         .unwrap();
         let err = check(&s).unwrap_err().to_string();
         assert!(err.contains("Tailscale name"), "{err}");
-        // ...and the same name is fine when it is honest about being private.
         let ok: Spec = toml::from_str(
             "name = \"g\"\ndomain = \"box.tail1234.ts.net\"\nartifact = \"a.wasm\"\n",
         )
@@ -1161,19 +915,11 @@ routes = "upstream=http://127.0.0.1:9000"
     fn tailscale_serve_needs_no_certificate_work_but_costs_the_hostname() {
         let out = render_route(&spec(MINIMAL), Router::TailscaleServe);
         assert!(out.contains("tailscale serve --bg --https=443"), "{out}");
-        // One hostname per machine, so apps are distinguished by path — and the file
-        // says so, because it will break an app that assumes it lives at `/`.
         assert!(out.contains("--set-path /gate"), "{out}");
         assert!(out.contains(&format!("http://127.0.0.1:{}", port_of(&spec(MINIMAL)))));
         assert!(out.starts_with("#!/usr/bin/env bash"), "it is a script, not config");
     }
 
-    /// `mount = "/"` for the app that owns the box.
-    ///
-    /// The default `/<name>` is right when several apps share one Tailscale
-    /// hostname and wrong for every SPA: `/api/...` and `/assets/...` are absolute,
-    /// so under `/events` the page loads and nothing on it works. That failure is
-    /// silent in a way "no route" is not, which is why the option exists.
     #[test]
     fn an_app_that_owns_the_box_can_be_mounted_at_the_root() {
         let spec: Spec = toml::from_str(
@@ -1183,10 +929,8 @@ routes = "upstream=http://127.0.0.1:9000"
         .unwrap();
         let out = render_route(&spec, Router::TailscaleServe);
         assert!(out.contains("--set-path / http://127.0.0.1:3230"), "{out}");
-        // And the URL it prints has no path glued on the end.
         assert!(!out.contains("')/events"), "{out}");
 
-        // Absent, the default is still one path per app.
         let shared: Spec = toml::from_str(
             "name = \"gate\"\ndomain = \"malna.tail3a9c.ts.net\"\nartifact = \"a.wasm\"\n",
         )
@@ -1199,15 +943,12 @@ routes = "upstream=http://127.0.0.1:9000"
         let s = spec(MINIMAL);
         let unit = render_unit(&s, &Layout::default());
         assert!(unit.contains("--kv sqlite"), "{unit}");
-        // No --sqlite-path: comp-host reads $STATE_DIRECTORY, which this unit already
-        // declares, and under DynamicUser that path is private to the app.
         assert!(!unit.contains("--sqlite-path"), "{unit}");
         assert!(unit.contains("StateDirectory=comp/gate"), "{unit}");
     }
 
     #[test]
     fn an_app_with_no_triggers_gains_no_poker() {
-        // Every app in the tree would otherwise get a process poking it forever.
         assert!(spec(MINIMAL).triggers.is_none());
     }
 
@@ -1215,20 +956,14 @@ routes = "upstream=http://127.0.0.1:9000"
     fn a_relay_unit_pokes_the_loopback_port_and_not_the_public_hostname() {
         let s = spec(&format!("{}\n[triggers]\n", MINIMAL));
         let t = s.triggers.as_ref().unwrap();
-        // The defaults are the convention: saga-domain and the four eshop services
-        // all export exactly this path.
         assert_eq!(t.pump, "/internal/pump");
         let u = render_relay_unit(&s, t, &Layout::default());
         assert!(
             u.contains(&format!("--target http://127.0.0.1:{}/internal/pump", port_of(&s))),
             "{u}"
         );
-        // Going out through the proxy would make an internal endpoint reachable from
-        // wherever the route is.
         assert!(!u.contains(&s.domain), "the relay must not dial the public name: {u}");
-        // It binds to the app's lifecycle: pointless before it starts.
         assert!(u.contains("BindsTo=comp-gate.service"), "{u}");
-        // It JITs nothing, unlike comp-host — so this one CAN be tightened.
         assert!(u.contains("MemoryDenyWriteExecute=yes"), "{u}");
     }
 
@@ -1249,8 +984,6 @@ routes = "upstream=http://127.0.0.1:9000"
         assert!(err.to_string().contains("no matching"), "{err}");
     }
 
-    /// The app's unit must let the component reach its daemon: comp-host is
-    /// default-deny on egress and refuses loopback without the private flag.
     #[test]
     fn an_app_unit_can_reach_its_daemons_and_nothing_else() {
         let s = spec(
@@ -1265,7 +998,6 @@ routes = "upstream=http://127.0.0.1:9000"
         assert!(!none.contains("--egress") && !none.contains("--allow-private-egress"), "{none}");
     }
 
-    /// ADR-0106's resumer: it pulls from NATS and pushes to a sink, and listens on nothing.
     const WITH_WORKER: &str = "name = \"park\"\ndomain = \"p.example.com\"\nartifact = \"a.wasm\"\n\
          [config]\npark-url = \"http://127.0.0.1:8015\"\n\
          [[daemon]]\nname = \"park\"\naddr = \"127.0.0.1:8015\"\n\
@@ -1274,7 +1006,6 @@ routes = "upstream=http://127.0.0.1:9000"
 
     #[test]
     fn a_daemon_with_no_addr_is_a_worker_and_needs_nothing_a_listener_needs() {
-        // No `<name>-url` in `[config]`, no address, no token: it is valid as it stands.
         let s = spec(WITH_WORKER);
         assert_eq!(s.daemons[1].addr, None);
         assert_eq!(s.daemons[0].addr.as_deref(), Some("127.0.0.1:8015"));
@@ -1293,10 +1024,8 @@ routes = "upstream=http://127.0.0.1:9000"
         );
         assert!(!u.contains("--addr"), "it listens on nothing: {u}");
         assert!(u.contains("native worker beside park, listening on nothing"), "{u}");
-        // Same lifecycle as the app it serves, and the same hardening as any daemon.
         assert!(u.contains("BindsTo=comp-park.service"), "{u}");
         assert!(u.contains("MemoryDenyWriteExecute=yes") && u.contains("Restart=always"), "{u}");
-        // A daemon that does listen is rendered as it always was.
         let d = render_daemon_unit(&s, &s.daemons[0], &Layout::default());
         assert!(d.contains("ExecStart=/usr/local/bin/comp-park --addr 127.0.0.1:8015\n"), "{d}");
     }
@@ -1306,7 +1035,6 @@ routes = "upstream=http://127.0.0.1:9000"
         let unit = render_unit(&spec(WITH_WORKER), &Layout::default());
         assert!(unit.contains("--egress 127.0.0.1:8015 --allow-private-egress"), "{unit}");
         assert_eq!(unit.matches("--egress").count(), 1, "nothing to reach at a worker: {unit}");
-        // A spec with only a worker has nothing for the component to dial at all.
         let only = spec(
             "name = \"park\"\ndomain = \"p.example.com\"\nartifact = \"a.wasm\"\n\
              [[daemon]]\nname = \"resume\"\nextra_args = [\"--sink-url http://127.0.0.1:1/x\"]\n",
@@ -1332,9 +1060,6 @@ routes = "upstream=http://127.0.0.1:9000"
 
     #[test]
     fn a_daemon_named_like_its_app_gets_a_unit_of_its_own() {
-        // `park` and `vcs` each name their app and their daemon alike, and both were rendered to
-        // `comp-<name>.service`: the daemon's text over the app's, which left nothing serving the
-        // app and a unit `BindsTo` itself.
         let s = spec(WITH_WORKER);
         assert_eq!(daemon_unit_name(&s, &s.daemons[0]), "comp-park-daemon.service");
         assert_eq!(daemon_unit_name(&s, &s.daemons[1]), "comp-resume.service");
@@ -1344,7 +1069,6 @@ routes = "upstream=http://127.0.0.1:9000"
         );
         let d = render_daemon_unit(&s, &s.daemons[0], &Layout::default());
         assert!(d.contains("BindsTo=comp-park.service") && d.contains("comp-park --addr"), "{d}");
-        // A daemon with a name of its own is named as it always was.
         let fs = spec(
             "name = \"fs-watcher\"\ndomain = \"f.example.com\"\nartifact = \"a.wasm\"\n\
              [config]\nfswatch-url = \"http://127.0.0.1:8000\"\n\
@@ -1355,7 +1079,6 @@ routes = "upstream=http://127.0.0.1:9000"
 
     #[test]
     fn two_units_that_would_share_a_file_are_refused() {
-        // Two daemons of one name, and a daemon named like the relay's unit.
         let twice = "name = \"park\"\ndomain = \"p.example.com\"\nartifact = \"a.wasm\"\n\
              [[daemon]]\nname = \"resume\"\n[[daemon]]\nname = \"resume\"\n";
         let err = toml::from_str::<Spec>(twice).map(|s| check(&s)).expect("parses").unwrap_err();
@@ -1366,8 +1089,6 @@ routes = "upstream=http://127.0.0.1:9000"
         assert!(err.to_string().contains("comp-park-relay.service"), "{err}");
     }
 
-    /// Every committed spec, read as `holon node validate` reads it: no spec writes two units to
-    /// one file. The guard is `check()`'s own; this is what keeps a spec added later honest.
     #[test]
     fn no_committed_app_spec_renders_two_units_to_one_file() {
         let mut n = 0;
@@ -1397,25 +1118,20 @@ routes = "upstream=http://127.0.0.1:9000"
             unit_names(&s),
             ["comp-park.service", "comp-park-daemon.service", "comp-resume.service"]
         );
-        // The app is comp-host, and can reach the daemon and only it.
         let app = render_unit(&s, &l);
         assert!(app.contains("comp-host") && app.contains("--egress 127.0.0.1:8015"), "{app}");
         assert_eq!(app.matches("--egress").count(), 1, "{app}");
-        // The resumer is a worker, and is given what it must have: where NATS is and a sink.
         let resume = s.daemons.iter().find(|d| d.name == "resume").expect("a resume worker");
         assert_eq!(resume.addr, None);
         let u = render_daemon_unit(&s, resume, &l);
         assert!(!u.contains("--addr"), "{u}");
         assert!(u.contains("--sink-url ") && u.contains("--nats-url "), "{u}");
-        // And it reads the same NATS as the engine.
         let park = s.daemons.iter().find(|d| d.name == "park").expect("the park daemon");
         let nats = |d: &Daemon| d.extra_args.iter().find(|a| a.starts_with("--nats-url")).cloned();
         assert_eq!(nats(park), nats(resume), "comp-park and comp-resume must share a NATS");
     }
 
-    /// The flags the park spec makes `comp-park` and `comp-resume` take are flags they have. A
-    /// misspelt one is a unit that starts, fails and restarts every two seconds. Skipped where the
-    /// binaries are not built, like its neighbour for the twelve.
+    /// A misspelt flag is a unit that restarts every two seconds. Skipped where unbuilt.
     #[test]
     fn every_flag_in_the_park_spec_exists_on_its_binaries() {
         let src = std::fs::read_to_string("../apps/park.toml").expect("../apps/park.toml");
@@ -1461,11 +1177,7 @@ routes = "upstream=http://127.0.0.1:9000"
             "{u}"
         );
         assert!(u.contains("BindsTo=comp-fs-watcher.service"), "{u}");
-        // A daemon is a plain binary, not a wasmtime host — unlike comp-host's
-        // unit, this one has no reason to leave W^X open.
         assert!(u.contains("MemoryDenyWriteExecute=yes"), "{u}");
-        // ProtectSystem=strict would otherwise refuse the very path the
-        // daemon's own --allow-path just granted.
         assert!(u.contains("ReadWritePaths=/var/log"), "{u}");
     }
 
@@ -1493,9 +1205,6 @@ routes = "upstream=http://127.0.0.1:9000"
         assert!(!u.contains("LoadCredential"), "{u}");
     }
 
-    /// `--token`, like `--config`, must never reach `ps` — a value on the
-    /// command line is `ps`-readable by any local user, exactly the reason
-    /// `comp-host`'s own config goes through `LoadCredential` instead.
     #[test]
     fn a_daemons_token_reaches_it_through_a_credential_not_argv() {
         let s = spec(
@@ -1527,8 +1236,6 @@ routes = "upstream=http://127.0.0.1:9000"
         assert!(err.to_string().contains("no matching"), "{err}");
     }
 
-    /// `render_daemon_unit` writes these straight into `ExecStart=`, where `%`
-    /// is a systemd specifier and a newline would inject a second directive.
     #[test]
     fn a_daemon_allow_value_with_a_percent_or_newline_is_refused() {
         for bad in ["allow = [\"/var/log/%h\"]\n", "allow = [\"/var/log\\nEnvironment=EVIL=1\"]\n"]
@@ -1563,7 +1270,6 @@ routes = "upstream=http://127.0.0.1:9000"
             let s: Spec = toml::from_str(src).unwrap();
             assert!(check(&s).is_err(), "must refuse: {src}");
         }
-        // A config key that would not survive the CFG_ translation.
         let s: Spec = toml::from_str(
             "name = \"g\"\ndomain = \"g.example.com\"\nartifact = \"a.wasm\"\n[config]\n\"A B\" = \"x\"\n",
         )
@@ -1571,9 +1277,7 @@ routes = "upstream=http://127.0.0.1:9000"
         assert!(check(&s).is_err());
     }
 
-    /// The renderer's flags must exist on the binary it is writing a unit for; a wrong
-    /// flag fails only on the box. So ask the binary. Skipped when the host has not
-    /// been built.
+    /// A wrong flag fails only on the box, so ask the binary. Skipped where unbuilt.
     #[test]
     fn every_flag_we_emit_exists_on_comp_host() {
         let bin = std::path::Path::new("../host/target/release/comp-host");
@@ -1599,10 +1303,7 @@ static_dir = "ui/dist"
         for flag in exec.split_whitespace().filter(|w| w.starts_with("--")) {
             assert!(help.contains(flag), "comp-host has no {flag}\n--- help ---\n{help}");
         }
-        // And the nats variant, which the redis spec above does not exercise. It
-        // also turns pooling OFF, because that is the only branch that emits a flag
-        // now — with pooling on, the unit says nothing, so the default path cannot
-        // catch a rename here a second time.
+        // The nats variant, with pooling off: `--no-pool` is the only pooling branch with a flag.
         let s2 = spec(
             "name = \"g\"\ndomain = \"g.example.com\"\nartifact = \"a.wasm\"\n\
              kv = \"nats\"\nkv_url = \"127.0.0.1:4222\"\npooling = false\n",
@@ -1624,8 +1325,6 @@ static_dir = "ui/dist"
 
     #[test]
     fn every_flag_we_emit_for_a_daemon_exists_on_its_own_binary() {
-        // Each daemon and its allow-list flag (if any), read from the daemon's
-        // own `Args`.
         let daemons = [
             ("fswatch", Some("allow-path")),
             ("browser", Some("allow-host")),
@@ -1708,14 +1407,10 @@ repo = "me/holon"
         assert!(out.contains("Restart=always"));
         assert!(out.contains("DynamicUser=yes"));
         assert!(out.contains("ProtectSystem=strict"));
-        // It shells out to plain binaries, not a wasmtime host.
         assert!(out.contains("\nMemoryDenyWriteExecute=yes\n"), "{out}");
-        // A minimal spec asks for neither renewal nor enforcement.
         assert!(!out.contains("--email"), "{out}");
         assert!(!out.contains("--password-file"), "{out}");
         assert!(!out.contains("--enforce-deepseek-offpeak"), "{out}");
-        // Unlike a daemon's or the relay's unit, this one is not bound to any
-        // app's lifecycle — it outlives all of them.
         assert!(!out.contains("BindsTo"), "{out}");
 
         for line in out.lines() {
@@ -1767,9 +1462,6 @@ repo = "me/holon"
 
     #[test]
     fn email_without_a_password_file_is_refused() {
-        // comp-goald's own semantics: either alone silently becomes
-        // `login: None`, and the daemon dies on the first session renewal
-        // instead of refusing to start — catch it here instead.
         let bad: GoaldSpec =
             toml::from_str(&format!("{MINIMAL_GOALD}email = \"bot@holon.dev\"\n")).unwrap();
         let err = check_goald(&bad).unwrap_err().to_string();
@@ -1813,9 +1505,6 @@ repo = "me/holon"
 
     #[test]
     fn a_launchd_password_file_is_the_real_path_not_a_credential_indirection() {
-        // Unlike the systemd unit: a LaunchAgent already runs at its owner's
-        // own uid, so there is no privilege to drop and nothing for
-        // `LoadCredential` to mediate.
         let s = goald(&format!(
             "{MINIMAL_GOALD}email = \"bot@holon.dev\"\npassword_file = \"/etc/holon/goald.password\"\n"
         ));
@@ -1834,8 +1523,6 @@ repo = "me/holon"
         assert!(!out.contains("<string>a<b&c</string>"), "{out}");
     }
 
-    /// Same reasoning as `every_flag_we_emit_exists_on_comp_host`. Skipped when the
-    /// binary has not been built.
     #[test]
     fn every_flag_we_emit_exists_on_comp_goald() {
         let bin = std::path::Path::new("../reconciler/target/release/comp-goald");
@@ -1853,9 +1540,7 @@ repo = "me/holon"
         ));
         let unit = render_goald_unit(&s, &Layout::default());
         let exec = unit.lines().find(|l| l.starts_with("ExecStart=")).expect("an ExecStart line");
-        // Everything before the bare `--` is comp-goald's own flags; what
-        // follows is comp-goalrun's, which comp-goald never inspects and
-        // this test has no business checking against comp-goald's --help.
+        // After the bare `--` come comp-goalrun's flags, not comp-goald's.
         let own = exec.split(" -- ").next().unwrap();
         for flag in own.split_whitespace().filter(|w| w.starts_with("--")) {
             assert!(help.contains(flag), "comp-goald has no {flag}\n--- help ---\n{help}");
@@ -1864,8 +1549,6 @@ repo = "me/holon"
 
     #[test]
     fn the_spec_carries_the_kubernetes_fields_it_does_not_use_yet() {
-        // Tier 3 reads `components` + `strategy`. They are optional here so that
-        // moving an app up a tier is an edit, not a rewrite (docs/SELFHOST.md).
         let s = spec(
             "name = \"gate\"\ndomain = \"g.example.com\"\nartifact = \"a.wasm\"\n\
              components = [\"gate-domain\", \"record-store\"]\nstrategy = \"fused\"\n",

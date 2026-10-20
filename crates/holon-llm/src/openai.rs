@@ -1,12 +1,4 @@
-//! The OpenAI-compatible chat API (`POST …/chat/completions`), which is also what vLLM, llama.cpp,
-//! Ollama and mlx_lm serve.
-//!
-//! What differs from the Anthropic dialect, all of it handled here:
-//! * the system prompt is the first message;
-//! * a tool call is a `tool_calls` entry on the assistant message whose arguments are a JSON STRING, and
-//!   its answer is a message of its own with the role `tool`;
-//! * a picture is an `image_url` part carrying a data URL;
-//! * cached prompt tokens are a SUBSET of `prompt_tokens`, not a count beside it.
+//! The OpenAI-compatible chat API (`POST …/chat/completions`), also served by vLLM, llama.cpp, Ollama and mlx_lm.
 
 use serde_json::{json, Value};
 
@@ -14,10 +6,6 @@ use crate::model::{
     parse_args, str_of, u64_at, Call, Message, ParseError, Part, Reply, Request, Role, Tool, Usage,
 };
 
-/// The request body for `…/chat/completions`.
-///
-/// `stream` is always written out, `false` included. `max_tokens`, `temperature`, `seed` and `stop`
-/// are sent when set and left to the server's defaults otherwise.
 pub fn body(req: &Request) -> Value {
     let mut messages: Vec<Value> = Vec::new();
     if let Some(system) = req.system {
@@ -56,7 +44,7 @@ fn tool(t: &Tool) -> Value {
 fn push(out: &mut Vec<Value>, m: &Message) {
     match m.role {
         Role::User => {
-            // A tool's answer is a message of its own, and goes first: it answers the call before.
+            // A tool's answer is its own message and goes first: it answers the call before.
             for p in &m.parts {
                 if let Part::ToolResult(r) = p {
                     let content =
@@ -102,8 +90,7 @@ fn push(out: &mut Vec<Value>, m: &Message) {
     }
 }
 
-/// Token counts as OpenAI reports them. Cached prompt tokens are a subset of `prompt_tokens` and priced
-/// apart, so they come out of `input` and into `cache_read`.
+/// Cached tokens are a subset of `prompt_tokens`, so they move out of `input`.
 fn usage(u: &Value) -> Usage {
     let cached = u64_at(u, "/prompt_tokens_details/cached_tokens");
     Usage {
@@ -114,12 +101,7 @@ fn usage(u: &Value) -> Usage {
     }
 }
 
-/// Read a non-streamed `…/chat/completions` response.
-///
-/// The text is the first choice's `content` (null is empty), its tool calls are read with their
-/// arguments parsed, and `finish` is its `finish_reason`. A `200` carrying an `error` object is an
-/// error. Whether an empty text is one is the caller's to say: a reasoning model can spend its whole
-/// budget thinking, which [`Reply::hit_token_limit`] tells apart from a model with nothing to say.
+/// Empty text is not an error here: a reasoning model can spend its whole budget ([`Reply::hit_token_limit`]).
 pub fn parse(body: &[u8]) -> Result<Reply, ParseError> {
     let v: Value = serde_json::from_slice(body)
         .map_err(|e| ParseError::Malformed(format!("chat json: {e}")))?;
@@ -147,8 +129,7 @@ pub fn parse(body: &[u8]) -> Result<Reply, ParseError> {
     })
 }
 
-/// A finished tool call. An id the server left out is made up from the call's position, because the
-/// answer has to name the call it answers.
+/// A missing id is made up from the position, because the answer has to name the call it answers.
 fn call(index: usize, id: &str, name: &str, args: &str) -> Result<Call, ParseError> {
     if name.is_empty() {
         return Err(ParseError::Malformed("model sent a tool call with no name".into()));
@@ -157,14 +138,11 @@ fn call(index: usize, id: &str, name: &str, args: &str) -> Result<Call, ParseErr
     Ok(Call { id, name: name.to_string(), input: parse_args(args) })
 }
 
-/// A streamed reply, assembled as its chunks arrive. Feed each SSE `data:` payload (see
-/// [`crate::sse::take_frames`]); text is handed to `on_text` as it is generated and everything else is
-/// in the [`Reply`] that [`Stream::finish`] returns. The last chunk carries `usage` only when the
-/// request asked for it (`stream_options.include_usage`, which [`body`] sets for a stream).
+/// `usage` arrives only because [`body`] sets `stream_options.include_usage` for a stream.
 #[derive(Default)]
 pub struct Stream {
     reply: Reply,
-    /// Tool calls by stream index: (id, name, argument JSON so far).
+    /// By stream index: (id, name, argument JSON so far).
     calls: Vec<(String, String, String)>,
 }
 

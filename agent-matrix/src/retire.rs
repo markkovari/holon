@@ -1,23 +1,14 @@
-//! When an agent is deleted, what happens to its Matrix side (ADR-0105, section 3).
-//!
-//! The bridge learns of a deletion only by the agent's absence from the runtime's
-//! list, and absence also means "the runtime came up against the wrong state
-//! directory". So a deletion is believed after a few consecutive passes, and not at
-//! all when it would retire most of the fleet at once. This module is that decision
-//! and nothing else; `Bridge::retire_gone_agents` does the talking.
+//! Absence may also mean a runtime on the wrong state dir, so a deletion is believed only after
+//! `PASSES` misses and never for most of the fleet at once (ADR-0105 §3).
 
 use std::collections::{HashMap, HashSet};
 
-/// Consecutive reconcile passes an agent must be missing for before it is retired.
 pub const PASSES: u32 = 3;
 
 #[derive(Debug, PartialEq)]
 pub enum Verdict {
     Nothing,
-    /// These agents are gone: retire their rooms.
     Retire(Vec<String>),
-    /// These agents look gone, but so do too many others to be a set of deletions. Do
-    /// nothing and say so.
     Refuse(Vec<String>),
 }
 
@@ -25,8 +16,6 @@ pub enum Verdict {
 pub struct Absence(HashMap<String, u32>);
 
 impl Absence {
-    /// One reconcile pass. `known` are the agents the bridge keeps rooms for, `active`
-    /// the ones the runtime lists now.
     pub fn observe(&mut self, known: &[String], active: &HashSet<String>) -> Verdict {
         self.0.retain(|name, _| known.contains(name));
         for name in known {
@@ -45,8 +34,7 @@ impl Absence {
         if gone.is_empty() {
             return Verdict::Nothing;
         }
-        // One deletion is ordinary. Several is, at more than half the fleet, a runtime
-        // that lost its state far more often than a person who deleted most of it.
+        // Over half the fleet at once is far likelier a runtime that lost its state than deletions.
         if gone.len() > 1 && gone.len() * 2 > known.len() {
             return Verdict::Refuse(gone);
         }

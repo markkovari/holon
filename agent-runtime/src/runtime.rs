@@ -1,25 +1,4 @@
-//! The runtime: owns the store, bus and shared KV, runs agents, fires their
-//! triggers, and holds approvals open while a human decides. One per state
-//! directory.
-//!
-//! ## How agents wake each other
-//!
-//! * **Call** (`agent:<name>`) — synchronous; tokens are charged to the caller's budget.
-//! * **Task** (`spawn_task` / `task_result`) — the same, without waiting.
-//! * **Event** (`emit_event`) — durable fan-out: written to the bus log, then delivered to
-//!   each subscriber from its own offset, so a paused agent or a restart loses nothing.
-//! * **Store** (`store_put`) — a write that CHANGES a value publishes `store.<ns>`.
-//! * **Timer** (`schedule_self`) — a persisted one-shot wake-up.
-//!
-//! Every hop carries a [`Cause`](crate::agent::Cause) (trace id, parent span, hops, chain,
-//! remaining budget): what the guards below and the trace export are built on.
-//!
-//! ## What stops a runaway
-//!
-//! A chain longer than `MAX_HOPS`, an agent woken twice by the same topic in
-//! one chain (a cycle), more than `max_runs_per_min` runs, and an agent whose
-//! last few runs all failed (circuit breaker) are all REFUSED before the model
-//! is called, and logged as `Dropped` runs so the refusal is visible.
+//! One per state directory: runs agents, fires their triggers, holds approvals open.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -43,30 +22,20 @@ use crate::trace::{new_span_id, new_trace_id};
 #[derive(Clone)]
 pub struct Config {
     pub state_dir: std::path::PathBuf,
-    /// Where `ModelSpec::Local` points. Settable later (`set_local_model`)
-    /// because a console starts the runtime before its model server is up.
+    /// Settable later: a console starts the runtime before its model server is up.
     pub local: LocalModel,
-    /// How long a sensitive tool call waits for a human before it is denied.
+    /// Unanswered by then, a sensitive tool call is denied.
     pub approval_timeout: Duration,
-    /// Consecutive failed runs after which an agent's circuit opens.
     pub breaker_threshold: u32,
-    /// How long an open circuit refuses runs.
     pub breaker_cooldown: Duration,
-    /// An OpenTelemetry collector's OTLP/HTTP base URL
-    /// (`http://localhost:4318`). Every finished run is exported to
-    /// `<endpoint>/v1/traces`. The standard `OTEL_EXPORTER_OTLP_ENDPOINT`
-    /// variable is honoured by the daemon and the console.
+    /// OTLP/HTTP base URL; every finished run goes to `<endpoint>/v1/traces`.
     pub otlp_endpoint: Option<String>,
-    /// On-device speech engines (see `speech.rs`). Nothing is configured by default.
     pub speech: crate::speech::SpeechConfig,
-    /// Where the embedding service listens (`embed/server.py`); empty: memories are recalled by shared words.
+    /// Empty: memories are recalled by shared words.
     pub embed_url: String,
-    /// The launchd service behind `embed_url`, started on demand (see `lazy.rs`).
+    /// Started on demand (`lazy.rs`).
     pub embed_service: String,
-    /// Where the Google login lives (`client.json`, `token.json`) and which API it talks to.
     pub google: crate::google::GoogleConfig,
-    /// `comp-agentd`, where an agent granted `session_start` opens coding sessions. `None`: the
-    /// tool answers that sessions are not available.
     pub agentd: Option<AgentdConfig>,
 }
 
@@ -101,7 +70,7 @@ struct Timer {
     agent: String,
     at: u64,
     prompt: String,
-    /// The project the reminder was asked for in, so it is delivered back there.
+    /// So the reminder is delivered back to that project.
     #[serde(default)]
     project: Option<String>,
 }
@@ -110,8 +79,7 @@ const MAX_TIMERS_PER_AGENT: usize = 20;
 const MAX_TASKS_KEPT: usize = 200;
 
 pub struct Runtime {
-    /// Weak self, so `Host` methods (which only have `&self`) can hand an owned
-    /// handle to the threads they spawn.
+    /// `Host` methods only have `&self` but hand an owned handle to the threads they spawn.
     me: std::sync::Weak<Runtime>,
     store: Store,
     kv: Kv,
@@ -120,7 +88,6 @@ pub struct Runtime {
     speech: crate::speech::Speech,
     embedder: Option<crate::embed::Embedder>,
     google: crate::google::Google,
-    /// Jev, for reading pictures, when `HOLON_JEV_KEY_FILE` names a key.
     jev: Option<crate::jev::JevClient>,
     local: Mutex<LocalModel>,
     started: u64,
@@ -128,7 +95,6 @@ pub struct Runtime {
     approvals: Mutex<Vec<Slot>>,
     approvals_cv: Condvar,
     pub(crate) next_approval: AtomicU64,
-    /// The daemon coding sessions run on, and the sessions this runtime has started on it.
     pub(crate) agentd: Option<session::Agentd>,
     pub(crate) sessions: Mutex<Vec<session::Tracked>>,
     observers: Mutex<Vec<Sender<Event>>>,
@@ -139,7 +105,7 @@ pub struct Runtime {
     next_task: AtomicU64,
     timers: Mutex<Vec<Timer>>,
     next_timer: AtomicU64,
-    /// Agents with a bus drain in flight; a second kick is folded into it.
+    /// A second kick is folded into the drain in flight.
     draining: Mutex<HashSet<String>>,
     rate: Mutex<HashMap<String, VecDeque<u64>>>,
     /// agent -> (consecutive failures, circuit open until)
@@ -154,8 +120,6 @@ pub fn unix_now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
-/// Checked before a spec is saved, so a typo is an error now rather than an
-/// agent that silently never fires or never gets to speak.
 pub fn validate_spec(spec: &AgentSpec) -> Result<(), String> {
     validate_name(&spec.name)?;
     if spec.description.trim().is_empty() {
@@ -209,18 +173,15 @@ pub fn validate_spec(spec: &AgentSpec) -> Result<(), String> {
     Ok(())
 }
 
-/// How long an agent calling another agent waits for it to finish its current run.
 const CALL_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
 
-/// Whether a finished run is the kind of failure another model might not have.
 fn needs_better_model(rec: &RunRecord) -> bool {
     (rec.status == Status::Failed && rec.answer.starts_with("never called required tool"))
         || (rec.status == Status::Ok && rec.answer.trim().is_empty())
 }
 
 thread_local! {
-    /// The agents whose runs are in progress on this thread, outermost first: a call from
-    /// an agent's run is made on its thread, so this is the call stack of agents.
+    /// A call runs on its caller's thread, so this is the call stack of agents, outermost first.
     static RUNNING_HERE: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -282,8 +243,6 @@ impl Runtime {
         &self.kv
     }
 
-    /// Embeds `texts` with the embedding service (starting it if it is on demand). `None` when
-    /// none is configured or it cannot answer.
     pub fn has_embedder(&self) -> bool {
         self.embedder.is_some()
     }
@@ -310,16 +269,11 @@ impl Runtime {
         rx
     }
 
-    /// One trace as an OTLP/JSON `ExportTraceServiceRequest`: the same
-    /// document a collector would have received, so any OpenTelemetry tool can
-    /// open it.
     pub fn trace_otlp(&self, trace_id: &str) -> Value {
         crate::otlp::request(&self.store.trace(trace_id))
     }
 
-
-    /// A new subscriber starts at the head of each topic it listens on: it
-    /// hears what happens from now on, not the whole history of the topic.
+    /// A new subscriber hears what happens from now on, not the topic's whole history.
     fn ensure_offsets(&self, spec: &AgentSpec) {
         for topic in spec.triggers.iter().filter_map(Trigger::topic) {
             if let (Ok(None), Ok(head)) =
@@ -340,7 +294,6 @@ impl Runtime {
         Ok(())
     }
 
-    /// Replaces the spec. The next run uses it — no rebuild, no redeploy.
     pub fn update_agent(&self, spec: AgentSpec) -> Result<(), String> {
         validate_spec(&spec)?;
         if self.store.get(&spec.name).is_none() {
@@ -351,7 +304,6 @@ impl Runtime {
         Ok(())
     }
 
-    /// Resuming delivers everything the agent missed while paused.
     pub fn set_paused(self: &Arc<Self>, name: &str, paused: bool) -> Result<(), String> {
         let mut s = self.store.get(name).ok_or_else(|| format!("no agent named {name}"))?;
         s.paused = paused;
@@ -362,7 +314,6 @@ impl Runtime {
         Ok(())
     }
 
-    /// Creates or replaces a project. Every member must be an existing agent.
     pub fn put_project(&self, project: crate::projects::Project) -> Result<(), String> {
         project.validate()?;
         if let Some(missing) = project.agents.iter().find(|a| self.store.get(a).is_none()) {
@@ -371,8 +322,7 @@ impl Runtime {
         self.store.put_project(&project)
     }
 
-    /// Forgets a project. An archived one is brought back first, so deleting it does not
-    /// leave its agents paused with nothing to say why.
+    /// Unarchived first, so its agents are not left paused with nothing to say why.
     pub fn delete_project(self: &Arc<Self>, name: &str) -> Result<(), String> {
         let _ = self.unarchive_project(name);
         self.store.delete_project(name)
@@ -387,8 +337,6 @@ impl Runtime {
         self.put_project(p)
     }
 
-    /// Takes the agent's project grants away at its next run. If it was the
-    /// project's lead, the project has no lead until one is set.
     pub fn remove_from_project(&self, name: &str, agent: &str) -> Result<(), String> {
         let mut p =
             self.store.get_project(name).ok_or_else(|| format!("no project named {name}"))?;
@@ -400,9 +348,7 @@ impl Runtime {
         self.put_project(p)
     }
 
-    /// Shelves a project: it is marked archived, and each member that no other live project
-    /// holds is paused (unless it already was, which is the owner's doing and is left alone).
-    /// Returns the agents it paused. Archiving an archived project changes nothing.
+    /// A member already paused is the owner's doing: it is left alone and not recorded.
     pub fn archive_project(self: &Arc<Self>, name: &str) -> Result<Vec<String>, String> {
         let mut p =
             self.store.get_project(name).ok_or_else(|| format!("no project named {name}"))?;
@@ -426,8 +372,7 @@ impl Runtime {
         Ok(paused)
     }
 
-    /// Brings a project back, and resumes the members an archive paused: any member that a
-    /// project's record says archiving paused, whichever project that was. Returns them.
+    /// Resumes members any project's record says an archive paused, whichever project that was.
     pub fn unarchive_project(self: &Arc<Self>, name: &str) -> Result<Vec<String>, String> {
         let mut p =
             self.store.get_project(name).ok_or_else(|| format!("no project named {name}"))?;
@@ -445,7 +390,6 @@ impl Runtime {
                 self.set_paused(a, false)?;
             }
         }
-        // what was resumed is no longer a record of anything, in any project
         for q in all.iter_mut().filter(|q| q.name != p.name) {
             let before = q.paused_by_archive.len();
             q.paused_by_archive.retain(|a| !resume.contains(a));
@@ -458,7 +402,6 @@ impl Runtime {
         Ok(resume)
     }
 
-    /// Takes the agent out of service and into the trash (see `Store::delete`).
     pub fn delete_agent(&self, name: &str) -> Result<(), String> {
         self.store.delete(name)?;
         for p in
@@ -472,8 +415,7 @@ impl Runtime {
         Ok(())
     }
 
-    /// Brings a deleted agent back as it was, and into the projects it was in that
-    /// still exist. Its timers are not restored; the schedules in its spec are.
+    /// Its timers are not restored; the schedules in its spec are.
     pub fn restore_agent(&self, id_or_name: &str) -> Result<crate::store::Trashed, String> {
         let t = self.store.restore(id_or_name)?;
         for p in &t.projects {
@@ -482,13 +424,10 @@ impl Runtime {
         Ok(t)
     }
 
-
     fn lock_for(&self, name: &str) -> Arc<Mutex<()>> {
         self.busy.lock().unwrap().entry(name.to_string()).or_default().clone()
     }
 
-    /// Refuses a run before the model is called: too many hops, a cycle, the
-    /// rate limit, an open circuit. `Err` is the reason.
     fn admit(&self, spec: &AgentSpec, cause: &Cause, via: &str) -> Result<(), String> {
         let now = unix_now();
         if cause.hops > MAX_HOPS {
@@ -540,8 +479,7 @@ impl Runtime {
         }
     }
 
-    /// A refused wake-up still leaves a record (and a span): silence would
-    /// look like the agent ignoring it.
+    /// A refused wake-up still leaves a record: silence would look like the agent ignoring it.
     fn record_drop(&self, agent: &str, trigger: &str, input: &str, cause: &Cause, why: &str) {
         let (now, now_ms) = (unix_now(), unix_now_ms());
         let seq = self.next_task.fetch_add(1, Ordering::Relaxed);
@@ -576,11 +514,8 @@ impl Runtime {
         self.observe(Event::RunFinished(Box::new(rec)));
     }
 
-    /// Runs `name` to completion. One run per agent at a time: with `wait`
-    /// it queues behind the current one, without it a busy agent is an error
-    /// (a schedule tick that finds its agent still working should skip, not
-    /// pile up behind it). `via` names how it was woken (`topic` or `call`)
-    /// for cycle detection; empty for triggers that cannot cycle.
+    /// Without `wait` a busy agent is an error: a schedule tick should skip, not pile up.
+    /// `via` (topic or `call`) feeds cycle detection; empty for triggers that cannot cycle.
     pub fn run_agent(
         &self,
         name: &str,
@@ -594,11 +529,9 @@ impl Runtime {
         if spec.paused {
             return Err(format!("{name} is paused"));
         }
-        // What a run may do is its own spec plus whatever its projects grant.
         let directory: Vec<(String, String)> =
             self.store.list().into_iter().map(|a| (a.name, a.description)).collect();
         let mut spec = crate::projects::effective(&spec, &self.store.list_projects(), &directory);
-        // A capability named after a shared connector gets its definition from there.
         let dir = self.store.connectors_dir();
         for c in spec.capabilities.iter_mut().filter(|c| c.exec.is_none()) {
             if let Some(d) = crate::connector::load(&dir, &c.name) {
@@ -612,14 +545,11 @@ impl Runtime {
         let _guard = if wait {
             lock.lock().unwrap()
         } else if via == "call" {
-            // An agent further up this very call stack is waiting on us: queueing
-            // behind it would be a certain deadlock.
+            // An agent up this call stack waits on us: queueing behind it would deadlock.
             if RUNNING_HERE.with(|r| r.borrow().iter().any(|n| n == name)) {
                 return Err(format!("{name} is already waiting on this call"));
             }
-            // An agent asked by another agent queues behind the run in progress (the
-            // owner may have just addressed both). Bounded, so two agents waiting on
-            // each other time out with an error instead of hanging.
+            // Bounded, so two agents waiting on each other time out instead of hanging.
             let deadline = std::time::Instant::now() + CALL_WAIT;
             loop {
                 match lock.try_lock() {
@@ -639,16 +569,14 @@ impl Runtime {
             self.record_drop(name, trigger, input, cause, &why);
             return Err(format!("dropped: {why}"));
         }
-        // The chain a run records includes its own wake-up.
         let mut c = cause.clone();
         if !via.is_empty() {
             c.chain.push(format!("{name}|{via}"));
         }
         RUNNING_HERE.with(|r| r.borrow_mut().push(name.to_string()));
         let mut rec = agent::run(self, &spec, trigger, input, &c);
-        // A run that fails a check the agent sets (a tool it must call) or says nothing is
-        // tried again on the next model of its fallback chain, so a hosted model's miss is
-        // the local model's turn, and a good hosted answer never wakes a local server.
+        // Retried on the next fallback model only on a miss, so a good hosted answer never
+        // wakes a local server.
         if let crate::spec::ModelSpec::Fallback { models } = &spec.model {
             let mut rest = &models[..];
             while rest.len() > 1 && needs_better_model(&rec) {
@@ -667,7 +595,6 @@ impl Runtime {
         Ok(rec)
     }
 
-
     fn publish_draft(self: &Arc<Self>, topic: &str, draft: Draft) -> Result<usize, String> {
         validate_topic(topic)?;
         if draft.hops > MAX_HOPS {
@@ -684,18 +611,13 @@ impl Runtime {
                 if !spec.paused {
                     woken += 1;
                 }
-                // A paused agent is kicked too: the drain refuses while it is
-                // paused and `set_paused(false)` kicks again, so this keeps
-                // one code path.
+                // Kicked even when paused: the drain refuses then, and resuming kicks again.
                 self.kick(&spec.name);
             }
         }
         Ok(woken)
     }
 
-    /// Publishes from outside any agent (a webhook, the admin API), joining
-    /// `trace_id` / `parent_span_id` if the caller supplied a `traceparent`.
-    /// Returns how many agents it will wake.
     pub fn emit_event(
         self: &Arc<Self>,
         topic: &str,
@@ -717,8 +639,6 @@ impl Runtime {
         )
     }
 
-    /// Starts draining `agent`'s backlog on its own thread, unless one is
-    /// already running (it will see anything newly published).
     pub fn kick(self: &Arc<Self>, agent: &str) {
         if !self.draining.lock().unwrap().insert(agent.to_string()) {
             return;
@@ -730,8 +650,8 @@ impl Runtime {
                 let _ = rt.bus.set_offset(&topic, &agent, env.seq);
             }
             rt.draining.lock().unwrap().remove(&agent);
-            // Something may have been published between the last empty check
-            // and the flag clearing; look once more.
+            // Something may have been published between the last empty check and the flag
+            // clearing; look once more.
             if rt.next_pending(&agent).is_none()
                 || !rt.draining.lock().unwrap().insert(agent.clone())
             {
@@ -740,8 +660,6 @@ impl Runtime {
         });
     }
 
-    /// The oldest undelivered envelope across the agent's topics. `None` when
-    /// there is none, or the agent is paused or gone.
     fn next_pending(&self, agent: &str) -> Option<(String, Envelope)> {
         let spec = self.store.get(agent)?;
         if spec.paused {
@@ -798,7 +716,6 @@ impl Runtime {
         let _ = self.run_agent(agent, &label, &env.draft.payload, &cause, topic, true);
     }
 
-    /// Delivers whatever agents missed while the runtime was down.
     pub fn recover(self: &Arc<Self>) {
         for spec in self.store.list() {
             if spec.triggers.iter().any(|t| t.topic().is_some()) {
@@ -806,7 +723,6 @@ impl Runtime {
             }
         }
     }
-
 
     fn save_timers(&self) {
         let t = self.timers.lock().unwrap();
@@ -816,8 +732,7 @@ impl Runtime {
         );
     }
 
-    /// Evaluates every schedule trigger and due timer once, firing what is
-    /// due. Public so a test can drive it without waiting on the thread.
+    /// Public so a test can drive it without waiting on the thread.
     pub fn tick(self: &Arc<Self>, now: u64) -> usize {
         let mut fired = 0;
         for spec in self.store.list() {
@@ -865,8 +780,6 @@ impl Runtime {
         fired
     }
 
-    /// Starts the background scheduler (once a second) and delivers any bus
-    /// backlog left from before this process started.
     pub fn start_scheduler(self: &Arc<Self>) {
         self.recover();
         self.start_session_watcher();
@@ -876,7 +789,6 @@ impl Runtime {
             while !rt.stop.load(Ordering::Relaxed) {
                 let now = unix_now();
                 rt.tick(now);
-                // The trash is checked once an hour, and once at start.
                 if now.saturating_sub(swept) >= 3600 {
                     rt.store.sweep_trash(now);
                     swept = now;
@@ -888,7 +800,6 @@ impl Runtime {
 
     pub fn shutdown(&self) {
         self.stop.store(true, Ordering::Relaxed);
-        // A session left open keeps a task running that nobody is left to answer.
         self.close_all_sessions();
     }
 
@@ -896,8 +807,6 @@ impl Runtime {
         self.stop.load(Ordering::Relaxed)
     }
 
-
-    /// Writes from outside any agent (the admin API). Wakes watchers on change.
     pub fn put_store(
         self: &Arc<Self>,
         ns: &str,
@@ -943,7 +852,6 @@ impl Runtime {
         Ok(put)
     }
 
-
     fn set_task(&self, id: &str, state: TaskState) {
         let mut tasks = self.tasks.lock().unwrap();
         match tasks.iter_mut().find(|(i, _)| i == id) {
@@ -957,9 +865,6 @@ impl Runtime {
         }
     }
 
-
-    /// What is waiting for a person: sensitive tool calls agents have asked to make, and the
-    /// calls a coding session's daemon is waiting on, shown the same way.
     pub fn pending_approvals(&self) -> Vec<Pending> {
         let mut all: Vec<Pending> = self
             .approvals
@@ -973,13 +878,12 @@ impl Runtime {
         all
     }
 
-    /// `false` if no such pending request (already answered or timed out).
+    /// `false`: already answered or timed out.
     pub fn resolve_approval(&self, id: u64, approved: bool) -> bool {
         self.resolve_approval_scoped(id, approved, "once")
     }
 
-    /// `scope` (`once`, `task`, `session`) says how far an approval of a coding session's tool
-    /// call reaches (ADR-0114); an agent's own sensitive call has one reach, and ignores it.
+    /// `scope` (ADR-0114) reaches only a coding session's tool calls.
     pub fn resolve_approval_scoped(&self, id: u64, approved: bool, scope: &str) -> bool {
         {
             let mut list = self.approvals.lock().unwrap();

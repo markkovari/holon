@@ -1,19 +1,4 @@
-//! The node agent: how one `comp-host` joins a lattice and does as it is told.
-//!
-//! Three jobs, and no more:
-//!
-//! * publish what is running here, as a full snapshot, on a timer;
-//! * take `start`/`stop` commands and make them true; and
-//! * fetch artifacts by digest.
-//!
-//! There is no scheduler here and no opinion about placement. The reconciler
-//! decides; this obeys and reports. That split is the whole reason a node can be
-//! added by installing a binary and joining a tailnet.
-//!
-//! **It keeps serving when the control plane is gone.** The instance table is
-//! persisted on every accepted command and restored *before* NATS is contacted, so
-//! a node that reboots during an outage comes back running what it was running. An
-//! unreachable reconciler is not an instruction to stop.
+//! Node agent. The ledger is restored before NATS is contacted, so a node keeps serving with the control plane gone.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -27,13 +12,8 @@ use serde::{Deserialize, Serialize};
 use crate::tenant::{instance_id, Limits, StartCommand};
 use crate::{Instance, Instances, Routes};
 
-/// The capabilities this host can actually grant, enforced by the linker: a
-/// component importing anything not on it does not start.
-/// VERSIONLESS on purpose, in step with `manifest.rs`'s `HostIface::family`: a node
-/// advertises a concrete version and a component imports one, and requiring the
-/// strings to be equal made every deployment unschedulable.
-// ponytail: family match; tighten to semver when two incompatible versions of one
-// interface actually have to coexist on a node.
+/// Versionless on purpose (see `manifest.rs` `HostIface::family`): exact version equality made every deployment unschedulable.
+// ponytail: family match; tighten to semver when two incompatible versions must coexist on a node.
 pub const HOST_IFACES: &[&str] = &[
     "wasi:http/incoming-handler",
     "wasi:http/outgoing-handler",
@@ -55,8 +35,7 @@ pub struct RunningInstance {
     pub component: String,
     pub digest: String,
     pub count: u32,
-    /// The Host header this instance answers to, so an ingress can build its
-    /// routing table from inventory alone.
+    /// So an ingress can build its routing table from inventory alone.
     pub ingress_host: Option<String>,
 }
 
@@ -77,35 +56,26 @@ struct Capacity {
     instances: usize,
 }
 
-/// What a node needs to obey a command. Everything here is process-lifetime.
 pub struct Agent {
     pub node: String,
     pub labels: BTreeMap<String, String>,
     pub lattice: String,
     pub engine: Arc<wasmtime::Engine>,
     pub kv: crate::Kv,
-    /// Where a granted secret is fetched from (ADR-0051). Carried on the agent so
-    /// the wRPC-served path and the HTTP path build identical stores.
+    /// Secret source (ADR-0051), on the agent so the wRPC and HTTP paths build identical stores.
     pub platform_url: String,
     pub instances: Instances,
-    /// Compiled artifacts, by digest. A `Component` is immutable machine code and
-    /// reference-counted, so every app running the same digest shares ONE copy;
-    /// per-instance state lives in the Store.
+    /// By digest: a `Component` is immutable and refcounted, so every app on one digest shares one copy.
     pub compiled:
         Arc<std::sync::RwLock<std::collections::HashMap<String, wasmtime::component::Component>>>,
     pub routes: Routes,
     pub limits: Limits,
-    /// The node's NATS connection, for building wRPC clients. `None` off a lattice.
     pub nats: Option<Arc<async_nats::Client>>,
     pub state_dir: PathBuf,
     pub heartbeat_secs: u64,
-    /// Where this node can be reached by an ingress, `host:port`. A node bound to
-    /// `0.0.0.0` knows its port and not its address, so this is told to it.
+    /// `host:port` for an ingress; a node bound to `0.0.0.0` cannot know its own address.
     pub address: String,
-    /// Can every replica of an app see this node's store, wherever it runs?
-    ///
-    /// Advertised so the reconciler can refuse to spread a stateful app across
-    /// nodes where it would silently diverge. `--kv sqlite`/`memory` say false.
+    /// Lets the reconciler refuse to spread a stateful app where its store would diverge.
     pub kv_shared: bool,
 }
 
@@ -118,15 +88,11 @@ impl Agent {
         self.state_dir.join("instances.json")
     }
 
-    /// Where compiled artifacts live, keyed by the digest of the wasm they came from.
     fn cache_dir(&self) -> PathBuf {
         self.state_dir.join("cache")
     }
 
-    /// Everything running here, for the inventory and for the ledger.
     fn snapshot(&self) -> Vec<RunningInstance> {
-        // Reverse the route table once rather than per instance: a node holds few
-        // instances, but this runs on every heartbeat.
         let routes: BTreeMap<String, String> = self
             .routes
             .read()
@@ -149,13 +115,9 @@ impl Agent {
             .collect()
     }
 
-    /// Persist what we were told to run, so a reboot is not a data-loss event for
-    /// the fleet's desired state. Atomic rename: a half-written ledger read on the
-    /// next boot would start a subset and look like a partial outage.
+    /// Atomic rename: a half-written ledger read on boot would start a subset.
     fn persist(&self, commands: &BTreeMap<String, StartCommand>) {
-        // Failures are logged, not propagated: the caller is a heartbeat, and failing
-        // it would turn "the ledger did not save" into "the node is down". A silent
-        // no-op would only surface one reboot later as a partial outage.
+        // Logged, not propagated: failing the heartbeat would turn "ledger not saved" into "node down".
         let tmp = self.ledger().with_extension("json.tmp");
         let bytes = match serde_json::to_vec_pretty(commands) {
             Ok(b) => b,
@@ -186,13 +148,9 @@ impl Agent {
         }
     }
 
-    /// The other half of the same promise. An unreadable or corrupt ledger is not
-    /// the same as an empty one, so it is reported rather than treated as "nothing
-    /// to restore".
     fn load_ledger(&self) -> BTreeMap<String, StartCommand> {
         let bytes = match std::fs::read(self.ledger()) {
             Ok(b) => b,
-            // Absent is normal: nothing has been started yet.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return BTreeMap::new(),
             Err(e) => {
                 eprintln!(
@@ -219,13 +177,9 @@ impl Agent {
     }
 }
 
-/// The commands this node has accepted, keyed by instance id. Kept beside the live
-/// table because a `StartCommand` is what has to be replayed on boot — the
-/// compiled instance cannot be.
+/// Accepted commands by instance id: a `StartCommand` is what replays on boot, not the compiled instance.
 type Ledger = Arc<std::sync::Mutex<BTreeMap<String, StartCommand>>>;
 
-/// The fabric this node is joined to. Three traits, one implementation today —
-/// nothing below this line names a broker.
 pub struct Fabric {
     pub inventory: Arc<dyn Inventory>,
     pub commands: Arc<dyn CommandBus>,
@@ -238,9 +192,7 @@ pub async fn run(agent: Arc<Agent>, fabric: Fabric) -> Result<()> {
 
     let ledger: Ledger = Arc::new(std::sync::Mutex::new(agent.load_ledger()));
 
-    // Restore BEFORE touching the network. This is the property that replaces the
-    // operator: a node that reboots while the control plane is down comes back
-    // serving, from its own disk, with no help from anyone.
+    // Restore before touching the network, so a reboot during a control-plane outage still serves.
     {
         let saved = crate::sync::held(&ledger).clone();
         if !saved.is_empty() {
@@ -248,8 +200,6 @@ pub async fn run(agent: Arc<Agent>, fabric: Fabric) -> Result<()> {
         }
         for (id, cmd) in saved {
             if let Err(e) = start(&agent, cmd, None).await {
-                // A restore failure must not stop the others: one unreadable
-                // artifact is not a reason to bring up nothing.
                 eprintln!("comp-host: could not restore {id}: {e:#}");
             }
         }
@@ -257,8 +207,7 @@ pub async fn run(agent: Arc<Agent>, fabric: Fabric) -> Result<()> {
 
     let Fabric { inventory, commands, artifacts } = fabric;
 
-    // Heartbeat. Separate task so a slow command cannot make this node look dead
-    // and get its work rescheduled underneath it.
+    // Own task, so a slow command cannot make this node look dead.
     {
         let agent = agent.clone();
         let inventory = inventory.clone();
@@ -280,8 +229,7 @@ pub async fn run(agent: Arc<Agent>, fabric: Fabric) -> Result<()> {
                 };
                 match serde_json::to_vec(&inv) {
                     Ok(bytes) => {
-                        // Three missed beats. A flaky tailnet gets chances; a dead
-                        // node does not linger long enough to hold a replica hostage.
+                        // Three missed beats: tolerates a flaky tailnet, drops a dead node fast.
                         let ttl = Duration::from_secs(agent.heartbeat_secs * 3);
                         if let Err(e) = inventory.publish(&agent.node, bytes, ttl).await {
                             eprintln!("comp-host: heartbeat failed: {e:#}");
@@ -299,8 +247,7 @@ pub async fn run(agent: Arc<Agent>, fabric: Fabric) -> Result<()> {
     while let Some(cmd) = inbox.recv().await {
         let result = handle(&agent, artifacts.as_ref(), &ledger, &cmd.verb, &cmd.payload).await;
 
-        // Acked only after the instance is built, so "started" means "will serve"
-        // rather than "is downloading".
+        // Acked only after the instance is built: "started" means "will serve".
         let body = match &result {
             Ok(note) => serde_json::json!({ "ok": true, "note": note }),
             Err(e) => {
@@ -343,18 +290,11 @@ async fn handle(
             }
             let s: Stop = serde_json::from_slice(payload).context("unreadable stop command")?;
             let id = instance_id(&s.tenant, &s.app, &s.component);
-            // Shrink by the delta; remove only when nothing is left. A stop of 1
-            // out of 3 must not take the whole instance down.
-            // Stop means gone. Shrinking to a smaller non-zero count is a `start`
-            // with a lower absolute count, so there is only one code path that
-            // changes a replica count and only one that removes an instance.
+            // Stop means gone; shrinking is a `start` with a lower absolute count.
             let removed = crate::sync::writing(&agent.instances).remove(&id);
             if let Some(gone) = &removed {
                 crate::sync::writing(&agent.routes).retain(|_, v| *v != id);
-                // Drop the shared module when the LAST instance on that digest goes.
-                // Holding machine code for something nothing runs is exactly the idle
-                // cost this cache exists to reduce, and the .cwasm stays on disk, so
-                // coming back costs the 0.3ms load rather than a recompile.
+                // Drop the shared module with the last instance on its digest; the .cwasm stays on disk for a cheap reload.
                 let digest = gone.scope.digest.clone();
                 let still_used =
                     agent.instances.read().unwrap().values().any(|i| i.scope.digest == digest);
@@ -371,8 +311,7 @@ async fn handle(
             Ok(if removed.is_some() {
                 format!("stopped {id}")
             } else {
-                // Not an error: the reconciler re-derives from inventory, so
-                // stopping something already gone is a converged no-op.
+                // Not an error: stopping something already gone is a converged no-op.
                 format!("{id} was not running")
             })
         }
@@ -380,19 +319,14 @@ async fn handle(
             let ids: Vec<String> = crate::sync::reading(&agent.instances).keys().cloned().collect();
             crate::sync::writing(&agent.instances).clear();
             crate::sync::writing(&agent.routes).clear();
-            // The ledger is deliberately NOT cleared: a drain is an operator asking
-            // this node to shed load now, not a decision that these apps should
-            // never come back. The reconciler will place them elsewhere.
+            // Ledger deliberately kept: a drain sheds load now, it does not retire these apps.
             Ok(format!("drained {} instance(s)", ids.len()))
         }
         other => bail!("unknown command {other:?}"),
     }
 }
 
-/// Build one instance and put it in the table.
-///
-/// `artifacts` is `None` during a ledger restore, where only the local cache may be
-/// used — the whole point of that path is that it works with no network.
+/// `artifacts` is `None` during a ledger restore, which must use the local cache only.
 async fn start(
     agent: &Arc<Agent>,
     cmd: StartCommand,
@@ -400,20 +334,14 @@ async fn start(
 ) -> Result<()> {
     let id = instance_id(&cmd.tenant, &cmd.app, &cmd.component);
     let ingress_host = cmd.ingress_host.clone();
-    // A start command carries an absolute count, not a delta, so re-sending it is a
-    // no-op; the reconciler re-derives faster than this node heartbeats.
-    //
-    // The clone-then-drop is load-bearing: `if let Some(x) = lock.read()…` holds the
-    // read guard for the whole block, so taking the write lock inside deadlocks, and
-    // the heartbeat (which also reads this table) stops publishing inventory.
+    // Absolute count, so a re-send is a no-op.
+    // Clone-then-drop: holding the read guard into the write lock deadlocks the heartbeat.
     let resized = {
         let table = crate::sync::reading(&agent.instances);
         table.get(&id).filter(|e| e.scope.digest == cmd.digest && e.count != cmd.count.max(1)).map(
             |e| {
                 Arc::new(Instance {
                     scope: e.scope.clone(),
-                    // Resizing a running instance's replica count, not restarting
-                    // it — its cache carries over, same as its scope does.
                     cache_backing: e.cache_backing.clone(),
                     pre: e.pre.clone(),
                     remotes: e.remotes.clone(),
@@ -428,54 +356,41 @@ async fn start(
         eprintln!("comp-host: {id} now holds {n} replica(s)");
         return Ok(());
     }
-    // Already exactly as asked: say so and touch nothing.
     if crate::sync::reading(&agent.instances).get(&id).is_some_and(|e| e.scope.digest == cmd.digest)
     {
         return Ok(());
     }
 
-    // Omission fails closed. A component importing something this host cannot
-    // grant is refused HERE, at start, rather than trapping on its first request
-    // in front of a user.
+    // Fail closed at start, not on the first request.
     for need in &cmd.host_needs {
         if !HOST_IFACES.contains(&need.as_str()) {
             bail!("{id} imports {need}, which this host cannot grant");
         }
     }
 
-    // Phase timings, because "cold start" is three different costs; reported on the
-    // start line so the number comes from the node doing the work.
+    // Phase timings: "cold start" is three different costs.
     let t0 = std::time::Instant::now();
     let path = fetch_artifact(agent, &cmd.digest, artifacts).await?;
     let t_fetch = t0.elapsed();
     let count = cmd.count.max(1);
     let scope = Arc::new(cmd.into_scope(&agent.limits));
-    // Fresh for this instance alone — see `CacheBacking`'s own doc for why a
-    // process-global one would let two tenants' `cache:store` collide.
+    // Per instance: a process-global one would let two tenants' `cache:store` collide.
     let cache_backing: crate::CacheBacking =
         Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
 
-    // Every granted reference must resolve before this instance serves anything
-    // (ADR-0013, ADR-0051): a deleted or renamed secret should fail the deploy, not
-    // the first request that takes that code path. This is a `describe`, not a
-    // fetch; the plaintext stays put.
-    //
-    // Skipped on a ledger restore (`artifacts` is `None`), which must work with no
-    // network; those references were checked when the instance first started.
+    // Every granted secret must resolve before serving (ADR-0013, ADR-0051); a `describe`, not a fetch.
+    // Skipped on a ledger restore, which must work with no network.
     if artifacts.is_some() && scope.secret_refs().next().is_some() {
         if agent.platform_url.is_empty() {
             bail!("{id} was granted secrets, and this host has no platform to resolve them");
         }
-        // ponytail: a client per start. Start commands are rare enough that a
-        // connection pool per start is not worth a field on `Agent`.
+        // ponytail: a client per start; starts are rare enough not to warrant a pool on `Agent`.
         let http = reqwest::Client::new();
         for (key, reference) in scope.secret_refs() {
             crate::secrets::probe(&http, &agent.platform_url, &scope.fetch_token, reference)
                 .await
                 .map_err(|e| {
-                    // The reference is a name, not a value, and naming it is the
-                    // difference between an operator fixing the manifest and
-                    // guessing which of five keys is the broken one.
+                    // Name the reference (not a value) so an operator knows which key is broken.
                     anyhow::anyhow!(
                         "{id} cannot start: secret {key:?} -> {}: {e}",
                         reference.as_str()
@@ -484,34 +399,22 @@ async fn start(
         }
     }
 
-    // Compile once per artifact per node, not once per start. ADR-0037 measured a
-    // 33ms cold start of which 31ms was recompiling already-compiled bytes.
+    // Compile once per artifact per node: ADR-0037 measured 31 of a 33ms cold start as recompiling.
     let cache = agent.cache_dir();
     let _ = std::fs::create_dir_all(&cache);
     let cwasm = cache.join(format!("{}.cwasm", scope.digest.trim_start_matches("sha256:")));
-    // Cloned for the blocking task below: compilation must not stall the
-    // heartbeat behind it.
     let engine = agent.engine.clone();
-    // Already compiled on this node? Then share it. A `Component` is immutable
-    // machine code and internally reference-counted, so N apps on one digest hold one
-    // copy — per-instance state lives in the Store. Everything below still runs per
-    // instance: the linker, the remotes and the route are what make it an instance.
     let in_memory = crate::sync::reading(&agent.compiled).get(&scope.digest).cloned();
     let shared = in_memory.is_some();
     let (component, from_cache) = match in_memory {
         Some(hit) => (hit, true),
         None => tokio::task::spawn_blocking(move || {
-            // SAFETY: `deserialize_file` trusts its input completely — it maps machine
-            // code straight in. The only thing that makes that acceptable is where the
-            // file comes from: written by this process, into a host-private directory,
-            // named for the digest whose bytes we verified before compiling. Nothing
-            // off the wire is ever deserialised, and a file that came from anywhere
-            // else would be arbitrary code execution.
+            // SAFETY: `deserialize_file` maps machine code in unchecked. The file is only ever written by this
+            // process, into a host-private dir, named for a verified digest; nothing off the wire is deserialised.
             if cwasm.exists() {
                 match unsafe { wasmtime::component::Component::deserialize_file(&engine, &cwasm) } {
                     Ok(c) => return Ok((c, true)),
-                    // A cache written by a different wasmtime build, or a truncated
-                    // write, must not be fatal — it is a cache. Drop it and compile.
+                    // A stale or truncated cache is not fatal: drop it and compile.
                     Err(e) => {
                         eprintln!("comp-host: ignoring unusable {}: {e}", cwasm.display());
                         let _ = std::fs::remove_file(&cwasm);
@@ -519,9 +422,7 @@ async fn start(
                 }
             }
             let c = wasmtime::component::Component::from_file(&engine, &path)?;
-            // Write via a temp file in the same directory, then rename. Two starts of
-            // the same digest can race here, and a half-written .cwasm that another
-            // start deserialises is the one failure this cache must never cause.
+            // Temp file + rename: two starts of one digest can race, and a half-written .cwasm must never load.
             if let Ok(bytes) = c.serialize() {
                 let tmp = cwasm.with_extension(format!("tmp.{}", std::process::id()));
                 if std::fs::write(&tmp, &bytes).is_ok() {
@@ -536,12 +437,7 @@ async fn start(
     };
     let t_compile = t0.elapsed() - t_fetch;
 
-    // EVERY link becomes a wRPC client, including one whose target is in this very
-    // process. There is no in-process path between SEPARATELY STARTED components;
-    // skipping a local target leaves its import unbound ("a matching implementation
-    // was not found in the linker"). In-process linking only exists via `wac` fusing
-    // at build time (ADR-0005). Loopback wRPC measured within noise of fused (2,795
-    // vs 2,788 rps).
+    // Every link is a wRPC client, even to this process: separate starts have no in-process path (ADR-0005).
     let remotes = match (&agent.nats, scope.links.is_empty()) {
         (Some(nats), false) => {
             crate::rpc::remote_clients(nats.clone(), &agent.lattice, &scope.links).await?
@@ -552,30 +448,21 @@ async fn start(
         eprintln!("comp-host: {id} links {} interface(s) over wrpc", remotes.len());
     }
 
-    // Remembered by digest, so the next app on this component shares this copy.
-    // Inserted before the linker because everything below is per-instance and this
-    // is the only part that is not.
     if !shared {
         crate::sync::writing(&agent.compiled).insert(scope.digest.clone(), component.clone());
     }
 
     let mut linker = crate::build_linker(&agent.engine)?;
-    // Bind the remote half BEFORE pre-instantiating: an import with no host impl
-    // and no link is what makes `instantiate_pre` fail, and failing there is how
-    // omission stays fail-closed (ADR-0013).
+    // Bind remotes before pre-instantiating: an unbound import failing `instantiate_pre` keeps omission fail-closed (ADR-0013).
     if !remotes.is_empty() {
         let n = crate::rpc::link_remote_imports(&agent.engine, &mut linker, &component, &remotes)?;
         eprintln!("comp-host: {id} bound {n} interface(s) over wrpc");
     }
     let ipre = linker.instantiate_pre(&component)?;
     let t_link = t0.elapsed() - t_fetch - t_compile;
-    // A component that exports `wasi:http/incoming-handler` gets a door; one that
-    // does not is a plug, reachable over the bus only. Both are legal instances.
     let pre = crate::HttpPre::new(ipre.clone());
 
-    // Serve this instance's exports so a remote import has something to call. On the
-    // instance's own subject, in a queue group named for it, so N replicas share the
-    // work and a departing one needs no deregistration.
+    // Queue group per instance: N replicas share the work and a departing one needs no deregistration.
     if let Some(nats) = &agent.nats {
         let exports = crate::rpc::exported_functions(&agent.engine, &component);
         if !exports.is_empty() {
@@ -631,10 +518,7 @@ async fn start(
     Ok(())
 }
 
-/// Local cache first, object store second, and the digest is checked either way.
-///
-/// The object store is not a trust boundary — the digest is. Anything that does not
-/// hash to the name it was fetched under is discarded rather than compiled.
+/// Local cache first, then the store; the digest, not the store, is the trust boundary.
 async fn fetch_artifact(
     agent: &Arc<Agent>,
     digest: &str,
@@ -683,9 +567,7 @@ mod tests {
 
     #[test]
     fn a_digest_that_is_not_a_digest_is_refused() {
-        // The artifact path is a filename built from this string. A digest with a
-        // slash in it would be a directory traversal into whatever the host can
-        // write, so it is validated as hex before it is ever joined to a path.
+        // The digest becomes a filename; a slash in it would be a directory traversal.
         for bad in ["", "sha256:", "sha256:../../etc/passwd", "sha256:zz", "latest", "sha256:ab/cd"]
         {
             let short = bad.trim_start_matches("sha256:");
@@ -699,21 +581,16 @@ mod tests {
 
     #[test]
     fn the_host_interface_list_is_what_the_linker_actually_provides() {
-        // The highest-consequence list in the platform: anything on it is something a
-        // tenant's component may import. Adding a line here without adding it to
-        // `build_linker` promises something that then fails at start.
+        // Adding an entry without wiring it in `build_linker` promises an import that fails at start.
         assert!(HOST_IFACES.iter().all(|i| i.contains(':') && i.contains('/')));
-        // Versionless, matching what a manifest stamps into `host_needs`.
         assert!(!HOST_IFACES.iter().any(|i| i.contains('@')));
-        // wasmcloud:messaging stays off it: raw subject publish reaches around the
-        // host's naming and would break the boundary for every NATS-backed thing.
+        // wasmcloud:messaging stays off: raw subject publish bypasses the host's naming boundary.
         assert!(!HOST_IFACES.iter().any(|i| i.starts_with("wasmcloud:messaging")));
     }
 
     #[test]
     fn sha256_matches_the_reconcilers() {
-        // Both sides content-address independently; if these ever disagree, every
-        // artifact fetch fails its integrity check for a reason nobody would guess.
+        // Both sides content-address independently; a mismatch fails every fetch's integrity check.
         assert_eq!(
             sha256_hex(b"hello"),
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"

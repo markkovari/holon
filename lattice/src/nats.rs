@@ -1,7 +1,3 @@
-//! The NATS implementation of all three traits. One struct because one connection
-//! serves all of them; callers hold `Arc<dyn Inventory>` and friends, so any ONE
-//! trait can get a second implementation without touching the others.
-
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -15,32 +11,20 @@ pub struct NatsLattice {
     kv: async_nats::jetstream::kv::Store,
     objects: async_nats::jetstream::object_store::ObjectStore,
     lattice: String,
-    /// The bucket's REAL `max_age`, which is not necessarily the one this process
-    /// asked for — see `connect_bucket`.
     effective_ttl: Duration,
 }
 
-/// Split a comma-separated server list, so one flag can name a whole cluster.
-///
-/// A client given a single address does learn the rest of the cluster from the
-/// INFO the server sends, and fails over to them — but only once it has connected
-/// to something. A process starting while its one listed server is the one that
-/// is down cannot bootstrap at all, which is exactly when it matters (ADR-0067).
-/// Everything that dials NATS in this workspace goes through here.
+/// Lists every server so a process can start while one of them is down (ADR-0067).
 pub fn servers(url: &str) -> Vec<String> {
     url.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
 }
 
 impl NatsLattice {
-    /// `inventory_ttl` becomes the bucket's `max_age`. NATS applies it per BUCKET, not
-    /// per entry, so `Inventory::publish`'s `ttl` is honoured at connect time and two
-    /// callers asking for different TTLs get whichever connected first.
+    /// NATS applies `inventory_ttl` per bucket, not per entry; the first creator's value wins.
     pub async fn connect(url: &str, lattice: &str, inventory_ttl: Duration) -> Result<Self> {
         Self::connect_bucket(url, lattice, inventory_ttl, wire::INVENTORY).await
     }
 
-    /// The same thing against a named bucket, so the load signal can reuse this
-    /// wholesale instead of growing a fourth trait for one map of counters.
     pub async fn connect_bucket(
         url: &str,
         lattice: &str,
@@ -53,16 +37,8 @@ impl NatsLattice {
             .with_context(|| format!("connecting to NATS at {}", urls.join(", ")))?;
         let js = async_nats::jetstream::new(client.clone());
 
-        // Created rather than assumed, so a fresh lattice needs no setup step.
-        //
-        // AND OPENED rather than insisted upon when it already exists with a different
-        // config: host, reconciler and ingress each ask for their own `max_age`.
-        // nats-server 2.14.6 REFUSES `create_key_value` there (`stream name already in
-        // use with a different configuration`, 10058), so the second process would fail
-        // to start with a message naming neither the TTL nor who wanted what, and a
-        // changed `--heartbeat-secs` would keep a host from ever joining. So: fall back
-        // to the existing bucket and say what differs. The TTL comes back out on
-        // `effective_ttl` so a caller sizes its refresh off reality.
+        // Open the existing bucket on failure: nats-server refuses a create with a different
+        // `max_age` (10058), and host, reconciler and ingress each ask for their own.
         let wanted = async_nats::jetstream::kv::Config {
             bucket: bucket.into(),
             max_age: inventory_ttl,
@@ -82,11 +58,8 @@ impl NatsLattice {
             .await
             .context("opening the artifact store")?;
 
-        // WHAT THE BUCKET ACTUALLY SAYS, not what we asked for: a refresh sized against
-        // a TTL three times the real one is a poll that mostly sees an empty bucket,
-        // which looks like `no app answers`. Read back, reported once when it differs,
-        // and carried on the handle. Not fatal: refusing to start would turn a degraded
-        // fleet into a dead one.
+        // A refresh sized off the requested TTL reads an empty bucket, so use the real one.
+        // Not fatal: refusing to start would turn a degraded fleet into a dead one.
         let effective_ttl = match kv.status().await {
             Ok(status) => {
                 let actual = status.max_age();
@@ -104,9 +77,7 @@ impl NatsLattice {
                 }
                 actual
             }
-            // A status read that fails says nothing about the TTL, so the requested
-            // value stands rather than a zero being invented — and it is reported,
-            // because silently falling back is the failure this whole block is about.
+            // Keep the requested value rather than invent a zero, and say so.
             Err(e) => {
                 eprintln!(
                     "comp-lattice: could not read `{bucket}`'s max_age ({e}); assuming the \
@@ -120,11 +91,7 @@ impl NatsLattice {
         Ok(Self { client, kv, objects, lattice: lattice.to_string(), effective_ttl })
     }
 
-    /// The inventory bucket's real `max_age`.
-    ///
-    /// Ask this rather than reusing the value passed to `connect`: they differ
-    /// whenever the bucket outlived the config, and anything sized against the wrong
-    /// one polls too slowly and reads an empty bucket.
+    /// Size refreshes off this, not the requested TTL: the bucket may predate the config.
     pub fn effective_ttl(&self) -> Duration {
         self.effective_ttl
     }
@@ -144,8 +111,7 @@ impl Inventory for NatsLattice {
         let mut out = Vec::new();
         while let Some(key) = keys.next().await {
             let key = key.context("reading an inventory key")?;
-            // Absent here means it expired between the list and the read. That is
-            // the mechanism working, so it is skipped rather than reported.
+            // Absent: it expired between the list and the read, which is not an error.
             if let Some(raw) = self.kv.get(&key).await.context("reading an inventory entry")? {
                 out.push(Entry { key, value: crate::snapshot::expand(raw.to_vec()) });
             }
@@ -166,8 +132,6 @@ impl CommandBus for NatsLattice {
         let (tx, rx) = tokio::sync::mpsc::channel(32);
         let client = self.client.clone();
 
-        // Translating a subscription into a channel is what keeps the trait free of
-        // NATS types. The handler side never sees a `Message`.
         tokio::spawn(async move {
             while let Some(msg) = sub.next().await {
                 let verb = wire::verb_of(msg.subject.as_str()).to_string();
@@ -179,8 +143,6 @@ impl CommandBus for NatsLattice {
                 if let Some(reply_to) = msg.reply {
                     let client = client.clone();
                     tokio::spawn(async move {
-                        // A dropped sender means the handler chose not to answer,
-                        // which the caller sees as a timeout — no special case.
                         if let Ok(body) = reply_rx.await {
                             let _ = client.publish(reply_to, body.into()).await;
                         }
@@ -203,8 +165,7 @@ impl CommandBus for NatsLattice {
             tokio::time::timeout(timeout, self.client.request(subject.clone(), payload.into()))
                 .await
                 .map_err(|_| anyhow::anyhow!("no reply within {}s", timeout.as_secs()))?
-                // NATS answers `NoResponders` immediately rather than after the
-                // timeout, which is the distinction the trait doc asks for.
+                // `NoResponders` comes back immediately, not after the timeout.
                 .with_context(|| format!("publishing to {subject}"))?;
         Ok(reply.payload.to_vec())
     }
@@ -235,13 +196,7 @@ impl Artifacts for NatsLattice {
     }
 }
 
-/// Watch a KV bucket's keys for changes, as a stream of notifications.
-///
-/// For `comp-relay`, which needs to know that SOMETHING was published without caring
-/// what: `event-bus` bumps `eb.seq.<topic>` per publish, so a watch on `eb.seq.>` is
-/// a change feed of bus activity. It lives here because everything that dials NATS
-/// goes through this file. The item type is `()` on purpose: a caller reacting to
-/// WHICH key changed would be reimplementing `event:bus`'s consumer-group offsets.
+/// Yields `()` on purpose: reacting to which key changed would reimplement `event:bus` offsets.
 pub async fn watch_bucket(
     url: &str,
     bucket: &str,
@@ -252,9 +207,7 @@ pub async fn watch_bucket(
         .await
         .with_context(|| format!("connecting to NATS at {}", urls.join(", ")))?;
     let js = async_nats::jetstream::new(client);
-    // `get`, not `create`: the bucket belongs to whatever wrote it. Creating it here
-    // would invent an empty one and then report no activity forever, which looks
-    // exactly like a quiet system.
+    // `get`, not `create`: an invented empty bucket would look like a quiet system forever.
     let store = js
         .get_key_value(bucket)
         .await

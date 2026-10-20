@@ -1,8 +1,3 @@
-//! `holon` — the CLI: renders app specs and fleet layouts into what a box, a
-//! lattice node, or wasmCloud needs, plus platform/goal/org commands over the
-//! control-plane API. The renderers live in [`selfhost`]; this file is argument
-//! parsing (`Args`/`Cmd`) and dispatch.
-
 mod fleet;
 mod platform;
 mod selfhost;
@@ -482,9 +477,6 @@ fn main() -> Result<()> {
             dry_run,
             smoke,
         }) => {
-            // Exec the sibling binary that holds the fleet. Found on PATH, or via
-            // COMP_GOALRUN_BIN, or next to this executable — so a `cargo install`
-            // and a `just`-built tree both work.
             let bin = std::env::var("COMP_GOALRUN_BIN").unwrap_or_else(|_| "comp-goalrun".into());
             let mut cmd = std::process::Command::new(&bin);
             cmd.arg("--checkout")
@@ -548,16 +540,14 @@ fn main() -> Result<()> {
             std::fs::write(&unit, render_unit(&spec, &layout))?;
             write_secret_file(&env, render_env(&spec).as_bytes())?;
             std::fs::write(&route, render_route(&spec, router))?;
-            // Only when the spec asks for one. An app with no timers and no topics
-            // must not gain a process that pokes it every ten seconds forever.
+            // Only when asked: an app with no triggers must not gain a process that pokes it forever.
             if let Some(t) = &spec.triggers {
                 std::fs::write(
                     dir.join(format!("comp-{}-relay.service", spec.name)),
                     render_relay_unit(&spec, t, &layout),
                 )?;
             }
-            // One unit per daemon this app declared — see `Daemon`'s own doc for
-            // why not one shared runner for all twelve.
+            // One unit per daemon; `Daemon`'s doc says why not one shared runner.
             for d in &spec.daemons {
                 std::fs::write(
                     dir.join(daemon_unit_name(&spec, d)),
@@ -669,14 +659,10 @@ fn main() -> Result<()> {
             wadm::check_fusable(&s, topology)?;
             let g = graph.as_deref().map(wadm::Graph::read).transpose()?;
             let y = match api {
-                // v2 is a different KIND of document, not a different envelope:
-                // wasmCloud 2.x dropped wadm, so this goes to the Kubernetes API.
+                // wasmCloud 2.x dropped wadm, so v2 is a Kubernetes workload, not a wadm manifest.
                 wadm::ApiVersion::V2 => {
-                    // Read from the artifact, not the graph: `comp:` imports are
-                    // host imports and the capability graph does not record them, so
-                    // asking it would always answer "fine". Skipped when the artifact
-                    // has not been composed yet — that is `compose-<app>`'s error to
-                    // give, not this one's.
+                    // Read from the artifact: the capability graph does not record `comp:` host imports.
+                    // An uncomposed artifact is `compose-<app>`'s error to give, not this one's.
                     let art = std::path::Path::new(&s.artifact);
                     let mut imports_config = false;
                     if art.exists() {
@@ -717,9 +703,7 @@ fn main() -> Result<()> {
             if topology == wadm::Topology::Linked {
                 let fused = wadm::fusable(&s.components);
                 if !fused.is_empty() {
-                    // The hybrid gen-manifest.py reached with LATTICE=1, derived
-                    // rather than typed: pure compute costs nothing to fuse and saves
-                    // a hop each — 1.2ms apiece on v1.
+                    // Pure compute costs nothing to fuse and saves a hop (1.2ms apiece on v1).
                     eprintln!("  fused in (pure compute, no hop): {}", fused.join(" "));
                 }
             }
@@ -732,8 +716,7 @@ fn main() -> Result<()> {
             let f = load_fleet(&spec)?;
             let layout = fleet::FleetLayout::default();
 
-            // One directory per BOX, not per unit: a box is what gets scp'd to, and
-            // a reconciler standby sharing a box with a node is normal.
+            // One directory per box: that is what gets scp'd, and a standby may share a box with a node.
             for n in &f.nodes {
                 let dir = out.join(&n.name);
                 std::fs::create_dir_all(&dir)?;
@@ -750,8 +733,7 @@ fn main() -> Result<()> {
                     dir.join("comp-reconciler.service"),
                     fleet::render_reconciler_unit(&f, r, &layout),
                 )?;
-                // Rendered empty and installed 0600. A secret that lives in a file
-                // you commit is not a secret (ADR-0010).
+                // Rendered empty: a secret in a file you commit is not a secret (ADR-0010).
                 std::fs::write(dir.join("reconciler.env"), fleet::render_reconciler_env())?;
                 println!("{}", dir.display());
             }

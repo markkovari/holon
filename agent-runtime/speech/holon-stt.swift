@@ -1,13 +1,4 @@
-// holon-stt: transcribe an audio file with Apple's ON-DEVICE speech recognizer.
-//
-//   holon-stt <audio file> [locale, default en-US]   -> transcript on stdout, nothing else
-//
-// Diagnostics go to stderr. Needs macOS 26+ (SpeechTranscriber). It runs headless — no
-// permission prompt, no network — and uses the locale's on-device model, which macOS
-// downloads once if it is not installed yet. Locales without a model (Apple has none for
-// Hungarian) exit 4 with the supported list on stderr: use another engine for those
-// (any command with the same contract: `<bin> <audio.wav> <locale>` prints the transcript).
-//
+// holon-stt <audio file> [locale, default en-US]: transcript on stdout, diagnostics on stderr. Needs macOS 26+.
 // Build:  swiftc -parse-as-library -O -o holon-stt holon-stt.swift
 import AVFoundation
 import Foundation
@@ -35,7 +26,6 @@ struct HolonSTT {
         let transcriber = SpeechTranscriber(
             locale: locale, transcriptionOptions: [], reportingOptions: [], attributeOptions: [])
 
-        // The model is downloaded once per locale if it is not already installed.
         let installed = await SpeechTranscriber.installedLocales
         if !installed.contains(where: { $0.identifier(.bcp47) == locale.identifier(.bcp47) }) {
             do {

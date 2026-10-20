@@ -1,6 +1,4 @@
-//! What the bridge remembers between runs: which room is which. Everything else
-//! (the agents, the projects, who belongs to what) is read from the runtime each
-//! time, so this file cannot disagree with it about anything that matters.
+//! Only which room is which; everything else is read from the runtime, so this cannot disagree with it.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -11,15 +9,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ProjectRooms {
     pub space: String,
-    /// Empty for a Space the owner made themselves and the bridge adopted: its
-    /// rooms are whatever the owner puts in it (see `Data::rooms`).
+    /// Empty for an adopted Space: its rooms are in `Data::rooms`.
     #[serde(default)]
     pub general: String,
     #[serde(default)]
     pub feed: String,
 }
 
-/// A photo kept for an agent: the Matrix event it came in, and its file name in that agent's inbox.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PhotoRef {
     pub agent: String,
@@ -30,35 +26,24 @@ pub struct PhotoRef {
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct Data {
     pub control_room: Option<String>,
-    /// agent name -> its direct room with the owner
     pub dms: BTreeMap<String, String>,
     pub projects: BTreeMap<String, ProjectRooms>,
-    /// poll event id -> runtime approval id
     pub polls: BTreeMap<String, u64>,
-    /// room id -> project, for the rooms inside an ADOPTED Space (rebuilt each
-    /// reconcile from the Space's `m.space.child` events).
+    /// Rooms inside an adopted Space; rebuilt each reconcile from `m.space.child`.
     #[serde(default)]
     pub rooms: BTreeMap<String, String>,
-    /// agent name -> `finished_ms` of the last run of it the bridge has posted
-    /// (or, for an agent it has only just seen, when it first saw it), so a
-    /// restart neither repeats a result nor posts an agent's whole history.
+    /// Last posted run's `finished_ms` (or first-seen time), so a restart neither repeats nor floods.
     #[serde(default)]
     pub delivered: BTreeMap<String, u64>,
-    /// agent name -> its old direct room, for an agent that was deleted but is still in
-    /// the runtime's trash: the owner has left the room, the agent's user is still in it,
-    /// and a restore invites the owner back to the same room, history intact.
+    /// A trashed agent's old DM, so a restore invites the owner back to the same history.
     #[serde(default)]
     pub retired: BTreeMap<String, String>,
-    /// The Matrix-only Space that holds the room of every agent that is in no project.
-    /// It is not a runtime project: membership is the grant, and this Space grants nothing.
+    /// Holds agents in no project; not a runtime project, since membership is the grant.
     #[serde(default)]
     pub agents_space: Option<String>,
-    /// Photos the bridge handed to an agent, newest last (the last 100): which Matrix message each
-    /// was, and what it is called in the agent's inbox. A follow-up text can then bring the same
-    /// photo back, since the agent cannot look at a picture it was only sent a message ago.
+    /// So a follow-up text can resend a photo: an agent cannot see one sent a message ago.
     #[serde(default)]
     pub photos: Vec<PhotoRef>,
-    /// Projects whose rooms the owner has left because the runtime says they are archived.
     #[serde(default)]
     pub archived: std::collections::BTreeSet<String>,
 }
@@ -69,9 +54,7 @@ pub enum RoomKind {
     Dm(String),
     ProjectGeneral(String),
     ProjectFeed(String),
-    /// The Space itself. Inviting an agent to it, or removing one, changes the project.
     ProjectSpace(String),
-    /// A room inside an adopted Space: talked to like a project's general room.
     ProjectRoom(String),
 }
 
@@ -93,7 +76,6 @@ impl State {
         f(&self.data.lock().unwrap())
     }
 
-    /// Mutates and saves, atomically.
     pub fn write<T>(&self, f: impl FnOnce(&mut Data) -> T) -> T {
         let mut d = self.data.lock().unwrap();
         let out = f(&mut d);
@@ -151,7 +133,6 @@ mod tests {
         assert_eq!(s.kind_of("!f:s"), Some(RoomKind::ProjectFeed("rowing".into())));
         assert_eq!(s.kind_of("!sp:s"), Some(RoomKind::ProjectSpace("rowing".into())));
         assert_eq!(s.kind_of("!unknown:s"), None);
-        // rooms inside an adopted Space, and a Space adopted with no rooms of its own
         s.write(|d| {
             d.projects.insert(
                 "nutrition".into(),

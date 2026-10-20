@@ -1,88 +1,4 @@
-//! Symbol extraction: real source files split into holon-vcs symbols, and back,
-//! byte for byte (ADR-0099, *Extraction*).
-//!
-//! # The lossless rule
-//!
-//! [`extract`] cuts a file into pieces whose concatenation, in order, IS the
-//! file — every byte (comments, blank lines, attributes, doc comments, `//!`
-//! headers, a BOM, a missing final newline, CRLF) belongs to exactly one symbol.
-//! Cuts are only ever made just after a `\n`, so every symbol but the last ends
-//! in one, which is what `snapshot-export`'s layout needs to reproduce the file
-//! exactly (it inserts a `\n` only between two symbols when the first lacks one).
-//! [`extract`] checks both properties on its own output and, if a splitter ever
-//! got it wrong, falls back to one `kind: file` symbol rather than lose a byte.
-//!
-//! Where the bytes between items go:
-//!
-//! * **Leading trivia** — comments, blank lines, `///` docs and `#[attributes]`
-//!   above an item — belongs to the item below it.
-//! * **The rest of an item's last line** — `} // why` — belongs to the item.
-//! * **Two items on one line** (`fn a() {} fn b() {}`) are one symbol, named after
-//!   the first: a cut there would not end in `\n`.
-//! * **The file header** — BOM, shebang, inner attributes and `//!` docs, and the
-//!   `use` / `extern crate` declarations before the first other item (in WIT: the
-//!   `package` line and top-level `use`s) — is one symbol, `(header)`, kind
-//!   `module`.
-//! * **A later run of `use` declarations** is one symbol, `(use)`.
-//! * **Trailing trivia** after the last item: whitespace joins the last item;
-//!   anything with a comment in it is a `(tail)` symbol.
-//!
-//! # Granularity (Rust, via `syn`)
-//!
-//! One symbol per top-level item: `fn` (function), `struct`/`union`
-//! (struct-item), `enum`, `trait` / trait alias (trait-item), `impl` (impl-block,
-//! named `impl Order` / `impl Display for Order`), `const`, `static`, `type`
-//! (type-alias), `macro_rules! m` (macro-item `m`) and other item macros
-//! (macro-item `path!`), `mod m;` (module), `extern "C" { .. }` (module).
-//!
-//! * **impl blocks are the unit**, not their methods. A method is not
-//!   independently meaningful to the store (its `Self` and its sibling methods are
-//!   in the block). Two agents editing two methods of one impl therefore
-//!   conflict; splitting methods out (an impl as head + methods + `(end)`, like an
-//!   inline module) is the next refinement.
-//! * **Inline modules recurse**: `mod tests { .. }` becomes a `tests` symbol (the
-//!   attributes, the `mod tests {` line and the module's leading `use`s), one
-//!   symbol per inner item (`tests::adds_up`), and `tests::(end)` (the closing
-//!   brace and any trivia before it) — test modules are where agents collide most.
-//!   A module whose braces share a line with its items is kept whole.
-//! * Names repeat (two `impl Order` blocks, `#[cfg]`-twinned `fn`s): the second is
-//!   `impl Order~2`, and so on, in file order.
-//!
-//! A file `syn` cannot parse is one `kind: file` symbol named by its path, as is
-//! a file with no items (only comments, or empty), and any file that is neither
-//! `.rs` nor `.wit`.
-//!
-//! # WIT
-//!
-//! A brace-matching splitter that knows `//`, `///` and nested `/* */` comments:
-//! one symbol per top-level `interface` (wit-interface) and `world` (wit-world),
-//! a nested `package x:y { .. }` block as one module, and the `package` / `use`
-//! header as `(header)`. `wit-parser` is not used: its spans are for diagnostics
-//! and it resolves more than a splitter needs. Unbalanced braces fall back to a
-//! `kind: file` symbol.
-//!
-//! # Edges, best effort
-//!
-//! * `depends_on`: identifiers an item mentions that another item of the SAME FILE
-//!   defines (by simple name — `Foo::new` makes a dependency on a local `new` too).
-//! * `implements`: `impl Trait for X` where `Trait` is defined in the same file.
-//! * `wit_binding`: an `impl exports::ns::pkg::iface::Guest for C` is bound to
-//!   `ns:pkg/iface`; a bare `impl Guest for C` to `Guest` (the world's export — the
-//!   world is in a `generate!` elsewhere); a WIT interface or world to
-//!   `ns:pkg/name` (its package, without the version). The two spellings meet.
-//!
-//! # Ingest
-//!
-//! [`ingest_file`] and [`ingest_tree`] turn an edited copy of a file into patches
-//! against the store as it was at the agent's read point (`read_at`): a symbol
-//! whose bytes did not change produces no patch; a changed one is a `replace` whose
-//! parent is its tip AT THE READ POINT (so an edit another agent landed since then
-//! comes back as a conflict, never a silent overwrite); a new one is a `create`
-//! placed right after the item before it in the file (or `first`); one that
-//! changed place is a `move`; a vanished one a `delete`. Every patch carries the
-//! read point as `read-at`, so `commuted` is exact. Every item of the file is its
-//! own symbol wherever it stands. See [`ingest_tree`] for the details and
-//! renames.
+//! Lossless symbol extraction: the symbols' concatenation is the file, byte for byte (ADR-0099).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -97,30 +13,21 @@ use crate::oplog::OpLog;
 use crate::order;
 use crate::store::{BlobStore, PointerStore};
 
-/// Name of the file-header symbol.
 pub const HEADER: &str = "(header)";
-/// Name of a run of `use` declarations after the header.
 pub const USES: &str = "(use)";
-/// Name of the trailing-comments symbol.
 pub const TAIL: &str = "(tail)";
-/// Suffix of an inline module's closing piece (`tests::(end)`).
 pub const END: &str = "(end)";
 
-/// One symbol cut from a file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtractedSymbol {
     pub id: SymbolId,
-    /// The symbol's exact bytes. Every symbol but a file's last ends in `\n`.
+    /// Every symbol but a file's last ends in `\n`.
     pub content: String,
-    /// Other symbols of the same file this one mentions (best effort).
     pub depends_on: Vec<SymbolId>,
-    /// Traits of the same file this `impl` implements.
     pub implements: Vec<SymbolId>,
-    /// The WIT name this symbol implements or is (best effort, see the module docs).
     pub wit_binding: Option<String>,
 }
 
-/// Which splitter a path gets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Language {
     Rust,
@@ -138,9 +45,7 @@ pub fn language_of(path: &str) -> Language {
     }
 }
 
-/// Split `bytes` into symbols, in file order. The concatenation of their
-/// `content` is `bytes`. Non-UTF-8 input is refused: it is not source code, and
-/// [`ingest_file`] stores it as one `kind: file` blob instead.
+/// Non-UTF-8 is refused: not source; [`ingest_file`] stores it as one `kind: file` blob.
 pub fn extract(
     component: &str,
     path: &str,
@@ -149,7 +54,6 @@ pub fn extract(
     Ok(extract_str(component, path, std::str::from_utf8(bytes)?))
 }
 
-/// [`extract`] over text.
 pub fn extract_str(component: &str, path: &str, text: &str) -> Vec<ExtractedSymbol> {
     let units = match language_of(path) {
         Language::Rust => rust::units(text),
@@ -165,9 +69,7 @@ pub fn extract_str(component: &str, path: &str, text: &str) -> Vec<ExtractedSymb
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Role {
-    /// Shebang, inner attribute, WIT `package x;` — only ever part of `(header)`.
     Header,
-    /// `use`, `extern crate` — part of `(header)` when leading, else `(use)`.
     Use,
     Item,
 }
@@ -191,11 +93,9 @@ impl Meta {
     }
 }
 
-/// One item as a splitter sees it. Only its END matters for the cuts: where it
-/// starts is decided by the lossless rule (leading trivia is its own).
+/// No `start`: leading trivia belongs to the item below, so only ends decide the cuts.
 #[derive(Debug, Clone)]
 struct Unit {
-    /// Byte just past the item's last token.
     end: usize,
     name: String,
     kind: SymbolKind,
@@ -204,12 +104,9 @@ struct Unit {
     body: Option<Body>,
 }
 
-/// An inline module's braces and items.
 #[derive(Debug, Clone)]
 struct Body {
-    /// Just past `{`.
     open_end: usize,
-    /// At `}`.
     close_start: usize,
     units: Vec<Unit>,
 }
@@ -223,9 +120,6 @@ struct Piece {
     meta: Meta,
 }
 
-/// Where the line an item ends on ends: skip blanks and comments from `pos`; the
-/// cut is just after the first `\n` outside a block comment. `None` if another
-/// token comes first. At `limit`, `Some(limit)` only if `eof_ok`.
 fn line_end(text: &str, pos: usize, limit: usize, eof_ok: bool) -> Option<usize> {
     let b = text.as_bytes();
     let mut i = pos;
@@ -252,7 +146,6 @@ fn line_end(text: &str, pos: usize, limit: usize, eof_ok: bool) -> Option<usize>
     }
 }
 
-/// `b[i..]` starts with `/*`; the index just past its (nesting) `*/`.
 fn skip_block_comment(b: &[u8], mut i: usize) -> Option<usize> {
     let mut depth = 0usize;
     while i + 1 < b.len() {
@@ -272,8 +165,6 @@ fn skip_block_comment(b: &[u8], mut i: usize) -> Option<usize> {
     None
 }
 
-/// Units grouped into cuttable runs: a group closes at the first unit whose line
-/// ends cleanly. `None` if the last group cannot close.
 fn groups<'u>(
     text: &str,
     units: &'u [Unit],
@@ -295,10 +186,8 @@ fn groups<'u>(
 }
 
 struct Region {
-    /// End of the leading header/use groups, and what they carry.
     header: Option<(usize, Meta)>,
     pieces: Vec<Piece>,
-    /// End of the last group (the region's trailing trivia starts here).
     end: usize,
 }
 
@@ -329,7 +218,6 @@ fn region(
     while i < gs.len() {
         let (members, cut) = &gs[i];
         if members.iter().all(|u| u.role != Role::Item) {
-            // A run of `use` groups.
             let mut meta = Meta::default();
             let mut end = *cut;
             while i < gs.len() && gs[i].0.iter().all(|u| u.role != Role::Item) {
@@ -371,8 +259,6 @@ fn region(
     Some(Region { header, pieces, end: start })
 }
 
-/// An inline module as head + inner items + `(end)`, if its body can be cut on
-/// line boundaries and has at least one item.
 fn module_pieces(
     text: &str,
     start: usize,
@@ -410,7 +296,6 @@ fn module_pieces(
     Some(out)
 }
 
-/// The top level: header, items, tail. `None` if there is nothing to split.
 fn layout(text: &str, units: &[Unit]) -> Option<Vec<Piece>> {
     let r = region(text, 0, text.len(), units, "", true)?;
     let mut pieces = Vec::new();
@@ -448,8 +333,6 @@ fn whole_file(text: &str, path: &str) -> Vec<Piece> {
     }]
 }
 
-/// The lossless rule, checked: contiguous, covering, non-empty (unless the file
-/// is), every piece but the last ending in `\n`, and on char boundaries.
 fn well_formed(text: &str, pieces: &[Piece]) -> bool {
     let mut at = 0;
     for (i, p) in pieces.iter().enumerate() {
@@ -468,7 +351,6 @@ fn well_formed(text: &str, pieces: &[Piece]) -> bool {
 }
 
 fn finish(component: &str, path: &str, text: &str, pieces: Vec<Piece>) -> Vec<ExtractedSymbol> {
-    // Unique names, in file order.
     let mut seen: HashMap<(String, SymbolKind), u32> = HashMap::new();
     let ids: Vec<SymbolId> = pieces
         .iter()
@@ -509,7 +391,6 @@ fn finish(component: &str, path: &str, text: &str, pieces: Vec<Piece>) -> Vec<Ex
         .collect()
 }
 
-/// Collapse whitespace runs to one space (for names built from source text).
 fn compact(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -525,7 +406,6 @@ mod rust {
     use super::{compact, Body, Meta, Role, Unit};
     use crate::model::SymbolKind;
 
-    /// `None` when `syn` cannot parse the file.
     pub(super) fn units(text: &str) -> Option<Vec<Unit>> {
         // What `syn::parse_file` strips, stripped here so offsets can be restored.
         let mut base = 0;
@@ -550,8 +430,7 @@ mod rust {
             units.extend(file.items.iter().map(|i| cx.unit(i)));
             units
         });
-        // The spans above live in a thread-local source map that only grows;
-        // nothing of them survives this call.
+        // proc-macro2's span source map is thread-local and only grows.
         proc_macro2::extra::invalidate_current_thread_spans();
         let units = out?;
         // Offsets must only move forward, or the layout is not ours to trust.
@@ -658,7 +537,6 @@ mod rust {
             let defines = !matches!(item, Item::Impl(_) | Item::ForeignMod(_))
                 && !matches!(item, Item::Macro(m) if m.ident.is_none());
             if role == Role::Item && defines {
-                // Only the NAME a definition introduces; other items refer to it.
                 let n = name.as_str();
                 if !n.is_empty() && !n.contains(' ') && !n.starts_with('(') {
                     meta.defines.push(n.to_string());
@@ -715,7 +593,6 @@ mod wit {
         c.is_ascii_alphanumeric() || c == b'-' || c == b'_' || c == b'%'
     }
 
-    /// Past whitespace and comments. `None` on an unterminated block comment.
     fn skip_trivia(b: &[u8], mut i: usize) -> Option<usize> {
         loop {
             while i < b.len() && b[i].is_ascii_whitespace() {
@@ -733,7 +610,6 @@ mod wit {
         }
     }
 
-    /// `None` when the braces do not balance (the caller keeps the file whole).
     pub(super) fn units(text: &str) -> Option<Vec<Unit>> {
         let b = text.as_bytes();
         let mut i = if text.starts_with('\u{feff}') { 3 } else { 0 };
@@ -744,12 +620,10 @@ mod wit {
             if i >= b.len() {
                 break;
             }
-            // One top-level item: to `;` at depth 0, or the `}` that closes its body.
             let mut depth = 0usize;
             let mut parens = 0usize;
             let mut opened = false;
             let mut after_at = false;
-            // (start, end) of each word before the body, outside `@gate(...)`.
             let mut head: Vec<(usize, usize)> = Vec::new();
             let mut head_end = None;
             let mut meta = Meta::default();
@@ -843,14 +717,12 @@ mod wit {
     }
 }
 
-/// What one patch of an ingest did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditKind {
     Create,
     Replace,
     Delete,
     Rename,
-    /// Same content, new place in the file.
     Move,
 }
 
@@ -858,32 +730,26 @@ pub enum EditKind {
 pub struct IngestPatch {
     pub symbol: SymbolId,
     pub edit: EditKind,
-    /// A store refusal (`unresolved-conflict`, `name-taken`, …) is recorded here
-    /// and the ingest goes on with the other symbols — they commute. Only a
-    /// storage outage aborts.
+    /// A store refusal is recorded and the ingest goes on (symbols commute);
+    /// only a storage outage aborts.
     pub result: std::result::Result<CommitResult, VcsError>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IngestReport {
     pub path: String,
-    /// The read point the file was diffed against, and the `read-at` every
-    /// patch carried.
     pub read_at: OpId,
-    /// Symbols whose bytes and place did not change: no patch.
     pub unchanged: Vec<SymbolId>,
     pub patches: Vec<IngestPatch>,
 }
 
 impl IngestReport {
-    /// Conflicts this ingest opened (or re-found).
     pub fn conflicts(&self) -> Vec<ConflictId> {
         self.patches.iter().filter_map(|p| p.result.as_ref().ok()?.conflict.clone()).collect()
     }
     pub fn errors(&self) -> Vec<&VcsError> {
         self.patches.iter().filter_map(|p| p.result.as_ref().err()).collect()
     }
-    /// Every patch landed (applied, commuted or duplicate).
     pub fn is_clean(&self) -> bool {
         self.patches
             .iter()
@@ -891,32 +757,24 @@ impl IngestReport {
     }
 }
 
-/// A live symbol as of a read point.
 #[derive(Debug, Clone)]
 struct Stored {
     key: String,
     id: SymbolId,
     tip: Hash,
     content: Vec<u8>,
-    /// Its order key at the read point ([`crate::order`]).
     order: String,
 }
 
-/// The component as the agent read it.
 struct Base {
-    /// The read point.
     at: OpId,
-    /// Live symbols at the read point, by path, in file order: (order key,
-    /// symbol key), as `snapshot-export` lays them out.
+    /// By path, in `snapshot-export`'s order: (order key, symbol key).
     live: BTreeMap<String, Vec<Stored>>,
-    /// Every symbol id the component's index has, live or dead: a `create` of
-    /// one of these is a recreate, which keeps the old place unless placed.
+    /// Live or dead: a `create` of one is a recreate, which keeps its old place unless placed.
     known: BTreeSet<SymbolId>,
 }
 
-/// The settled oplog head of `ws` (`oplog-head`): what an agent should
-/// remember as its read point when it reads (snapshots, queries) before editing
-/// — every op at or below it is reflected in what it read. `0` for an empty log.
+/// The settled `oplog-head`: every op at or below it is reflected in what the agent then reads.
 pub async fn read_point<B, P, G, L>(engine: &Engine<B, P, G, L>, ws: &str) -> Result<OpId>
 where
     B: BlobStore,
@@ -927,10 +785,8 @@ where
     engine.oplog_head(ws).await
 }
 
-/// The component's live symbols as of `read_at` (`None`: the settled head now):
-/// tips replayed from the committed ops at or below it. The writers of a
-/// pointer form a chain of increasing op ids, so the last committed op, in id
-/// order, that moved a pointer is the value it held at the read point.
+/// A pointer's writers have increasing op ids, so the last committed op at or below
+/// `read_at` that moved it holds its value there.
 async fn base_at<B, P, G, L>(
     engine: &Engine<B, P, G, L>,
     ws: &str,
@@ -1002,19 +858,13 @@ where
     Ok(Base { at, live, known })
 }
 
-/// Where a planned symbol goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Place {
-    /// It was in the file at the read point, and its place relative to the
-    /// other kept symbols did not change: no move.
     Kept,
-    /// It was in the file, somewhere else: a `move`.
     Moved,
-    /// It is new: a placed `create`.
     New,
 }
 
-/// One symbol as it will be stored.
 #[derive(Debug, Clone)]
 struct Planned {
     id: SymbolId,
@@ -1022,18 +872,15 @@ struct Planned {
     depends_on: Vec<SymbolId>,
     implements: Vec<SymbolId>,
     wit_binding: Option<String>,
-    /// The base symbol it is (index into the path's base list), if any.
+    /// Index into the path's base list.
     from: Option<usize>,
-    /// `from` is a vanished symbol this one is a rename of.
     renamed: bool,
     place: Place,
 }
 
-/// How alike a vanished symbol and a new one must be to be taken as a rename.
 pub const RENAME_SIMILARITY: f64 = 0.5;
 
-/// Dice similarity of the two symbols' non-blank lines, after the old name is
-/// replaced by the new one in the old content (so a pure rename scores 1).
+/// Dice over non-blank lines, the old name replaced by the new so a pure rename scores 1.
 fn similarity(old: &Stored, new: &ExtractedSymbol) -> f64 {
     let leaf = |n: &str| n.rsplit("::").next().unwrap_or(n).to_string();
     let (from, to) = (leaf(&old.id.name), leaf(&new.id.name));
@@ -1079,16 +926,8 @@ fn lis(seq: &[(usize, usize)]) -> BTreeSet<usize> {
     out
 }
 
-/// Match the extracted symbols against the file as the agent read it, and
-/// decide where each goes.
-///
-/// A symbol whose id was in the file is that symbol. A new one standing where a
-/// vanished one of the same kind stood (between the same matched neighbours),
-/// with at least [`RENAME_SIMILARITY`] of its lines, is a rename of it. Of the
-/// matched symbols, the longest run whose read-point order the file keeps
-/// stays where it is ([`Place::Kept`]); every other matched symbol is
-/// [`Place::Moved`], and the rest are [`Place::New`]. Every symbol of the file
-/// is its own symbol: nothing is folded into a neighbour.
+/// A new symbol where a vanished one of the same kind stood, at least [`RENAME_SIMILARITY`]
+/// alike, is a rename. The longest run in read-point order stays; other matches move.
 fn plan(extracted: Vec<ExtractedSymbol>, base: &[Stored]) -> Vec<Planned> {
     let index: HashMap<&SymbolId, usize> =
         base.iter().enumerate().map(|(i, s)| (&s.id, i)).collect();
@@ -1146,7 +985,6 @@ fn plan(extracted: Vec<ExtractedSymbol>, base: &[Stored]) -> Vec<Planned> {
         .collect()
 }
 
-/// Ingest an edited copy of one file (see [`ingest_tree`]).
 #[allow(clippy::too_many_arguments)]
 pub async fn ingest_file<B, P, G, L>(
     engine: &Engine<B, P, G, L>,
@@ -1167,26 +1005,6 @@ where
     ingest_one(engine, ws, component, path, bytes, agent, &base).await
 }
 
-/// Ingest a set of files (component-relative path, bytes) against the store as
-/// of `read_at` (`None`: the settled head now, [`read_point`]). For each file,
-/// only symbols whose bytes or place changed produce patches, every one
-/// carrying `read-at`:
-///
-/// * `delete` for what the file no longer has (first);
-/// * then in file order: `replace` (parent = the tip at the read point),
-///   `rename` when a new item stands where a vanished one of the same kind
-///   stood, `move` when an existing item changed place, and `create` for a new
-///   one — placed `after(<the item before it in the file>)`, or `first`.
-///
-/// A new item with no existing item after it in the file is created unplaced
-/// (`position: none`, which appends): the same place, and resolving an
-/// explicit placement reads the component's other symbols, which would make
-/// importing a whole file quadratic.
-///
-/// With `prune`, the set is the whole component: a file the store has and
-/// `files` does not is deleted, symbol by symbol.
-///
-/// No filesystem here: [`read_tree`] is the host-side helper that reads one.
 #[allow(clippy::too_many_arguments)]
 pub async fn ingest_tree<B, P, G, L>(
     engine: &Engine<B, P, G, L>,
@@ -1232,8 +1050,6 @@ where
     Ok(out)
 }
 
-/// The patch a landed result names — what the next patch of the same symbol
-/// builds on. `None` if it did not land (a conflict, a refusal).
 fn landed(r: &std::result::Result<CommitResult, VcsError>) -> Option<Hash> {
     match r {
         Ok(c) if c.outcome != PatchOutcome::Conflicted => Some(c.patch.clone()),
@@ -1281,7 +1097,6 @@ where
         IngestReport { path: path.to_string(), read_at: base.at, ..Default::default() };
     let survivors: BTreeSet<usize> = planned.iter().filter_map(|p| p.from).collect();
 
-    // Deletes first: what the file no longer has.
     for (i, s) in stored.iter().enumerate() {
         if survivors.contains(&i) {
             continue;
@@ -1294,21 +1109,18 @@ where
         });
     }
 
-    // Then everything else in file order, each new or moved symbol placed right
-    // after the last symbol before it that is live under its planned name.
     let last_existing = planned.iter().rposition(|p| p.from.is_some());
     let mut anchor: Option<SymbolId> = None;
     for (i, p) in planned.iter().enumerate() {
         let here = || anchor.clone().map_or(Placement::First, Placement::After);
         let Some(b) = p.from else {
-            // Past the last existing symbol: append (see `ingest_tree`) — unless
-            // it is a recreate, which would go back to its old place.
+            // Appended past the last existing symbol: placing reads the other symbols, quadratic
+            // on import. A recreate is placed, or it would return to its old place.
             let append = last_existing.is_none_or(|l| i > l) && !base.known.contains(&p.id);
             let position = if append { None } else { Some(here()) };
             let change = Transformation::Create(content(engine, &p.content).await?);
             let r = cx.send(&p.id, None, change, Some(p), position).await?;
-            // A conflicted create is the same symbol created by somebody else:
-            // live under this name all the same.
+            // A conflicted create is the same symbol made by someone else: live all the same.
             if r.is_ok() {
                 anchor = Some(p.id.clone());
             }
@@ -1362,7 +1174,6 @@ where
     Ok(report)
 }
 
-/// UTF-8 inline; anything else stored as a blob first.
 async fn content<B, P, G, L>(engine: &Engine<B, P, G, L>, bytes: &[u8]) -> Result<Content>
 where
     B: BlobStore,
@@ -1376,7 +1187,6 @@ where
     })
 }
 
-/// What every patch of one file's ingest shares.
 struct Submit<'a, B, P, G, L> {
     engine: &'a Engine<B, P, G, L>,
     ws: &'a str,
@@ -1392,8 +1202,6 @@ where
     G: Graph,
     L: OpLog,
 {
-    /// One patch. A refusal is the patch's result; a storage outage is the
-    /// ingest's error.
     async fn send(
         &self,
         symbol: &SymbolId,
@@ -1423,9 +1231,7 @@ where
     }
 }
 
-/// Host-side helper: every file under `root` that `keep` accepts, as
-/// (`/`-separated relative path, bytes), sorted by path. Not for components,
-/// which have no filesystem (ADR-0023).
+/// Host-side only: components have no filesystem (ADR-0023).
 pub fn read_tree(
     root: &std::path::Path,
     keep: impl Fn(&str) -> bool,
@@ -1503,7 +1309,6 @@ mod tests {
         assert!(s[0].content.ends_with("use std::io;\n"));
         assert!(s[1].content.starts_with("\n/// An order.\n#[derive(Debug)]\n"));
         assert!(s[4].content.ends_with("// trailing\n"));
-        // `impl Order` uses `helper` and `Order`; the Display impl uses `Order`.
         let dep_names =
             |i: usize| s[i].depends_on.iter().map(|d| d.name.clone()).collect::<Vec<_>>();
         assert_eq!(dep_names(2), vec!["Order".to_string(), "helper".to_string()]);
@@ -1523,7 +1328,6 @@ mod tests {
         let s = cut("a.rs", "fn a() {}\n\nfn b() {}");
         assert_eq!(names(&s), vec![("a", SymbolKind::Function), ("b", SymbolKind::Function)]);
         assert_eq!(s[1].content, "\nfn b() {}");
-        // Only a BOM before the first item, no header: the BOM leads the item.
         let s = cut("a.rs", "\u{feff}fn a() {}\n");
         assert_eq!(names(&s), vec![("a", SymbolKind::Function)]);
     }
@@ -1585,7 +1389,6 @@ mod tests {
         assert!(s[1].content.ends_with("use super::*;\n"));
         assert_eq!(s[6].content, "    // trailing in tests\n}\n");
         assert_eq!(s[2].depends_on[0].name, "top");
-        // Braces sharing a line with the items: kept whole.
         let s = cut("x.rs", "mod m { fn a() {} }\nmod n {\n    fn b() {} }\n");
         assert_eq!(names(&s), vec![("m", SymbolKind::Module), ("n", SymbolKind::Module)]);
     }
@@ -1644,7 +1447,6 @@ mod tests {
         assert!(s[2].content.starts_with("\n@since"));
         assert_eq!(s[2].depends_on[0].name, "types");
         assert_eq!(s[3].depends_on[0].name, "api");
-        // Unbalanced: whole file.
         let s = cut("x.wit", "interface a {\n");
         assert_eq!(names(&s), vec![("x.wit", SymbolKind::File)]);
     }
@@ -1669,7 +1471,6 @@ mod tests {
                 .collect()
         };
         let own = |n: &str, p: Place| (n.to_string(), p, false);
-        // x inserted between a and b, z appended: both their own symbols.
         assert_eq!(
             places("fn a() {}\nfn x() {}\nfn b() {}\nfn c() {}\nfn z() {}\n"),
             vec![
@@ -1680,12 +1481,10 @@ mod tests {
                 own("z", Place::New),
             ]
         );
-        // c moved to the top: one move, the rest stay.
         assert_eq!(
             places("fn c() {}\nfn a() {}\nfn b() {}\n"),
             vec![own("c", Place::Moved), own("a", Place::Kept), own("b", Place::Kept)]
         );
-        // b renamed to bb in place.
         let p = plan(extract_str("c", "x.rs", "fn a() {}\nfn bb() {}\nfn c() {}\n"), &stored);
         assert_eq!((p[1].from, p[1].renamed, p[1].place), (Some(1), true, Place::Kept));
     }

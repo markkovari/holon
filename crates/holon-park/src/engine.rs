@@ -1,46 +1,4 @@
-//! The contract's operations (`holon:park/lot`) over [`ParkStore`].
-//!
-//! # The state machine
-//!
-//! One ticket moves forward only:
-//!
-//! ```text
-//! parked ──(wake)──────────────▶ ready ─────────┐
-//!   │                              │             ├─(take-ready)─▶ resumed   [terminal]
-//!   └──(interrupt, recover)──▶ interrupted ──────┘
-//!
-//! parked, ready, interrupted ──(cancel, recover of an `abandon` call)──▶ cancelled   [terminal]
-//! ```
-//!
-//! `interrupted` is how a turn is told a call will get no answer and may or
-//! may not have happened (ADR-0106). It is taken exactly like `ready`; only
-//! what [`Engine::take_ready`] hands over differs.
-//!
-//! `expired` is not a stored state — it is `to_entry`'s reading of a `parked`
-//! record once `now` passed its `call.deadline`. A late `wake` still lands;
-//! only [`Engine::pending`] stops surfacing it (ADR-0100). Nothing here sweeps
-//! expired tickets: there is no background task in this crate (ADR-0095).
-//! [`Engine::recover`] is what a resumer calls on a timer to act on them.
-//!
-//! `now_ms` is passed in rather than read inside the engine so that `expired`,
-//! the one time-dependent classification, is deterministic under test. Writes
-//! still stamp a real timestamp ([`now_ms`]).
-//! # Idempotency
-//!
-//! * `park` on an existing ticket never writes a second record; it reports
-//!   `already-woken` (if `ready` or `interrupted`) or `already-parked`, so a
-//!   retrying caller learns whether it can `take-ready`.
-//! * `wake` on a `ready`, `interrupted`, `resumed` or `cancelled` ticket is
-//!   accepted without rewriting (a redelivered webhook is not an error,
-//!   ADR-0100); only a `parked` ticket moves to `ready`. An answer that
-//!   arrives after the ticket was interrupted is dropped, like one that
-//!   arrives after a cancel.
-//! * `interrupt` on an `interrupted` ticket is accepted without rewriting;
-//!   on a `ready` one it changes nothing, because the answer beat it.
-//! * `take-ready` is deliberately NOT idempotent: a second call on a `resumed`
-//!   ticket is `already-closed`, since handing one result to two resumers is
-//!   the bug this contract prevents. [`Engine::resolution`] is the read that
-//!   does not consume, for a resumer that must deliver before it closes.
+//! `holon:park/lot` over [`ParkStore`]; a ticket's status only moves forward.
 
 use std::future::Future;
 
@@ -52,32 +10,25 @@ use crate::model::{
 use crate::store::{IndexChild, ParkStore, Record, StoredStatus};
 use crate::ticket::ticket_id;
 
-/// CAS retry bound. Contention is at most a couple of racing writers (duplicate
-/// `park`, `wake` vs `cancel`), so this is a correctness net, not a throttle.
+/// Contention is at most a couple of racing writers, so this is a correctness net, not a throttle.
 pub(crate) const MAX_CAS_RETRIES: u32 = 8;
 
-/// What [`Engine::wake`] tells its caller beyond the bare ticket id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WakeOutcome {
     pub ticket: TicketId,
     pub session: SessionId,
     pub freshly_woken: bool,
-    /// What to put on `PARK_WAKE` because of this call: the ticket itself, if it is not a
-    /// child and this call woke it, or the group this call resolved (ADR-0109). A child is
-    /// never announced on its own.
+    /// A child is never announced on its own; its group is, if this call resolved it (ADR-0109).
     pub announce: Vec<WakeMessage>,
 }
 
-/// What [`Engine::interrupt`] tells its caller: the status the ticket is in
-/// now, and whether this call is the one that put it there (so the daemon
-/// announces once per real transition, as for [`WakeOutcome`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InterruptOutcome {
     pub ticket: TicketId,
     pub session: SessionId,
     pub status: TurnStatus,
+    /// This call made the transition, so the daemon announces once per real one.
     pub fresh: bool,
-    /// As [`WakeOutcome::announce`].
     pub announce: Vec<WakeMessage>,
 }
 
@@ -100,8 +51,7 @@ impl<S: ParkStore> Engine<S> {
         self.park_in(session, call, by, now_ms, None).await
     }
 
-    /// [`Engine::park`], for a commit: the ticket is stamped with the batch that made it
-    /// (ADR-0110), so rolling that batch back cancels exactly what it created.
+    /// Stamped with its batch (ADR-0110), so a rollback cancels exactly what it created.
     pub(crate) async fn park_in(
         &self,
         session: &SessionId,
@@ -121,9 +71,8 @@ impl<S: ParkStore> Engine<S> {
                     describe_parent(&call.parent)
                 )));
             }
-            // A retry after a crash lands here. The crash may have come between `create` and
-            // the index writes below, which leaves a record nothing can find by session,
-            // by correlation or by group, and this is the caller's one chance to say so.
+            // A crash between `create` and the index writes below leaves an unfindable record:
+            // this retry heals it.
             self.reindex_or_refuse(&existing).await?;
             return Ok(ParkResult { ticket, outcome: outcome_of(&existing) });
         }
@@ -137,10 +86,8 @@ impl<S: ParkStore> Engine<S> {
             }
         }
 
-        // A child's group must exist, be this session's, still be unresolved, and have room.
-        // The place is taken before the record is written, so the bound holds when several
-        // children race for the last one; a crash between the two leaves a place held for a
-        // ticket the caller's retry will create.
+        // The place is taken before the record is written, so the bound holds when children
+        // race for the last one.
         let group = match &call.parent {
             Some(parent) => Some((parent.clone(), self.open_group(session, parent).await?)),
             None => None,
@@ -176,8 +123,7 @@ impl<S: ParkStore> Engine<S> {
         };
 
         if !self.store.create(&ticket, &record).await? {
-            // Lost a race to create the identical ticket. The winner's record
-            // is what's there now; report against it, not against ours.
+            // Lost a race to create the identical ticket: report against the winner's record.
             let (existing, _) = self.store.get(&ticket).await?.ok_or_else(|| {
                 ParkError::storage(
                     "create() said the ticket already existed, then get() found nothing",
@@ -187,12 +133,8 @@ impl<S: ParkStore> Engine<S> {
             return Ok(ParkResult { ticket, outcome: outcome_of(&existing) });
         }
 
-        // Best-effort indexes: a lost race on either just means another
-        // caller already added the same entry. `session` is read back by
-        // `pending`/`oplog` and `correlation` by `wake`; a ticket whose process
-        // died right here is reachable by its own id and by nothing else until
-        // something writes them again. A `park` retry does (above), and so does
-        // `Engine::repair` for a caller that never comes back.
+        // A crash here leaves the ticket reachable only by id until a `park` retry or
+        // `Engine::repair` reindexes it.
         if let Some(other) = self.reindex(&record).await? {
             debug_assert_eq!(
                 other, ticket,
@@ -200,8 +142,7 @@ impl<S: ParkStore> Engine<S> {
             );
         }
 
-        // The group may have resolved while this was being registered. A child it will never
-        // join is cancelled rather than left to run, and the caller is told.
+        // The group may have resolved meanwhile: cancel a child it will never join.
         if let Some((name, (group_ticket, _))) = &group {
             let open = matches!(
                 self.store.get(group_ticket).await?,
@@ -218,8 +159,6 @@ impl<S: ParkStore> Engine<S> {
         Ok(ParkResult { ticket, outcome: ParkOutcome::Parked })
     }
 
-    /// The group `parent` names in `session`, and how it is declared: refused unless it exists,
-    /// is a group, and is still waiting on its children.
     pub(crate) async fn open_group(
         &self,
         session: &SessionId,
@@ -242,18 +181,12 @@ impl<S: ParkStore> Engine<S> {
         Ok((ticket, spec))
     }
 
-    /// Write `record`'s two index entries, both idempotent: its place in its
-    /// session's list, and the claim on its `correlation` that `wake` finds it by.
-    /// `Some(other)`: a different ticket holds the correlation, which a ticket
-    /// derived from `(session, correlation)` can only mean when two sessions
-    /// parked one correlation (refused by design, but a crash between `create`
-    /// and the claim lets the second in).
+    /// `Some(other)`: two sessions hold one correlation, refused by design but let in by a crash
+    /// between `create` and the claim.
     pub(crate) async fn reindex(&self, record: &Record) -> Result<Option<TicketId>> {
         self.store.index_session(&record.session, &record.ticket).await?;
         let holder = self.store.claim_correlation(&record.call.correlation, &record.ticket).await?;
         if let Some(parent) = &record.call.parent {
-            // A child is also listed under its group, bounded by what the group was declared
-            // with. A group that is gone leaves nothing to list under.
             let group = ticket_id(&record.session, parent);
             if let Some((g, _)) = self.store.get(&group).await? {
                 if let Some(spec) = g.call.group {
@@ -274,10 +207,6 @@ impl<S: ParkStore> Engine<S> {
         }
     }
 
-    /// The answer arrived. Returns [`WakeOutcome`] rather than the bare
-    /// `ticket-id` so the daemon (`comp-park`) knows whether this call actually
-    /// moved `parked` to `ready` ([`WakeOutcome::freshly_woken`]) and publishes
-    /// to `PARK_WAKE` once per real answer.
     pub async fn wake(
         &self,
         correlation: &str,
@@ -311,8 +240,7 @@ impl<S: ParkStore> Engine<S> {
             };
 
             if !matches!(record.status, StoredStatus::Parked) {
-                // ready, interrupted, resumed or cancelled: accepted, nothing
-                // rewritten.
+                // A redelivered webhook is not an error (ADR-0100): accepted, nothing rewritten.
                 return Ok(Some((outcome(false), parent)));
             }
 
@@ -323,7 +251,7 @@ impl<S: ParkStore> Engine<S> {
             if self.store.cas(&ticket, rev, &next).await? {
                 Ok(Some((outcome(true), parent)))
             } else {
-                Ok(None) // lost the race; retry() will read again
+                Ok(None)
             }
         })
         .await?;
@@ -339,11 +267,8 @@ impl<S: ParkStore> Engine<S> {
         Ok(outcome)
     }
 
-    /// What `PARK_WAKE` should be told after a call moved `ticket`. A ticket that is not a
-    /// child is announced if this call moved it. A child never is: its group is, if running
-    /// the group's join now is what resolved it — and it is run whether or not this call
-    /// moved the child, so that the retry of a call that died between the two writes heals
-    /// it (ADR-0109).
+    /// The group's join runs even if this call did not move the child, so a retry after a crash
+    /// heals it (ADR-0109).
     async fn announce_for(
         &self,
         announce: &mut Vec<WakeMessage>,
@@ -365,12 +290,7 @@ impl<S: ParkStore> Engine<S> {
         Ok(())
     }
 
-    /// Give up on a `parked` ticket without an answer: the turn will be told,
-    /// by `take-ready`, that the call's fate is unknown (ADR-0106).
-    ///
-    /// Not tied to the deadline: whoever calls decides, and `by` and `reason`
-    /// are recorded. A `ready` ticket is left alone — the answer beat this —
-    /// and the outcome says so.
+    /// Not tied to the deadline: whoever calls decides (ADR-0106).
     pub async fn interrupt(
         &self,
         ticket: &TicketId,
@@ -437,9 +357,7 @@ impl<S: ParkStore> Engine<S> {
         Ok(outcome)
     }
 
-    /// Every ticket for `session` still `parked` (and not yet past its
-    /// deadline), `ready` or `interrupted` — what a resumer, or the session
-    /// itself on restart, reads to find outstanding work.
+    /// Leaves out tickets past their deadline: `to_entry` reads those as `Expired` (ADR-0100).
     pub async fn pending(&self, session: &SessionId, now_ms: u64) -> Result<Vec<TicketEntry>> {
         let mut entries = self.entries_of(session, now_ms).await?;
         entries.retain(|e| {
@@ -448,7 +366,7 @@ impl<S: ParkStore> Engine<S> {
         Ok(entries)
     }
 
-    /// Consume a `ready` or `interrupted` ticket's resolution, exactly once.
+    /// Deliberately not idempotent: one result handed to two resumers is the bug this prevents.
     pub async fn take_ready(&self, ticket: &TicketId, now_ms: u64) -> Result<Resolution> {
         retry(|| async {
             let (record, rev) =
@@ -468,10 +386,8 @@ impl<S: ParkStore> Engine<S> {
         .await
     }
 
-    /// What `take-ready` would hand over, without consuming it: for a resumer
-    /// that delivers the resolution somewhere and only then closes the ticket,
-    /// so that dying in between redelivers instead of losing the answer.
-    /// Same refusals as [`Engine::take_ready`].
+    /// Does not consume, so a resumer that dies between delivering and closing redelivers
+    /// instead of losing the answer.
     pub async fn resolution(&self, ticket: &TicketId) -> Result<Resolution> {
         let (record, _) =
             self.store.get(ticket).await?.ok_or_else(|| ParkError::NotFound(ticket.clone()))?;
@@ -483,10 +399,8 @@ impl<S: ParkStore> Engine<S> {
         self.cancel_announcing(ticket, by, now_ms).await.map(|_| ())
     }
 
-    /// [`Engine::cancel`], and what to announce because of it. Cancelling a group cancels its
-    /// children first, then the group: bottom-up, so a crash between leaves a group that is
-    /// still live and a retry finishes it, never a cancelled group with children still running.
-    /// Cancelling a child counts as a failure to its group, which may resolve it.
+    /// Bottom-up, so a crash leaves a live group a retry finishes, never a cancelled group with
+    /// children still running.
     pub async fn cancel_announcing(
         &self,
         ticket: &TicketId,
@@ -503,8 +417,8 @@ impl<S: ParkStore> Engine<S> {
         let moved = self.cancel_ticket(ticket, &by, now_ms).await;
         let mut announce = Vec::new();
         if let Some(parent) = &record.call.parent {
-            // Run even when the cancel found the child already cancelled: that is a retry of a
-            // call that died before this step.
+            // Run even when the child was already cancelled: that is a retry of a call that died
+            // before this step.
             if let Some(g) = self.settle(&ticket_id(&record.session, parent), now_ms).await? {
                 announce.push(g.announcement());
             }
@@ -512,7 +426,6 @@ impl<S: ParkStore> Engine<S> {
         moved.map(|()| announce)
     }
 
-    /// One ticket's `parked`/`ready`/`interrupted` to `cancelled`, refusing a closed one.
     async fn cancel_ticket(&self, ticket: &TicketId, by: &Agent, now_ms: u64) -> Result<()> {
         retry(|| async {
             let (record, rev) =
@@ -538,8 +451,6 @@ impl<S: ParkStore> Engine<S> {
         .await
     }
 
-    /// One session's history, oldest first, starting strictly after `after`
-    /// milliseconds (`None`: from the start).
     pub async fn oplog(
         &self,
         session: &SessionId,
@@ -568,14 +479,12 @@ impl<S: ParkStore> Engine<S> {
     }
 }
 
-/// A ticket's resolution, if it has one: `ready` and `interrupted` do.
 fn resolution_of(record: &Record) -> Result<Resolution> {
     match record.status {
         StoredStatus::Parked => Err(ParkError::NotFound(record.ticket.clone())),
         StoredStatus::Resumed | StoredStatus::Cancelled => {
             Err(ParkError::AlreadyClosed(record.ticket.clone()))
         }
-        // A group is resolved with how its children ended; anything else with its answer.
         StoredStatus::Ready if record.joined.is_some() => {
             Ok(Resolution::Joined(record.joined.clone().expect("checked by the guard")))
         }
@@ -595,7 +504,6 @@ fn resolution_of(record: &Record) -> Result<Resolution> {
 
 fn outcome_of(record: &Record) -> ParkOutcome {
     match record.status {
-        // A resolution is waiting: an answer, or the news there will not be one.
         StoredStatus::Ready | StoredStatus::Interrupted => ParkOutcome::AlreadyWoken,
         StoredStatus::Parked | StoredStatus::Resumed | StoredStatus::Cancelled => {
             ParkOutcome::AlreadyParked
@@ -603,7 +511,6 @@ fn outcome_of(record: &Record) -> ParkOutcome {
     }
 }
 
-/// The WIT-shaped, deadline-aware projection of a stored [`Record`].
 fn to_entry(record: &Record, now_ms: u64) -> TicketEntry {
     let expired = matches!(record.status, StoredStatus::Parked)
         && record.call.deadline.is_some_and(|d| now_ms >= d);
@@ -624,7 +531,6 @@ fn to_entry(record: &Record, now_ms: u64) -> TicketEntry {
     }
 }
 
-/// What a call may not say about groups, checked before anything is read or written.
 pub(crate) fn check_shape(call: &OutboundCall) -> Result<()> {
     if call.group.is_some() && call.parent.is_some() {
         return Err(ParkError::Invalid(
@@ -652,8 +558,7 @@ fn describe_parent(p: &Option<String>) -> String {
     }
 }
 
-/// A child is consumed by its group: taking it, or reading its resolution, would hand the
-/// same answer to two places.
+/// A child is consumed by its group: handing its answer out here too would deliver it twice.
 fn refuse_a_child(record: &Record) -> Result<()> {
     match &record.call.parent {
         Some(p) => Err(ParkError::Invalid(format!(
@@ -671,9 +576,7 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Retry a CAS loop up to [`MAX_CAS_RETRIES`] times. `f` returns `Ok(Some(_))`
-/// on success (whether it wrote or found nothing to write), `Ok(None)` to try
-/// again, `Err` to stop.
+/// `f` returns `Ok(Some(_))` when done, `Ok(None)` after losing the CAS, `Err` to stop.
 pub(crate) async fn retry<T, F, Fut>(mut f: F) -> Result<T>
 where
     F: FnMut() -> Fut,

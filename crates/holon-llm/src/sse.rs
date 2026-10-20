@@ -1,10 +1,4 @@
-//! Server-sent events, as both dialects stream their replies.
-
-/// Remove every complete SSE frame from `buf` and return their `data`.
-///
-/// A frame split across chunks stays in `buf` until its blank line arrives, so the caller appends each
-/// chunk to the same buffer and calls this again. `\r\n` is read as `\n`. A frame with no `data:` line
-/// (a comment, an `event:` alone) yields nothing.
+/// A frame split across chunks stays in `buf` until its blank line arrives.
 pub fn take_frames(buf: &mut String) -> Vec<String> {
     if buf.contains('\r') {
         *buf = buf.replace("\r\n", "\n");

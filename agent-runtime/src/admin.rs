@@ -1,20 +1,13 @@
-//! Managing agents from an agent: the tools a `holon`-style agent uses to list, show, create,
-//! change, pause and delete other agents. The registry stays the runtime's; these only build the
-//! spec a call describes. Whether a change happens is up to the owner (create/change/delete are
-//! sensitive tools: every call waits for approval).
+//! The tools an agent uses to manage other agents: they only build specs; the registry stays the runtime's.
 
 use serde_json::{json, Map, Value};
 
 use crate::spec::AgentSpec;
 
-/// The spec a `agent_save` call means. With an existing agent, the call's fields replace the
-/// same fields of it and everything else is kept; otherwise they build a new one. Capabilities
-/// may be plain names (`["http_get"]`) or full objects.
 pub fn build_spec(existing: Option<&AgentSpec>, args: &Value) -> Result<AgentSpec, String> {
     build_spec_with(existing, args, &|_| None)
 }
 
-/// `build_spec`, with `model_alias` resolving a model name (`"qwen"`) to its spec block.
 pub fn build_spec_with(
     existing: Option<&AgentSpec>,
     args: &Value,
@@ -43,7 +36,6 @@ pub fn build_spec_with(
         }
     };
     for (k, v) in given {
-        // `schedule` is the friendly spelling of one cron trigger
         if k == "schedule" {
             let cron = v.as_str().unwrap_or_default();
             if !cron.is_empty() {
@@ -63,7 +55,6 @@ pub fn build_spec_with(
                 base.insert("triggers".into(), json!([trigger]));
             }
         } else if k == "model" {
-            // a name from `models.json` (`qwen`, `apple`, ...) stands for the whole block
             let alias = v.as_str().map(|n| (n, model_alias(&n.to_lowercase())));
             match alias {
                 Some((_, Some(block))) => base.insert(k.clone(), block),
@@ -83,8 +74,7 @@ pub fn build_spec_with(
     }
     let mut spec: AgentSpec = serde_json::from_value(Value::Object(base))
         .map_err(|e| format!("not a valid agent: {e}"))?;
-    // An agent that may fetch pages but may reach no host cannot do anything: allow the hosts
-    // its own instructions name.
+    // http_get with no allowed host can do nothing: allow the hosts its own instructions name.
     if spec.has_capability("http_get") && spec.allow_hosts.is_empty() {
         let mut text = spec.description.clone();
         for t in &spec.triggers {
@@ -98,7 +88,6 @@ pub fn build_spec_with(
     Ok(spec)
 }
 
-/// The distinct hosts of the http(s) URLs in `text`, in order.
 pub fn hosts_in(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for scheme in ["https://", "http://"] {
@@ -116,7 +105,6 @@ pub fn hosts_in(text: &str) -> Vec<String> {
     out
 }
 
-/// One line per agent for `agents_list`.
 pub fn summary(s: &AgentSpec) -> String {
     let first = s.description.split(['.', '\n']).next().unwrap_or_default().trim();
     let caps: Vec<&str> = s.capabilities.iter().map(|c| c.name.as_str()).collect();
@@ -158,7 +146,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(s.allow_hosts, ["official-joke-api.appspot.com", "example.org"]);
-        // hosts the owner set are never overridden
         let s = build_spec(
             None,
             &json!({"name": "jokes", "description": "Fetch https://a.com/x", "capabilities": ["http_get"], "allow_hosts": ["b.com"]}),
@@ -180,7 +167,6 @@ mod tests {
         assert!(build_spec_with(Some(&old), &json!({"name": "kevin", "model": "gpt"}), &alias)
             .unwrap_err()
             .contains("no model called"));
-        // a full block still works
         let s = build_spec_with(
             Some(&old),
             &json!({"name": "kevin", "model": {"kind": "local"}}),

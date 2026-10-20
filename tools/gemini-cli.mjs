@@ -1,12 +1,5 @@
 #!/usr/bin/env node
-// `gemini-cli` — a lightweight CLI for Gemini on the machine (picur).
-//
-// Supports `gemini -p` (print mode) with stdin prompt and system-prompt flags,
-// matching the invocation interface of `claude -p`.
-//
-// Usage:
-//   echo "What is WebAssembly?" | node tools/gemini-cli.mjs -p
-//   echo "What is WebAssembly?" | node tools/gemini-cli.mjs -p --model gemini-2.5-pro --system-prompt "Be concise"
+// A `claude -p`-shaped CLI over the Gemini API: echo "hi" | node tools/gemini-cli.mjs -p [--model m] [--system-prompt s]
 
 import { parseArgs } from 'node:util';
 
@@ -27,7 +20,6 @@ if (values.help) {
   process.exit(0);
 }
 
-// Read stdin prompt
 let prompt = '';
 for await (const chunk of process.stdin) {
   prompt += chunk;
@@ -62,7 +54,6 @@ if (systemPrompt) {
 
 const key = API_KEY;
 if (!key) {
-  // If no API key is provided, output an informative message or fallback
   console.error("Warning: GEMINI_API_KEY or GOOGLE_API_KEY is not set.");
 }
 
