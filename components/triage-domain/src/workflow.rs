@@ -1,13 +1,5 @@
-//! The report lifecycle. **This file is the goal of the `workflow` part.**
-//!
-//! Two ideas hold this file up. `MOVES` is the lifecycle, written once: the fsm definition, the
-//! legal event names (the 400 gate) and the catch-up walk are all derived from it. Nothing asks
-//! the fsm whether it is ready: `fire` is attempted first and its typed errors say what is
-//! missing (`UnknownMachine` then `define`, `UnknownInstance` then `create_instance`, retry), so
-//! the machine is never defensively re-defined and an instance never re-created (which would
-//! reset it to `open`).
-//! The fsm instance is the authority on whether a move is legal; the document in `records:store`
-//! is the readable copy `digest` uses.
+//! `MOVES` is the lifecycle, written once. `fire` goes first and its typed errors say what is
+//! missing, so an instance is never defensively re-created (which would reset it to `open`).
 use crate::bindings::fsm::workflow::engine as fsm;
 use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
@@ -44,10 +36,7 @@ fn definition() -> fsm::Definition {
     }
 }
 
-/// Walk a brand-new instance from `initial` up to where the document already says
-/// the report is, following `MOVES` (prefer a move that lands on `want`, else the
-/// non-terminal one). A cold fsm store with warm documents is otherwise a report
-/// that silently rewinds to `open`.
+/// A cold fsm store with warm documents would otherwise silently rewind a report to `open`.
 fn catch_up(id: &str, want: &str) -> Result<(), fsm::FsmError> {
     let mut at = STATES[0];
     while at != want {
@@ -62,8 +51,7 @@ fn catch_up(id: &str, want: &str) -> Result<(), fsm::FsmError> {
     Ok(())
 }
 
-/// Fire, letting the fsm's errors tell us what is missing. At most one `define` and
-/// one `create_instance` can be needed, so three attempts is the ceiling.
+/// At most one `define` and one `create_instance` can be needed, so three attempts is the ceiling.
 fn fire(id: &str, event: &str, doc_state: &str) -> Result<fsm::Status, fsm::FsmError> {
     for _ in 0..3 {
         match fsm::fire(MACHINE, id, event) {

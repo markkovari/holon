@@ -1,11 +1,4 @@
 //! throttle:app — a live throttle wall over composed contracts.
-//!
-//! Each `hit` runs through `ratelimit:guard` (fixed-window attempt counter that LOCKS a key after
-//! the ceiling) and `quota:meter` (cumulative budget with a reset period). The verdict (allow /
-//! throttled(locked) / quota-exceeded) is published on `event:bus`, and `GET /api/stream` sets
-//! its response early then LOOPS writing each verdict as an SSE frame (as pulse). No state of our
-//! own.
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -27,7 +20,6 @@ mod bindings {
         world: "throttle:app/throttle-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -54,7 +46,6 @@ const VERDICTS: &str = "throttle";
 const POLL_MS: u64 = 400;
 const MAX_TICKS: u32 = 800;
 const DEFAULT_KEY: &str = "demo";
-// quota budget: `QUOTA_LIMIT` requests per `QUOTA_PERIOD` seconds.
 const QUOTA_LIMIT: u64 = 20;
 const QUOTA_PERIOD: u64 = 30;
 
@@ -109,8 +100,7 @@ fn usage_json() -> Outcome {
     )
 }
 
-/// One request through the wall: ratelimit lockout first (cheap, and throttling comes before
-/// spending budget), then the cumulative quota.
+/// Ratelimit lockout first: it's cheap, and throttling comes before spending budget.
 fn decide(key: &str, subject: &str) -> (u16, Value) {
     match limiter::check(key) {
         Ok(left) => {
@@ -237,8 +227,7 @@ fn stream_events(path: &str) -> Result<Response, ErrorCode> {
 
     let (mut stream, rx) = bindings::wit_stream::new();
     wit_bindgen::spawn_local(async move {
-        // `write_all` hands back what the reader never took: non-empty means the
-        // browser went away.
+        // `write_all` hands back what the reader never took: non-empty means the browser went away.
         if !stream.write_all(b": connected\n\n".to_vec()).await.is_empty() {
             return;
         }
@@ -299,9 +288,8 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be before the component stops reading it. Without a ceiling,
-/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
-/// A backstop, not a content policy; uploads police their own size with a 413.
+/// Without a ceiling a read grew to wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy: uploads 413 on their own.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

@@ -1,23 +1,5 @@
 //! `typesafe-provider` — the TypeSafe AI (Jev) side of the decision contract.
-//!
-//! Implements `jev:decision/decision` by POSTing to `https://api.typesafe.ai/v1/systemone`. Jev
-//! evaluates a `state` against typed question schemas (Choice, Score, Noul) and returns discrete
-//! probabilities, never free-form text, so this is NOT shaped like `openai-provider`; see
-//! `codec.rs` for the wire shape.
-//! Timeouts are tighter than `openai-provider`'s: Jev is ultra-low-latency, so a few seconds
-//! without an answer is `provider-unavailable`.
-//!
-//! Config (wasi:config/store):
-//!   typesafe:base-url  default "https://api.typesafe.ai"
-//!   typesafe:model     default "jev-latest"
-//!   typesafe:timeout   seconds to wait for the first response byte, and
-//!                      between bytes after it (default 5)
-//!
-//! Secret (comp:secrets/reader):
-//!   typesafe-api-key   bearer token, granted by reference in the manifest
-//!
-//! Unlike `openai-provider`, a missing key is refused before any request is sent (Jev is always
-//! hosted), rather than sent unauthenticated and left to come back as a 401.
+//! which sends unauthenticated and lets the 401 come back.
 
 #[allow(warnings)]
 mod bindings;
@@ -39,10 +21,10 @@ struct Component;
 
 const DEFAULT_BASE: &str = "https://api.typesafe.ai";
 const DEFAULT_MODEL: &str = "jev-latest";
-/// A hosted decision call that hasn't answered in a few seconds is unhealthy, unlike
-/// `openai-provider`'s ten-minute chat budget.
+/// A hosted decision call silent for a few seconds is unhealthy, unlike `openai-provider`'s
+/// ten-minute chat budget.
 const DEFAULT_TIMEOUT_SECS: u64 = 5;
-const CONNECT_TIMEOUT_NS: u64 = 3_000_000_000; // 3s
+const CONNECT_TIMEOUT_NS: u64 = 3_000_000_000;
 
 fn cfg(key: &str) -> Option<String> {
     config::get(key).ok().flatten().filter(|s| !s.is_empty())
@@ -64,8 +46,7 @@ fn timeout_ns() -> u64 {
         .saturating_mul(1_000_000_000)
 }
 
-/// The bearer token, from the vault. `None` is a deployment error (Jev has no unauthenticated
-/// mode), so callers check before sending.
+/// `None` is a deployment error: Jev has no unauthenticated mode.
 fn api_key() -> Option<String> {
     match secrets::get("typesafe-api-key") {
         Ok(Some(s)) => secrets::reveal(&s).ok().filter(|v| !v.is_empty()),
@@ -149,8 +130,7 @@ fn post_json(path: &str, key: &str, body: &[u8]) -> Result<(u16, Vec<u8>), Decis
     Ok((status, buf))
 }
 
-/// Map a non-2xx status to a decision-error carrying the body snippet: 401 (bad key), 422
-/// (validation), 429 (rate limit), 529 (Jev's own overloaded status, treated as unavailability).
+/// 529 is Jev's own overloaded status, treated as unavailability.
 fn status_error(status: u16, body: &[u8]) -> DecisionError {
     let snippet = String::from_utf8_lossy(body).chars().take(300).collect::<String>();
     match status {

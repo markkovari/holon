@@ -1,13 +1,5 @@
 //! `support-desk-domain` — a model writes the reply, and the reply gets there.
-//!
-//! This file is the ROUTER and no part may write it: it dispatches to `tickets`, `reply` and
-//! `courier`, answers `/health`, mints a token, opens a session with its CSRF token, seeds
-//! tickets, and can put a reply straight into the outbox. `src/tickets.rs`, `src/reply.rs` and
-//! `src/courier.rs` are the goal; `CONTRACT.md` is what they must agree on.
-//! The chain is about DELIVERY: `reply` must ENQUEUE rather than send, and `courier` is the only
-//! part that talks to the far end. Sending inline loses a reply when the far end is down and a
-//! courier that acks a refusal loses it silently; neither is visible in a request that succeeds,
-//! so the gates run a sink they can break on purpose.
+//! the reply when the far end is down, invisibly in a request that succeeds.
 
 #[allow(warnings)]
 mod bindings {
@@ -39,7 +31,6 @@ mod bindings {
         world: "support:desk/support-desk-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -78,22 +69,18 @@ impl Reply {
     pub fn err(status: u16, code: &str) -> Self {
         Reply::json(status, json!({ "error": code }))
     }
-    /// 204 carries no body, and a JSON `null` is not "no body".
+    /// A JSON `null` is not "no body".
     pub fn no_content() -> Self {
         Reply::json(204, Value::Null)
     }
 }
 
-/// One request, as a part sees it.
-///
-/// The bearer is handed over as a STRING: resolving it is `auth:identity/authorizer`'s job.
+/// The bearer stays a STRING: resolving it is `auth:identity/authorizer`'s job.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
-    /// The `Authorization: Bearer …` value, empty when the header is absent.
     pub bearer: String,
-    /// The agent's session id (`x-session`) and CSRF token (`x-csrf`), empty when absent, handed
-    /// over raw: verifying them is `session:store`'s job.
+    /// Raw `x-session` / `x-csrf`: verifying them is `session:store`'s job.
     pub session: String,
     pub csrf: String,
 }
@@ -111,7 +98,6 @@ impl Route {
 
 use guestfmt::percent_decode as percent;
 
-/// A `wasi:config` value as a number, with a default. Scaffold: the contract names the keys.
 pub fn cfg_u64(key: &str, default: u64) -> u64 {
     bindings::wasi::config::store::get(key)
         .ok()
@@ -126,13 +112,11 @@ pub fn now_secs() -> u64 {
 
 use guestfmt::rfc3339;
 
-/// A token for a test caller. It is `session::issue` rather than a hand-built JWT so the fixture
-/// cannot drift from what the verifier accepts.
+/// `session::issue`, not a hand-built JWT, so the fixture cannot drift from the verifier.
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let subject = req.get("subject").and_then(Value::as_str).unwrap_or("ada").to_string();
-    // The tenant is the budget's subject, so a gate has to be able to choose it: two
-    // tenants sharing one budget would make an exhausted-budget check untestable.
+    // A gate must choose the tenant: two tenants sharing one budget make exhaustion untestable.
     let tenant = req.get("tenant").and_then(Value::as_str).unwrap_or("acme").to_string();
     let scopes: Vec<String> = match req.get("scopes").and_then(Value::as_array) {
         Some(list) => list.iter().filter_map(Value::as_str).map(str::to_string).collect(),
@@ -156,9 +140,8 @@ fn mint(body: &str) -> Reply {
     }
 }
 
-/// Two open tickets aimed at a target the caller names, so `reply` and `courier` can be judged
-/// before `tickets` exists. The target is a parameter so a gate can point it at a sink it
-/// controls. `reply` is absent on purpose: drafting it is the reply part's job.
+/// Lets `reply` and `courier` be judged before `tickets` exists; the target is a parameter so a
+/// gate can point it at a sink it controls.
 fn seed(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let target = req
@@ -187,8 +170,7 @@ fn seed(body: &str) -> Reply {
     Reply::json(201, json!({ "ticket_ids": ids }))
 }
 
-/// One reply put straight into the outbox, in the contract's payload shape, so `courier` can be
-/// judged with `reply` stubbed.
+/// In the contract's payload shape, so `courier` can be judged with `reply` stubbed.
 fn enqueue_fixture(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let target =
@@ -205,8 +187,7 @@ fn enqueue_fixture(body: &str) -> Reply {
     }
 }
 
-/// A session and its CSRF token: `reply`'s first check is CSRF, against a session that belongs to
-/// no part.
+/// `reply`'s first check is CSRF, against a session that belongs to no part.
 fn open_session() -> Reply {
     match sessions::create(b"{}", 900) {
         Ok(s) => Reply::json(201, json!({ "session": s.id, "csrf": s.csrf_token })),
@@ -214,9 +195,7 @@ fn open_session() -> Reply {
     }
 }
 
-/// A ceiling on a body read into memory, not a policy: past this the read gives up
-/// and the body reads as empty, rather than growing until the store's memory cap
-/// traps the component and the connection simply closes.
+/// Past this the body reads as empty, instead of growing until the memory cap traps the component.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
@@ -248,8 +227,6 @@ impl Guest for Component {
             _ => String::new(),
         };
 
-        // The router: `/health`, the token and the fixture here, everything else to
-        // the part that owns it.
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
         let Reply { status, json: payload } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
@@ -257,14 +234,12 @@ impl Guest for Component {
             ["test", "seed"] => seed(&body),
             ["test", "session"] => open_session(),
             ["test", "enqueue"] => enqueue_fixture(&body),
-            // The stored document straight out of the store, so a part is judgeable on what it
-            // WROTE without the part that owns the read route.
+            // Straight out of the store, so a part is judged on what it WROTE.
             ["test", "ticket", id] => match records::get("tickets", id) {
                 Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
                 Err(_) => Reply::err(404, "not_found"),
             },
-            // Before the `api/tickets` arm: a match on ["api","tickets",..] would hand
-            // the reply route to `tickets` instead.
+            // Before `api/tickets`, which would hand the reply route to `tickets`.
             ["api", "tickets", _, "reply"] => reply::handle(&method, &route, &body),
             ["api", "tickets", ..] => tickets::handle(&method, &route, &body),
             ["api", "deliver"] | ["api", "dead-letters", ..] => {

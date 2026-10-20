@@ -1,11 +1,5 @@
 //! `triage-domain` — defect intake, lifecycle and digest, as one component.
-//!
-//! This file is the ROUTER and no part may write it: it dispatches to `intake`, `workflow` and
-//! `digest`, answers `/health` (so the harness can tell 'not up' from 'wrong'), and seeds a
-//! fixture. `src/intake.rs`, `src/workflow.rs` and `src/digest.rs` are the goal; `CONTRACT.md` is
-//! what they must agree on.
-//! Data flows one way (`intake` writes, `workflow` moves, `digest` counts), so a part that
-//! invents its own storage shape passes its own gate and fails the composition.
+//! own storage shape passes its own gate and fails the composition.
 
 #[allow(warnings)]
 mod bindings {
@@ -30,7 +24,6 @@ mod bindings {
         world: "triage:domain/triage-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -49,14 +42,11 @@ guestio::guest_p3_respond!();
 
 struct Component;
 
-/// What a handler answers with: a status, and a body that is JSON unless the
-/// handler says otherwise.
 pub struct Reply {
     pub status: u16,
-    /// The JSON body. `Value::Null` means no body at all — see `no_content`.
+    /// `Value::Null` means no body at all.
     pub json: Value,
-    /// A body the router must NOT serialise as JSON, with its content type.
-    /// `text/csv` cannot be a `Value`: `Value::String` serialises to a JSON string literal with quotes and escapes, so a CSV parser reads one quoted blob.
+    /// `text/csv` can't be a `Value`: `Value::String` serialises to one quoted JSON string.
     pub raw: Option<(String, Vec<u8>)>,
 }
 
@@ -67,17 +57,15 @@ impl Reply {
     pub fn err(status: u16, code: &str) -> Self {
         Reply::json(status, json!({ "error": code }))
     }
-    /// 204 carries no body, and a JSON `null` is not "no body".
+    /// A JSON `null` is not "no body".
     pub fn no_content() -> Self {
         Reply::json(204, Value::Null)
     }
-    /// A body sent through byte-for-byte, under the content type you name.
     pub fn raw(status: u16, content_type: &str, bytes: Vec<u8>) -> Self {
         Reply { status, json: Value::Null, raw: Some((content_type.to_string(), bytes)) }
     }
 }
 
-/// The path segments of a request and its query string.
 /// No bearer: this API has no auth, deliberately.
 pub struct Route {
     pub segments: Vec<String>,
@@ -97,8 +85,7 @@ impl Route {
 
 use guestfmt::percent_decode as percent;
 
-/// Two reports written straight to the store, so `workflow` and `digest` can be judged before
-/// `intake` exists. `severity` is absent on purpose: assigning it is `workflow`'s job.
+/// Lets `workflow` and `digest` be judged before `intake` exists; `severity` is `workflow`'s job.
 fn seed() -> Reply {
     let mut ids = Vec::new();
     for (title, body, component) in [
@@ -125,9 +112,7 @@ fn seed() -> Reply {
     Reply::json(201, json!({ "report_ids": ids }))
 }
 
-/// A ceiling on a body read into memory, not a policy: past this the read gives up
-/// and the body reads as empty, rather than growing until the store's memory cap
-/// traps the component and the connection simply closes.
+/// Past this the body reads as empty, instead of growing until the memory cap traps the component.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
@@ -149,26 +134,18 @@ impl Guest for Component {
             _ => String::new(),
         };
 
-        // The router: `/health` and the fixture here, everything else to the part
-        // that owns it.
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
         let Reply { status, json: payload, raw } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
             ["test", "seed"] => seed(),
-            // The stored document straight out of the store, so a part is judgeable on what it
-            // WROTE: `workflow` updates the report document, and the only other read is
-            // `intake`'s route, a stub while `workflow` is judged alone.
+            // Straight out of the store, so a part is judged on what it WROTE.
             ["test", "report", id] => match records::get("reports", id) {
                 Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
                 Err(_) => Reply::err(404, "not_found"),
             },
-            // `digest.csv` and `digest` both start with "digest", and the CSV arm
-            // must come first or a path-segment match on ["digest"] alone would
-            // swallow it.
+            // The CSV arm must come first, or a match on ["digest"] alone would swallow it.
             ["api", "digest.csv"] | ["api", "digest"] => digest::handle(&method, &route, &body),
-            // Before the `api/reports` arm: `/api/reports/{id}/transition` belongs
-            // to `workflow`, and a match on ["api","reports",..] would hand it to
-            // `intake` instead.
+            // Before `api/reports`, which would hand `/transition` to `intake`.
             ["api", "reports", _, "transition"] | ["api", "queue"] => {
                 workflow::handle(&method, &route, &body)
             }

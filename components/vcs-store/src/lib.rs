@@ -1,19 +1,5 @@
 //! `vcs-store` — `holon:vcs/code-store` and `holon:vcs/files` for components,
-//! each call one HTTP request to `comp-vcs` (ADR-0099, ADR-0095).
-//!
-//! The engine needs NATS JetStream and SurrealDB, which a `wasm32-wasip2` guest cannot dial, so
-//! it runs natively (`reconciler/daemons/vcs/`) and this is its component face: each call
-//! becomes `POST <vcs-url>/v1/<function>` with JSON arguments (`holon_vcs::wire`) and the answer
-//! is turned back into the WIT result. No state, no decisions.
-//!
-//! Config (wasi:config/store):
-//!   vcs-url     where `comp-vcs` listens, e.g. http://127.0.0.1:8014
-//!   vcs-token   the daemon's `--token`, sent as `Authorization: Bearer`, if set
-//!
-//! Errors: the daemon's refusals arrive as `{error, detail}` and come back as
-//! the `vcs-error` case they name, payload and all. Anything else — no
-//! `vcs-url`, nothing listening, a 401, a body that is not the daemon's JSON —
-//! is `storage-error`, which is what the contract says a caller may retry.
+//! anything but a named daemon refusal is `storage-error`, which the contract lets callers retry.
 
 #[allow(warnings)]
 mod bindings;
@@ -43,8 +29,7 @@ use wit::t;
 
 struct Component;
 
-/// Five minutes: an `ingest-tree` of a whole component, or an export waiting out a crashed
-/// writer's lease, is slow but must not hang forever.
+/// An `ingest-tree` of a whole component, or waiting out a crashed writer's lease, is slow.
 const TIMEOUT_NS: u64 = 300_000_000_000;
 
 fn storage(msg: impl Into<String>) -> t::VcsError {
@@ -126,8 +111,7 @@ fn post(func: &str, body: &[u8]) -> Result<(u16, Vec<u8>), t::VcsError> {
         match stream.blocking_read(64 * 1024) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went wrong,
-            // and returning what arrived would be a truncated answer.
+            // Anything else would present a truncated answer as a whole one.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -292,9 +276,6 @@ mod tests {
         m::SymbolId::new("c", "src/lib.rs", "f", m::SymbolKind::Function)
     }
 
-    /// Every refusal the daemon can send comes back as the case it names, with
-    /// its payload — a caller must be able to tell "retry" from "resolve" from
-    /// "rename to something else".
     #[test]
     fn daemon_refusals_map_back_to_their_vcs_error_case() {
         let cas = m::CasFailure {
@@ -347,8 +328,6 @@ mod tests {
         assert_eq!(decode::<u64>(200, b"7").ok(), Some(7));
     }
 
-    /// The conversion is lossless both ways for the records with the most
-    /// shape: a request with a placement, and an ingest report with a refusal.
     #[test]
     fn records_survive_model_to_wit_and_back() {
         let req = m::PatchRequest {

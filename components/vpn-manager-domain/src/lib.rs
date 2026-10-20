@@ -1,5 +1,4 @@
 //! `vpn-manager-domain` — report whether the VPN tunnel is up and who is connected to it
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -25,7 +24,6 @@ mod bindings {
         world: "local:vpn-manager/domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;

@@ -3,7 +3,6 @@ let currentToken = null;
 let currentUser = null;
 let currentRole = null;
 
-// DOM Elements
 const authSection = document.getElementById('auth-section');
 const dashboardSection = document.getElementById('dashboard-section');
 const authControls = document.getElementById('auth-controls');
@@ -13,7 +12,6 @@ const adminControls = document.getElementById('admin-controls');
 const devicesGrid = document.getElementById('devices-grid');
 const createDeviceForm = document.getElementById('create-device-form');
 
-// Toast
 function showToast(msg) {
     const toast = document.createElement('div');
     toast.className = 'toast';
@@ -24,7 +22,6 @@ function showToast(msg) {
     }, 3000);
 }
 
-// Authentication
 async function register(email, password) {
     const res = await fetch(`${API_BASE}/register`, {
         method: 'POST',
@@ -45,7 +42,6 @@ async function login(email, password) {
         const data = await res.json();
         currentToken = data.access_token;
         
-        // Get user info
         const meRes = await fetch(`${API_BASE}/me`, {
             headers: { 'Authorization': `Bearer ${currentToken}` }
         });
@@ -67,7 +63,6 @@ async function mockLogin(email) {
     try {
         await login(email, password);
     } catch (e) {
-        // Attempt register then login
         await register(email, password);
         await login(email, password);
     }
@@ -104,7 +99,6 @@ function updateUI() {
     }
 }
 
-// Devices
 createDeviceForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const name = document.getElementById('new-device-name').value;
@@ -195,7 +189,6 @@ async function toggleDevice(id, cardElement) {
         }
         showToast(`Device turned ${!isOn ? 'ON' : 'OFF'}`);
     } catch (e) {
-        // Revert on failure
         showToast('Toggle failed, reverting...');
         loadDevices();
     }

@@ -216,8 +216,7 @@ fn write_transfer(route: &Route, body: &str) -> Reply {
         Ok(u) => u,
         Err(_) => {
             if do_credit(from_id, &amount).is_err() {
-                // If refund also fails, we've truly lost money (or it's hanging).
-                // In this case, we MUST report 500
+                // Refund failed too: the money is truly lost (or hanging), so 500.
                 return do_complete_err(500, "money_lost");
             }
             return do_complete_err(503, "credit_failed");
@@ -234,8 +233,7 @@ fn write_transfer(route: &Route, body: &str) -> Reply {
         match records::create("transfers", &transfer_doc.to_string(), &["state".to_string()]) {
             Ok(e) => e,
             Err(_) => {
-                // The money has moved but the transfer record could not be created; the contract
-                // journals only settled transfers, so nothing is journalled.
+                // The contract journals only settled transfers, so nothing is journalled.
                 return do_complete_err(503, "store_unavailable");
             }
         };
@@ -284,11 +282,8 @@ fn write_transfer(route: &Route, body: &str) -> Reply {
         "lines": j_doc
     });
 
-    // The balances moved and the journal is written, so the books already agree; what is
-    // left is the transfer record itself. A write that is dropped here leaves it `pending`
-    // forever while the money is gone, so retry a bounded number of times and, if it still
-    // will not take, say so — the same rule as `journal_lost`. The answer names the transfer
-    // so whoever reads the 500 can find the record that is wrong.
+    // A dropped write leaves the record `pending` forever while the money is gone: retry a bounded
+    // number of times, then say so (as `journal_lost`), naming the transfer.
     let mut settled = false;
     let mut revision = t_entry.revision;
     for _ in 0..5 {

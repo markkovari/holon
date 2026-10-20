@@ -1,22 +1,5 @@
 //! `upload-policy` — validate a file upload against a size and content-type policy, then mint a signed upload ticket
-//!
-//! Validate a declared content-type and size against a config allow-policy, then mint a
-//! short-lived HMAC-signed upload ticket (a stand-in for a presigned URL; the signing is the
-//! reusable part, the storage URL is the deploy's concern). Also verifies a returned ticket.
-//!
-//! Ticket wire format: `{base64url-nopad payload}.{checksum-hex}` where
-//!   payload  = `{b64url object-key}:{b64url content-type}:{size}:{expires}`
-//!   checksum = first 8 bytes of HMAC-SHA256(secret, payload), hex.
-//! `redeem` recomputes the HMAC over the decoded payload and constant-time
-//! compares it to the presented checksum, so a tampered payload or a wrong key
-//! fails closed as `invalid-ticket`.
-//!
-//! Config (wasi:config/store):
-//!   allowed-types   comma-separated content-type allow-list; empty/unset = all
-//!   max-size        bytes, default 10485760 (10 MiB)
-//!   ticket-ttl      seconds, default 300
-//!   ticket-secret   HMAC key; default "upload-default-secret"
-//!                   — production MUST set this to a real secret.
+//! fails closed. `ticket-secret` has a placeholder default: production MUST set a real one.
 
 #[allow(warnings)]
 mod bindings;
@@ -35,7 +18,7 @@ struct Component;
 
 type HmacSha256 = Hmac<Sha256>;
 
-const DEFAULT_MAX_SIZE: u64 = 10_485_760; // 10 MiB
+const DEFAULT_MAX_SIZE: u64 = 10_485_760;
 const DEFAULT_TTL: u64 = 300;
 const DEFAULT_SECRET: &str = "upload-default-secret";
 
@@ -77,7 +60,6 @@ fn random16hex() -> String {
     get_random_bytes(8).iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// Sanitize a tenant into key-legal chars (same byte scheme as other components).
 fn sanitize(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -140,7 +122,7 @@ impl Guest for Component {
         let payload_bytes = B64.decode(b64_payload).map_err(|_| PolicyError::InvalidTicket)?;
         let payload = String::from_utf8(payload_bytes).map_err(|_| PolicyError::InvalidTicket)?;
 
-        // Verify signature (constant-time over the hex strings).
+        // Constant-time over the hex strings.
         let expected = checksum(&ticket_secret(), &payload);
         if !ct_eq(expected.as_bytes(), presented.as_bytes()) {
             return Err(PolicyError::InvalidTicket);

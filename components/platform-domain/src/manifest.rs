@@ -79,8 +79,7 @@ pub struct HostIface {
 }
 
 impl HostIface {
-    /// Versionless on purpose: equal version strings would make a patch bump unschedulable.
-    // ponytail: family match; tighten to semver when two incompatible versions of
+    // ponytail: family match; tighten to semver once two incompatible versions of one interface coexist.
     // one interface actually coexist.
     fn family(&self) -> String {
         format!("{}:{}/{}", self.namespace, self.pkg, self.iface)

@@ -1,11 +1,5 @@
 //! `secret-probe` — an instrument for `comp:secrets/reader` (see wit/probe.wit).
-//!
-//!   GET /has?k=stripe     was this component granted that key? (no value read)
-//!   GET /reveal?k=stripe  read it — the audited call, and the only path to a value
-//!
-//! `/has` returning `granted:false` for a key another tenant holds is the boundary
-//! ADR-0051 is about: the guest names a key, never a reference, so there is no string
-//! it can send that reaches a secret nobody granted it.
+//! granted it (ADR-0051).
 
 #[allow(warnings)]
 mod bindings {
@@ -23,7 +17,6 @@ mod bindings {
         world: "comp:secretprobe/secret-probe",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -48,8 +41,7 @@ fn param(query: &str, key: &str) -> String {
         .unwrap_or_default()
 }
 
-/// JSON string escaping for the two characters a secret value could plausibly carry. Not a
-/// general encoder; a dependency for two `replace` calls is not worth it.
+/// Only the two characters a secret value could plausibly carry; not a general encoder.
 fn esc(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -65,9 +57,8 @@ impl Guest for Component {
 
         let body = match (request.get_method(), route.as_str()) {
             (Method::Get, "/has") => match reader::get(&k) {
-                // `key()` is read back off the handle rather than echoed from the
-                // query: it proves the handle carries the manifest's name, which is
-                // the only thing about a secret that is safe to log.
+                // Read back off the handle, not echoed: proves it carries the manifest's name, the only thing
+                // about a secret that is safe to log.
                 Ok(Some(s)) => {
                     format!(
                         "{{\"key\":\"{}\",\"granted\":true,\"name\":\"{}\"}}",
@@ -75,8 +66,7 @@ impl Guest for Component {
                         esc(&s.key())
                     )
                 }
-                // Not an error. An optional secret being absent is a normal way to
-                // run, and it is also what a guest gets for a key it was not granted.
+                // Not an error: absent is also what a guest gets for a key it was not granted.
                 Ok(None) => format!("{{\"key\":\"{}\",\"granted\":false}}", esc(&k)),
                 Err(e) => format!("{{\"key\":\"{}\",\"error\":\"{e:?}\"}}", esc(&k)),
             },

@@ -1,17 +1,5 @@
 //! `vcs-gateway` — the code store as HTTP routes, for agents and tests
-//! (ADR-0099).
-//!
-//! Imports `holon:vcs/code-store` and `holon:vcs/files` and serves each function at `POST
-//! /v1/<function>` with the same JSON `comp-vcs` takes (`holon_vcs::wire`): parse the body, make
-//! ONE import call, write the result back. Composed with `vcs-store` every request is a real
-//! round trip through the component model, which the e2e suite (`reconciler/daemons/vcs/tests/e2e_vcs.rs`)
-//! relies on.
-//! Errors are `{error, detail, message}` with the status `holon_vcs::wire` gives each `vcs-error`
-//! case.
-//!
-//! No auth of its own: whoever can reach this may edit every workspace. It is a
-//! tailnet app (apps/vcs.toml) and meant for agents on that network; a
-//! deployment that needs more puts `auth-guard` in front.
+//! (apps/vcs.toml); a deployment that needs more puts `auth-guard` in front.
 
 #[allow(warnings)]
 mod bindings {
@@ -29,7 +17,6 @@ mod bindings {
         world: "holon:vcs-gateway/gateway",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -219,8 +206,6 @@ guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 mod tests {
     use super::*;
 
-    /// A malformed body never reaches the import: it is refused here, in the
-    /// daemon's own words.
     #[test]
     fn a_body_that_is_not_the_routes_json_is_a_bad_request() {
         let (s, v) = dispatch("apply-patch", b"{\"workspace\": 1}");
@@ -232,8 +217,6 @@ mod tests {
         assert_eq!((s, v["error"].as_str()), (404, Some("not-found")));
     }
 
-    /// A refusal from the import is written with the case, payload and status
-    /// the daemon uses — an agent reads one format whichever it talks to.
     #[test]
     fn import_refusals_are_written_as_the_daemon_writes_them() {
         let id = t::SymbolId {

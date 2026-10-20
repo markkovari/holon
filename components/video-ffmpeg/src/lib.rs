@@ -1,21 +1,5 @@
 //! `video-ffmpeg` — re-encode a video into another format, for a component
-//! that cannot spawn a process
-//!
-//! The transcode happens in `comp-ffmpeg`, which is native because ffmpeg is a
-//! process and a `wasm32-wasip2` guest cannot fork one (ADR-0095). This is the
-//! component side: it holds the contract, and reaches the daemon over HTTP the
-//! same way `fs-watcher` reaches `comp-fswatch`.
-//!
-//! Two things follow from that split, and both are the point rather than a cost:
-//!
-//!   * what this may dial is a MANIFEST decision (ADR-0008). The daemon's
-//!     address is `ffmpeg-url` in `wasi:config`, and the deployment's egress
-//!     allow-list decides whether the call leaves at all.
-//!   * the daemon has its own allow-list of directories. Neither side trusts
-//!     the path in the request, because it can come from a model.
-//!
-//! Config (wasi:config/store):
-//!   ffmpeg-url    where `comp-ffmpeg` is listening, e.g. http://127.0.0.1:8010
+//! (ADR-0095). Neither side trusts the request's path: it can come from a model.
 
 #[allow(warnings)]
 mod bindings;
@@ -30,15 +14,13 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Sixty seconds: a transcode is a real ffmpeg run, and fs-watcher's ten-second poll budget would
-/// time out on anything but a trivial file.
+/// A transcode is a real ffmpeg run; fs-watcher's ten-second budget would time out.
 const TIMEOUT_NS: u64 = 60_000_000_000;
 
 fn daemon_url() -> Result<String, TranscodeError> {
     match config::get("ffmpeg-url") {
         Ok(Some(u)) if !u.is_empty() => Ok(u),
-        // Unavailable rather than not-permitted: nobody refused anything, the
-        // deployment simply never said where the transcoder is.
+        // Unavailable, not not-permitted: the deployment never said where the transcoder is.
         _ => Err(TranscodeError::Unavailable(
             "ffmpeg-url is not set — this transcoder has nowhere to ask".into(),
         )),
@@ -62,9 +44,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), TranscodeError> {
     Ok((scheme, authority, path))
 }
 
-/// POST the request and return the body. Every failure is `unavailable`: the
-/// daemon's own refusals arrive as JSON with a 200, so anything at this level
-/// is the transport rather than an answer.
+/// Every failure is `unavailable`: the daemon's own refusals arrive as JSON with a 200.
 fn post(body: Vec<u8>) -> Result<Vec<u8>, TranscodeError> {
     let url = daemon_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
@@ -72,10 +52,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, TranscodeError> {
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // A shared secret, if the deployment set one — see
-    // `comp_daemon_kit`'s own doc for why loopback
-    // binding alone is not a boundary. Absent means the daemon was
-    // started with no --token, so there is nothing to send.
+    // Loopback binding alone is not a boundary (see `comp_daemon_kit`); absent means no --token.
     if let Ok(Some(token)) = config::get("ffmpeg-token") {
         if !token.is_empty() {
             let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
@@ -90,8 +67,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, TranscodeError> {
     let out = req.body().map_err(|_| net("body"))?;
     {
         let stream = out.write().map_err(|_| net("write"))?;
-        // Chunked: `blocking-write-and-flush` traps above 4096 bytes, and a
-        // request naming a long path is small but not bounded.
+        // `blocking-write-and-flush` traps above 4096 bytes.
         for chunk in body.chunks(4096) {
             stream
                 .blocking_write_and_flush(chunk)
@@ -121,9 +97,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, TranscodeError> {
         match stream.blocking_read(8192) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went
-            // wrong, and returning what arrived would be a truncated answer
-            // presented as a whole one.
+            // Anything else would present a truncated answer as a whole one.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -131,8 +105,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, TranscodeError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser: the daemon's replies have two flat shapes, so
-/// serde would be more code than what it reads.
+/// No parser: the daemon's replies have two flat shapes.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];
@@ -147,10 +120,7 @@ impl Guest for Component {
         let raw = post(body.into_bytes())?;
         let text = String::from_utf8_lossy(&raw).into_owned();
 
-        // The daemon reports its refusals in the body. Mapping them back to
-        // the variant matters: a caller that cannot tell "you may not
-        // transcode that" from "the transcoder is down" will retry the first
-        // one forever.
+        // Refusals map back to their variant, or a caller retries "you may not" forever.
         if let Some(err) = field(&text, "error") {
             let detail = field(&text, "detail").unwrap_or_default().to_string();
             return Err(match err {
@@ -167,8 +137,6 @@ impl Guest for Component {
     }
 }
 
-/// A JSON string literal. A path can contain a quote or a backslash, and this
-/// is building a request out of one.
 fn json_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -193,16 +161,13 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::*;
 
-    /// A path is caller-supplied and goes into a JSON request. A quote in it
-    /// would end the string early and the rest would be read as structure.
     #[test]
     fn a_path_cannot_break_out_of_the_request_it_is_put_in() {
         assert_eq!(json_str(r#"/a/b.mov"#), r#""/a/b.mov""#);
         assert_eq!(json_str(r#"/a"b"#), r#""/a\"b""#);
         assert_eq!(json_str(r#"/a\b"#), r#""/a\\b""#);
         assert_eq!(json_str("/a\nb"), r#""/a\nb""#);
-        // Escaped, not stripped: a control character silently removed would
-        // change the path the daemon is asked about, and nobody would know.
+        // Escaped, not stripped: removing it would silently change the path.
         assert_eq!(json_str("/a\u{1}b"), r#""/a\u0001b""#);
     }
 
@@ -213,9 +178,6 @@ mod tests {
         assert!(field(json, "error").is_none());
     }
 
-    /// The daemon's three refusal shapes must map back to the matching
-    /// variant, not all collapse to `unavailable` — a caller retrying a
-    /// permission refusal forever is the failure mode this guards against.
     #[test]
     fn a_refusal_names_its_own_kind() {
         let not_permitted = r#"{"error":"not-permitted","detail":"/etc"}"#;

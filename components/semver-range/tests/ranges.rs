@@ -1,7 +1,3 @@
-//! The specification, held out: this file is not writable by the goal.
-//!
-//! Every case here is a rule people get wrong, mostly the pre-release rules.
-
 use semver_range::matches;
 
 #[test]
@@ -42,11 +38,9 @@ fn a_prerelease_is_below_its_release() {
 
 #[test]
 fn prerelease_identifiers_compare_by_kind_then_value() {
-    // Numeric identifiers compare NUMERICALLY, so 2 < 10 — the case a
-    // string comparison gets backwards.
+    // Numeric identifiers compare NUMERICALLY: 2 < 10.
     assert!(matches("<1.0.0-alpha.10", "1.0.0-alpha.2"));
-    // Alphanumeric identifiers compare in ASCII order, and an alphanumeric
-    // identifier outranks a numeric one.
+    // An alphanumeric identifier outranks a numeric one.
     assert!(matches("<1.0.0-alpha.beta", "1.0.0-alpha.1"));
     assert!(matches("<1.0.0-beta", "1.0.0-alpha.beta"));
     // A shorter set of identifiers is lower when all preceding ones are equal.
@@ -55,9 +49,7 @@ fn prerelease_identifiers_compare_by_kind_then_value() {
 
 #[test]
 fn a_prerelease_satisfies_a_range_only_when_the_range_names_one() {
-    // THE rule everybody misses: `^1.0.0` does not admit `1.1.0-alpha`, even
-    // though 1.1.0-alpha is inside the version interval, because a range with no
-    // pre-release in it does not opt into pre-releases at all.
+    // THE rule: a range with no pre-release in it does not opt into pre-releases.
     assert!(!matches("^1.0.0", "1.1.0-alpha"));
     // It does admit one whose [major, minor, patch] the range itself named.
     assert!(matches(">=1.0.0-alpha, <2.0.0", "1.0.0-beta"));

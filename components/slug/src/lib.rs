@@ -1,9 +1,4 @@
 //! `slug` — turn a title into a clean URL slug, transliterating accents and suffixing on collision
-//!
-//! Pure compute. `slugify` lowercases, transliterates common accented Latin to ASCII, collapses
-//! non-alphanumeric runs into one separator and trims the ends. A non-zero `max-length` truncates
-//! on a separator boundary, falling back to a hard byte cut. `uniquify` appends the smallest free
-//! numeric suffix (`-2`, `-3`, ...).
 
 #[allow(warnings)]
 mod bindings;
@@ -29,8 +24,7 @@ fn translit(c: char) -> Option<&'static str> {
 }
 
 fn slugify_sep(text: &str, sep: &str) -> String {
-    // Build a flat stream of ASCII alphanumerics; every other char (spaces,
-    // punctuation, unknown unicode) is a boundary we model as a single space.
+    // Every char that isn't ASCII alphanumeric (after transliteration) is a boundary.
     let mut tokens: Vec<char> = Vec::with_capacity(text.len());
     for c in text.to_lowercase().chars() {
         if c.is_ascii_alphanumeric() {

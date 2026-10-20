@@ -1,28 +1,6 @@
 //! `resilience` — stop hammering a failing service — a circuit breaker and exponential backoff, as pure functions
-//!
-//! The caller owns the state and passes it in; every function returns the state to persist. No
-//! clock or host imports: `now-ms` and the jitter `seed` are arguments, which also makes the
-//! state machine exhaustively testable.
-//!
-//! The state machine:
-//!
-//! ```text
-//!                failures >= failure-threshold
-//!        CLOSED ────────────────────────────────► OPEN
-//!          ▲                                       │ cooldown open-ms elapsed
-//!          │ successes >= success-threshold         ▼
-//!          └──────────────── HALF-OPEN ◄────── (admit up to half-open-probes)
-//!                               │
-//!                               └── one probe fails ──► OPEN
-//! ```
-//!
-//! `failure-threshold` counts CONSECUTIVE failures: a success in `closed` clears
-//! the count, and `window-ms` bounds how long a partial streak is remembered, so
-//! an upstream that fails once an hour never trips.
-//!
-//! ponytail: consecutive-with-staleness, not a sliding error *ratio*: one counter instead of a
-//! bucket ring, and identical for the mode that matters (an upstream that is down). Upgrade to a
-//! ratio only if a partially-degraded upstream (say 30% errors, forever) must also trip.
+//! ponytail: consecutive failures (forgotten after `window-ms`), not an error ratio; upgrade only
+//! if a partially-degraded upstream (say 30% errors, forever) must also trip.
 
 #[allow(warnings)]
 mod bindings;
@@ -72,8 +50,7 @@ impl Guest for Component {
                     c.probes += 1;
                     (Admission { admit: true, state: CircuitState::HalfOpen, retry_after_ms: 0 }, c)
                 } else {
-                    // Probe budget spent; someone else's probe decides. No useful
-                    // retry-after: the answer arrives when that probe reports.
+                    // Probe budget spent; that probe's report decides, so there is no useful retry-after.
                     (
                         Admission {
                             admit: false,
@@ -111,8 +88,7 @@ impl Guest for Component {
                 }
             }
             (CircuitState::HalfOpen, true) => {
-                // The probe reported, so its slot is free again — `half-open-probes`
-                // bounds CONCURRENT probes, not probes per episode.
+                // `half-open-probes` bounds CONCURRENT probes, not probes per episode.
                 c.probes = c.probes.saturating_sub(1);
                 c.successes += 1;
                 if c.successes >= at_least_1(pol.success_threshold) {
@@ -125,7 +101,6 @@ impl Guest for Component {
                 }
             }
             (CircuitState::HalfOpen, false) => {
-                // One failed probe is enough — back to open, full cooldown.
                 c.state = CircuitState::Open;
                 c.changed_ms = now_ms;
                 c.failures = at_least_1(pol.failure_threshold);
@@ -139,10 +114,10 @@ impl Guest for Component {
 
     fn backoff(attempt: u32, pol: RetryPolicy, seed: u64) -> Option<u32> {
         if attempt > at_least_1(pol.max_attempts) {
-            return None; // out of attempts — stop retrying
+            return None;
         }
         if attempt <= 1 {
-            return Some(0); // the first attempt does not wait
+            return Some(0);
         }
         let cap = if pol.max_ms == 0 { u32::MAX } else { pol.max_ms } as u64;
         let base = pol.base_ms as u64;
@@ -158,8 +133,7 @@ impl Guest for Component {
         if !pol.jitter || delay <= base {
             return Some(delay as u32);
         }
-        // Decorrelated jitter: uniform in [base, delay]. Deterministic in `seed`
-        // (splitmix64 mixed with the attempt) so this stays a pure function.
+        // Decorrelated jitter in [base, delay], deterministic in `seed` so this stays pure.
         let span = delay - base + 1;
         Some(
             (base + mix(seed ^ (attempt as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)) % span) as u32,
@@ -167,7 +141,7 @@ impl Guest for Component {
     }
 }
 
-/// splitmix64 finalizer — cheap, well-distributed bit mixing.
+/// splitmix64 finalizer.
 fn mix(mut x: u64) -> u64 {
     x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
     x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -260,7 +234,6 @@ mod tests {
         }
         assert!(matches!(c.state, CircuitState::Open));
 
-        // Cooldown elapsed -> one probe admitted, budget then spent.
         let (a, next) = admit(c, 1_030);
         assert!(a.admit && matches!(a.state, CircuitState::HalfOpen));
         c = next;

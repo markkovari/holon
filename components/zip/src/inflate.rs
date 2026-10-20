@@ -1,8 +1,5 @@
-//! DEFLATE (RFC 1951), decode only.
-//!
-//! Here because a `.xlsx` is a ZIP of XML written with DEFLATE, so a STORE-only reader refuses
-//! every real file. Written out rather than depended on so the crate stays dependency-free for
-//! `wasm32-wasip2`; the ENCODER is out of scope (writing STORE is honest and small).
+//! A `.xlsx` is DEFLATE'd, so STORE-only would refuse every real file; written out to stay
+//! dependency-free for `wasm32-wasip2`.
 
 struct Bits<'a> {
     data: &'a [u8],
@@ -44,9 +41,7 @@ impl<'a> Bits<'a> {
     }
 }
 
-/// A canonical Huffman table: for each code length, the first code and the symbols using it.
-/// Decoding walks bit by bit, slower than a lookup table but not the bottleneck for a
-/// spreadsheet.
+/// Bit-by-bit decoding: slower than a lookup table, but not a spreadsheet's bottleneck.
 struct Huffman {
     /// counts[len] = how many codes have this length
     counts: [u16; 16],
@@ -129,9 +124,7 @@ fn fixed_tables() -> (Huffman, Huffman) {
     )
 }
 
-/// The order RFC 1951 stores the code-length code lengths in. Not sorted, on
-/// purpose: the lengths most likely to be zero are last, so a truncated list is
-/// usually enough.
+/// Not sorted, on purpose (RFC 1951): the lengths most likely to be zero come last.
 const CLEN_ORDER: [usize; 19] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
 
 fn dynamic_tables(bits: &mut Bits) -> Result<(Huffman, Huffman), String> {
@@ -183,8 +176,7 @@ fn dynamic_tables(bits: &mut Bits) -> Result<(Huffman, Huffman), String> {
     Ok((Huffman::new(lit)?, Huffman::new(dist)?))
 }
 
-/// Decompress a raw DEFLATE stream. `expected` sizes the output buffer; it is a
-/// hint, not a limit, because a wrong one in the archive must not truncate a file.
+/// `expected` is a hint, not a limit: a wrong one in the archive must not truncate a file.
 pub fn inflate(data: &[u8], expected: usize) -> Result<Vec<u8>, String> {
     let mut bits = Bits::new(data);
     let mut out: Vec<u8> = Vec::with_capacity(expected);
@@ -226,8 +218,7 @@ pub fn inflate(data: &[u8], expected: usize) -> Result<Vec<u8>, String> {
                                     "a back-reference before the start of the output".into()
                                 );
                             }
-                            // Byte at a time: the ranges may overlap, which is how
-                            // DEFLATE expresses a run.
+                            // Byte at a time: overlapping ranges are how DEFLATE expresses a run.
                             let start = out.len() - distance;
                             for k in 0..length {
                                 let b = out[start + k];

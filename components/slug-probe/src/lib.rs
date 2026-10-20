@@ -1,6 +1,4 @@
 //! Front the `slug` capability over HTTP: `GET /slugify?text=<pct-encoded>` calls
-//! the real slug component's `slugify` and returns the result. Deployed composed
-//! with slug, this makes the capability answer over the lattice.
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -17,7 +15,6 @@ mod bindings {
         world: "comp:slugprobe/slug-probe",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -32,8 +29,7 @@ guestio::guest_p3_respond!();
 
 struct Component;
 
-/// Percent-decode a query value (handles `+` and multi-byte `%XX`), so a request
-/// can carry "Café Déjà" and the slug component sees the real UTF-8.
+/// Handles `+` and multi-byte `%XX`, so the slug component sees the real UTF-8.
 fn pct(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::new();
@@ -85,10 +81,8 @@ impl Guest for Component {
                 let slug = slug::slugify(&param(&query, "text"));
                 format!("{{\"slug\":\"{}\"}}", esc(&slug))
             }
-            // A VERSIONED feature: bounded slugs via the real slug's slugify-with.
-            // Present only when built with COMP_SLUGWITH, so a baseline build
-            // genuinely lacks it and a candidate genuinely gains it — a behavioral
-            // difference the gate can see by CALLING it over the lattice.
+            // Built only with COMP_SLUGWITH, so baseline and candidate differ in behaviour the gate can
+            // see by CALLING it over the lattice.
             (Method::Get, "/slugify-with") if option_env!("COMP_SLUGWITH").is_some() => {
                 let max = param(&query, "max").parse().unwrap_or(0);
                 let opts = slug::Options { separator: "-".to_string(), max_length: max };

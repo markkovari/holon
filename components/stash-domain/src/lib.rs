@@ -1,8 +1,4 @@
 //! `stash-domain` — a personal note stash (docs/apps/STASH.md) as ONE composed wasm HTTP
-//! component. Exports `wasi:http`; imports only WIT contracts: the composed
-//! auth-guard (`auth:identity`), `records:store`, `zip:archive` (the export) and
-//! `csv:codec` (the index inside it). No bespoke auth, storage, or zip library.
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -29,7 +25,6 @@ mod bindings {
         world: "stash:app/stash-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -352,9 +347,8 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be before the component stops reading it. Without a ceiling,
-/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
-/// A backstop, not a content policy; uploads police their own size with a 413.
+/// Without a ceiling a read grew to wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy: uploads 413 on their own.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

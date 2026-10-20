@@ -1,10 +1,4 @@
 //! search:app — faceted search-as-you-type over composed contracts.
-//!
-//! Query pipeline: tokenize the box, build a cache key, `cache::get`; on a MISS run
-//! `search::query` (TF-IDF ranked ids), hydrate each id from `records::store`, page, `cache::set`
-//! the JSON. Every query bumps a `search:hit` or `search:miss` counter in `metrics::collect` for
-//! a live hit-ratio.
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -30,7 +24,6 @@ mod bindings {
         world: "search:app/search-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -158,8 +151,7 @@ fn do_search(path: &str) -> Outcome {
         "cached": false,
         "ms": now().saturating_sub(started),
     });
-    // cache the miss result (without the per-call timing/cached flags — they're
-    // re-stamped on a hit).
+    // Cached without the per-call timing/cached flags; they're re-stamped on a hit.
     let _ = cache::set(&ckey, body.to_string().as_bytes(), CACHE_TTL);
     Outcome::Json(200, body.to_string())
 }
@@ -191,9 +183,7 @@ async fn index_doc(request: Request) -> Outcome {
     persist_and_index(given, &title, &bodytext, &url, &tags)
 }
 
-/// Upsert the record, (re)index its postings and invalidate the query cache. The record-store
-/// mints the id; we index under that SAME id so a hit hydrates. `given` = an existing record id
-/// to re-index.
+/// Indexed under the store-minted id so a hit hydrates; `given` re-indexes an existing record.
 fn persist_and_index(
     given: Option<String>,
     title: &str,
@@ -216,7 +206,7 @@ fn persist_and_index(
             Err(e) => return store_err(e),
         },
         None => {
-            // create with a placeholder, then rewrite with the real id embedded.
+            // A placeholder first, then rewritten with the real id embedded.
             let seed = json!({"title": title, "body": body, "url": url, "tags": tags, "at": now()});
             let entry = match records::create(DOCS, &seed.to_string(), &["id".to_string()]) {
                 Ok(e) => e,
@@ -246,7 +236,7 @@ fn seed() -> Outcome {
     Outcome::Json(200, json!({"seeded": n}).to_string())
 }
 
-/// A small demo corpus with overlapping + rare terms so ranking + facets show.
+/// Overlapping and rare terms, so ranking and facets show.
 const CORPUS: &[(&str, &str, &[&str])] = &[
     (
         "WebAssembly components",
@@ -337,9 +327,8 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be before the component stops reading it. Without a ceiling,
-/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
-/// A backstop, not a content policy; uploads police their own size with a 413.
+/// Without a ceiling a read grew to wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy: uploads 413 on their own.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

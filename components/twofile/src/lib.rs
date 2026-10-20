@@ -1,5 +1,4 @@
 //! A two-file goal: the spec (here) needs a variant added in `kind.rs` AND its
-//! arm added in `render.rs`. Neither file alone compiles — that is the point.
 pub mod kind;
 pub mod render;
 

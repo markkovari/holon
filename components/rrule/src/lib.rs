@@ -1,11 +1,5 @@
 //! `rrule` — expand a repeating or recurring event into concrete dates — every weekday, every 2 weeks on Mon and Wed
-//!
-//! Expand a normalized recurrence rule into occurrence dates (`YYYY-MM-DD`) clipped to an
-//! inclusive window. Dates are days-since-epoch internally, so there is no date library and no
-//! time-of-day. Easy to get wrong: INTERVAL steps whole periods; BYDAY emits the listed weekdays
-//! *within* each weekly period, ascending; COUNT applies over the full series from `dtstart`
-//! (occurrences before the window still consume it) before clipping to `[from, to]`; a hard cap
-//! (366) bounds unbounded rules.
+//! before clipping; a hard cap (366) bounds unbounded rules.
 
 #[allow(warnings)]
 mod bindings;
@@ -28,9 +22,7 @@ fn parse(s: &str) -> Result<i64, RecurError> {
     let y: i64 = p[0].parse().map_err(|_| bad())?;
     let m: i64 = p[1].parse().map_err(|_| bad())?;
     let d: i64 = p[2].parse().map_err(|_| bad())?;
-    // Bounding the year, not just month/day: an unbounded digit string here
-    // overflows `era * 146097` in `days_from_civil` (found by fuzzing the
-    // identical algorithm in vet-domain's datetime parser).
+    // Bounding the year: unbounded digits overflow `era * 146097` in `days_from_civil` (fuzz-found).
     if !(1..=12).contains(&m) || !(1..=31).contains(&d) || !(-9999..=9999).contains(&y) {
         return Err(bad());
     }

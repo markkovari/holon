@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# room-booking-domain's held-out-spec gate: compose the real capability graph, host it, and
-# assert real HTTP behavior — not just that `cargo component check` is happy.
+# Held-out-spec gate: compose the real capability graph, host it, assert real HTTP behaviour.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 

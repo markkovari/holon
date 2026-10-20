@@ -1,14 +1,4 @@
 //! `session-store` — hold a server-side session — mint an opaque id, attach data, refresh a sliding expiry, revoke it
-//!
-//! Server-side session + CSRF capability on `wasi:keyvalue`. The client only carries the opaque
-//! session id (a cookie); payload and CSRF token live here.
-//!
-//! State per session: `sess_{id}` -> `{created}:{expires}:{csrf}:{base64url data}` (unix seconds;
-//! `data` is base64url so it never collides with the `:` delimiter).
-//!
-//! Config (wasi:config/store):
-//!   default-ttl   session lifetime, seconds (default 86400). The per-call
-//!                 `ttl-seconds` overrides this when non-zero.
 
 #[allow(warnings)]
 mod bindings;
@@ -56,8 +46,7 @@ fn token() -> String {
     B64.encode(get_random_bytes(32))
 }
 
-/// Sanitize an opaque session id to NATS-legal kv chars (same scheme as idempotency-guard's
-/// `id_key`), prefixed `sess_`.
+/// Same scheme as idempotency-guard's `id_key`.
 fn sess_key(id: &str) -> String {
     let mut out = String::with_capacity(id.len() + 5);
     out.push_str("sess_");
@@ -136,8 +125,7 @@ fn to_session(id: &str, r: &Record) -> Session {
     }
 }
 
-/// Constant-time byte compare: XOR-accumulate over equal-length inputs.
-/// Differing lengths fail immediately (the length is not itself secret here).
+/// Differing lengths fail immediately: the length is not secret here.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;

@@ -54,7 +54,6 @@ impl Guest for Component {
                     }
                 }
                 TicketMessage::ChangeState { event } => {
-                    // Apply FSM transitions directly on the actor's state
                     let new_status = match (state.status.as_str(), event.as_str()) {
                         ("new", "triage") => "open",
                         ("open", "reply") => "pending",

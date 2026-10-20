@@ -1,5 +1,4 @@
 //! `reddit-domain` — run threaded discussion boards where people post and reply under topics
-
 use bindings::auth::identity::authorizer::authorize;
 use bindings::auth::identity::types::Permission;
 use bindings::wasi::keyvalue::store::open;

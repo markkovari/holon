@@ -14,8 +14,6 @@ package = "net:vpn"
 path = "wit"
 world = "component"
 
-# The daemon is reached over HTTP and told where it is by config — see the crate
-# docs and ADR-0095. Both come from the repo-root vendored WASI packages.
 [package.metadata.component.target.dependencies]
 "wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
 "wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }

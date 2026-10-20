@@ -1,9 +1,5 @@
 //! `wit-reflect` — read a component's real imports and exports out of the binary, and compose components from them
-//!
-//! `inspector` reads a component's import/export sections with `wasmparser` (interface names are already the keys everything else uses, so no WIT resolver). `composer::plan` is graph work: order plugs, find gaps, refuse cycles, count instances. `composer::satisfies`/`compose` delegate to `wac-graph` (its `SubtypeChecker` and `plug`).
-//! A built component does NOT tell you its own package name; the `component-name` section is a
-//! hint stamped by `cargo xtask build --force` (`wasm-component-ld` writes none), so callers
-//! still supply ids.
+//! by `cargo xtask build --force`), so callers supply ids.
 
 #[allow(warnings)]
 mod bindings;
@@ -23,13 +19,12 @@ use bindings::exports::wit::reflect::inspector::{
 
 struct Component;
 
-/// Namespaces only a runtime can satisfy; everything else is a composition edge.
-/// `comp` is here like `wasi`: `comp:secrets/reader` (ADR-0061) and `comp:store/cas` (ADR-0066) are host-implemented on every node, and leaving them out made every component importing one undeployable (`unsatisfied_imports`).
+/// Namespaces only a runtime can satisfy. `comp` is host-implemented on every node (ADR-0061,
+/// ADR-0066); leaving it out made every importer undeployable.
 const HOST_NAMESPACES: &[&str] = &["wasi", "wasmcloud", "comp"];
 
-/// wasmtime refuses to instantiate a component nesting more than this many
-/// component instances. It is why `vet-domain` cannot be fused in one piece
-/// (104 modules) and had to keep its stateful capabilities as links.
+/// wasmtime's cap on nested component instances; why `vet-domain` (104 modules) keeps its
+/// stateful capabilities as links.
 const NESTED_INSTANCE_LIMIT: u32 = 30;
 
 impl InspectorGuest for Component {
@@ -37,8 +32,7 @@ impl InspectorGuest for Component {
         if bytes.len() < 8 || &bytes[..4] != b"\0asm" {
             return Err(ReflectError::NotAComponent("not wasm (bad magic)".into()));
         }
-        // Byte 6 distinguishes a component (0x01) from a core module (0x00) in
-        // the version/layer field. Saying so beats "parse error".
+        // Byte 6 is the layer: component 0x01, core module 0x00. Saying so beats "parse error".
         if bytes[6] != 0x01 {
             return Err(ReflectError::NotAComponent(
                 "this is a core wasm module, not a component".into(),
@@ -49,9 +43,8 @@ impl InspectorGuest for Component {
         let mut exports_raw: Vec<String> = Vec::new();
         let mut name = String::new();
         let mut nested: u32 = 0;
-        // Only the OUTER component's sections describe this component; a composed
-        // artifact contains its plugs' sections too, and counting those would
-        // report every capability's imports as if they were still unsatisfied.
+        // Only the OUTER sections describe this component: a composed artifact's plug sections would
+        // report satisfied imports as unsatisfied.
         let mut depth: i32 = 0;
 
         for payload in wasmparser::Parser::new(0).parse_all(&bytes) {
@@ -99,12 +92,10 @@ impl InspectorGuest for Component {
     }
 }
 
-/// Split `ns:pkg/iface@ver` into parts, keeping the raw string authoritative.
-/// Names that don't match that shape (a bare function import, a `locked-dep=`
-/// form) keep `raw` and land in `name` — never silently dropped.
+/// Names of another shape (bare function import, `locked-dep=`) keep `raw` in `name`, never dropped.
 fn parse_ref(raw: &str) -> IfaceRef {
     let (before_at, version) = match raw.rsplit_once('@') {
-        // Guard against a `@` inside a path-ish name: a version starts with a digit.
+        // A version starts with a digit, so a path-ish `@` is not one.
         Some((b, v)) if v.starts_with(|c: char| c.is_ascii_digit()) => (b, v.to_string()),
         _ => (raw, String::new()),
     };
@@ -125,8 +116,7 @@ fn parse_ref(raw: &str) -> IfaceRef {
     }
 }
 
-/// The component name from a `component-name` custom section: subsection id 0,
-/// then a name-map-free plain string (LEB128 length + bytes).
+/// Subsection id 0, then a plain string (LEB128 length + bytes).
 fn component_name(data: &[u8]) -> Option<String> {
     let mut i = 0usize;
     while i < data.len() {
@@ -179,8 +169,7 @@ impl ComposerGuest for Component {
         let socket_id = graph.register_package(socket_pkg).map_err(|e| bad(e.to_string()))?;
         let plug_id = graph.register_package(plug_pkg).map_err(|e| bad(e.to_string()))?;
 
-        // The test wac-graph's `plug` applies: the plug's export type must be a SUBTYPE of the
-        // socket's import; matching names is not enough.
+        // wac-graph's `plug` test: the export must be a SUBTYPE of the import; names are not enough.
         let mut cache = Default::default();
         let mut checker = SubtypeChecker::new(&mut cache);
         let mut out = Vec::new();
@@ -241,11 +230,8 @@ impl ComposerGuest for Component {
     }
 }
 
-/// Compose one node: its plugs first (so an intermediate artifact is a real
-/// composed component, exactly as the two-step Justfile recipes do it), then
-/// `wac`'s `plug` over the results. Memoised, so a capability shared by two
-/// consumers is composed once — though each consumer still gets its own
-/// INSTANCE, which is `wac plug` semantics and the reason `.wac` exists.
+/// Plugs first, so intermediates are real composed components. Memoised, yet each consumer still
+/// gets its own INSTANCE (`wac plug` semantics, the reason `.wac` exists).
 fn compose_node<'a>(
     id: &'a str,
     bytes: &BTreeMap<&'a str, &'a [u8]>,
@@ -270,8 +256,6 @@ fn compose_node<'a>(
     stack.push(id);
     let mut plug_bytes: Vec<(String, Vec<u8>)> = Vec::new();
     for plug in &plugs {
-        // NOTE: the recursion is what makes depth > 2 work, which the hand-written
-        // recipes never attempt (they stop at cache.composed.wasm).
         let composed = compose_node(plug, bytes, deps, memo, stack)?;
         plug_bytes.push(((*plug).to_string(), composed));
     }
@@ -316,7 +300,6 @@ fn plug_together(
     graph.encode(EncodeOptions::default()).map_err(|e| ComposeError::EncodeFailed(e.to_string()))
 }
 
-/// Everything `plan` needs, resolved once.
 pub(crate) struct Graph<'a> {
     nodes: &'a [Node],
     by_id: BTreeMap<&'a str, &'a Node>,
@@ -440,8 +423,7 @@ impl<'a> Graph<'a> {
         None
     }
 
-    /// Topological depth: a leaf is 0, everything else is 1 + its deepest plug.
-    /// Doubles as the UI's layout — column = depth, no layout library needed.
+    /// Doubles as the UI's layout: column = depth.
     fn depths(&self) -> BTreeMap<&'a str, u32> {
         let mut depth: BTreeMap<&str, u32> = BTreeMap::new();
         // Iterating |nodes| times settles any DAG; a cycle is caught before this.
@@ -507,8 +489,7 @@ impl<'a> Graph<'a> {
                 .map(|(i, socket)| {
                     let plugs = self.deps.get(socket).cloned().unwrap_or_default();
                     let socket_node = self.by_id[*socket];
-                    // Every interface wac WILL satisfy, minus the ones drawn: the
-                    // caller cannot ask wac to satisfy only some of them.
+                    // wac satisfies every matching interface, not only the drawn ones.
                     let mut also = Vec::new();
                     for plug in &plugs {
                         let drawn = self.drawn.get(&(*socket, *plug)).cloned().unwrap_or_default();
@@ -531,8 +512,7 @@ impl<'a> Graph<'a> {
                 .collect()
         };
 
-        // Gaps: a composable import with no edge into it survives into the
-        // finished artifact, so the root's leftover imports are the union of these.
+        // An import with no edge survives into the finished artifact.
         let mut unsatisfied = Vec::new();
         for node in self.nodes {
             for import in &node.surface.imports {
@@ -542,8 +522,7 @@ impl<'a> Graph<'a> {
             }
         }
 
-        // Host needs: deduped union across the graph, since one workload's
-        // hostInterfaces cover every component in it.
+        // Deduped: one workload's hostInterfaces cover every component in it.
         let mut host_seen: BTreeSet<&str> = BTreeSet::new();
         let mut host_needs = Vec::new();
         for node in self.nodes {
@@ -554,9 +533,7 @@ impl<'a> Graph<'a> {
             }
         }
 
-        // Instance budget: each node contributes itself plus whatever it already
-        // nests (a composed plug carries its own). An estimate, but the right
-        // order of magnitude, and the limit it warns about is real.
+        // An estimate (each node plus what it already nests), but the limit it warns about is real.
         let instance_count: u32 = self.nodes.iter().map(|n| 1 + n.surface.nested_instances).sum();
         let over = instance_count > NESTED_INSTANCE_LIMIT;
         if over {
@@ -631,8 +608,7 @@ mod tests {
         );
         let r = iface("wasi:keyvalue/store@0.2.0-draft");
         assert_eq!(r.version, "0.2.0-draft", "prerelease versions survive intact");
-        // gen-catalog.py drops these; we keep them, because wac and wasmCloud
-        // both key on the exact string.
+        // gen-catalog.py drops these; kept because wac and wasmCloud key on the exact string.
         let r = iface("auth:identity/types");
         assert_eq!((r.name.as_str(), r.version.as_str()), ("types", ""));
         let r = iface("some-bare-name");
@@ -694,8 +670,7 @@ mod tests {
 
     #[test]
     fn warns_that_wac_satisfies_more_than_you_drew() {
-        // One plug exporting two interfaces the socket imports: `wac plug` wires
-        // BOTH whether you drew one edge or two. A UI that hides this is lying.
+        // `wac plug` wires BOTH interfaces whether one edge or two was drawn.
         let nodes = vec![
             node(
                 "app",
@@ -778,8 +753,7 @@ mod tests {
 
     #[test]
     fn warns_before_the_instance_limit_bites() {
-        // vet-domain's real shape: one app, 19 capabilities, ~104 modules. It
-        // composes and then refuses to instantiate — the warning is the product.
+        // vet-domain's real shape (19 capabilities, ~104 modules): composes, then refuses to instantiate.
         let mut nodes =
             vec![node("app", Surface { nested_instances: 4, ..surface("app", &[], &[], &[]) })];
         for i in 0..19 {
@@ -800,7 +774,6 @@ mod tests {
         std::fs::read(p).ok()
     }
 
-    /// Panics with a usable message rather than skipping silently.
     fn require(name: &str) -> Vec<u8> {
         artifact(name).unwrap_or_else(|| {
             panic!("components/target/wasm32-wasip2/release/{name}.wasm missing — run `cargo xtask build --force` first")
@@ -811,8 +784,7 @@ mod tests {
     fn inspects_a_real_component() {
         let bytes = require("mesh_domain");
         let s = <Component as InspectorGuest>::inspect(bytes).expect("mesh-domain inspects");
-        // wasm32-wasip2 artifacts come out anonymous; `cargo xtask build --force` stamps the name
-        // back.
+        // wasm32-wasip2 artifacts come out anonymous; `cargo xtask build --force` stamps the name.
         assert_eq!(s.name, "mesh-domain", "the build's `wasm-tools metadata add` pass");
         assert_eq!(s.exports.len(), 1);
         assert_eq!(s.exports[0].raw, "wasi:http/handler@0.3.0-rc-2026-03-15"); // p3 (ADR-0103)
@@ -830,14 +802,10 @@ mod tests {
 
     #[test]
     fn a_composed_artifact_reports_only_what_is_left() {
-        // The distinction depth-tracking buys: a composed component contains its
-        // plugs' import sections, and counting those would report satisfied
-        // imports as outstanding.
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../target/mesh_domain.composed.wasm");
-        // Skipped, loudly, not failed: this artifact comes from a hand-written plug chain (`cargo
-        // xtask compose mesh`) a fresh checkout lacks, and a test that is red until an unrelated
-        // recipe runs gets ignored.
+        // Skipped loudly, not failed: the artifact comes from `cargo xtask compose mesh`, which a fresh
+        // checkout lacks.
         let Ok(bytes) = std::fs::read(&path) else {
             eprintln!(
                 "SKIPPED: {} is not there — run `cargo xtask compose mesh`. Nothing about composed artifacts was verified by \
@@ -877,8 +845,7 @@ mod tests {
             <Component as ComposerGuest>::satisfies(mesh.clone(), records).unwrap(),
             vec!["records:store/store@0.1.0"]
         );
-        // Nothing zip exports is imported by mesh — an honest empty answer, so a
-        // UI can refuse the connection instead of composing something broken.
+        // An honest empty answer, so a UI can refuse the connection.
         assert!(<Component as ComposerGuest>::satisfies(mesh, zip).unwrap().is_empty());
     }
 
@@ -906,9 +873,7 @@ mod tests {
             .any(|h| h.name == "incoming-handler" || h.namespace == "wasi"));
         assert_eq!(s.exports[0].raw, "wasi:http/handler@0.3.0-rc-2026-03-15"); // p3 (ADR-0103)
 
-        // Structurally what `wac plug` writes: plugs nested inside, so instance count and size go
-        // up. Not compared with the CLI's output here (`cargo test` doesn't rebuild it); that
-        // belongs in the e2e.
+        // Not compared with the CLI's output: `cargo test` doesn't rebuild it, so that is e2e work.
         assert!(s.nested_instances >= 4, "socket + 3 plugs are nested in: {}", s.nested_instances);
         assert!(out.len() > require("mesh_domain").len(), "it contains its plugs");
     }

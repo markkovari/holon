@@ -1,22 +1,8 @@
 //! `semver-range` — does a version satisfy a range?
-//!
-//! `tests/ranges.rs` is the specification and is not writable from here.
-//!
-//! Pre-release rule: a version carrying a pre-release is only considered when some comparator in
-//! the range shares its `[major, minor, patch]`; otherwise the answer is `false` before any
-//! ordering.
-//! That is why `^1.0.0` refuses `1.1.0-alpha` (inside `>=1.0.0, <2.0.0`, but nobody asking for
-//! `^1.0.0` wants an unreleased 1.1.0), and why `<1.0.0` accepts `1.0.0-alpha` (the range names
-//! `1.0.0`, and ordering puts it below its release). One rule, not two.
-//!
-//! Build metadata is dropped on sight from both sides (SemVer §10: not part of precedence).
+//! `1.1.0-alpha`, `<1.0.0` accepts `1.0.0-alpha`. Build metadata is dropped (SemVer §10).
 
-/// One dot-separated piece of a pre-release tag.
-///
-/// The distinction is load-bearing twice over: numeric identifiers compare as
-/// NUMBERS (so `alpha.2` is below `alpha.10`, which a string comparison gets
-/// backwards), and when the kinds differ the alphanumeric one is the greater
-/// (SemVer §11.4.3).
+/// Numeric identifiers compare as NUMBERS (`alpha.2` < `alpha.10`), and alphanumeric beats
+/// numeric (SemVer §11.4.3).
 #[derive(Debug, PartialEq, Eq)]
 enum Ident {
     Num(u64),
@@ -25,8 +11,7 @@ enum Ident {
 
 impl Ident {
     fn parse(s: &str) -> Self {
-        // Leading zeroes make it a string, not a number: `01` is not `1`, and
-        // treating it as one would make two distinct versions compare equal.
+        // Leading zeroes make it text: `01` as 1 would make two distinct versions compare equal.
         if !s.is_empty()
             && s.bytes().all(|b| b.is_ascii_digit())
             && (s.len() == 1 || !s.starts_with('0'))
@@ -74,10 +59,7 @@ impl Version {
         (self.major, self.minor, self.patch)
     }
 
-    /// `major.minor.patch` with an optional `-pre`, tolerating a missing minor
-    /// or patch so `~1.2` can be written as a version.
-    /// Build metadata is discarded here rather than stored, because nothing
-    /// downstream is allowed to look at it.
+    /// Tolerates a missing minor or patch so `~1.2` parses; build metadata is discarded.
     fn parse(s: &str) -> Option<Self> {
         let s = s.trim();
         if s.is_empty() {
@@ -91,8 +73,7 @@ impl Version {
 
         let mut parts = core.split('.');
         let major = parts.next()?.parse().ok()?;
-        // An absent minor or patch is zero — `~1.2` means `1.2.0` — but a
-        // PRESENT one that is not a number is a parse failure, not a zero.
+        // Absent is zero (`~1.2` is `1.2.0`); present but not a number is a failure.
         let minor = match parts.next() {
             Some(p) => p.parse().ok()?,
             None => 0,
@@ -107,10 +88,7 @@ impl Version {
         Some(Version { major, minor, patch, pre })
     }
 
-    /// How many of `major.minor.patch` were actually written.
-    ///
-    /// `~1.2` and `~1.2.0` expand to different upper bounds, so the shape of what
-    /// was typed survives parsing.
+    /// `~1.2` and `~1.2.0` have different upper bounds, so what was typed survives parsing.
     fn written_parts(s: &str) -> usize {
         s.trim().split('+').next().unwrap_or("").split('-').next().unwrap_or("").split('.').count()
     }
@@ -123,8 +101,7 @@ impl Ord for Version {
                 (true, true) => std::cmp::Ordering::Equal,
                 (true, false) => std::cmp::Ordering::Greater,
                 (false, true) => std::cmp::Ordering::Less,
-                // Field by field, and a shorter set is lower once every shared
-                // identifier is equal (SemVer §11.4.4).
+                // A shorter set is lower once every shared identifier is equal (SemVer §11.4.4).
                 (false, false) => self.pre.cmp(&other.pre),
             }
         })
@@ -164,9 +141,9 @@ impl Comparator {
     }
 }
 
-/// `^1.2.3` — compatible within the leftmost NONZERO part (`^0.2.3` is minor-locked, `^0.0.3` patch-locked). Treating `^` as 'same major' is the expensive bug on 0.x dependencies.
+/// Locked at the leftmost NONZERO part: treating `^` as 'same major' is the costly bug on 0.x.
 fn caret(v: Version) -> Vec<Comparator> {
-    // `+1` saturates: components parse from input with no upper bound, so `u64::MAX` would overflow, and 'nothing is above this bound' is right.
+    // Saturates: input has no upper bound, and 'nothing is above this' is right at `u64::MAX`.
     let upper = if v.major > 0 {
         Version { major: v.major.saturating_add(1), minor: 0, patch: 0, pre: vec![] }
     } else if v.minor > 0 {
@@ -177,8 +154,7 @@ fn caret(v: Version) -> Vec<Comparator> {
     vec![Comparator { op: Op::Gte, version: v }, Comparator { op: Op::Lt, version: upper }]
 }
 
-/// `~1.2.3` — patch-level changes. `~1.2` — the minor was never written, so the
-/// minor is what may move.
+/// `~1.2`: the minor was never written, so the minor may move.
 fn tilde(v: Version, written: usize) -> Vec<Comparator> {
     let upper = if written >= 2 {
         Version { major: v.major, minor: v.minor.saturating_add(1), patch: 0, pre: vec![] }
@@ -188,8 +164,6 @@ fn tilde(v: Version, written: usize) -> Vec<Comparator> {
     vec![Comparator { op: Op::Gte, version: v }, Comparator { op: Op::Lt, version: upper }]
 }
 
-/// One comma-separated term into the comparators it stands for; `None` for anything unparseable,
-/// which the caller turns into `false`.
 fn parse_term(term: &str) -> Option<Vec<Comparator>> {
     let term = term.trim();
     if term.is_empty() {
@@ -217,10 +191,7 @@ fn parse_term(term: &str) -> Option<Vec<Comparator>> {
     Some(vec![Comparator { op: Op::Eq, version: Version::parse(term)? }])
 }
 
-/// Does `version` satisfy `range`?
-///
-/// Ranges: `*`, `1.2.3`, `^1.2.3`, `~1.2.3`, `~1.2`, `>=1.0.0`, `<2.0.0`, and
-/// comma-separated conjunctions of those.
+/// `*`, exact, `^`, `~`, `>=`, `<`, and comma-separated conjunctions of those.
 pub fn matches(range: &str, version: &str) -> bool {
     let Some(v) = Version::parse(version) else { return false };
 
@@ -234,13 +205,10 @@ pub fn matches(range: &str, version: &str) -> bool {
         }
     }
     if comparators.is_empty() {
-        // `*` admits any release. A pre-release still needs a range that named
-        // its triple, and `*` names nothing.
+        // `*` names no triple, so it admits no pre-release.
         return saw_star && v.pre.is_empty();
     }
 
-    // THE pre-release gate. Before any comparison: a pre-release is only in
-    // scope when the range itself mentioned this exact triple.
     if !v.pre.is_empty() && !comparators.iter().any(|c| c.version.triple() == v.triple()) {
         return false;
     }
@@ -252,8 +220,6 @@ pub fn matches(range: &str, version: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// The ordering rules, tested directly so a failure says 'comparison is wrong' rather than
-    /// 'some range is wrong'.
     #[test]
     fn precedence_follows_semver_11() {
         let v = |s: &str| Version::parse(s).expect(s);
@@ -267,8 +233,6 @@ mod tests {
 
     #[test]
     fn a_leading_zero_makes_an_identifier_textual() {
-        // `01` is not the number 1: treating it as one would make two distinct
-        // pre-releases compare equal.
         assert_eq!(Ident::parse("01"), Ident::Text("01".into()));
         assert_eq!(Ident::parse("1"), Ident::Num(1));
         assert_eq!(Ident::parse("0"), Ident::Num(0));

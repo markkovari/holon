@@ -1,7 +1,4 @@
-//! Generate a static-asset table from `static/` (the built React SPA) so the
-//! component can serve the UI itself — embedded in the wasm, no filesystem.
-//! Emits `OUT_DIR/static_assets.rs`: `STATIC_ASSETS: &[(path, content_type,
-//! &[u8])]`, each file `include_bytes!`'d.
+//! Embeds `static/` in the wasm (no filesystem): emits `OUT_DIR/static_assets.rs`.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};

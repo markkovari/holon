@@ -1,10 +1,4 @@
 //! relay:app — webhook relay over composed capability contracts.
-//!
-//! Ingest (`POST /hook/{source}`): rate-limit -> HMAC verify + replay dedup
-//! (webhook:ingest) -> optional json:patch transform -> outbox enqueue -> 202.
-//! Delivery is an explicit pump (`POST /api/drain`, wasip2 has no background
-//! tasks): claim -> github-scheme sign -> notify:dispatch -> ack/fail, with the
-//! outbox contract owning retry/backoff and the dead-letter lane.
 
 #[allow(warnings)]
 mod bindings {
@@ -33,7 +27,6 @@ mod bindings {
         world: "relay:app/relay-app",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -63,8 +56,7 @@ struct Component;
 const SOURCES: &str = "relay_sources";
 const CLAIM_BATCH: u32 = 25;
 const CLAIM_LEASE: u64 = 60;
-/// How long a delivery-id stays deduplicated. 24h is the outer bound of the retry schedules worth
-/// naming; a shorter window would let a genuinely delivered event be accepted twice.
+/// 24h bounds the retry schedules worth naming; shorter would accept a delivered event twice.
 const DEDUP_TTL: u64 = 24 * 60 * 60;
 
 impl Guest for Component {
@@ -105,7 +97,7 @@ impl Guest for Component {
 
 enum Outcome {
     Json(u16, String),
-    /// 429 with a Retry-After of the payload seconds.
+    /// Retry-After seconds.
     Limited(u32),
     Bad(String),
     Err(u16, String),
@@ -115,14 +107,13 @@ enum Outcome {
 #[derive(Deserialize)]
 struct CreateSource {
     name: String,
-    /// inbound HMAC secret senders sign with.
+    /// Inbound: what senders sign with.
     secret: String,
-    /// where accepted deliveries get forwarded.
     destination: String,
-    /// outbound signing secret (github scheme) receivers verify with.
+    /// Outbound, github scheme.
     #[serde(rename = "dest-secret", alias = "dest_secret")]
     dest_secret: String,
-    /// optional reshape: JSON array -> RFC 6902 patch, object -> merge-patch.
+    /// JSON array -> RFC 6902 patch, object -> merge-patch.
     #[serde(default)]
     transform: Option<Value>,
 }
@@ -154,9 +145,8 @@ async fn create_source(request: Request) -> Outcome {
         }
     }
 
-    // dest_secret lives in the record (same trust domain as the kv store the
-    // record lands in); the INBOUND secret goes to the kv key webhook:ingest
-    // reads via `secret-ref`. Secrets never appear in responses.
+    // The INBOUND secret goes to the kv key webhook:ingest reads via `secret-ref`. Secrets never
+    // appear in responses.
     let data = json!({
         "name": req.name,
         "destination": req.destination,
@@ -226,8 +216,7 @@ async fn inbound(request: Request, source_id: &str) -> Outcome {
         Err(e) => return store_err(e),
     };
 
-    // failure-counter lockout per source: only bad signatures count against
-    // the window, so a healthy sender is never throttled.
+    // Only bad signatures count, so a healthy sender is never throttled.
     let rl_key = format!("relay:hook:{source_id}");
     match limiter::check(&rl_key) {
         Ok(_) => {}
@@ -245,20 +234,17 @@ async fn inbound(request: Request, source_id: &str) -> Outcome {
     }
     let payload = read_body(request).await.unwrap_or_default();
 
-    // Verify first and side-effect-free: a forged request must not burn a delivery-id, or an
-    // attacker who guesses one suppresses the real delivery. `signer::verify` compares in
-    // constant time. Only then is the id reserved (see `wit/relay.wit`).
+    // Verify first, side-effect free: a forged request must not burn a delivery-id, or an attacker
+    // who guesses one suppresses the real delivery.
     let secret = match kv::open("default").and_then(|b| b.get(&secret_ref(source_id))) {
         Ok(Some(bytes)) => String::from_utf8_lossy(&bytes).into_owned(),
-        // The source record exists but its secret does not: a store that lost one, so 503 for the
-        // sender to retry, never a 401 that blames the sender.
+        // A store that lost the secret: 503 so the sender retries, never a 401 that blames it.
         Ok(None) => {
             return Outcome::Err(503, "the inbound secret for this source is missing".into())
         }
         Err(e) => return Outcome::Err(503, format!("reading the inbound secret: {e:?}")),
     };
-    // The header as sent: `sig` had any `sha256=` prefix stripped above, and the github scheme
-    // wants it back.
+    // `sig` had its `sha256=` prefix stripped above; the github scheme wants it back.
     let header = format!("sha256={sig}");
     if signer::verify(&payload, &header, &secret, signer::Scheme::Github, 0).is_err() {
         let _ = limiter::record_failure(&rl_key);
@@ -269,13 +255,11 @@ async fn inbound(request: Request, source_id: &str) -> Outcome {
     // delivery-ids are scoped per source so two senders can't collide.
     let scoped = format!("{source_id}:{delivery}");
     match idem::begin(&scoped, DEDUP_TTL) {
-        // First time for this id: it is reserved, not committed. Nothing below may
-        // return without either completing or forgetting it.
+        // Reserved, not committed: nothing below may return without completing or forgetting it.
         Ok(None) => {}
-        // Already handled: 200 `{"replay": true}`, a 2xx so the sender stops.
+        // A 2xx so the sender stops.
         Ok(Some(_)) => return Outcome::Json(200, json!({ "replay": true }).to_string()),
-        // A concurrent duplicate — the other caller holds the reservation and has not
-        // finished. Retryable, and `idempotency:guard`'s own contract names 409 for it.
+        // A concurrent duplicate still in flight; `idempotency:guard` names 409 for it.
         Err(idem::IdemError::InProgress) => {
             return Outcome::Err(409, "a delivery with this id is already in flight".into())
         }
@@ -284,14 +268,12 @@ async fn inbound(request: Request, source_id: &str) -> Outcome {
 
     let outcome = accept(&source, source_id, &delivery, payload);
 
-    // COMMIT ON SUCCESS, RELEASE ON ANYTHING ELSE: a 2xx means it is in the outbox and retries
-    // must stop; anything else must leave the id usable again.
-    // `forget` failing is reported, not fatal, so it does not hide the first failure.
+    // Commit on 2xx (it is in the outbox), forget on anything else so the id is usable again. A
+    // failed `forget` is reported, not fatal, so it does not hide the first failure.
     match &outcome {
         Outcome::Json(status, body) if (200..300).contains(status) => {
             if let Err(e) = idem::complete(&scoped, *status, body.as_bytes()) {
-                // Queued but not marked: a retry will queue it a second time. Worth
-                // saying out loud, and still a success — the event IS delivered.
+                // Queued but not marked: a retry queues it twice. Still a success.
                 audit(
                     "hook.accepted",
                     "dedup-not-recorded",
@@ -337,8 +319,7 @@ fn accept(source: &records::Entry, source_id: &str, delivery: &str, payload: Vec
             }
         }
     };
-    // The enqueue is the last thing that can fail; `inbound` forgets the reservation on any
-    // non-2xx, so the sender's retry after a 503 is a real attempt.
+    // `inbound` forgets the reservation on any non-2xx, so a retry after a 503 is a real attempt.
     match outbox::enqueue(source_id, outbound.as_bytes(), 0) {
         Ok(event_id) => {
             audit("hook.accepted", "queued", source_id, delivery, &event_id);
@@ -348,7 +329,6 @@ fn accept(source: &records::Entry, source_id: &str, delivery: &str, payload: Vec
     }
 }
 
-/// Deliver pending events as signed webhooks — the explicit-pump pattern
 fn drain() -> Outcome {
     let events = match outbox::claim(CLAIM_BATCH, CLAIM_LEASE) {
         Ok(evs) => evs,
@@ -368,13 +348,12 @@ fn drain() -> Outcome {
             Err(_) => (String::new(), String::new(), String::new()),
         };
         if dest.is_empty() {
-            // source deleted since enqueue -> drop, don't retry forever.
+            // Source deleted since enqueue: drop, don't retry forever.
             let _ = outbox::ack(&ev.id);
             dropped += 1;
             continue;
         }
-        // github-scheme HMAC over the payload; the signature rides inside the
-        // envelope because notify:dispatch's message has no header field.
+        // The signature rides inside the envelope: notify:dispatch messages have no header field.
         let envelope = match signer::sign(&ev.payload, &secret, signer::Scheme::Github) {
             Ok(s) => json!({
                 "id": ev.id,
@@ -504,9 +483,8 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-/// The most a request body may be before the component stops reading it. Without a ceiling,
-/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
-/// A backstop, not a content policy; uploads police their own size with a 413.
+/// Without a ceiling a read grew to wasmtime's 64 MiB cap and TRAPPED (a closed connection).
+/// A backstop, not a content policy: uploads 413 on their own.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

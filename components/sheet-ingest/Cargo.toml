@@ -7,16 +7,14 @@ license.workspace = true
 publish.workspace = true
 
 [lib]
-# See `components/demo`: the bindings are gated on wasm32 so `cargo test` can link
-# the crate for the held-out specification.
+# rlib so `cargo test` links the crate; the bindings are gated on wasm32 (see `components/demo`).
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 wit-bindgen-rt = { workspace = true }
 
 [dev-dependencies]
-# The held-out spec opens the real `.xlsx` fixture with the same reader the
-# composed component uses, rather than a second one written for the test.
+# The spec reads the real `.xlsx` with the composed component's reader, not a test-only one.
 zip = { path = "../zip" }
 
 [package.metadata.component]
