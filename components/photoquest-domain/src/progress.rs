@@ -1,23 +1,5 @@
-//! A photographer's side of the game (CONTRACT.md "Journeys, quests, levels", "Submitting, XP, levels,
-//! badges", "Game routes"): published journeys with my XP, level and quest lock/pass state, a quest,
-//! submitting a photo, my submissions, and `/api/me/progress`.
-//!
-//! Collections written here:
-//!
-//! * `submissions` — `{user, quest, journey, photo, sha256, verdict, pass, xp_awarded, xp_reason,
-//!   level_up, badge, at}`, indexed by `user`. Every submission is kept; "passed" means a submission with `pass: true`.
-//! * `xp_ledger` — the append-only ledger `{user, journey, source, source_id, photo, sha256, xp, at}`,
-//!   indexed by `user`, `sha256`, `source_id`. Written only through [`credit`] (also called by
-//!   `competitions.rs`), and only when XP > 0.
-//! * `badges` — `{user, journey, name, at}`, indexed by `user`; one per (user, journey), granted when
-//!   every published quest of the journey is passed.
-//!
-//! **Which quests count.** A journey's unlock chain and badge are over its *published* quests in
-//! `journey.quests` order: a draft is invisible; an archived one drops out of the chain.
-//!
-//! **Races.** `records:store` has no unique constraint, so concurrent writes of the "same" ledger row or
-//! badge are settled afterwards: each writer re-reads and the one whose record id (a ULID) is not the
-//! smallest deletes its own and reports nothing awarded, so exactly one row survives.
+//! A journey's chain and badge are over its *published* quests in `journey.quests` order.
+//! Races: records:store has no unique constraint, so the writer whose ULID is not the smallest deletes its row.
 
 use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
@@ -33,17 +15,16 @@ const PHOTOS: &str = "photos";
 const SUBMISSIONS: &str = "submissions";
 const LEDGER: &str = "xp_ledger";
 const BADGES: &str = "badges";
-/// The same index list `competitions.rs` used for its interim ledger rows.
+/// Must match competitions.rs's interim ledger rows.
 const LEDGER_INDEX: &[&str] = &["user", "sha256", "source_id"];
 
-/// A record id as it may appear in a path. Record ids are ULIDs; anything else is a 404 before it reaches the store.
+/// Record ids are ULIDs; anything else is a 404 before it reaches the store.
 pub(crate) fn valid_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
         && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-/// One stored record as a JSON object, its id merged in.
 pub(crate) fn doc(entry: &records::Entry) -> Map<String, Value> {
     let mut m = match serde_json::from_str::<Value>(&entry.data) {
         Ok(Value::Object(m)) => m,
@@ -53,7 +34,6 @@ pub(crate) fn doc(entry: &records::Entry) -> Map<String, Value> {
     m
 }
 
-/// A record's data without the merged-in id, ready to write back.
 pub(crate) fn data_of(m: &Map<String, Value>) -> String {
     let mut d = m.clone();
     d.remove("id");
@@ -74,7 +54,6 @@ pub(crate) fn store_err() -> Reply {
 
 type EntryDoc = (records::Entry, Map<String, Value>);
 
-/// `Some((entry, doc))`, `None` for a missing record, `Err` for a store failure.
 pub(crate) fn load(collection: &str, id: &str) -> Result<Option<EntryDoc>, Reply> {
     if !valid_id(id) {
         return Ok(None);
@@ -89,7 +68,6 @@ pub(crate) fn load(collection: &str, id: &str) -> Result<Option<EntryDoc>, Reply
     }
 }
 
-/// Every record whose indexed `field` equals the string `value`.
 pub(crate) fn find(
     collection: &str,
     field: &str,
@@ -103,7 +81,6 @@ pub(crate) fn find(
     }
 }
 
-/// A whole collection, following the cursor, in id (creation) order.
 pub(crate) fn list_all(collection: &str) -> Result<Vec<Map<String, Value>>, Reply> {
     let mut out = Vec::new();
     let mut after = String::new();
@@ -132,8 +109,6 @@ macro_rules! tri {
 }
 pub(crate) use tri;
 
-/// `(level, next threshold)` for `xp` on a journey's `levels`: the highest level
-/// whose `xp` is reached, and the `xp` of the one after it (None at the top).
 pub(crate) fn level_of(levels: &Value, xp: u64) -> (u64, Option<u64>) {
     let mut level = 1;
     let mut next = None;
@@ -151,16 +126,10 @@ pub(crate) fn level_of(levels: &Value, xp: u64) -> (u64, Option<u64>) {
     (level, next)
 }
 
-/// What [`credit`] did.
 pub struct Credit {
-    /// XP written to the ledger by this call; 0 when nothing was.
     pub awarded: u64,
-    /// Why nothing was awarded: `"already_rewarded"` (this photo for this source
-    /// already paid, or — for quests — a file with this `sha256` already earned
-    /// XP), or `"already_passed"` (a quest this user was already paid for, with a
-    /// different photo). `None` when XP was awarded, or when `xp` was 0.
+    /// "already_rewarded" (photo or sha256 already paid) or "already_passed" (quest paid with another photo).
     pub reason: Option<String>,
-    /// `{journey, from, to}` when this credit crossed a level of `journey`.
     pub level_up: Option<Value>,
 }
 
@@ -176,20 +145,13 @@ fn is_row(r: &Map<String, Value>, user: &str, source: &str, source_id: &str) -> 
         && str_of(r, "source_id") == source_id
 }
 
-/// The smallest record id among `rows` — the one that wins a race.
+/// The smallest id wins a race.
 fn first_id(rows: &[Map<String, Value>]) -> Option<String> {
     rows.iter().map(|r| str_of(r, "id").to_string()).min()
 }
 
-/// Credit `xp` to `user` on the ledger, counted toward `journey`'s levels when there is one.
-///
-/// * Idempotent: a second call for the same (user, source, source_id, photo) awards 0 with
-///   `already_rewarded`. A different photo for the same (user, source, source_id) awards 0 too:
-///   `already_passed` for a quest (XP once per (photographer, quest)), `already_rewarded` otherwise
-///   (a competition prize is once per (user, competition, place); `source_id` is `"<competition>#<place>"`).
-/// * For `source == "quest"` only: a file (by `sha256`) earns XP at most once across every quest and user.
-///   Competition prizes neither consume nor are blocked by that rule.
-/// * `xp == 0` writes nothing and answers `awarded: 0, reason: None`.
+/// Idempotent per (user, source, source_id, photo). For quests a file (by sha256) earns XP at most once
+/// across every quest and user; competition prizes neither consume nor are blocked by that.
 pub fn credit(
     user: &str,
     journey: Option<&str>,
@@ -279,7 +241,6 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     }
 }
 
-/// What one photographer has: ledger rows, passed quest ids, badge rows.
 struct Mine {
     ledger: Vec<Map<String, Value>>,
     passed: HashSet<String>,
@@ -295,7 +256,6 @@ fn mine(user: &str) -> Result<Mine, Reply> {
     Ok(Mine { ledger: find(LEDGER, "user", user)?, passed, badges: find(BADGES, "user", user)? })
 }
 
-/// A journey's published quests, in unlock order.
 fn chain(journey: &Map<String, Value>) -> Result<Vec<Map<String, Value>>, Reply> {
     let mut out = Vec::new();
     for id in journey.get("quests").and_then(Value::as_array).into_iter().flatten() {
@@ -310,8 +270,7 @@ fn chain(journey: &Map<String, Value>) -> Result<Vec<Map<String, Value>>, Reply>
     Ok(out)
 }
 
-/// `locked | open | passed` for each quest of `chain`: quest n+1 is locked until
-/// quest n is passed.
+/// Quest n+1 is locked until quest n is passed.
 fn states(chain: &[Map<String, Value>], passed: &HashSet<String>) -> Vec<&'static str> {
     let mut prev_passed = true;
     chain
@@ -331,7 +290,7 @@ fn states(chain: &[Map<String, Value>], passed: &HashSet<String>) -> Vec<&'stati
         .collect()
 }
 
-/// `upcoming | running | ended` — the quest's time window, `[starts_at, ends_at)`.
+/// Half-open window `[starts_at, ends_at)`.
 fn window(q: &Map<String, Value>, now: u64) -> &'static str {
     if now < u64_of(q, "starts_at") {
         "upcoming"
@@ -351,7 +310,6 @@ fn quest_view(q: &Map<String, Value>, state: &str, now: u64) -> Value {
     })
 }
 
-/// My standing in one journey.
 fn standing(j: &Map<String, Value>, m: &Mine) -> Value {
     let id = str_of(j, "id");
     let xp = journey_xp(&m.ledger, id);
@@ -376,7 +334,6 @@ fn published_journey(id: &str) -> Result<Option<Map<String, Value>>, Reply> {
     Ok(load(JOURNEYS, id)?.map(|(_, j)| j).filter(|j| str_of(j, "state") == "published"))
 }
 
-/// `GET /api/journeys` — every published journey, with my standing and counts.
 fn journeys(route: &Route) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let m = tri!(mine(&principal.subject));
@@ -396,8 +353,6 @@ fn journeys(route: &Route) -> Reply {
     Reply::json(200, json!({ "journeys": out }))
 }
 
-/// `GET /api/journeys/{id}` — one published journey, its quests with my
-/// lock/pass state, and my standing.
 fn journey(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let Some(j) = tri!(published_journey(id)) else { return Reply::err(404, "not_found") };
@@ -412,11 +367,8 @@ fn journey(route: &Route, id: &str) -> Reply {
     Reply::json(200, Value::Object(v))
 }
 
-/// A quest and its journey, both as decoded documents.
 type QuestJourney = (Map<String, Value>, Map<String, Value>);
 
-/// A quest a photographer may see: not a draft, in a published journey.
-/// `(quest, journey)`, or None (→ 404).
 fn visible_quest(id: &str) -> Result<Option<QuestJourney>, Reply> {
     let Some((_, q)) = load(QUESTS, id)? else { return Ok(None) };
     if str_of(&q, "state") == "draft" {
@@ -426,7 +378,6 @@ fn visible_quest(id: &str) -> Result<Option<QuestJourney>, Reply> {
     Ok(Some((q, j)))
 }
 
-/// This quest's state for this user: `archived` when it has left the chain.
 fn state_in(
     q: &Map<String, Value>,
     j: &Map<String, Value>,
@@ -440,7 +391,6 @@ fn state_in(
         .unwrap_or(if passed.contains(str_of(q, "id")) { "passed" } else { "archived" }))
 }
 
-/// `GET /api/quests/{id}` — a published quest with my state for it.
 fn quest(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let Some((q, j)) = tri!(visible_quest(id)) else { return Reply::err(404, "not_found") };
@@ -460,12 +410,7 @@ struct SubmitReq {
     photo_id: String,
 }
 
-/// `POST /api/quests/{id}/submissions {photo_id}` — judge the photo now, store the verdict, and pay XP /
-/// level / badge for a pass.
-///
-/// Refusals in CONTRACT.md's order, all before judging: no such (visible) quest or photo → 404; not your
-/// photo → 403 `forbidden`; not evaluated → 409 `not_evaluated`; hidden → 409 `photo_hidden`; quest
-/// locked / not started / ended / archived → 409 with that reason; suspended → 403 `suspended`.
+/// Refusals in CONTRACT.md's order, all before judging.
 fn submit(route: &Route, id: &str, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let req = guestauth::guest_parse_body!(body, SubmitReq);
@@ -542,8 +487,6 @@ fn submit(route: &Route, id: &str, body: &str) -> Reply {
     Reply::json(201, Value::Object(doc(&entry)))
 }
 
-/// Grant `j`'s badge when every published quest in it is in `passed` and the
-/// user has none yet. The badge as `{journey, name}` when granted by this call.
 fn grant_badge(
     user: &str,
     j: &Map<String, Value>,
@@ -581,7 +524,6 @@ fn newest_first(v: &mut [Map<String, Value>]) {
     });
 }
 
-/// `GET /api/quests/{id}/submissions` — my submissions to this quest, newest first.
 fn my_submissions(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     if tri!(visible_quest(id)).is_none() {
@@ -595,8 +537,6 @@ fn my_submissions(route: &Route, id: &str) -> Reply {
     Reply::json(200, json!({ "submissions": subs }))
 }
 
-/// `GET /api/me/progress` — XP and level per journey (every published journey,
-/// plus any other I hold XP or a badge in), my badges, and my ledger.
 fn me_progress(route: &Route) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let m = tri!(mine(&principal.subject));

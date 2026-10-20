@@ -1,8 +1,4 @@
-//! `clinic-domain` — owners, pets and visits, as one component.
-//!
-//! This file is the ROUTER and not writable by either part: it dispatches to `owners` and
-//! `visits` and answers `/health` so the harness can tell "not up" from "wrong".
-//! `src/owners.rs` and `src/visits.rs` are the goal; `CONTRACT.md` is what they must agree on.
+//! The router; neither part may write it.
 
 mod access;
 #[allow(warnings)]
@@ -33,7 +29,6 @@ mod bindings {
         world: "clinic:domain/clinic-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -53,15 +48,11 @@ guestio::guest_p3_respond!();
 
 struct Component;
 
-/// What a handler answers with: a status, and a body that is JSON unless the
-/// handler says otherwise.
 pub struct Reply {
     pub status: u16,
-    /// The JSON body. `Value::Null` means no body at all — see `no_content`.
+    /// `Value::Null` means no body at all.
     pub json: Value,
-    /// A body the router must NOT serialise as JSON, with its content type: `Value::String`
-    /// serialises to a JSON string *literal* (quotes and escapes), so a CSV parser would
-    /// read one quoted blob instead of six columns.
+    /// Not serialised as JSON: a `Value::String` would become one quoted blob instead of columns.
     pub raw: Option<(String, Vec<u8>)>,
 }
 
@@ -72,18 +63,16 @@ impl Reply {
     pub fn err(status: u16, code: &str) -> Self {
         Reply::json(status, json!({ "error": code }))
     }
-    /// 204 carries no body, and a JSON `null` is not "no body".
+    /// A JSON `null` is not "no body".
     pub fn no_content() -> Self {
         Reply::json(204, Value::Null)
     }
-    /// A body sent through byte-for-byte, under the content type you name.
     pub fn raw(status: u16, content_type: &str, bytes: Vec<u8>) -> Self {
         Reply { status, json: Value::Null, raw: Some((content_type.to_string(), bytes)) }
     }
 }
 
-/// The path segments of a request, its query string, and its bearer token. `bearer` is read
-/// here because `Request` is consumed to read the body.
+/// `bearer` is read here because `Request` is consumed to read the body.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
@@ -103,8 +92,7 @@ impl Route {
 
 use guestfmt::percent_decode as percent;
 
-/// One owner and three pets, written straight to the store. Three because `access-and-search`
-/// is judged on RANKING; `pet_id` stays the first (the visits gate books against it).
+/// Three because `access-and-search` is judged on ranking; `pet_id` stays the first.
 fn seed() -> Reply {
     let owner = match records::create(
         "owners",
@@ -135,7 +123,6 @@ fn seed() -> Reply {
     Reply::json(201, json!({ "owner_id": owner, "pet_id": pet }))
 }
 
-/// The token out of `Authorization: Bearer <token>`, or empty.
 fn bearer(request: &Request) -> String {
     let headers = request.get_headers();
     let Some(value) = headers.get("authorization").into_iter().next() else {
@@ -144,9 +131,7 @@ fn bearer(request: &Request) -> String {
     String::from_utf8_lossy(&value).strip_prefix("Bearer ").unwrap_or_default().trim().to_string()
 }
 
-/// A ceiling on a request body, not a policy: past this the read gives up and
-/// the body reads as empty, rather than growing until the store's memory cap
-/// traps the component and the connection simply closes.
+/// Past this the body reads as empty, rather than the store's memory cap trapping the component.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
@@ -169,15 +154,12 @@ impl Guest for Component {
             _ => String::new(),
         };
 
-        // The router: `/health` here, everything else to the half that owns it.
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
         let Reply { status, json: payload, raw } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
-            // A fixture, not a feature: the `visits` half cannot book without a pet and pets
-            // belong to the OTHER half. Scaffold, not writable.
+            // A fixture: `visits` cannot book without a pet, and pets belong to the other part.
             ["test", "seed"] => seed(),
-            // Before the `api/pets` arm below, or `/api/pets/search` reads as a
-            // pet whose id is "search" and the owners half answers 404.
+            // Before the `api/pets` arm, or `/api/pets/search` reads as a pet whose id is "search".
             ["api", "staff", ..] | ["api", "pets", "search"] => {
                 access::handle(&method, &route, &body)
             }
@@ -194,8 +176,7 @@ impl Guest for Component {
         };
         let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
         let bytes = match raw {
-            // Byte-for-byte. `to_string()` here is what turned a CSV
-            // document into a JSON string literal.
+            // Byte-for-byte: `to_string()` here turned a CSV document into a JSON string literal.
             Some((_, bytes)) => bytes,
             None if !payload.is_null() => payload.to_string().into_bytes(),
             None => Vec::new(),

@@ -1,26 +1,5 @@
-//! `card-identify` — read a photo of a Pokémon card into its name, set, number and condition, and say which parts are a guess
-//!
-//! `tests/guess.rs` is the specification and is not writable from here.
-//!
-//! Nobody types a card in: a vision model describes the photo and this turns that answer
-//! into typed fields plus the list of fields a person should check (half of a card's value
-//! is invisible at photo resolution). This is the DETERMINISTIC half; the vision call is a
-//! provider and deliberately not here: a model call cannot be gated, and this can.
-//!
-//! Never invent a field: the expensive failure is a CONFIDENT wrong guess, e.g. 300 cards
-//! silently saying "Near Mint" by default. An absent field stays absent and its name goes
-//! in `needs_review`.
-//!
-//! Refusing is a valid answer: a hand, a booster wrapper or two cards at once must be an
-//! error, not a blank card row.
-//!
-//! Normalising is not guessing: `58/165`, `058/165` and `#58` are one number, and
-//! collapsing them is a lookup requirement that does not lower confidence. Anything needing
-//! a fact not on the card (set total cut off, language with no Japanese text) is inference
-//! and does.
+//! Never invents a field: an absent one stays absent and is listed in `needs_review`.
 
-/// How the card is printed. Drives price more than anything except condition: a
-/// reverse holo and a normal copy of one card are different markets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Variant {
     Normal,
@@ -28,13 +7,10 @@ pub enum Variant {
     ReverseHolo,
     FirstEdition,
     Shadowless,
-    /// Full art, alt art, secret rare — the "looks nothing like the base print"
-    /// bucket. Kept coarse on purpose: the fine distinctions are set-specific and
-    /// a photo often cannot settle them.
+    /// Coarse on purpose: the fine distinctions are set-specific and a photo often cannot settle them.
     Special,
 }
 
-/// Condition, on the scale the singles market actually uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Condition {
     Mint,
@@ -45,57 +21,37 @@ pub enum Condition {
     Damaged,
 }
 
-/// A professional grade, when the card is in a slab.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Grade {
-    /// `PSA`, `BGS`, `CGC`, uppercased.
     pub grader: String,
-    /// Tenths, so BGS 9.5 is 95 and PSA 10 is 100. Integer, because a grade is
-    /// the whole basis of the price and a float here would round.
+    /// Tenths (BGS 9.5 is 95): a grade is the basis of the price and a float would round.
     pub tenths: u16,
 }
 
-/// What the model thought it saw.
-///
-/// Empty string means "not established" for every text field. There is no
-/// sentinel and no default: see the module header.
+/// An empty string means "not established"; there is no sentinel or default.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Guess {
     pub name: String,
-    /// Human-readable, as printed: `Obsidian Flames`.
     pub set_name: String,
-    /// The lookup key, lowercased: `sv3`, `base1`, `sv3pt5`.
     pub set_code: String,
-    /// Zero-padded to the set total when it is known: `058/165`. Bare when it is
-    /// not: `58`.
+    /// Zero-padded to the set total when known (`058/165`), bare when not (`58`).
     pub number: String,
     pub rarity: String,
-    /// ISO-639-1, lowercased. Empty when nothing on the card settles it.
     pub language: String,
     pub variant: Option<Variant>,
     pub condition: Option<Condition>,
     pub graded: Option<Grade>,
-    /// 0..=100, the model's own confidence in the identification as a whole.
     pub confidence: u8,
-    /// Field names a person should check, sorted, no duplicates. Every absent
-    /// field is here, plus any the model flagged itself.
     pub needs_review: Vec<String>,
 }
 
-/// Why no guess could be made.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IdentifyError {
-    /// The model says there is no card in the picture.
     NoCard(String),
-    /// More than one card is visible. One photo, one card — otherwise the app
-    /// cannot know which one the fields describe.
     MoreThanOneCard,
-    /// The model declined, or answered with nothing usable.
     Refused(String),
-    /// The answer carried no JSON object this crate could read.
     Unparseable(String),
-    /// The answer was JSON but had no name in it, which is the one field that
-    /// cannot be reviewed into existence later.
+    /// The one field that cannot be reviewed into existence later.
     NoName,
 }
 
@@ -194,10 +150,7 @@ fn parse_graded(v: &serde_json::Value) -> Option<Grade> {
     }
 }
 
-/// Read a vision model's answer into a typed guess.
-///
-/// `answer` is whatever the model returned: bare JSON, JSON in a fenced block,
-/// or JSON with prose either side of it.
+/// `answer` may be bare JSON, fenced, or wrapped in prose.
 pub fn parse(answer: &str) -> Result<Guess, IdentifyError> {
     let trimmed = answer.trim();
     if trimmed.is_empty() {
@@ -298,8 +251,7 @@ pub fn parse(answer: &str) -> Result<Guess, IdentifyError> {
     })
 }
 
-/// The prompt the vision provider should send. It lives here so the shape this parses and
-/// the shape the model is asked for cannot drift apart.
+/// Lives here so the parsed shape and the requested shape cannot drift.
 pub fn prompt() -> &'static str {
     r#"Look at this photo of a trading card and answer with a single JSON object, nothing else.
 
@@ -322,9 +274,7 @@ Otherwise reply with these fields, using an empty string or omitting a field you
 }"#
 }
 
-// WIT <-> plain-type mapping only (no behaviour, so `tests/guess.rs` covers what ships).
-// Gated on the target like `components/demo`: a `cdylib` carrying wit-bindgen's exports
-// does not link natively.
+// Gated on the target like `components/demo`: a cdylib with wit-bindgen exports does not link natively.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]
@@ -347,8 +297,7 @@ impl w::Guest for Component {
                 number: g.number,
                 rarity: g.rarity,
                 language: g.language,
-                // `variant` is a WIT keyword, so the field is `printing` there — the
-                // word a collector uses for the same thing.
+                // `variant` is a WIT keyword, so the field is `printing` there.
                 printing: g.variant.map(|v| match v {
                     Variant::Normal => w::VariantKind::Normal,
                     Variant::Holo => w::VariantKind::Holo,

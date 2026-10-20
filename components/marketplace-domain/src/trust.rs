@@ -1,9 +1,5 @@
-//! Part 3 — disputes, fraud scoring, vendor reputation (CONTRACT.md's "Part 3 — trust.rs").
-//!
-//! A dispute is refused once the order's `order` machine is `delivered`; the admin's OWN verdict is what is
-//! recorded (the two `jev_*` fields are never read to decide anything). Parts never call each other's Rust,
-//! so reputation, including the retroactive fraud count, is computed by reading `orders`/`listings`/
-//! `disputes` straight out of `records:store`.
+//! The admin's own verdict is recorded; the `jev_*` fields never decide anything.
+//! Reputation reads orders/listings/disputes straight from records:store (parts never call each other).
 
 use std::collections::HashSet;
 
@@ -14,22 +10,18 @@ use crate::bindings::records::store::store as records;
 use crate::{is_admin, Reply, Route};
 use serde_json::{json, Value};
 
-/// The advisory hints CONTRACT.md gives verbatim for the dispute `gate` call.
+/// Verbatim from CONTRACT.md.
 const TRUE_HINT: &str = "the buyer's claim looks legitimate and a refund is warranted";
 const FALSE_HINT: &str = "the claim looks weak or abusive";
 
-/// The only resolutions an admin may record on a dispute.
 const RESOLUTIONS: &[&str] = &["refund", "deny", "partial"];
 
 /// A "large order" for fraud scoring: 100 dollars, in minor units.
 const LARGE_ORDER: u64 = 10_000;
 
-/// A Jev `probability` at or above this advises `"refund"` rather than `"deny"`.
 const REFUND_THRESHOLD: u32 = 500;
 
-/// The authenticated principal behind this request's bearer token, or an immediate `401`. Spelled out
-/// against `crate::introspect` rather than the `guestauth::guest_authenticated!` shorthand, whose
-/// expansion names `introspect` in THIS module's scope.
+/// Not `guestauth::guest_authenticated!`: its expansion names `introspect` in THIS module's scope.
 macro_rules! principal_of {
     ($route:expr) => {
         match crate::introspect($route) {
@@ -52,9 +44,7 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     }
 }
 
-/// Idempotent (`define` on an already-defined name replaces it with the same definition). This part owns
-/// `dispute`, so it ensures the machine exists before creating or firing an instance on a store where no
-/// other part has run its startup path.
+/// Idempotent; this part owns `dispute`, and no other part may have run its startup path.
 fn ensure_machines() {
     let _ = fsm::define(
         "dispute",
@@ -71,8 +61,7 @@ fn ensure_machines() {
     );
 }
 
-/// Every document in `collection`, as the entry's id plus its parsed body. A read error means "nothing
-/// there": these are aggregation reads over ANOTHER part's collection.
+/// A read error means "nothing there": these aggregate over another part's collection.
 fn load_all(collection: &str) -> Vec<(String, Value)> {
     match crate::list_all(collection) {
         Ok(entries) => entries
@@ -86,8 +75,6 @@ fn load_all(collection: &str) -> Vec<(String, Value)> {
     }
 }
 
-/// An integer out of JSON, whether it arrived as an integer, a float or a
-/// string.
 fn as_int(value: &Value) -> u64 {
     if let Some(n) = value.as_u64() {
         n
@@ -104,8 +91,7 @@ fn as_int(value: &Value) -> u64 {
     }
 }
 
-/// `POST /api/orders/{id}/disputes` — the order's own buyer. Allowed while the order is NOT YET
-/// `delivered` (afterwards the buyer's only path is a return, 409). The Jev gate is advisory and must never refuse creation.
+/// The Jev gate is advisory and must never refuse creation.
 fn open_dispute(route: &Route, order_id: &str, body: &str) -> Reply {
     let principal = principal_of!(route);
     let subject: &str = principal.subject.as_ref();
@@ -174,8 +160,6 @@ fn open_dispute(route: &Route, order_id: &str, body: &str) -> Reply {
     Reply::json(201, out)
 }
 
-/// `GET /api/disputes` — an admin sees every dispute, a buyer only their own.
-/// Each one carries its `dispute` machine status merged in.
 fn list_disputes(route: &Route) -> Reply {
     let principal = principal_of!(route);
     let subject: &str = principal.subject.as_ref();
@@ -199,8 +183,7 @@ fn list_disputes(route: &Route) -> Reply {
     Reply::json(200, json!({"disputes": disputes}))
 }
 
-/// `POST /api/disputes/{id}/resolve` — admin only. Records the admin's OWN `resolution`; never reads
-/// `jev_recommendation` or `jev_confidence` to decide anything, and never moves money.
+/// Never reads the `jev_*` fields to decide, and never moves money.
 fn resolve_dispute(route: &Route, id: &str, body: &str) -> Reply {
     let principal = principal_of!(route);
     if !is_admin(&principal) {
@@ -236,15 +219,10 @@ fn resolve_dispute(route: &Route, id: &str, body: &str) -> Reply {
     }
 }
 
-/// `GET /api/vendors/{subject}/reputation` — any authenticated caller.
-///
-/// `dispute_rate` is disputes on any of this vendor's orders over those orders (0, not a division error,
-/// with no orders). `fraud_flags` is CONTRACT.md's specific rule: an order over 100 dollars AND the
-/// vendor's FIRST-ever order, read directly from `orders`/`listings` with no shared score field.
+/// `fraud_flags` (CONTRACT.md): an order over 100 dollars that is also the vendor's FIRST-ever order.
 fn reputation(route: &Route, subject: &str) -> Reply {
     let _principal = principal_of!(route);
 
-    // The vendor's own listings, read straight from part 1's collection.
     let mut vendor_listings: HashSet<String> = HashSet::new();
     for (id, data) in load_all("listings") {
         if data.get("vendor").and_then(Value::as_str) == Some(subject) {
@@ -252,7 +230,7 @@ fn reputation(route: &Route, subject: &str) -> Reply {
         }
     }
 
-    // Every order containing one of those listings, oldest first (the fraud rule is about the FIRST-ever order).
+    // Oldest first: the fraud rule is about the FIRST-ever order.
     let mut orders: Vec<_> = Vec::new();
     if let Ok(entries) = crate::list_all("orders") {
         for entry in entries {

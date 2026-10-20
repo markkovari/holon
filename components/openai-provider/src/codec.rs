@@ -1,18 +1,13 @@
-//! The OpenAI provider's side of a completion, decoupled from the WIT bindings so it is unit-testable on the host.
-//! The Guest impl in `lib.rs` converts WIT records to/from these plain types. Deterministic: no WASI, config or HTTP
-//! (that plumbing lives in `lib.rs`). What the chat API looks like on the wire is `holon-llm`'s (docs/adr/0116);
-//! the embeddings endpoint is a different shape and stays here.
+//! Pure, host-testable side of the provider; the chat wire shape is holon-llm's (ADR-0116), embeddings stay here.
 
 use holon_llm::{openai, Message, Part, Request, Role};
 use serde::Deserialize;
 
-/// A chat message (plain mirror of the WIT `message`).
 pub struct Msg<'a> {
     pub role: &'a str, // "system" | "user" | "assistant"
     pub content: &'a str,
 }
 
-/// Completion tunables (plain mirror of the relevant WIT `options` fields).
 #[derive(Default)]
 pub struct Opts<'a> {
     pub model: &'a str, // already resolved (caller substitutes the default)
@@ -22,7 +17,6 @@ pub struct Opts<'a> {
     pub seed: u64,
 }
 
-/// A parsed completion (plain mirror of the WIT `completion`).
 pub struct Parsed {
     pub text: String,
     pub finish_reason: String,
@@ -31,7 +25,6 @@ pub struct Parsed {
     pub completion_tokens: u32,
 }
 
-/// Why parsing a response failed (mapped to `infer-error` by the caller).
 pub enum ParseError {
     BadResponse(String),
     NoContent,
@@ -41,10 +34,7 @@ fn json_str(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
 }
 
-/// Build the `/v1/chat/completions` request body. `temperature` is milli-units
-/// (700 -> 0.7). `model` must already be resolved (non-empty). Unset optionals (a zero
-/// temperature, token limit or seed) are left to the server's defaults, and system turns
-/// are lifted into the one system prompt that leads the messages.
+/// `temperature` is milli-units (700 -> 0.7); zero optionals are left to the server's defaults.
 pub fn chat_body(messages: &[Msg], opts: &Opts) -> String {
     let system: Vec<&str> =
         messages.iter().filter(|m| m.role == "system").map(|m| m.content).collect();
@@ -68,7 +58,6 @@ pub fn chat_body(messages: &[Msg], opts: &Opts) -> String {
     openai::body(&req).to_string()
 }
 
-/// Build the `/v1/embeddings` request body. `model` must already be resolved.
 pub fn embed_body(text: &str, model: &str) -> String {
     format!("{{\"model\":{},\"input\":{}}}", json_str(model), json_str(text))
 }
@@ -84,12 +73,11 @@ struct EmbedData {
     embedding: Vec<f32>,
 }
 
-/// A count as the WIT record has it, which is 32 bits.
+/// The WIT record's counts are 32-bit.
 fn narrow(n: u64) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
-/// Parse a `/v1/chat/completions` response into the domain completion.
 pub fn parse_completion(body: &[u8]) -> Result<Parsed, ParseError> {
     let reply = openai::parse(body).map_err(|e| ParseError::BadResponse(e.to_string()))?;
     if reply.text.is_empty() {
@@ -104,7 +92,6 @@ pub fn parse_completion(body: &[u8]) -> Result<Parsed, ParseError> {
     })
 }
 
-/// Parse a `/v1/embeddings` response into the first embedding vector.
 pub fn parse_embedding(body: &[u8]) -> Result<Vec<f32>, ParseError> {
     let parsed: EmbedResp = serde_json::from_slice(body)
         .map_err(|e| ParseError::BadResponse(format!("embed json: {e}")))?;
@@ -153,7 +140,6 @@ mod tests {
     fn chat_body_escapes_content() {
         let msgs = [Msg { role: "user", content: "quote \" and \n newline" }];
         let body = chat_body(&msgs, &Opts { model: "m", ..Default::default() });
-        // must round-trip as valid JSON with the exact content preserved.
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["messages"][0]["content"], "quote \" and \n newline");
     }

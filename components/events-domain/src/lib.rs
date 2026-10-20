@@ -1,14 +1,4 @@
-//! `events-domain` — free event ticketing, as one component.
-//!
-//! This file is the ROUTER and no part may write it: it dispatches to the four parts, answers
-//! `/health`, and seeds the fixture every part is judged against. `src/events.rs`,
-//! `src/tickets.rs`, `src/checkin.rs` and `src/swaps.rs` are the goal; `CONTRACT.md` is what
-//! they must agree on.
-//!
-//! The fixture registers people and hands back tokens: every route is behind
-//! `auth:identity`, and per-gate registration would put four copies of the same twenty lines
-//! in four scripts. It does NOT create tickets: issuing one is `tickets`' whole job, and
-//! pre-issuing would let a part that never calls `quota::reserve` pass.
+//! The router; no part may write this file. The fixture never pre-issues tickets (that is `tickets`' job).
 
 #[allow(warnings)]
 mod bindings {
@@ -46,7 +36,6 @@ mod bindings {
         world: "events:ticketing/events-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -74,16 +63,13 @@ guestio::guest_p3_respond!();
 
 struct Component;
 
-/// The tenant every principal belongs to. One tenant: multi-tenancy is `auth-guard`'s problem.
 pub const TENANT: &str = "events";
 
 pub struct Reply {
     pub status: u16,
-    /// `Value::Null` means no body at all — see `no_content`.
+    /// `Value::Null` means no body at all.
     pub json: Value,
-    /// A body the router must NOT serialise as JSON, with its content type: `Value::String`
-    /// serialises to a JSON string LITERAL, so a browser asked to render an image gets a quoted
-    /// blob.
+    /// Not serialised as JSON: a `Value::String` would become a quoted JSON literal.
     pub raw: Option<(String, Vec<u8>)>,
 }
 
@@ -91,21 +77,18 @@ impl Reply {
     pub fn json(status: u16, body: Value) -> Self {
         Reply { status, json: body, raw: None }
     }
-    /// Bytes through, byte for byte, under the content type you name.
     pub fn raw(status: u16, content_type: &str, bytes: Vec<u8>) -> Self {
         Reply { status, json: Value::Null, raw: Some((content_type.to_string(), bytes)) }
     }
     pub fn err(status: u16, code: &str) -> Self {
         Reply::json(status, json!({ "error": code }))
     }
-    /// 204 carries no body, and a JSON `null` is not "no body".
+    /// A JSON `null` is not "no body".
     pub fn no_content() -> Self {
         Reply::json(204, Value::Null)
     }
 }
 
-/// The path segments of a request, its query string, and the bearer it arrived
-/// with — parsed once here so no part has to read a header.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
@@ -123,13 +106,11 @@ impl Route {
     }
 }
 
-/// `{target, action}` in one line, because every part needs several.
 pub fn perm(target: &str, action: &str) -> Permission {
     Permission { target: target.to_string(), action: action.to_string() }
 }
 
-/// Authorise, or produce the reply that says why. Shared because the mapping is a CONTRACT
-/// decision: a missing bearer is 401, a valid bearer without the permission is 403.
+/// Contract: a missing bearer is 401, a bearer without the permission 403.
 pub fn require(route: &Route, target: &str, action: &str) -> Result<Principal, Reply> {
     if route.bearer.is_empty() {
         return Err(Reply::err(401, "unauthorized"));
@@ -148,9 +129,7 @@ pub fn has_role(p: &Principal, role: &str) -> bool {
     p.roles.iter().any(|r| r == role)
 }
 
-/// What each role may do. Lives here, not in `seed()`: with the test route off, nothing else
-/// would grant anything. Idempotent, called from both entry points a principal can arrive
-/// through (there is no startup).
+/// Idempotent and called from both entry points (there is no startup); `seed()` may be off.
 fn ensure_roles() {
     let roles: [(&str, &[(&str, &str)]); 3] = [
         (
@@ -186,18 +165,13 @@ fn ensure_roles() {
     }
 }
 
-/// Give this person the roles the DEPLOYMENT named for them: `organizer-emails` in the app
-/// spec says who (somebody must be able to open the first event), rather than promoting
-/// whoever registered first. Still a grant, not a claim: the list is config. Applied on LOGIN
-/// as well as registration, so an operator who adds an address and redeploys changes an
-/// existing account too. Idempotent.
+/// Roles the deployment names (`organizer-emails`), applied on login too so a redeploy updates accounts.
 fn grant_configured_roles(email: &str, subject: &str) {
     if organizer_emails().iter().any(|e| e.eq_ignore_ascii_case(email)) {
         let _ = rbac::assign_role(TENANT, subject, "organizer");
     }
 }
 
-/// Who gets `organizer` when they register. Empty unless the deployment says so.
 fn organizer_emails() -> Vec<String> {
     bindings::wasi::config::store::get("organizer-emails")
         .ok()
@@ -209,10 +183,7 @@ fn organizer_emails() -> Vec<String> {
         .collect()
 }
 
-/// Is the fixture allowed to run at all? It registers three people and hands their bearers
-/// back, which only a gate may have: it once shipped to a real box where the SPA called it
-/// on load. Absent is OFF; a switch whose purpose is to be off in production must not depend
-/// on somebody remembering to turn it off.
+/// Absent is off: the fixture hands out bearers, and it once shipped to a real box.
 fn test_routes_allowed() -> bool {
     bindings::wasi::config::store::get("allow-test-routes")
         .ok()
@@ -220,8 +191,7 @@ fn test_routes_allowed() -> bool {
         .is_some_and(|v| v == "1" || v == "true")
 }
 
-/// Sign up. Anyone may, and a new account is an `attendee` — the two roles that can
-/// do more are granted by an admin, never claimed by the person asking.
+/// A new account is an `attendee`; higher roles are granted, never claimed.
 fn register(body: &str) -> Reply {
     let Ok(input) = serde_json::from_str::<Value>(body) else {
         return Reply::err(400, "malformed_body");
@@ -243,8 +213,7 @@ fn register(body: &str) -> Reply {
         return Reply::err(500, "assign_failed");
     }
     grant_configured_roles(email, &principal.subject);
-    // Log in here rather than making the caller ask twice, and AFTER the role is
-    // assigned — a token minted before carries no roles and every route 403s.
+    // After the role is assigned: a token minted before carries no roles and every route 403s.
     match accounts::login(email, password, TENANT) {
         Ok(t) => Reply::json(201, json!({ "token": t.access_token, "subject": principal.subject })),
         Err(_) => Reply::err(500, "login_failed"),
@@ -278,14 +247,10 @@ fn login(body: &str) -> Reply {
     }
 }
 
-/// Three people, their roles, the permissions those roles carry, and one event, so a part can
-/// be judged before the other three exist. Returns the bearers, because a gate cannot mint one.
 fn seed() -> Reply {
     ensure_roles();
 
-    // `already-exists` is not a failure here: the fixture is called by four gates
-    // and by the composition gate, and it has to be idempotent or the second call
-    // fails a part for the harness's reason.
+    // Idempotent: every gate calls it, so `already-exists` is not a failure.
     let mut tokens = json!({});
     for (email, role) in [
         ("organizer@example.test", "organizer"),
@@ -305,7 +270,6 @@ fn seed() -> Reply {
         if rbac::assign_role(TENANT, &principal.subject, role).is_err() {
             return Reply::err(500, "seed_assign_failed");
         }
-        // Log in AFTER the role is assigned, or the token carries no roles.
         let pair = match accounts::login(email, "correct-horse", TENANT) {
             Ok(t) => t,
             Err(_) => return Reply::err(500, "seed_login_failed"),
@@ -314,13 +278,9 @@ fn seed() -> Reply {
         tokens[key] = json!({ "token": pair.access_token, "subject": principal.subject });
     }
 
-    // TWO events, and the second is the point: `contested_event_id` has capacity ONE, because
-    // with capacity not smaller than the fixture's people nothing can be contended (three
-    // principals racing for three places all win, so "count, compare, create" would pass).
-    // One place and two claimants is the smallest shape that tells the implementations apart.
+    // The second event has capacity one: the smallest shape where a claim race is actually contended.
     let organizer = tokens["organizer"]["subject"].as_str().unwrap_or_default().to_string();
-    // Find-or-create by title: the fixture is called by five gates AND every screencast pane,
-    // and creating unconditionally added two events per caller.
+    // Find-or-create by title: every gate and screencast pane calls this.
     let existing = records::find_by("events", "state", "\"open\"").unwrap_or_default();
     let mut made = Vec::new();
     for (title, capacity) in [("Rust, Wasm and a Free Drink", 3), ("The Last Seat In The House", 1)]
@@ -361,14 +321,10 @@ fn seed() -> Reply {
     )
 }
 
-/// A ceiling on a body read into memory, not a policy: past this the read gives up
-/// and the body reads as empty, rather than growing until the store's memory cap
-/// traps the component and the connection simply closes.
+/// Past this the body reads as empty, rather than the store's memory cap trapping the component.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-// Body as BYTES vs text is a real choice: `read_body` decodes lossily (right for JSON),
-// which destroys an image (non-UTF-8 becomes U+FFFD, so the upload stores a non-JPEG).
-// Binary goes through `read_body_bytes`.
+// `read_body` is lossy (right for JSON); binary goes through `read_body_bytes`.
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
 use guestfmt::percent_decode as percent;
@@ -394,8 +350,7 @@ impl Guest for Component {
             bearer,
         };
         let method = request.get_method();
-        // The content type the caller sent, needed before the body is consumed —
-        // `request.get_headers()` is not readable once the body has been consumed.
+        // Headers are unreadable once the body is consumed.
         let content_type = request
             .get_headers()
             .get("content-type")
@@ -407,8 +362,7 @@ impl Guest for Component {
             && route.segments[0] == "api"
             && route.segments[1] == "events"
             && route.segments[3] == "image";
-        // A body is read ONCE — the stream is not rewindable — so which shape it is
-        // read into has to be decided before reading, not after.
+        // The stream is not rewindable, so the shape is decided before reading.
         let (body, bytes) = match method {
             _ if is_image_upload => {
                 (String::new(), read_body_bytes(request).await.unwrap_or_default())
@@ -421,9 +375,7 @@ impl Guest for Component {
 
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
 
-        // The stream never returns a `Reply`. It sets the response itself and then
-        // writes to it for as long as the connection lasts, so it has to be taken
-        // out of the dispatch table above the thing that expects a body back.
+        // The stream sets its own response and writes for the connection's life, so it bypasses dispatch.
         if seg.as_slice() == ["api", "notifications", "stream"] {
             return notifications::stream(&route);
         }
@@ -432,18 +384,15 @@ impl Guest for Component {
             ["health"] => Reply::json(200, json!({ "ok": true })),
             ["api", "register"] => register(&body),
             ["api", "login"] => login(&body),
-            // 404 rather than 403 when it is off: a route that is not there should
-            // not advertise that it exists somewhere else.
+            // 404, not 403: a route that is off should not advertise itself.
             ["test", ..] if !test_routes_allowed() => Reply::err(404, "not_found"),
             ["test", "seed"] => seed(),
-            // Scaffold: a part must be judgeable on what it WROTE without the part that owns
-            // the read route (the check-in gate needs a ticket document while `tickets` is a stub).
+            // Scaffold: lets a part be judged on what it wrote while the reading part is a stub.
             ["test", coll @ ("events" | "tickets" | "swaps"), id] => match records::get(coll, id) {
                 Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
                 Err(_) => Reply::err(404, "not_found"),
             },
-            // Before the events arm: a ticket claim is nested under an event, and a
-            // match on ["api","events",..] would hand it to `events` instead.
+            // Before the events arm, which would otherwise take nested routes.
             ["api", "reminders", "run"] => remind::run(&method, &route),
             ["api", "events", id, "reminder"] => remind::peek(&route, id),
             ["api", "notifications", ..] | ["api", "prefs"] => {

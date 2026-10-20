@@ -1,22 +1,5 @@
-//! `openai-provider` — chat, completion and embeddings over an OpenAI-compatible HTTP API.
-//!
-//! Implements the vendor-agnostic `llm:inference/inference` by POSTing to `/v1/chat/completions` and
-//! `/v1/embeddings`; works against OpenAI, Azure OpenAI, Together, Groq, vLLM, or a local Ollama/llama.cpp
-//! server. Endpoint and models come from wasi:config; nothing about the vendor is in the WIT.
-//!
-//! Config (wasi:config/store):
-//!   openai:base-url     default "https://api.openai.com/v1"
-//!   openai:model        default chat model (default "gpt-4o-mini")
-//!   openai:embed-model  default embedding model (default "text-embedding-3-small")
-//!   openai:timeout      seconds to wait for the first response byte, and between bytes after it (default 600)
-//!   openai:max-tokens   the cap to send when the caller sets none (default 4096)
-//!
-//! Secret (comp:secrets/reader):
-//!   openai-api-key      bearer token, granted by reference in the manifest
-//!
-//! The key is a SECRET, not config: a config map is readable by anything that can read the deployment and
-//! dumped by every debug path (ADR-0051), and this token spends money on someone else's account. A local
-//! server that ignores auth grants nothing and no header is sent.
+//! OpenAI-compatible HTTP (OpenAI, Azure, Together, Groq, vLLM, Ollama); endpoint and models from wasi:config.
+//! The API key is a secret by reference (ADR-0051): it spends money. A keyless local server gets no header.
 
 #[allow(warnings)]
 mod bindings;
@@ -38,15 +21,9 @@ struct Component;
 const DEFAULT_BASE: &str = "https://api.openai.com/v1";
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
 const DEFAULT_EMBED_MODEL: &str = "text-embedding-3-small";
-/// How long to wait for a token, when nobody says. Ten minutes: far past any hosted API, right for a
-/// self-hosted server generating on one machine (benchmarked on an M2 Max with Qwen3-Coder-30B-A3B-4bit:
-/// decode 72 tok/s at a 1k prompt, 34 at 16k, so a 12000-token answer takes about six minutes). A cloud-sized
-/// budget kills it mid-sentence and the caller sees `provider-unavailable` from a healthy server. Decode
-/// falls with context (attention reads the whole KV cache per token), so size against the context you send.
+/// Ten minutes: a self-hosted model decodes ~34 tok/s at 16k context, so a 12k-token answer takes about six.
 const DEFAULT_TIMEOUT_SECS: u64 = 600;
-/// The `max_tokens` to send when the caller asked for none. The codec OMITS the field at zero, which is
-/// not unlimited: the server applies its own default (mlx_lm's cuts a file in half). `agent-writer` sends 0
-/// and expects the deployment to decide the budget, so that decision lives here.
+/// The codec omits a zero `max_tokens`, and the server's default is not unlimited (mlx_lm's cuts a file in half).
 const DEFAULT_MAX_TOKENS: u32 = 4096;
 
 fn cfg(key: &str) -> Option<String> {
@@ -61,8 +38,6 @@ fn default_model() -> String {
     cfg("openai:model").unwrap_or_else(|| DEFAULT_MODEL.to_string())
 }
 
-/// The read budget, in nanoseconds, from `openai:timeout`. A zero or unparseable value falls back rather
-/// than disabling the timeout: a hung forever budget is worse than a wrong one.
 fn default_max_tokens() -> u32 {
     cfg("openai:max-tokens")
         .and_then(|s| s.trim().parse().ok())
@@ -70,6 +45,7 @@ fn default_max_tokens() -> u32 {
         .unwrap_or(DEFAULT_MAX_TOKENS)
 }
 
+/// Zero falls back rather than disabling the timeout: a hung-forever budget is worse than a wrong one.
 fn timeout_ns() -> u64 {
     cfg("openai:timeout")
         .and_then(|s| s.trim().parse::<u64>().ok())
@@ -82,9 +58,7 @@ fn default_embed_model() -> String {
     cfg("openai:embed-model").unwrap_or_else(|| DEFAULT_EMBED_MODEL.to_string())
 }
 
-/// The bearer token, from the vault. `none` is not an error: a local Ollama or llama.cpp ignores auth, and
-/// refusing to run without a key would break the offline case. A real provider answers 401, which becomes
-/// `provider-denied` and says what happened better than a guess before the call.
+/// `None` is normal: a local Ollama or llama.cpp ignores auth; a real provider's 401 becomes `provider-denied`.
 fn api_key() -> Option<String> {
     match secrets::get("openai-api-key") {
         Ok(Some(s)) => secrets::reveal(&s).ok().filter(|v| !v.is_empty()),
@@ -107,8 +81,6 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), InferError> {
     Ok((scheme, authority, path))
 }
 
-/// POST `body` as application/json to `base_url + path` with an optional bearer token. Returns
-/// (status, response-body-bytes). Network failures map to `provider-unavailable`.
 fn post_json(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
     let url = format!("{}{}", base_url().trim_end_matches('/'), path);
     let (scheme, authority, full_path) = parse_url(&url)?;
@@ -140,11 +112,10 @@ fn post_json(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
         OutgoingBody::finish(out, None).map_err(|_| net("finish body"))?;
     }
 
-    // The host default is picked for an API that answers in seconds, not a local model decoding for twenty
-    // minutes. Connect stays short (a refused connection is immediate); the READ budget has to be generous.
+    // The host default suits an API answering in seconds; a local model may decode for twenty minutes.
     let opts = RequestOptions::new();
     let read_ns = timeout_ns();
-    let _ = opts.set_connect_timeout(Some(30_000_000_000)); // 30s
+    let _ = opts.set_connect_timeout(Some(30_000_000_000));
     let _ = opts.set_first_byte_timeout(Some(read_ns));
     let _ = opts.set_between_bytes_timeout(Some(read_ns));
 
@@ -174,7 +145,6 @@ fn post_json(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
     Ok((status, buf))
 }
 
-/// Map a non-2xx status to the right infer-error, carrying the body snippet.
 fn status_error(status: u16, body: &[u8]) -> InferError {
     let snippet = String::from_utf8_lossy(body).chars().take(300).collect::<String>();
     match status {

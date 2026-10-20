@@ -1,22 +1,4 @@
-//! `policy-guard` — does this principal own THIS row? — attribute-based, row-level authorization beyond roles
-//!
-//! Declarative ABAC / row-level authz that complements `auth-guard`'s RBAC (which cannot answer
-//! "does this principal own THIS row"). Principal attrs + resource attrs + an action go in; an
-//! allow/deny decision with the deciding rule comes out.
-//!
-//! Semantics:
-//!   * **Default-deny** — if no rule matches a request, the decision is DENY
-//!     (`rule_id == ""`, reason "no matching rule (default deny)").
-//!   * **Deny-overrides** — rules are evaluated in ascending `priority` (lower
-//!     wins); within the same priority a matching DENY beats a matching ALLOW.
-//!   * Both sides of every condition go through the same `resolve()`: a side
-//!     starting with `principal.`/`resource.` is looked up in the matching attr
-//!     map (absent -> ""), anything else is a literal. So the canonical
-//!     ownership rule `{left:"resource.owner", op:eq, right:"principal.subject"}`
-//!     compares the resource's owner attr to the principal's subject attr.
-//!
-//! State is the rule set per domain in `wasi:keyvalue` (updatable without a redeploy), at
-//! `pol_{sanitize(domain)}` as the serde_json encoding of a `Vec<StoredRule>`.
+//! Row-level ABAC beside auth-guard's RBAC: default-deny, and deny-overrides at equal priority (lower wins).
 
 #[allow(warnings)]
 mod bindings;
@@ -33,8 +15,7 @@ struct Component;
 
 const BUCKET: &str = "default";
 
-// The WIT-generated `Op`/`Effect` enums don't derive serde, so serde-deriving mirrors are
-// converted at the boundary.
+// WIT-generated `Op`/`Effect` don't derive serde, so these mirrors convert at the boundary.
 
 #[derive(Serialize, Deserialize)]
 struct StoredCond {
@@ -150,8 +131,7 @@ impl From<&StoredRule> for Rule {
     }
 }
 
-/// Sanitize one opaque segment to NATS-legal kv chars (same byte scheme as config-store's
-/// `sanitize`).
+/// NATS-legal kv chars only (as config-store's `sanitize`).
 fn sanitize(seg: &str) -> String {
     let mut out = String::with_capacity(seg.len());
     for b in seg.bytes() {
@@ -184,10 +164,7 @@ fn is_reference(s: &str) -> bool {
     s.starts_with("principal.") || s.starts_with("resource.")
 }
 
-/// Validate one condition: both sides non-empty; if a side *looks* like a
-/// reference prefix it must be a well-formed `principal.<key>`/`resource.<key>`
-/// (a non-empty key after the dot). Anything not matching a reference prefix is
-/// a literal and always allowed.
+/// A side that looks like `principal.`/`resource.` must have a key; anything else is a literal.
 fn validate_cond(rule_id: &str, c: &Condition) -> Result<(), PolicyError> {
     let check_side = |label: &str, side: &str| -> Result<(), PolicyError> {
         if side.is_empty() {
@@ -287,8 +264,7 @@ impl Guest for Component {
         let rmap = attr_map(&target_attrs);
 
         rules.retain(|r| r.action == action || r.action == "*");
-        // Stable sort by ascending priority — lower priority wins. Within the
-        // same priority a DENY must be seen before an ALLOW so deny overrides.
+        // Ascending priority (lower wins); within one priority DENY first, so deny overrides.
         rules.sort_by(|a, b| {
             a.priority.cmp(&b.priority).then(deny_first(a.effect).cmp(&deny_first(b.effect)))
         });
@@ -326,7 +302,6 @@ impl Guest for Component {
     }
 }
 
-/// Sort key making DENY sort before ALLOW at equal priority (deny-overrides).
 fn deny_first(e: StoredEffect) -> u8 {
     match e {
         StoredEffect::Deny => 0,

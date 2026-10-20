@@ -1,16 +1,3 @@
-//! bin:app — a paste / gist bin over a chain of mostly pure-compute contracts.
-//!
-//! The pipeline is a fold over stateless transforms with exactly one stateful step:
-//!
-//!   validate::validate   (body required, length-bounded)   — pure
-//!   pii::mask            (emails / cards / ssn masked)      — pure, at INGEST
-//!   records::create      (store the already-redacted body)  — the ONE stateful step
-//!   slug::slugify/uniquify (URL-safe slug from the title)   — pure
-//!
-//! and on read `md::to_html` (sanitized Markdown -> HTML) and `md::to_text` (plain-text preview), both pure.
-//!
-//! Redaction happens BEFORE storage: the raw PII never lands in the record store.
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -33,7 +20,6 @@ mod bindings {
         world: "bin:app/paste-bin",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -91,7 +77,6 @@ fn now() -> u64 {
     system_clock::now().seconds as u64
 }
 
-/// The PII kinds masked at ingest.
 fn pii_opts() -> pii::Options {
     pii::Options {
         kinds: vec![pii::Kind::Email, pii::Kind::CreditCard, pii::Kind::Ssn, pii::Kind::Phone],
@@ -122,7 +107,6 @@ async fn create_paste(request: Request) -> Outcome {
     let raw = body["body"].as_str().unwrap_or("").to_string();
     let syntax = body["syntax"].as_str().unwrap_or("markdown").trim().to_string();
 
-    // 1. validate — pure. body required, length-bounded.
     let rules = vec![validate::Rule {
         field: "body".into(),
         kind: validate::Kind::Text,
@@ -142,12 +126,11 @@ async fn create_paste(request: Request) -> Outcome {
         return Outcome::Json(422, json!({"error": "validation_failed", "fields": fe}).to_string());
     }
 
-    // 2. redact — pure, at INGEST. Count findings first (for the response), then mask, so raw PII never reaches the store.
+    // Count findings, then mask, at INGEST: raw PII never reaches the store.
     let opts = pii_opts();
     let findings = pii::detect(&raw, &opts).len();
     let redacted = pii::mask(&raw, &opts);
 
-    // 3. store — the ONE stateful step. Slug is derived after we know the id.
     let title = if title.is_empty() { "untitled".to_string() } else { title };
     let doc = json!({"title": title, "body": redacted, "syntax": syntax, "redacted": findings, "at": now()});
     let entry = match records::create(PASTES, &doc.to_string(), &["slug".to_string()]) {
@@ -155,7 +138,6 @@ async fn create_paste(request: Request) -> Outcome {
         Err(e) => return store_err(e),
     };
 
-    // 4. slug — pure. URL-safe + de-duplicated against existing slugs.
     let taken = existing_slugs();
     let base = slug::slugify(&title);
     let unique = slug::uniquify(&base, &taken);
@@ -251,7 +233,6 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
         .map_err(|e| Outcome::Json(400, json!({"error": format!("bad json: {e}")}).to_string()))
 }
 
-/// A ceiling on a request body, not a policy: past this the read stops and the caller is told.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

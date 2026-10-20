@@ -1,12 +1,4 @@
-//! `luhn-checksum` — the mod-10 check digit used by credit-card numbers, IMEIs and
-//! national ID schemes.
-//!
-//! `tests/luhn.rs` is the specification and is not writable from here.
-//!
-//! Pure compute: digits in, a bool/digit/string out.
-
-/// Sums the digits, doubling every second one counted from the right. `double_rightmost` says whether the rightmost
-/// digit is among the doubled ones (`checksum_digit` uses it: an unwritten digit will land to its right). `None` on empty input or a non-digit byte.
+/// `double_rightmost`: a check digit will still be appended to the right.
 fn folded_sum(digits: &str, double_rightmost: bool) -> Option<u32> {
     if digits.is_empty() {
         return None;
@@ -32,27 +24,23 @@ fn folded_sum(digits: &str, double_rightmost: bool) -> Option<u32> {
     Some(sum)
 }
 
-/// Is `digits` a valid Luhn number (its own last digit is the check digit)?
 pub fn is_valid(digits: &str) -> bool {
     // The rightmost digit is the check digit itself and is never doubled.
     matches!(folded_sum(digits, false), Some(sum) if sum % 10 == 0)
 }
 
-/// The check digit that would make `digits` valid once appended, or `None` on empty/non-digit input.
 pub fn checksum_digit(digits: &str) -> Option<u8> {
     // Once a digit is appended, every existing digit's doubling flips.
     let sum = folded_sum(digits, true)?;
     Some((10 - (sum % 10) as u8) % 10)
 }
 
-/// `digits` with its check digit appended, or `None` on the same bad input as
-/// [`checksum_digit`].
 pub fn append_checksum(digits: &str) -> Option<String> {
     let check = checksum_digit(digits)?;
     Some(format!("{digits}{check}"))
 }
 
-// A mapping between the WIT types and the ones above; adds no behaviour, so `tests/luhn.rs` keeps covering what ships.
+// Thin WIT mapping only, so tests/luhn.rs covers what ships.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]

@@ -39,13 +39,11 @@ HTTP 200
 [Captures]
 vendor_subject: jsonpath "$.subject"
 
-# a buyer cannot create a listing
 POST {{base}}/api/listings
 Authorization: Bearer {{buyer_token}}
 {"title": "Keyboard", "description": "Mechanical, brown switches", "price": 4500, "stock": 10}
 HTTP 403
 
-# a vendor creates one — auto-labeled by Jev
 POST {{base}}/api/listings
 Authorization: Bearer {{vendor_token}}
 {"title": "Keyboard", "description": "Mechanical, brown switches", "price": 4500, "stock": 10}
@@ -56,7 +54,6 @@ listing_id: jsonpath "$.id"
 jsonpath "$.category" exists
 jsonpath "$.category_confidence" exists
 
-# empty title is refused
 POST {{base}}/api/listings
 Authorization: Bearer {{vendor_token}}
 {"title": "", "description": "x", "price": 100, "stock": 1}
@@ -72,7 +69,6 @@ GET {{base}}/api/listings/{{listing_id}}
 Authorization: Bearer {{buyer_token}}
 HTTP 200
 
-# only the owning vendor (or admin — untested here, no admin in this gate) may override the category
 PATCH {{base}}/api/listings/{{listing_id}}/category
 Authorization: Bearer {{buyer_token}}
 {"category": "toys"}
@@ -95,7 +91,6 @@ POST {{base}}/api/listings/{{listing_id}}/delist
 Authorization: Bearer {{vendor_token}}
 HTTP 200
 
-# delisted: 404 for a non-owner, still visible to the owning vendor
 GET {{base}}/api/listings/{{listing_id}}
 Authorization: Bearer {{buyer_token}}
 HTTP 404
@@ -104,7 +99,6 @@ GET {{base}}/api/listings/{{listing_id}}
 Authorization: Bearer {{vendor_token}}
 HTTP 200
 
-# a fresh listing for order placement
 POST {{base}}/api/listings
 Authorization: Bearer {{vendor_token}}
 {"title": "Mouse", "description": "Wireless", "price": 1000, "stock": 3}
@@ -112,13 +106,11 @@ HTTP 201
 [Captures]
 mouse_id: jsonpath "$.id"
 
-# oversell is refused
 POST {{base}}/api/orders
 Authorization: Bearer {{buyer_token}}
 {"items": [{"listing_id": "{{mouse_id}}", "quantity": 10}]}
 HTTP 409
 
-# empty items is refused
 POST {{base}}/api/orders
 Authorization: Bearer {{buyer_token}}
 {"items": []}

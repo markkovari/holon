@@ -1,42 +1,5 @@
-//! A curator's side of the game (CONTRACT.md "Journeys, quests, levels", "Game
-//! routes" → `curation.rs`): create, edit, publish and archive journeys and
-//! quests, and list them in every state.
-//!
-//! | route | answer |
-//! |---|---|
-//! | `GET  /api/curator/journeys` | 200 `{journeys: [...]}` — every journey, every state |
-//! | `POST /api/curator/journeys` | `{title, description?, levels?, badge?}` → 201 the journey (`draft`, `quests: []`) |
-//! | `GET  /api/curator/journeys/{id}` | 200 the journey, plus `quest_docs` (its quests, in order, every state) |
-//! | `PUT  /api/curator/journeys/{id}` | any of `{title, description, levels, badge, quests}` → 200 |
-//! | `POST /api/curator/journeys/{id}/publish` / `archive` | 200 |
-//! | `GET  /api/curator/quests` | 200 `{quests: [...]}` — every quest, every state |
-//! | `POST /api/curator/quests` | `{journey, title, description?, xp?, starts_at?, ends_at?, requirements?}` → 201 (`draft`) |
-//! | `GET  /api/curator/quests/{id}` | 200 |
-//! | `PUT  /api/curator/quests/{id}` | any of `{title, description, xp, starts_at, ends_at, requirements}` → 200 |
-//! | `POST /api/curator/quests/{id}/publish` / `archive` | 200 |
-//!
-//! Rules this module adds to the contract:
-//!
-//! * **Who may edit.** Every route needs the `curator` role (`403 forbidden_role`);
-//!   writes also need an active account (`403 suspended`). A journey — and every
-//!   quest in it — is edited by the curator who created it; another curator gets
-//!   `403 forbidden`, unless they are also an `admin` (a way out when a curator
-//!   leaves). Reads are open to every curator.
-//! * **Levels** default to `[{level: 1, xp: 0}]`. They must be consecutive levels
-//!   from 1 with strictly ascending XP, the first `{1, 0}` — else `400 bad_levels`.
-//! * **Quest order.** Creating a quest appends it to its journey's `quests`; `PUT
-//!   …/journeys/{id} {quests}` reorders (it must be the same set of ids).
-//!   Publishing a journey keeps that order and appends any quest of the journey the
-//!   list is missing. A quest never moves to another journey.
-//! * **Publishing a quest whose journey is a draft** is allowed: the quest is
-//!   ready, and photographers see it when the journey is published — so a whole
-//!   journey can be prepared and then go live at once.
-//! * **Archived journeys** take no new quests and cannot have a quest published
-//!   into them (`409 journey_archived`). Publishing an archived journey or quest
-//!   brings it back.
-//! * **Requirements** are fixed once a quest leaves `draft` (`409
-//!   quest_published`) — a `PUT` carrying the same requirements is not a change.
-//!   Title, description, XP and the time window stay editable.
+//! Rules added to CONTRACT.md: another curator may edit only as admin (a way out when one leaves);
+//! a quest may publish into a draft journey, so a whole journey can go live at once.
 
 use crate::bindings::auth::identity::types::Principal;
 use crate::bindings::p3::http::types::Method;
@@ -123,7 +86,6 @@ fn save(
     }
 }
 
-/// A non-empty trimmed string field.
 fn title_of(m: &Map<String, Value>) -> Result<String, Reply> {
     match m.get("title").and_then(Value::as_str).map(str::trim) {
         Some(t) if !t.is_empty() => Ok(t.to_string()),
@@ -305,7 +267,6 @@ fn set_journey_state(principal: &Principal, id: &str, state: &str) -> Reply {
     Reply::json(200, Value::Object(saved))
 }
 
-/// The time window from `req` over `current`: `(starts_at, ends_at)`.
 fn window_of(
     req: &Map<String, Value>,
     current: Option<&Map<String, Value>>,
@@ -373,7 +334,7 @@ fn create_quest(principal: &Principal, body: &str) -> Reply {
         Ok(e) => e,
         Err(_) => return store_err(),
     };
-    // Append to the journey's order; a concurrent edit of the journey is re-read.
+    // A concurrent edit of the journey is re-read.
     for attempt in 0..3 {
         let Some((je, mut j)) = tri!(load(JOURNEYS, &journey_id)) else { break };
         let mut order = j.get("quests").and_then(Value::as_array).cloned().unwrap_or_default();
@@ -400,7 +361,6 @@ fn get_quest(id: &str) -> Reply {
 /// The quest's own entry and document, and its journey's document.
 type EditableQuest = (records::Entry, Map<String, Value>, Map<String, Value>);
 
-/// The quest and its journey, when `principal` may edit them.
 fn editable_quest(principal: &Principal, id: &str, event: &str) -> Result<EditableQuest, Reply> {
     let Some((entry, q)) = load(QUESTS, id)? else { return Err(Reply::err(404, "not_found")) };
     let j = load(JOURNEYS, str_of(&q, "journey"))?.map(|(_, j)| j).unwrap_or_default();

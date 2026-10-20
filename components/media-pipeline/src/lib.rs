@@ -1,15 +1,5 @@
-//! `media-pipeline` — presigned uploads and evaluation jobs for large photos
-//!
-//! Everything interesting happens in `comp-media`, which is native (ADR-0098): it signs URLs against the object
-//! store and owns the `MEDIA_JOBS` work queue. This is the component side: it holds the `media:pipeline/jobs`
-//! contract and turns each call into exactly one HTTP request to the daemon (as `image-optimizer` reaches
-//! `comp-imageopt`). No call carries pixels, only keys, sizes and URLs.
-//!
-//! Config (wasi:config/store):
-//!   media-url     where `comp-media` is listening, e.g. http://127.0.0.1:8013
-//!   media-token   bearer token matching the daemon's --token (absent = none)
-//!
-//! The wire shapes are `CONTRACT.md`'s, and that file is authoritative.
+//! Component side of comp-media (ADR-0098): one HTTP request per call, and no call carries pixels.
+//! CONTRACT.md's wire shapes are authoritative.
 
 #[allow(warnings)]
 mod bindings;
@@ -25,7 +15,7 @@ use serde_json::{json, Value};
 
 struct Component;
 
-/// Thirty seconds. Every route is bookkeeping (presign, `CompleteMultipartUpload`, publish); none waits on the evaluation, which comes back as a callback.
+/// Every route is bookkeeping; the evaluation comes back as a callback.
 const TIMEOUT_NS: u64 = 30_000_000_000;
 
 fn daemon_url() -> Result<String, MediaError> {
@@ -53,8 +43,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), MediaError> {
     Ok((scheme, authority, path))
 }
 
-/// POST `body` to `route` and return the parsed JSON answer. Every failure at this level is `unavailable`: the
-/// daemon's refusals arrive as JSON with a 200 (CONTRACT.md), so a non-200 (a 401 for a wrong token too) is the transport or deployment.
+/// Every failure is `unavailable`: the daemon's refusals arrive as JSON with a 200 (CONTRACT.md).
 fn post(route: &str, body: &Value) -> Result<Value, MediaError> {
     let url = daemon_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
@@ -65,7 +54,7 @@ fn post(route: &str, body: &Value) -> Result<Value, MediaError> {
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     // Stated, so the request is not sent chunked: every body is small and whole.
     let _ = headers.set("content-length", &[payload.len().to_string().into_bytes()]);
-    // A shared secret, if the deployment set one (see `comp_daemon_kit` for why loopback binding alone is not a boundary). Absent means the daemon runs with no --token.
+    // Optional shared secret: loopback binding alone is not a boundary (see `comp_daemon_kit`).
     if let Ok(Some(token)) = config::get("media-token") {
         if !token.is_empty() {
             let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
@@ -80,7 +69,7 @@ fn post(route: &str, body: &Value) -> Result<Value, MediaError> {
     let out = req.body().map_err(|_| net("body"))?;
     {
         let stream = out.write().map_err(|_| net("write"))?;
-        // Chunked: `blocking-write-and-flush` traps above 4096 bytes and a part list for a 512 MiB upload is thirty-two ETags long.
+        // Chunked: `blocking-write-and-flush` traps above 4096 bytes.
         for chunk in payload.chunks(4096) {
             stream
                 .blocking_write_and_flush(chunk)
@@ -111,7 +100,7 @@ fn post(route: &str, body: &Value) -> Result<Value, MediaError> {
         match stream.blocking_read(8192) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went wrong, and parsing what arrived would present a truncated answer as whole.
+            // Any other error would present a truncated answer as whole.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -130,7 +119,7 @@ fn post(route: &str, body: &Value) -> Result<Value, MediaError> {
     check(reply)
 }
 
-/// The daemon reports refusals in the body; map them back to the variant, or a caller that cannot tell "too big" from "daemon down" retries the first forever.
+/// Mapped back to the variant, or a caller that cannot tell "too big" from "daemon down" retries forever.
 fn check(reply: Value) -> Result<Value, MediaError> {
     let Some(err) = reply.get("error").and_then(Value::as_str) else {
         return Ok(reply);

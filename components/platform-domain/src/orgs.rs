@@ -1,17 +1,4 @@
-//! Organisations: who owns what, when a person can belong to several.
-//!
-//! `auth-guard` gives one identity ONE tenant (docs/adr/0009): right for authentication, wrong for
-//! ownership (a person contracting for three companies). Orgs sit above it: auth-guard answers "who are
-//! you", this answers "on whose behalf, right now".
-//!
-//! **An org is the isolation unit.** The deployment record, catalogue row and the storage bucket a running
-//! instance gets are keyed by org id, preserving ADR-0012: the host names the bucket from a control-plane
-//! record the guest cannot write.
-//!
-//! **Everyone gets a solo org on registration**, named after their personal tenant, so "org" is never
-//! optional and has no second code path.
-//!
-//! Membership is by invite code, not email (no mail subsystem needed).
+//! auth-guard gives one identity ONE tenant (ADR-0009); orgs answer "on whose behalf, right now".
 //! ponytail: opaque codes, no email; add invitations-by-address when there is a mail path.
 
 use serde_json::{json, Map, Value};
@@ -22,7 +9,7 @@ pub const ORGS: &str = "orgs";
 pub const MEMBERS: &str = "members";
 pub const INVITES: &str = "invites";
 
-/// What a member may do. ADR-0009's vocabulary. Ordered, so a check is `role_of(..) >= Role::Member`.
+/// ADR-0009's vocabulary. Ordered, so a check is `role_of(..) >= Role::Member`.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Role {
     /// Read the catalogue and the deployments. Changes nothing.
@@ -51,8 +38,7 @@ impl Role {
     }
 }
 
-/// A DNS-label org id derived from a name. It ends up in a storage bucket name and
-/// in a hostname, so it cannot be arbitrary text.
+/// Ends up in a bucket name and a hostname, so it cannot be arbitrary text.
 pub fn slug(name: &str) -> String {
     let s: String = name
         .chars()
@@ -66,15 +52,14 @@ fn member_key(org: &str, subject: &str) -> String {
     format!("{org}/{subject}")
 }
 
-/// The caller's role in `org`, or `None` if they are not a member. THE authorisation primitive: every
-/// org-scoped handler goes through it, so one place decides membership.
+/// THE authorisation primitive: every org-scoped handler goes through it.
 pub fn role_of(subject: &str, org: &str) -> Option<Role> {
     let key = member_key(org, subject);
     let row = crate::find_one(MEMBERS, "key", &key).map(|(_, _, v)| v)?;
     Role::parse(row["role"].as_str().unwrap_or_default())
 }
 
-/// Create an org with `subject` as its owner. Idempotent on the slug.
+/// Idempotent on the slug.
 pub fn create(name: &str, subject: &str, email: &str) -> Result<Value, String> {
     let id = slug(name);
     if id.is_empty() {
@@ -112,7 +97,6 @@ pub fn add_member(org: &str, subject: &str, email: &str, role: Role) -> Result<(
     Ok(())
 }
 
-/// Every org this subject belongs to, with their role in each.
 pub fn memberships(subject: &str) -> Vec<Value> {
     records::find_by(MEMBERS, "subject", &json!(subject).to_string())
         .unwrap_or_default()
@@ -153,7 +137,7 @@ fn owner_count(org: &str) -> usize {
     members(org).iter().filter(|m| m["role"] == json!("owner")).count()
 }
 
-/// Mint a join code. The code IS the credential, so it comes from the records store's own id, not a counter.
+/// The code IS the credential, so it is the store's own id, not a counter.
 pub fn invite(org: &str, role: Role, by: &str, ttl_secs: u64) -> Result<Value, String> {
     let doc = json!({
         "org": org, "role": role.as_str(), "created_by": by,
@@ -161,7 +145,6 @@ pub fn invite(org: &str, role: Role, by: &str, ttl_secs: u64) -> Result<Value, S
     });
     let rec = records::create(INVITES, &doc.to_string(), &["org".to_string()])
         .map_err(|_| "could not create the invite".to_string())?;
-    // The record id is the code: unguessable, unique, already stored.
     let (id, rev) = (rec.id.clone(), rec.revision);
     let mut doc = doc;
     doc["code"] = json!(id);
@@ -169,7 +152,7 @@ pub fn invite(org: &str, role: Role, by: &str, ttl_secs: u64) -> Result<Value, S
     Ok(json!({ "code": id, "org": org, "role": role.as_str(), "expires": doc["expires"] }))
 }
 
-/// Redeem a code. Single use: the invite is deleted on success.
+/// Single use: deleted on success.
 pub fn redeem(code: &str, subject: &str, email: &str) -> Result<Value, String> {
     let Ok(entry) = records::get(INVITES, code) else {
         return Err("no such invite".into());
@@ -188,8 +171,7 @@ pub fn redeem(code: &str, subject: &str, email: &str) -> Result<Value, String> {
     Ok(json!({ "org": org, "role": role.as_str() }))
 }
 
-/// Which org a request is acting on behalf of: `?org=` when given, otherwise the caller's personal org.
-/// Returns the role alongside so a handler cannot check membership without checking permission.
+/// Returns the role too, so a handler cannot check membership without checking permission.
 pub fn acting(
     subject: &str,
     personal: &str,
@@ -229,7 +211,6 @@ mod tests {
 
     #[test]
     fn a_slug_is_always_a_dns_label() {
-        // It becomes a storage bucket name and part of a hostname.
         assert_eq!(slug("Acme Corp."), "acme-corp");
         assert_eq!(slug("  --Weird--  "), "weird");
         assert_eq!(slug(&"x".repeat(200)).len(), 40);

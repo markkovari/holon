@@ -17,8 +17,7 @@ package = "media:pipeline"
 path = "wit"
 world = "component"
 
-# The daemon is reached over HTTP and told where it is by config — see
-# CONTRACT.md and ADR-0098. Both come from the repo-root vendored WASI packages.
+# wasi:http to reach the daemon, wasi:config to find it (ADR-0098); vendored at the repo root.
 [package.metadata.component.target.dependencies]
 "wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
 "wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }

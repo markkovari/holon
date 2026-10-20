@@ -1,10 +1,4 @@
-//! ledger:app — billing ledger over composed capability contracts.
-//!
-//! Write path (`POST /api/accounts/{id}/entries`): idempotency-key replay
-//! cache -> per-account quota -> money parse -> entry record -> balance CAS
-//! (revision-guarded, bounded retry) -> outbox feed -> cache the 201. A retry
-//! with the same key gets the cached response byte-for-byte, so a client can
-//! crash mid-request and resend without double-charging.
+//! A retry with the same idempotency key gets the cached response byte-for-byte: no double charge.
 
 #[allow(warnings)]
 mod bindings {
@@ -30,7 +24,6 @@ mod bindings {
         world: "ledger:app/ledger-app",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -54,10 +47,9 @@ struct Component;
 
 const ACCOUNTS: &str = "ledger_accounts";
 const ENTRIES: &str = "ledger_entries";
-/// entries per account per window.
+/// Entries per account per window.
 const ENTRY_LIMIT: u64 = 1000;
 const QUOTA_PERIOD: u64 = 3600;
-/// how long a replayed idempotency-key returns the cached response.
 const IDEM_TTL: u64 = 86400;
 const CAS_RETRIES: u32 = 3;
 
@@ -98,10 +90,10 @@ impl Guest for Component {
 
 enum Outcome {
     Json(u16, String),
-    /// replayed idempotent response — served with `idempotent-replay: true`.
+    /// Served with `idempotent-replay: true`.
     Cached(u16, String),
     Csv(String),
-    /// 429 with a Retry-After until the payload epoch-seconds.
+    /// 429 with Retry-After until the payload's epoch seconds.
     Limited(u64),
     Bad(String),
     Err(u16, String),
@@ -120,9 +112,7 @@ async fn create_account(request: Request) -> Outcome {
             Ok(r) => r,
             Err(_) => return Outcome::Bad("expected json body {name, currency}".into()),
         };
-    // money:amount owns the currency table — parsing zero validates the code.
-    // parse demands exactly the currency's exponent digits, which we don't
-    // know yet, so try the exponents in circulation (0, 2, 3).
+    // Parsing zero validates the code; parse demands the exact exponent, so try 0, 2 and 3.
     if !["0", "0.00", "0.000"].iter().any(|z| money::parse(z, &req.currency).is_ok()) {
         return Outcome::Bad(format!("unknown currency: {}", req.currency));
     }
@@ -196,8 +186,7 @@ async fn post_entry(request: Request, account_id: &str) -> Outcome {
         Err(idem::IdemError::BackendUnavailable(m)) => return Outcome::Err(503, m),
     }
 
-    // only a successful post is cached; any error forgets the reservation so
-    // the client can retry with the same key after fixing the request.
+    // Only success is cached; an error forgets the reservation so the same key can retry.
     let outcome = post_entry_inner(request, account_id).await;
     match &outcome {
         Outcome::Json(status, body) => {
@@ -244,7 +233,7 @@ async fn post_entry_inner(request: Request, account_id: &str) -> Outcome {
         .unwrap_or_default();
     let amt = match money::parse(&req.amount, &currency) {
         Ok(a) => a,
-        // money reports malformed decimals as unknown-currency; translate.
+        // money reports malformed decimals as unknown-currency.
         Err(_) => {
             return Outcome::Bad(format!(
                 "bad amount: expected a {currency} decimal with its exact minor digits (e.g. 1.50)"
@@ -255,10 +244,8 @@ async fn post_entry_inner(request: Request, account_id: &str) -> Outcome {
         return Outcome::Bad("amount must be positive".into());
     }
 
-    // entry first, then balance CAS; a failed CAS compensates by deleting the
-    // entry. ponytail: no cross-key transaction in wasi:keyvalue — if the
-    // compensation itself fails the entry survives without a balance effect;
-    // an outbox-driven reconciler is the upgrade path.
+    // A failed balance CAS compensates by deleting the entry.
+    // ponytail: no cross-key transaction; a failed compensation orphans the entry (fix: outbox reconciler).
     let entry_data = json!({
         "account": account_id,
         "kind": req.kind,
@@ -279,8 +266,7 @@ async fn post_entry_inner(request: Request, account_id: &str) -> Outcome {
         }
     };
 
-    // durable feed for the external biller; a lost enqueue is visible by the
-    // entry existing without a feed event, not worth failing the write over.
+    // A lost enqueue shows as an entry without a feed event; not worth failing the write.
     let _ = outbox::enqueue(
         "entry.recorded",
         json!({
@@ -305,8 +291,6 @@ async fn post_entry_inner(request: Request, account_id: &str) -> Outcome {
     )
 }
 
-/// Revision-guarded read-modify-write on the account balance. The CAS loop
-/// absorbs concurrent posts; money:amount does the arithmetic (overflow-safe).
 fn apply_balance(account_id: &str, amt: &money::Amount, charge: bool) -> Result<i64, Outcome> {
     for _ in 0..CAS_RETRIES {
         let account = match records::get(ACCOUNTS, account_id) {
@@ -393,8 +377,6 @@ fn statement(account_id: &str) -> Outcome {
     Outcome::Csv(csv::format(&rows, &dialect))
 }
 
-/// Penny-exact split — money:allocate distributes the remainder so the parts
-/// always sum to the total.
 fn allocate(query: &str) -> Outcome {
     let amount = query_param(query, "amount").unwrap_or_default();
     let currency = query_param(query, "currency").unwrap_or_default();
@@ -419,8 +401,7 @@ fn allocate(query: &str) -> Outcome {
     }
 }
 
-/// Claim-and-ack the entry feed — an at-least-once poll for an external
-/// consumer (dedupe on event id downstream).
+/// At-least-once: consumers dedupe on event id.
 fn drain_events() -> Outcome {
     let events = match outbox::claim(50, 60) {
         Ok(evs) => evs,
@@ -450,8 +431,7 @@ fn store_err(e: records::StoreError) -> Outcome {
     }
 }
 
-/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
-/// guest traps and the caller just sees a closed connection.
+/// Backstop below wasmtime's 64 MiB per-store cap, past which the guest traps.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

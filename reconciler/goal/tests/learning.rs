@@ -1,13 +1,4 @@
-//! The loop learns: a run writes what it failed on, and a later run can only succeed by having read it.
-//!
-//! The scripted model has two rules that matter: it writes the WRONG answer for the goal as written
-//! and the right one when it sees `AVOID` (the tag a retrieved `errors` lesson is rendered under).
-//! `AVOID` cannot reach the second prompt unless the first run's failure became a lesson, was
-//! retrieved, and was rendered into the branch's goal.
-//!
-//! No AI calls: eight components, a real SurrealDB, the real checks runner and a deterministic
-//! provider. `reconciler/tests/memory.rs` covers the pool; this covers the LOOP closing around it.
-//! Skipped, loudly, when Docker cannot start the database.
+//! The loop learns: a later run can only pass by reading the first run's failure (`AVOID`).
 
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -17,7 +8,7 @@ use comp_goal::generation::{default_strategies, search_with, Bounds};
 use comp_goal::memory::{self, run_id, Memory, Reading};
 use serde_json::{json, Value};
 
-// The shared test module of the root's suites, included rather than copied (docs/adr/0115).
+// Shared harness, included rather than copied (docs/adr/0115).
 #[path = "../../tests/harness/mod.rs"]
 mod harness;
 use harness::{Surreal, SURREAL_IMAGE, SURREAL_PASSWORD};
@@ -116,8 +107,7 @@ fn plan(text: &str) -> Value {
             "id": "answer-is-42",
             "required": true,
             "weight": 1,
-                        // The command must not NAME the answer, or a repair prompt hands it over and the model
-                        // never needs the lesson.
+                        // Must not name the answer, or a repair prompt hands it over.
             "command": ["grep", "-q", "42", "src/lib.rs"],
         }],
         "base_commit": BASE,
@@ -155,8 +145,7 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
         host: "memory.acme.test".into(),
         timeout: Duration::from_secs(30),
     };
-    // The first real call is the readiness check: it can only answer by reaching SurrealDB through
-    // two components (`Fleet::until`).
+    // The first real call is the readiness check (`Fleet::until`).
     fleet.until("asking the pool about a goal nobody has run", Duration::from_secs(180), || {
         pool.already_done("nothing has ever asked this", 0.9).map(|_| ())
     });
@@ -195,8 +184,7 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
     assert!(rendered.contains("[AVOID]"), "an errors lesson is marked as one: {rendered}");
     assert!(rendered.contains("answer-is-42"), "{rendered}");
 
-    // --- run two: the SAME goal, one branch reading ---
-    // The script writes 41 for this goal on its own, so a pass here means the lesson reached the prompt.
+    // The script writes 41 for this goal alone, so a pass means the lesson reached the prompt.
     let mut strategies = default_strategies(1);
     strategies[0].knowledge = rendered.clone();
     let second = search_with(
@@ -220,8 +208,7 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
         second.stopped
     );
 
-    // --- and a branch that reads nothing still fails ---
-    // The control arm: same goal, same script, everything the same except the reading.
+    // The control arm: everything the same except the reading.
     let cold = search_with(
         &driver_url,
         "learndrive.acme.test",
@@ -239,7 +226,7 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
     let keys: Vec<String> = lessons.iter().map(|l| l.key.clone()).collect();
     pool.attribute(&keys, &run_id(12_000, 0, "branch-0"), true).expect("attribution landed");
     pool.attribute(&keys, &run_id(13_000, 0, "branch-0"), false).expect("attribution landed");
-    // Still retrievable afterwards: attribution moves standing, it does not delete.
+    // Attribution moves standing; it does not delete.
     assert!(
         !pool
             .recall(
@@ -251,10 +238,7 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
         "sinking is not deletion"
     );
 
-    // --- and what the gate proved can be promoted ---
-    // The trusted pool has one writer, not the agent-facing interface: `promote` goes through
-    // `knowledge:memory/promotion`, absent from an agent's world (ADR-0084). The distiller's model call
-    // is not exercised (its prompt and parser are unit-tested).
+    // `promote` goes through `knowledge:memory/promotion`, absent from an agent's world (ADR-0084).
     let lesson = "the gate greps the file rather than running it, so the answer has to be \
                   literal in the source";
     let promoted = pool
@@ -262,13 +246,12 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
         .expect("a passing score may promote");
     assert!(promoted.starts_with("patterns:"), "promotion writes the trusted pool: {promoted}");
 
-    // A score that did not pass may not, and the refusal comes from the component.
+    // The refusal comes from the component.
     let refused = pool
         .promote(goal, "branch-0", "run-x", lesson, 0)
         .expect_err("a gate that did not pass must not promote");
     assert!(refused.contains("refused"), "{refused}");
 
-    // And the promoted lesson comes back marked as what it is.
     let after = pool
         .recall(
             goal,

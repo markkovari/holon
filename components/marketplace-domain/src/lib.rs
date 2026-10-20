@@ -1,13 +1,5 @@
-//! `marketplace-domain` — a 5-part DECOMPOSED goal (ADR-0086). See `CONTRACT.md` for what the parts must agree on.
-//!
-//! This file is the ROUTER and no part may write it: real auth (via `guestauth`, three roles:
-//! `vendor`/`buyer`/`admin`), dispatch to `catalog`, `fulfillment`, `trust`, `ledger` and `messaging`,
-//! `/health`, and a `/test/seed` fixture plus raw-store read routes so any part can be judged before the
-//! others exist. The five part files are the goal.
-//!
-//! Parts share five collections plus five `fsm:workflow` machines (`order` and `shipment` are fired by TWO
-//! parts in one request). A part never calls another part's Rust function; they meet only in `records:store`
-//! and `fsm:workflow` instances.
+//! The ROUTER of a 5-part decomposed goal (ADR-0086, CONTRACT.md); no part may write it.
+//! Parts meet only in records:store and fsm:workflow instances, never via each other's functions.
 
 #[allow(warnings)]
 mod bindings {
@@ -37,7 +29,6 @@ mod bindings {
         world: "marketplace:domain/marketplace-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -53,7 +44,6 @@ mod trust;
 pub use guestauth::Route;
 
 pub const TENANT: &str = "marketplace";
-/// The only roles this app grants. Anything else in a register request falls back to `buyer`.
 const ROLES: &[&str] = &["vendor", "buyer", "admin"];
 
 guestio::guest_p3_bearer!();
@@ -72,11 +62,10 @@ guestauth::guest_p3_emit!();
 use bindings::fsm::workflow::engine as fsm;
 use bindings::records::store::store as records;
 
-/// `records:store`'s own ceiling on one `list_records` page (record-store's `MAX_LIMIT`).
+/// records:store's own page ceiling (record-store's `MAX_LIMIT`).
 const PAGE_SIZE: u32 = 500;
 
-/// Every entry in `collection`, not one page of it. `list_records` is cursor-paginated, so an aggregate
-/// (balance, reputation, fraud flag) or admin listing reading one page silently ignores the rest.
+/// Every page: an aggregate reading one page silently ignores the rest.
 pub(crate) fn list_all(collection: &str) -> Result<Vec<records::Entry>, ()> {
     drain_pages(|after| {
         records::list_records(collection, PAGE_SIZE, after)
@@ -85,9 +74,7 @@ pub(crate) fn list_all(collection: &str) -> Result<Vec<records::Entry>, ()> {
     })
 }
 
-/// The paging loop behind [`list_all`], over any `fetch(after) -> (entries, next)`. Stops on the store's
-/// "exhausted" signal (an empty `next`), not on a short page, since record-store may return fewer entries
-/// than asked (index drift) while having more. A `next` equal to the cursor just used also stops it.
+/// Stops on an empty `next`, not a short page: record-store may return fewer than asked while having more.
 fn drain_pages<T, E>(
     mut fetch: impl FnMut(&str) -> Result<(Vec<T>, String), E>,
 ) -> Result<Vec<T>, E> {
@@ -103,9 +90,7 @@ fn drain_pages<T, E>(
     }
 }
 
-/// Idempotent: `define` on an already-defined name replaces it with the same definition. Called by `seed`
-/// because nothing else exists yet to call it; a real part's code path is expected to call the SAME
-/// definitions. CONTRACT.md is the source of truth for each machine's states/transitions.
+/// Idempotent (`define` replaces). CONTRACT.md is the source of truth for each machine.
 fn define_machines() {
     let def =
         |states: &[&str], initial: &str, transitions: &[(&str, &str, &str)], terminal: &[&str]| {
@@ -171,19 +156,8 @@ fn define_machines() {
     );
 }
 
-/// Entries written straight to the store and to `fsm:workflow` instances, so a part can be judged before
-/// the part upstream of it exists.
-///
-/// Three orders, each a different point in the lifecycle:
-///
-///   * order 1 stays at `placed`, so `fulfillment`'s gate can pay/ship it and prove ITS OWN transitions;
-///   * order 2 is pre-paid (a `payments` document AND a `payment` machine instance at `captured`), so
-///     `fulfillment` can ship without its own `pay` route and `trust` has a non-delivered order to dispute;
-///   * order 3 is pre-delivered (payment captured, `shipments` document, `shipment` and `order` machines at
-///     `delivered`), for `fulfillment`'s return request and `trust`'s proof that disputes are REFUSED.
-///
-/// Two listings, different vendors. `body` may be `{"vendor_a","vendor_b","buyer"}`: REAL subjects a gate
-/// already registered, so ownership-gated routes are testable. Missing fields fall back to a placeholder subject.
+/// Written straight to the store and fsm, so a part is judgeable before its upstream exists.
+/// Orders: 1 placed, 2 paid, 3 delivered; `body` may name real subjects for ownership-gated routes.
 fn seed(body: &str) -> Reply {
     define_machines();
     let params: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::json!({}));
@@ -232,7 +206,6 @@ fn seed(body: &str) -> Reply {
 
     let mut order_ids = Vec::new();
 
-    // order 1: placed, nothing else.
     let Some(order1) = new_order(&buyer, &listing_a, 1000) else {
         return Reply::err(500, "seed_failed");
     };
@@ -241,7 +214,6 @@ fn seed(body: &str) -> Reply {
     }
     order_ids.push(order1.clone());
 
-    // order 2: paid.
     let Some(order2) = new_order(&buyer, &listing_a, 1000) else {
         return Reply::err(500, "seed_failed");
     };
@@ -266,7 +238,6 @@ fn seed(body: &str) -> Reply {
     }
     order_ids.push(order2.clone());
 
-    // order 3: delivered.
     let Some(order3) = new_order(&buyer, &listing_a, 1000) else {
         return Reply::err(500, "seed_failed");
     };
@@ -308,8 +279,7 @@ fn seed(body: &str) -> Reply {
     }
     order_ids.push(order3.clone());
 
-    // The sale entry `order2`'s `pay` would have posted, written directly: `ledger`'s gate needs a REAL
-    // non-zero balance, and posting it is `fulfillment`'s route, a stub at judgment time.
+    // order2's sale entry, written directly: ledger's gate needs a real balance and fulfillment's `pay` may be a stub.
     let vendor_account = format!("vendor:{vendor_a}");
     let _ = records::create(
         "ledger_entries",
@@ -336,8 +306,7 @@ fn seed(body: &str) -> Reply {
     )
 }
 
-/// A stored document with its fsm status (if any) merged in, or 404; generalised to any collection so a
-/// gate can inspect what ANOTHER part wrote without depending on that part's own GET route.
+/// Any collection, so a gate can inspect another part's writes without its GET route.
 fn test_doc(collection: &str, id: &str, machine: Option<&str>) -> Reply {
     let entry = match records::get(collection, id) {
         Ok(e) => e,
@@ -356,9 +325,6 @@ fn test_doc(collection: &str, id: &str, machine: Option<&str>) -> Reply {
     Reply::json(200, v)
 }
 
-/// A document found by an indexed field rather than its own store id, with its fsm status merged in.
-/// `payments` is looked up by `order_id`: the stored document's id is whatever `records::create` generated,
-/// and only the fsm INSTANCE is keyed by the order id. Answers the first match, or 404.
 fn test_doc_by(collection: &str, field: &str, value: &str, machine: Option<&str>) -> Reply {
     let value_json = serde_json::to_string(&value.to_string()).unwrap_or_default();
     let entry = match records::find_by(collection, field, &value_json) {
@@ -379,7 +345,6 @@ fn test_doc_by(collection: &str, field: &str, value: &str, machine: Option<&str>
     Reply::json(200, v)
 }
 
-/// The FSM's own status for any machine/instance: the general fallback for fixtures a gate created itself mid-scenario.
 fn test_fsm(machine: &str, instance: &str) -> Reply {
     match fsm::get_status(machine, instance) {
         Ok(status) => Reply::json(
@@ -426,7 +391,6 @@ impl bindings::p3::handler::Guest for Component {
             (Method::Get, ["test", "shipment", id]) => test_doc("shipments", id, Some("shipment")),
             (Method::Get, ["test", "fsm", machine, instance]) => test_fsm(machine, instance),
 
-            // Shared `/api/vendors/{subject}/...` prefix: disambiguate on the trailing segment.
             (Method::Get, ["api", "vendors", _, "reputation"]) => {
                 trust::handle(&method, &route, &body)
             }
@@ -434,7 +398,6 @@ impl bindings::p3::handler::Guest for Component {
             | (Method::Post, ["api", "vendors", _, "payout"])
             | (Method::Get, ["api", "ledger", ..]) => ledger::handle(&method, &route, &body),
 
-            // `/api/orders/{id}/...` sub-routes belong to whichever part owns the action; `catalog` owns only bare `/api/orders` and `/api/orders/{id}`.
             (Method::Post, ["api", "orders", _, "pay"])
             | (Method::Post, ["api", "orders", _, "ship"])
             | (Method::Post, ["api", "shipments", ..])
@@ -469,7 +432,7 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::drain_pages;
 
-    /// A fake `list_records` over `0..total`, `size` per page, cursor = last id handed out (record-store's cursor shape).
+    /// cursor = last id handed out (record-store's cursor shape).
     fn fake_store(total: u32, size: u32) -> impl FnMut(&str) -> Result<(Vec<u32>, String), ()> {
         move |after: &str| {
             let start = if after.is_empty() { 0 } else { after.parse::<u32>().unwrap() + 1 };

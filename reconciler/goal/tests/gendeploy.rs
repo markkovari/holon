@@ -1,14 +1,5 @@
-//! The loop, deployed into per-branch environments and driven through the platform.
-//!
-//! `generation.rs` fanned out to one app on one host and `envbranch.rs` proved an environment has its
-//! own store and address. This joins them: the driver graph is DEPLOYED through the platform API, an
-//! environment is spawned per branch, and the generation is driven across their derived hostnames. A
-//! branch is an environment, not a concurrent call to one shared app (the driver does not yet KEEP
-//! anything in that store).
-//!
-//! The gate is `mock-fitness`: the real gate needs egress the platform stamps only on a graph's front
-//! door (ADR-0008), so a linked gate in a deployed graph cannot dial out. The real gate is proven in
-//! `driver.rs`; the graph here stays egress-free on purpose.
+//! The loop deployed through the platform, one environment per branch. The gate is `mock-fitness`:
+//! a linked gate in a deployed graph gets no egress (ADR-0008).
 
 use std::time::{Duration, Instant};
 
@@ -62,7 +53,6 @@ impl Api {
         (r.status().as_u16(), r.json().unwrap_or(Value::Null))
     }
 
-    /// Upload a component, declaring the config keys it may take.
     fn upload(&self, id: &str, file: &str, config: &str) -> u16 {
         let wasm =
             std::fs::read(repo_root().join("components/target/wasm32-wasip2/release").join(file))
@@ -90,8 +80,7 @@ fn wait_for(fleet: &Fleet, needle: &str, within: Duration) -> bool {
 
 const BRANCHES: usize = 2;
 
-/// The scripted model: branch seeds differ by `generation::STRIDE`, so a rule per seed makes the two
-/// branches disagree.
+/// Seeds differ by `generation::STRIDE`, so a rule per seed makes the branches disagree.
 const MOCK_SCRIPT: &str = r#"{"rules":[
   {"when":"make it 42","seed":700,"text":"=== FILE: src/lib.rs\npub fn answer() -> u32 { 42 }\n=== END"},
   {"when":"make it 42","seed":800,"text":"=== FILE: src/lib.rs\npub fn answer() -> u32 { 41 }\n=== END"}
@@ -113,8 +102,7 @@ fn a_generation_runs_one_branch_per_environment() {
         assert!(matches!(api.upload(id, file, config), 200 | 201), "upload {id} failed");
     }
 
-    // --- deploy it as a linked graph ---
-    // plug = provider, socket = consumer (the reconciler's link table keys on socket).
+    // plug = provider, socket = consumer (the link table keys on socket).
     let nodes = json!([
         { "id": "probe" },
         { "id": "driver" },
@@ -122,13 +110,8 @@ fn a_generation_runs_one_branch_per_environment() {
         { "id": "llm", "config": { "mock-model": "mock-agent", "mock-script": MOCK_SCRIPT } },
         { "id": "gate", "config": { "gate-script": "{\"be-42\":\"42\"}" } },
     ]);
-    // The versions are the packages' own and have drifted once: `graph:*` went 0.1.0 -> 0.2.0 and these
-    // edges did not follow, so every link failed to match and `save` refused with `unsatisfied_imports`
-    // (no CI job runs this file). `llm:inference` really is still 0.1.0.
-    //
-    // `graph:run/driver` does `use graph:agent/writer.{...}` and `use graph:fitness.{check}`, so a
-    // component importing graph:run also imports those as TYPE-transitive instance imports; hence the
-    // probe edges for graph:agent and graph:fitness.
+    // Versions must follow the packages (they drifted once; no CI runs this). `graph:run` `use`s
+    // `graph:agent` and `graph:fitness`, hence their probe edges.
     let edges = json!([
         { "plug": "driver", "socket": "probe",  "iface": "graph:run/driver@0.2.0" },
         { "plug": "writer", "socket": "probe",  "iface": "graph:agent/writer@0.2.0" },
@@ -137,7 +120,7 @@ fn a_generation_runs_one_branch_per_environment() {
         { "plug": "gate",   "socket": "driver", "iface": "graph:fitness/evaluator@0.2.0" },
         { "plug": "llm",    "socket": "writer", "iface": "llm:inference/inference@0.1.0" },
     ]);
-    // Linked, not fused: separate components the host links in process; this shape does not fuse cleanly.
+    // Linked, not fused: this shape does not fuse cleanly.
     let (code, dep) = api.post(
         "/api/deployments",
         json!({ "name": "swarm", "strategy": "linked", "nodes": nodes, "edges": edges }),
@@ -175,7 +158,7 @@ fn a_generation_runs_one_branch_per_environment() {
         );
     }
 
-    // The branches' own derived hostnames (ADR-0083), each a strict suffix of the parent's.
+    // Derived hostnames (ADR-0083), each a strict suffix of the parent's.
     let hosts: Vec<String> = names.iter().map(|n| format!("{n}.{parent_host}")).collect();
     let strategies = on_hosts(&default_strategies(BRANCHES as u16), &hosts);
 
@@ -194,9 +177,7 @@ fn a_generation_runs_one_branch_per_environment() {
     let url = format!("http://127.0.0.1:{}/run", fleet.ingress_port);
     let timeout = Duration::from_secs(120);
 
-    // Every environment answering a real run on its own host, retried. Not a readiness signal (those
-    // have gone green over a broken deployment); a one-branch fan-out IS the operation under test
-    // (`Fleet::until`'s rule).
+    // A real run, retried, not a readiness signal: those have gone green over broken deployments.
     for host in &hosts {
         let mut warm = strategies[0].clone();
         warm.host = host.clone();
@@ -223,8 +204,7 @@ fn a_generation_runs_one_branch_per_environment() {
         assert!(ok, "environment at {host} never served a run:\n{}", fleet.node_log("n1"));
     }
 
-    // --- THE GENERATION, one branch per environment ---
-    // base_seed 700: branch 0 uses seed 700 (writes 42), branch 1 uses 700 + STRIDE = 800 (writes 41).
+    // Branch 0 uses seed 700 (writes 42), branch 1 uses 700 + STRIDE = 800 (writes 41).
     let entries = fan_out_from(&url, &parent_host, &base, &strategies, None, 700, timeout);
     for e in &entries {
         println!(
@@ -243,8 +223,7 @@ fn a_generation_runs_one_branch_per_environment() {
         "a branch never ran in its environment: {entries:?}"
     );
 
-    // The two branches disagree BECAUSE they are separate environments running the same graph with
-    // different seeds, not one app answering twice.
+    // They disagree because they are separate environments, not one app answering twice.
     assert!(entries[0].accepted, "branch 0 was seeded to write 42 and pass: {entries:?}");
     assert!(!entries[1].accepted, "branch 1 was seeded to write 41 and fail: {entries:?}");
     assert_ne!(
@@ -252,7 +231,7 @@ fn a_generation_runs_one_branch_per_environment() {
         "the two environments produced the same candidate — they are one app wearing two names: {entries:?}"
     );
 
-    // Both environments are placed and distinct in the fleet's own ledger (a shared app would show one instance).
+    // Distinct in the fleet's ledger: a shared app would show one instance.
     let ledger =
         std::fs::read_to_string(fleet.state_dir().join("n1/instances.json")).unwrap_or_default();
     for n in &names {

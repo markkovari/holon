@@ -1,12 +1,3 @@
-//! Local user accounts: register / login / verify / change-password.
-//!
-//! Passwords are hashed with Argon2id (PHC string format). Salt entropy comes
-//! from `wasi:random`. User records live in kv:
-//!   user:{tenant}:{email}  -> JSON { subject, phc }
-//!
-//! Login delegates session issuance to `store::session_issue`, so the token a
-//! caller gets back is a normal session token the authorizer already understands.
-
 use argon2::Argon2;
 use password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, Salt};
 use serde::{Deserialize, Serialize};
@@ -17,8 +8,6 @@ use crate::bindings::ratelimit::guard::limiter::LimitError;
 use crate::bindings::wasi::random::random::get_random_bytes;
 use crate::{config, kv, store};
 
-/// Rate-limit key for an identifier (per tenant+email). Failed logins count
-/// against this; a successful login resets it.
 fn rl_key(tenant: &str, email: &str) -> String {
     format!("login:{tenant}:{}", email.to_lowercase())
 }
@@ -120,8 +109,7 @@ pub fn register(email: &str, password: &str, tenant: &str) -> Result<Principal, 
 }
 
 pub fn verify_password(email: &str, password: &str, tenant: &str) -> Result<Principal, AuthError> {
-    // Constant-ish path: always do a verify, even on missing account, to avoid
-    // user enumeration via timing. Return the same error for both cases.
+    // Always verify, even with no account, so timing cannot enumerate users.
     match load(tenant, email)? {
         Some(account) if verify(password, &account.phc) => {
             Ok(principal_for(account.subject, tenant))
@@ -133,7 +121,6 @@ pub fn verify_password(email: &str, password: &str, tenant: &str) -> Result<Prin
 pub fn login(email: &str, password: &str, tenant: &str) -> Result<TokenPair, AuthError> {
     use crate::audit::{emit, Outcome};
     let key = rl_key(tenant, email);
-    // Refuse before touching the password store if the identifier is locked.
     if let Err(e) = limiter::check(&key).map_err(rl_err) {
         emit("login", Outcome::Deny, tenant, email, "rate_limited");
         return Err(e);

@@ -1,10 +1,4 @@
-//! pulse:app — a realtime chat room over composed contracts.
-//!
-//! Messages are an append-only log in `record:store`, each stamped with a global monotonic `seq`
-//! that doubles as the stream cursor. `GET /events` sets its HTTP response early, then LOOPS
-//! polling for `seq > cursor` and writing each message as an SSE `data:` frame while the host
-//! streams the body, sleeping on `monotonic-clock` between polls and stopping when a write fails.
-//! Server-push on WASI p3, no WebSocket.
+//! `seq` is global and monotonic, so it doubles as the SSE cursor. Server-push on WASI p3, no WebSocket.
 
 #[allow(warnings)]
 mod bindings {
@@ -27,7 +21,6 @@ mod bindings {
         world: "pulse:app/pulse-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -64,8 +57,7 @@ impl Guest for Component {
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         match (&method, seg.as_slice()) {
-            // Routes live under /api so the host's static-dir SPA fallback
-            // (which returns index.html for unknown GETs) leaves them alone.
+            // Under /api so the host's static-dir SPA fallback (index.html for unknown GETs) leaves them alone.
             (Method::Get, ["api", "rooms", room, "events"]) => stream_events(room, &path),
             _ => {
                 let outcome = match (&method, seg.as_slice()) {
@@ -216,14 +208,11 @@ fn presence(room: &str) -> Outcome {
     Outcome::Json(200, json!({ "online": online }).to_string())
 }
 
-/// Hold the connection open and push each new message as an SSE `data:` frame; a spawned task
-/// loops until the client disconnects or the cap is hit. `?after=seq` catches up; the default is
-/// only messages posted after connecting.
+/// `?after=seq` catches up; the default is only messages posted after connecting.
 fn stream_events(room: &str, path: &str) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
     let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);
-    // let the browser's EventSource reconnect quickly if we hit the cap.
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
 
     let mut cursor = query_i64(path, "after").unwrap_or_else(|| max_seq(room));
@@ -231,8 +220,7 @@ fn stream_events(room: &str, path: &str) -> Result<Response, ErrorCode> {
 
     let (mut stream, rx) = bindings::wit_stream::new();
     wit_bindgen::spawn_local(async move {
-        // open the stream (some proxies buffer until the first bytes).
-        // `write_all` hands back what it could not send: non-empty = hung up.
+        // Some proxies buffer until the first bytes. `write_all` returns what it could not send: non-empty = hung up.
         if !stream.write_all(b": connected\n\n".to_vec()).await.is_empty() {
             return;
         }
@@ -245,7 +233,7 @@ fn stream_events(room: &str, path: &str) -> Result<Response, ErrorCode> {
                 msgs.iter().map(|m| format!("data: {m}\n\n")).collect::<String>()
             };
             if !stream.write_all(frame.into_bytes()).await.is_empty() {
-                break; // client disconnected
+                break;
             }
             monotonic_clock::wait_for(POLL_MS * 1_000_000).await;
         }
@@ -275,14 +263,11 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be before the component stops reading it. Without a ceiling,
-/// input accumulated until the guest hit wasmtime's 64 MiB cap and TRAPPED (a closed connection).
-/// A backstop, not a content policy; uploads police their own size with a 413.
+/// Backstop under wasmtime's 64 MiB per-store cap, which traps instead of erroring.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
-/// Read query param `key` as an i64 (for the `after` cursor).
 fn query_i64(path: &str, key: &str) -> Option<i64> {
     let query = path.split('?').nth(1)?;
     query.split('&').find_map(|pair| {

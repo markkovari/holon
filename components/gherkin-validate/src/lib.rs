@@ -1,22 +1,7 @@
-//! `gherkin-validate` — is this `.feature` file actually Gherkin, and will it run?
-//!
-//! `tests/validate.rs` is the specification and is not writable from here.
-//!
-//! Gherkin breaks quietly (an `Examples` row one cell short, a typo'd `<placeholder>` that the step
-//! receives literally), so this reports EVERY problem with a line and a column.
-//! It checks syntax and structure only, not that a step has a step definition.
-//!
-//! Severity follows `cucumber/gherkin`'s own `testdata/`: a scenario with no steps and an outline with
-//! no `Examples` appear in files the corpus calls GOOD, so they are `warning`s, never a refusal.
-//! Also from that corpus: `*` is a step keyword, not a continuation; a `Scenario:` with an `Examples:`
-//! under it IS an outline; a table row has to close with `|`.
-//!
-//! A language it cannot read (`# language: de`) is declined with ONE problem rather than a page of
-//! complaints about missing English keywords.
+//! Severity follows cucumber/gherkin's `testdata/`: what its GOOD corpus contains only warns.
 
 use std::collections::BTreeSet;
 
-/// What is wrong. See the WIT for why each case carries what it carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Kind {
     NoFeature,
@@ -40,10 +25,8 @@ pub enum Kind {
     UnsupportedLanguage(String),
 }
 
-/// How much a problem means. See the WIT: the split is what the corpus forced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
-    /// Cucumber cannot parse this.
     Error,
     /// It parses, runs, and is almost certainly not what anyone meant.
     Warning,
@@ -52,8 +35,7 @@ pub enum Severity {
 }
 
 impl Kind {
-    /// Errors are what cucumber refuses; warnings are what it accepts and nobody meant. Checked against
-    /// `testdata/`: each of the twelve bad files yields an `Error`, none of the fifty good ones does.
+    /// Checked against `testdata/`: each of the twelve bad files yields an `Error`, no good one does.
     pub fn severity(&self) -> Severity {
         match self {
             Kind::UnsupportedLanguage(_) => Severity::Declined,
@@ -67,19 +49,15 @@ impl Kind {
     }
 }
 
-/// One step of a scenario, as written.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Step {
-    /// `Given`, `When`, `Then`, `And`, `But` or `*` — as written, not resolved.
+    /// As written, not resolved.
     pub keyword: String,
     pub text: String,
     pub line: u32,
-    /// A docstring or data table attached to this step, line by line, with the
-    /// fences removed. Empty when the step has neither.
     pub argument: Vec<String>,
 }
 
-/// One `Examples:` table under an outline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExampleTable {
     pub name: String,
@@ -87,30 +65,25 @@ pub struct ExampleTable {
     pub rows: Vec<Vec<String>>,
 }
 
-/// A scenario, an outline, or a background.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Scenario {
     pub name: String,
     pub line: u32,
     pub tags: Vec<String>,
     pub steps: Vec<Step>,
-    /// Empty for a plain scenario. Non-empty means every row is a test case.
     pub examples: Vec<ExampleTable>,
 }
 
-/// A whole feature file, once it is known to be readable.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Document {
     pub feature: String,
     pub tags: Vec<String>,
-    /// Steps every scenario runs first. Flattened across `Rule:` containers, since
-    /// a runner cares what runs, not which container declared it.
+    /// Flattened across `Rule:` containers: a runner cares what runs, not where it was declared.
     pub background: Vec<Step>,
     pub scenarios: Vec<Scenario>,
 }
 
-/// One problem, and where. Both coordinates are 1-based; the column counts
-/// characters, not bytes.
+/// 1-based; the column counts characters, not bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Problem {
     pub line: u32,
@@ -124,17 +97,12 @@ impl Problem {
     }
 }
 
-/// Step keywords. `*` is a real one — Gherkin allows a bullet in place of any.
 const STEPS: &[&str] = &["Given", "When", "Then", "And", "But", "*"];
-/// The two that only make sense after another step.
-///
-/// `*` is NOT one: a bullet is a step keyword in its own right, and treating it as a continuation
-/// flagged files cucumber calls good (`star-keywords.feature`).
+/// `*` is not one: it is a step keyword in its own right (`star-keywords.feature`).
 const CONTINUATIONS: &[&str] = &["And", "But"];
 const FENCES: &[&str] = &["\"\"\"", "```"];
 
-/// Every language Gherkin has keywords for, from `gherkin-languages.json`. Tells a real dialect this
-/// component cannot read (DECLINE) from `#language:no-such`, a broken header (error).
+/// Tells a real dialect this cannot read (decline) from `#language:no-such` (an error).
 const DIALECTS: &[&str] = &[
     "af",
     "am",
@@ -225,46 +193,32 @@ enum BlockKind {
     Outline,
 }
 
-/// The scenario, outline or background currently being read.
 struct Block {
     kind: BlockKind,
     name: String,
     line: u32,
     column: u32,
     steps: usize,
-    /// Outline only: how many `Examples` blocks it has.
     examples: usize,
-    /// Outline only: the union of every `Examples` header's columns. Union, not intersection: a placeholder
-    /// provided by any one block is substituted there, and a sibling omitting it must not flag it.
+    /// Union, not intersection: a placeholder any one `Examples` block provides is substituted there.
     headers: BTreeSet<String>,
-    /// Every `<placeholder>` seen, with where it was. Checked only for outlines.
     placeholders: Vec<(String, u32, u32)>,
-    /// Whether the step being read already has a docstring.
     had_docstring: bool,
-    /// The parsed form, built alongside the checks so one walk does both.
     parsed: Scenario,
 }
 
-/// Which table, if any, the next `|` row belongs to.
 enum Table {
     None,
-    /// A step's data table; the first row set the width.
     Data(usize),
-    /// Straight after `Examples:` — the next row is the header.
     ExamplesHeader,
-    /// Rows under a header of this width.
     ExamplesRows(usize),
 }
 
-/// 1-based column where a line's content starts.
 fn indent_col(raw: &str) -> u32 {
     raw.chars().take_while(|c| c.is_whitespace()).count() as u32 + 1
 }
 
-/// The step keyword a line starts with, if any.
-///
-/// The keyword must be followed by whitespace, so `Andrew types` is a description
-/// line and not a step called `rew types`.
+/// Must be followed by whitespace, so `Andrew types` is not a step called `rew types`.
 fn step_keyword(t: &str) -> Option<&'static str> {
     STEPS
         .iter()
@@ -272,9 +226,7 @@ fn step_keyword(t: &str) -> Option<&'static str> {
         .find(|kw| t.strip_prefix(kw).is_some_and(|rest| rest.starts_with(char::is_whitespace)))
 }
 
-/// The structural keyword a line starts with, and whatever followed the colon.
 fn block_keyword(t: &str) -> Option<(&'static str, String)> {
-    // `Scenario Outline:` cannot be confused with `Scenario:`; the list is ordered for reading.
     const KEYWORDS: &[(&str, &str)] = &[
         ("Feature:", "feature"),
         ("Rule:", "rule"),
@@ -294,11 +246,8 @@ fn block_keyword(t: &str) -> Option<(&'static str, String)> {
     None
 }
 
-/// The cells of a table row: only what is BETWEEN pipes.
-///
-/// Anything after the last `|` is not part of the table (`testdata/good/extra_table_content.feature`).
-/// A cut row, or one ending in a `\` that eats the closing pipe, yields fewer cells and is caught by
-/// the width check. `\|` is an escaped pipe and does not split a cell.
+/// Only what is between pipes (`good/extra_table_content.feature`); a cut row yields fewer cells
+/// and fails the width check. `\|` is an escaped pipe.
 fn cells(row: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
@@ -327,19 +276,16 @@ fn cells(row: &str) -> Vec<String> {
             cur.push(c);
         }
     }
-    // `cur` here is whatever followed the last pipe. Deliberately dropped.
     out
 }
 
-/// Every `<placeholder>` in a line, with the character offset of its `<`.
 fn placeholders(text: &str) -> Vec<(String, usize)> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
     while i < chars.len() {
         if chars[i] == '<' {
-            // Stop at the next `<` too, so `a < b and <c>` finds `c` and not `
-            // b and <c`.
+            // Stop at the next `<` too, so `a < b and <c>` finds `c`.
             if let Some(end) = (i + 1..chars.len()).find(|&j| chars[j] == '>' || chars[j] == '<') {
                 if chars[end] == '>' && end > i + 1 {
                     out.push((chars[i + 1..end].iter().collect(), i));
@@ -353,7 +299,6 @@ fn placeholders(text: &str) -> Vec<(String, usize)> {
     out
 }
 
-/// `# language: xx`, if that is what this comment is.
 fn language_of(t: &str) -> Option<String> {
     let rest = t.strip_prefix('#')?;
     let rest = rest.trim_start().strip_prefix("language")?;
@@ -361,15 +306,11 @@ fn language_of(t: &str) -> Option<String> {
     Some(code.trim().to_string())
 }
 
-/// Every problem in `source`, in the order they appear. Empty means valid.
 pub fn validate(source: &str) -> Vec<Problem> {
     walk(source).1
 }
 
-/// The parsed feature, when nothing is an `error`.
-///
-/// Warnings do NOT stop it (cucumber accepts those files); `validate` returns them and a caller
-/// decides. One walk produces both, so parser and validator cannot disagree about a file.
+/// Warnings do not stop it (cucumber accepts those files); one walk, so parser and validator agree.
 pub fn parse(source: &str) -> Result<Document, Vec<Problem>> {
     let (doc, problems) = walk(source);
     if problems.iter().any(|p| p.severity() == Severity::Error) {
@@ -383,8 +324,7 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
     let mut problems: Vec<Problem> = Vec::new();
     let mut doc = Document::default();
 
-    // The language header belongs on the first line; scanning the leading comments
-    // for it is more forgiving than the specification and costs nothing.
+    // Scanning the leading comments is more forgiving than the spec's first-line rule.
     for (i, raw) in lines.iter().enumerate() {
         let t = raw.trim();
         if t.is_empty() {
@@ -398,8 +338,6 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
                 break;
             }
             if !DIALECTS.contains(&code.as_str()) {
-                // Not a dialect at all — a broken header, and the file's own claim
-                // about itself is wrong. That IS a defect.
                 return (
                     doc,
                     vec![Problem {
@@ -409,7 +347,7 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
                     }],
                 );
             }
-            // A real dialect this component cannot read: decline the whole file rather than bury one useful sentence in noise.
+            // Declined with one problem rather than a page of missing-English-keyword noise.
             return (
                 doc,
                 vec![Problem {
@@ -423,17 +361,14 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
 
     let mut feature: Option<u32> = None;
     let mut first_content: Option<(u32, u32)> = None;
-    // Per `Feature:` or `Rule:` — a Rule is its own container, so it may have its
-    // own Background.
+    // Per `Feature:` or `Rule:`: a Rule may have its own Background.
     let mut backgrounds = 0usize;
     let mut scenarios = 0usize;
     let mut block: Option<Block> = None;
     let mut table = Table::None;
     let mut docstring: Option<(&str, u32)> = None;
-    // Tags waiting for something to tag. At the end of the file they are a defect:
-    // `testdata/bad/unexpected_eof.feature` is a feature, a blank line and a tag.
+    // Dangling at EOF is a defect (`bad/unexpected_eof.feature`).
     let mut pending_tags: Option<(u32, u32)> = None;
-    // Tag lines stack: `@a\n@b\nScenario:` is two tags on one scenario.
     let mut tag_names: Vec<String> = Vec::new();
 
     for (idx, raw) in lines.iter().enumerate() {
@@ -442,7 +377,6 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
         let t = raw.trim_start();
         let trimmed = raw.trim();
 
-        // Inside a docstring everything is text, including things that look like Gherkin.
         if let Some((fence, _)) = docstring {
             if trimmed.starts_with(fence) {
                 docstring = None;
@@ -450,7 +384,6 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
                 for (name, at) in placeholders(raw) {
                     b.placeholders.push((name, line, at as u32 + 1));
                 }
-                // The docstring belongs to the step above it.
                 if let Some(step) = b.parsed.steps.last_mut() {
                     step.argument.push(raw.trim().to_string());
                 }
@@ -472,11 +405,8 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
             tag_names.extend(
                 t.split_whitespace().take_while(|w| !w.starts_with('#')).map(str::to_string),
             );
-            // A tag cannot contain whitespace, so every token on the line has to be one
-            // (`testdata/bad/whitespace_in_tags.feature`).
             for word in t.split_whitespace() {
-                // A trailing comment is legal on a tag line and ends the tags, but `@comment_tag#2` shows a `#`
-                // only starts a comment when it starts a token.
+                // A `#` starts a comment only at the start of a token (`@comment_tag#2`).
                 if word.starts_with('#') {
                     break;
                 }
@@ -494,8 +424,6 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
         if let Some(fence) = FENCES.iter().find(|f| trimmed.starts_with(**f)) {
             if let Some(b) = block.as_mut() {
                 if b.had_docstring {
-                    // The first docstring is the step's argument. There is nowhere
-                    // for a second one to go.
                     problems.push(Problem { line, column: col, kind: Kind::RepeatedDocstring });
                 }
                 b.had_docstring = true;
@@ -545,7 +473,6 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
                                     t.rows.push(row.clone());
                                 }
                             }
-                            // A data table belongs to the step above it, raw, so a runner can read it as rows or key/value pairs.
                             _ => {
                                 if let Some(step) = b.parsed.steps.last_mut() {
                                     step.argument.push(raw.trim().to_string());
@@ -553,8 +480,7 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
                             }
                         }
                     }
-                    // Only a DATA table can carry a placeholder; an `Examples` cell
-                    // is the literal value being substituted in.
+                    // Only a data table can carry a placeholder; an `Examples` cell is the substituted value.
                     if matches!(table, Table::Data(_)) {
                         if let Some(b) = block.as_mut() {
                             for (name, at) in placeholders(raw) {
@@ -629,8 +555,7 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
                     b.parsed.tags = std::mem::take(&mut tag_names);
                     block = Some(b);
                 }
-                // `Examples:` under a plain `Scenario:` PROMOTES it to an outline (Gherkin treats the keywords
-                // as interchangeable; `testdata/good/scenario_outline.feature`).
+                // `Examples:` under a plain `Scenario:` promotes it to an outline (`good/scenario_outline.feature`).
                 "examples" => match block.as_mut() {
                     Some(b) => {
                         b.kind = BlockKind::Outline;
@@ -678,7 +603,7 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
                         line,
                         argument: Vec::new(),
                     });
-                    // Collected for a plain `Scenario:` too, since a later `Examples:` promotes it; only CHECKED for outlines.
+                    // Collected for plain scenarios too, since a later `Examples:` promotes them.
                     for (name, at) in placeholders(raw) {
                         b.placeholders.push((name, line, at as u32 + 1));
                     }
@@ -687,8 +612,6 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
             continue;
         }
 
-        // Free text. Legal as a description under a `Feature:` or a scenario;
-        // above the feature it is a stray paste.
         table = Table::None;
         if feature.is_none() {
             problems.push(Problem {
@@ -743,11 +666,8 @@ fn new_block(kind: BlockKind, name: String, line: u32, column: u32) -> Block {
     }
 }
 
-/// The checks that can only be made once a block has ended.
 fn close_block(problems: &mut Vec<Problem>, doc: &mut Document, block: Option<Block>) {
     let Some(b) = block else { return };
-    // A background's steps run before every scenario, so a runner wants them
-    // flattened rather than as a scenario of their own.
     match b.kind {
         BlockKind::Background => doc.background.extend(b.parsed.steps.clone()),
         _ => doc.scenarios.push(b.parsed.clone()),
@@ -777,11 +697,7 @@ fn close_block(problems: &mut Vec<Problem>, doc: &mut Document, block: Option<Bl
     }
 }
 
-// ---- the component: a mapping between the WIT types and the ones above, nothing else. The logic is judged
-// by `tests/validate.rs` against the plain functions.
-//
-// Gated on the target like `components/demo`: a `cdylib` carrying wit-bindgen's exports does not link
-// natively, and `cargo test` builds every crate-type first.
+// Gated on the target like `components/demo`: a cdylib with wit-bindgen exports does not link natively.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]

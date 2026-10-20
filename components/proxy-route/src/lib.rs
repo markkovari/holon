@@ -1,7 +1,4 @@
-//! `proxy-route` — forward a request to an upstream by path prefix — a config-driven reverse proxy
-//! (`routes`, `prefix=upstream` comma-separated, longest prefix wins;
-//! upstream ending in `/` strips the matched prefix), forwarding over the
-//! host's wasi:http outgoing handler.
+//! Config `routes`: `prefix=upstream` comma-separated, longest prefix wins; an upstream ending in `/` strips the prefix.
 
 #[allow(warnings)]
 mod bindings;
@@ -26,13 +23,10 @@ fn table() -> Vec<(String, String)> {
                 .then(|| (prefix.to_string(), upstream.to_string()))
         })
         .collect();
-    // longest prefix first, so the first match wins.
     entries.sort_by_key(|(p, _)| std::cmp::Reverse(p.len()));
     entries
 }
 
-/// Apply the strip convention: upstream ending in `/` drops the matched
-/// prefix, otherwise the full original path rides along.
 fn target_for(path_with_query: &str, prefix: &str, upstream: &str) -> String {
     if let Some(base) = upstream.strip_suffix('/') {
         let rest = &path_with_query[prefix.len()..];

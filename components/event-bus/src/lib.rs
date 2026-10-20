@@ -1,27 +1,4 @@
-//! `event-bus` — publish an event and let several unrelated things react — in-app publish/subscribe over topics
-//!
-//! A durable topic log with per-consumer-group offsets, backed by
-//! `wasi:keyvalue`. Producers `publish` to a topic; independent consumer groups
-//! `poll` at their own pace and `ack` what they processed. Per-group offsets
-//! mean a slow/new group still sees past events and groups never steal each
-//! other's events (fan-out, not a work queue). At-least-once: an event stays
-//! visible to a group until that group acks it.
-//!
-//! Storage layout (BUCKET = "default"):
-//!   eb_seq_{topic}        monotonic publish counter (via atomics.increment).
-//!   eb_ev_{topic}_{seq}   one event: `at\tb64(payload)` (seq is the id).
-//!   eb_off_{topic}_{grp}  highest seq this group has acked (0 = nothing yet).
-//!   eb_topics             newline-joined topic names, for `topics()`.
-//!
-//! poll(topic, group, max): returns events with seq in (offset, max_seq],
-//! oldest first, up to `max`. ack(topic, group, ids): moves the offset to the
-//! MAX acked id (monotonic; acking lower ids is a no-op). pending = max_seq -
-//! offset.
-//!
-//! RACE CAVEAT (best-effort): the topic index + offsets are read-modify-write;
-//! the per-topic sequence uses atomics.increment so ids never collide, but
-//! concurrent ack of the same group can clobber an offset advance. Single
-//! writer per group is the assumed topology.
+//! At-least-once fan-out over per-group offsets. Offsets are read-modify-write: one writer per group assumed.
 
 #[allow(warnings)]
 mod bindings;
@@ -43,7 +20,6 @@ fn now() -> u64 {
     wall_clock::now().seconds
 }
 
-/// Sanitize a topic/group to NATS-legal kv chars (so it composes into a key).
 fn safe(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -56,16 +32,12 @@ fn safe(s: &str) -> String {
 }
 
 fn seq_key(topic: &str) -> String {
-    // Dotted on purpose: on a NATS-KV-backed host every write to this key is
-    // broadcast on subject `$KV.<bucket>.eb.seq.<topic>`, so a push relay
-    // (components/event-pusher) can subscribe to `$KV.<bucket>.eb.seq.>` and
-    // get server-side-filtered publish notifications — without being woken by
-    // every other KV write in the bucket (which would feed back on itself).
+    // Dotted: on NATS KV each write broadcasts on `$KV.<bucket>.eb.seq.<topic>`, so event-pusher can
+    // subscribe to publishes alone instead of being woken by every write.
     format!("eb.seq.{}", safe(topic))
 }
 fn ev_key(topic: &str, seq: u64) -> String {
-    // zero-pad so lexical order matches numeric order (not strictly needed —
-    // we iterate by number — but keeps the store browsable).
+    // Zero-padded so the store browses in numeric order.
     format!("eb_ev_{}_{:020}", safe(topic), seq)
 }
 fn off_key(topic: &str, group: &str) -> String {
@@ -77,10 +49,8 @@ fn open() -> Result<kv::Bucket, BusError> {
 }
 
 fn get_u64(bucket: &kv::Bucket, key: &str) -> Result<u64, BusError> {
-    // wasi:keyvalue doesn't pin the atomics counter representation: some hosts
-    // store it as a decimal string (native comp-host, jco shims), wash-runtime's
-    // NATS plugin as 8-byte big-endian. Reading the publish counter via
-    // store.get must accept both or consumers see head=0 forever.
+    // The atomics counter representation is not pinned: decimal string on comp-host/jco, 8-byte
+    // big-endian on wash-runtime's NATS plugin. Accept both or consumers see head=0 forever.
     match bucket.get(key) {
         Ok(Some(bytes)) => Ok(std::str::from_utf8(&bytes)
             .ok()
@@ -136,8 +106,6 @@ fn parse_event(topic: &str, seq: u64, s: &str) -> Result<Event, BusError> {
 impl Guest for Component {
     fn publish(topic: String, payload: Vec<u8>) -> Result<String, BusError> {
         let bucket = open()?;
-        // atomic per-topic sequence: increment returns the new value, so ids
-        // never collide even under concurrent publish.
         let seq = atomics::increment(&bucket, &seq_key(&topic), 1)
             .map_err(|e| BusError::BackendUnavailable(format!("increment: {e:?}")))?;
         let line = format!("{}\t{}", now(), B64.encode(&payload));
@@ -169,7 +137,6 @@ impl Guest for Component {
         let bucket = open()?;
         let key = off_key(&topic, &group);
         let current = get_u64(&bucket, &key)?;
-        // advance to the highest acked id (monotonic; lower acks are no-ops).
         let highest = ids.iter().filter_map(|i| i.parse::<u64>().ok()).max().unwrap_or(0);
         if highest > current {
             set_u64(&bucket, &key, highest)?;

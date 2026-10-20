@@ -1,17 +1,4 @@
-//! `pii-redact` — find and mask personal data in free text before it reaches a log, an LLM prompt or an analytics sink.
-//!
-//! Five hand-rolled, regex-free scanners: email, credit-card (Luhn-checked), US SSN, phone (NANP /
-//! international-ish) and IPv4. Each match is a `finding` with **byte** offsets (`start` + `length`).
-//! Every pattern matched is pure ASCII, so a byte index always falls on a char boundary and slicing is safe.
-//!
-//! Three entry points share one scanner: `detect` (spans only), `redact` (typed placeholders such as
-//! `[EMAIL]`) and `mask` (partial, keeping context such as `j***@e***.com` or a card's last 4).
-//!
-//! Overlap handling: scanners run in priority order (credit-card and SSN, then email and IPv4, then phone)
-//! and a match is dropped if any byte is already covered, so a card or SSN wins over a phone match on the
-//! same digits. The returned list is non-overlapping and sorted by `start`.
-//!
-//! Pure compute: text in, redacted text + findings out. No state, no host imports.
+//! Regex-free ASCII scanners with byte offsets: every pattern is ASCII, so slicing is safe.
 
 #[allow(warnings)]
 mod bindings;
@@ -20,8 +7,7 @@ use bindings::exports::pii::redact::redactor::{Finding, Guest, Kind, Options};
 
 struct Component;
 
-/// Priority order for overlap resolution: most specific first. Phone is last
-/// so a card/SSN digit run claims its bytes before phone can.
+/// Most specific first, so a card/SSN digit run claims its bytes before phone can.
 const PRIORITY: [Kind; 5] = [Kind::CreditCard, Kind::Ssn, Kind::Email, Kind::Ip, Kind::Phone];
 
 fn wanted(opts: &Options) -> Vec<Kind> {
@@ -44,8 +30,6 @@ fn same_kind(a: Kind, b: Kind) -> bool {
     )
 }
 
-/// Run every wanted scanner, dropping any candidate that overlaps a span
-/// already claimed by a higher-priority kind. Returns findings sorted by start.
 fn scan(text: &str, opts: &Options) -> Vec<Finding> {
     let bytes = text.as_bytes();
     let mut out: Vec<Finding> = Vec::new();
@@ -93,8 +77,6 @@ fn is_domain(b: u8) -> bool {
     is_alpha(b) || is_digit(b) || matches!(b, b'.' | b'-')
 }
 
-// local@domain.tld : run of local chars, '@', run of domain chars containing
-// at least one '.', last label 2+ letters.
 fn scan_email(b: &[u8]) -> Vec<(usize, usize)> {
     let n = b.len();
     let mut out = Vec::new();
@@ -130,7 +112,6 @@ fn scan_email(b: &[u8]) -> Vec<(usize, usize)> {
     out
 }
 
-/// Domain must contain a '.' and end in a 2+ letter label.
 fn domain_has_tld(domain: &[u8]) -> bool {
     let mut end = domain.len();
     while end > 0 && matches!(domain[end - 1], b'.' | b'-') {
@@ -145,8 +126,7 @@ fn domain_has_tld(domain: &[u8]) -> bool {
     tld.len() >= 2 && tld.iter().all(|&c| is_alpha(c)) && dot > 0
 }
 
-// A run of 13..=19 digits, optionally separated by single spaces or hyphens.
-// Strip separators; must be all digits and pass Luhn.
+// 13..=19 digits, single space/hyphen separators, Luhn-checked.
 fn scan_credit_card(b: &[u8]) -> Vec<(usize, usize)> {
     let n = b.len();
     let mut out = Vec::new();
@@ -157,10 +137,7 @@ fn scan_credit_card(b: &[u8]) -> Vec<(usize, usize)> {
             continue;
         }
         // don't start mid-run.
-        if i > 0 && (is_digit(b[i - 1]) || matches!(b[i - 1], b'-' | b' ')) {
-            // previous was a separator/digit -> this is a continuation; skip
-            // ahead to a clean boundary below.
-        }
+        if i > 0 && (is_digit(b[i - 1]) || matches!(b[i - 1], b'-' | b' ')) {}
         let start = i;
         let mut digits: Vec<u8> = Vec::new();
         let mut j = i;
@@ -173,7 +150,6 @@ fn scan_credit_card(b: &[u8]) -> Vec<(usize, usize)> {
                 && is_digit(b[j + 1])
                 && !digits.is_empty()
             {
-                // single separator between digit groups.
                 j += 1;
             } else {
                 break;
@@ -192,7 +168,6 @@ fn scan_credit_card(b: &[u8]) -> Vec<(usize, usize)> {
     out
 }
 
-/// Advance past the current digit/separator run.
 fn next_non_card(b: &[u8], start: usize) -> usize {
     let mut i = start;
     let n = b.len();
@@ -246,7 +221,6 @@ fn scan_ssn(b: &[u8]) -> Vec<(usize, usize)> {
             && is_digit(w[8])
             && is_digit(w[9])
             && is_digit(w[10]);
-        // not followed by a digit.
         let clean_tail = i + 11 == n || !is_digit(b[i + 11]);
         if shape && clean_tail {
             out.push((i, 11));
@@ -258,9 +232,7 @@ fn scan_ssn(b: &[u8]) -> Vec<(usize, usize)> {
     out
 }
 
-// Conservative: a run of digits/space/hyphen/parens/'+' totaling 10..=15
-// digits, accepted only if it leads with '+' OR matches the NANP shape
-// (NNN-NNN-NNNN or (NNN) NNN-NNNN).
+// Conservative: 10..=15 digits, accepted only with a leading '+' or the NANP shape.
 fn scan_phone(b: &[u8]) -> Vec<(usize, usize)> {
     let n = b.len();
     let mut out = Vec::new();
@@ -306,13 +278,11 @@ fn scan_phone(b: &[u8]) -> Vec<(usize, usize)> {
     out
 }
 
-/// `NNN-NNN-NNNN` or `(NNN) NNN-NNNN`.
 fn looks_nanp(s: &[u8]) -> bool {
     matches_pat(s, b"NNN-NNN-NNNN") || matches_pat(s, b"(NNN) NNN-NNNN")
 }
 
-/// Match `s` against a pattern where 'N' means any ASCII digit and every other
-/// byte must match literally.
+/// 'N' is any ASCII digit; every other byte matches literally.
 fn matches_pat(s: &[u8], pat: &[u8]) -> bool {
     if s.len() != pat.len() {
         return false;
@@ -320,7 +290,6 @@ fn matches_pat(s: &[u8], pat: &[u8]) -> bool {
     s.iter().zip(pat).all(|(&c, &p)| if p == b'N' { is_digit(c) } else { c == p })
 }
 
-// Dotted quad, each octet 0..=255.
 fn scan_ip(b: &[u8]) -> Vec<(usize, usize)> {
     let n = b.len();
     let mut out = Vec::new();
@@ -348,7 +317,6 @@ fn scan_ip(b: &[u8]) -> Vec<(usize, usize)> {
     out
 }
 
-/// Parse four dot-separated octets starting at `i`; return the end index.
 fn parse_ipv4(b: &[u8], i: usize) -> Option<usize> {
     let n = b.len();
     let mut pos = i;
@@ -364,8 +332,7 @@ fn parse_ipv4(b: &[u8], i: usize) -> Option<usize> {
         if len == 0 || val > 255 {
             return None;
         }
-        // reject leading-zero padded octets like "01" (keep it strict-ish but
-        // allow a bare "0").
+        // Reject zero-padded octets like "01"; a bare "0" is fine.
         if len > 1 && b[oct_start] == b'0' {
             return None;
         }
@@ -373,7 +340,7 @@ fn parse_ipv4(b: &[u8], i: usize) -> Option<usize> {
             if pos >= n || b[pos] != b'.' {
                 return None;
             }
-            pos += 1; // consume '.'
+            pos += 1;
         }
     }
     Some(pos)
@@ -389,7 +356,6 @@ fn placeholder(kind: Kind) -> &'static str {
     }
 }
 
-/// Walk findings in order, copying gaps and substituting each span.
 fn rewrite(text: &str, findings: &[Finding], sub: impl Fn(Kind, &str) -> String) -> String {
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0usize;
@@ -416,8 +382,6 @@ fn mask_span(kind: Kind, s: &str) -> String {
     }
 }
 
-/// `john@example.com` -> `j***@e***.com` (keep first local char, first domain
-/// char, and the TLD).
 fn mask_email(s: &str) -> String {
     let (local, rest) = match s.split_once('@') {
         Some(v) => v,
@@ -435,8 +399,6 @@ fn mask_email(s: &str) -> String {
     }
 }
 
-/// Keep last 4 digits; mask the rest. 16-digit numbers come back grouped as
-/// `**** **** **** 1234`, otherwise `***...1234`.
 fn mask_card(s: &str) -> String {
     let digits: Vec<char> = s.chars().filter(|c| c.is_ascii_digit()).collect();
     let count = digits.len();
@@ -451,13 +413,11 @@ fn mask_card(s: &str) -> String {
     }
 }
 
-/// `***-**-1234` (keep last 4).
 fn mask_ssn(s: &str) -> String {
     let last4: String = s.chars().filter(|c| c.is_ascii_digit()).skip(5).collect();
     format!("***-**-{last4}")
 }
 
-/// Keep the last two digits; mask other digits with '*'; preserve separators.
 fn mask_phone(s: &str) -> String {
     let total = s.chars().filter(|c| c.is_ascii_digit()).count();
     let mut seen = 0usize;
@@ -477,7 +437,6 @@ fn mask_phone(s: &str) -> String {
     out
 }
 
-/// Mask the first three octets, keep the last: `***.***.***.123`.
 fn mask_ip(s: &str) -> String {
     match s.rsplit_once('.') {
         Some((_, last)) => format!("***.***.***.{last}"),
@@ -517,8 +476,7 @@ mod tests {
         }
     }
 
-    /// Luhn is the whole difference between a card number and sixteen digits. Both directions are pinned: a
-    /// false NEGATIVE leaks a card, a false POSITIVE redacts an order number and destroys needed data.
+    /// Both directions pinned: a false negative leaks a card, a false positive destroys an order number.
     #[test]
     fn luhn_accepts_real_check_digits_and_rejects_near_misses() {
         assert!(luhn(&[4, 5, 3, 9, 1, 4, 8, 8, 0, 3, 4, 3, 6, 4, 6, 7]));
@@ -535,7 +493,6 @@ mod tests {
         assert!(spans("4539148803436468", Kind::CreditCard).is_empty());
     }
 
-    /// An SSN is exactly `NNN-NN-NNNN`; the guards on both ends stop the middle of a longer number matching.
     #[test]
     fn an_ssn_does_not_match_inside_a_longer_number() {
         assert_eq!(spans("ssn 123-45-6789 ok", Kind::Ssn), vec![(4, 11)]);
@@ -544,7 +501,6 @@ mod tests {
         assert!(spans("123456789", Kind::Ssn).is_empty(), "hyphens are required");
     }
 
-    /// Priority is what stops a card being reported as a phone number: both match long digit runs, and
     /// `[CARD]` and `[PHONE]` are not interchangeable to whatever reads the output.
     #[test]
     fn a_higher_priority_kind_claims_an_overlapping_span() {
@@ -554,7 +510,7 @@ mod tests {
         assert!(matches!(found[0].kind, Kind::CreditCard), "the card wins over the phone shape");
     }
 
-    /// Findings come back sorted by start, because a caller replaces spans in order and unsorted spans corrupt later offsets.
+    /// A caller replaces spans in order; unsorted spans corrupt later offsets.
     #[test]
     fn findings_are_sorted_by_start() {
         let opts = Options { kinds: vec![] };

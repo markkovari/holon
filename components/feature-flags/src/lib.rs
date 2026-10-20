@@ -1,19 +1,4 @@
-//! `feature-flags` — is this feature on for this user? — flag evaluation with percentage rollouts and kill switches
-//!
-//! Flag evaluation + runtime management backed by `wasi:keyvalue` (runtime
-//! rules) + `wasi:config` (deploy-time definitions).
-//!
-//! Runtime rules live in kv under `ff_{tenant}_{flag}` (tenant `""` = global),
-//! serialized as one of: `e` (enabled), `d` (disabled), `p{N}` (percentage).
-//!
-//! Resolution order for `is-enabled(flag, ctx)`:
-//!   1. tenant rule `ff_{tenant}_{flag}`
-//!   2. global rule  `ff__{flag}`
-//!   3. config `flag:{flag}`   (bool or `N%`)
-//!   4. `false`
-//!
-//! Percentage rollouts bucket on a stable FNV-1a hash of `ctx.subject`, so the
-//! same subject is sticky across calls (no flicker).
+//! Tenant rule, then global rule, then config, then false; rollouts hash the subject, so they stick.
 
 #[allow(warnings)]
 mod bindings;
@@ -29,9 +14,7 @@ struct Component;
 const BUCKET: &str = "default";
 const PREFIX: &str = "ff_";
 
-/// Runtime-rule kv key: `ff_{tenant}/{flag}`, both parts sanitized so neither
-/// the separator `/` nor the escape char `_` can appear inside a part. A `""`
-/// tenant yields the global key `ff_/{flag}`.
+/// Both parts sanitized, so neither `/` nor `_` appears inside one; a `""` tenant is global.
 fn rule_key(tenant: &str, flag: &str) -> String {
     let mut out = String::with_capacity(flag.len() + tenant.len() + 4);
     out.push_str(PREFIX);
@@ -44,16 +27,12 @@ fn rule_key(tenant: &str, flag: &str) -> String {
 fn sanitize_into(out: &mut String, s: &str) {
     for b in s.bytes() {
         match b {
-            // '/' (separator) and '_' (escape lead) are deliberately escaped so
-            // they cannot appear literally inside a sanitized part.
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'=' => out.push(b as char),
             _ => out.push_str(&format!("_{b:02X}")),
         }
     }
 }
 
-/// Inverse of `sanitize_into`: decode `_HH` escapes back to the original name
-/// (for display in `list`). Invalid escapes are passed through best-effort.
 fn unsanitize(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -98,7 +77,6 @@ fn rule_from_bytes(bytes: &[u8]) -> Option<Rule> {
     }
 }
 
-/// Parse a config value (`true`/`on`/`1`/`yes`, `false`/...`, or `N%`) into a rule.
 fn rule_from_config(val: &str) -> Option<Rule> {
     let v = val.trim();
     if let Some(pct) = v.strip_suffix('%') {
@@ -112,8 +90,7 @@ fn rule_from_config(val: &str) -> Option<Rule> {
     }
 }
 
-/// FNV-1a 64-bit hash — small, deterministic, dependency-free. Stable across
-/// runs so a subject's rollout bucket never changes.
+/// Stable across runs, so a subject's rollout bucket never changes.
 fn fnv1a(s: &str) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in s.bytes() {
@@ -133,12 +110,10 @@ fn rule_verdict(rule: &Rule, subject: &str) -> bool {
     }
 }
 
-/// Read a runtime rule for (tenant, flag) from kv, if set.
 fn kv_rule(bucket: &kv::Bucket, tenant: &str, flag: &str) -> Result<Option<Rule>, FlagError> {
     kv_rule_by_key(bucket, &rule_key(tenant, flag))
 }
 
-/// Read a runtime rule by its already-formed kv key.
 fn kv_rule_by_key(bucket: &kv::Bucket, key: &str) -> Result<Option<Rule>, FlagError> {
     match bucket.get(key) {
         Ok(Some(bytes)) => Ok(rule_from_bytes(&bytes)),
@@ -181,13 +156,10 @@ impl Guest for Component {
     }
 
     fn list_flags(tenant: String) -> Result<Vec<FlagState>, FlagError> {
-        // Merge config definitions + global rules + tenant rules. Later sources
-        // shadow earlier ones: config < global-override < tenant-override.
-        // Keyed by flag name, preserving insertion of the winning rule+source.
         let mut names: Vec<String> = Vec::new();
         let mut chosen: Vec<(Rule, Source)> = Vec::new();
 
-        // Priority so the merge is order-independent: config < global < tenant.
+        // Ranked so the merge is order-independent: config < global < tenant.
         let rank = |s: Source| match s {
             Source::Config => 0u8,
             Source::GlobalOverride => 1,
@@ -204,7 +176,6 @@ impl Guest for Component {
             }
         };
 
-        // config: `flag:{name}` -> rule.
         if let Ok(pairs) = config::get_all() {
             for (k, v) in pairs {
                 if let Some(name) = k.strip_prefix("flag:") {
@@ -215,11 +186,9 @@ impl Guest for Component {
             }
         }
 
-        // runtime rules from kv. global keys are `ff_/{flag}`; tenant keys are
-        // `ff_{tenant}/{flag}`. The `{flag}` part is sanitized — decode it back
-        // for display, but read the value by the full key (no re-sanitizing).
+        // `{flag}` is decoded for display, but values are read by the full key (no re-sanitizing).
         let bucket = open()?;
-        let global_prefix = format!("{PREFIX}/"); // ff_/ (empty tenant)
+        let global_prefix = format!("{PREFIX}/");
         let tenant_prefix = if tenant.is_empty() {
             String::new()
         } else {
@@ -235,7 +204,6 @@ impl Guest for Component {
                 .list_keys(cursor)
                 .map_err(|e| FlagError::BackendUnavailable(format!("list-keys: {e:?}")))?;
             for key in &page.keys {
-                // tenant rule wins, so check it first (only the queried tenant).
                 if !tenant_prefix.is_empty() {
                     if let Some(enc) = key.strip_prefix(&tenant_prefix) {
                         if let Some(r) = kv_rule_by_key(&bucket, key)? {
@@ -244,7 +212,6 @@ impl Guest for Component {
                         continue;
                     }
                 }
-                // global rule: ff_/{flag}
                 if let Some(enc) = key.strip_prefix(&global_prefix) {
                     if let Some(r) = kv_rule_by_key(&bucket, key)? {
                         upsert(&unsanitize(enc), r, Source::GlobalOverride);

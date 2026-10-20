@@ -1,29 +1,14 @@
-//! What the merged graph costs, at sizes this repository has not reached yet (ADR-0091).
-//!
-//! The justifying query is a three-hop traversal (`app -> carries -> artifact -> imports -> interface`)
-//! feeding a `CONTAINSANY` over the lesson pool; both halves grow. This reports a table of insert and
-//! query times against node and edge counts, at the real size and three synthetic multiples.
-//!
-//! **Correctness at scale is asserted:** the join must return exactly the right lessons when the graph
-//! is 20x and the pool 100x larger.
-//! **Scaling SHAPE is asserted, loosely** (see `SUPERLINEAR_ALLOWANCE`): the thing to catch is an
-//! accidental full scan per hop, an order of magnitude and not thirty percent.
-//! **Absolute times are reported, never asserted:** they describe the machine (ADR-0019, ADR-0020).
-//!
-//! Run: `cargo test -p comp-reconciler --release --test capgraph_stress -- --ignored --nocapture`
-//! Scales are tunable: `COMP_STRESS_SCALES=1,5,20,50 COMP_STRESS_LESSONS=50000 cargo test ...`
-//!
-//! `#[ignore]`d: it writes hundreds of thousands of rows and takes a minute or two.
+//! What the merged graph costs at larger sizes (ADR-0091); times reported, never asserted.
 
 use std::process::Command;
 use std::time::Duration;
 
-// The shared test module of the root's suites, included rather than copied (docs/adr/0115).
+// Shared harness, included rather than copied (docs/adr/0115).
 #[path = "../../tests/harness/mod.rs"]
 mod harness;
 use harness::{Store, SURREAL_IMAGE};
 
-/// How much bigger than the real catalogue each round is. `1` is the repository as it stands.
+/// `1` is the repository as it stands.
 fn scales() -> Vec<usize> {
     std::env::var("COMP_STRESS_SCALES")
         .ok()
@@ -32,17 +17,15 @@ fn scales() -> Vec<usize> {
         .unwrap_or_else(|| vec![1, 5, 20])
 }
 
-/// How many lessons sit in the pool the join filters. The pool outgrows the graph.
+/// The pool outgrows the graph.
 fn lessons() -> usize {
     std::env::var("COMP_STRESS_LESSONS").ok().and_then(|v| v.parse().ok()).unwrap_or(20_000)
 }
 
-/// How much worse than linear the join may scale before this fails. Slack on purpose: a scan per hop
-/// would land past 400x against 20x graph growth, an order of magnitude clear of this bound.
+/// Slack on purpose: a scan per hop lands past 400x against 20x growth.
 const SUPERLINEAR_ALLOWANCE: f64 = 8.0;
 
-/// The interface the asserted lessons are tagged with. Real, so the assertion survives the synthetic
-/// rows being removed.
+/// Real, so the assertion survives the synthetic rows being removed.
 const TAGGED: &str = "csv:codec/codec@0.1.0";
 const APP: &str = "vet";
 
@@ -55,14 +38,11 @@ fn real_projection(generation: u64) -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
-/// Synthetic rows in the same SHAPE as the projection, at `copies` times the size. Copies, not random
-/// graphs, because traversal cost depends on fan-out and a copy of the real catalogue has the real
-/// one. `copies - 1` extra copies are written; copy zero is the real one.
+/// Copies, not random graphs: traversal cost depends on fan-out, and a copy has the real one.
 fn synthetic(copies: usize, generation: u64) -> String {
     let mut out = String::new();
     for c in 1..copies {
-        // One app, its parts and their interfaces, per copy. Suffixed so the asserted join cannot
-        // match a synthetic row.
+        // Suffixed so the asserted join cannot match a synthetic row.
         for a in 0..47 {
             out.push_str(&format!(
                 "UPSERT app:⟨syn-{c}-{a}⟩ SET name = 'syn-{c}-{a}', root = 'syn-part-{c}-{a}-0', \
@@ -79,8 +59,7 @@ fn synthetic(copies: usize, generation: u64) -> String {
                      artifact:⟨{part}⟩ SET gen = {generation};\n"
                 ));
                 for i in 0..3 {
-                    // Interfaces are shared across the copy, like the real ones (`records:store/store`
-                    // has 37 consumers); private interfaces would have no fan-in to traverse.
+                    // Shared within the copy, like real ones: private interfaces have no fan-in.
                     let iface = format!("syn:pkg-{c}-{}/thing@0.1.0", i + p % 5);
                     out.push_str(&format!(
                         "UPSERT interface:⟨{iface}⟩ SET name = '{iface}', exporter = '', \
@@ -97,7 +76,6 @@ fn synthetic(copies: usize, generation: u64) -> String {
     out
 }
 
-/// The lesson pool. One in every `TAGGED_EVERY` is tagged with the real interface; the rest are noise.
 const TAGGED_EVERY: usize = 500;
 
 fn lesson_rows(n: usize) -> String {
@@ -116,7 +94,7 @@ fn lesson_rows(n: usize) -> String {
     out
 }
 
-/// Statements are posted in chunks: one huge body would measure HTTP upload, not the write path.
+/// One huge body would measure HTTP upload, not the write path.
 const CHUNK: usize = 2_000;
 
 fn post_in_chunks(db: &Store, sql: &str) -> Duration {
@@ -128,7 +106,7 @@ fn post_in_chunks(db: &Store, sql: &str) -> Duration {
     total
 }
 
-/// The query under test, verbatim from the old `just lessons-for` recipe.
+/// Verbatim from the old `just lessons-for` recipe.
 fn join_query(app: &str) -> String {
     format!(
         "LET $ifaces = (SELECT VALUE array::distinct(array::flatten(\
@@ -137,7 +115,7 @@ fn join_query(app: &str) -> String {
     )
 }
 
-/// Median of five, so one scheduler hiccup does not become the reported number.
+/// Median of five, so one scheduler hiccup does not become the number.
 fn median_query(db: &Store, app: &str) -> (Duration, usize) {
     let mut times = Vec::new();
     let mut hits = 0;
@@ -161,8 +139,7 @@ fn the_join_under_load() {
         return;
     };
 
-    // The pool first, and once: every round measures a graph growing against an already large pool,
-    // the real shape.
+    // Once: every round measures a growing graph against an already large pool.
     let n = lessons();
     let pool_write = post_in_chunks(&db, &lesson_rows(n));
     let expected_hits = n.div_ceil(TAGGED_EVERY);
@@ -197,7 +174,7 @@ fn the_join_under_load() {
         let edges = db.count("imports") + db.count("exports") + db.count("carries");
         let (join, hits) = median_query(&db, APP);
 
-        // CORRECTNESS, every round: the real app's answer must not change because the database grew.
+        // The real app's answer must not change because the database grew.
         assert_eq!(
             hits, expected_hits,
             "at scale {scale} the join returned {hits} lessons, expected {expected_hits} — \
@@ -216,7 +193,7 @@ fn the_join_under_load() {
         }
     }
 
-    // SCALING SHAPE, compared against the first round so one slow middle round cannot hide.
+    // Against the first round, so one slow middle round cannot hide.
     if let Some((first_size, first_time)) = first {
         let size_now = (db.count("interface") + db.count("artifact") + db.count("app")) as f64
             + (db.count("imports") + db.count("exports") + db.count("carries")) as f64;
@@ -243,13 +220,8 @@ fn the_join_under_load() {
     );
 }
 
-/// What the lesson half of the join costs, and what a graph edge would cost instead.
-///
-/// The graph is nearly free (30x the nodes costs 1.2x the time); the pool is where the time goes.
-/// `tags CONTAINSANY [...]` is a **full table scan of the lesson pool, every time** (an index was
-/// measured and changed nothing; `EXPLAIN` reports `TableScan` on `surrealdb:v3.1.3`). The alternative
-/// ADR-0091 sketched is `lesson -about-> interface` as a real edge: O(hits) instead of O(pool).
-/// Asserts only that the two agree; the times are the finding.
+/// `tags CONTAINSANY` is a full scan of the pool (`EXPLAIN`: TableScan); an `about` edge is
+/// O(hits). Asserts only that the two agree; the times are the finding.
 #[test]
 #[ignore = "writes hundreds of thousands of rows; run with --ignored --nocapture"]
 fn what_an_edge_would_buy_over_a_tag_scan() {
@@ -262,7 +234,6 @@ fn what_an_edge_would_buy_over_a_tag_scan() {
     post_in_chunks(&db, &lesson_rows(n));
     let expected = n.div_ceil(TAGGED_EVERY);
 
-    // The interface node, and one `about` edge per tagged lesson.
     db.last(&format!(
         "UPSERT interface:⟨{TAGGED}⟩ SET name = '{TAGGED}', exporter = '', consumers = 0, gen = 1;"
     ));

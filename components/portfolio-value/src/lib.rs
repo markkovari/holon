@@ -1,30 +1,12 @@
-//! `portfolio-value` — what a collection is worth now, what it cost, and what selling has already made
-//!
-//! `tests/valuation.rs` is the specification and is not writable from here.
-//!
-//! The chart data behind a collection: cost basis, unrealised gain, realised
-//! gain, and the value series a line chart is drawn from. Pure compute — events
-//! and quotes in, numbers out. Nothing here fetches a price or reads a store.
-//!
-//! FIFO, not average cost: a collector buys the same card at wildly different prices and asks
-//! 'did I do well on that one?', which is about a specific purchase. A sale consumes the OLDEST
-//! unsold lot first, at that lot's own cost.
-//!
-//! Money is integer minor units tagged with a currency (as `money:amount`): never a float, and
-//! mixing currencies is an error, because the historical exchange rate is not knowable here.
-//!
-//! An unpriced holding is not worth zero: valuing it at zero makes the chart lie downward and
-//! dropping it lies upward. It is carried at COST and counted, so the caller can say 'plus 340
-//! cards not priced'.
+//! FIFO, not average cost: a collector asks about a specific purchase. Integer minor units, no FX.
+//! An unpriced holding is carried at COST and counted: zero lies downward, dropping it lies upward.
 
 use std::collections::{HashMap, VecDeque};
 
-/// A currency, ISO-4217, as it arrives — compared exactly, never converted.
+/// Compared exactly, never converted.
 pub type Currency = String;
 
-/// What happened to a card, and when.
-/// A swap is two events: the card that left is a disposal at the agreed value and the card that
-/// arrived an acquisition at that value, so a lopsided swap shows up as a gain.
+/// A swap is two events at the agreed value, so a lopsided swap shows up as a gain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventKind {
     /// Bought, or received in a swap, at `unit_minor`.
@@ -33,50 +15,41 @@ pub enum EventKind {
     Disposed,
 }
 
-/// One thing that happened to one card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Event {
-    /// Which card. Opaque here: whatever the caller uses to identify a printing.
+    /// Opaque: whatever the caller uses to identify a printing.
     pub card_id: String,
     pub kind: EventKind,
-    /// How many copies. Zero is an error, not a no-op.
+    /// Zero is an error, not a no-op.
     pub quantity: u32,
-    /// Price per copy, in minor units of `currency`.
     pub unit_minor: i64,
     pub currency: Currency,
-    /// Unix seconds. Events are sorted by this rather than trusted in order.
+    /// Sorted by this rather than trusted in order.
     pub at: u64,
 }
 
-/// The latest known price for a card at some instant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Quote {
     pub card_id: String,
     pub unit_minor: i64,
     pub currency: Currency,
-    /// Unix seconds this price was observed. A quote is used for any instant at
-    /// or after this one, until a later quote replaces it.
+    /// Used for any instant at or after this one, until a later quote replaces it.
     pub at: u64,
 }
 
-/// What a collection is worth, and how it got there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Valuation {
-    /// What the cards still held cost.
     pub cost_basis_minor: i64,
-    /// What the cards still held are worth — quoted at market, unquoted at cost.
+    /// Quoted at market, unquoted at cost.
     pub market_value_minor: i64,
-    /// `market_value_minor - cost_basis_minor`. Held cards only.
     pub unrealised_minor: i64,
     /// Proceeds minus FIFO cost, over every disposal up to this instant.
     pub realised_minor: i64,
     pub currency: Currency,
-    /// Copies still held that no quote covered. They are inside
-    /// `market_value_minor` at cost, and named here so a caller can say so.
+    /// Inside `market_value_minor` at cost, named so a caller can say so.
     pub unquoted: u32,
 }
 
-/// One sample on the value chart.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Point {
     pub at: u64,
@@ -86,26 +59,21 @@ pub struct Point {
     pub unquoted: u32,
 }
 
-/// Why a valuation could not be produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValueError {
-    /// Two currencies in one portfolio. Says which, because the fix is a data
-    /// fix and the caller needs to know where to look.
+    /// Names both: the fix is a data fix.
     MixedCurrency { expected: Currency, found: Currency },
-    /// A disposal of more copies than were held at that instant. The event log is
-    /// wrong, and guessing which is a bigger lie than refusing.
+    /// Guessing which event is the lie is a bigger lie than refusing.
     OversoldAt { card_id: String, at: u64, held: u32, disposed: u32 },
-    /// A zero-quantity event: not a no-op, because it is always a bug upstream.
+    /// Always a bug upstream, so not a no-op.
     ZeroQuantity { card_id: String, at: u64 },
-    /// `series` was asked for a step of zero, which does not terminate.
+    /// A zero step does not terminate.
     ZeroStep,
-    /// No events at all — there is no currency to report, so there is no answer.
+    /// No events means no currency to report.
     Empty,
 }
 
-/// What the collection is worth at `at`, over `events` priced by `quotes`.
-///
-/// Events after `at` are ignored, so this is also how the history is walked.
+/// Events after `at` are ignored, which is also how the history is walked.
 pub fn value_at(events: &[Event], quotes: &[Quote], at: u64) -> Result<Valuation, ValueError> {
     if events.is_empty() {
         return Err(ValueError::Empty);
@@ -124,8 +92,7 @@ pub fn value_at(events: &[Event], quotes: &[Quote], at: u64) -> Result<Valuation
         }
     }
 
-    // Sorted by time, never trusted in the order given — a backfilled purchase
-    // must land where it happened, not where it was recorded.
+    // Sorted by time: a backfilled purchase must land where it happened.
     let mut sorted: Vec<&Event> = events.iter().collect();
     sorted.sort_by_key(|e| e.at);
 
@@ -205,7 +172,6 @@ pub fn value_at(events: &[Event], quotes: &[Quote], at: u64) -> Result<Valuation
     })
 }
 
-/// `value_at` sampled every `step` seconds over `from..=until`, for a chart.
 pub fn series(
     events: &[Event],
     quotes: &[Quote],
@@ -239,12 +205,8 @@ pub fn series(
     Ok(points)
 }
 
-// A thin mapping between the WIT types and the ones above; the logic must not be repeated here,
-// because `tests/valuation.rs` judges the plain Rust functions (ADR-0095: components meet through
-// WIT, so reuse costs a conversion at the edge).
-// Gated on the target: a `cdylib` with wit-bindgen exports does not LINK natively, so `cargo
-// test` would die at the linker. Natively this crate is the plain functions; for wasm32 it is the
-// whole component.
+// Thin WIT mapping only: tests/valuation.rs judges the plain functions. Gated on wasm32 because
+// a cdylib with wit-bindgen exports does not link natively.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]

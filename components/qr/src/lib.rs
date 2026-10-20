@@ -1,9 +1,4 @@
-//! `qr` — turn a URL or a string into a scannable QR code, as SVG
-//!
-//! The `qrcode` crate does segment encoding, Reed-Solomon and mask selection; we render its
-//! module grid as a self-contained SVG, compact unicode blocks, or raw JSON. Rendering ourselves
-//! keeps the dependency to the encoder only and lets `svg` honor an arbitrary quiet zone. Pure
-//! compute.
+//! Rendered here, not by qrcode: keeps the dependency to the encoder and lets `svg` honour any quiet zone.
 
 #[allow(warnings)]
 mod bindings;
@@ -114,7 +109,6 @@ mod tests {
     fn matrix_is_square_and_nonempty() {
         let j = <Component as Guest>::matrix("hi".into(), Ecc::Low).unwrap();
         assert!(j.starts_with("{\"size\":"));
-        // at least one dark module
         assert!(j.contains("true"));
     }
 

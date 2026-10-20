@@ -1,6 +1,3 @@
-//! IdP-agnostic OIDC client: discovery, JWKS fetch/cache, code exchange.
-//! All outbound HTTP goes through `wasi:http/outgoing-handler`.
-
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use serde::Deserialize;
@@ -13,8 +10,7 @@ use crate::bindings::wasi::http::types::{Fields, Method, OutgoingRequest, Reques
 use crate::bindings::wasi::io::streams::StreamError;
 use crate::{config, kv};
 
-/// Read a TTL-cached value: entries are stored as `<expiry-epoch>:<payload>`.
-/// Returns the payload if present and unexpired.
+/// Stored as `<expiry-epoch>:<payload>`.
 fn cache_get(key: &str) -> Option<String> {
     let raw = kv::get(key).ok().flatten()?;
     let (exp, payload) = raw.split_once(':')?;
@@ -138,8 +134,6 @@ fn decode_b64(v: Option<&str>) -> Result<Vec<u8>, AuthError> {
     URL_SAFE_NO_PAD.decode(s).map_err(|_| AuthError::InvalidToken("jwk field not base64url".into()))
 }
 
-/// Authorization-code exchange. POSTs to the token endpoint; client creds are
-/// read from kv ("oidc:client-id", "oidc:client-secret", "oidc:issuer").
 pub fn exchange_code(code: &str, redirect_uri: &str) -> Result<TokenPair, AuthError> {
     let issuer = kv::get("oidc:issuer")?
         .ok_or_else(|| AuthError::BackendUnavailable("oidc:issuer not configured".into()))?;
@@ -269,12 +263,7 @@ fn urlencode(s: &str) -> String {
     out
 }
 
-/// Write a whole body, however long. `blocking-write-and-flush` accepts at most 4096
-/// bytes and TRAPS above that rather than erroring: the component dies mid-response and
-/// the caller sees `connection closed before message completed`, far from the cause.
-/// Writes in whatever bites `check-write` offers, waits on the pollable when it offers
-/// none, and flushes ONCE at the end. Returns false when the stream is gone (for an SSE
-/// loop, the client hung up; not an error).
+/// `blocking-write-and-flush` traps above 4096 bytes; write what `check-write` offers, flush once.
 fn write_all(stream: &crate::bindings::wasi::io::streams::OutputStream, mut bytes: &[u8]) -> bool {
     while !bytes.is_empty() {
         let ready = match stream.check_write() {

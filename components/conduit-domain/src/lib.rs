@@ -1,17 +1,4 @@
-//! conduit:app — the RealWorld ("Conduit") spec over composed contracts.
-//!
-//! One HTTP component that owns only routing + the RealWorld JSON shape; auth is
-//! the composed auth-guard (`accounts` + `authorizer::introspect`), storage is
-//! `record:store`, slugs are `slug:generate`. No bespoke business crate.
-//!
-//! Conformance target: the official RealWorld Hurl suite (see
-//! `examples/conduit/conformance`). That fixes the exact status codes and the
-//! field-keyed error envelope (`{"errors":{"<field>":["<msg>"]}}`), the
-//! `Authorization: Token <jwt>` header, and null-normalization of bio/image.
-//!
-//! Two identities coexist: auth-guard keys accounts on (tenant, email); Conduit
-//! shows clients the mutable `username`. The `users` collection bridges them —
-//! one record per account, indexed by username / email / subject.
+//! RealWorld (Conduit) over composed contracts; conformance target is `examples/conduit/conformance`.
 
 #[allow(warnings)]
 mod bindings {
@@ -38,7 +25,6 @@ mod bindings {
         world: "conduit:app/conduit-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -64,8 +50,8 @@ const TENANT: &str = "conduit";
 const USERS: &str = "users";
 const FOLLOWS: &str = "follows";
 const ARTICLES: &str = "articles";
-const FAVORITES: &str = "favorites"; // {user, article} relation
-const COMMENTS: &str = "comments"; // {article, author, body}
+const FAVORITES: &str = "favorites";
+const COMMENTS: &str = "comments";
 
 impl Guest for Component {
     async fn handle(request: Request) -> Result<Response, ErrorCode> {
@@ -117,13 +103,9 @@ impl Guest for Component {
     }
 }
 
-/// The RealWorld error envelope is field-keyed: `{"errors":{"<field>":["<msg>"]}}`.
 enum Outcome {
-    /// Success; body is already a fully-formed (envelope-wrapped) JSON string.
     Json(u16, String),
-    /// Success with no body (204).
     Empty(u16),
-    /// `{"errors":{field:[message]}}` at `status`.
     Err(u16, &'static str, String),
 }
 
@@ -198,8 +180,7 @@ async fn register(request: Request) -> Outcome {
     if let Err(e) = records::create(USERS, &data.to_string(), &user_idx()) {
         return store_err(e);
     }
-    // RealWorld returns a token on register; auth-guard's register does not log
-    // in, so mint the session with the credentials we already hold.
+    // RealWorld returns a token on register; auth-guard's register does not log in.
     let token = match accounts::login(&email, &password, TENANT) {
         Ok(tp) => tp.access_token,
         Err(e) => return auth_server_error(e),
@@ -260,7 +241,6 @@ async fn update_user(request: Request) -> Outcome {
         None => return not_found("user"),
     };
 
-    // username / email: present must be a non-empty string (null / "" → reject).
     if let Some(v) = user.get("username") {
         match nonempty_string(v) {
             Some(s) => {
@@ -276,20 +256,16 @@ async fn update_user(request: Request) -> Outcome {
     }
     if let Some(v) = user.get("email") {
         match nonempty_string(v) {
-            // ponytail: the display record's email is rewritten but the auth-guard
-            // login key is NOT (no rename verb) — a changed email won't work for a
-            // fresh login. Conformance never re-logs-in after a change; flagged.
+            // ponytail: the auth-guard login key is not renamed (no verb), so a changed email cannot log in.
             Some(s) => data["email"] = json!(s),
             None => return blank("email"),
         }
     }
-    // password: NIST 800-63B — reject null/""/<8, accept >=8 (RealWorld PUT rules).
+    // NIST 800-63B: at least 8 (RealWorld PUT rules).
     if let Some(v) = user.get("password") {
         match v.as_str() {
             Some(s) if s.chars().count() >= 8 => {
-                // ponytail: accepted-but-not-rotated — auth-guard has no
-                // "set password without the current one" verb. The suite checks
-                // the validation + 200, never that the new password logs in.
+                // ponytail: accepted, not rotated: auth-guard has no set-password-without-current verb.
             }
             Some(s) if !s.is_empty() => {
                 return invalid_field("password", "is too short (minimum is 8 characters)")
@@ -297,7 +273,6 @@ async fn update_user(request: Request) -> Outcome {
             _ => return blank("password"),
         }
     }
-    // bio / image: nullable — "" and null both normalize to null.
     if let Some(v) = user.get("bio") {
         data["bio"] = normalize_nullable(v);
     }
@@ -346,7 +321,7 @@ fn set_follow(request: &Request, username: &str, follow: bool) -> Outcome {
                 return store_err(e);
             }
         }
-        _ => {} // already in the desired state — idempotent.
+        _ => {}
     }
     Outcome::Json(200, profile_envelope(&target, follow))
 }
@@ -376,12 +351,7 @@ async fn create_article(request: Request) -> Outcome {
     let base = slug::slugify(&title);
     let base = if base.is_empty() { "article".to_string() } else { base };
     let slug = unique_slug(&base);
-    // ponytail: `created` is only second-resolution and record-store randomizes
-    // intra-ms id order, so neither disambiguates two articles created in the
-    // same millisecond. `seq` is a monotonic insertion counter (global record
-    // count at create) giving deterministic newest-first ordering. Global &
-    // lock-free: fine for the sequential suite; two *concurrent* creates could
-    // tie — swap for a KV atomic counter if that ever matters.
+    // ponytail: `seq` (global count at create) orders newest-first; two concurrent creates could tie.
     let seq = records::count(ARTICLES).unwrap_or(0);
     let ts = now_iso();
     let data = json!({
@@ -447,7 +417,6 @@ async fn update_article(request: Request, slug: &str) -> Outcome {
             data["body"] = json!(s);
         }
     }
-    // tagList: absent → preserve; [] → clear; [..] → replace; null → reject.
     if let Some(v) = article.get("tagList") {
         if v.is_null() {
             return invalid_field("tagList", "can't be null");
@@ -473,8 +442,7 @@ fn delete_article(request: &Request, slug: &str) -> Outcome {
     if data["author"].as_str() != Some(p.subject.as_str()) {
         return forbidden("article");
     }
-    // ponytail: orphaned comments/favorites are left in place (both are looked
-    // up by the now-unreachable article id). Add a cascade if it ever matters.
+    // ponytail: orphaned comments/favorites are left in place; add a cascade if it matters.
     match records::delete(ARTICLES, &entry.id) {
         Ok(()) => Outcome::Empty(204),
         Err(e) => store_err(e),
@@ -561,7 +529,7 @@ fn set_favorite(request: &Request, slug: &str, favorite: bool) -> Outcome {
                 return store_err(e);
             }
         }
-        _ => {} // idempotent.
+        _ => {}
     }
     Outcome::Json(200, article_envelope(&article, Some(&p)))
 }
@@ -603,8 +571,6 @@ fn list_comments(request: &Request, slug: &str) -> Outcome {
         Err(e) => return store_err(e),
     };
     comments.sort_by(|a, b| a.created.cmp(&b.created).then(a.id.cmp(&b.id)));
-    // Comments are a list too, and every one of them asked who the viewer
-    // follows. Same memo, same reason.
     let mut view = View::default();
     let list: Vec<Value> =
         comments.iter().map(|e| comment_json(e, viewer.as_ref(), &mut view)).collect();
@@ -616,13 +582,10 @@ fn delete_comment(request: &Request, slug: &str, id: &str) -> Outcome {
         Ok(v) => v,
         Err(o) => return o,
     };
-    // Unknown article vs unknown comment are distinct 404s in the spec.
     let article = match load_article(slug) {
         Ok((a, _)) => a,
         Err(o) => return o,
     };
-    // The public comment id is the integer `comment_id(record-id)`; find the
-    // record whose derived id matches (see comment_id).
     let Ok(want) = id.parse::<i64>() else {
         return not_found("comment");
     };
@@ -641,10 +604,7 @@ fn delete_comment(request: &Request, slug: &str, id: &str) -> Outcome {
     }
 }
 
-/// RealWorld comment ids are integers, but record ids are ULIDs. Derive a
-/// stable positive 53-bit integer from the record id (FNV-1a). Delete/list
-/// recompute it, so no separate index is needed; collisions within one
-/// article's comments are astronomically unlikely for demo volumes.
+/// RealWorld ids are integers, records ULIDs: a stable 53-bit FNV-1a of the id, so no index.
 fn comment_id(record_id: &str) -> i64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in record_id.bytes() {
@@ -691,7 +651,6 @@ fn follow_entry(follower: &str, followee: &str) -> Option<String> {
     )
 }
 
-/// The slug is free, or the first `-N` suffix that is (via slug:generate).
 fn unique_slug(base: &str) -> String {
     let taken = records::find_by(ARTICLES, "slug", &json!(base).to_string()).unwrap_or_default();
     if taken.is_empty() {
@@ -714,8 +673,7 @@ fn load_article(slug: &str) -> Result<(records::Entry, Value), Outcome> {
     Ok((entry, data))
 }
 
-// ponytail: O(n) full scan per list/feed/tags. RealWorld datasets are tiny; add
-// a tag/author join index if article volume ever outgrows a single page dump.
+// ponytail: O(n) scan per list/feed/tags; add a join index if articles outgrow one page dump.
 fn all_articles() -> Vec<(records::Entry, Value)> {
     let mut out = Vec::new();
     let mut cursor = String::new();
@@ -736,16 +694,10 @@ fn all_articles() -> Vec<(records::Entry, Value)> {
     out
 }
 
-/// Newest-first, offset/limit slice, `{articles, articlesCount}` envelope.
-/// `articlesCount` is the full match count (pre-pagination), per spec. The
-/// Per-request memo for the lookups a page repeats (ADR-0077): rendering a page asked the store
-/// the same questions once per article (the author, and the viewer's follows, byte-identical for
-/// every row). Safe because a component instance is per-request (ADR-0037), so it cannot go
-/// stale; it is not a cache.
+/// Per-request memo (ADR-0077); an instance is per-request (ADR-0037), so it cannot go stale.
 #[derive(Default)]
 struct View {
     authors: std::collections::HashMap<String, Option<Value>>,
-    /// The viewer's followees, fetched at most once.
     follows: Option<Vec<String>>,
 }
 
@@ -759,7 +711,6 @@ impl View {
         found
     }
 
-    /// Whether `viewer` follows `subject`, reading the viewer's follow list once.
     fn following(&mut self, viewer: Option<&Principal>, subject: &str) -> bool {
         let Some(v) = viewer else { return false };
         if self.follows.is_none() {
@@ -779,7 +730,6 @@ impl View {
     }
 }
 
-/// list shape omits `body` (RealWorld's "multiple articles" response).
 fn articles_page(
     mut arts: Vec<(records::Entry, Value)>,
     path: &str,
@@ -806,8 +756,6 @@ fn article_envelope(entry: &records::Entry, viewer: Option<&Principal>) -> Strin
     json!({ "article": article_json(entry, viewer, true, &mut View::default()) }).to_string()
 }
 
-/// `include_body` false for list/feed (RealWorld omits `body` there), true for
-/// single-article responses.
 fn article_json(
     entry: &records::Entry,
     viewer: Option<&Principal>,
@@ -911,7 +859,6 @@ fn profile_envelope(data: &Value, following: bool) -> String {
     .to_string()
 }
 
-/// The object under `key` in a `{key:{...}}` envelope (empty map if absent).
 fn envelope(body: &Value, key: &str) -> Map<String, Value> {
     body.get(key).and_then(|v| v.as_object()).cloned().unwrap_or_default()
 }
@@ -920,12 +867,10 @@ fn str_field(obj: &Map<String, Value>, key: &str) -> String {
     obj.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string()
 }
 
-/// `Some(s)` for a non-empty string; `None` for null, "", or a non-string.
 fn nonempty_string(v: &Value) -> Option<String> {
     v.as_str().filter(|s| !s.trim().is_empty()).map(String::from)
 }
 
-/// Nullable text field: a non-empty string stays; null/"" normalize to null.
 fn normalize_nullable(v: &Value) -> Value {
     match v.as_str() {
         Some(s) if !s.is_empty() => json!(s),
@@ -933,7 +878,6 @@ fn normalize_nullable(v: &Value) -> Value {
     }
 }
 
-/// Sorted, de-duplicated string tags from a `tagList` value (missing → empty).
 fn tag_list(v: Option<&Value>) -> Vec<String> {
     let mut tags: Vec<String> = v
         .and_then(|v| v.as_array())
@@ -944,7 +888,6 @@ fn tag_list(v: Option<&Value>) -> Vec<String> {
     tags
 }
 
-/// Resolve the bearer token to a principal (RealWorld echoes the token back).
 fn auth(request: &Request) -> Result<(Principal, String), Outcome> {
     let Some(token) = bearer(request) else {
         return Err(token_missing());
@@ -979,14 +922,13 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(422, "body", format!("bad json: {e}")))
 }
 
-/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
-/// guest traps and the caller just sees a closed connection.
+/// Backstop below wasmtime's 64 MiB per-store cap, past which the guest traps.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 guestio::guest_p3_respond!();
 
-/// RealWorld sends `Authorization: Token <jwt>`; also accept `Bearer`.
+/// RealWorld sends `Token <jwt>`; `Bearer` is accepted too.
 fn bearer(request: &Request) -> Option<String> {
     let raw = header(request, "authorization")?;
     for prefix in ["Token ", "Bearer "] {
@@ -1001,7 +943,6 @@ fn header(request: &Request, name: &str) -> Option<String> {
     request.get_headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
 }
 
-/// First value of query param `key` in a `path?query` string, percent-decoded.
 fn query_param(path: &str, key: &str) -> Option<String> {
     let query = path.split('?').nth(1)?;
     query.split('&').find_map(|pair| {
@@ -1012,16 +953,13 @@ fn query_param(path: &str, key: &str) -> Option<String> {
 
 use guestfmt::percent_decode;
 
-/// Current wall-clock time as RealWorld ISO8601 with milliseconds. Millisecond
-/// precision matters: RealWorld asserts `updatedAt` changes after an update, and
-/// record:store timestamps are second-only.
+/// Millisecond precision: RealWorld asserts `updatedAt` changes, and record:store is second-only.
 fn now_iso() -> String {
     let t = system_clock::now();
     iso8601(t.seconds as u64, t.nanoseconds / 1_000_000)
 }
 
-/// Unix seconds + millis → ISO8601 (`YYYY-MM-DDTHH:MM:SS.mmmZ`).
-/// Civil-from-days (Howard Hinnant); correct across leap years.
+/// Civil-from-days (Howard Hinnant).
 fn iso8601(secs: u64, millis: u32) -> String {
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;

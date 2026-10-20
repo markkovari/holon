@@ -1,9 +1,5 @@
-//! `photoquest-domain` — router: auth (register/login/logout/me), the photo routes in `photos.rs`, and the evaluator's callback.
-//!
-//! The auth half is the usual `guestauth`/`guestio` macro sequence. The router is NOT `guest_saas_router!` for one route:
-//! the callback `comp-media` POSTs lives under `/internal`, is authenticated by an HMAC over its exact bytes rather than a
-//! bearer, and needs a request header the SaaS router never reads, so it is dispatched here before anything expecting a
-//! login (as `events-domain` does for its SSE stream). Why photo bytes never reach this component: ADR-0098.
+//! Not `guest_saas_router!`: comp-media's /internal callback is HMAC-authenticated over its exact bytes,
+//! not a bearer, so it is dispatched before anything expecting a login. Photo bytes never reach here (ADR-0098).
 
 #[allow(warnings)]
 mod bindings {
@@ -32,7 +28,6 @@ mod bindings {
         world: "photoquest:domain/photoquest-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -51,13 +46,13 @@ mod rules;
 pub use guestauth::Route;
 
 pub const TENANT: &str = "photoquest";
-/// The only role register grants. `admin` is honoured when an operator assigns it (`is_admin` reads roles, not this list) but cannot be asked for.
+/// `admin` is honoured when an operator assigns it (`is_admin` reads roles), but cannot be asked for.
 const ROLES: &[&str] = &["photographer"];
 
 guestio::guest_p3_bearer!();
 guestio::guest_p3_respond!();
 
-/// The callback is the largest body here (256 sharpness tiles plus Vision's boxes, tens of KiB); a megabyte is a ceiling, not a budget.
+/// The callback is the largest body (tens of KiB); a megabyte is a ceiling, not a budget.
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
@@ -68,7 +63,6 @@ guestauth::guest_p3_audit!(TENANT);
 guestauth::guest_accounts_endpoints!(TENANT, ROLES, "photographer");
 guestauth::guest_p3_emit!();
 
-/// One request header's first value, empty when absent.
 fn header(request: &bindings::p3::http::types::Request, name: &str) -> String {
     request
         .get_headers()
@@ -111,7 +105,6 @@ impl bindings::p3::handler::Guest for Component {
             (_, ["health"]) => Reply::json(200, serde_json::json!({"ok": true})),
             // 404 unless config `allow-test-routes = true` (see clock.rs).
             (Method::Post, ["test", "clock"]) => clock::set(&body),
-            // Register plus the account book and `bootstrap-admin-email` (moderation.rs).
             (Method::Post, ["register"]) => moderation::register(&body),
             (Method::Post, ["login"]) => login(&body),
             (Method::Post, ["logout"]) => logout(&route),
@@ -120,7 +113,7 @@ impl bindings::p3::handler::Guest for Component {
             (Method::Post, ["internal", "photos", id, "evaluated"]) => {
                 photos::evaluated(id, &bytes, &signature)
             }
-            // The game (CONTRACT.md "Game routes"). Most specific first: a photo's reports are moderation's, the rest of /api/photos is photos.rs.
+            // Most specific first: a photo's reports are moderation's, the rest of /api/photos is photos.rs.
             (_, ["api", "photos", _, "reports"]) | (_, ["api", "admin", ..]) => {
                 moderation::handle(&method, &route, &body, &path)
             }

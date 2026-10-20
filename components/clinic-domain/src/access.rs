@@ -1,16 +1,4 @@
-//! Staff accounts and pet search — the `access-and-search` part.
-//!
-//! Nothing here hashes, tokenises or scans. `auth:identity/accounts` owns the
-//! password, `auth:identity/session` owns the token, `search:index/index` owns
-//! the ranking. This file is glue.
-//!
-//! Login is deliberately NOT `accounts::login` (which would hand back a pair we
-//! never asked for): `verify-password` proves the credential, `session::issue`
-//! mints the token we then `lookup` on every search. Same two calls guard both
-//! directions, so a token this component accepts is one this component issued.
-//!
-//! The corpus comes from the record store, synced on search — `owners-and-pets`
-//! is not ours to edit and needs to know nothing about the index.
+//! Not `accounts::login`: verify-password plus session::issue, so a token accepted here was issued here.
 
 use crate::bindings::auth::identity::accounts;
 use crate::bindings::auth::identity::session;
@@ -35,7 +23,6 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     }
 }
 
-/// `{email, password}` out of a body, or the 400 to answer with.
 fn creds(body: &str) -> Result<(String, String), Reply> {
     let doc: Value = serde_json::from_str(body).map_err(|_| Reply::err(400, "invalid"))?;
     let email = doc["email"].as_str().unwrap_or("").trim().to_string();
@@ -48,8 +35,7 @@ fn register(body: &str) -> Reply {
         Ok(c) => c,
         Err(r) => return r,
     };
-    // Checked here as well as in auth-guard: the contract promises 400 for a
-    // short password regardless of how `password-min-len` is configured.
+    // The contract promises 400 for a short password whatever `password-min-len` is.
     if !email.contains('@') || password.chars().count() < 8 {
         return Reply::err(400, "invalid");
     }
@@ -78,12 +64,7 @@ fn login(body: &str) -> Reply {
     }
 }
 
-/// Bring the index level with the store.
-///
-/// ponytail: the guard is a document count, so a same-sized store that changed
-/// (one pet deleted, one added) is missed until the count moves again. The fix
-/// is indexing on create — that is `src/owners.rs`, which this part may not
-/// edit; ask via CONTRACT-REQUEST.md if the drift ever matters.
+/// ponytail: a count guard misses a same-sized change; indexing on create (owners.rs) is the fix.
 fn sync_index() {
     let Ok(page) = records::list_records(PETS, 1000, "") else { return };
     if search::doc_count().unwrap_or(0) as usize == page.entries.len() {
@@ -110,8 +91,7 @@ fn search_pets(route: &Route) -> Reply {
         return Reply::err(400, "invalid");
     }
     sync_index();
-    // ANY, not ALL: "cat marbles" should still rank Marbles first rather than
-    // return nothing. Ranking is the index's job, ordering here is its output.
+    // ANY, not ALL: "cat marbles" should still rank Marbles first rather than return nothing.
     let hits = match search::query(&q, search::Mode::Any, &[PET_TAG.to_string()], 50) {
         Ok(h) => h,
         Err(_) => return Reply::err(503, "unavailable"),

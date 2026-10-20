@@ -261,7 +261,6 @@
       text-align: center;
     }
 
-    /* Modal */
     .modal-overlay {
       position: fixed;
       top: 0; left: 0; right: 0; bottom: 0;
@@ -338,7 +337,6 @@
     .rating-slider { flex: 2; accent-color: var(--accent); cursor: pointer; }
     .rating-val { font-weight: 800; font-family: 'JetBrains Mono', monospace; width: 32px; text-align: right; color: var(--gold); }
 
-    /* Admin Panel */
     .admin-attr-list { display: flex; flex-direction: column; gap: 0.6rem; }
     .admin-attr-item {
       display: flex;

@@ -1,19 +1,5 @@
-//! Moderation — CONTRACT.md "Moderation", plus the helpers every game module calls (`require_role`,
-//! `require_active`, `is_hidden`) and the bootstrap admin.
-//!
-//! Collections this module owns:
-//!
-//! - `accounts` — `{subject, email, created_at}`, indexed by `subject`. Written at register (`auth:identity`
-//!   has no "list accounts"); read by `GET /api/admin/users` and to check an admin action names a real account.
-//! - `account_flags` — `{subject, suspended, reason, at, by}`, indexed by `subject`; at most one per subject.
-//! - `reports` — `{photo, photo_owner, reporter, reason, note, state, created_at, resolved_at, resolved_by,
-//!   resolution_note}`, indexed by `photo`, `state`, `reporter`.
-//!
-//! It reads `competition_entries` and `competitions`, which `competitions.rs` writes, to decide whether a photo
-//! is visible to someone other than its owner.
-//!
-//! Roles live in `auth:identity/rbac`, not here. `auth-guard` re-resolves a session's roles on every
-//! `introspect`, so a grant or revoke takes effect on the grantee's NEXT request, no re-login.
+//! Roles live in auth:identity/rbac; auth-guard re-resolves them on every introspect, so a grant or revoke
+//! applies on the grantee's NEXT request. `accounts` exists because auth:identity has no "list accounts".
 
 use crate::bindings::auth::identity::rbac;
 use crate::bindings::auth::identity::types::Principal;
@@ -32,7 +18,7 @@ const COMPETITIONS: &str = "competitions";
 
 const REPORT_REASONS: &[&str] = &["inappropriate", "stolen", "spam", "other"];
 const REPORT_STATES: &[&str] = &["open", "dismissed", "actioned"];
-/// The roles an admin may grant or revoke. `photographer` is everyone's and not an admin's to take away.
+/// `photographer` is everyone's and not an admin's to take away.
 const GRANTABLE: &[&str] = &["curator", "admin"];
 
 pub fn handle(method: &Method, route: &Route, body: &str, query: &str) -> Reply {
@@ -44,7 +30,6 @@ pub fn handle(method: &Method, route: &Route, body: &str, query: &str) -> Reply 
     }
 }
 
-/// `Ok(())` when `principal` holds `role`, else the `403 forbidden_role` reply.
 pub fn require_role(principal: &Principal, role: &str) -> Result<(), Reply> {
     if principal.roles.iter().any(|r| r == role) {
         Ok(())
@@ -53,7 +38,7 @@ pub fn require_role(principal: &Principal, role: &str) -> Result<(), Reply> {
     }
 }
 
-/// `Err(403 suspended)` when the account is suspended. A store that cannot answer is a 503, not a pass: a suspension that lapses whenever the store hiccups is not a suspension.
+/// A store that cannot answer is a 503, not a pass: a suspension that lapses on a hiccup is not one.
 pub fn require_active(principal: &Principal) -> Result<(), Reply> {
     match flags_of(&principal.subject) {
         Ok(Some((_, f))) if bool_of(&f, "suspended") => {
@@ -65,15 +50,11 @@ pub fn require_active(principal: &Principal) -> Result<(), Reply> {
     }
 }
 
-/// True when moderation has hidden this photo.
 pub fn is_hidden(photo: &Map<String, Value>) -> bool {
     photo.get("moderation").and_then(|m| m.get("hidden")).and_then(Value::as_bool).unwrap_or(false)
 }
 
-/// `POST /register` — the `guestauth` register, then two things it cannot do: keep
-/// `{subject, email}` for the admin user list, and grant `admin` to the account
-/// whose email is config `bootstrap-admin-email`. Nothing in the body can ask for
-/// a role; the macro already ignores `role` (ROLES is `["photographer"]`).
+/// Also keeps `{subject, email}` for the admin list and grants `admin` to config `bootstrap-admin-email`.
 pub fn register(body: &str) -> Reply {
     let mut reply = crate::register(body);
     if reply.status != 201 {
@@ -137,7 +118,6 @@ fn valid_id(id: &str) -> bool {
         && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-/// Write `m` over `entry` at the revision it was read at (`id` stripped).
 fn save(collection: &str, entry: &records::Entry, m: &Map<String, Value>) -> Result<(), Reply> {
     let mut data = m.clone();
     data.remove("id");
@@ -179,9 +159,7 @@ fn all(collection: &str) -> Result<Vec<records::Entry>, Reply> {
     }
 }
 
-/// Is `photo` visible to someone other than its owner? Yes iff it is not hidden
-/// and it is entered in a `published` competition — the leaderboard is the only
-/// shared surface there is (CONTRACT.md "Leaderboard").
+/// The leaderboard of a published competition is the only shared surface (CONTRACT.md "Leaderboard").
 fn visible_to_others(photo_id: &str, photo: &Map<String, Value>) -> bool {
     if is_hidden(photo) {
         return false;
@@ -205,7 +183,6 @@ struct ReportReq {
     note: Option<String>,
 }
 
-/// `POST /api/photos/{id}/reports`.
 fn report(route: &Route, id: &str, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     if let Err(r) = require_active(&principal) {
@@ -317,7 +294,6 @@ fn admin(method: &Method, route: &Route, rest: &[&str], body: &str, query: &str)
     out.unwrap_or_else(|r| r)
 }
 
-/// `GET /api/admin/reports?state=open|dismissed|actioned` (default `open`), newest first.
 fn list_reports(query: &str) -> Result<Reply, Reply> {
     let state =
         query_param(query, "state").filter(|s| !s.is_empty()).unwrap_or_else(|| "open".into());
@@ -331,7 +307,6 @@ fn list_reports(query: &str) -> Result<Reply, Reply> {
     Ok(Reply::json(200, json!({"reports": out})))
 }
 
-/// `POST /api/admin/reports/{id}/dismiss {note?}` — only an open report.
 fn dismiss(actor: &Principal, id: &str, body: &str) -> Result<Reply, Reply> {
     let req = parse_reason(body)?;
     if !valid_id(id) {
@@ -354,8 +329,7 @@ fn dismiss(actor: &Principal, id: &str, body: &str) -> Result<Reply, Reply> {
     Ok(Reply::json(200, Value::Object(m)))
 }
 
-/// Read-modify-write a photo, retrying a revision conflict (the callback or a
-/// `complete` may be writing the same record).
+/// Retries a revision conflict: the callback or a `complete` may be writing the same record.
 fn update_photo(
     id: &str,
     f: impl Fn(&mut Map<String, Value>),
@@ -376,8 +350,6 @@ fn update_photo(
     Err(Reply::err(503, "busy"))
 }
 
-/// `POST /api/admin/photos/{id}/hide {reason}` — and every open report on it
-/// becomes `actioned`.
 fn hide(actor: &Principal, id: &str, body: &str) -> Result<Reply, Reply> {
     let reason = required_reason(body)?;
     let at = now_secs();
@@ -410,7 +382,6 @@ fn hide(actor: &Principal, id: &str, body: &str) -> Result<Reply, Reply> {
     ))
 }
 
-/// `POST /api/admin/photos/{id}/unhide` — idempotent.
 fn unhide(actor: &Principal, id: &str, body: &str) -> Result<Reply, Reply> {
     let req = parse_reason(body)?;
     update_photo(id, |m| {
@@ -420,7 +391,6 @@ fn unhide(actor: &Principal, id: &str, body: &str) -> Result<Reply, Reply> {
     Ok(Reply::json(200, json!({"id": id, "moderation": {"hidden": false}})))
 }
 
-/// `POST /api/admin/users/{id}/suspend {reason}` / `unsuspend` — idempotent.
 fn suspend(actor: &Principal, subject: &str, body: &str, on: bool) -> Result<Reply, Reply> {
     let reason =
         if on { required_reason(body)? } else { parse_reason(body)?.reason.unwrap_or_default() };
@@ -450,7 +420,6 @@ struct RolesReq {
     reason: Option<String>,
 }
 
-/// `POST /api/admin/users/{id}/roles {grant|revoke: "curator"|"admin"}`.
 fn roles(actor: &Principal, subject: &str, body: &str) -> Result<Reply, Reply> {
     let req: RolesReq = serde_json::from_str(body).map_err(|_| Reply::err(400, "bad_json"))?;
     let (grant, role) = match (&req.grant, &req.revoke) {
@@ -485,7 +454,6 @@ fn roles(actor: &Principal, subject: &str, body: &str) -> Result<Reply, Reply> {
     Ok(Reply::json(200, json!({"subject": subject, "roles": now})))
 }
 
-/// `GET /api/admin/users` — every account registered here, oldest first.
 fn users() -> Result<Reply, Reply> {
     let accounts = all(ACCOUNTS)?;
     let out: Vec<Value> = accounts

@@ -1,27 +1,4 @@
-//! `pagination` — paginate a long list without drift — encode a sort position into an opaque cursor
-//!
-//! ## Keyset pagination
-//! Offset paging silently skips or repeats rows when the set changes mid-scroll. Keyset pagination remembers
-//! *where you were*: a [`Position`] is the stable sort key at the page boundary plus the boundary row's unique
-//! id (tiebreaker) and the direction. The next query is `WHERE (sort_key, id) > (:key, :id) ORDER BY sort_key,
-//! id LIMIT :n`, stable under concurrent inserts and deletes.
-//!
-//! ## Tamper-evident opaque cursor
-//! Clients must not be able to forge or silently corrupt a cursor (paging to arbitrary positions, confusing errors):
-//!
-//! ```text
-//!   cursor = base64url_nopad(payload) + "." + checksum_hex
-//!   payload  = "f:{0|1}:{b64url(sort_key)}:{b64url(last_id)}"
-//!   checksum = hex(  HMAC-SHA256(key, payload)[..8]  )
-//! ```
-//!
-//! `decode` recomputes the HMAC and compares in constant time (`verify_slice`); any mismatch (forgery, bit-rot,
-//! a different key) yields `invalid-cursor`. Fields are base64url-encoded so the `:` delimiter never appears in one.
-//!
-//! ## Config (wasi:config/store)
-//!   cursor-secret   HMAC signing key. Defaults to a fixed development value; PRODUCTION DEPLOYMENTS MUST
-//!                   SET THIS, otherwise cursors are trivially forgeable.
-//!   max-page-size   upper bound for `clamp-limit` (default 100).
+//! Keyset pagination: the cursor holds the boundary (sort_key, id), so mid-scroll inserts/deletes cannot skip or repeat rows.
 
 #[allow(warnings)]
 mod bindings;
@@ -38,12 +15,9 @@ struct Component;
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// Number of leading HMAC bytes kept as the cursor checksum (16 hex chars).
 const TAG_LEN: usize = 8;
 
-/// HMAC signing key. The fallback is a fixed, well-known development secret;
-/// production MUST override it via config `cursor-secret`, since anyone who
-/// knows the key can forge cursors.
+/// The fallback is a well-known dev secret: production MUST set `cursor-secret` or cursors are forgeable.
 fn signing_key() -> String {
     match config::get("cursor-secret") {
         Ok(Some(v)) if !v.is_empty() => v,
@@ -58,7 +32,7 @@ fn max_page_size() -> u32 {
     }
 }
 
-/// Serialize a position into the canonical payload string; free-form fields are base64url-encoded so `:` cannot collide.
+/// base64url fields, so the `:` delimiter cannot collide.
 fn payload_of(pos: &Position) -> String {
     format!(
         "f:{}:{}:{}",
@@ -68,7 +42,6 @@ fn payload_of(pos: &Position) -> String {
     )
 }
 
-/// Parse a payload string back into a position; `None` on any structural problem.
 fn position_of(payload: &str) -> Option<Position> {
     let mut parts = payload.split(':');
     if parts.next()? != "f" {
@@ -100,7 +73,6 @@ fn checksum(key: &str, payload: &str) -> String {
     tag[..TAG_LEN].iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Constant-time verify that `payload` carries `expected_hex` checksum under `key` (`hmac`'s `verify_slice`).
 fn verify(key: &str, payload: &str, expected_hex: &str) -> bool {
     let Some(expected) = hex_to_bytes(expected_hex) else {
         return false;
@@ -186,7 +158,6 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::*;
 
-    /// A cursor is only opaque if also unforgeable: the tag depends on BOTH key and payload.
     #[test]
     fn a_cursor_tag_binds_the_key_and_the_payload() {
         let tag = checksum("k1", "offset:10");
@@ -205,9 +176,7 @@ mod tests {
         assert!(!verify("other", "page:2", &tag), "the key is bound");
     }
 
-    /// Malformed tags must be REJECTED. A cursor comes from a client, so odd-length hex, non-hex characters, an
-    /// empty tag and a truncated one are all reachable. Truncation is the sharp one: the verifier tolerates a
-    /// shortened tag by design, so "shorter" must still mean "wrong length".
+    /// The verifier tolerates a shortened tag by design, so "shorter" must still mean "wrong length".
     #[test]
     fn a_malformed_tag_is_refused_rather_than_trusted() {
         let tag = checksum("secret", "page:2");

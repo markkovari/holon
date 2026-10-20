@@ -1,29 +1,4 @@
-//! `comp-oci` — put a built component in a registry, and get one back out.
-//!
-//! ```
-//! comp-oci push ghcr.io/markkovari/holon components/target/wasm32-wasip2/release/*.wasm
-//! comp-oci pull ghcr.io/markkovari/holon portfolio-value-c -o pv.wasm
-//! comp-oci pull ghcr.io/markkovari/holon portfolio-value-c@sha256:… -o pv.wasm
-//! ```
-//!
-//! ## Why this exists
-//!
-//! Push has existed (`reconciler/oci/src/lib.rs`, ADR-0017) with nothing to pull it back, so the only ways
-//! to get a component's bytes were to build it (five toolchains, `docs/POLYGLOT.md`) or download
-//! CI's artifact (expires after thirty days, needs a green run for that commit, all 205 components
-//! or none). This is the way to get ONE component you did not build.
-//!
-//! ## What it is not
-//!
-//! Not on the runtime path: ADR-0024 moved distribution to a JetStream object store keyed by sha256,
-//! so a node still fetches by digest and never talks to a registry. This is for people and for CI.
-//!
-//! ## Digests, not tags
-//!
-//! Every push is tagged with the first twelve hex of the component's own sha256, so a tag never
-//! changes meaning (ADR-0006); there is no `latest`. It PRINTS the digest, and `--lock` writes it for
-//! every component pushed. Pull verifies the bytes against the manifest's digest before writing a
-//! file: a registry is a cache and the digest is the trust boundary (ADR-0024).
+//! Push a component to an OCI registry and pull one back; digests, not tags (ADR-0006, ADR-0024).
 
 use std::path::PathBuf;
 
@@ -79,9 +54,7 @@ fn repo_for(prefix: &str, name: &str) -> String {
     }
 }
 
-/// Every `.wasm` a path names: the file itself, or the ones directly inside a directory. Not
-/// recursive: `components/target` has composed artifacts and build intermediates that nobody meant to
-/// publish.
+/// Not recursive: `components/target` holds intermediates nobody meant to publish.
 fn wasm_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     for p in paths {
@@ -105,17 +78,12 @@ fn wasm_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
-/// The component's surface, for the OCI config blob.
-///
-/// `plug::surface` is the reader the composer uses, so a puller sees the same strings the composer
-/// reasons about. Best-effort: the BYTES are the artifact, and a core module or adapter with no
-/// surface is still worth publishing, so a failure is an empty list.
+/// Best-effort: the bytes are the artifact, so a module with no surface yields empty lists.
 fn surface(wasm: &[u8]) -> (Vec<String>, Vec<String>) {
     match comp_fleet::plug::surface(wasm) {
         Ok(s) => (
             s.exports.into_iter().collect(),
-            // Both kinds, because a puller wants to know everything the component will reach for
-            // (`docs/POLYGLOT.md` is about host imports acquired without asking).
+            // Both kinds: a puller wants everything the component will reach for.
             s.imports.into_iter().chain(s.host_imports).collect(),
         ),
         Err(_) => (Vec::new(), Vec::new()),
@@ -126,8 +94,7 @@ fn surface(wasm: &[u8]) -> (Vec<String>, Vec<String>) {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let http = reqwest::Client::builder()
-        // A component is megabytes and a registry can be slow; the default is too short for a 17 MB Python
-        // build over a home connection.
+        // A 17 MB Python build over a home connection outlasts the default.
         .timeout(std::time::Duration::from_secs(300))
         .build()?;
     let creds = Creds::from_env();

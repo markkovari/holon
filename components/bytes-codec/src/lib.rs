@@ -1,37 +1,17 @@
-//! `bytes-codec` — turn bytes into text that survives a URL, a JSON string or a header, and back again
-//!
-//! `tests/codec.rs` is the specification and is not writable from here.
-//!
-//! Five components here had hand-written base64 in five incompatible shapes, one of them
-//! in an authentication path; this is the shared one. Pure compute.
-//!
-//! Two alphabets, not interchangeable: standard (`+`, `/`) and URL-SAFE (`-`, `_`; WebAuthn,
-//! JWTs, ids in links). Decoding one with the other's table does not fail, it produces
-//! different bytes, and nothing reports it.
-//!
-//! Padding is optional on the way in and chosen on the way out: WebAuthn forbids `=`, JSON
-//! payloads usually carry it, and a decoder refusing unpadded input rejects half the real
-//! world. Hex: lowercase out, either case in (digests move between tools that disagree).
+//! Decoding one alphabet with the other's table silently produces different bytes; padding is optional in.
 
-/// Which alphabet, and what to do about padding when encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Alphabet {
-    /// `+` and `/`, with `=` padding. What a JSON payload or an HTTP header carries.
+    /// What a JSON payload or an HTTP header carries.
     Standard,
-    /// `-` and `_`, no padding. What a URL, a JWT and WebAuthn use.
+    /// What a URL, a JWT and WebAuthn use.
     UrlSafe,
 }
 
-/// Why some text could not be decoded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecodeError {
-    /// A character that is in neither alphabet, with its position — which is the
-    /// only useful thing to say about a payload you cannot print in an error.
     NotInAlphabet { at: usize, found: char },
-    /// A length that cannot be a whole number of bytes. `abcde` is five characters,
-    /// which is one group of four and one orphan.
     TruncatedGroup { length: usize },
-    /// Padding somewhere other than the end, or too much of it.
     MisplacedPadding { at: usize },
 }
 
@@ -51,10 +31,7 @@ fn b64_val(c: char, alphabet: Alphabet) -> Option<u8> {
     }
 }
 
-/// Encode bytes as base64 in `alphabet`.
-///
-/// `Standard` pads to a multiple of four; `UrlSafe` does not, because the
-/// specifications that use it forbid it.
+/// `UrlSafe` is unpadded because the specifications that use it forbid `=`.
 pub fn encode(bytes: &[u8], alphabet: Alphabet) -> String {
     let table = match alphabet {
         Alphabet::Standard => STD_TABLE,
@@ -91,8 +68,7 @@ pub fn encode(bytes: &[u8], alphabet: Alphabet) -> String {
     out
 }
 
-/// Decode base64 in `alphabet`. Padding is accepted either way: `=` on URL-safe input is
-/// wrong per the specification but unambiguous, and refusing it fails on real tokens.
+/// `=` on URL-safe input is wrong per spec but unambiguous, and refusing it fails on real tokens.
 pub fn decode(text: &str, alphabet: Alphabet) -> Result<Vec<u8>, DecodeError> {
     if text.is_empty() {
         return Ok(Vec::new());
@@ -184,8 +160,6 @@ pub fn from_hex(text: &str) -> Result<Vec<u8>, DecodeError> {
     }
     Ok(out)
 }
-
-// WIT <-> plain-type mapping only; no behaviour, so `tests/codec.rs` keeps covering what ships.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]

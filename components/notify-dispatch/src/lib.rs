@@ -1,13 +1,4 @@
-//! `notify-dispatch` — send an outbound notification — a webhook POST, or email/SMS through a configured gateway
-//!
-//! Synchronous outbound sender over `wasi:http/outgoing-handler`; the HTTP idiom (build OutgoingRequest -> write body ->
-//! handle -> block -> read response) is the one auth-guard uses for OIDC, factored into `post`.
-//!
-//! Channels:
-//!   webhook  POST `body` to `target` as application/json.
-//!   email    POST {"to","subject","body"} to config `notify:email-url`.
-//!   sms      POST {"to","body"} to config `notify:sms-url`.
-//! The gateway URLs are deploy-time config; no vendor is named in the contract.
+//! Gateway URLs are deploy-time config (`notify:email-url`, `notify:sms-url`); the contract names no vendor.
 
 #[allow(warnings)]
 mod bindings;
@@ -28,7 +19,6 @@ fn net_err(ctx: &str) -> NotifyError {
     NotifyError::BackendUnavailable(ctx.to_string())
 }
 
-/// JSON-escape a string value.
 fn esc(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     for c in s.chars() {
@@ -60,7 +50,6 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), NotifyError> {
     Ok((scheme, authority, path))
 }
 
-/// POST `body` (application/json) to `url`, returning the upstream status.
 fn post(url: &str, body: &[u8]) -> Result<u16, NotifyError> {
     let (scheme, authority, path) = parse_url(url)?;
     let headers = Fields::new();

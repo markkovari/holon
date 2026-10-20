@@ -1,7 +1,3 @@
-//! Building the base tree a candidate is judged against, materialising what a
-//! candidate wrote, and the two guards that decide whether a gate is even
-//! capable of judging it before anything is spent.
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -15,9 +11,6 @@ use serde_json::{json, Value};
 use crate::setup::wait_serving;
 use crate::{Args, GoalSpec};
 
-/// The tracked files the gate materialises and runs its checks over: source, tests, and whatever the
-/// build needs (`pyproject.toml`, `uv.lock`, `Cargo.toml`). Scoped to `base_paths` when given, so a
-/// goal against one crate of a large repo ships that crate and its path-deps.
 pub(crate) fn base_tree(checkout: &Path, base_paths: &[String]) -> Result<Vec<Value>> {
     let out = Command::new("git")
         .arg("-C")
@@ -35,8 +28,7 @@ pub(crate) fn base_tree(checkout: &Path, base_paths: &[String]) -> Result<Vec<Va
             continue;
         }
         let full = checkout.join(path);
-        // Skip anything that is not valid UTF-8 (a stray binary) rather than fail the whole run; it is not a
-        // gate input.
+        // A stray binary is not a gate input.
         let Ok(content) = std::fs::read_to_string(&full) else { continue };
         bytes += content.len();
         tree.push(json!({ "path": path, "content": content }));
@@ -48,10 +40,7 @@ pub(crate) fn base_tree(checkout: &Path, base_paths: &[String]) -> Result<Vec<Va
             checkout.display()
         );
     }
-    // The whole tree travels over wrpc as one message and NATS refuses one past `max_payload` with an
-    // opaque failure, so it is caught here with a message that says what to do. The bound comes from
-    // `fleet::max_tree_payload()` because the same number configures the server: hardcoded at one end
-    // and configured at the other is how a raised server still gets refused by its own client.
+    // NATS refuses a message past `max_payload` opaquely; the server config shares this bound.
     let ceiling = comp_fleet::fleet::max_tree_payload();
     if bytes > ceiling {
         bail!(
@@ -77,11 +66,7 @@ pub(crate) fn head_commit(checkout: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-/// The components a run created, as (name, path).
-///
-/// `components/<name>/...` is the only shape that names a component (the rule `plug::tags_for` uses
-/// for what a lesson is about). Derived from paths, not announced by the model: only a component
-/// actually left in the tree changes what the pool can do.
+/// Derived from paths, not announced by the model: only a component left in the tree counts.
 pub(crate) fn new_capabilities(files: &Value) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = files
         .as_array()
@@ -101,13 +86,10 @@ pub(crate) fn new_capabilities(files: &Value) -> Vec<(String, String)> {
     out
 }
 
-/// Write a candidate's files under `target/goalrun/candidate/`, mirroring paths.
-///
-/// Returns the directory. The tree it was run against is never touched, so it can be diffed.
+/// Under `target/goalrun/candidate/`, so the checkout stays untouched and can be diffed.
 pub(crate) fn write_candidate(checkout: &Path, files: &Value) -> std::io::Result<PathBuf> {
     let dir = checkout.join("target/goalrun/candidate");
-    // Cleared rather than merged: a stale file beside a fresh one is indistinguishable from the candidate
-    // having written it.
+    // Cleared, not merged: a stale file would look like the candidate wrote it.
     if dir.exists() {
         std::fs::remove_dir_all(&dir)?;
     }
@@ -117,8 +99,7 @@ pub(crate) fn write_candidate(checkout: &Path, files: &Value) -> std::io::Result
         else {
             continue;
         };
-        // A candidate's paths are checked by the applier before it can land; this is a second look, since
-        // writing to disk is where a `../` would escape.
+        // A second look after the applier's: writing to disk is where a `../` would escape.
         if path.contains("..") || Path::new(path).is_absolute() {
             continue;
         }
@@ -131,15 +112,7 @@ pub(crate) fn write_candidate(checkout: &Path, files: &Value) -> std::io::Result
     Ok(dir)
 }
 
-/// Gate commands whose script is not in the shipped tree.
-///
-/// A check that fails because its script is missing looks EXACTLY like one that fails because the work
-/// is not done, so the critic would say "every check can judge" and every branch would score zero for
-/// the operator's reason (`gate.sh` was untracked once). Needs no log heuristic: the tree is a list of
-/// paths and the command names one.
-///
-/// Only arguments unambiguously a repo file count: path-shaped, a script extension, no URL scheme, not
-/// a flag. `cargo test -p x` names no path.
+/// A missing script fails exactly like unfinished work, so every branch would score zero.
 pub(crate) fn gates_missing_from_the_tree(goal: &GoalSpec, tree: &[Value]) -> Vec<String> {
     let shipped: std::collections::BTreeSet<&str> =
         tree.iter().filter_map(|f| f.get("path").and_then(Value::as_str)).collect();
@@ -169,14 +142,8 @@ pub(crate) fn gates_missing_from_the_tree(goal: &GoalSpec, tree: &[Value]) -> Ve
         .collect()
 }
 
-/// Can this gate judge anything at all?
-///
-/// A check that already passes on the base tree cannot judge: a candidate that changes nothing
-/// satisfies it (goal 07: 1000 scored on candidates that had deleted their exports). This is the
-/// cheapest place to find out, before a generation buys the wrong answer.
-///
-/// `Ok(false)` means stop, having spent nothing. A critic that cannot RUN is reported and ignored: a
-/// failing guard must not stop work a person asked for.
+/// A check that already passes on the base cannot judge (goal 07 scored 1000 on deleted exports).
+/// `Ok(false)` means stop, having spent nothing; a critic that cannot run is reported and ignored.
 pub(crate) fn gate_can_judge(
     goal: &GoalSpec,
     checks: &[Value],
@@ -235,16 +202,13 @@ pub(crate) fn gate_can_judge(
                 return false;
             }
             println!("gate: every check fails on the base tree, so every check can judge");
-            // WHY each one failed, because "it failed" is two states: work not done (a gate that can judge) and a
-            // tree that cannot build (a gate that fails every branch identically). Printed rather than guessed:
-            // a heuristic on the word "compile" would refuse legitimate goals.
+            // Printed, not guessed: a heuristic on "compile" would refuse legitimate goals.
             for r in &base.reasons {
                 let first = r.lines().next().unwrap_or(r).trim();
                 println!("  · {}", &first[..first.len().min(160)]);
             }
             true
         }
-        // Reported, not fatal: a guard that cannot run must not stop a run a person asked for.
         Err(e) => {
             println!("gate: could not be criticised ({e}) — running anyway");
             true
@@ -252,11 +216,7 @@ pub(crate) fn gate_can_judge(
     }
 }
 
-/// Prove the whole rig without spending anything.
-///
-/// Both apps serving already proves a lot: an app whose secret cannot be granted or whose egress is
-/// malformed fails to START (`select.rs` saw this). A `max_attempts: 0` run is refused by the driver
-/// BEFORE any model call, so the last round trip proves probe→driver for free.
+/// `max_attempts: 0` is refused by the driver before any model call, so the round trip is free.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn smoke(
     args: &Args,
@@ -275,8 +235,6 @@ pub(crate) fn smoke(
             json!({
                 "text": goal.text, "writable": goal.writable, "context": context,
                 "previous": [], "checks": checks, "base_commit": base_commit,
-                // Empty, like every other plan: the runner holds the tree, and this `max_attempts: 0` run never
-                // reaches the gate.
                 "base_tree": [], "max_attempts": 0, "seed": 1,
             })
             .to_string(),
@@ -288,9 +246,7 @@ pub(crate) fn smoke(
     println!("  · both graphs started and serve → links, egress and secret GRANTS are correct");
     println!("  · driver reachable → {body}");
 
-    // A decomposed goal brings up two more apps and a database, each provable for FREE: an unservable app
-    // never serves, publishing the contract exercises the registry through to a real SurrealDB, and
-    // `describe` asks the provider what it is without asking it to think.
+    // Each provable for free: `describe` asks the provider what it is without asking it to think.
     if !goal.parts.is_empty() {
         wait_serving(port, "goalcontract.acme.test", Duration::from_secs(180))?;
         wait_serving(port, "goalanswer.acme.test", Duration::from_secs(180))?;
@@ -309,8 +265,7 @@ pub(crate) fn smoke(
                 "  · contract v{v} published from {contract_path} → registry → graph → \
                  SurrealDB, and the database's secret was granted"
             ),
-            // A second smoke run against the same database finds the contract already there: same chain, not a
-            // failure.
+            // A second smoke run against the same database finds the contract already there.
             Err(e) if e.contains("already published") => match registry.current() {
                 Ok(c) => println!(
                     "  · contract v{} already in the registry, and readable → the whole \
@@ -351,8 +306,6 @@ mod tests {
     use super::*;
     use crate::CheckSpec;
 
-    /// A gate whose script is not in the shipped tree must be refused BEFORE a branch is spent: a missing
-    /// script and unfinished work are the same exit code (the `gate.sh` case).
     #[test]
     fn a_gate_script_missing_from_the_tree_is_refused() {
         let goal = |cmd: Vec<&str>| GoalSpec {
@@ -393,7 +346,6 @@ mod tests {
             missing[0]
         );
 
-        // The discriminator has to leave ordinary commands alone; none of these names a repo script.
         for cmd in [
             vec!["cargo", "test", "-p", "card-identify"],
             vec!["curl", "-sf", "http://127.0.0.1:8080/health"],
@@ -407,8 +359,6 @@ mod tests {
         }
     }
 
-    /// A component is `components/<name>/…` and nothing else: a path outside `components/` is app code,
-    /// and counting it would report a capability no future run can reuse.
     #[test]
     fn only_components_count_as_a_new_capability() {
         let files = serde_json::json!([
@@ -428,7 +378,6 @@ mod tests {
         );
     }
 
-    /// A run that wrote no component gained the pool nothing, and must say so.
     #[test]
     fn a_run_that_built_no_component_adds_no_capability() {
         let files = serde_json::json!([

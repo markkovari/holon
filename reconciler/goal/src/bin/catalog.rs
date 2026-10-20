@@ -1,25 +1,4 @@
-//! `comp-catalog` — the component catalogue, from the components' own sources.
-//!
-//! What a consumer needs to adopt a component WITHOUT reading its source: the WIT package and exports,
-//! the dependency footprint, the `wasi:config` knobs it reads, and the one-line description from its
-//! module doc. Printed as JSON with `--json`, and rendered into `components/CATALOG.md`.
-//! Deliberately NOT a committed `catalog.json`: see the note in `main`.
-//!
-//! ## Why this is not `comp-capgraph`
-//!
-//! They answer different questions from different evidence. `comp-capgraph` reads the BUILT ARTIFACTS
-//! (what a component really imports, after the linker drops the unreachable); this reads the SOURCE
-//! (what a component says it is for). A component that does not build vanishes from the graph but
-//! still has a description here.
-//!
-//! ## Why this is not Python any more
-//!
-//! It was `tools/gen-catalog.py`. The catalogue is read by `capsearch`, so it is load-bearing, and it
-//! could not be tested while it embedded `wasm_size_bytes` and `wasm_sha256_12` from the last build
-//! (stale by construction). Now it is a function of the source and can be checked, cheaply, from
-//! `reconciler/tests/derived.rs`.
-//!
-//! Non-ASCII is written as itself (Python's `ensure_ascii=True` turned 256 em-dashes into `—`).
+//! The component catalogue from sources (what a component is for); `comp-capgraph` reads artifacts.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -43,16 +22,11 @@ struct Entry {
     capability_deps: Vec<String>,
     config_keys: Vec<ConfigKey>,
     reusable_as_is: bool,
-    /// A component whose exports all return an `UNIMPLEMENTED:` marker is a CONTRACT, not a capability.
-    /// Detected from the source rather than a list, so implementing the thing clears the flag.
+    /// Detected from the source, so implementing the thing clears the flag.
     unimplemented: bool,
 }
 
-/// Where this crate's WIT actually lives.
-///
-/// A crate may point `[package.metadata.component.target].path` at a shared directory: `auth-guard`
-/// uses the repo-root `wit/` to share the wkg-vendored `wasi:*` packages. Assuming a local `wit/` hid
-/// the most-depended-on capability from `capsearch` (36 applications import `auth:guard`).
+/// `target.path` may point at a shared dir (`auth-guard` uses the root `wit/`).
 fn component_wit_dir(dir: &Path) -> Option<PathBuf> {
     let manifest = dir.join("Cargo.toml");
     if let Ok(text) = std::fs::read_to_string(&manifest) {
@@ -89,10 +63,7 @@ fn first_doc_line(lib: &Path) -> String {
     String::new()
 }
 
-/// The world this crate builds, from `[package.metadata.component.target].world`.
-///
-/// Needed because a shared wit directory holds many worlds, and reading exports from all of them
-/// attributed an unrelated `types` interface to `accounts-app` and `sample-consumer`.
+/// A shared wit directory holds many worlds; reading all of them misattributed exports.
 fn target_world(dir: &Path) -> Option<String> {
     let text = std::fs::read_to_string(dir.join("Cargo.toml")).ok()?;
     let re =
@@ -133,9 +104,7 @@ fn scan(dir: &Path, res: &Regexes) -> Option<Entry> {
     if wits.is_empty() || !lib.is_file() {
         return None;
     }
-    // Comments stripped FIRST: a world may be written on one line (`world calc { export arith; }`), so the
-    // export pattern cannot be anchored to a line start, and an unanchored one matches "export" inside
-    // prose (it reclassified seven components).
+    // Comments stripped first: an unanchored `export` pattern matched prose.
     let wit_text = wits
         .iter()
         .filter_map(|w| std::fs::read_to_string(w).ok())
@@ -153,8 +122,7 @@ fn scan(dir: &Path, res: &Regexes) -> Option<Entry> {
 
     let package =
         res.package.captures(&wit_text).map(|c| c[1].trim().to_string()).unwrap_or_default();
-    // Only the world this crate builds; the whole text when it names none (a component with its own
-    // single-world `wit/`).
+    // The whole text when it names none (a single-world local `wit/`).
     let scope = target_world(dir)
         .and_then(|w| world_body(&wit_text, &w).map(str::to_string))
         .unwrap_or_else(|| wit_text.clone());

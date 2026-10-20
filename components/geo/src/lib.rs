@@ -1,17 +1,4 @@
-//! `geo` — distance between two lat/lon points, a bounding box for a within-N-km filter, and IP address classing
-//!
-//! Pure coordinate math + IP literal classification. This is NOT a GeoIP
-//! database: IP -> country/city lookup needs a licensed dataset the host
-//! injects, so it is deliberately out of scope. This component owns only the
-//! pure math + parsing every app would otherwise re-implement:
-//!   - `distance-meters`: great-circle (haversine) distance between two points.
-//!   - `bounding-box`: an axis-aligned box around a point for a "within N m"
-//!     pre-filter (cheap rejection before an exact distance check).
-//!   - `contains`: inclusive point-in-box test.
-//!   - `classify-ip`: parse an IPv4/IPv6 literal and class it as
-//!     public/private/loopback/special.
-//!
-//! No state, no host imports — pure compute.
+//! Not a GeoIP database: IP-to-location needs a licensed dataset, so it is out of scope.
 
 #[allow(warnings)]
 mod bindings;
@@ -26,7 +13,6 @@ struct Component;
 /// Mean Earth radius in meters (IUGG mean radius R1).
 const EARTH_RADIUS_M: f64 = 6_371_008.8;
 
-/// Meters per degree of latitude (approx, treating the Earth as a sphere).
 const M_PER_DEG_LAT: f64 = 111_320.0;
 
 fn validate(p: &Point) -> Result<(), GeoError> {
@@ -68,12 +54,12 @@ fn classify(ip: IpAddr) -> IpClass {
     }
 }
 
-/// IPv6 unique-local address: fc00::/7 (first byte 0xfc or 0xfd).
+/// fc00::/7.
 fn is_unique_local(v6: Ipv6Addr) -> bool {
     (v6.octets()[0] & 0xfe) == 0xfc
 }
 
-/// IPv6 link-local: fe80::/10.
+/// fe80::/10.
 fn is_link_local_v6(v6: Ipv6Addr) -> bool {
     let o = v6.octets();
     o[0] == 0xfe && (o[1] & 0xc0) == 0x80
@@ -99,9 +85,7 @@ impl Guest for Component {
 
         let dlat_deg = radius_meters / M_PER_DEG_LAT;
 
-        // Meters per degree of longitude shrinks with latitude; near the poles
-        // cos(lat) -> 0, so the longitude span blows up. Guard against that and
-        // clamp to the full [-180, 180] range when cos is tiny.
+        // cos(lat) -> 0 near the poles, so clamp to the full longitude range.
         let cos_lat = center.lat.to_radians().cos();
         let (min_lon, max_lon) = if cos_lat.abs() < 1e-12 {
             (-180.0, 180.0)
@@ -145,9 +129,7 @@ mod tests {
         classify(s.parse().expect(s))
     }
 
-    /// Anything not Public is a place a request must not be sent on a user's
-    /// say-so. That is what this classification is for, so the boundaries are
-    /// pinned on both sides rather than sampled in the middle.
+    /// Anything not Public must not be dialled on a user's say-so, so boundaries are pinned on both sides.
     #[test]
     fn every_private_v4_range_is_classified_private() {
         for edge in [
@@ -160,8 +142,7 @@ mod tests {
         ] {
             assert_eq!(c(edge), IpClass::Private, "{edge}");
         }
-        // Just OUTSIDE 172.16/12 on both sides — the range people get wrong,
-        // because it is not 172.0/8 and not 172.16/16.
+        // Just outside 172.16/12: not 172.0/8 and not 172.16/16.
         assert_eq!(c("172.15.255.255"), IpClass::Public);
         assert_eq!(c("172.32.0.0"), IpClass::Public);
         assert_eq!(c("9.255.255.255"), IpClass::Public);
@@ -175,21 +156,15 @@ mod tests {
         assert_eq!(c("0.0.0.0"), IpClass::Special);
         assert_eq!(c("255.255.255.255"), IpClass::Special);
         assert_eq!(c("224.0.0.1"), IpClass::Special, "multicast");
-        // The cloud metadata address is PUBLIC by this classification. That is
-        // correct for what this function claims to answer, and it is exactly
-        // why an egress policy needs more than an IP class.
         assert_eq!(c("169.254.169.254"), IpClass::Special, "link-local covers it");
     }
 
-    /// fc00::/7 — and the /7 is the point. The check masks the low bit of the
-    /// first octet, so both fc00:: and fd00:: are covered; testing only `fd`
-    /// (what real deployments use) would miss a wrong mask.
+    /// Covers both fc00:: and fd00::; testing only `fd` would miss a wrong mask.
     #[test]
     fn unique_local_v6_covers_the_whole_slash_7() {
         assert!(is_unique_local("fc00::1".parse::<Ipv6Addr>().unwrap()));
         assert!(is_unique_local("fd00::1".parse::<Ipv6Addr>().unwrap()));
         assert!(is_unique_local("fdff:ffff::1".parse::<Ipv6Addr>().unwrap()));
-        // Neighbours on both sides are NOT unique-local.
         assert!(!is_unique_local("fb00::1".parse::<Ipv6Addr>().unwrap()));
         assert!(!is_unique_local("fe00::1".parse::<Ipv6Addr>().unwrap()));
         assert!(!is_unique_local("2001:db8::1".parse::<Ipv6Addr>().unwrap()));
@@ -202,10 +177,7 @@ mod tests {
         assert_eq!(c("2606:4700::1111"), IpClass::Public);
     }
 
-    /// An IPv4-mapped IPv6 address carries a v4 inside it, and a classifier
-    /// that only looks at the v6 shape calls `::ffff:127.0.0.1` public. Pinned
-    /// as the behaviour that IS, so a change to it is a decision and not a
-    /// surprise.
+    /// `::ffff:127.0.0.1` is pinned as what is, so changing it is a decision, not a surprise.
     #[test]
     fn ipv4_mapped_addresses_are_classified_explicitly() {
         let mapped = "::ffff:127.0.0.1".parse::<IpAddr>().unwrap();

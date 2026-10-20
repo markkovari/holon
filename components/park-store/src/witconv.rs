@@ -1,7 +1,4 @@
-//! The contract's records, between this crate's generated bindings and `holon_park::model` (the serde types of the
-//! wire), both directions. Shared by `park-store` and `park-gateway` as a SOURCE file (`#[path]`), not a library: each
-//! crate's `bindings.rs` makes its own Rust types for the same WIT types (ADR-0095), so it is compiled once per crate
-//! against `crate::wit::t` (the `holon:park/types` bindings). See `components/vcs-store/src/witconv.rs`.
+//! Included via `#[path]` by park-store and park-gateway: each crate's bindings make their own types (ADR-0095).
 
 use holon_park::model as m;
 use holon_park::ParkError;
@@ -51,7 +48,6 @@ impl<T: ToModel> ToModel for Vec<T> {
     }
 }
 
-/// A record with the same name and fields on both sides.
 macro_rules! record {
     ($name:ident { $($field:ident),* $(,)? }) => {
         impl ToWit for m::$name {
@@ -65,8 +61,6 @@ macro_rules! record {
     };
 }
 
-/// A variant or enum with the same name and cases on both sides; a case has
-/// no payload or one.
 macro_rules! variant {
     ($name:ident { $($case:ident $(($x:ident))?),* $(,)? }) => {
         impl ToWit for m::$name {

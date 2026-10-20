@@ -1,14 +1,4 @@
-//! `notify-probe` — the door onto `notify:prefs` and `notify:inbox`.
-//!
-//!   PUT  /prefs                  {subject, default_channels[], overrides{}, email_address}
-//!   GET  /prefs?subject=
-//!   POST /notify                 {subject, kind, title, body, payload}
-//!   GET  /inbox?subject=&after=&limit=
-//!   GET  /unread?subject=
-//!   POST /read                   {subject, seqs[]}   or {subject, through}
-//!
-//! Every route answers JSON with 200 unless the request itself was malformed: what is under test is what the capabilities
-//! decided, and a status code would flatten "that subject wants no email" into "the gateway refused".
+//! 200 unless the request is malformed: a status code would flatten "that subject wants no email" into "the gateway refused".
 
 #[allow(warnings)]
 mod bindings {
@@ -33,7 +23,6 @@ mod bindings {
         world: "notify:probe/notify-probe",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;

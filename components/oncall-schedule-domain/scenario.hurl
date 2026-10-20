@@ -33,13 +33,11 @@ Authorization: Bearer {{bob_token}}
 {"engineer": "{{bob_subject}}"}
 HTTP 403
 
-# alice (owner) reassigns her own shift to bob
 POST {{base}}/api/shifts/{{shift_id}}/reassign
 Authorization: Bearer {{alice_token}}
 {"engineer": "{{bob_subject}}"}
 HTTP 200
 
-# lead overrides and reassigns back to alice
 POST {{base}}/api/shifts/{{shift_id}}/reassign
 Authorization: Bearer {{lead_token}}
 {"engineer": "{{alice_subject}}"}

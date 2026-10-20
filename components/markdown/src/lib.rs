@@ -1,20 +1,5 @@
-//! `markdown` — render user-supplied Markdown to HTML safely, escaping raw HTML instead of trusting it
-//!
-//! Safe Markdown -> HTML for a practical CommonMark *subset*. Pure compute, no state, no host imports.
-//!
-//! # Safety guarantee (the reason this component exists)
-//!
-//! Rendering user Markdown is a classic XSS vector; **no input can inject executable HTML**:
-//!
-//! * **Raw HTML is escaped, never passed through.** Every block's text is HTML-escaped *first*, and only
-//!   then is inline formatting applied to the already-escaped text, so `<script>` renders as inert text.
-//!   No code path copies source bytes into the output unescaped.
-//! * **Link/URL schemes are sanitized.** `[text](url)` emits an `href` only for `http://`, `https://`,
-//!   `mailto:` or a relative reference (`/...`, `#...`); `javascript:`, `data:`, `vbscript:` etc. are
-//!   dropped (the text still renders, escaped). With `safe-links`, surviving links also get
-//!   `rel="nofollow noopener" target="_blank"`.
-//!
-//! The parser is a pragmatic subset: formatting is best-effort, escaping and scheme sanitization are not.
+//! User Markdown -> HTML: raw HTML is escaped before inline formatting,
+//! and only http(s)/mailto/relative hrefs survive.
 
 #[allow(warnings)]
 mod bindings;
@@ -23,7 +8,6 @@ use bindings::exports::md::render::renderer::{Guest, Options};
 
 struct Component;
 
-/// Escape text so it can never be interpreted as HTML markup.
 fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -39,11 +23,10 @@ fn escape(s: &str) -> String {
     out
 }
 
-/// Return `Some(url)` if the scheme is allowed (`http://`, `https://`, `mailto:`, or a relative reference
-/// starting with `/` or `#`), else `None`, so `javascript:`, `data:` and `vbscript:` never become an `href`.
+/// Allow-list, so `javascript:`, `data:` and `vbscript:` never become an `href`.
 fn sanitize_url(url: &str) -> Option<String> {
     let trimmed = url.trim();
-    // Strip control/whitespace chars that could obscure a scheme (e.g. `java\tscript:`); if any are present, treat conservatively.
+    // Control chars can hide a scheme (`java\tscript:`): any present rejects the URL.
     let cleaned: String = trimmed.chars().filter(|c| !c.is_control() && *c != '\u{0}').collect();
     if cleaned != trimmed {
         return None;
@@ -61,7 +44,7 @@ fn sanitize_url(url: &str) -> Option<String> {
     }
 }
 
-/// Apply inline Markdown to already-escaped text.
+/// Input is already escaped.
 fn inline(escaped: &str, opts: &Options) -> String {
     // Order matters: code spans first (their content is opaque), then links, then bold, then italic.
     let with_code = inline_code(escaped);
@@ -72,7 +55,6 @@ fn inline(escaped: &str, opts: &Options) -> String {
     inline_emphasis(&with_em, "_", "em")
 }
 
-/// `code` -> <code>code</code>. The inner text is already escaped; no further inline formatting inside.
 fn inline_code(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let bytes = s.as_bytes();
@@ -94,7 +76,6 @@ fn inline_code(s: &str) -> String {
     out
 }
 
-/// `[text](url)` -> sanitized anchor. `text` keeps its inline formatting; the url is scheme-checked.
 fn inline_links(s: &str, opts: &Options) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
@@ -143,7 +124,6 @@ fn inline_links(s: &str, opts: &Options) -> String {
     out
 }
 
-/// Paired-delimiter emphasis: `marker text marker` -> <tag>text</tag>.
 fn inline_emphasis(s: &str, marker: &str, tag: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
@@ -224,7 +204,6 @@ fn unordered_item(line: &str) -> Option<&str> {
     line.strip_prefix("- ").or_else(|| line.strip_prefix("* "))
 }
 
-/// Render a paragraph's lines into inline-formatted HTML.
 fn render_para(lines: &[String], opts: &Options) -> String {
     let joined = lines.join("\n");
     let escaped = escape(&joined);
@@ -258,7 +237,7 @@ fn render_html(markdown: &str, opts: &Options) -> String {
                 i += 1;
             }
             if i < lines.len() {
-                i += 1; // consume closing fence
+                i += 1;
             }
             out.push_str("<pre><code");
             if !info.is_empty() {
@@ -364,8 +343,6 @@ fn render_html(markdown: &str, opts: &Options) -> String {
     out
 }
 
-/// Strip inline Markdown markers from a single line, returning plain text.
-/// Links become their visible text; code spans become their content.
 fn strip_inline(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -469,8 +446,7 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::*;
 
-    /// Everything that can start a tag or break an attribute must not survive. Both quote forms matter: a
-    /// bare `'` escapes a single-quoted attribute the day the emitter uses them.
+    /// Both quote forms: a bare `'` breaks out of a single-quoted attribute.
     #[test]
     fn escape_covers_every_character_that_can_start_markup() {
         assert_eq!(escape("<script>"), "&lt;script&gt;");
@@ -482,7 +458,7 @@ mod tests {
         assert_eq!(escape("plain text 123"), "plain text 123");
     }
 
-    /// The allow-list is the point: anything not named is rejected, so an unforeseen scheme cannot become an `href`.
+    /// The allow-list is the point: an unforeseen scheme cannot become an `href`.
     #[test]
     fn only_allow_listed_schemes_can_become_an_href() {
         assert!(sanitize_url("https://example.com").is_some());
@@ -495,12 +471,10 @@ mod tests {
         assert!(sanitize_url("data:text/html,<script>").is_none());
         assert!(sanitize_url("vbscript:msgbox").is_none());
         assert!(sanitize_url("file:///etc/passwd").is_none());
-        // Not on the list, so not allowed — the default is refusal.
         assert!(sanitize_url("ftp://example.com").is_none());
     }
 
-    /// The evasions this function exists for: case folding (`JaVaScRiPt:`) and hidden control characters
-    /// (`java\tscript:` is parsed as the scheme by browsers while failing a literal match).
+    /// Evasions: case folding, and control chars (browsers parse `java\tscript:` as the scheme).
     #[test]
     fn scheme_checks_survive_case_and_control_character_evasion() {
         assert!(sanitize_url("JaVaScRiPt:alert(1)").is_none());
@@ -510,7 +484,6 @@ mod tests {
         assert!(sanitize_url("java\u{0}script:alert(1)").is_none());
         // A control character ANYWHERE is a rejection, not a strip: stripping would hand back a URL the caller never wrote.
         assert!(sanitize_url("https://exa\tmple.com").is_none());
-        // Case folding must not break the legitimate side.
         assert!(sanitize_url("HTTPS://EXAMPLE.COM").is_some());
     }
 

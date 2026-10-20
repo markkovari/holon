@@ -1,60 +1,29 @@
-//! `deck-build` — is this deck legal to play, and what is missing from your collection to build it
-//!
-//! `tests/legality.rs` is the specification and is not writable from here.
-//!
-//! Two questions a deck builder has to answer and neither is arithmetic on a list:
-//! whether a pile of cards is a deck the rules allow, and — given what you already
-//! own — what you still have to buy and what that costs.
-//!
-//! Pure compute. A deck, a collection and some prices in; a verdict and a shopping
-//! list out. Nothing here fetches a price or reads a store.
-//!
-//! The four-copy rule counts NAMES, not printings: "at most four of any card" means four
-//! `Pikachu` across every set and printing. Counting by the collection's id gives a
-//! sixteen-Pikachu deck that passes and is not legal.
-//!
-//! Basic Energy is uncapped; Special Energy is an ordinary card capped at four. One word
-//! apart, and the whole rule.
-//!
-//! Exactly sixty, not "at least"; no Basic Pokémon means nothing in play on turn one, so
-//! illegal. Every reason a deck fails is reported, not the first: a builder fixing one
-//! problem per attempt is one nobody uses.
+//! The four-copy rule counts names, not printings; Basic Energy is uncapped, Special Energy is not.
 
-/// What a card is, for the rules that care. The collection knows far more about a
-/// card than this; a deck only needs to know what the format restricts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CardKind {
-    /// Can be played to the bench on turn one. A deck needs at least one.
     BasicPokemon,
-    /// Evolves from something. Useless without its basic, but that is a deck
-    /// builder's problem, not a legality one.
     EvolvedPokemon,
     Trainer,
-    /// Uncapped: play as many as you like.
     BasicEnergy,
-    /// An ordinary card that happens to be energy. Capped at four.
     SpecialEnergy,
 }
 
-/// One line of a deck list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Slot {
-    /// The printing, as the collection keys it: `sv3-125/197`.
     pub card_id: String,
-    /// The printed NAME, which is what the four-copy rule counts.
+    /// What the four-copy rule counts.
     pub name: String,
     pub kind: CardKind,
     pub quantity: u32,
 }
 
-/// What you already own, by printing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Owned {
     pub card_id: String,
     pub quantity: u32,
 }
 
-/// The market price of one printing, in minor units.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Price {
     pub card_id: String,
@@ -62,47 +31,33 @@ pub struct Price {
     pub currency: String,
 }
 
-/// Why a deck is not legal. Every applicable one is reported, not just the first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Illegal {
-    /// A deck is exactly sixty cards. Carries the count found.
     WrongSize(u32),
-    /// More than four of one NAME, across every printing of it. Carries the name
-    /// and the count.
     TooManyOfAName { name: String, count: u32 },
-    /// Nothing to put into play on turn one.
     NoBasicPokemon,
-    /// A slot with no cards in it is a typo, not an empty slot.
     ZeroQuantity(String),
 }
 
-/// One line of what you still have to buy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Missing {
     pub card_id: String,
     pub name: String,
-    /// How many more than you own.
     pub quantity: u32,
-    /// `quantity` × the market price, or `None` when nothing has priced it — which
-    /// is NOT the same as free, and the caller has to be able to tell.
+    /// `None` when nothing priced it, which is not free.
     pub cost_minor: Option<i64>,
 }
 
-/// What it would take to build a deck you do not fully own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shortfall {
-    /// Sorted by card id, so the same deck always produces the same list.
+    /// Sorted by card id, so the same deck always gives the same list.
     pub missing: Vec<Missing>,
-    /// The total for the lines that HAVE a price.
     pub cost_minor: i64,
     pub currency: String,
-    /// How many missing cards nothing has priced. Their cost is not in
-    /// `cost_minor`, and a caller that ignores this is quoting a total that is too
-    /// low without saying so.
+    /// Not in `cost_minor`: ignoring this quotes a total that is too low.
     pub unpriced: u32,
 }
 
-/// Every reason this deck is not legal, or an empty list.
 pub fn legality(deck: &[Slot]) -> Vec<Illegal> {
     use std::collections::BTreeMap;
 
@@ -138,10 +93,7 @@ pub fn legality(deck: &[Slot]) -> Vec<Illegal> {
     why
 }
 
-/// What is missing from `owned` to build `deck`, and what that costs.
-///
-/// `currency` is the one to report and the one prices must be in; a price in
-/// another currency does not count toward the total and its card is `unpriced`.
+/// A price in another currency does not count; its card is `unpriced`.
 pub fn shortfall(deck: &[Slot], owned: &[Owned], prices: &[Price], currency: &str) -> Shortfall {
     use std::collections::BTreeMap;
 
@@ -183,9 +135,6 @@ pub fn shortfall(deck: &[Slot], owned: &[Owned], prices: &[Price], currency: &st
 
     Shortfall { missing, cost_minor, currency: currency.to_string(), unpriced }
 }
-
-// WIT <-> plain-type mapping only; the logic is judged by `tests/legality.rs` against the
-// plain functions.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]

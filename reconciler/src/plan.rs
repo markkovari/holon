@@ -1,10 +1,4 @@
-//! The diff: desired manifests vs observed lattice, in, commands out.
-//!
-//! Pure: no I/O, no clock, no network, so it can be tested to destruction.
-//!
-//! **It assumes `desired` is complete.** A partial list reads as "these apps were deleted" and
-//! stops them. Callers must never pass the result of a failed poll (see the `continue` in
-//! `reapply_loop`).
+//! Pure diff of desired vs observed. Assumes `desired` is complete: a partial list stops apps.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -28,19 +22,13 @@ pub enum Mode {
     Spread,
     /// One per eligible node; `replicas` is ignored.
     Daemon,
-    /// Exactly the named nodes.
     Pinned,
 }
 
-/// How many replicas an app should have, as a function of how busy it is.
-///
-/// `target` is concurrent requests per replica, not requests per second: the ingress already
-/// observes in-flight counts, and it needs no clock or window (a rate over the wrong window is how
-/// autoscalers oscillate).
+/// `target` is concurrent requests per replica, not a rate: a rate over a wrong window oscillates.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Scale {
-    /// `0` parks the app; a request brings it back (the ingress asks the reconciler to place a
-    /// replica and holds the request while it starts, ADR-0042).
+    /// `0` parks the app; a request brings it back (ADR-0042).
     pub min: u32,
     pub max: u32,
     /// Concurrent requests one replica should carry before another is added.
@@ -48,25 +36,20 @@ pub struct Scale {
     pub target: u32,
 }
 
-/// Observed demand per ingress host, as published by the ingress.
 pub type Load = BTreeMap<String, u32>;
 
-/// A component at its ceiling with demand still arriving.
-///
-/// Autoscaling cannot fix this (`max` is the operator's limit), so it is reported; otherwise a
-/// fleet pinned at `max` and shedding looks correctly sized.
+/// Reported because autoscaling cannot fix it; a fleet pinned at `max` would look correctly sized.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AtCeiling {
     pub tenant: String,
     pub app: String,
     pub component: String,
     pub max: u32,
-    /// What the demand actually asked for, before it was clamped.
+    /// Before clamping.
     pub wanted: u32,
 }
 
-/// How many replicas this component should have right now. Separate from placement so "how many"
-/// can be tested without a fleet.
+/// Separate from placement so "how many" can be tested without a fleet.
 pub fn desired_replicas(c: &Component, m: &Manifest, load: Option<&Load>, running: u32) -> u32 {
     desired_and_wanted(c, m, load, running).0
 }
@@ -86,19 +69,15 @@ fn desired_and_wanted(
         let hi = scale.max.max(scale.min);
         (n.clamp(lo, hi), n)
     };
-    // No signal at all is NOT no traffic. Falling back to the manifest's `replicas` would shrink an
-    // app that had scaled up exactly when nobody can see its load, so hold what is running
-    // (ADR-0022: a failed poll means we change nothing).
+    // No signal is not no traffic: hold what runs (ADR-0022: a failed poll changes nothing).
     let Some(load) = load else {
         return hold(running.max(scale.min));
     };
-    // An app nobody has reported on has not been published by the ingress yet (just started, or
-    // before the first sample). Falling to `min` would scale a busy app to zero on every ingress
-    // restart.
+    // Not published yet: falling to `min` would scale a busy app to zero on every ingress restart.
     let Some(host) = m.ingress.as_ref().map(|i| i.host.as_str()) else {
         return hold(running.max(scale.min));
     };
-    // A host with no sample yet is the same case: hold, do not collapse.
+    // No sample yet: hold, do not collapse.
     let Some(&demand) = load.get(host) else {
         return hold(running.max(scale.min));
     };
@@ -108,7 +87,6 @@ fn desired_and_wanted(
     (wanted.clamp(scale.min, scale.max.max(scale.min)), wanted)
 }
 
-/// What a node can take, as it advertises it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capacity {
     #[serde(default)]
@@ -116,8 +94,7 @@ pub struct Capacity {
 }
 
 impl Capacity {
-    /// Never zero: a node that advertises nothing (older host, unparseable field) must still be
-    /// placeable and not panic when divided by. One is the pessimistic reading.
+    /// Never zero: a node advertising nothing must stay placeable and not divide by zero.
     pub fn weight(&self) -> usize {
         self.cpus.max(1)
     }
@@ -129,7 +106,7 @@ pub struct Placement {
     pub mode: Mode,
     #[serde(default)]
     pub nodes: Vec<String>,
-    /// Matched against the labels a node advertises. Equality only.
+    /// Equality only.
     // ponytail: equality only; add operators when a real multiregion query needs them.
     #[serde(default)]
     pub constraints: BTreeMap<String, String>,
@@ -142,14 +119,12 @@ pub struct Component {
     pub digest: String,
     #[serde(default = "one")]
     pub replicas: u32,
-    /// Autoscaling bounds. `None` means `replicas` is a fixed count; a defaulted `min: 1, max: 1`
-    /// would read as "autoscaling on and pinned", a different state to debug.
+    /// `None` means fixed `replicas`; a defaulted `min: 1, max: 1` reads as pinned autoscaling.
     #[serde(default)]
     pub scale: Option<Scale>,
     #[serde(default)]
     pub placement: Placement,
-    /// Stamped from `plan.host_needs` at save, never authored, so placement is a set comparison and
-    /// never needs `wit:reflect`.
+    /// Stamped at save, never authored, so placement is a set comparison.
     #[serde(default)]
     pub host_needs: Vec<String>,
     #[serde(default)]
@@ -157,8 +132,7 @@ pub struct Component {
     /// By reference only. A value must never reach a manifest (ADR-0010).
     #[serde(default)]
     pub secrets: Vec<SecretRef>,
-    /// Authorities this component may reach over `wasi:http`. Empty is deny-all.
-    /// Stamped by the platform, never authored by a tenant (ADR-0008).
+    /// Empty is deny-all. Stamped by the platform, never authored by a tenant (ADR-0008).
     #[serde(default)]
     pub egress: Vec<String>,
 }
@@ -174,8 +148,7 @@ pub struct SecretRef {
     pub reference: String,
 }
 
-/// `composer.edge` verbatim: the vocabulary the studio canvas emits and `composer::plan` consumes.
-/// It names which import of which instance, which is what the subtype checker validates.
+/// `composer.edge` verbatim, so the subtype checker validates it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Link {
     pub plug: String,
@@ -202,7 +175,7 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    /// The component placement is computed for; the rest of the app follows it (see `place`).
+    /// The rest of the app follows this component (see `place`).
     fn root(&self) -> Option<&Component> {
         match &self.ingress {
             Some(i) => self.components.iter().find(|c| c.id == i.component),
@@ -210,8 +183,7 @@ impl Manifest {
         }
     }
 
-    /// `import iface -> instance id` for one component. Every entry is local because the graph is
-    /// co-located (see `place`), so the host binds these to direct in-process calls.
+    /// All local, as the graph is co-located: the host binds direct in-process calls.
     fn link_table(&self, socket: &str) -> BTreeMap<String, String> {
         self.links
             .iter()
@@ -220,14 +192,8 @@ impl Manifest {
             .collect()
     }
 
-    /// Two links giving one component the same interface from different providers.
-    ///
-    /// Refused rather than resolved: an import is keyed by INTERFACE (link table, `Scope.links`,
-    /// wasmtime's linker), so `collect()` would keep whichever came last and the app would deploy
-    /// wired to a provider nobody chose. Telling them apart needs NAMED imports, which this
-    /// platform cannot bind today.
-    /// ponytail: revisit if named-import linking becomes available; the manifest
-    /// shape would need a name per link, not just an interface.
+    /// Refused, not resolved: imports are keyed by interface, so the last link would silently win.
+    /// ponytail: revisit if named-import linking becomes available (a name per link).
     fn conflicting_links(&self) -> Vec<String> {
         let mut seen: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
         for l in &self.links {
@@ -254,18 +220,13 @@ pub struct RunningInstance {
     pub digest: String,
     #[serde(default = "one")]
     pub count: u32,
-    /// The Host header this instance answers to, when it is the one serving HTTP. Advertised so an
-    /// ingress can build `host -> [node]` from inventory alone, keeping the data plane up while the
-    /// control plane is down.
+    /// Lets an ingress route from inventory alone while the control plane is down.
     #[serde(default)]
     pub ingress_host: Option<String>,
 }
 
-/// One host's whole inventory, as written to the `comp-inventory` KV bucket. A full snapshot
-/// rather than a delta: a few KB, idempotent, and a new reconciler learns the world in one
-/// heartbeat with no replay.
-// ponytail: full snapshot; switch to deltas + periodic full sync when one exceeds
-// the NATS max payload, i.e. thousands of instances on one node.
+/// A full snapshot, not a delta: a few KB, idempotent, and a new reconciler learns all in one beat.
+// ponytail: full snapshot; deltas + periodic full sync once one exceeds NATS max payload.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct NodeInventory {
     pub node: String,
@@ -274,17 +235,12 @@ pub struct NodeInventory {
     /// Host capabilities this node can grant, e.g. `wasi:keyvalue/store`.
     #[serde(default)]
     pub host_ifaces: Vec<String>,
-    /// Can every replica of an app see this node's store, wherever it runs?
-    ///
-    /// Defaults to FALSE: a node that predates this field or has an unparseable inventory must read
-    /// as node-local, or a stateful app would be spread across nodes that silently diverge.
+    /// False by default: an unknown node must read as node-local, or stateful replicas diverge.
     #[serde(default)]
     pub kv_shared: bool,
-    /// Where this node can be reached, `host:port`. A node bound to `0.0.0.0` knows its port, not
-    /// its address.
+    /// A node bound to `0.0.0.0` knows its port, not its address.
     #[serde(default)]
     pub address: String,
-    /// What this node can take.
     #[serde(default)]
     pub capacity: Capacity,
     #[serde(default)]
@@ -306,8 +262,7 @@ pub enum Command {
         links: BTreeMap<String, String>,
         host_needs: Vec<String>,
         egress: Vec<String>,
-        /// The Host header this instance answers to, when it is the one serving HTTP. `None` for a
-        /// plug: it is reachable through links.
+        /// `None` for a plug: it is reachable through links.
         ingress_host: Option<String>,
     },
     Stop {
@@ -342,8 +297,7 @@ pub struct Outcome {
     /// Components that wanted more replicas than `max` allows.
     #[serde(default)]
     pub at_ceiling: Vec<AtCeiling>,
-    /// Commands the cap dropped this pass. Never silently truncated: a dropped command would read
-    /// as "converged".
+    /// Never silently truncated: a dropped command would read as "converged".
     pub deferred: usize,
 }
 
@@ -353,10 +307,7 @@ pub struct Cfg {
     pub settle_passes: u32,
     /// Commands emitted per pass, so a mass event drains instead of stampeding.
     pub max_commands: usize,
-    /// Let a converged app keep its placement instead of re-ranking the fleet.
-    ///
-    /// On by default; it is why a pass is milliseconds. It is a switch so the differential test can
-    /// prove both paths agree, and so an operator can turn it off in the field to rule it out.
+    /// A switch so the differential test can prove both paths agree, and to rule it out live.
     pub fast_path: bool,
 }
 
@@ -367,27 +318,18 @@ impl Default for Cfg {
     }
 }
 
-/// How many consecutive passes each surplus has been observed for.
-///
-/// Scale *up* is not tracked: under-replicated fires on the first pass. Only removal waits.
+/// Only removal waits: under-replicated fires on the first pass.
 #[derive(Debug, Clone, Default)]
 pub struct Hysteresis {
     seen: BTreeMap<Key, u32>,
-    /// What the fleet looked like last pass (node names, labels, interfaces, capacity), hashed.
-    ///
-    /// The converged fast path keeps an app where it is, but a joining node must attract a share of
-    /// an app already at its replica count, which counting replicas cannot see. When this differs,
-    /// every app takes the full ranking for one pass.
+    /// Hashed fleet shape: when it changes, every app takes the full ranking for one pass.
     fleet: Option<u64>,
 }
 
 type Key = (String, String, String, String, String); // tenant, app, component, digest, node
-/// Who a set of replicas belongs to: tenant, app, component, digest. Borrowed, because it is looked
-/// up once per app per pass and allocating there is the difference between 46 ms and 300 ms.
+/// Borrowed: allocating here once per app per pass was 300 ms vs 46 ms.
 type Owner<'a> = (&'a str, &'a str, &'a str, &'a str);
 
-/// A component's eligibility signature — its labels and interface needs —
-/// memoised against the node set that fits it.
 type EligibleFor<'a> =
     BTreeMap<(&'a BTreeMap<String, String>, &'a Vec<String>), Vec<&'a NodeInventory>>;
 
@@ -401,12 +343,8 @@ pub fn plan(
     let mut out = Outcome::default();
     let mut want: BTreeMap<Key, (u32, &Manifest, &Component)> = BTreeMap::new();
 
-    // Everything running, indexed ONCE: scanning every node's instances per manifest cost
-    // apps x instances (1.76 s for 10 000 apps on ten nodes, ADR-0055).
-    //
-    // The key includes tenant and app, which also fixes a correctness bug: matching on component id
-    // and digest alone let two tenants deploying the same catalogue component count each other's
-    // replicas.
+    // Indexed once: a scan per manifest cost 1.76 s at 10 000 apps (ADR-0055). Keyed by tenant and
+    // app too, or two tenants deploying one component count each other's replicas.
     let mut have: BTreeMap<Key, u32> = BTreeMap::new();
     let mut node_load: BTreeMap<&str, usize> = BTreeMap::new();
     for inv in observed {
@@ -424,8 +362,7 @@ pub fn plan(
             *node_load.get_mut(inv.node.as_str()).unwrap() += i.count as usize;
         }
     }
-    // The same index nested: owner -> node -> count. Borrowed keys, so ranking a node is a `&str`
-    // lookup, not five `String` allocations.
+    // Borrowed keys: ranking a node is a `&str` lookup, not five allocations.
     let mut running_by_node: BTreeMap<Owner<'_>, BTreeMap<&str, u32>> = BTreeMap::new();
     let mut running_total: BTreeMap<Owner<'_>, u32> = BTreeMap::new();
     for ((t, a, c, d, node), n) in &have {
@@ -436,13 +373,11 @@ pub fn plan(
     let by_node: BTreeMap<&str, &NodeInventory> =
         observed.iter().map(|n| (n.node.as_str(), n)).collect();
 
-    // Which nodes a component may go on, memoised on its eligibility signature: `fits` scans labels
-    // and interfaces per node and almost every app shares a signature.
+    // Memoised: almost every app shares an eligibility signature.
     let mut eligible_for: EligibleFor<'_> = BTreeMap::new();
     let fitting = |c: &Component, node: &str| by_node.get(node).is_some_and(|n| fits(c, n));
 
-    // Fleet composition, not fleet LOAD: instance counts change constantly and must not disable the
-    // fast path, but a node joining, leaving, or relabelling must.
+    // Composition, not load: a node joining or relabelling disables the fast path; traffic not.
     let fleet = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -529,9 +464,7 @@ pub fn plan(
             },
         };
 
-        // Spreading a STATEFUL app over nodes with node-local stores gives every replica its own
-        // store under the same bucket name: nothing errors, the counter just counts wrong.
-        // Refused rather than quietly placed (ADR-0013 "deny by omission").
+        // Node-local stores give each replica its own store under one name; refused (ADR-0013).
         if nodes.len() > 1 && holds_state(m) {
             let local: Vec<&str> = nodes
                 .iter()
@@ -557,14 +490,11 @@ pub fn plan(
             want.insert(key(m, &root.id, &root.digest, node), (*count, m, root));
             *pending.entry(node.clone()).or_default() += *count as usize;
         }
-        // The rest of the graph follows the root onto the same nodes, one each, which keeps every
-        // link local and bindable to a direct in-process call.
-        // ponytail: whole-graph co-location; slice two honours per-component
-        // placement and pays a NATS hop for the edges it splits.
+        // The graph follows the root onto the same nodes, keeping every link local.
+        // ponytail: whole-graph co-location; slice two honours per-component placement.
         if m.strategy == Strategy::Linked {
             for c in m.components.iter().filter(|c| c.id != root.id) {
-                // A plug with its OWN placement goes where it says (e.g. a GPU box), making the link
-                // a wRPC call. Without one it rides along with the root, which is faster.
+                // A plug with its own placement goes there (a GPU box); its link becomes wRPC.
                 let spans = !c.placement.constraints.is_empty()
                     || c.placement.mode == Mode::Pinned
                     || !c.placement.nodes.is_empty();
@@ -604,9 +534,7 @@ pub fn plan(
     let all: BTreeSet<&Key> = want.keys().chain(have.keys()).collect();
     let mut still_surplus = BTreeMap::new();
 
-    // A command says what the world should BE, never what to change by. A delta was killed by a
-    // live run: the reconciler outpaces host heartbeats, re-derived the same deficit and issued the
-    // increment twice. An absolute count makes a repeated command a no-op.
+    // Absolute counts, not deltas: a delta re-derived before the heartbeat was issued twice.
     for k in all {
         let w = want.get(k).map(|(n, _, _)| *n).unwrap_or(0);
         let h = have.get(k).copied().unwrap_or(0);
@@ -616,8 +544,7 @@ pub fn plan(
 
         // Scaling DOWN (even to zero) waits for the surplus to persist; scaling up does not.
         if w < h {
-            // Counters are never reset on emit: if the command lands the surplus is gone and the
-            // entry pruned, otherwise we re-emit.
+            // Never reset on emit: a landed command prunes the entry, otherwise we re-emit.
             let passes = hyst.seen.get(k).copied().unwrap_or(0) + 1;
             still_surplus.insert(k.clone(), passes);
             if passes < cfg.settle_passes {
@@ -644,7 +571,6 @@ pub fn plan(
                     .filter(|i| i.component == c.id)
                     .map(|i| i.host.clone()),
             }),
-            // Nothing wanted here at all: take it off this node.
             None => stops.push(Command::Stop {
                 node: k.4.clone(),
                 tenant: k.0.clone(),
@@ -657,8 +583,7 @@ pub fn plan(
     }
     hyst.seen = still_surplus;
 
-    // Starts first: a digest change is a surplus of the old and a deficit of the new, so the
-    // replacement is up before the old one goes, without a rollout state machine.
+    // Starts first, so a digest change brings the replacement up before the old one goes.
     let total = starts.len() + stops.len();
     starts.extend(stops);
     if starts.len() > cfg.max_commands {
@@ -669,43 +594,23 @@ pub fn plan(
     out
 }
 
-/// Does any component in this app keep state a second replica would need to see?
-///
-/// Derived from `host_needs` (stamped from the real WIT surface) rather than a separate `stateful:`
-/// flag that could disagree with the imports.
-// ponytail: any keyvalue import counts. An app that only ever writes node-local
-// scratch is indistinguishable from one that does not, and the safe reading of an
-// ambiguity here is the one that refuses.
-/// The placement an already-converged component keeps, without ranking anything.
-///
-/// Converged apps are the vast majority of every pass, and ranking the fleet to rediscover a correct
-/// placement cost `apps x nodes` (ADR-0056). It cannot simply SKIP the app (the diff would read a key
-/// absent from `want` as "stop it"), so it returns the existing placement.
-///
-/// Conservative: declines, letting the full ranking run, when anything is missing or surplus, nothing
-/// is running, or a holding node no longer satisfies the component's constraints.
+/// The placement a converged component keeps without ranking (ADR-0056); declines when unsure.
 fn settled(
     c: &Component,
     want_replicas: u32,
     running: u32,
     mine: Option<&BTreeMap<&str, u32>>,
     fitting: &impl Fn(&Component, &str) -> bool,
-    // False on the pass after any node joins, leaves or relabels: only the full ranking can decide
-    // whether a new node attracts a share.
+    // False after any node joins, leaves or relabels.
     fleet_stable: bool,
 ) -> Option<Vec<(String, u32)>> {
     if !fleet_stable || running == 0 || running != want_replicas || c.placement.mode == Mode::Daemon
     {
-        // Daemon is one per ELIGIBLE node, so a new node must grow it; only the ranking can see that.
+        // Daemon is one per eligible node, so a new node must grow it.
         return None;
     }
     let mine = mine?;
-    // One replica per node: maximally spread, and the ONLY state where the lookup is provably what
-    // the ranking would return (it gives the top `replicas` nodes one each, first key "replicas of
-    // this component already here", so current holders are that top slice).
-    //
-    // A CONCENTRATED app takes the full path: the fast path is taken only where it cannot differ
-    // from the ranking.
+    // One per node is the only state where the lookup provably equals the ranking.
     if mine.len() as u32 != want_replicas {
         return None;
     }
@@ -715,6 +620,8 @@ fn settled(
     Some(mine.iter().map(|(n, count)| (n.to_string(), *count)).collect())
 }
 
+/// From `host_needs` (the real WIT surface), not a `stateful:` flag that could disagree.
+// ponytail: any keyvalue import counts; the safe reading of an ambiguity is the one that refuses.
 fn holds_state(m: &Manifest) -> bool {
     m.components
         .iter()
@@ -726,14 +633,9 @@ fn key(m: &Manifest, component: &str, digest: &str, node: &str) -> Key {
     (m.tenant.clone(), m.app.clone(), component.into(), digest.into(), node.into())
 }
 
-/// Which nodes run how many, or why none can.
-/// Split `total` across `weights` in proportion, using largest remainder.
-///
-/// Integer arithmetic so placement does not depend on summation order and `plan` stays exactly
-/// assertable. Largest remainder because the total must be exact.
+/// Largest remainder in integers: the total stays exact and independent of summation order.
 fn proportional(total: u32, weights: &[usize]) -> Vec<u32> {
-    // A weight of zero would lose replicas, so it reads as the smallest share; this keeps the
-    // function total-preserving for any input.
+    // A zero weight would lose replicas, so it reads as the smallest share.
     let weights: Vec<usize> = weights.iter().map(|w| (*w).max(1)).collect();
     let sum: usize = weights.iter().sum::<usize>().max(1);
     let mut out: Vec<u32> = Vec::with_capacity(weights.len());
@@ -746,7 +648,7 @@ fn proportional(total: u32, weights: &[usize]) -> Vec<u32> {
         given += whole;
         remainders.push((exact % sum, i));
     }
-    // Biggest leftover first; ties go to the earlier (already ranked) node, so it stays deterministic.
+    // Ties go to the earlier, already ranked, node.
     remainders.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     for (_, i) in remainders.into_iter().take((total - given) as usize) {
         out[i] += 1;
@@ -757,23 +659,18 @@ fn proportional(total: u32, weights: &[usize]) -> Vec<u32> {
 #[allow(clippy::too_many_arguments)]
 fn place<'a>(
     c: &'a Component,
-    // Whose component this is, `(tenant, app)`: without an owner the ranking would match another
-    // tenant's identical component.
+    // `(tenant, app)`: without it the ranking would match another tenant's component.
     owner: (&str, &str),
-    // How many to place. Passed in because with autoscaling the count is a function of load and `c`
-    // is only the policy.
+    // With autoscaling the count is a function of load; `c` is only the policy.
     replicas: u32,
     observed: &'a [NodeInventory],
-    // Everything running, keyed by owner then node, so ranking a node is a lookup, not a scan.
-    // A converged app never gets here (see `settled`).
     running_by_node: &BTreeMap<Owner<'_>, BTreeMap<&str, u32>>,
     node_load: &BTreeMap<&str, usize>,
     eligible_for: &mut EligibleFor<'a>,
-    // What THIS pass has already decided to put on each node. Without it every app ranks against
-    // the same stale inventory and they all land on one node (six apps, three nodes, 6/0/0).
+    // Without it every app ranks against the same stale inventory and lands on one node.
     pending: &BTreeMap<String, usize>,
 ) -> Result<Vec<(String, u32)>, String> {
-    // Memoised on the signature `fits` reads, so apps wanting the same thing pay for one scan.
+    // Apps wanting the same thing pay for one scan.
     let eligible: &Vec<&NodeInventory> = eligible_for
         .entry((&c.placement.constraints, &c.host_needs))
         .or_insert_with(|| observed.iter().filter(|n| fits(c, n)).collect());
@@ -804,13 +701,8 @@ fn place<'a>(
             if replicas == 0 {
                 return Ok(Vec::new());
             }
-            // Three keys, in this order, each load-bearing:
-            //  1. replicas of THIS component already here, DESCENDING: stability; a joining node
-            //     must not shuffle existing replicas onto it.
-            //  2. total instances on the node, ASCENDING: balance across apps. Otherwise every new
-            //     app ties on key 1 and all land on the alphabetically first node.
-            //  3. the name: determinism, so the plan is a pure function.
-            // One lookup for the whole component, then a borrowed lookup per node.
+            // Keys: this component's replicas here (desc: stability), total instances (asc:
+            // balance across apps), name (determinism).
             let mine = running_by_node.get(&(owner.0, owner.1, c.id.as_str(), c.digest.as_str()));
             let mut ranked: Vec<(&NodeInventory, u32, usize)> = eligible
                 .iter()
@@ -820,15 +712,12 @@ fn place<'a>(
                     (*n, here, observed_load + pending.get(&n.node).copied().unwrap_or(0))
                 })
                 .collect();
-            // Key 2 is load PER CPU, not raw load (a 4-core Pi is not a 10-core laptop).
-            // Cross-multiplied to stay integer and never divide by zero.
+            // Key 2 is load per CPU, cross-multiplied to stay integer and never divide by zero.
             let rank = |a: &(&NodeInventory, u32, usize), b: &(&NodeInventory, u32, usize)| {
                 let (aw, bw) = (a.0.capacity.weight(), b.0.capacity.weight());
                 b.1.cmp(&a.1).then((a.2 * bw).cmp(&(b.2 * aw))).then(a.0.node.cmp(&b.0.node))
             };
-            // Fewer replicas than nodes means only the first `replicas` entries are read, so
-            // partition around that point and sort the prefix: same result, O(nodes) not
-            // O(nodes log nodes) per app.
+            // Only the first `replicas` are read: partition then sort the prefix, O(nodes) per app.
             let k = replicas as usize;
             if k < ranked.len() {
                 ranked.select_nth_unstable_by(k, rank);
@@ -837,12 +726,10 @@ fn place<'a>(
                 ranked.sort_by(rank);
             }
 
-            // The split is proportional for the same reason: wasmCloud puts 3 of 4 replicas on a
-            // 10-core box and 1 on a 4-core one (ADR-0039).
+            // Proportional to capacity: 3 of 4 replicas on a 10-core box, 1 on a 4-core (ADR-0039).
             let weights: Vec<usize> = ranked.iter().map(|(n, _, _)| n.capacity.weight()).collect();
             let shares: Vec<u32> = if (replicas as usize) <= ranked.len() {
-                // Fewer replicas than nodes: take the RANKING's answer, one each. Capacity is for
-                // dividing many replicas; the ranking knows who should get the next one.
+                // Fewer replicas than nodes: one each, in ranking order.
                 (0..ranked.len()).map(|i| u32::from((i as u32) < replicas)).collect()
             } else {
                 proportional(replicas, &weights)
@@ -861,9 +748,6 @@ fn fits(c: &Component, n: &NodeInventory) -> bool {
     c.placement.constraints.iter().all(|(k, v)| n.labels.get(k) == Some(v))
         && c.host_needs.iter().all(|need| n.host_ifaces.contains(need))
 }
-
-// `running_on` was removed: the owner-keyed `have` index answers the same question, and a helper
-// callable without a tenant would be misused.
 
 #[cfg(test)]
 mod tests {
@@ -952,8 +836,7 @@ mod tests {
         match cmd {
             Command::Start { node, tenant, app, component, digest, count, .. } => {
                 let inv = observed.iter_mut().find(|n| n.node == *node).expect("node");
-                // Matched on the whole owner, like `plan`'s key and the real host's
-                // `<tenant>/<app>/<component>` instance id.
+                // The whole owner, like the host's `<tenant>/<app>/<component>` instance id.
                 match inv.instances.iter_mut().find(|i| {
                     i.tenant == *tenant
                         && i.app == *app
@@ -1052,7 +935,7 @@ mod tests {
 
     #[test]
     fn a_vanished_node_is_replaced_without_any_delete_handling() {
-        // A node that stops writing its inventory key simply stops appearing (replaces ADR-0016's reaping).
+        // A silent node simply stops appearing.
         let m = app(vec![comp("api", "sha256:a", 2)], vec![], Strategy::Linked);
         let mut obs = vec![node("box-a", &[], &[]), node("box-b", &[], &[])];
         converge(std::slice::from_ref(&m), &mut obs, 2);
@@ -1265,7 +1148,6 @@ mod tests {
 
     #[test]
     fn the_command_cap_defers_rather_than_drops() {
-        // A silent truncation reads as "converged", so the count is reported and the next pass re-derives.
         let m = app(vec![comp("api", "sha256:a", 50)], vec![], Strategy::Linked);
         let obs: Vec<NodeInventory> =
             (0..50).map(|i| node(&format!("box-{i:02}"), &[], &[])).collect();
@@ -1275,8 +1157,7 @@ mod tests {
         assert_eq!(out.deferred, 30);
     }
 
-    /// THE test: two replicas on node-local stores each got their own store under one bucket name.
-    /// Nothing errored; the rate limiter stopped limiting and failover moved placement without data.
+    /// Two replicas on node-local stores silently split the rate limiter's state.
     #[test]
     fn a_stateful_app_is_refused_rather_than_split_across_local_stores() {
         let m = app(vec![stateful("api", "sha256:a", 2)], vec![], Strategy::Linked);
@@ -1425,8 +1306,7 @@ mod tests {
 
     #[test]
     fn different_apps_spread_across_nodes_instead_of_piling_onto_one() {
-        // Every app is new, so every node scores 0 on key 1; without a load key all six land on the
-        // alphabetically first node.
+        // Every app is new, so key 1 ties; without key 2 all six land on the first node.
         let mut obs = vec![node("n1", &[], &[]), node("n2", &[], &[]), node("n3", &[], &[])];
         let apps: Vec<Manifest> = ["a", "b", "c", "d", "e", "f"]
             .iter()
@@ -1570,10 +1450,8 @@ mod tests {
 
     #[test]
     fn a_proportional_split_is_exact_and_favours_the_bigger_node() {
-        // The wasmCloud case (ADR-0039): 4 replicas over a 10-core and a 4-core machine place 3 and 1,
-        // not 2 and 2.
+        // ADR-0039: 4 replicas over 10 and 4 cores place 3 and 1, not 2 and 2.
         assert_eq!(proportional(4, &[10, 4]), vec![3, 1]);
-        // Every split must sum to the total.
         for total in 0..20u32 {
             for weights in [vec![10, 4], vec![1, 1, 1], vec![8, 4, 2, 1], vec![5]] {
                 let got = proportional(total, &weights);
@@ -1683,8 +1561,7 @@ mod tests {
 
     #[test]
     fn two_providers_of_one_interface_are_refused_rather_than_one_winning() {
-        // `link_table` collects into a map keyed by interface, so the second link would silently
-        // overwrite the first.
+        // Keyed by interface, the second link would silently overwrite the first.
         let root = comp("gate", "sha256:aa", 1);
         let a = comp("store-a", "sha256:bb", 1);
         let b = comp("store-b", "sha256:cc", 1);
@@ -1716,7 +1593,7 @@ mod tests {
 
     #[test]
     fn the_same_interface_for_different_components_is_fine() {
-        // Two components importing the same interface from their own providers is normal; the key is (component, iface).
+        // Two components importing one interface from their own providers is normal.
         let m = app(
             vec![
                 comp("gate", "sha256:aa", 1),
@@ -1762,10 +1639,7 @@ mod tests {
         assert!(m.conflicting_links().is_empty(), "{:?}", m.conflicting_links());
     }
 
-    /// The fast path and the full ranking place identically, over a sweep of worlds run side by
-    /// side: node count, replica count (below, equal to, above node count), uneven capacity, and an
-    /// app that starts concentrated. A lookup that differs from the ranking would be a slow drift
-    /// into imbalance no single scenario catches.
+    /// A lookup that differs from the ranking would be a slow drift no single scenario catches.
     #[test]
     fn the_fast_path_never_places_differently_from_the_full_ranking() {
         let mut checked = 0;
@@ -1821,8 +1695,7 @@ mod tests {
         assert_eq!(checked, 140, "the sweep shrank — it is the whole guarantee");
     }
 
-    /// A converged app whose node stops qualifying still moves: nothing about the app changed, only
-    /// the fleet under it, so the fast path must not take it.
+    /// Only the fleet under the app changed, so the fast path must not take it.
     #[test]
     fn a_node_that_stops_qualifying_gives_its_replica_up() {
         let mut c = comp("api", "sha256:a", 1);
@@ -1849,7 +1722,6 @@ mod tests {
         assert_ne!(after[0].0, held, "it must leave the node that no longer qualifies");
     }
 
-    /// Two tenants, one catalogue component, the same id on both sides (the marketplace case).
     /// Counting by component id and digest alone let bob's replica satisfy alice's manifest.
     #[test]
     fn one_tenants_replicas_do_not_count_as_anothers() {

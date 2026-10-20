@@ -24,8 +24,7 @@ password-hash = { workspace = true }
 [package.metadata.component]
 package = "auth:guard"
 
-# Use the shared, dep-vendored WIT directory at the repo root. cargo-component
-# reads ../../wit/deps for the wasi:* packages we fetched with wkg.
+# cargo-component reads ../../wit/deps for the wasi:* packages fetched with wkg.
 [package.metadata.component.target]
 path = "../../wit"
 world = "authority"

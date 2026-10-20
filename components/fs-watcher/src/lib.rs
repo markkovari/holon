@@ -1,17 +1,4 @@
-//! `fs-watcher` — report what changed in a directory, since a cursor
-//!
-//! The watching happens in `comp-fswatch`, native because a watch syscall is not something a
-//! `wasm32-wasip2` guest has (ADR-0095). This component holds the contract and reaches the
-//! daemon over HTTP, like `checks-runner` reaches `comp-checks`.
-//!
-//!   * what this may dial is a MANIFEST decision (ADR-0008): the daemon's address is
-//!     `fswatch-url` in `wasi:config` and the egress allow-list decides whether the call
-//!     leaves at all;
-//!   * the daemon has its own allow-list of directories. Neither side trusts the path in the
-//!     request, because it can come from a model.
-//!
-//! Config (wasi:config/store):
-//!   fswatch-url    where `comp-fswatch` is listening, e.g. http://127.0.0.1:8000
+//! Neither side trusts the request's path (it can come from a model); egress is the manifest's call (ADR-0008).
 
 #[allow(warnings)]
 mod bindings;
@@ -26,14 +13,13 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Ten seconds: a poll stats a directory and returns, so anything slower is a daemon in trouble.
+/// A poll stats a directory and returns; anything slower is a daemon in trouble.
 const TIMEOUT_NS: u64 = 10_000_000_000;
 
 fn daemon_url() -> Result<String, WatchError> {
     match config::get("fswatch-url") {
         Ok(Some(u)) if !u.is_empty() => Ok(u),
-        // Unavailable rather than not-permitted: nobody refused anything, the
-        // deployment simply never said where the watcher is.
+        // Unavailable, not not-permitted: nobody refused; the deployment never said where the watcher is.
         _ => Err(WatchError::Unavailable(
             "fswatch-url is not set — this watcher has nowhere to ask".into(),
         )),
@@ -55,9 +41,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), WatchError> {
     Ok((scheme, authority, path))
 }
 
-/// POST the request and return the body. Every failure is `unavailable`: the
-/// daemon's own refusals arrive as JSON with a 200, so anything at this level is
-/// the transport rather than an answer.
+/// The daemon's refusals arrive as JSON with a 200, so any failure here is transport.
 fn post(body: Vec<u8>) -> Result<Vec<u8>, WatchError> {
     let url = daemon_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
@@ -65,10 +49,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, WatchError> {
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // A shared secret, if the deployment set one — see
-    // `comp_daemon_kit`'s own doc for why loopback
-    // binding alone is not a boundary. Absent means the daemon was
-    // started with no --token, so there is nothing to send.
+    // Loopback binding alone is not a boundary (see `comp_daemon_kit`); absent means no --token.
     if let Ok(Some(token)) = config::get("fswatch-token") {
         if !token.is_empty() {
             let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
@@ -83,8 +64,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, WatchError> {
     let out = req.body().map_err(|_| net("body"))?;
     {
         let stream = out.write().map_err(|_| net("write"))?;
-        // Chunked: `blocking-write-and-flush` traps above 4096 bytes, and a
-        // request naming a long path plus a cursor is small but not bounded.
+        // `blocking-write-and-flush` traps above 4096 bytes.
         for chunk in body.chunks(4096) {
             stream
                 .blocking_write_and_flush(chunk)
@@ -114,9 +94,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, WatchError> {
         match stream.blocking_read(8192) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went wrong,
-            // and returning what arrived would be a truncated answer presented
-            // as a whole one.
+            // Anything but `Closed` is a failed read; returning what arrived would be a truncated answer.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -124,8 +102,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, WatchError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser: the daemon's replies are flat enough that
-/// serde would be more code than the thing it reads.
+/// Flat replies: serde would be more code than what it reads.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];
@@ -162,9 +139,7 @@ impl Guest for Component {
         let raw = post(body.into_bytes())?;
         let text = String::from_utf8_lossy(&raw).into_owned();
 
-        // The daemon reports its refusals in the body. Mapping them back to the
-        // variant matters: a caller that cannot tell "you may not watch that"
-        // from "the watcher is down" will retry the first one forever.
+        // Mapped back to the variant, or a caller retries a permanent "no" forever.
         if let Some(err) = field(&text, "error") {
             let detail = field(&text, "detail").unwrap_or_default().to_string();
             return Err(match err {
@@ -182,8 +157,6 @@ impl Guest for Component {
     }
 }
 
-/// A JSON string literal. A path can contain a quote or a backslash, and this is
-/// building a request out of one.
 fn json_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -208,16 +181,13 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::*;
 
-    /// A path is caller-supplied and goes into a JSON request. A quote in it
-    /// would end the string early and the rest would be read as structure.
     #[test]
     fn a_path_cannot_break_out_of_the_request_it_is_put_in() {
         assert_eq!(json_str(r#"/a/b"#), r#""/a/b""#);
         assert_eq!(json_str(r#"/a"b"#), r#""/a\"b""#);
         assert_eq!(json_str(r#"/a\b"#), r#""/a\\b""#);
         assert_eq!(json_str("/a\nb"), r#""/a\nb""#);
-        // Escaped, not stripped: a control character silently removed would
-        // change the path the daemon is asked about, and nobody would know.
+        // Escaped, not stripped: removing it would silently change the path.
         assert_eq!(json_str("/a\u{1}b"), r#""/a\u0001b""#);
     }
 
@@ -235,8 +205,7 @@ mod tests {
         assert_eq!(field(json, "cursor"), Some("18"));
     }
 
-    /// An empty page is a legitimate answer — the first poll always returns one
-    /// — and must not read as a failure.
+    /// The first poll always returns an empty page; it is not a failure.
     #[test]
     fn an_empty_page_is_not_an_error() {
         let json = r#"{"events":[],"cursor":"99","truncated":false}"#;

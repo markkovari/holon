@@ -5,15 +5,12 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
-# A shim over src/plug.rs, for gates — which are shell scripts and cannot call a Rust function.
-# The composition itself is the library.
+# A CLI over src/plug.rs for gates, which are shell scripts.
 [[bin]]
 name = "comp-plug"
 path = "src/bin/plug.rs"
 
-# Put a built component in a registry, and get one back out (ADR-0017, ADR-0024). It is here and
-# not with the artifacts library because it prints a pulled component's surface, which is
-# `plug::surface`, and the library must not carry the wasm toolchain.
+# Here, not in the artifacts library, which must not carry the wasm toolchain (`plug::surface`).
 [[bin]]
 name = "comp-oci"
 path = "src/bin/oci.rs"
@@ -28,9 +25,7 @@ serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
-# Composition as a library call (src/plug.rs): `wac` is a crate before it is a command. wasmparser is
-# pinned to the one wac-graph carries (0.10 reads with 0.247): two versions of the component model's
-# reader in one graph is a type error waiting to happen, and was this package's state for as long as
-# this pin said 0.244. tests/workspace.rs fails when it is two again.
+# wasmparser is pinned to the one wac-graph carries (0.10 reads with 0.247): two component-model
+# readers in one graph is a type error waiting to happen; tests/workspace.rs fails when it is two.
 wac-graph = "0.10"
 wasmparser = "0.247"

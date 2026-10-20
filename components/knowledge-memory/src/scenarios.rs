@@ -1,13 +1,4 @@
-//! Nine scenarios against a real, **pinned** `surrealdb/surrealdb:v3.1.3`.
-//!
-//! These run the statements `surql.rs` builds (the same strings the component sends) and assert what
-//! the database actually answers: the half between statement and answer is where this repo has gone
-//! wrong before (ADR-0061, ADR-0080).
-//!
-//! Skipped, loudly, when Docker cannot start the database.
-//!
-//! `cargo test -p knowledge-memory -- --nocapture scenarios` prints the savings report. Its COUNTS are
-//! asserted; its money is arithmetic over a stated assumption and asserted by nothing.
+//! Scenarios against a pinned SurrealDB: what the database actually answers (ADR-0061, ADR-0080).
 
 #![cfg(test)]
 
@@ -22,15 +13,14 @@ use serde_json::Value;
 use crate::surql::{self, EntryWrite};
 use crate::{digest, normalise, rrf, weight};
 
-/// The image, PINNED (same as `reconciler/tests/graph.rs`), so a server upgrade is not a mystery failure.
+/// Pinned (as reconciler/tests/graph.rs), so a server upgrade is not a mystery failure.
 const IMAGE: &str = "surrealdb/surrealdb:v3.1.3";
 
-/// What the report multiplies by. **An assumption, not a measurement**: one goal from queue to
-/// merge-ready PR "for a few cents", a generation being four branches (ADR-0078).
+/// An assumption, not a measurement (ADR-0078).
 const BRANCHES_PER_GENERATION: u32 = 4;
 const USD_PER_BRANCH: f64 = 0.02;
 
-/// Width of the toy embedding below. Small on purpose: a scenario that only passes at 1536 dimensions is not testing the design.
+/// Small on purpose: a scenario that only passes at 1536 dimensions tests nothing.
 const DIM: usize = 16;
 
 struct Db {
@@ -40,7 +30,7 @@ struct Db {
 
 impl Drop for Db {
     fn drop(&mut self) {
-        // `--rm` handles the ordinary exit; this covers a killed run, when a leaked container would hold a port.
+        // `--rm` covers a clean exit; this covers a killed run whose container would hold the port.
         let _ = Command::new("docker")
             .args(["rm", "-f", &self.name])
             .stdout(Stdio::null())
@@ -76,8 +66,7 @@ impl Db {
         let me = Self { name, port };
         for _ in 0..60 {
             if me.raw("probe", "RETURN 1;").contains("\"OK\"") {
-                // A self-check: scenarios read an absent table as "empty" on purpose, so a fixture not really talking
-                // to a database would pass them while proving nothing.
+                // Self-check: absent tables read as empty, so a fixture not talking to a database would pass.
                 let wrote = me.must("probe", "UPSERT probe:⟨x⟩ SET ok = true;");
                 assert_eq!(
                     wrote.first().map(|r| r["ok"].clone()),
@@ -92,7 +81,6 @@ impl Db {
         None
     }
 
-    /// One statement over HTTP, through curl rather than a new dependency.
     fn raw(&self, db: &str, statement: &str) -> String {
         let out = Command::new("curl")
             .args(["-s", "-X", "POST", &format!("http://127.0.0.1:{}/sql", self.port)])
@@ -110,15 +98,11 @@ impl Db {
         out.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
     }
 
-    /// The rows a statement answered with, parsed by the component's own reader (a table nobody has written reads as empty).
     fn rows(&self, db: &str, statement: &str) -> Result<Vec<Value>, String> {
         surql::rows(&self.raw(db, statement))
     }
 
-    /// Everything `knowledge:graph`'s `send()` does, in order: define the namespace if the server says it is
-    /// missing, then resend a conflicted statement with no backoff (a conflicted transaction did not commit).
-    /// Mirroring the bootstrap matters: without it every statement answered "namespace does not exist",
-    /// which the reader maps to *empty*, so scenarios passed while talking to nothing.
+    /// Mirrors knowledge:graph's send(): without the namespace bootstrap every statement read as empty.
     fn rows_retrying(&self, db: &str, statement: &str) -> Result<Vec<Value>, String> {
         let mut body = self.raw(db, statement);
         if body.contains("does not exist")
@@ -133,7 +117,7 @@ impl Db {
             body = self.raw(db, statement);
         }
         let mut attempts = 1;
-        // 12, matching `knowledge:graph`'s MAX_ATTEMPTS; at 4 a write was lost about one run in three on a loaded machine.
+        // Matches knowledge:graph's MAX_ATTEMPTS; at 4 a write was lost one run in three under load.
         while body.contains("retry the transaction") && attempts < 12 {
             body = self.raw(db, statement);
             attempts += 1;
@@ -150,8 +134,7 @@ impl Db {
 
 static RETRIES: AtomicU32 = AtomicU32::new(0);
 
-/// A deterministic embedding with real similarity structure: token overlap hashed into `DIM` buckets,
-/// L2-normalised. Not semantic, but threshold scenarios need vectors whose closeness they control.
+/// Token overlap hashed into `DIM` buckets: not semantic, but closeness the scenarios control.
 fn embed(text: &str) -> Vec<f32> {
     let mut v = vec![0f32; DIM];
     for token in normalise(text).split(' ').filter(|t| !t.is_empty()) {
@@ -181,14 +164,13 @@ fn write_entry(db: &Db, name: &str, handle: &str, ns: &str, goal: &str, text: &s
         attempt: "1",
         score: -1,
         promoted: ns == "patterns",
-        // These scenarios pin SurrealQL behaviour, not retrieval policy; the tagged path has its own test (reconciler/tests/tagged.rs).
+        // The tagged path has its own test (reconciler/tests/tagged.rs).
         tags: &[],
     };
     let vector = embed(&format!("{goal} — {text}"));
     db.must(name, &surql::upsert_entry(&w, Some(&vector), false));
 }
 
-/// `already-done`, exactly as the component asks it: the KNN, then the floor.
 fn already_done(db: &Db, name: &str, goal: &str, floor: f64) -> Option<(String, f64, u64)> {
     let rows = db.must(name, &surql::already_done_knn(&embed(&normalise(goal))));
     let row = rows.first()?;
@@ -203,8 +185,6 @@ fn already_done(db: &Db, name: &str, goal: &str, floor: f64) -> Option<(String, 
     ))
 }
 
-/// What `recall` would put in a prompt: KNN candidates fused with a lexical ordering, weighted by
-/// outcomes. The lexical half (`search:index`) has no SurrealDB in it, so scenarios pass a rank list in.
 fn recall(
     db: &Db,
     name: &str,
@@ -305,7 +285,7 @@ fn scenarios() {
     };
     let mut saved = Savings::default();
 
-    // ---- 1. A cold pool. The first `recall` of a project precedes its first write, so an absent table must read as "nothing".
+    // The first recall precedes the first write, so an absent table must read as nothing.
     let s1 = "s1_cold";
     saved.goals_asked += 1;
     assert_eq!(
@@ -318,7 +298,6 @@ fn scenarios() {
         "an empty pool retrieves nothing and reports no error"
     );
 
-    // ---- 2. The same goal, asked twice. One passing evaluation, then a repeat.
     let s2 = "s2_repeat";
     let goal = "make a slug from a title string";
     db.must(
@@ -340,8 +319,7 @@ fn scenarios() {
     assert_eq!(hit.2, 1, "one evaluation recorded");
     saved.goals_skipped += 1;
 
-    // ---- 3. A paraphrase is the same work; a stranger is not. This pays for the 0.9 floor: the KNN ALWAYS
-    // returns its nearest row (measured `dist: 1.0` for an orthogonal query), so the floor makes the answer correct.
+    // The KNN always returns its nearest row (measured `dist: 1.0` when orthogonal); the floor decides.
     saved.goals_asked += 2;
     let paraphrase = "make a slug from the title string";
     let stranger = "parse a csv file into typed records";
@@ -361,8 +339,6 @@ fn scenarios() {
         saved.false_skips += 1;
     }
 
-    // ---- 4. A goal that has only ever failed. `passes > 0` is the filter, so failures leave the work
-    // available AND leave the count that says whether another attempt is worth buying.
     let s4 = "s4_failed";
     let hard = "make the flaky integration suite deterministic";
     for (i, run) in ["run-2", "run-3", "run-4"].iter().enumerate() {
@@ -396,7 +372,7 @@ fn scenarios() {
         "every evaluation was recorded, not only the passing ones"
     );
     assert_eq!(all[0]["passes"], 0);
-    // Re-reporting a run must not invent another verdict: the edge is keyed by (task, run), so the landing path can attach a PR later.
+    // The edge is keyed by (task, run), so re-reporting adds no verdict.
     db.must(
         s4,
         &surql::evaluated(
@@ -418,7 +394,6 @@ fn scenarios() {
         ),
     );
     assert_eq!(after[0]["evaluations"], 3, "a re-reported run is one verdict, not two");
-    // And the per-verdict trail is on the edges, with no run node needed.
     let trail = db.must(
         s4,
         &format!(
@@ -432,7 +407,6 @@ fn scenarios() {
         "three verdicts, each recoverable with its score"
     );
 
-    // ---- 5. Two lessons, opposite histories. Ordering changes only because `attribute` recorded what happened to the runs.
     let s5 = "s5_outcomes";
     let g = "make a slug from a title string";
     write_entry(&db, s5, "errors:bad", "errors", g, "make a slug by lowercasing the title only");
@@ -458,11 +432,9 @@ fn scenarios() {
         after[0], "patterns:good",
         "a lesson present when runs passed outranks one present when they failed"
     );
-    // The floor still protects it: sinking is not deleting.
     assert!(after.contains(&"errors:bad".to_string()), "sinking is not deletion");
 
-    // ---- 6. Herding, and the control arm. Identical options give identical prompts (ADR-0081's silent failure);
-    // varying pools per branch buys diversity back and `k = 0` reads nothing.
+    // Identical options give identical prompts (ADR-0081's silent failure).
     let identical: Vec<Vec<String>> =
         (0..3).map(|_| recall(&db, s5, g, 2, &["patterns", "errors"], &[])).collect();
     assert!(
@@ -473,7 +445,6 @@ fn scenarios() {
     assert_ne!(varied, identical[0], "a different pool mix is a different prompt");
     assert!(recall(&db, s5, g, 0, &["patterns"], &[]).is_empty(), "k = 0 is the cold control arm");
 
-    // ---- 7. Twenty branches attributing the same entry: read-modify-write loses writes, the `+=` arm with bounded retry loses at most the engine's rare lost update.
     let s7 = "s7_contention";
     write_entry(&db, s7, "errors:hot", "errors", "one hot lesson", "every branch read this one");
     write_entry(&db, s7, "errors:rmw", "errors", "one hot lesson", "the naive arm");
@@ -485,7 +456,7 @@ fn scenarios() {
         for w in 0..WRITERS {
             scope.spawn(move || {
                 let db = Db { name: String::new(), port: db.port };
-                // Not dropped through `Drop` — this borrows the port only.
+                // Not dropped: this borrows the port only.
                 let db = std::mem::ManuallyDrop::new(db);
                 for _ in 0..PER_WRITER {
                     db.rows_retrying(
@@ -493,7 +464,6 @@ fn scenarios() {
                         &surql::attribute(&["errors:hot".into()], &format!("run-{w}"), true),
                     )
                     .expect("an atomic increment survives contention");
-                    // The naive arm, spelled out: read, add one here, write it back.
                     let seen = db
                         .rows(
                             s7,
@@ -524,7 +494,6 @@ fn scenarios() {
         db.must(s7, &format!("SELECT uses FROM {};", surql::rid(surql::ENTRIES, "errors:rmw")));
     saved.writes_landed_atomic = atomic[0]["uses"].as_u64().unwrap_or(0) as u32;
     saved.writes_landed_rmw = naive[0]["uses"].as_u64().unwrap_or(0) as u32;
-    // The edges are the record, and every one of them must have landed exactly once.
     let edges = db.must(
         s7,
         &format!(
@@ -537,11 +506,8 @@ fn scenarios() {
         Some(u64::from(saved.writes_attempted)),
         "the edges are the record and none of them is a duplicate"
     );
-    // The counter is a denormalised read of the edges and may trail them. Measured on v3.1.3 and v3.2.5: in
-    // ~0.5% of 60-write bursts an explicit `BEGIN … COMMIT` lets two transactions that read N both commit N+1,
-    // every statement answers OK, so a resend cannot help (v3.3.0 lost none in 2,600). So this pins what must
-    // hold on every run instead of an exact count: the counter is never AHEAD of the edges, and the `+=` arm
-    // still beats read-modify-write.
+    // The counter may trail the edges: on v3.1.3/v3.2.5 ~0.5% of bursts commit N+1 twice with every
+    // statement OK, so a resend cannot help. Pinned instead: never ahead, and `+=` beats read-modify-write.
     assert!(
         saved.writes_landed_atomic <= saved.writes_attempted,
         "`+=` plus a bounded resend must never double-count, got {} of {}",
@@ -560,7 +526,6 @@ fn scenarios() {
         saved.writes_attempted
     );
 
-    // ---- 8. The embedding model changes width.
     let s8 = "s8_drift";
     let w = EntryWrite {
         handle: "errors:drift",
@@ -590,7 +555,6 @@ fn scenarios() {
     assert_eq!(kept[0]["dim_conflict"], true, "and the drift is queryable rather than invisible");
     saved.lessons_kept_through_drift += 1;
 
-    // ---- 9. Hydrating candidates: one statement or twenty.
     let s9 = "s9_reads";
     let handles: Vec<String> = (0..20).map(|i| format!("errors:h{i}")).collect();
     for h in &handles {
@@ -621,8 +585,7 @@ fn scenarios() {
     assert_eq!(saved.goals_skipped, 2, "one exact repeat and one paraphrase");
 }
 
-/// Decay: what nobody read goes, what somebody read stays, and what has no date
-/// at all survives — the last being the trap, not the feature.
+/// A row with no date at all must survive: the trap, not the feature.
 #[test]
 fn decay_forgets_the_unread_and_spares_everything_else() {
     let Some(db) = Db::start() else {
@@ -640,14 +603,12 @@ fn decay_forgets_the_unread_and_spares_everything_else() {
             attempt: "1",
             score: -1,
             promoted: false,
-            // This scenario is about decay, which does not read tags.
             tags: &[],
         }
     }
     for h in ["errors:unread", "errors:earned", "errors:fresh"] {
         db.must(name, &surql::upsert_entry(&entry_at(h), None, false));
     }
-    // Age two by hand (a test cannot wait a month) and let one earn its place by being read twice.
     db.must(
         name,
         &format!(
@@ -662,7 +623,6 @@ fn decay_forgets_the_unread_and_spares_everything_else() {
             surql::rid(surql::ENTRIES, "errors:earned")
         ),
     );
-    // And one with no date at all: a row from a write path that forgot to stamp it.
     db.must(
         name,
         &format!("UPDATE {} SET last_used = NONE;", surql::rid(surql::ENTRIES, "errors:fresh")),
@@ -683,10 +643,6 @@ fn decay_forgets_the_unread_and_spares_everything_else() {
     );
 }
 
-/// The slice-1 cycle as the goal runner drives it: four branch verdicts, then the winner re-reported
-/// with the pull request the forge opened. Written when the composed e2e counted five verdicts; it
-/// passed here at once, which showed the e2e ran a wasm artifact built BEFORE the edge became
-/// deterministic (rebuild with `cargo build --target wasm32-wasip2` before the fleet suites).
 #[test]
 fn a_re_reported_winner_does_not_invent_a_verdict() {
     let Some(db) = Db::start() else {
@@ -733,11 +689,6 @@ fn a_re_reported_winner_does_not_invent_a_verdict() {
     assert_eq!(ids.len(), 4, "the edge ids that exist: {ids:?}");
 }
 
-/// A goal broken into sub-goals, and both directions of the edge.
-///
-/// Asserts beyond parsing: the edge is idempotent per `(parent, child)` (re-running a decomposed goal is
-/// normal); a sub-goal exists the moment it is NAMED; `done` is derived from the child's own verdict
-/// edges so a parent can be resumed; one sub-goal under two parents is one node with two edges.
 #[test]
 fn a_goal_remembers_what_it_broke_into_and_a_part_remembers_whose_it_is() {
     let Some(db) = Db::start() else {
@@ -753,7 +704,6 @@ fn a_goal_remembers_what_it_broke_into_and_a_part_remembers_whose_it_is() {
     db.must(name, &surql::decomposed_into(&pk, parent, &bk, back, 0, "the data half"));
     db.must(name, &surql::decomposed_into(&pk, parent, &fk, front, 1, "the view half"));
 
-    // Naming a sub-goal is enough to put it in the pool. Nothing has run either.
     let parts = db.must(name, &surql::parts_of(&pk));
     assert_eq!(parts.len(), 2, "both parts, in ordinal order: {parts:?}");
     assert_eq!(parts[0]["goal"], back, "ordinal 0 first: {parts:?}");
@@ -764,7 +714,6 @@ fn a_goal_remembers_what_it_broke_into_and_a_part_remembers_whose_it_is() {
         "nothing has been evaluated, so nothing may read as done: {parts:?}"
     );
 
-    // Idempotent: decomposing the same goal again reinforces the edges.
     db.must(name, &surql::decomposed_into(&pk, parent, &bk, back, 0, "the data half"));
     let again = db.must(name, &surql::parts_of(&pk));
     assert_eq!(
@@ -773,7 +722,6 @@ fn a_goal_remembers_what_it_broke_into_and_a_part_remembers_whose_it_is() {
         "re-running a decomposed goal must not grow a fan of duplicate edges: {again:?}"
     );
 
-    // `done` is DERIVED. Pass the backend half and only that half moves.
     db.must(name, &surql::evaluated(&bk, back, "run-1", 1000, true, "art-1", None, false));
     let after = db.must(name, &surql::parts_of(&pk));
     let by_goal = |g: &str| -> Value {
@@ -786,7 +734,6 @@ fn a_goal_remembers_what_it_broke_into_and_a_part_remembers_whose_it_is() {
         "and finishes ONLY that part — a parent is resumable or it is not: {after:?}"
     );
 
-    // Upward, and plural: the same sub-goal under a second parent is one node.
     let other = "produce a monthly billing report";
     let ok = digest(&normalise(other));
     db.must(name, &surql::decomposed_into(&ok, other, &bk, back, 0, "needs the same store"));
@@ -800,7 +747,6 @@ fn a_goal_remembers_what_it_broke_into_and_a_part_remembers_whose_it_is() {
     let texts: Vec<&str> = owners.iter().filter_map(|r| r["goal"].as_str()).collect();
     assert!(texts.contains(&parent) && texts.contains(&other), "{texts:?}");
 
-    // And the node was not duplicated by the second parent.
     let nodes = db.must(name, &format!("SELECT id FROM {};", surql::TASKS));
     assert_eq!(nodes.len(), 4, "two parents and two children, no duplicates: {nodes:?}");
 }

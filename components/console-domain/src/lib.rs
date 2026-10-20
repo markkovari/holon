@@ -1,26 +1,4 @@
-//! `console-domain` — the Holon console (see `wit/console.wit` for why it is a
-//! second client of the platform API rather than a second control plane).
-//!
-//! Slice one: the shell, and one real write path end to end.
-//!
-//!   GET  /                        the SPA
-//!   POST /api/session             log in — forwarded to the platform, cookie back
-//!   GET  /api/session             who the cookie belongs to
-//!   DELETE /api/session           log out
-//!   GET  /api/projects            proxied
-//!   GET  /api/projects/{p}/goals  proxied
-//!   POST /api/goals               AUTHOR a goal: a pull request, then a queue entry
-//!
-//! The session is a cookie and the platform never sees one: the platform speaks bearer
-//! tokens, but this page renders model-written prose and a token any script can read is a
-//! bad pairing with that. So the console holds the token in an `HttpOnly` cookie and puts it
-//! on the `Authorization` header of every forwarded call; it never reaches JavaScript.
-//!
-//! Authoring a goal is two writes, in order: the pull request first (ADR-0082: the spec
-//! lives in git), then the queue entry. If the entry fails you get an open PR nobody queued,
-//! visible and revertable; the other order leaves a queue entry pointing at a spec path that
-//! does not exist. The entry is `queued` and nothing starts it: starting a run spends money
-//! and opens pull requests, so it stays a deliberate act.
+//! Holon console. The token lives in an HttpOnly cookie, never in JS: this page renders model prose.
 
 #[allow(warnings)]
 mod bindings {
@@ -42,7 +20,6 @@ mod bindings {
         world: "console:app/console-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -63,12 +40,9 @@ use bindings::p3::http::types::{
 
 struct Component;
 
-/// The cookie the browser holds. `HttpOnly` so no script can read it, `SameSite=Strict`
-/// because every request this cookie authorises is a same-origin call from our own SPA.
+/// `HttpOnly` so no script reads it; `SameSite=Strict` since only our own SPA calls with it.
 const SESSION_COOKIE: &str = "holon_session";
 
-/// Where a goal spec lands in the repository. `.comp/goals/` is where the CLI
-/// already expects to find one.
 const DEFAULT_GOALS_DIR: &str = ".comp/goals";
 
 impl Guest for Component {
@@ -89,9 +63,7 @@ impl Guest for Component {
             }
 
             (Method::Post, ["api", "goals"]) => author_goal(request).await,
-            // The lifecycle moves, forwarded verbatim: `goal_may` in platform-domain decides
-            // which are legal and its 409 names both ends; a second copy of that table here
-            // could only disagree.
+            // Forwarded verbatim: platform-domain's `goal_may` decides which moves are legal.
             (Method::Post, ["api", "goals", id, action])
                 if matches!(*action, "start" | "review" | "done" | "fail") =>
             {
@@ -101,8 +73,7 @@ impl Guest for Component {
             (Method::Get, ["api", "runs"]) => runs(),
             (Method::Get, ["api", "runs", id]) => run_detail(&percent_decode(id)),
 
-            // Anything else that is a GET is the SPA — client-side routes render
-            // the shell. API routes are matched above, so this cannot swallow one.
+            // Client-side routes render the shell; API routes match above, so none is swallowed.
             (Method::Get, _) => serve_static(&route),
             _ => Outcome::Err(404, "not_found".into()),
         };
@@ -112,13 +83,11 @@ impl Guest for Component {
 
 enum Outcome {
     Json(u16, String),
-    /// A body with headers of its own — the SPA's bytes, or a Set-Cookie.
     Raw(u16, Vec<(String, String)>, Vec<u8>),
     Err(u16, String),
 }
 
-/// Forward a login to the platform and keep the token server-side. The body passes through
-/// unchanged: the platform owns what a credential looks like.
+/// The body passes through unchanged: the platform owns what a credential looks like.
 async fn log_in(request: Request) -> Outcome {
     let body = match read_body(request).await {
         Ok(b) => b,
@@ -129,7 +98,6 @@ async fn log_in(request: Request) -> Outcome {
         Err(e) => return Outcome::Err(502, e),
     };
     if !(200..300).contains(&status) {
-        // Pass the platform's refusal through as-is, so console and CLI agree on what happened.
         return Outcome::Raw(
             status,
             vec![("content-type".into(), "application/json".into())],
@@ -143,8 +111,7 @@ async fn log_in(request: Request) -> Outcome {
         return Outcome::Err(502, "the platform accepted the login but returned no token".into());
     }
 
-    // The token goes in the cookie and NOT in the response body — the whole
-    // point of the exchange is that the browser cannot read it.
+    // The token goes in the cookie, never the body: the browser must not read it.
     Outcome::Raw(
         200,
         vec![
@@ -156,16 +123,13 @@ async fn log_in(request: Request) -> Outcome {
 }
 
 fn session_cookie(token: &str) -> String {
-    // No `Secure` here: it would make the cookie useless over the plain-HTTP
-    // loopback this runs on in development, and the deployment that terminates
-    // TLS is the thing that should add it. Stated rather than silently omitted.
+    // No `Secure`: it breaks the plain-HTTP dev loopback; the TLS-terminating deployment adds it.
     format!("{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/")
 }
 
 async fn whoami(request: &Request) -> Outcome {
     match proxy_get(request, "/api/me").await {
-        // A 401 from the platform is not an error here — it is the answer to
-        // "am I logged in", and the SPA renders a login form rather than a fault.
+        // A 401 here is the answer to "am I logged in", not a fault.
         Outcome::Raw(401, _, _) | Outcome::Err(401, _) => {
             Outcome::Json(200, json!({ "authenticated": false }).to_string())
         }
@@ -178,8 +142,7 @@ fn log_out() -> Outcome {
         200,
         vec![
             ("content-type".into(), "application/json".into()),
-            // Expire it. The platform's own session outlives this, which is
-            // correct: the CLI's login is not this browser's to end.
+            // The platform session outlives this: the CLI's login is not this browser's to end.
             (
                 "set-cookie".into(),
                 format!("{SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"),
@@ -189,10 +152,6 @@ fn log_out() -> Outcome {
     )
 }
 
-/// `POST /api/goals {project, title, spec, priority?}`
-///
-/// Opens a pull request adding the spec, then queues the goal against the path
-/// that PR creates. See the module header for why that order.
 async fn author_goal(request: Request) -> Outcome {
     let Some(token) = session_token(&request) else {
         return Outcome::Err(401, "not signed in".into());
@@ -215,14 +174,12 @@ async fn author_goal(request: Request) -> Outcome {
 
     let slug = slugify(&title);
     if slug.is_empty() {
-        // A title of nothing but punctuation would otherwise become `.md` at the
-        // root of the goals directory.
+        // Punctuation only would become `.md` at the goals root.
         return Outcome::Err(400, "the title has no characters usable in a filename".into());
     }
     let path = format!("{}/{slug}.md", goals_dir());
 
-    // 1. The pull request. `propose` is one call on purpose — the intermediate
-    //    states (a branch with no commit) are litter if we die halfway.
+    // PR first (ADR-0082: the spec lives in git); one `propose` call, so a crash leaves no orphan branch.
     let proposal = forge::Proposal {
         branch: format!("goal/{slug}"),
         base: String::new(), // the repository's default
@@ -242,8 +199,7 @@ async fn author_goal(request: Request) -> Outcome {
         Err(e) => return forge_error(e),
     };
 
-    // 2. The queue entry, pointing at the path the PR creates. `queued`, never
-    //    started: what spends money stays a deliberate human act.
+    // Queued, never started: what spends money stays a deliberate human act.
     let entry = json!({
         "title": title,
         "spec": path,
@@ -270,8 +226,6 @@ async fn author_goal(request: Request) -> Outcome {
                 .to_string(),
             )
         }
-        // The PR is open and the entry is not. Say so precisely — the operator's
-        // move is to queue it by hand or close the PR, and either needs the URL.
         Ok((status, answer)) => Outcome::Err(
             502,
             format!(
@@ -287,13 +241,10 @@ async fn author_goal(request: Request) -> Outcome {
     }
 }
 
-/// The file that lands in the repository: a heading and the prose, deliberately without a
-/// generated header (timestamp, author) that the graph already holds.
 fn spec_document(title: &str, spec: &str) -> String {
     format!("# {title}\n\n{}\n", spec.trim())
 }
 
-/// A filename from a title. Lowercase, alphanumerics and single dashes.
 fn slugify(title: &str) -> String {
     let mut out = String::new();
     for ch in title.chars() {
@@ -308,8 +259,6 @@ fn slugify(title: &str) -> String {
 
 fn forge_error(e: forge::ForgeError) -> Outcome {
     match e {
-        // The branch already exists — the caller's move is a different title,
-        // not a different request, so this is not a 400.
         forge::ForgeError::Conflict(m) => {
             Outcome::Err(409, format!("a goal by that name is already proposed: {m}"))
         }
@@ -323,12 +272,9 @@ fn forge_error(e: forge::ForgeError) -> Outcome {
     }
 }
 
-/// The runs, newest first. Reads the merged store directly: run history is the half the
-/// control plane deliberately cannot see (ADR-0091).
+/// Reads the merged store directly: run history is what the control plane cannot see (ADR-0091).
 fn runs() -> Outcome {
-    // A bounded list: an unbounded SELECT here is the query that gets slow silently.
-    // `started_at` must stay in the projection: SurrealDB v3 refuses an ORDER BY on a field
-    // the statement does not select, with a 400.
+    // SurrealDB v3 refuses ORDER BY on an unselected field, so `started_at` stays in the projection.
     let surql =
         "SELECT id_text, goal, spec, outcome, winner, url, branches, started_at, resolved_at \
                  FROM run ORDER BY started_at DESC LIMIT 50;";
@@ -342,13 +288,10 @@ fn runs() -> Outcome {
     }
 }
 
-/// How many events one run detail may return. A 5,000-event run used to return all 5,000.
-/// The COUNT beside the cap matters more: a truncated timeline that does not say so is the
-/// failure this repo keeps re-learning (ADR-0080).
+/// The count beside the cap says the timeline is truncated (ADR-0080).
 const EVENT_PAGE: usize = 500;
 
-/// One run: the node, its attempts, and its events in order. Four statements in one request,
-/// since a partially-loaded timeline looks complete.
+/// One request: a partially-loaded timeline looks complete.
 fn run_detail(id: &str) -> Outcome {
     let quoted = surql_string(id);
     let surql = format!(
@@ -368,15 +311,11 @@ fn run_detail(id: &str) -> Outcome {
     }
 }
 
-/// `knowledge:graph/query` answers SurrealDB's per-statement envelope. The SPA
-/// wants the rows, so unwrap the LAST statement's result under `key`.
 fn wrap(answer: &str, key: &str) -> Vec<u8> {
     let rows = statements(answer).pop().unwrap_or(Value::Array(vec![]));
     json!({ key: rows }).to_string().into_bytes()
 }
 
-/// The five statements of a run detail, named. `eventCount` is the store total and `events`
-/// the first page, so the page can say "the first 500 of 5,000".
 fn detail(answer: &str) -> Vec<u8> {
     let mut s = statements(answer);
     // Pop in reverse: the last statement is the capabilities.
@@ -387,9 +326,7 @@ fn detail(answer: &str) -> Vec<u8> {
     let run = s.pop().unwrap_or(Value::Array(vec![]));
 
     let shown = events.as_array().map(|a| a.len()).unwrap_or(0);
-    // `count()` on an empty table answers with no rows at all, not a zero — so
-    // fall back to what was actually returned rather than reporting 0 events
-    // beside a list that has some.
+    // `count()` on an empty table answers no rows, not zero.
     let total = counted[0]["count"].as_u64().unwrap_or(shown as u64);
 
     json!({
@@ -398,16 +335,13 @@ fn detail(answer: &str) -> Vec<u8> {
         "events": events,
         "eventCount": total,
         "truncated": total > shown as u64,
-        // What the pool gained (ADR-0089). Usually empty: most runs change an app.
         "capabilities": capabilities,
     })
     .to_string()
     .into_bytes()
 }
 
-/// Per-statement results, in order. An unreadable answer is an empty list rather
-/// than a panic: the run view showing nothing is recoverable, the component
-/// trapping is not.
+/// Unreadable is empty, not a panic: an empty view is recoverable, a trap is not.
 fn statements(answer: &str) -> Vec<Value> {
     serde_json::from_str::<Value>(answer)
         .ok()
@@ -418,15 +352,13 @@ fn statements(answer: &str) -> Vec<Value> {
 
 use guestfmt::percent_decode;
 
-/// A SurrealQL string literal. Through JSON so a value cannot carry syntax —
-/// this one takes a run id straight off the URL (ADR-0080).
+/// Through JSON so a value cannot carry syntax: this takes a run id off the URL (ADR-0080).
 fn surql_string(s: &str) -> String {
     Value::String(s.to_string()).to_string()
 }
 
 fn graph_error(e: graph::GraphError) -> Outcome {
     match e {
-        // No credentials is an operator problem, not a caller's — say which.
         graph::GraphError::NotConfigured(m) => {
             Outcome::Err(503, format!("no knowledge store configured: {m}"))
         }
@@ -466,7 +398,6 @@ async fn proxy_get(request: &Request, path: &str) -> Outcome {
     }
 }
 
-/// A POST forwarded to the platform, body and all, unchanged for the same reason as `log_in`.
 async fn proxy_post(request: Request, path: &str) -> Outcome {
     let token = session_token(&request);
     let body = read_body(request).await.unwrap_or_default();
@@ -487,9 +418,6 @@ fn session_token(request: &Request) -> Option<String> {
     })
 }
 
-/// One call to `platform-domain`, carrying the caller's token if there is one. Returns the
-/// status alongside the body: the console is a proxy here, and a 401 or 409 must mean the
-/// same to the browser as to the CLI.
 async fn platform_call(
     method: &str,
     path: &str,
@@ -503,23 +431,20 @@ async fn platform_call(
     let _ = headers.set("accept", &[b"application/json".to_vec()]);
     if let Some(b) = body {
         let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-        // Framed by length, not chunked: a real edge can mishandle chunked bodies, giving a
-        // truncated response a loopback test never reproduces.
+        // Length-framed, not chunked: a real edge can truncate chunked bodies; loopback never shows it.
         let _ = headers.set("content-length", &[b.len().to_string().into_bytes()]);
     }
-    // Close after the response, so the whole body is delivered rather than the
-    // host being left reading a keep-alive socket that never signals end.
+    // Close after, so the host is not left reading a keep-alive socket that never signals end.
     let _ = headers.set("connection", &[b"close".to_vec()]);
     if let Some(t) = token {
         let _ = headers.set("authorization", &[format!("Bearer {t}").into_bytes()]);
     }
 
-    // Set all three explicitly. An unset default that happens to be short is how
-    // a call that should take 200ms dies as "data receipt timed out".
+    // All three explicit: a short unset default kills a 200ms call as "data receipt timed out".
     let opts = RequestOptions::new();
-    let _ = opts.set_connect_timeout(Some(10_000_000_000)); // 10s
-    let _ = opts.set_first_byte_timeout(Some(30_000_000_000)); // 30s
-    let _ = opts.set_between_bytes_timeout(Some(30_000_000_000)); // 30s
+    let _ = opts.set_connect_timeout(Some(10_000_000_000));
+    let _ = opts.set_first_byte_timeout(Some(30_000_000_000));
+    let _ = opts.set_between_bytes_timeout(Some(30_000_000_000));
 
     let (trailers_tx, trailers_rx) = bindings::wit_future::new(|| Ok(None));
     drop(trailers_tx);
@@ -563,9 +488,7 @@ async fn platform_call(
         }
     }
     drop(res_tx);
-    // The stream ending is not the body arriving whole: a transfer that failed partway is
-    // reported here, and treating it as the end returns a truncated 200 that callers then
-    // fail to parse as JSON, far from the cause.
+    // A transfer that failed partway is reported on the trailers, not by the stream ending.
     trailers.await.map_err(|e| format!("the platform's response was cut short: {e:?}"))?;
     Ok((status, buf))
 }
@@ -585,8 +508,6 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), String> {
 
 guestio::guest_p3_respond!();
 
-/// Serve the baked SPA via `ui:assets`: exact path, else fall back to index.html
-/// so client-side routes render the shell.
 fn serve_static(route: &str) -> Outcome {
     let want = if route == "/" { "/index.html" } else { route };
     match statics::get(want).or_else(|| statics::get("/index.html")) {
@@ -595,9 +516,7 @@ fn serve_static(route: &str) -> Outcome {
     }
 }
 
-/// The most a request body may be. A goal spec is prose; sixteen megabytes of it is not a
-/// goal. A ceiling, not a policy: past this the read stops and the caller is told, instead
-/// of the guest trapping at wasmtime's per-store memory cap.
+/// A goal spec is prose; past this the read stops instead of trapping at the store's memory cap.
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

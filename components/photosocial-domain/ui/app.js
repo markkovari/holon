@@ -89,7 +89,6 @@ let token = localStorage.getItem('ps_token') || '';
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, width, height);
           
-          // Downscale to JPEG (quality 0.82)
           uploadedFileDataUrl = canvas.toDataURL('image/jpeg', 0.82);
           
           document.getElementById('previewImg').src = uploadedFileDataUrl;

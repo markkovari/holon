@@ -1,29 +1,5 @@
-// `portfolio:value`, in C# — the same WIT `components/portfolio-value` exports.
-//
-// One of four languages this interface is implemented in. It goes into the SAME
-// binder composition and is judged by the SAME unedited e2e; see
-// ../portfolio-value-go/README.md for what that is meant to prove.
-//
-// `result<T, E>` is return-or-throw here: the ok value is returned, and the error
-// is thrown as `WitException<ValueError>(e, 0)` — the generated interop catches it
-// and lowers it into the error arm. The nesting level is 0 because this result is
-// not inside another one.
-//
-// The rules, all of which the app's e2e checks:
-//
-//   FIFO. A sale consumes the OLDEST unsold lot, at that lot's own cost. Average
-//   cost is easier and answers a different question than the one a collector asks.
-//
-//   Events are SORTED by `at`, never trusted in the order given, so backfilling an
-//   old purchase does not change the answer. STABLE, so two events in the same
-//   second keep their given order — `List.Sort` is NOT stable, which is why this
-//   uses OrderBy: LINQ's is, and disagreeing with the other three implementations
-//   on exactly the ties that matter is the failure mode.
-//
-//   An unpriced holding is carried at COST and counted, not valued at zero and not
-//   dropped. Either of those puts a confident wrong number on the chart.
-//
-//   Money never converts. Two currencies are an error naming both.
+// `result<T, E>` is return-or-throw: the generated interop lowers `WitException<ValueError>(e, 0)` into the error arm.
+// Same rules as the other three implementations: FIFO, stable sort by `at`, unpriced at cost, no FX.
 
 using System.Collections.Generic;
 using System.Linq;
@@ -33,7 +9,6 @@ namespace PortfolioValueWorld.wit.Exports.portfolio.value;
 
 public class ValuationExportsImpl : IValuationExports {
 
-    /// One open lot: what is left of a purchase, and what that purchase cost.
     private sealed class Lot {
         public uint Quantity;
         public long UnitMinor;
@@ -45,8 +20,7 @@ public class ValuationExportsImpl : IValuationExports {
     private static WitException<IValuationExports.ValueError> Fail(IValuationExports.ValueError e) =>
         new WitException<IValuationExports.ValueError>(e, 0);
 
-    /// The numbers, without the currency — so `Series` can sample without
-    /// re-deriving the string every time.
+    /// No currency, so `Series` samples without re-deriving the string.
     private static Totals TotalsAt(
         List<IValuationExports.Event> events,
         List<IValuationExports.Quote> quotes,
@@ -88,8 +62,7 @@ public class ValuationExportsImpl : IValuationExports {
             uint held = 0;
             for (int i = heads[e.itemId]; i < dq.Count; i++) held += dq[i].Quantity;
             if (held < e.quantity)
-                // The event log is wrong, and guessing which event is the lie is a
-                // bigger lie than refusing.
+                // Guessing which event is the lie is a bigger lie than refusing.
                 throw Fail(IValuationExports.ValueError.OversoldAt((e.itemId, e.at, held, e.quantity)));
 
             uint remaining = e.quantity;

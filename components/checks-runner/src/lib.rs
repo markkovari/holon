@@ -1,15 +1,4 @@
-//! `checks-runner` — `graph:fitness` over the native check runner.
-//!
-//! All judgement lives here; all process-spawning lives in `comp-checks`, native because it
-//! must be (a component cannot spawn a process) and reached over `wasi:http`.
-//!
-//! The gate and the score come back together (ADR-0081): `accepted` is every required check
-//! passing, `score` the weighted fraction of all of them. A binary verdict would throw away
-//! the only signal in a generation where nothing passes yet.
-//!
-//! `need-base` is not a failure: the runner caches base trees by commit and asks for one it
-//! has not seen. A caller answers by sending the tree; collapsing it into a failure would
-//! make a cold cache look like a broken branch.
+//! `graph:fitness` judgement; process spawning is the native `comp-checks`, reached over `wasi:http`.
 
 #[allow(warnings)]
 mod bindings;
@@ -29,8 +18,6 @@ fn cfg(key: &str, default: &str) -> String {
     config::get(key).ok().flatten().filter(|s| !s.is_empty()).unwrap_or_else(|| default.to_string())
 }
 
-/// Where the runner is. Split by hand rather than adding a URL crate for one
-/// shape of string.
 fn endpoint() -> Result<(Scheme, String, String), EvalError> {
     let url = cfg("checks-url", "");
     if url.is_empty() {
@@ -60,9 +47,7 @@ fn files_json(files: &[bindings::exports::graph::fitness::evaluator::File]) -> s
     )
 }
 
-/// The bearer token this evaluator was granted, if any. `none` is the common case: a runner
-/// on loopback is bounded by the loopback, and `comp-checks` only insists on a token when
-/// bound somewhere a second machine can reach.
+/// `none` is common: `comp-checks` insists on a token only when bound beyond loopback.
 fn token() -> Option<String> {
     match secrets::get("checks-token") {
         Ok(Some(s)) => secrets::reveal(&s).ok().filter(|v| !v.is_empty()),
@@ -70,7 +55,6 @@ fn token() -> Option<String> {
     }
 }
 
-/// POST the candidate and hand back (status, body).
 fn post(body: &str) -> Result<(u16, String), EvalError> {
     let (scheme, authority, path) = endpoint()?;
     let headers = Fields::new();
@@ -89,8 +73,7 @@ fn post(body: &str) -> Result<(u16, String), EvalError> {
     let out = req.body().map_err(|_| net("no request body".into()))?;
     {
         let stream = out.write().map_err(|_| net("no request stream".into()))?;
-        // A whole base tree goes through here, so it is chunked: the WASI write
-        // caps at 4096 bytes a call and a repository is rather larger.
+        // WASI writes cap at 4096 bytes a call, and a base tree is larger.
         for chunk in body.as_bytes().chunks(4096) {
             stream
                 .blocking_write_and_flush(chunk)
@@ -101,8 +84,7 @@ fn post(body: &str) -> Result<(u16, String), EvalError> {
 
     let opts = RequestOptions::new();
     let _ = opts.set_connect_timeout(Some(10_000_000_000));
-    // Generous: the far end is compiling and running a test suite, and a shorter timeout
-    // would report every slow candidate as bad.
+    // Generous: the far end compiles and runs a suite; shorter reports every slow candidate as bad.
     let _ = opts.set_first_byte_timeout(Some(900_000_000_000));
 
     let fut = bindings::wasi::http::outgoing_handler::handle(req, Some(opts))
@@ -123,24 +105,15 @@ fn post(body: &str) -> Result<(u16, String), EvalError> {
             Ok(chunk) if chunk.is_empty() => break,
             Ok(chunk) => buf.extend_from_slice(&chunk),
             Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-            // A failed read is not the end of the answer. Keeping the truncated
-            // bytes turns half a reply into a whole one that happens to be wrong.
+            // A failed read is not the end: truncated bytes turn half a reply into a wrong whole one.
             Err(e) => return Err(net(format!("reading the response: {e:?}"))),
         }
     }
     Ok((status, String::from_utf8_lossy(&buf).into_owned()))
 }
 
-/// The checks in the order they may run: one list per LEVEL, independent within a level
-/// (Kahn's algorithm, a whole ready level at a time).
-///
-/// Three refusals, all `invalid` rather than a failed check, since each is a mistake in the
-/// gate itself:
-///   - a CYCLE, named, because a graph that cannot be ordered has no first check;
-///   - an unknown id, since a typo silently meaning "no dependency" gives unasked
-///     parallelism and a report that lies about why something ran;
-///   - a required check that needs an optional one, which would let a check marked as not
-///     mattering decide whether the gate opens.
+/// Kahn's algorithm, a level at a time. A cycle, an unknown id or a required check needing an
+/// optional one is `invalid`: a mistake in the gate, not a failed check.
 fn plan(checks: &[Check]) -> Result<Vec<Vec<usize>>, String> {
     let index: std::collections::BTreeMap<&str, usize> =
         checks.iter().enumerate().map(|(i, c)| (c.id.as_str(), i)).collect();
@@ -174,8 +147,6 @@ fn plan(checks: &[Check]) -> Result<Vec<Vec<usize>>, String> {
             .filter(|&i| checks[i].needs.iter().all(|n| done.contains(&index[n.as_str()])))
             .collect();
         if ready.is_empty() {
-            // Whatever is left is in a cycle or downstream of one. Name the members:
-            // "there is a cycle" sends the reader back to the file.
             let mut names: Vec<&str> = remaining.iter().map(|&i| checks[i].id.as_str()).collect();
             names.sort();
             return Err(format!("these checks need each other in a cycle: {}", names.join(", ")));
@@ -189,9 +160,7 @@ fn plan(checks: &[Check]) -> Result<Vec<Vec<usize>>, String> {
     Ok(levels)
 }
 
-/// Walk the levels, asking `run` for each level's results. Pure apart from `run`, so the
-/// blocking rules are testable without a runner. A check blocked by something that was
-/// ITSELF blocked reports the ROOT, not a chain the reader has to walk.
+/// A check blocked by a blocked check reports the root, not a chain to walk.
 fn walk_levels<F, E>(checks: &[Check], levels: &[Vec<usize>], mut run: F) -> Result<Vec<Outcome>, E>
 where
     F: FnMut(&[&Check]) -> Result<Vec<Outcome>, E>,
@@ -224,22 +193,18 @@ where
         }
         for o in run(&runnable)? {
             if o.state != CheckState::Passed {
-                // Its own id is the root: whatever depends on it stops HERE.
                 stopped.insert(o.id.clone(), o.id.clone());
             }
             outcomes.push(o);
         }
     }
 
-    // Back into the order the caller asked in, so a report reads like the file it
-    // was written in rather than like the schedule.
+    // Back into the caller's order, so the report reads like the file, not the schedule.
     outcomes.sort_by_key(|o| checks.iter().position(|k| k.id == o.id).unwrap_or(usize::MAX));
     Ok(outcomes)
 }
 
-/// One level's report into outcomes. The gate and score are recomputed rather than trusted
-/// from the wire: taking them on faith would put the acceptance rule in a process the
-/// caller does not control.
+/// Recomputed, not trusted from the wire: the acceptance rule stays in this process.
 fn outcomes_of(report: &serde_json::Value) -> Vec<Outcome> {
     report["results"]
         .as_array()
@@ -262,14 +227,10 @@ fn outcomes_of(report: &serde_json::Value) -> Vec<Outcome> {
         .collect()
 }
 
-/// The gate and the score, from every outcome.
 fn verdict_of(outcomes: Vec<Outcome>) -> Verdict {
-    // A required check that was never attempted has not passed. A blocked gate is
-    // a closed gate.
+    // A required check never attempted has not passed.
     let accepted = outcomes.iter().filter(|o| o.required).all(|o| o.state == CheckState::Passed);
-    // The denominator is everything ASKED FOR, `not-attempted` included. Dropping
-    // skipped checks would let a branch that fails early compete against a smaller
-    // denominator than one that runs the whole gate.
+    // The denominator includes `not-attempted`, or failing early competes against a smaller one.
     let total: u32 = outcomes.iter().map(|o| o.weight).sum();
     let won: u32 =
         outcomes.iter().filter(|o| o.state == CheckState::Passed).map(|o| o.weight).sum();
@@ -280,8 +241,7 @@ fn verdict_of(outcomes: Vec<Outcome>) -> Verdict {
 impl Guest for Component {
     fn evaluate(c: Candidate, checks: Vec<Check>) -> Result<Verdict, EvalError> {
         if checks.is_empty() {
-            // A candidate nothing was asked of would be vacuously "accepted"; an empty check
-            // list is a caller mistake, and a pass is how a swarm accepts everything.
+            // An empty check list would be vacuously accepted.
             return Err(EvalError::Invalid(
                 "no checks — an empty gate accepts everything, which is never what was meant"
                     .into(),
@@ -317,8 +277,7 @@ impl Guest for Component {
 
             match status {
                 200 => Ok(outcomes_of(&parsed)),
-                // The runner has not seen this base; the caller answers by sending the tree,
-                // not by judging the candidate.
+                // Not a failure: the runner caches bases by commit; the caller answers by sending the tree.
                 409 => Err(EvalError::NeedBase(
                     parsed["base_commit"].as_str().unwrap_or_default().to_string(),
                 )),
@@ -328,8 +287,7 @@ impl Guest for Component {
                         .unwrap_or("the runner refused the request")
                         .to_string(),
                 )),
-                // `invalid`, not `unavailable`: the runner answered, and reporting it as
-                // unreachable would send the caller to look at the network, the wrong half.
+                // `invalid`, not `unavailable`: the runner answered, so the network is the wrong place to look.
                 401 => Err(EvalError::Invalid(
                     "the runner rejected this evaluator's token — grant `checks-token` in the \
                      manifest, matching the runner's --token-file"
@@ -389,7 +347,6 @@ mod tests {
             .collect()
     }
 
-    /// The gate is the required checks, and nothing else gets a vote.
     #[test]
     fn an_optional_check_cannot_close_the_gate() {
         let v = verdict_of(vec![passed("compiles", true, 1), failed("lints", false, 1)]);
@@ -403,8 +360,6 @@ mod tests {
         assert!(!v.accepted);
     }
 
-    /// The property the whole contract exists for: something to select on before
-    /// anything is acceptable.
     #[test]
     fn the_score_orders_candidates_that_all_fail_the_gate() {
         let poor =
@@ -428,7 +383,6 @@ mod tests {
         assert!(!v.accepted, "and the light REQUIRED one still closes the gate");
     }
 
-    /// A check that was never attempted has not passed, so a blocked gate is shut.
     #[test]
     fn a_required_check_that_never_ran_closes_the_gate() {
         let v = verdict_of(vec![
@@ -438,8 +392,6 @@ mod tests {
         assert!(!v.accepted, "nobody proved `tests` passes, so it did not");
     }
 
-    /// THE scoring trap. Skipped checks stay in the denominator, or failing early
-    /// competes against a smaller one — which pays a search to break the build.
     #[test]
     fn skipping_a_check_never_raises_the_score() {
         let ran_everything = verdict_of(vec![
@@ -460,8 +412,6 @@ mod tests {
         );
     }
 
-    /// A flat list is a graph with one level, so every gate written before the
-    /// edges existed behaves exactly as it did.
     #[test]
     fn no_edges_is_one_level() {
         let checks = vec![check("a", true, &[]), check("b", true, &[]), check("c", false, &[])];
@@ -470,8 +420,6 @@ mod tests {
         assert_eq!(ids(&levels, &checks), vec![vec!["a", "b", "c"]]);
     }
 
-    /// And the levels are what may run at once: `lints` and `tests` both need
-    /// `compiles` and neither needs the other.
     #[test]
     fn the_levels_are_what_can_run_together() {
         let checks = vec![
@@ -497,8 +445,6 @@ mod tests {
         }
     }
 
-    /// A typo that silently meant "no dependency" would give parallelism nobody
-    /// asked for and a report that lies about why something ran.
     #[test]
     fn a_dependency_nothing_declares_is_refused() {
         let checks = vec![check("tests", true, &["compile"])];
@@ -506,20 +452,16 @@ mod tests {
         assert!(e.contains("compile") && e.contains("tests"), "{e}");
     }
 
-    /// The subtle one: an optional check must not decide whether the gate opens.
     #[test]
     fn a_required_check_may_not_hang_off_an_optional_one() {
         let checks = vec![check("lints", false, &[]), check("tests", true, &["lints"])];
         let e = plan(&checks).expect_err("that lets `lints` close the gate");
         assert!(e.contains("optional"), "{e}");
 
-        // The other way round is fine: an optional check may wait on a required one.
         let ok = vec![check("compiles", true, &[]), check("bench", false, &["compiles"])];
         assert!(plan(&ok).is_ok());
     }
 
-    /// Run the graph with a scripted runner: every check passes unless it is named
-    /// in `fails`. No HTTP, so what is under test is the blocking, not the wire.
     fn walk(checks: &[Check], fails: &[&str]) -> Vec<Outcome> {
         let levels = plan(checks).expect("plans");
         walk_levels::<_, ()>(checks, &levels, |runnable| {
@@ -551,9 +493,6 @@ mod tests {
         ]
     }
 
-    /// THE case the graph exists for. A candidate that does not compile used to
-    /// arrive as four failures and four walls of output; it arrives as ONE failure
-    /// and three things nobody tried.
     #[test]
     fn a_compile_failure_produces_one_failure_and_a_list_of_untried_things() {
         let checks = gate();
@@ -578,8 +517,6 @@ mod tests {
         );
     }
 
-    /// `bench` needs `tests` which needs `compiles`. It must not report `tests` —
-    /// a chain the reader has to walk always ends at the same place.
     #[test]
     fn a_blocked_check_names_the_root_and_not_the_link() {
         let outcomes = walk(&gate(), &["compiles"]);
@@ -587,8 +524,6 @@ mod tests {
         assert_eq!(bench.blocked_by, "compiles", "not `tests`, which never ran either");
     }
 
-    /// A failure only stops what depends on it. `lints` has nothing to do with
-    /// `tests` and must still run.
     #[test]
     fn a_failure_blocks_its_dependents_and_nothing_else() {
         let outcomes = walk(&gate(), &["tests"]);
@@ -599,8 +534,6 @@ mod tests {
         assert_eq!(state("bench"), CheckState::NotAttempted, "bench does");
     }
 
-    /// The report comes back in the order the gate was WRITTEN, not the order the
-    /// schedule happened to run it.
     #[test]
     fn the_report_reads_like_the_file_it_was_written_in() {
         let checks = vec![
@@ -613,7 +546,6 @@ mod tests {
         assert_eq!(ids, vec!["bench", "compiles", "tests"]);
     }
 
-    /// Everything green is still everything green.
     #[test]
     fn a_passing_graph_runs_all_of_it() {
         let outcomes = walk(&gate(), &[]);

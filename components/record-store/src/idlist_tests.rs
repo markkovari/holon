@@ -1,11 +1,5 @@
-//! Deterministic interleavings of the id-list writers, against the algorithm this
-//! replaced and against the current one.
-//!
-//! `MemKv` behaves like the host's memory backend (a revision per key, bumped on
-//! every write, compare-and-set under one lock) and can run a second operation
-//! to completion immediately before the N-th store call of the first. `explore`
-//! tries that at EVERY call boundary of the first operation, so each test below
-//! covers all single-preemption schedules of its pair, not a sample of them.
+//! `explore` preempts at EVERY store-call boundary of the first operation, so each test covers all
+//! single-preemption schedules of its pair, not a sample.
 
 use super::*;
 use std::collections::{BTreeSet, HashMap};
@@ -26,7 +20,6 @@ impl MemKv {
         Self::default()
     }
 
-    /// Count a store call; run the hook first if this is the call it waits for.
     fn tick(&self) {
         let fire = {
             let mut c = self.calls.lock().unwrap();
@@ -53,7 +46,6 @@ impl MemKv {
         *self.calls.lock().unwrap()
     }
 
-    /// Run `f` right before the `n`-th store call from now.
     fn at(&self, n: u64, f: impl FnOnce(&MemKv) + Send + 'static) {
         self.reset_calls();
         *self.hook.lock().unwrap() = Some((n, Box::new(f)));
@@ -123,8 +115,6 @@ fn set_of(v: &[&str]) -> BTreeSet<String> {
     v.iter().map(|s| s.to_string()).collect()
 }
 
-/// Every manifest entry agrees with its chunk, no empty chunk is named beside
-/// others, and every read path returns exactly `want`.
 fn assert_consistent(kv: &MemKv, want: &BTreeSet<String>) {
     let got: BTreeSet<String> = read_all(kv, B).unwrap().into_iter().collect();
     assert_eq!(&got, want, "membership");
@@ -163,8 +153,6 @@ fn assert_consistent(kv: &MemKv, want: &BTreeSet<String>) {
     }
 }
 
-/// Run `second` before every store call of `first` in turn (and once after it),
-/// each time from a fresh `setup`, and hand every final state to `check`.
 fn explore(
     setup: &dyn Fn(&MemKv),
     first: &dyn Fn(&MemKv),
@@ -290,18 +278,13 @@ mod old {
         Err("lost".into())
     }
 
-    /// What a reader of the old layout saw.
     pub fn members(kv: &MemKv, base: &str) -> BTreeSet<String> {
         read_all(kv, base).unwrap().into_iter().collect()
     }
 }
 
-/// The old `remove` that empties a chunk deleted it and rewrote the manifest with no guard. An
-/// `insert` inside that window is lost, or lost AND the list is wedged: the insert recreated
-/// chunk 0 and named it, the remove's plain manifest write un-named it, and every later insert
-/// CASes chunk 0 with `expected: 0`, conflicts with the chunk still there, and loses all its
-/// "races" against nobody (seen as `ix_transfers_state_"pending"` drift, where a pending index
-/// empties whenever the last pending transfer settles).
+/// Old remove: an empty chunk was deleted and the manifest rewritten unguarded, losing (and wedging) an
+/// insert in that window (seen as `ix_transfers_state_"pending"` drift).
 #[test]
 fn old_remove_emptying_a_chunk_loses_a_racing_insert_and_can_wedge_the_list() {
     let (mut lost, mut wedged) = (0, 0);
@@ -328,7 +311,6 @@ fn old_remove_emptying_a_chunk_loses_a_racing_insert_and_can_wedge_the_list() {
     assert!(wedged > 0, "the old remove never wedged the list");
 }
 
-/// The same schedules against the current code: nothing lost, nothing wedged.
 #[test]
 fn remove_emptying_the_only_chunk_keeps_a_racing_insert() {
     explore(
@@ -343,10 +325,7 @@ fn remove_emptying_the_only_chunk_keeps_a_racing_insert() {
     );
 }
 
-/// The old manifest guard compared against the revision read just before the
-/// write, so a manifest computed from a STALE read went through whenever nobody
-/// wrote in that last instant. With a split in between, the stale manifest does
-/// not name the split's new chunk, and half a chunk of ids vanishes from the list.
+/// The old guard compared against the revision read just before the write, so a STALE manifest could drop a split's chunk.
 #[test]
 fn old_stale_manifest_write_unnames_a_split_chunk() {
     let setup = |kv: &MemKv| {
@@ -374,8 +353,7 @@ fn old_stale_manifest_write_unnames_a_split_chunk() {
     assert!(lost > 0, "the stale manifest write never lost ids");
 }
 
-/// Two splits of DIFFERENT chunks both picked `max(seq) + 1` from their own read
-/// and wrote the new chunk with a plain set, so one right half overwrote the other.
+/// Two splits picked `max(seq) + 1` independently and one right half overwrote the other.
 #[test]
 fn old_concurrent_splits_clobber_one_new_chunk() {
     let setup = |kv: &MemKv| two_full_chunks(kv, true);
@@ -400,8 +378,7 @@ fn old_concurrent_splits_clobber_one_new_chunk() {
     assert!(lost > 0, "the old concurrent splits never clobbered each other");
 }
 
-/// `repair` emptying an index left chunk 0 behind under an empty manifest, and
-/// the old bootstrap (`expected: 0` on chunk 0) could then never succeed again.
+/// An emptied index left chunk 0 behind, and the old `expected: 0` bootstrap could never succeed again.
 #[test]
 fn an_emptied_manifest_over_a_leftover_chunk_no_longer_wedges_inserts() {
     let kv = MemKv::new();
@@ -419,8 +396,7 @@ fn remove4(kv: &MemKv, id: &str) {
     remove_capped(kv, B, id, 4).unwrap()
 }
 
-/// c0 = [a b c d], c1 = [m n o p], written directly. `with_revs: false` writes
-/// the manifest as the old code did — no `rev`, no `next_seq`.
+/// `with_revs: false` writes the manifest as the old code did (no `rev`, no `next_seq`).
 fn two_full_chunks(kv: &MemKv, with_revs: bool) {
     kv.put_json(&chunk_key(B, 0), &ids(&["a", "b", "c", "d"]));
     kv.put_json(&chunk_key(B, 1), &ids(&["m", "n", "o", "p"]));
@@ -483,9 +459,7 @@ fn two_appends_racing_to_start_the_same_new_chunk_both_land() {
     );
 }
 
-/// The chunk-drop race: "m".."p" are removed down to one, the last remove
-/// empties c1 and drops it, and an insert routed into c1 on the old manifest runs
-/// inside that window. It must end up in a named chunk.
+/// An insert routed into c1 on the old manifest while the last remove drops c1 must land in a named chunk.
 #[test]
 fn dropping_an_emptied_chunk_keeps_an_insert_routed_into_it() {
     explore(
@@ -545,8 +519,7 @@ fn converting_a_legacy_list_keeps_a_racing_remove() {
     );
 }
 
-/// Two preemptions deep: a third operation injected at every call boundary of
-/// the second, itself injected at every call boundary of the first.
+/// Two preemptions deep.
 #[test]
 fn three_way_drop_insert_insert_under_every_two_level_schedule() {
     let setup = |kv: &MemKv| {
@@ -586,8 +559,7 @@ fn three_way_drop_insert_insert_under_every_two_level_schedule() {
     }
 }
 
-/// An id one chunk early (a writer routed on a manifest read just before a new
-/// chunk was named) is still read, paged, and removable.
+/// A writer routed on a manifest read just before a new chunk was named.
 #[test]
 fn an_id_one_chunk_early_is_still_listed_and_removable() {
     let kv = MemKv::new();
@@ -634,11 +606,7 @@ fn chunk_keys_are_recognised_and_base_keys_are_not() {
     assert!(!is_chunk_key("ix_t_f_c1234567"));
 }
 
-/// Real threads, a store that yields on every call, a chunk cap of 3 so chunks
-/// are created and dropped constantly, and ids in random order so inserts land
-/// in the middle as well as at the end. Each thread inserts its own ids and
-/// removes some of them again (the same id is never raced — that has no defined
-/// winner), so the final list is known exactly.
+/// The same id is never raced (no defined winner), so the final list is known exactly.
 #[test]
 fn stress_many_writers_one_list() {
     let kv = MemKv { yield_each: true, ..MemKv::default() };
@@ -671,8 +639,7 @@ fn stress_many_writers_one_list() {
     assert_consistent(&kv, &wanted.into_inner().unwrap());
 }
 
-/// All writers appending to the tail at once — the id index's shape, and the
-/// treasury gate's: every create lands in the last chunk.
+/// The id index's shape (and the treasury gate's): every create lands in the last chunk.
 #[test]
 fn stress_many_writers_appending() {
     let kv = MemKv { yield_each: true, ..MemKv::default() };

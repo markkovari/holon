@@ -1,12 +1,4 @@
-//! `jsonpatch` — apply a partial change to a JSON document — RFC 6902 JSON Patch and RFC 7386 merge patch
-//!
-//! Pure-compute JSON patching over three IETF standards:
-//!   - RFC 6902 (JSON Patch): an ordered list of add/remove/replace/move/copy/test ops. Atomic: every op runs
-//!     against a working clone and the result is returned only if all succeed, so the original is never partially mutated.
-//!   - RFC 7386 (JSON Merge Patch): a sparse overlay where `null` deletes a key and any other value merges/replaces recursively.
-//!   - RFC 6901 (JSON Pointer): the `/foo/0/~1bar` path syntax, with the `~1` -> `/` and `~0` -> `~` escapes and the array-append `-` token.
-//!
-//! `diff` produces an RFC 7386 merge-patch between two documents. No state, no host imports.
+//! RFC 6902 patches are atomic: ops run on a clone, returned only if all succeed.
 
 #[allow(warnings)]
 mod bindings;
@@ -16,13 +8,10 @@ use serde_json::Value;
 
 struct Component;
 
-/// Decode a single reference token: `~1` -> `/`, `~0` -> `~`.
 fn unescape_token(tok: &str) -> String {
     tok.replace("~1", "/").replace("~0", "~")
 }
 
-/// Parse a JSON Pointer string into its decoded reference tokens. An empty
-/// string addresses the whole-document root (zero tokens).
 fn parse_pointer(path: &str) -> Result<Vec<String>, PatchError> {
     if path.is_empty() {
         return Ok(Vec::new());
@@ -35,8 +24,6 @@ fn parse_pointer(path: &str) -> Result<Vec<String>, PatchError> {
     Ok(path[1..].split('/').map(unescape_token).collect())
 }
 
-/// Resolve an array index token (a non-negative integer with no leading zeros
-/// beyond "0" itself).
 fn parse_index(tok: &str, len: usize) -> Result<usize, PatchError> {
     if tok == "0" {
         return Ok(0);
@@ -49,7 +36,6 @@ fn parse_index(tok: &str, len: usize) -> Result<usize, PatchError> {
     })
 }
 
-/// Borrow the value at `tokens`, or `PathNotFound`.
 fn resolve<'a>(root: &'a Value, tokens: &[String]) -> Result<&'a Value, PatchError> {
     let mut cur = root;
     for tok in tokens {
@@ -72,8 +58,6 @@ fn resolve<'a>(root: &'a Value, tokens: &[String]) -> Result<&'a Value, PatchErr
     Ok(cur)
 }
 
-/// Mutably borrow the *parent* container of the location named by `tokens`,
-/// returning `(parent, last_token)`. `tokens` must be non-empty.
 fn resolve_parent_mut<'a>(
     root: &'a mut Value,
     tokens: &'a [String],
@@ -101,9 +85,6 @@ fn resolve_parent_mut<'a>(
     Ok((cur, last))
 }
 
-/// Insert/replace `value` at `tokens`. For an array, an in-range index inserts
-/// (shifting), "-" appends; for an object, the key is set. Root ("") replaces
-/// the whole document.
 fn op_add(root: &mut Value, tokens: &[String], value: Value) -> Result<(), PatchError> {
     if tokens.is_empty() {
         *root = value;
@@ -134,7 +115,6 @@ fn op_add(root: &mut Value, tokens: &[String], value: Value) -> Result<(), Patch
     }
 }
 
-/// Remove and return the value at `tokens`; missing -> PathNotFound.
 fn op_remove(root: &mut Value, tokens: &[String]) -> Result<Value, PatchError> {
     if tokens.is_empty() {
         let old = std::mem::replace(root, Value::Null);
@@ -156,21 +136,18 @@ fn op_remove(root: &mut Value, tokens: &[String]) -> Result<Value, PatchError> {
     }
 }
 
-/// Replace an existing value at `tokens`; the location must already exist.
 fn op_replace(root: &mut Value, tokens: &[String], value: Value) -> Result<(), PatchError> {
     resolve(root, tokens)?;
     op_remove(root, tokens)?;
     op_add(root, tokens, value)
 }
 
-/// Read the required string field `field` from an op object.
 fn req_str<'a>(op: &'a serde_json::Map<String, Value>, field: &str) -> Result<&'a str, PatchError> {
     op.get(field)
         .and_then(Value::as_str)
         .ok_or_else(|| PatchError::InvalidPatch(format!("op missing string field '{field}'")))
 }
 
-/// Read the required `value` field from an op object.
 fn req_value(op: &serde_json::Map<String, Value>) -> Result<&Value, PatchError> {
     op.get("value").ok_or_else(|| PatchError::InvalidPatch("op missing 'value' field".into()))
 }
@@ -222,7 +199,6 @@ fn apply_op(root: &mut Value, op: &Value) -> Result<(), PatchError> {
     }
 }
 
-/// Merge `patch` into `target` per RFC 7386 §2.
 fn merge(target: &mut Value, patch: &Value) {
     match patch {
         Value::Object(patch_map) => {
@@ -245,14 +221,13 @@ fn merge(target: &mut Value, patch: &Value) {
     }
 }
 
-/// Produce a merge-patch that turns `from` into `to`.
 fn diff_value(from: &Value, to: &Value) -> Value {
     match (from, to) {
         (Value::Object(from_map), Value::Object(to_map)) => {
             let mut out = serde_json::Map::new();
             for (k, to_v) in to_map {
                 match from_map.get(k) {
-                    Some(from_v) if from_v == to_v => {} // unchanged, omit
+                    Some(from_v) if from_v == to_v => {}
                     Some(from_v) => {
                         out.insert(k.clone(), diff_value(from_v, to_v));
                     }
@@ -287,7 +262,6 @@ impl Guest for Component {
         let ops = patch_val
             .as_array()
             .ok_or_else(|| PatchError::InvalidPatch("patch must be a JSON array of ops".into()))?;
-        // Atomic: every op runs on the working clone; it is serialized and returned only after all succeed.
         for op in ops {
             apply_op(&mut working, op)?;
         }
@@ -314,8 +288,7 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::*;
 
-    /// RFC 6901 §4: `~1` is unescaped BEFORE `~0`, and the order is the whole rule. Reversed, `~01` decodes to `/`
-    /// instead of the literal `~1`, silently pointing an edit at a different member.
+    /// RFC 6901 §4: `~1` before `~0`; reversed, `~01` decodes to `/` instead of `~1`.
     #[test]
     fn pointer_tokens_unescape_in_the_order_the_rfc_specifies() {
         assert_eq!(unescape_token("~1"), "/");
@@ -326,7 +299,7 @@ mod tests {
         assert_eq!(unescape_token("plain"), "plain");
     }
 
-    /// The empty pointer is the whole document; `/` is a one-element path to the member named by the empty string (a legal key people delete by accident).
+    /// `/` names the empty-string key (a legal key people delete by accident).
     #[test]
     fn the_empty_pointer_and_the_empty_key_are_different_things() {
         assert_eq!(parse_pointer("").unwrap(), Vec::<String>::new(), "the whole document");
@@ -335,7 +308,7 @@ mod tests {
         assert_eq!(parse_pointer("/a//b").unwrap(), vec!["a", "", "b"]);
     }
 
-    /// A pointer not starting with `/` is rejected rather than guessed at: treating `a/b` as `/a/b` would let a typo address a real member.
+    /// Treating `a/b` as `/a/b` would let a typo address a real member.
     #[test]
     fn a_pointer_must_be_empty_or_absolute() {
         assert!(parse_pointer("a/b").is_err());

@@ -1,15 +1,4 @@
-//! `doc-search-domain` — retrieval-augmented answers over an indexed library, behind
-//! a TOTP step-up, a per-subject budget and a cache.
-//!
-//! This file is the ROUTER and no part may write it: it dispatches to `library`, `answer`
-//! and `stepup`, answers `/health`, mints a test token, seeds a library, and can mark a
-//! session stepped-up directly. `src/library.rs`, `src/answer.rs` and `src/stepup.rs` are
-//! the goal; `CONTRACT.md` is what they must agree on.
-//!
-//! The chain is about COST, not order: `library` decides what can be found, `stepup` who
-//! may spend, and `answer` is the only part that spends, so a second identical question
-//! must cost nothing and a refusal must not be remembered as an answer. Neither is
-//! checkable inside one part.
+//! The router; no part may write it. `answer` alone spends: a repeat must be free, a refusal not cached.
 
 mod answer;
 #[allow(warnings)]
@@ -43,7 +32,6 @@ mod bindings {
         world: "docsearch:agent/doc-search-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -69,7 +57,7 @@ struct Component;
 
 pub struct Reply {
     pub status: u16,
-    /// `Value::Null` means no body at all — see `no_content`.
+    /// `Value::Null` means no body at all.
     pub json: Value,
 }
 
@@ -80,19 +68,17 @@ impl Reply {
     pub fn err(status: u16, code: &str) -> Self {
         Reply::json(status, json!({ "error": code }))
     }
-    /// 204 carries no body, and a JSON `null` is not "no body".
+    /// A JSON `null` is not "no body".
     pub fn no_content() -> Self {
         Reply::json(204, Value::Null)
     }
 }
 
-/// One request, as a part sees it. The bearer is a STRING, not a principal: resolving it
-/// is `auth:identity/authorizer`'s job, and doing it here would remove the part's reason
-/// to import that capability.
+/// A string, not a principal: resolving it is `auth:identity/authorizer`'s job, in the part.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
-    /// The `Authorization: Bearer …` value, empty when the header is absent.
+    /// Empty when the header is absent.
     pub bearer: String,
 }
 
@@ -109,8 +95,6 @@ impl Route {
 
 use guestfmt::percent_decode as percent;
 
-/// A `wasi:config` value as a number, with a default. Scaffold: reading config is
-/// plumbing; what a part does with the number is the goal.
 pub fn cfg_u64(key: &str, default: u64) -> u64 {
     bindings::wasi::config::store::get(key)
         .ok()
@@ -123,9 +107,7 @@ pub fn now_secs() -> u64 {
     system_clock::now().seconds as u64
 }
 
-/// A token for a test caller, so no gate has to log in through a part it is not judging.
-/// `session::issue` rather than a hand-built JWT: a fixture minting its own tokens can drift
-/// from what the verifier accepts, and then every part fails for the router's reason.
+/// Via `session::issue`: a hand-built JWT could drift from what the verifier accepts.
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let subject = req.get("subject").and_then(Value::as_str).unwrap_or("ada").to_string();
@@ -146,9 +128,7 @@ fn mint(body: &str) -> Reply {
     }
 }
 
-/// Three documents, stored AND indexed, so `answer` and `stepup` can be judged before
-/// `library` exists. Deliberately specific, so `answer`'s gate can tell a real model answer
-/// from a canned sentence without comparing strings.
+/// Specific on purpose, so `answer`'s gate can tell a real answer from a canned one.
 fn seed() -> Reply {
     let mut ids = Vec::new();
     for (title, text, tag) in [
@@ -179,8 +159,7 @@ fn seed() -> Reply {
             Ok(e) => e,
             Err(_) => return Reply::err(500, "seed_failed"),
         };
-        // Indexed the way the contract says a document is indexed, because a fixture
-        // that indexed it differently would make `answer`'s retrieval untestable.
+        // Indexed as the contract says, or `answer`'s retrieval is untestable.
         if search::index_doc(&entry.id, &format!("{title}\n{text}"), &[tag.to_string()]).is_err() {
             return Reply::err(500, "seed_index_failed");
         }
@@ -189,10 +168,7 @@ fn seed() -> Reply {
     Reply::json(201, json!({ "doc_ids": ids }))
 }
 
-/// A verified step-up, written straight to the store.
-///
-/// `answer` is judged with `stepup` stubbed, and its first check is that the session is
-/// stepped up — without this it could only ever be judged on its 403.
+/// `answer` is judged with `stepup` stubbed; without this it could only be judged on its 403.
 fn mark_stepped_up(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let subject = req.get("subject").and_then(Value::as_str).unwrap_or("ada");
@@ -203,9 +179,7 @@ fn mark_stepped_up(body: &str) -> Reply {
     }
 }
 
-/// A ceiling on a body read into memory, not a policy: past this the read gives up
-/// and the body reads as empty, rather than growing until the store's memory cap
-/// traps the component and the connection simply closes.
+/// Past this the body reads as empty, rather than the store's memory cap trapping the component.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
@@ -229,27 +203,20 @@ impl Guest for Component {
             _ => String::new(),
         };
 
-        // The router: `/health`, the token and the fixture here, everything else to
-        // the part that owns it.
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
         let Reply { status, json: payload } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
             ["test", "token"] => mint(&body),
             ["test", "seed"] => seed(),
             ["test", "stepup"] => mark_stepped_up(&body),
-            // The stored document, straight out of the store. Scaffold: a part must be
-            // judgeable on what it WROTE without depending on the part that owns the read route.
+            // Scaffold: a part is judged on what it wrote, without the part owning the read route.
             ["test", "doc", id] => match records::get("docs", id) {
                 Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
                 Err(_) => Reply::err(404, "not_found"),
             },
             ["api", "answer"] => answer::handle(&method, &route, &body),
             ["api", "mfa", ..] => stepup::handle(&method, &route, &body),
-            // `search` before the catch-all: it is the library's, and a match on
-            // ["api", ..] alone would swallow it.
-            // `["api", "docs"]` is not listed: `["api", "docs", ..]` already
-            // matches the zero-extra-segment case, and naming both made the
-            // second arm unreachable.
+            // `search` before the catch-all; `["api", "docs", ..]` already matches zero extra segments.
             ["api", "search"] | ["api", "docs", ..] => library::handle(&method, &route, &body),
             _ => Reply::err(404, "not_found"),
         };

@@ -1,7 +1,4 @@
-//! Start a fleet, drive it, read it. Shared by the integration tests.
-//!
-//! Every process is a child killed on drop, so a failed assertion cannot leave a lattice running
-//! (the old bash benchmarks leaked `nats-server`s across a session).
+//! Start a fleet, drive it, read it; every process is a child killed on drop.
 
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -17,9 +14,7 @@ impl Drop for Kill {
     }
 }
 
-/// `Fleet`'s scratch directory: a fresh `tempfile::TempDir` (deleted on drop) or a FIXED, caller-chosen
-/// directory that is never deleted, so the NATS jetstream store and `platform-domain` SQLite DB
-/// survive separate process launches.
+/// `Fixed` is never deleted, so the jetstream store and SQLite DB survive separate launches.
 enum Scratch {
     Owned(tempfile::TempDir),
     Fixed(std::path::PathBuf),
@@ -34,8 +29,7 @@ impl Scratch {
     }
 }
 
-/// Keeps the node logs when asked. The struct's own `drop` runs BEFORE its fields are dropped, so the
-/// scratch directory is still there to copy out of.
+/// Keeps the node logs when asked; the scratch directory still exists during `drop`.
 impl Drop for Fleet {
     fn drop(&mut self) {
         let Some(dest) = std::env::var_os("COMP_FLEET_KEEP_LOGS") else { return };
@@ -57,16 +51,12 @@ impl Drop for Fleet {
 }
 
 pub struct Fleet {
-    /// Deleted on drop ONLY when `Owned`. `Drop for Fleet` copies the logs out first when
-    /// COMP_FLEET_KEEP_LOGS names somewhere to put them.
     dir: Scratch,
-    /// The stub control plane's port, so a second reconciler can be pointed at
-    /// the same one the first is using.
+    /// So a second reconciler can be pointed at the same stub control plane.
     platform_port: u16,
     /// Every reconciler started, in order, so a test can kill the leader.
     reconcilers: Vec<Kill>,
-    /// The first reconciler's pid. Killed by pid rather than by pattern, because
-    /// every reconciler on this lattice shares a command line.
+    /// Killed by pid: every reconciler on this lattice shares a command line.
     first_reconciler_pid: u32,
     /// One per node, in order, so a benchmark can read a host's memory.
     host_pids: Vec<u32>,
@@ -97,29 +87,22 @@ impl Load {
     }
 }
 
-/// What an open-loop run measured.
-/// Separate from `Load`: a fixed number of connections pins concurrency and makes mean latency
-/// `concurrency / rps` exactly (Little's law), for every cell ADR-0053 and 0054 published. That
-/// number cannot be wrong and cannot be informative.
+/// Open-loop: a fixed connection count pins mean latency to `concurrency / rps` (Little's law).
 pub struct Report {
     /// Requests the schedule called for.
     pub due: u64,
     pub ok: u64,
     pub shed: u64,
     pub failed: u64,
-    /// How many of each non-2xx status came back: a bare "shed" count cannot tell the ingress declining
-    /// load from a route that is not there yet.
+    /// A bare shed count cannot tell the ingress declining load from a missing route.
     pub statuses: std::collections::BTreeMap<u16, u64>,
     /// What the first refusal SAID: "nothing is placed" and "everything is saturated" are both 503.
     pub first_refusal: Option<String>,
-    /// Seconds into the run of the first and last refusal. Start-of-run clustering means the harness
-    /// raced something; spread means the platform is genuinely refusing.
+    /// Clustered at the start means the harness raced something; spread means real refusal.
     pub refusal_window: Option<(f64, f64)>,
-    /// What the first transport failure said, to tell the system refusing from the LOAD GENERATOR running
-    /// out of sockets.
+    /// Tells the system refusing from the load generator running out of sockets.
     pub first_error: Option<String>,
-    /// Microseconds, from the moment each request was DUE, not sent: timing from the send hides a
-    /// backlog (coordinated omission).
+    /// Microseconds from when each request was due, not sent: avoids coordinated omission.
     pub latencies: Vec<u64>,
 }
 
@@ -132,14 +115,12 @@ impl Report {
         self.latencies[i] as f64 / 1000.0
     }
 
-    /// Achieved rate over `secs`, the honest denominator: below the requested rate, the percentiles
-    /// describe a system in backlog.
+    /// Below the requested rate, the percentiles describe a system in backlog.
     pub fn rps(&self, secs: f64) -> f64 {
         self.ok as f64 / secs
     }
 }
 
-/// An open-loop run in flight.
 pub struct OpenLoad {
     stop: Arc<AtomicBool>,
     threads: Vec<std::thread::JoinHandle<Report>>,
@@ -182,22 +163,16 @@ impl OpenLoad {
     }
 }
 
-/// The largest message the lattice will carry, and so the largest base tree a run can ship.
-/// BOTH ends need the same number: `Fleet` configures the server with it and `comp-goalrun` refuses a
-/// tree over it before spending anything.
-/// 8 MB is NATS's recommended ceiling; the hard maximum is 64 MB.
+/// Both ends use this: `Fleet` configures NATS with it and `comp-goalrun` refuses larger trees.
+/// 8 MB is NATS's recommended ceiling; 64 MB the hard maximum.
 pub const MAX_TREE_BYTES: usize = 8 * 1024 * 1024;
 
-/// What a run may actually fill, leaving room for the envelope (contract, goal text, framing) that
-/// rides with the tree. 90% is a margin, not a measurement, because the envelope varies per goal.
+/// Leaves room for the envelope; 90% is a margin, not a measurement.
 pub fn max_tree_payload() -> usize {
     MAX_TREE_BYTES / 10 * 9
 }
 
-/// Find one of our binaries.
-/// `CARGO_BIN_EXE_*` only exists inside an integration test, and a benchmark binary uses this too, so
-/// the lookup walks from the current executable (`target/release/deps/` for a test,
-/// `target/release/` for the bench) and falls back to the workspace path. An override covers the rest.
+/// Walks from the current executable: `CARGO_BIN_EXE_*` exists only inside an integration test.
 pub fn bin_path(name: &str) -> std::path::PathBuf {
     if let Ok(p) = std::env::var(format!("COMP_{}_BIN", name.replace('-', "_").to_uppercase())) {
         return std::path::PathBuf::from(p);
@@ -213,10 +188,7 @@ pub fn bin_path(name: &str) -> std::path::PathBuf {
     repo_root().join(format!("reconciler/target/release/{name}"))
 }
 
-/// `bin_path` for a binary that another package owns, and an assertion that says how to build it.
-/// `CARGO_BIN_EXE_<name>` exists only for the integration tests of the package that owns the binary,
-/// so a suite that starts the binaries of two packages (docs/adr/0115) cannot have cargo build them
-/// for it: the job, or the person, builds them first.
+/// Only the owner's tests get `CARGO_BIN_EXE_<name>`; the job builds it first (docs/adr/0115).
 pub fn built_bin(name: &str) -> std::path::PathBuf {
     let p = bin_path(name);
     assert!(
@@ -229,9 +201,7 @@ pub fn built_bin(name: &str) -> std::path::PathBuf {
     p
 }
 
-/// Where the specs and artifacts live.
-/// `CARGO_MANIFEST_DIR` is baked in at COMPILE time, useless for a benchmark cross-compiled to another
-/// machine; the override is what lets `bench/` drive a second box.
+/// `CARGO_MANIFEST_DIR` is baked in at compile time; the override lets `bench/` drive a second box.
 pub fn repo_root() -> std::path::PathBuf {
     if let Ok(p) = std::env::var("COMP_REPO_ROOT") {
         return std::path::PathBuf::from(p);
@@ -239,12 +209,7 @@ pub fn repo_root() -> std::path::PathBuf {
     root_from_manifest()
 }
 
-/// The repository this crate was COMPILED from, whatever `COMP_REPO_ROOT` says. A goal run gives its
-/// checks a sandbox of their own and the gates must judge that checkout, not the machine's
-/// (`tests/gatelib`), so the suites that include the shared test harnesses read the root from here.
-///
-/// This package is `reconciler/fleet/`, so the repository is two directories above it. It was one
-/// when the harness was part of `reconciler/` itself; the depth is the thing a move changes.
+/// The compiled-from repo, ignoring `COMP_REPO_ROOT`: gates judge their own sandbox checkout.
 pub fn root_from_manifest() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -253,8 +218,7 @@ pub fn root_from_manifest() -> std::path::PathBuf {
         .to_path_buf()
 }
 
-/// Keep one demo app's fleet serving forever, printing its ingress port. Shared by the
-/// `comp-<app>serve` bins.
+/// Keeps one demo app's fleet serving forever; shared by the `comp-<app>serve` bins.
 pub fn serve_fixture(tag: &str, wasm_name: &str, fixture_stem: &str) -> ! {
     let home = std::env::var("HOME").unwrap();
     let key = format!("{home}/.comp-secrets/anthropic");
@@ -274,14 +238,13 @@ pub fn serve_fixture(tag: &str, wasm_name: &str, fixture_stem: &str) -> ! {
     }
 }
 
-/// Children write to a file rather than /dev/null: several assertions are about what a process SAID.
+/// To a file, not /dev/null: several assertions are about what a process said.
 fn spawn_logged(name: &str, cmd: &mut Command, log: &std::path::Path) -> Kill {
     let f =
         std::fs::File::create(log).unwrap_or_else(|e| panic!("creating {}: {e}", log.display()));
     let err = f.try_clone().unwrap();
     Kill(cmd.stdout(Stdio::from(f)).stderr(Stdio::from(err)).spawn().unwrap_or_else(|e| {
-        // A `comp-*` that is not there is, after docs/adr/0115, usually another package's: cargo
-        // builds a package's own binaries for its tests and nobody else's.
+        // A missing `comp-*` is usually another package's, which cargo does not build here.
         let hint = if e.kind() == std::io::ErrorKind::NotFound && name.starts_with("comp-") {
             format!(
                 " — build it with `cd reconciler && cargo build --bin {name}`; `cargo test` \
@@ -294,17 +257,12 @@ fn spawn_logged(name: &str, cmd: &mut Command, log: &std::path::Path) -> Kill {
     }))
 }
 
-/// A port nothing is listening on, found by asking the OS.
-/// Ports derived from a hash of the lattice name collided (`ha` with `autoscale`), so tests passed
-/// alone and failed in parallel. There is a small race between closing this listener and the child
-/// binding it; the alternative needs a channel out of every process, including `nats-server`.
+/// Hash-derived ports collided across parallel tests; a small bind race remains.
 pub fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0").expect("no free port").local_addr().unwrap().port()
 }
 
-/// Poll `addr` until something accepts a TCP connection, or panic after `within`.
-/// Replaces a fixed sleep, which wastes time when the process is ready sooner and on a loaded runner
-/// looks identical to a process that never started.
+/// Replaces a fixed sleep, which on a loaded runner looks like a process that never started.
 fn wait_for_port(addr: &str, within: Duration) {
     let deadline = Instant::now() + within;
     while Instant::now() < deadline {
@@ -317,15 +275,12 @@ fn wait_for_port(addr: &str, within: Duration) {
 }
 
 impl Fleet {
-    /// `specs` are authored YAML paths relative to `comp/`. `max_inflight` sets the
-    /// ingress shedding bound; `None` leaves it at the default.
+    /// `specs` are YAML paths relative to `comp/`; `max_inflight` sets the ingress shedding bound.
     pub fn start(lattice: &str, specs: &[&str], nodes: u16, max_inflight: Option<u32>) -> Self {
         Self::start_with_kv(lattice, specs, nodes, max_inflight, None)
     }
 
-    /// `kv` picks the host's storage backend. `None` leaves the lattice default
-    /// (`nats`, shared); `Some("sqlite")` gives every node its own file, which is the
-    /// arrangement a spread stateful app must be refused on.
+    /// `Some("sqlite")` gives every node its own file, where a spread stateful app is refused.
     pub fn start_with_kv(
         lattice: &str,
         specs: &[&str],
@@ -333,8 +288,7 @@ impl Fleet {
         max_inflight: Option<u32>,
         kv: Option<&str>,
     ) -> Self {
-        // Tests run what production runs: pooling on (ADR-0054), read cache off (ADR-0063: it trades
-        // cross-node freshness, so a shared-state test must not get it by accident).
+        // What production runs: pooling on (ADR-0054), read cache off (ADR-0063).
         Self::start_full(
             lattice,
             specs,
@@ -352,9 +306,7 @@ impl Fleet {
         )
     }
 
-    /// A fleet whose control plane holds a vault: `vault://<org>/<name>=value`.
-    /// A reference a spec grants and this list omits is the case worth a harness: that instance must
-    /// never start (ADR-0051).
+    /// A reference a spec grants and this list omits must never start (ADR-0051).
     pub fn start_with_secrets(
         lattice: &str,
         specs: &[&str],
@@ -378,16 +330,12 @@ impl Fleet {
         )
     }
 
-    /// A fleet driven by the REAL control plane, for tests that exercise the platform's own API
-    /// (ADR-0078).
+    /// Driven by the real control plane, for tests of the platform's own API (ADR-0078).
     pub fn start_with_platform(lattice: &str, nodes: u16) -> Self {
         Self::start_full(lattice, &[], &[], &[], nodes, None, None, true, 0, &[], true, &[], None)
     }
 
-    /// The same as `start_with_platform`, but living in `dir`, so the NATS jetstream store and
-    /// `platform-domain` SQLite DB survive across process launches. `dir` is created if missing and
-    /// NEVER deleted by this `Fleet`. `host_args` is exposed because a persistent deployment also wants
-    /// `--egress`/`--allow-private-egress` for its own daemons.
+    /// State lives in `dir`, created if missing and never deleted, so it survives relaunches.
     pub fn start_with_platform_in_dir(
         lattice: &str,
         nodes: u16,
@@ -411,8 +359,7 @@ impl Fleet {
         )
     }
 
-    /// A fleet whose every node gets `host_args` on its command line — how a test
-    /// runs the host with a flag no other entry point sets, such as `--blob s3`.
+    /// For a host flag no other entry point sets, such as `--blob s3`.
     pub fn start_with_host_args(
         lattice: &str,
         specs: &[&str],
@@ -436,14 +383,11 @@ impl Fleet {
         )
     }
 
-    /// Where the control plane is listening.
     pub fn platform_url(&self) -> String {
         format!("http://127.0.0.1:{}", self.platform_port)
     }
 
-    /// A fleet whose nodes carry LABELS, so placement constraints have something to match. `labels[i]`
-    /// is applied to node `i+1`; a node past the end gets none. Without this a constrained app is
-    /// unschedulable and a test wanting two components on two nodes would quietly get one.
+    /// `labels[i]` applies to node `i+1`; without labels a constrained app is unschedulable.
     pub fn start_with_labels(
         lattice: &str,
         specs: &[&str],
@@ -453,8 +397,7 @@ impl Fleet {
         Self::start_labelled_kv(lattice, specs, artifacts, labels, None)
     }
 
-    /// The same, choosing the store. `memory` is what a hop measurement wants: JetStream round trips
-    /// dominate everything else (ADR-0057) and hide a cross-node call.
+    /// `memory` suits hop measurement: JetStream round trips hide a cross-node call (ADR-0057).
     pub fn start_labelled_kv(
         lattice: &str,
         specs: &[&str],
@@ -479,8 +422,7 @@ impl Fleet {
         )
     }
 
-    /// Every node caches reads for `cache_ms` (ADR-0063). The interesting fleet is two or more: on one
-    /// node the cache invalidates its own writes and cannot be caught being stale.
+    /// Two or more nodes: on one, the cache invalidates its own writes and is never caught stale.
     pub fn start_with_cache(lattice: &str, specs: &[&str], nodes: u16, cache_ms: u64) -> Self {
         Self::start_full(
             lattice,
@@ -510,11 +452,9 @@ impl Fleet {
         kv: Option<&str>,
         pool: bool,
         cache_ms: u64,
-        // `labels[i]` goes to node i+1, as `--label k=v`.
         labels: &[&str],
         real_platform: bool,
         host_args: &[String],
-        // `Some(dir)` makes this fleet's state live in `dir` across process launches.
         scratch_dir: Option<std::path::PathBuf>,
     ) -> Self {
         let root = repo_root();
@@ -536,18 +476,13 @@ impl Fleet {
             None => Scratch::Owned(tempfile::tempdir().unwrap()),
         };
         let sp = dir.path().to_path_buf();
-        // Every node's stdout and stderr land in here, and the directory is deleted when the fleet drops;
-        // set COMP_FLEET_KEEP_LOGS to be told where to look after a failing run.
+        // Set COMP_FLEET_KEEP_LOGS to keep node logs past drop.
         if let Some(dest) = std::env::var_os("COMP_FLEET_KEEP_LOGS") {
             eprintln!("fleet logs: {} (copied to {:?} on shutdown)", sp.display(), dest);
         }
         let mut children = Vec::new();
 
-        // A base tree travels to the driver as ONE message, and NATS refuses one past `max_payload` (1 MB by
-        // default), which is the binding constraint on the goal loop: the largest goals ship 504 KB. 8 MB is
-        // NATS's own recommended ceiling (64 MB is the hard maximum); it costs a larger buffer on a
-        // loopback server that lives for one run. A FILE, because `nats-server` has no `--max_payload`
-        // flag, only `-c`.
+        // A base tree is one message and NATS defaults `max_payload` to 1 MB; only `-c` can set it.
         let conf = sp.join("nats.conf");
         std::fs::write(&conf, format!("max_payload: {MAX_TREE_BYTES}\n"))
             .expect("writing the nats config");
@@ -561,11 +496,9 @@ impl Fleet {
         children.push(spawn_logged("nats-server", &mut nats, &sp.join("nats.log")));
         wait_for_port(&format!("127.0.0.1:{nats_port}"), Duration::from_secs(20));
 
-        // The REAL control plane instead of the stub, when asked: `comp-stub` serves fixtures only, and
-        // spawning an environment, say, is a `platform-domain` feature it has never heard of.
+        // `comp-stub` serves fixtures only; spawning an environment needs `platform-domain`.
         if real_platform {
-            // Derived when the hand-composed artifact is not there, as for the default `gate` above: its absence
-            // otherwise surfaced as an assertion two workspaces into `just test`.
+            // Derived when absent, which otherwise surfaced two workspaces into `just test`.
             let legacy = root.join("components/target/platform_domain.composed.wasm");
             let component = if legacy.is_file() {
                 legacy
@@ -590,22 +523,17 @@ impl Fleet {
                 .args(["--tenant", "platform", "--app", "control-plane"])
                 .args(["--config", "applier-secret=test-secret"])
                 .args(["--config", "ingress-suffix=test"])
-                // Envelope encryption for the vault (`secrets-vault`). Without it every write is refused with
-                // "master key missing"; a fixed test key is fine because nothing real is stored.
+                // Without a master key every vault write is refused; this key guards nothing real.
                 .args(["--config", "master-key=Y29tcC10ZXN0LW9ubHktbWFzdGVyLWtleS0zMmJ5dGU="]);
-            // Admission control (ADR-0082). A test that wants to see the refusal sets it low; the rest need it
-            // high enough not to fire.
+            // Admission control (ADR-0082): set low to see the refusal.
             if let Ok(lag) = std::env::var("COMP_MAX_PLACEMENT_LAG") {
                 cp.args(["--config", &format!("max-placement-lag={lag}")]);
             }
-            // How old a fleet report may be before admission fails closed. Low enough to observe in the one
-            // test that wants to.
+            // Report age before admission fails closed.
             if let Ok(per) = std::env::var("COMP_MAX_PLACEMENT_LAG_PER_NODE") {
                 cp.args(["--config", &format!("max-placement-lag-per-node={per}")]);
             }
-            // Operator-granted egress for every tenant (platform-domain's `default-egress`), e.g. so a dev agent
-            // can reach a native daemon on loopback. Granted on the control plane's own command line, never by
-            // a tenant (ADR-0008).
+            // Operator-granted egress for every tenant, never a tenant's own (ADR-0008).
             if let Ok(egress) = std::env::var("COMP_DEFAULT_EGRESS") {
                 cp.args(["--config", &format!("default-egress={egress}")]);
             }
@@ -621,11 +549,7 @@ impl Fleet {
             stub.args(["--spec", s]);
         }
         if artifacts.is_empty() {
-            // The default `gate` artifact, derived rather than assumed: the hand-written plug chain
-            // (`cargo xtask compose gate`) is a second recipe nobody remembers to run, and its absence showed up
-            // as a 120-second timeout that says nothing about a missing file. `plug::compose_to` derives the
-            // composition from gate-domain's own imports and keys it by content, so the first caller builds it
-            // and the rest reuse it; the hand-made path is still honoured when it exists.
+            // Derived from gate-domain's imports, cached by content; a hand-made one still wins.
             let legacy = root.join("components/target/gate_domain.composed.wasm");
             let gate = if legacy.is_file() {
                 legacy
@@ -671,8 +595,7 @@ impl Fleet {
                 ])
                 .args(["--addr", &format!("127.0.0.1:{host_port}")])
                 .args(["--advertise-addr", &format!("127.0.0.1:{host_port}")])
-                // Where a granted secret is fetched from (ADR-0051). Every node in a real lattice has one; without it
-                // no test could exercise the reader.
+                // Where granted secrets are fetched from (ADR-0051).
                 .args(["--platform-url", &format!("http://127.0.0.1:{platform_port}")])
                 .arg("--state-dir")
                 .arg(sp.join(format!("n{n}")));
@@ -689,10 +612,7 @@ impl Fleet {
                 c.args(["--label", l]);
             }
             c.args(host_args);
-            // A harness runs on loopback, a PRIVATE address the host refuses to dial by default (ADR-0008), so a
-            // test against a real backing service needs this. Opt-in so no OTHER test gets an allowance it never
-            // asked for. It widens the address check only; the per-instance allow-list still decides which
-            // authority an instance may name.
+            // Loopback is private (ADR-0008); opt-in, and it widens only the address check.
             if std::env::var_os("COMP_FLEET_ALLOW_PRIVATE_EGRESS").is_some() {
                 c.arg("--allow-private-egress");
             }
@@ -706,7 +626,7 @@ impl Fleet {
         rec.current_dir(&root)
             .args(["--platform-url", &format!("http://127.0.0.1:{platform_port}")])
             .args(["--secret", "test-secret", "--nats-url", &nats_url, "--lattice", lattice])
-            // A lease TTL near the interval, so a failover test does not wait for what production tunes to 30s.
+            // Short lease, so a failover test does not wait production's 30s.
             .args(["--interval", "3", "--lease-ttl", "6"]);
         let rec_child = spawn_logged("comp-reconciler", &mut rec, &sp.join("rec.log"));
         let first_reconciler_pid = rec_child.0.id();
@@ -724,8 +644,7 @@ impl Fleet {
         if let Some(m) = max_inflight {
             ing.args(["--max-inflight", &m.to_string()]);
         }
-        // A real run does model calls and a test suite inside one guest invocation, which the 30s default
-        // backend timeout kills as "n1 timed out". A run that needs longer sets this.
+        // A real run's guest call can outlive the 30s default backend timeout.
         if let Ok(t) = std::env::var("COMP_FLEET_BACKEND_TIMEOUT") {
             ing.args(["--backend-timeout", &t]);
         }
@@ -765,16 +684,8 @@ impl Fleet {
         port
     }
 
-    /// Retry the FIRST REAL OPERATION until it works, and return what it returned.
-    /// "Is it ready yet" was answered wrongly in four tests, each with a readiness probe chosen SEPARATELY
-    /// from the thing measured: `graph.rs`/`vgit.rs` polled a root route that touches no capability;
-    /// `ha.rs` used `serves()`, which an ingress satisfies via the ACTIVATION path with an empty routing
-    /// table; `fitness.rs` polled a call the evaluator refuses before any HTTP request. All passed alone
-    /// and failed under load, which gets dismissed as flakiness.
-    /// The rule: **do not have a separate readiness signal.** Retry the operation the test cares about; a
-    /// fleet that is not ready simply makes the first call fail.
-    /// `f` returns `Err(why)` while not ready. The `why` is kept and printed on timeout beside the node and
-    /// reconciler logs.
+    /// No separate readiness signal: retry the operation the test cares about. Four probes chosen
+    /// apart from the measured thing passed alone and failed under load; `why` prints on timeout.
     pub fn until<T>(
         &self,
         what: &str,
@@ -802,11 +713,7 @@ impl Fleet {
         }
     }
 
-    /// Wait until the fleet has actually PLACED the app: some node advertises an instance carrying `host`
-    /// as its ingress.
-    /// Every cheaper check is a lie: an ingress with an empty routing table still answers a request, by
-    /// asking the reconciler to activate the app, so `serves()` and "poll until requests stop failing" go
-    /// green while inventory is empty. Inventory is the only honest answer, since routing is built from it.
+    /// Inventory is the only honest answer: an empty-table ingress still answers by activating.
     pub fn wait_for_placement(&self, host: &str, within: Duration) -> bool {
         let (url, lattice) = (self.nats_url.clone(), self.lattice.clone());
         let host = host.to_ascii_lowercase();
@@ -851,8 +758,7 @@ impl Fleet {
             .unwrap_or_else(|e| format!("(no ingress{which}.log: {e})"))
     }
 
-    /// A SECOND reconciler against the same lattice and control plane. It should stand by rather than
-    /// reconcile: exactly one holds the lease (ADR-0072). `n` names its log.
+    /// It should stand by: exactly one holds the lease (ADR-0072). `n` names its log.
     pub fn second_reconciler(&mut self, n: &str) -> &Kill {
         let mut rec = Command::new(bin_path("comp-reconciler"));
         rec.current_dir(repo_root())
@@ -872,19 +778,14 @@ impl Fleet {
         std::fs::read_to_string(self.dir.path().join(format!("rec-{n}.log"))).unwrap_or_default()
     }
 
-    /// Kill the reconciler started with `start`, leaving any standby running.
-    /// By pid: a pattern match on the command line kills every reconciler, because a standby is started
-    /// with the same arguments by design.
+    /// By pid: a standby is started with the same command line by design.
     pub fn kill_first_reconciler(&mut self) {
         let _ = std::process::Command::new("kill")
             .args(["-9", &self.first_reconciler_pid.to_string()])
             .status();
     }
 
-    /// Kill node `n` outright: SIGKILL, no chance to tidy up.
-    /// A host that deregisters on its way out exercises the polite path, not what happens on power loss or
-    /// an OOM kill. What must hold is that the lattice notices by itself: inventory expires, the
-    /// reconciler sees a gap, and the work is placed elsewhere.
+    /// SIGKILL: the lattice must notice by itself, as on power loss or an OOM kill.
     pub fn kill_host(&self, n: u16) -> Option<u32> {
         let pid = *self.host_pids.get((n as usize).saturating_sub(1))?;
         let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).status();
@@ -895,14 +796,12 @@ impl Fleet {
         self.host_pids.len()
     }
 
-    /// Stop whichever process was started last — used to kill an ingress and watch
-    /// the other one carry on.
+    /// Stops the last-started process, e.g. one ingress so the other carries on.
     pub fn kill_last(&mut self) {
         self._children.pop();
     }
 
-    /// Which node answered, over `n` requests to `port`; `x-comp-node` is the only way to see the balance
-    /// from outside.
+    /// `x-comp-node` is the only way to see the balance from outside.
     pub fn who_answers(
         &self,
         port: u16,
@@ -936,16 +835,14 @@ impl Fleet {
         (seen, failed)
     }
 
-    /// A fleet from a directory of specs and an explicit artifact list. The matrix varies both, and
-    /// sharing this constructor keeps a benchmark measuring the same fleet the tests assert on.
+    /// Shared so a benchmark measures the same fleet the tests assert on.
     pub fn start_bench(
         lattice: &str,
         spec_dir: &str,
         artifacts: &[String],
         nodes: u16,
         pool: bool,
-        // Which storage backend the guests get: the benchmark component reads and writes on every request,
-        // so with `nats` the number measures the bus.
+        // With `nats` the number measures the bus.
         kv: Option<&str>,
     ) -> Self {
         Self::start_full(
@@ -975,8 +872,7 @@ impl Fleet {
         self.node_log("n1").matches("comp-host: started ").count()
     }
 
-    /// How each module arrived on node `n`: (shared, from disk, compiled). Reading it from the host's own
-    /// log means the benchmark cannot disagree with the host.
+    /// (shared, from disk, compiled), read from the host's own log.
     pub fn module_arrivals(&self, n: u16) -> (usize, usize, usize) {
         let log = self.node_log(&format!("n{n}"));
         (
@@ -999,9 +895,7 @@ impl Fleet {
         std::fs::read_to_string(self.dir.path().join("rec.log")).unwrap_or_default()
     }
 
-    /// The control plane's own log, whichever control plane this fleet started. In `until`'s failure dump,
-    /// because a refused manifest and a control plane that never started look identical from the node
-    /// and reconciler. Both names are read since `comp-stub` and `platform-domain` are alternatives.
+    /// A refused manifest and a dead control plane look identical from the node and reconciler.
     pub fn platform_log(&self) -> String {
         let stub = std::fs::read_to_string(self.dir.path().join("stub.log")).unwrap_or_default();
         let real =
@@ -1021,8 +915,7 @@ impl Fleet {
             .unwrap_or(0)
     }
 
-    /// Constant load until stopped, counting answers and refusals separately: a 503 from the ingress is the
-    /// platform declining one request, and conflating them reads a shed storm as an outage.
+    /// Answers and refusals counted apart: conflating them reads a shed storm as an outage.
     pub fn load(&self, host: &str, threads: usize, _max: Duration) -> Load {
         let stop = Arc::new(AtomicBool::new(false));
         let (ok, shed) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
@@ -1055,15 +948,8 @@ impl Fleet {
         Load { stop, ok, shed, threads: handles }
     }
 
-    /// Load at a fixed ARRIVAL RATE, whatever the system does with it.
-    /// Each worker owns a slice of the schedule; if the previous response is late it fires late and the
-    /// lateness lands in the measurement, as for a real client. Requests are timed from due, not send.
-    /// `port` picks the door: the ingress, or a host directly to find what the extra hop costs.
-    /// Every worker walks the WHOLE host list, one app per request: pinning meant only `min(workers, apps)`
-    /// apps saw traffic (the 200-app Pi cell had twelve workers, so 188 apps were idle).
-    /// `rate: None` is a CLOSED loop: every worker sends again as soon as its response lands, latency is
-    /// timed from the send, and the percentiles describe a system whose concurrency the harness pinned
-    /// (mean is `workers / rps` and nothing more).
+    /// Fixed arrival rate, timed from due, each worker walking every host. `rate: None` is a closed
+    /// loop, whose percentiles describe concurrency the harness pinned.
     pub fn open_load(
         &self,
         hosts: &[String],
@@ -1077,7 +963,7 @@ impl Fleet {
         let mut threads = Vec::new();
         for w in 0..workers {
             let (stop, url) = (stop.clone(), url.clone());
-            // Offset per worker so they do not march through the list in step (every app hot and cold together).
+            // Offset per worker so apps are not all hot and cold together.
             let hosts = hosts.to_vec();
             let mut turn = w;
             threads.push(std::thread::spawn(move || {
@@ -1181,8 +1067,7 @@ impl Fleet {
 
 #[cfg(test)]
 mod tests {
-    /// Every path the harness builds (`reconciler/target/release/<bin>`, `components/target/...`,
-    /// `fixtures/`, `apps/`) is joined onto this, and a wrong depth fails nowhere near the cause.
+    /// A wrong depth fails nowhere near the cause.
     #[test]
     fn the_repo_root_is_the_repository_and_not_the_directory_this_package_sits_in() {
         let root = super::root_from_manifest();

@@ -1,11 +1,4 @@
-//! `otp` — generate and verify a one-time password for two-factor login — TOTP and HOTP, RFC 6238 and 4226
-//!
-//! Second-factor primitive over HMAC-SHA1, the algorithm Google Authenticator / Authy expect:
-//!   - HOTP (RFC 4226): code = dynamic-truncate(HMAC-SHA1(secret, counter)) mod 10^digits
-//!   - TOTP (RFC 6238): HOTP with counter = unix-time / period
-//!
-//! Stateless: the caller always supplies the shared secret (store it in `secrets:vault`), so nothing is persisted.
-//! `wasi:clocks/wall-clock` supplies "now"; `wasi:random/random` supplies secret + recovery-code entropy.
+//! HMAC-SHA1: what Google Authenticator / Authy expect. Stateless: the caller supplies the secret every time.
 
 #[allow(warnings)]
 mod bindings;
@@ -22,7 +15,6 @@ struct Component;
 
 const B32_ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
-/// Encode bytes as unpadded RFC 4648 base32 (upper-case A-Z2-7).
 fn base32_encode(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(5) * 8);
     let mut buffer: u32 = 0;
@@ -43,7 +35,6 @@ fn base32_encode(data: &[u8]) -> String {
     out
 }
 
-/// Map a base32 character to its 5-bit value (either case); `None` outside the A-Z2-7 alphabet, padding included.
 fn base32_value(c: u8) -> Option<u32> {
     match c {
         b'A'..=b'Z' => Some((c - b'A') as u32),
@@ -53,8 +44,6 @@ fn base32_value(c: u8) -> Option<u32> {
     }
 }
 
-/// Decode an unpadded RFC 4648 base32 string. Whitespace is ignored; any other
-/// non-alphabet byte makes the whole input invalid (returns `None`).
 fn base32_decode(s: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(s.len() * 5 / 8);
     let mut buffer: u32 = 0;
@@ -74,8 +63,6 @@ fn base32_decode(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Decode a secret string into raw bytes, mapping any base32 failure onto
-/// `OtpError::BadSecret`.
 fn decode_secret(secret: &str) -> Result<Vec<u8>, OtpError> {
     base32_decode(secret).ok_or(OtpError::BadSecret)
 }
@@ -88,8 +75,6 @@ fn check_digits(digits: u8) -> Result<u32, OtpError> {
     }
 }
 
-/// RFC 4226 HOTP: HMAC-SHA1 over the 8-byte big-endian counter, dynamically
-/// truncated to a `digits`-wide zero-padded decimal string.
 fn hotp(secret_bytes: &[u8], counter: u64, digits: u8) -> Result<String, OtpError> {
     let digits = check_digits(digits)?;
 
@@ -120,7 +105,7 @@ fn now() -> u64 {
     wall_clock::now().seconds
 }
 
-/// Constant-time byte comparison (length-checked, XOR-accumulated) so code verification does not leak via timing.
+/// Constant-time, so code verification does not leak via timing.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -132,7 +117,6 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-/// Percent-encode the characters that would break an `otpauth://` label or query value; intentionally minimal but yields a valid URI.
 fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for &b in s.as_bytes() {

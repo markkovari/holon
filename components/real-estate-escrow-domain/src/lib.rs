@@ -1,5 +1,3 @@
-//! `real-estate-escrow-domain` — hold property transactions behind a login, with per-account access
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -24,7 +22,6 @@ mod bindings {
         world: "real-estate-escrow:real-estate-escrow/real-estate-escrow-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -111,7 +108,6 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// Ceiling on a request body, matching the rest of the tree.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# parking-domain's held-out-spec gate: compose the real capability graph, host it, and
-# assert real HTTP behavior — register, login, roles, ownership, and the
-# reservation-overlap conflict rule. Deliberately NOT writable by the goal it judges
-# (.comp/goals/parking-domain.toml) — a candidate that could write its own gate could
-# always pass it.
+# Not writable by the goal it judges: a candidate that could write its own gate could always pass it.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 

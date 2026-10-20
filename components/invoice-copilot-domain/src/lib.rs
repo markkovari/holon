@@ -1,15 +1,4 @@
-//! `invoice-copilot-domain` — the model writes the words and the money component does the
-//! arithmetic.
-//!
-//! ## What is scaffold and what is the goal
-//!
-//! This file is the ROUTER and no part may write it: it dispatches to `invoices`, `copilot` and `posting`,
-//! answers `/health`, mints a token and seeds two invoices. `src/invoices.rs`, `src/copilot.rs` and
-//! `src/posting.rs` are the goal; `CONTRACT.md` is what they must agree on.
-//!
-//! This is the one of the five where being wrong costs money; the chain is about TRUST. `invoices` decides the
-//! currency the arithmetic is done in, `copilot` asks a model and must use it for words alone, and `posting`
-//! is the only irreversible step, so it happens exactly once or a retry charges a customer twice.
+//! The router; no part may write it. `posting` is the one irreversible step, so it happens exactly once.
 
 #[allow(warnings)]
 mod bindings {
@@ -40,11 +29,10 @@ mod bindings {
         world: "invoice:copilot/invoice-copilot-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
-        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
+        pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
     }
 }
 mod copilot;
@@ -53,11 +41,11 @@ mod posting;
 
 use bindings::auth::identity::session as auth_session;
 use bindings::auth::identity::types as auth_types;
-use bindings::p3::handler::Guest;
 use bindings::money::amount::arithmetic as money;
-use bindings::records::store::store as records;
 use bindings::p3::clocks::system_clock;
+use bindings::p3::handler::Guest;
 use bindings::p3::http::types::{ErrorCode, Method, Request, Response};
+use bindings::records::store::store as records;
 use serde_json::{json, Value};
 
 guestio::guest_p3_respond!();
@@ -65,10 +53,9 @@ guestio::guest_p3_bearer!();
 
 struct Component;
 
-/// What a handler answers with: a status and a JSON body.
 pub struct Reply {
     pub status: u16,
-    /// `Value::Null` means no body at all — see `no_content`.
+    /// `Value::Null` means no body at all.
     pub json: Value,
 }
 
@@ -79,21 +66,19 @@ impl Reply {
     pub fn err(status: u16, code: &str) -> Self {
         Reply::json(status, json!({ "error": code }))
     }
-    /// 204 carries no body, and a JSON `null` is not "no body".
+    /// A JSON `null` is not "no body".
     pub fn no_content() -> Self {
         Reply::json(204, Value::Null)
     }
 }
 
-/// One request, as a part sees it. The bearer is handed over as a STRING, not a principal: resolving it is
-/// `auth:identity/authorizer`'s job, which is the part's reason for importing that capability.
+/// A string, not a principal: resolving it is `auth:identity/authorizer`'s job, in the part.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
-    /// The `Authorization: Bearer …` value, empty when the header is absent.
+    /// Empty when the header is absent.
     pub bearer: String,
-    /// The `Idempotency-Key` header, empty when absent. Handed over raw: its meaning is `idempotency:guard`'s
-    /// business, and a part inventing its own key from the body builds a different guarantee than the caller asked for.
+    /// Raw: a part inventing a key from the body builds a different guarantee than the caller asked for.
     pub idempotency_key: String,
 }
 
@@ -110,7 +95,6 @@ impl Route {
 
 use guestfmt::percent_decode as percent;
 
-/// A `wasi:config` value, with a default. Scaffold: plumbing every part would write; the contract names the keys.
 pub fn cfg(key: &str, default: &str) -> String {
     bindings::wasi::config::store::get(key)
         .ok()
@@ -119,15 +103,13 @@ pub fn cfg(key: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_string())
 }
 
-/// Unix seconds, for anything that has to be stamped.
 pub fn now_secs() -> u64 {
     system_clock::now().seconds as u64
 }
 
 use guestfmt::rfc3339;
 
-/// A token for a test caller, so no gate has to log in through a part it is not judging. Scaffold; uses
-/// `session::issue` rather than a hand-built JWT, since a fixture minting its own tokens can drift from what the verifier accepts.
+/// Via `session::issue`: a hand-built JWT could drift from what the verifier accepts.
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let subject = req.get("subject").and_then(Value::as_str).unwrap_or("ada").to_string();
@@ -148,9 +130,7 @@ fn mint(body: &str) -> Reply {
     }
 }
 
-/// Two invoices: one empty draft, one already carrying three allocated lines. Scaffold: `copilot` needs a
-/// draft to write onto; `posting` needs an invoice that already HAS lines without waiting for `copilot`. The
-/// second one's amounts come from `money::allocate`, since hand division could hand `posting` a total that does not add up.
+/// The second's amounts come from `money::allocate`: hand division could give `posting` a bad total.
 fn seed() -> Reply {
     let mut ids = Vec::new();
     let empty = json!({
@@ -197,12 +177,12 @@ fn seed() -> Reply {
     Reply::json(201, json!({ "invoice_ids": ids }))
 }
 
-/// A ceiling on a body read into memory, not a policy: past this the read gives up and the body reads as empty.
+/// Past this the read gives up and the body reads as empty.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
-/// One header, as a string. Absent, repeated or non-UTF8 all read as empty.
+/// Absent, repeated or non-UTF-8 all read as empty.
 fn header(request: &Request, name: &str) -> String {
     let fields = request.get_headers();
     let values = fields.get(name);
@@ -229,19 +209,18 @@ impl Guest for Component {
             _ => String::new(),
         };
 
-        // The router: `/health`, the token and the fixture here, everything else to the part that owns it.
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
         let Reply { status, json: payload } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
             ["test", "token"] => mint(&body),
             ["test", "seed"] => seed(),
 
-            // The stored document straight out of the store (scaffold): a part must be judgeable on what it WROTE.
+            // Scaffold: a part is judged on what it wrote.
             ["test", "invoice", id] => match records::get("invoices", id) {
                 Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
                 Err(_) => Reply::err(404, "not_found"),
             },
-            // Both before the `api/invoices` arm: a match on ["api","invoices",..] would hand the suggest and post routes to `invoices`.
+            // Before the `api/invoices` arm, which would take the suggest and post routes.
             ["api", "invoices", _, "lines", "suggest"] => copilot::handle(&method, &route, &body),
             ["api", "invoices", _, "post"] | ["api", "invoices", _, "entry"] => {
                 posting::handle(&method, &route, &body)

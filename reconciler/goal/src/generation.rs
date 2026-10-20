@@ -1,49 +1,20 @@
-//! A generation: one goal, N branches at once, one winner.
-//!
-//! ## Why this is native and not a component
-//!
-//! It has to happen CONCURRENTLY. A component runs one call at a time, so branches in sequence would
-//! take N times the slowest branch and not be a generation at all. The fan-out is threads and sockets,
-//! so it lives where they live; every decision is delegated to a component (the driver decides when
-//! a branch stops, the selector which won).
-//!
-//! ## Seeds are spaced, not consecutive
-//!
-//! Attempt `n` of a branch uses `seed + n`, so branches seeded one apart would share prompts. `STRIDE`
-//! keeps them apart and is far larger than any sane `max-attempts`.
-//!
-//! ## Diversity is authored, not hoped for
-//!
-//! Branches that differ only by SEED share a prompt, context and model and answer in similar ways
-//! (herding). Each branch therefore gets a LENS, a different instruction appended to the goal, and one
-//! branch per generation is shown nothing from the previous one (ADR-0081). The second matters most:
-//! a generation seeded from the last winner inherits its mistakes, and the branch that reads nothing
-//! is the only one that can leave a local optimum.
-//!
-//! ## What a failed branch is
-//!
-//! An ordinary result. A branch that could not reach its provider still returns an entry (unaccepted,
-//! error in `note`): a generation of four with one dead is a generation of three, and dropping it
-//! silently would make `distinct` and the total cost wrong.
+//! One goal, N concurrent branches, one winner. Native: a component runs one call at a time.
 
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-/// The gap between one branch's seed and the next.
-/// Attempt `n` uses `seed + n`. Anything smaller than `max-attempts` makes two branches ask an
-/// identical question.
+/// Attempt `n` uses `seed + n`, so this must exceed `max-attempts`.
 pub const STRIDE: u64 = 100;
 
-/// Checked when the crate compiles, not when a test runs (clippy flags an `assert!` over constants).
-/// `--attempts` defaults to 2 and 8 is the headroom over any plausible value.
+/// Compile-time, as clippy flags an `assert!` over constants.
 const _: () = assert!(
     STRIDE > 8,
     "attempt n of a branch uses seed+n, so a stride at or below max-attempts makes two \
      branches ask an identical question — the one thing a generation exists to avoid"
 );
 
-/// What one branch came back with, in the shape `graph:select` wants.
+/// In the shape `graph:select` wants.
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub branch: String,
@@ -53,17 +24,13 @@ pub struct Entry {
     pub spent_tokens: u64,
     pub attempts: u64,
     pub files: Value,
-    /// What was still failing. Carried into the NEXT generation, so branches seeded with this candidate
-    /// are told what is wrong with it.
+    /// Carried into the next generation, so branches seeded with this candidate know what is wrong.
     pub failures: Value,
     /// Why this branch produced nothing, when it produced nothing.
     pub note: String,
-    /// How long this branch took on its own.
-    /// The only way to tell a fan-out from a for-loop after the fact: in parallel the wall clock is about
-    /// the slowest branch, in sequence about the SUM.
+    /// In parallel the wall clock is about the slowest branch; in sequence, the sum.
     pub elapsed_ms: u64,
-    /// What the driver reported as its reason for stopping. Not sent to the selector (how a branch ended
-    /// is not a property of its code) but the most useful thing in the log when a generation finds nothing.
+    /// Not sent to the selector: how a branch ended is not a property of its code.
     pub stopped: String,
 }
 
@@ -96,7 +63,6 @@ fn post(url: &str, host: &str, body: &Value, timeout: Duration) -> Result<Value,
     serde_json::from_str(&text).map_err(|_| format!("HTTP {status}: {text}"))
 }
 
-/// Run one branch and turn whatever came back into an entry.
 fn one_branch(
     url: &str,
     host: &str,
@@ -125,15 +91,13 @@ fn one_branch(
 
     let answer = match post(url, host, &plan, timeout) {
         Ok(v) => v,
-        // A branch that could not be reached found nothing; the generation carries on with the rest.
         Err(e) => return blank(e, "unreachable"),
     };
     if let Some(err) = answer["error"].as_str() {
         return blank(format!("{err}: {}", answer["detail"].as_str().unwrap_or_default()), err);
     }
 
-    // The digest of the run's BEST candidate, which the selector compares across branches: the attempt
-    // whose score the run kept.
+    // The attempt whose score the run kept, which the selector compares across branches.
     let attempts = answer["attempts"].as_array().cloned().unwrap_or_default();
     let score = answer["score"].as_u64().unwrap_or(0);
     let digest = attempts
@@ -145,8 +109,7 @@ fn one_branch(
         .unwrap_or_default()
         .to_string();
 
-    // A branch that accepted nothing and produced no candidate has its reason in the per-attempt `error`;
-    // surface the last one as the note so an all-rejected run is diagnosable.
+    // Surface the last per-attempt `error` so an all-rejected run is diagnosable.
     let accepted = answer["accepted"].as_bool().unwrap_or(false);
     let note = if !accepted {
         attempts
@@ -174,31 +137,19 @@ fn one_branch(
     }
 }
 
-/// How one branch is asked to differ from its siblings.
 #[derive(Clone, Debug)]
 pub struct Strategy {
-    /// Appended to the goal. A different instruction is the only thing that makes two branches explore
-    /// rather than sample the same answer twice.
+    /// Appended to the goal, so two branches explore rather than sample the same answer twice.
     pub lens: String,
-    /// Which door this branch answers on. Empty means the caller's default. Per branch because a branch
-    /// may be its own ENVIRONMENT (ADR-0078, ADR-0083), making "which branch" and "which address" one
-    /// question.
+    /// Empty means the caller's default; a branch may be its own environment (ADR-0078, ADR-0083).
     pub host: String,
-    /// Whether this branch is shown the previous generation's best candidate. `false` for exactly one branch per generation: every reader of the last winner inherits its
-    /// mistakes, so the one branch that starts from the original tree is the only escape from a local
-    /// optimum.
+    /// `false` for exactly one branch: every reader of the last winner inherits its mistakes.
     pub reads_prior: bool,
-    /// What the swarm has learned that bears on this goal, already rendered.
-    /// Per branch, deliberately: branches that all read the same top-k are an expensive way to run one
-    /// (ADR-0081's herding). The caller varies `k`, the pools and the budget and hands the text in, so
-    /// this module stays free of a knowledge client and testable without a database.
-    /// Empty means the branch reads nothing, which is what the control arm is.
+    /// Already rendered, per branch to avoid herding (ADR-0081); empty is the control arm.
     pub knowledge: String,
 }
 
-/// The lenses, in the order branches get them.
-/// The first is EMPTY on purpose: a control branch asked exactly what the goal says; a lens that hurts
-/// would otherwise be invisible.
+/// The first is empty: a control branch, so a lens that hurts is visible.
 const LENSES: &[&str] = &[
     "",
     "Prefer the smallest change that could possibly work.",
@@ -210,9 +161,7 @@ const LENSES: &[&str] = &[
     "Do the direct thing, without abstraction.",
 ];
 
-/// `n` strategies, distinct as far as the lens list goes, with exactly one branch that reads nothing
-/// from the previous generation.
-/// The reader-of-nothing is the LAST branch so the control branch (lens 0) carries the search forward.
+/// Exactly one branch reads nothing from the previous generation: the last, so lens 0 carries on.
 pub fn default_strategies(n: u16) -> Vec<Strategy> {
     (0..n as usize)
         .map(|i| Strategy {
@@ -225,9 +174,7 @@ pub fn default_strategies(n: u16) -> Vec<Strategy> {
         .collect()
 }
 
-/// Point each branch at its own environment.
-/// `hosts[i]` is where branch `i` runs. Shorter than the strategy list is an error, not a fallback to
-/// the shared host: a branch in the wrong environment would write another branch's store.
+/// Too few hosts is an error: a branch in the wrong environment would write another's store.
 pub fn on_hosts(strategies: &[Strategy], hosts: &[String]) -> Vec<Strategy> {
     assert_eq!(
         strategies.len(),
@@ -237,16 +184,13 @@ pub fn on_hosts(strategies: &[Strategy], hosts: &[String]) -> Vec<Strategy> {
     strategies.iter().zip(hosts).map(|(s, h)| Strategy { host: h.clone(), ..s.clone() }).collect()
 }
 
-/// Apply a strategy to a plan: the lens onto the goal, and the previous generation's work onto the
-/// context (not for the branch that reads nothing).
 fn plan_for(base: &Value, prior: Option<&Entry>, s: &Strategy) -> Value {
     let mut plan = base.clone();
     if !s.lens.is_empty() {
         let text = plan["text"].as_str().unwrap_or_default().to_string();
         plan["text"] = json!(format!("{text}\n\n{}", s.lens));
     }
-    // What the swarm learned goes in as CONTEXT under a heading saying what it is worth: pasted in as part
-    // of the goal it reads as an instruction, and a wrong lesson becomes a requirement.
+    // As context under a heading: pasted into the goal, a wrong lesson becomes a requirement.
     if !s.knowledge.is_empty() {
         let text = plan["text"].as_str().unwrap_or_default().to_string();
         plan["text"] = json!(format!(
@@ -258,7 +202,6 @@ fn plan_for(base: &Value, prior: Option<&Entry>, s: &Strategy) -> Value {
     }
     let Some(prior) = prior.filter(|_| s.reads_prior) else { return plan };
 
-    // The winner's files laid over the goal's, as the driver lays a repair over an attempt.
     let mut context = plan["context"].as_array().cloned().unwrap_or_default();
     for f in prior.files.as_array().cloned().unwrap_or_default() {
         match context.iter_mut().find(|c| c["path"] == f["path"]) {
@@ -267,15 +210,12 @@ fn plan_for(base: &Value, prior: Option<&Entry>, s: &Strategy) -> Value {
         }
     }
     plan["context"] = Value::Array(context);
-    // And what is still wrong with it: seeding code without the verdict hands branches broken work with
-    // no reason.
+    // Seeding code without the verdict hands branches broken work with no reason.
     plan["previous"] = prior.failures.clone();
     plan
 }
 
-/// Fan one plan out to `branches` branches and wait for all of them.
-/// Every branch is waited for, including slow ones: taking the first N would prefer the branches that
-/// gave up early.
+/// Waits for every branch: taking the first N would prefer branches that gave up early.
 pub fn fan_out(
     driver_url: &str,
     host: &str,
@@ -287,7 +227,6 @@ pub fn fan_out(
     fan_out_from(driver_url, host, plan, &default_strategies(branches), None, base_seed, timeout)
 }
 
-/// The same, with the strategies named and an optional candidate to build on.
 pub fn fan_out_from(
     driver_url: &str,
     host: &str,
@@ -302,7 +241,6 @@ pub fn fan_out_from(
         .enumerate()
         .map(|(i, s)| {
             let url = driver_url.to_string();
-            // The branch's own environment when it has one, the shared door otherwise.
             let host = if s.host.is_empty() { host.to_string() } else { s.host.clone() };
             let plan = plan_for(plan, prior, s);
             let name = format!("branch-{i}");
@@ -332,8 +270,7 @@ pub fn fan_out_from(
         .collect()
 }
 
-/// Hand a generation's entries to the selector, which decides and proposes.
-/// The entries go across whole: filtering unaccepted ones here would put the gate in two places.
+/// Entries go across whole: filtering unaccepted ones here would put the gate in two places.
 pub fn land(
     select_url: &str,
     host: &str,
@@ -352,23 +289,18 @@ pub fn land(
     )
 }
 
-/// Why a search ended.
-/// The same distinction the driver makes one level down: running out of money and running out of ideas
-/// are different facts, and only one is worth more money.
+/// Running out of money and running out of ideas are different facts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SearchStop {
-    /// A branch passed the gate. The only successful ending.
+    /// The only successful ending.
     Accepted,
     /// `max_rounds` generations produced nothing acceptable.
     Exhausted,
-    /// `patience` generations in a row failed to beat the best score. The
-    /// search is circling, and another generation costs a generation.
+    /// `patience` generations in a row failed to beat the best score.
     NoProgress,
-    /// The token budget is spent.
     OverBudget,
 }
 
-/// One generation's worth of the search.
 #[derive(Clone, Debug)]
 pub struct Round {
     pub entries: Vec<Entry>,
@@ -385,24 +317,18 @@ pub struct Search {
     pub stopped: SearchStop,
 }
 
-/// How a search is bounded.
-/// All three are needed: rounds bound the search when generations are cheap, the budget when they are
-/// not, patience when one is neither expensive nor going anywhere.
+/// Rounds bound cheap generations, the budget expensive ones, patience ones going nowhere.
 #[derive(Clone, Copy, Debug)]
 pub struct Bounds {
     pub branches: u16,
     pub max_rounds: u16,
-    /// Across the whole search, every branch of every generation. 0 is unbounded.
-    /// A budget PER BRANCH is what the driver enforces, and four branches each inside theirs can put a
-    /// project far outside its own.
+    /// Across the whole search; 0 is unbounded. Per-branch budgets alone can sum past a project's.
     pub max_tokens: u64,
     /// Generations in a row that may fail to beat the best score. 0 disables it.
     pub patience: u16,
 }
 
-/// Pick the candidate a generation carries forward.
-/// By score, earlier branch on a tie: the selector's rule, so the carried candidate is the one
-/// proposed.
+/// By score, earlier branch on a tie: the selector's rule, so carried is what gets proposed.
 pub fn best_of(entries: &[Entry]) -> Option<usize> {
     entries
         .iter()
@@ -412,10 +338,8 @@ pub fn best_of(entries: &[Entry]) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
-/// Run generations until one is accepted, or until a bound says stop.
-/// Every generation after the first is SEEDED with the last one's best candidate and its remaining
-/// failures, which is why a search finds what one generation cannot; except the one branch that reads
-/// nothing, which is how it leaves a local optimum.
+/// Each generation is seeded with the last one's best and its failures, except the one branch
+/// that reads nothing.
 pub fn search(
     driver_url: &str,
     host: &str,
@@ -435,9 +359,7 @@ pub fn search(
     )
 }
 
-/// The same search, with the branches' strategies supplied.
-/// The caller fills each strategy's `knowledge` from the pool (varying `k`, pools and budget across
-/// siblings, control arm empty); this stays free of a knowledge client.
+/// The caller fills each strategy's `knowledge`, keeping this free of a knowledge client.
 #[allow(clippy::too_many_arguments)]
 pub fn search_with(
     driver_url: &str,
@@ -457,7 +379,7 @@ pub fn search_with(
 
     let mut stopped = SearchStop::Exhausted;
     for r in 0..bounds.max_rounds {
-        // Rounds are spaced far enough apart that generation two's first branch cannot repeat a seed.
+        // Spaced so generation two's first branch cannot repeat a seed.
         let seed = base_seed + (r as u64) * STRIDE * (bounds.branches as u64 + 1);
         let entries =
             fan_out_from(driver_url, host, plan, &strategies, carried.as_ref(), seed, timeout);
@@ -475,8 +397,7 @@ pub fn search_with(
         } else {
             stale += 1;
         }
-        // Carried forward is the best SO FAR, not this round's best: a regression must not drag the next
-        // generation down.
+        // Best so far, not this round's: a regression must not drag the next generation down.
         carried = best.clone();
 
         let any_accepted = entries.iter().any(|e| e.accepted);
@@ -486,7 +407,7 @@ pub fn search_with(
             stopped = SearchStop::Accepted;
             break;
         }
-        // Both checked after the generation, because what one costs is not known until it runs.
+        // Checked after the generation: what one costs is not known until it runs.
         if bounds.max_tokens > 0 && spent >= bounds.max_tokens {
             stopped = SearchStop::OverBudget;
             break;
@@ -497,8 +418,7 @@ pub fn search_with(
         }
     }
 
-    // The accepted candidate, not merely the highest-scoring one: a branch can score well on optional
-    // checks while failing a required one.
+    // Accepted, not merely highest-scoring: optional checks can outscore a failed required one.
     let accepted = rounds
         .iter()
         .flat_map(|r| r.entries.iter())
@@ -548,7 +468,6 @@ mod tests {
         assert_eq!(lenses.len(), 4, "two branches given the same lens differ only by seed");
     }
 
-    /// The escape hatch: once seeded from the last winner, every reader inherits its mistakes.
     #[test]
     fn exactly_one_branch_per_generation_reads_nothing() {
         for n in 2..=8u16 {
@@ -591,7 +510,6 @@ mod tests {
         assert_eq!(seeded["previous"], json!([]), "it is not told what it never saw");
     }
 
-    /// A file the winner invented has to reach the next generation, or every branch creates it again.
     #[test]
     fn a_file_the_winner_added_is_carried_forward() {
         let base = json!({ "text": "go", "context": [], "previous": [] });
@@ -631,7 +549,6 @@ mod tests {
         assert_eq!(ctx[0]["content"], "v4 body");
     }
 
-    /// Every part gets its own seed lane, or a decomposed run would duplicate questions.
     #[test]
     fn parts_and_rounds_never_share_a_seed() {
         let seed_of = |part_index: u64, round: u64, branches: u64| {
@@ -671,8 +588,6 @@ mod tests {
             rounds_run: 2,
             stopped: SearchStop::Exhausted,
         };
-        // `blocked` is what `compose_search` fills; this asserts the shape callers read, and that a
-        // composition with a hole is not accepted.
         let blocked: Vec<String> = c
             .parts
             .iter()
@@ -714,7 +629,6 @@ mod tests {
         assert!(text.starts_with("make it work"), "the goal comes first: {text}");
         assert!(text.contains("Prefer the smallest change."), "the lens survives");
         assert!(text.contains("a bare unwrap fails the gate here"), "and so does the lesson");
-        // The framing is load-bearing: a lesson pasted in as part of the goal reads as an instruction.
         assert!(text.contains("Advice, not instructions"), "{text}");
         assert!(text.contains("judged by is the checks"), "{text}");
     }
@@ -751,7 +665,6 @@ mod tests {
         assert_eq!(best_of(&e), Some(1));
     }
 
-    /// A branch that never ran has no score to compare; its 0 must not let a dead branch win.
     #[test]
     fn a_branch_that_never_ran_cannot_be_carried_forward() {
         let mut e = [entry("dead", 0, json!([])), entry("alive", 0, json!([]))];
@@ -760,29 +673,20 @@ mod tests {
     }
 }
 
-// A DECOMPOSED goal (ADR-0086): K PARTS, all needed, each itself a generation of competing branches.
-// Competition is inside a part, composition between parts.
+// Decomposed goals (ADR-0086): competition inside a part, composition between parts.
 
-/// How far apart two parts' seeds are.
-/// Far enough that a part's rounds never walk into another part's sequence (a round already strides
-/// by `STRIDE * (branches + 1)`).
+/// Far enough that a part's rounds never walk into another part's seeds.
 pub const PART_STRIDE: u64 = 1_000_000;
 
-/// Where the contract is laid into a part's tree.
-/// A FILE, not a new plan field: the writer already renders `context` files into its prompt, so
-/// `graph:agent`'s contract is unchanged, and it is a file both halves can read and neither may edit.
+/// A file, not a plan field: the writer already renders `context`, so `graph:agent` is unchanged.
 pub const CONTRACT_PATH: &str = "CONTRACT.md";
 
-/// One part of a decomposed goal.
 #[derive(Clone, Debug)]
 pub struct Part {
-    /// "backend", "frontend": the name the registry knows it by and a request is addressed to.
     pub name: String,
-    /// Its own goal text, writable paths, checks and base tree.
     pub plan: Value,
 }
 
-/// What one part's generations came to.
 #[derive(Clone, Debug)]
 pub struct PartOutcome {
     pub part: String,
@@ -790,19 +694,15 @@ pub struct PartOutcome {
     pub best: Option<Entry>,
     pub accepted: bool,
     pub spent_tokens: u64,
-    /// The contract version the accepted candidate was built against; what
-    /// `contract:registry/composable` compares, and parts that disagree must not be landed.
+    /// What `composable` compares; parts that disagree must not be landed.
     pub built_against: u32,
 }
 
-/// What a decomposed run came to.
 #[derive(Clone, Debug)]
 pub struct Composition {
     pub parts: Vec<PartOutcome>,
-    /// The version in force when the run ended.
     pub contract_version: u32,
-    /// Empty when every part accepted; otherwise one line per part that did not, so "no PR" says which
-    /// half is missing.
+    /// One line per part that did not accept, so "no PR" says which half is missing.
     pub blocked: Vec<String>,
     pub spent_tokens: u64,
     pub rounds_run: u16,
@@ -814,16 +714,12 @@ impl Composition {
         self.blocked.is_empty() && !self.parts.is_empty()
     }
 
-    /// The winners, as `(part, candidate digest)`, what `composable` is asked about.
     pub fn winners(&self) -> Vec<(String, Entry)> {
         self.parts.iter().filter_map(|p| p.best.clone().map(|e| (p.part.clone(), e))).collect()
     }
 }
 
-/// Lay the contract into a part's plan as a read-only context file.
-/// Also says so in the goal text: a model handed a file it must not edit with no sentence about it
-/// will edit it. The version is in the text so the candidate's recorded contract version can be
-/// audited against the prompt.
+/// Also said in the goal text: a model handed a file with no sentence about it will edit it.
 pub fn with_contract(plan: &Value, body: &str, version: u32) -> Value {
     let mut plan = plan.clone();
     let text = plan["text"].as_str().unwrap_or_default().to_string();
@@ -842,17 +738,9 @@ pub fn with_contract(plan: &Value, body: &str, version: u32) -> Value {
     plan
 }
 
-/// Run a decomposed goal: every part, generation by generation, until each has
-/// `boundary` is called between rounds with what every part has so far and returns the contract each
-/// part builds against next, `(part, body, version)`.
-/// PER PART: a part that granted an amendment builds against its own proposal, since ratification
-/// means "I passed my gate against it"; the others stay on the last canonical version, keeping an
-/// unimplemented amendment out of their prompts. Request resolution (`pending` → `answer` →
-/// `ratify` → `current`) stays in the callback so this module does not depend on the registry.
-/// **Nothing blocks inside a round.** Parts run concurrently and a contract can only move between
-/// rounds (ADR-0086), so two parts waiting on each other is not a reachable state.
-// Three over clippy's default threshold; each is a distinct axis of the search, not a struct's fields
-// waiting to be extracted.
+/// `boundary` runs between rounds and returns each part's contract. Nothing blocks inside a round,
+/// so two parts waiting on each other is unreachable (ADR-0086).
+// Each argument is a distinct axis of the search, not fields waiting to be a struct.
 #[allow(clippy::too_many_arguments)]
 pub fn compose_search<F, S>(
     driver_url: &str,
@@ -868,8 +756,6 @@ pub fn compose_search<F, S>(
 ) -> Composition
 where
     F: FnMut(u16, &[PartOutcome]) -> Vec<(String, String, u32)>,
-    // Per PART and per ROUND: what a part should read depends on which part it is and on what has been
-    // written since the last round.
     S: FnMut(&Part, u16) -> Vec<Strategy>,
 {
     let mut outcomes: Vec<PartOutcome> = parts
@@ -883,7 +769,7 @@ where
             built_against: 0,
         })
         .collect();
-    // What each part builds against, by name; they may diverge only while one demonstrates an amendment.
+    // They diverge only while one part demonstrates an amendment.
     let mut agreed: Vec<(String, String, u32)> =
         parts.iter().map(|p| (p.name.clone(), contract.to_string(), contract_version)).collect();
     let contract_of = |agreed: &[(String, String, u32)], part: &str| {
@@ -900,15 +786,14 @@ where
 
     for r in 0..bounds.max_rounds {
         rounds_run = r + 1;
-        // A part that has already passed its gate does not run again: re-running would spend money to maybe
-        // make it worse, and its winner is what the other parts compose with.
+        // An accepted part does not rerun: its winner is what the others compose with.
         let running: Vec<usize> = (0..parts.len()).filter(|i| !outcomes[*i].accepted).collect();
         if running.is_empty() {
             stopped = SearchStop::Accepted;
             break;
         }
 
-        // Parts run CONCURRENTLY like branches: they are independent until the boundary.
+        // Concurrent like branches: parts are independent until the boundary.
         let handles: Vec<_> = running
             .iter()
             .map(|&i| {
@@ -918,7 +803,6 @@ where
                 let strategies = strategies_for(&parts[i], r);
                 let plan = with_contract(&parts[i].plan, &body, version);
                 let carried = outcomes[i].best.clone();
-                // Each part gets its own seed lane.
                 let seed = base_seed
                     + (i as u64 + 1) * PART_STRIDE
                     + (r as u64) * STRIDE * (bounds.branches as u64 + 1);
@@ -949,7 +833,6 @@ where
             }
             if entries.iter().any(|e| e.accepted) {
                 outcomes[i].accepted = true;
-                // The accepted candidate, not merely the best-scoring one.
                 if let Some(a) = entries.iter().filter(|e| e.accepted).max_by_key(|e| e.score) {
                     outcomes[i].best = Some(a.clone());
                     outcomes[i].built_against = version;
@@ -962,7 +845,6 @@ where
             stopped = SearchStop::Accepted;
             break;
         }
-        // Both checked after the round, because what one costs is not known until it runs.
         if bounds.max_tokens > 0 && spent >= bounds.max_tokens {
             stopped = SearchStop::OverBudget;
             break;
@@ -973,13 +855,12 @@ where
             break;
         }
 
-        // The boundary: outstanding requests are resolved here and nowhere else.
+        // Outstanding requests are resolved here and nowhere else.
         let next = boundary(r, &outcomes);
         for (i, p) in parts.iter().enumerate() {
             let (_, was) = contract_of(&agreed, &p.name);
             let (_, now) = contract_of(&next, &p.name);
-            // A contract that moved under a part invalidates what that part has: a candidate built against v3 is
-            // not a candidate for v4.
+            // A candidate built against v3 is not a candidate for v4.
             if now != was {
                 outcomes[i].accepted = false;
             }
@@ -1003,8 +884,7 @@ where
         })
         .collect();
 
-    // The version the parts ended on. They agree unless a proposal is still undemonstrated, which
-    // `composable` refuses at landing time.
+    // They agree unless a proposal is undemonstrated, which `composable` refuses at landing.
     let ended_on = agreed.first().map(|(_, _, v)| *v).unwrap_or(contract_version);
     Composition {
         parts: outcomes,

@@ -1,14 +1,4 @@
-//! The decoder: PNG bytes in, digits out. Pure compute, no host imports.
-//!
-//! Why a scanline decoder and not a library: the bars carry no information vertically,
-//! so one horizontal line of pixels suffices, not an image pipeline. That is what lets
-//! this fit in `wasm32-wasip2` with nothing behind it.
-//!
-//! What stops it returning a plausible constant (three contract-only capabilities
-//! shipped one; `docs/CURRENT.md` calls that worse than nothing):
-//!   * **The check digit.** Every EAN/UPC and Code 128 result is verified against its
-//!     checksum, so a decoder that guesses answers `err`, not a number.
-//!   * **`not-a-barcode.png`.** A blank-image fixture the gate asserts decodes to nothing.
+//! Scanline decoder: the bars carry no vertical information, so one row of pixels suffices.
 
 use crate::tables::{C128, C128_STOP, G, L, PARITY, R};
 
@@ -24,13 +14,10 @@ struct Run {
     len: u16,
 }
 
-/// How far a measured run may sit from its ideal width (as a fraction of a module)
-/// before the match is refused. 0.7 is ZXing's figure; not tighter because print gain
-/// makes bars read wide and spaces narrow by a consistent amount.
+/// ZXing's figure; print gain widens bars and narrows spaces consistently, so not tighter.
 const MAX_VARIANCE: f32 = 0.7;
 
-/// Scanlines to try per orientation: a row through a thumb, a crease or the
-/// human-readable digits decodes nothing, so not 1.
+/// A row through a thumb, a crease or the digits decodes nothing, so not 1.
 const SCANLINES: usize = 24;
 
 pub fn decode_png(bytes: &[u8]) -> Result<Symbol, String> {
@@ -51,8 +38,7 @@ fn to_gray(bytes: &[u8]) -> Result<(Vec<u8>, usize, usize), String> {
     for i in 0..w * h {
         let at = i * px * step;
         let v = match px {
-            // Rec. 601 luma. A red-on-white label is a real thing and reads as
-            // mid-grey under a plain average, which then binarises wrong.
+            // Rec. 601 luma: a plain average reads red-on-white as mid-grey and binarises wrong.
             3 | 4 => {
                 let r = buf[at] as u32;
                 let g = buf[at + step] as u32;
@@ -66,19 +52,15 @@ fn to_gray(bytes: &[u8]) -> Result<(Vec<u8>, usize, usize), String> {
     Ok((gray, w, h))
 }
 
-/// Try every orientation this can handle, and return the first symbol whose
-/// checksum holds.
 pub fn decode_gray(gray: &[u8], w: usize, h: usize) -> Option<Symbol> {
     if w < 24 || h == 0 || gray.len() < w * h {
         return None;
     }
-    // Rows then columns (90 degrees); 180 is free since each line is also read
-    // backwards. A label held at 30 degrees is NOT covered (see the crate docs).
+    // 180 degrees is free (each line is also read backwards); 30 degrees is not covered.
     for by_column in [false, true] {
         let (across, along) = if by_column { (h, w) } else { (w, h) };
         for i in 0..SCANLINES {
-            // Spread over the middle 90%: the extreme rows are quiet zone or
-            // page edge, and the human-readable digits sit at the very bottom.
+            // The middle 90%: the extremes are quiet zone or edge, and the digits sit at the bottom.
             let at = along * (i * 2 + 1) / (SCANLINES * 2);
             let line: Vec<u8> = if by_column {
                 (0..across).map(|y| gray[y * w + at]).collect()
@@ -102,12 +84,10 @@ fn decode_line(line: &[u8]) -> Option<Symbol> {
     decode_runs(&runs)
 }
 
-/// Pixels to runs of black and white. The threshold is the midpoint of this line's own
-/// range: a photographed label is brighter at one end, and one global threshold turns
-/// the dim end into one long black run.
+/// Per-line midpoint threshold: a photographed label is brighter at one end.
 fn to_runs(line: &[u8]) -> Option<Vec<Run>> {
     let (min, max) = line.iter().fold((255u8, 0u8), |(lo, hi), &v| (lo.min(v), hi.max(v)));
-    // No contrast is blank paper; thresholding it yields noise the matcher works hard to reject.
+    // No contrast is blank paper.
     if max - min < 40 {
         return None;
     }
@@ -135,9 +115,7 @@ fn decode_runs(runs: &[Run]) -> Option<Symbol> {
     None
 }
 
-/// How far `widths` sits from `pattern`, in modules, or `None` if any run is further out
-/// than `MAX_VARIANCE`. The module width comes from THIS symbol's own total, so one line
-/// can decode a label slightly wider at one end.
+/// The module width comes from this symbol's own total, so a label wider at one end decodes.
 fn variance(widths: &[u16], pattern: &[u16]) -> Option<f32> {
     let total: u32 = widths.iter().map(|&w| w as u32).sum();
     let modules: u32 = pattern.iter().map(|&w| w as u32).sum();
@@ -178,7 +156,6 @@ fn guard(runs: &[Run], at: usize, n: usize) -> bool {
     runs[at].black && variance(&w, &ones).is_some()
 }
 
-/// EAN-13, UPC-A and EAN-8 — one layout with two lengths.
 fn decode_ean(runs: &[Run], start: usize) -> Option<Symbol> {
     // 13 digits: guard(3) + 6 digits(24) + middle(5) + 6 digits(24) + guard(3).
     // 8 digits:  guard(3) + 4 digits(16) + middle(5) + 4 digits(16) + guard(3).
@@ -190,8 +167,7 @@ fn decode_ean(runs: &[Run], start: usize) -> Option<Symbol> {
         let middle_at = left_at + half * 4;
         let right_at = middle_at + 5;
         let end_at = right_at + half * 4;
-        // The middle guard starts on a space and `guard` wants a bar, so check its
-        // widths and colour separately.
+        // The middle guard starts on a space and `guard` wants a bar.
         let Some(mid) = widths_at(runs, middle_at, 5) else { continue };
         if runs[middle_at].black || variance(&mid, &[1, 1, 1, 1, 1]).is_none() {
             continue;
@@ -207,16 +183,14 @@ fn decode_ean(runs: &[Run], start: usize) -> Option<Symbol> {
                 ok = false;
                 break;
             };
-            // L and G are told apart by which table matches, and for EAN-13 that
-            // IS the leading digit — it is drawn nowhere else.
+            // For EAN-13 the L/G parity IS the leading digit; it is drawn nowhere else.
             match (digit(&w, &L), digit(&w, &G)) {
                 (Some(d), None) => digits.push(d),
                 (None, Some(d)) => {
                     parity |= 1 << (half - 1 - i);
                     digits.push(d);
                 }
-                // Both or neither: ambiguous, and guessing here is how a
-                // decoder invents a product code.
+                // Ambiguous: guessing here is how a decoder invents a product code.
                 _ => {
                     ok = false;
                     break;
@@ -248,8 +222,7 @@ fn decode_ean(runs: &[Run], start: usize) -> Option<Symbol> {
             s.extend(digits.iter().map(|d| char::from_digit(*d as u32, 10).unwrap()));
             s
         } else {
-            // EAN-8 has no parity digit: all four left digits are L, and a G
-            // among them is a misread, not a leading digit.
+            // EAN-8 has no parity digit: a G among the left digits is a misread.
             if parity != 0 {
                 continue;
             }
@@ -258,9 +231,7 @@ fn decode_ean(runs: &[Run], start: usize) -> Option<Symbol> {
         if !checksum_ok(&text) {
             continue;
         }
-        // A UPC-A and an EAN-13 with a leading zero are the SAME BARS, so the symbology
-        // is reported and the text is not shortened. Returning twelve digits silently
-        // truncated `0166131860910`, an ordinary EAN-13 that begins with 0.
+        // UPC-A and EAN-13 with a leading zero are the same bars, so the text is never shortened.
         let symbology = match (half, text.starts_with('0')) {
             (6, true) => "upc-a",
             (6, false) => "ean-13",
@@ -277,21 +248,16 @@ fn checksum_ok(text: &str) -> bool {
         return false;
     }
     let (body, check) = d.split_at(d.len() - 1);
-    // Weights run 3,1,3,1… backwards from the check digit, which is the same
-    // rule for EAN-8 and EAN-13 and is why this needs no length branch.
+    // Weights 3,1,3,1… backwards from the check digit: one rule for EAN-8 and EAN-13.
     let sum: u32 =
         body.iter().rev().enumerate().map(|(i, v)| v * if i % 2 == 0 { 3 } else { 1 }).sum();
     (10 - sum % 10) % 10 == check[0]
 }
 
-/// Code 128 — the symbology on shelf and price labels, and the only one here that
-/// carries letters. Read whole, then decoded: the check symbol is indistinguishable
-/// from data until the stop arrives, and taking it back from a streaming decode means
-/// reconstructing its VALUE across mode shifts — a second decoder to get wrong.
+/// Read whole, then decoded: the check symbol is indistinguishable from data until the stop.
 fn decode_code128(runs: &[Run], start: usize) -> Option<Symbol> {
     let start_value = best_c128(&widths_at(runs, start, 6)?)?;
-    // 103, 104, 105 are Start A, B and C. Any other value means this is the
-    // middle of a code rather than its beginning.
+    // 103, 104, 105 are Start A, B and C.
     let mut mode = match start_value {
         103 => 'A',
         104 => 'B',
@@ -303,21 +269,18 @@ fn decode_code128(runs: &[Run], start: usize) -> Option<Symbol> {
     let mut at = start + 6;
     loop {
         let widths = widths_at(runs, at, 6)?;
-        // Checked BEFORE the symbol table: some values are close enough to the
-        // stop that a wrong answer is available if it is read as data.
+        // Stop checked first: some values are close enough to it to read as data.
         if variance(&widths, &C128_STOP).is_some() {
             break;
         }
         values.push(best_c128(&widths)?);
         at += 6;
-        // Code 128 tops out at 80-odd data symbols in practice; well past that
-        // is a scanline walking through noise, not a label.
+        // Far past 80-odd symbols is a scanline walking through noise.
         if values.len() > 128 {
             return None;
         }
     }
 
-    // start + sum(position * value), against the check symbol the code carries.
     let (data, check) = values.split_at(values.len().checked_sub(1)?);
     let sum = data
         .iter()
@@ -337,15 +300,12 @@ fn decode_code128(runs: &[Run], start: usize) -> Option<Symbol> {
                 _ => return None,
             },
             _ => match value {
-                // 0..94 is printable ASCII offset by 32 in mode B. Mode A maps
-                // 64..94 to control characters, which a shelf label does not
-                // carry and this does not decode.
+                // Mode A's 64..94 are control characters, which a shelf label does not carry.
                 0..=94 if mode == 'B' || value >= 32 => text.push(char::from(value + 32)),
                 99 => mode = 'C',
                 100 if mode == 'A' => mode = 'B',
                 101 if mode == 'B' => mode = 'A',
-                // FNC1..FNC4 and the shifts: real, and not what a price label
-                // uses. Refusing beats inventing.
+                // FNC1..FNC4 and the shifts are not on price labels; refusing beats inventing.
                 _ => return None,
             },
         }

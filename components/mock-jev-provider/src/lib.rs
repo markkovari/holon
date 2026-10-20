@@ -1,31 +1,5 @@
-//! `mock-jev-provider` — `jev:decision`, scripted.
-//!
-//! ## The script
-//!
-//! `mock-script` is JSON: an ordered list of rules, first match wins.
-//!
-//! ```json
-//! {
-//!   "rules": [
-//!     { "when": "printer",     "selected": "helpdesk-domain", "confidence": 0.94 },
-//!     { "when": "appointment", "selected": "clinic-domain",   "confidence": 0.9 },
-//!     { "when": "vague",       "flat": true, "confidence": 0.2 },
-//!     { "when": "explode",     "error": "provider-denied", "detail": "429" },
-//!     { "when": "*",           "selected": "unknown", "confidence": 0.1, "flat": true }
-//!   ]
-//! }
-//! ```
-//!
-//! `when` is a substring of `choice-request.state` (for `choose`) or `score-request.state`/`gate-request.state`
-//! (for `score`/`gate`), or `"*"`. `selected` must be one of the request's own `options` unless the rule sets
-//! `"flat": true`, in which case the first offered option is used (a flat/low-confidence answer does not claim
-//! to know). The remaining confidence is split evenly across the other options for `distribution`, mirroring the
-//! real provider's shape so a router's branching can be exercised end to end.
-//!
-//! A rule may return an error instead of a decision; `"error"` names any `decision-error` case (as in `mock-provider`).
-//!
-//! `score` reports the rule's `"level"` (index into `score-request.levels`, default the middle), and `gate` reads
-//! `"probability"` (default 0.5) as the yes-probability. Both match against the same rule list.
+//! `mock-script` rules, first match wins: `when` (substring or "*"), then `selected`/`flat`/`error`/`level`/`probability`.
+//! `selected` must be one of the request's options unless `flat`: a low-confidence answer does not claim to know.
 
 #[allow(warnings)]
 mod bindings;
@@ -69,8 +43,7 @@ fn script() -> Result<serde_json::Value, DecisionError> {
         .map_err(|e| DecisionError::InvalidRequest(format!("mock-script is not JSON: {e}")))
 }
 
-/// Find the first rule whose `when` matches `text`, optionally scoped to one question id (`evaluate`'s batch;
-/// everything else passes `None`, which ignores a rule's own `"question"` field). Order is significant.
+/// Order is significant. `None` ignores a rule's own `"question"` field.
 fn select_for<'a>(
     rules: &'a [serde_json::Value],
     text: &str,
@@ -95,7 +68,7 @@ fn select_for<'a>(
     )))
 }
 
-/// Find the first rule whose `when` matches `text`. Order is significant.
+/// Order is significant.
 fn select<'a>(
     rules: &'a [serde_json::Value],
     text: &str,
@@ -107,7 +80,7 @@ fn rules_of(s: &serde_json::Value) -> Vec<serde_json::Value> {
     s["rules"].as_array().cloned().unwrap_or_default()
 }
 
-/// Build a `choice-result` from a matched rule against the request's own `options` (the mock only answers with something offered).
+/// The mock only answers with something offered.
 fn choice_from(
     rule: &serde_json::Value,
     options: &[String],
@@ -137,7 +110,7 @@ fn choice_from(
     Ok(ChoiceResult { selected, confidence, distribution, flat })
 }
 
-/// Build a `score-result` from a matched rule against the request's `levels`; `"level"` selects the reported (fractional) index, default the midpoint like the reference provider.
+/// `"level"` defaults to the midpoint, like the reference provider.
 fn score_from(rule: &serde_json::Value, levels: &[String]) -> Result<ScoreResult, DecisionError> {
     if let Some(name) = rule["error"].as_str() {
         return Err(error_for(name, rule["detail"].as_str().unwrap_or_default()));
@@ -152,7 +125,7 @@ fn score_from(rule: &serde_json::Value, levels: &[String]) -> Result<ScoreResult
     Ok(ScoreResult { value, confidence, distribution })
 }
 
-/// Build a `gate-result` from a matched rule. `"probability"` is the yes-probability, default 0.5 like the reference provider.
+/// `"probability"` defaults to 0.5, like the reference provider.
 fn gate_from(rule: &serde_json::Value) -> Result<GateResult, DecisionError> {
     if let Some(name) = rule["error"].as_str() {
         return Err(error_for(name, rule["detail"].as_str().unwrap_or_default()));

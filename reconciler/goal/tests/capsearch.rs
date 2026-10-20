@@ -1,11 +1,4 @@
-//! "Do we already have something for this?", asked of the real catalogue.
-//!
-//! The unit tests in `capsearch.rs` pin the scoring against a fixture; this asks the questions a goal
-//! would ask of the real components, and records where the answer is WRONG as well as right.
-//!
-//! No model (ADR-0089): term overlap over each package's WIT header, with the capability graph
-//! breaking ties towards what applications already carry. Free and a millisecond, so a planner can
-//! call it on every goal.
+//! The capsearch questions a goal would ask, against the real catalogue, misses included.
 
 use std::collections::BTreeMap;
 
@@ -13,15 +6,13 @@ use comp_fleet::fleet::repo_root;
 use comp_fleet::plug::{default_dirs, Catalog};
 use comp_goal::capsearch::{capabilities, find, Capability};
 
-/// Questions somebody would really type, and the component that answers them. Phrased as a person
-/// describes a need, not as the component describes itself, or this tests that a name matches itself.
+/// Phrased as a person describes a need, or this tests that a name matches itself.
 const SHOULD_FIND: &[(&str, &str)] = &[
     ("hash a password and issue a session token", "auth-guard"),
     ("rank documents by relevance", "search-index"),
     ("store records and find them by a field", "record-store"),
     ("format some rows as CSV", "csv"),
     ("generate a unique identifier", "id-generate"),
-    // Added when the tautological descriptions were replaced with sentences a CALLER would write.
     ("stop a caller making too many requests", "rate-limiter"),
     ("record who did what and when", "audit-log"),
     ("make a mutating request safe to retry", "idempotency-guard"),
@@ -30,17 +21,11 @@ const SHOULD_FIND: &[(&str, &str)] = &[
     ("do this later, on a timer", "scheduler-timer"),
     ("the books have to balance", "ledger"),
     ("render an email from a template", "email-render"),
-    // In the top 3 rather than first: `event-bus` still wins on "event" matching its name (see KNOWN_MISSES).
+    // Top 3, not first: `event-bus` wins on "event" in its name.
     ("expand a repeating event", "rrule"),
 ];
 
-/// Questions this searcher gets WRONG, kept here on purpose.
-///
-/// Both survivors have the SAME cause, not vocabulary: a match on a component's NAME or interface
-/// scores 3 and on its description 1, so a query word that appears in some component's name outranks
-/// the component that does the thing. It bites hardest because the pool contains 33 DOMAIN APPS;
-/// nobody reuses `jobs-domain`, they reuse `lock-mutex`. The fix is the app-local tier (apps are not in
-/// the catalogue), not a synonym list or a tuned weight.
+/// Kept on purpose: a name match (3) outranks a description match (1); needs an app-local tier.
 const KNOWN_MISSES: &[(&str, &str)] = &[
     // `jobs-domain` wins on "job" matching its name.
     ("two workers must not do the same job", "lock-mutex"),
@@ -53,7 +38,7 @@ fn pool() -> Option<Vec<Capability>> {
         eprintln!("SKIPPED: nothing is built, so no capability was searched. `cargo xtask build --force` first.");
         return None;
     }
-    // App counts are the tie-breaker; an empty map only removes the nudge.
+    // An empty map only removes the tie-break nudge.
     let mut apps_of: BTreeMap<String, usize> = BTreeMap::new();
     for name in catalog.names().map(String::from).collect::<Vec<_>>() {
         for part in catalog.closure(&name) {
@@ -102,8 +87,7 @@ fn the_known_misses_are_still_missing() {
     );
 }
 
-/// The most valuable answer a searcher gives is "nothing": always returning the closest row sends
-/// every goal off to reuse something unrelated, which spoils the REUSE vs BUILD decision (ADR-0089).
+/// "Nothing" is the most valuable answer: the closest row would spoil reuse vs build (ADR-0089).
 #[test]
 fn a_question_the_catalogue_cannot_answer_returns_nothing() {
     let Some(pool) = pool() else { return };
@@ -120,8 +104,7 @@ fn a_question_the_catalogue_cannot_answer_returns_nothing() {
     }
 }
 
-/// Interfaces two components are SUPPOSED to export, and why. Each is a substitution point; the audit
-/// looks for the entry nobody put here.
+/// Each is a substitution point; the audit looks for the entry nobody put here.
 const DELIBERATE: &[(&str, &str)] = &[
     (
         "durable:workflow/orchestrator",
@@ -158,11 +141,7 @@ const DELIBERATE: &[(&str, &str)] = &[
     ),
 ];
 
-/// Nobody built the same thing twice.
-///
-/// Prevention is `capsearch` consulted before writing, but a working search and a broken one look
-/// identical from outside, so this counts what got through. Structural on purpose: "exports the same
-/// interface" needs no model and no descriptions (many are tautologies).
+/// A working search and a broken one look identical from outside, so count what got through.
 #[test]
 fn the_same_capability_was_not_built_twice() {
     let root = repo_root();
@@ -174,8 +153,7 @@ fn the_same_capability_was_not_built_twice() {
 
     let mut undeclared = Vec::new();
     for t in comp_goal::capsearch::twins(&catalog) {
-        // A standard interface exported by everything is the shape of the system, not a duplicate
-        // (`wasi:http/incoming-handler` has 65 exporters).
+        // `wasi:` is the system's shape, not a duplicate (65 exporters of incoming-handler).
         if t.interface.starts_with("wasi:") {
             continue;
         }
@@ -198,13 +176,7 @@ fn the_same_capability_was_not_built_twice() {
     );
 }
 
-/// A capability describes itself in a caller's words, not its own.
-///
-/// Entries once read "`x` — reference implementation of `x:y`", which matches nothing anybody would
-/// type (`rate-limiter` shipped in 22 applications and could not be found by "stop a caller making too
-/// many requests"). The description is generated from the FIRST `//!` line of `src/lib.rs`
-/// (`tools/gen-catalog.py`), so that is what is checked. Deliberately blunt: it refuses the one known
-/// useless form (restating your own name) rather than scoring prose.
+/// Refuses the one useless form (restating your own name), checked on the first `//!` line.
 #[test]
 fn a_capability_does_not_describe_itself_as_its_own_reference_implementation() {
     let root = repo_root();
@@ -240,12 +212,7 @@ fn a_capability_does_not_describe_itself_as_its_own_reference_implementation() {
     println!("  {checked} component descriptions, none tautological");
 }
 
-/// A component with NO description is invisible to a caller's words.
-///
-/// ADR-0094 lints the reference-implementation form, but the walk `continue`s on a crate with no
-/// `//!` line at all, so 31 silent components were skipped rather than failed. `capsearch` knew they
-/// EXISTED via artifact reflection but had no prose to match. Blunt like its sibling: "you wrote none"
-/// cannot be argued with.
+/// Without a `//!` line a component exists for capsearch but has no prose to match.
 #[test]
 fn every_component_has_a_description() {
     let root = repo_root();
@@ -258,7 +225,7 @@ fn every_component_has_a_description() {
     for entry in dirs.flatten() {
         let manifest = entry.path().join("Cargo.toml");
         let Ok(toml) = std::fs::read_to_string(&manifest) else { continue };
-        // Only components: a plain library crate (`semver-range`, `capman`) is not in the pool.
+        // A plain library crate (`semver-range`, `capman`) is not in the pool.
         if !toml.contains("[package.metadata.component]") {
             continue;
         }
@@ -287,12 +254,7 @@ fn every_component_has_a_description() {
     println!("  {checked} components, all described");
 }
 
-/// The catalogue's idea of "reusable" matches what the artifacts export.
-///
-/// `reusable_as_is` was a NAME check (`ends_with("-domain")` plus exceptions) and disagreed with the
-/// components 33 times of 212 in both directions. It is now read off the exports (a contract is
-/// anything exported outside `wasi:`): `comp-catalog` reads the SOURCE and `capsearch` the ARTIFACT,
-/// and this asserts the two paths agree on every component. Both are computed here, not read from a file.
+/// `comp-catalog` reads sources and `capsearch` artifacts; both must agree on every component.
 #[test]
 fn the_catalogue_and_the_artifacts_agree_on_what_is_reusable() {
     let root = comp_fleet::fleet::repo_root();
@@ -301,7 +263,7 @@ fn the_catalogue_and_the_artifacts_agree_on_what_is_reusable() {
         eprintln!("SKIPPED: nothing is built — run `cargo xtask build --force`");
         return;
     }
-    // The PROGRAM, not a committed snapshot (a `catalog.json` was only read by tests checking staleness).
+    // The program, not a committed snapshot.
     let Ok(out) = std::process::Command::new(env!("CARGO_BIN_EXE_comp-catalog"))
         .arg("--json")
         .current_dir(&root)

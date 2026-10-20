@@ -1,12 +1,3 @@
-//! `photosocial-domain` — a social photo-sharing application with AI critique,
-//! upvoting/downvoting, and RBAC-gated attribute ratings (perspective, lighting, creativity, etc.).
-//!
-//! Exports `wasi:http/incoming-handler`; imports:
-//!   - `auth:identity` for authentication and RBAC
-//!   - `records:store` for photos, attributes, votes, and ratings
-//!   - `llm:inference` for automated photo critique & tag generation
-//!   - `wasi:random` & `wasi:clocks` for IDs and timestamps.
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -32,7 +23,6 @@ mod bindings {
         world: "photosocial:app/photosocial-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;

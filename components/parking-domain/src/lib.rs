@@ -1,6 +1,3 @@
-//! `parking-domain` — router: auth (register/login/logout/me) and dispatch into `handlers.rs`. The whole router is
-//! `guestauth`/`guestio` macro expansions; spots, reservations and the overlap rule live in `handlers.rs`.
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -26,7 +23,6 @@ mod bindings {
         world: "parking:reservations/parking-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -38,7 +34,7 @@ mod handlers;
 pub use guestauth::Route;
 
 pub const TENANT: &str = "parking";
-/// The only roles this app grants. Anything else in a register request falls back to `member`: a role is a privilege, not free text.
+/// Anything else falls back to `member`: a role is a privilege, not free text.
 const ROLES: &[&str] = &["admin", "member"];
 
 guestio::guest_p3_respond!();

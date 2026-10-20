@@ -1,16 +1,5 @@
-//! `park-store` — `holon:park/lot` for components, each call one HTTP request to `comp-park` (ADR-0100, ADR-0095).
-//!
-//! The engine needs a held NATS JetStream connection, which a `wasm32-wasip2` guest cannot dial, so it runs natively
-//! (`reconciler/daemons/park/`). This is its component face: it turns each call into `POST <park-url>/v1/<function>`
-//! with JSON arguments (`holon_park::wire`) and the answer back into the WIT result. No state, no decisions.
-//!
-//! Config (wasi:config/store):
-//!   park-url     where `comp-park` listens, e.g. http://127.0.0.1:8015
-//!   park-token   the daemon's `--token`, sent as `Authorization: Bearer`, if set
-//!
-//! Errors: the daemon's refusals arrive as `{error, detail}` and come back as the `park-error` case they name, payload
-//! and all. Anything else (no `park-url`, nothing listening, a 401, a non-daemon body) is `storage-error`, which the
-//! contract says a caller may retry.
+//! Component face of comp-park (ADR-0100, ADR-0095): a guest cannot hold a NATS JetStream connection.
+//! Non-daemon failures are `storage-error`, which the contract says a caller may retry.
 
 #[allow(warnings)]
 mod bindings;
@@ -30,7 +19,6 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use witconv::{ToModel, ToWit};
 
-/// The binding modules `witconv` is compiled against.
 mod wit {
     pub use crate::bindings::holon::park::types as t;
 }
@@ -38,7 +26,7 @@ use wit::t;
 
 struct Component;
 
-/// Five minutes, as `vcs-store`'s: a genuinely slow call (`comp-park` waiting on a CAS retry storm) must not hang a caller forever; a normal one is milliseconds.
+/// Five minutes, as vcs-store: a CAS retry storm in comp-park must not hang a caller forever.
 const TIMEOUT_NS: u64 = 300_000_000_000;
 
 fn storage(msg: impl Into<String>) -> t::ParkError {
@@ -67,7 +55,6 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), t::ParkError> {
     Ok((scheme, authority, path))
 }
 
-/// POST `body` to `/v1/<func>`; the status and the whole response body.
 fn post(func: &str, body: &[u8]) -> Result<(u16, Vec<u8>), t::ParkError> {
     let url = daemon_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
@@ -121,7 +108,7 @@ fn post(func: &str, body: &[u8]) -> Result<(u16, Vec<u8>), t::ParkError> {
         match stream.blocking_read(64 * 1024) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went wrong, and returning what arrived would be a truncated answer.
+            // Any other error would be a truncated answer.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -129,8 +116,6 @@ fn post(func: &str, body: &[u8]) -> Result<(u16, Vec<u8>), t::ParkError> {
     Ok((status, buf))
 }
 
-/// The daemon's answer, as the WIT result: `200` is the `ok` value; anything
-/// else is its `{error, detail}` or, failing that, a storage error.
 fn decode<T: DeserializeOwned>(status: u16, body: &[u8]) -> Result<T, t::ParkError> {
     if status == 200 {
         return serde_json::from_slice(body).map_err(|e| {
@@ -151,7 +136,6 @@ fn decode<T: DeserializeOwned>(status: u16, body: &[u8]) -> Result<T, t::ParkErr
     }
 }
 
-/// One call: the request as JSON, the answer as `R` (the model type), then WIT.
 fn call<Q: Serialize, R: DeserializeOwned + ToWit>(
     func: &str,
     req: &Q,
@@ -230,7 +214,6 @@ mod tests {
         serde_json::to_vec(&wire::ErrorBody::from(e)).unwrap()
     }
 
-    /// Every refusal the daemon can send comes back as the case it names, with its payload: a caller must tell "retry" from "gone" from "your request was wrong".
     #[test]
     fn daemon_refusals_map_back_to_their_park_error_case() {
         let got = decode::<m::ParkResult>(404, &body(&ParkError::NotFound("t1".into())));
@@ -264,8 +247,6 @@ mod tests {
         assert!(parse_url("nats://x").is_err());
     }
 
-    /// The record with the most shape (an optional `poll`) survives model to
-    /// WIT and back.
     #[test]
     fn records_survive_model_to_wit_and_back() {
         let call = m::OutboundCall {
@@ -302,7 +283,6 @@ mod tests {
         assert_eq!(entry.clone().to_wit().to_model(), entry);
     }
 
-    /// A commit's effects, every kind, survive the component boundary and come back equal.
     #[test]
     fn a_commits_effects_survive_model_to_wit_and_back() {
         let effects = vec![
@@ -335,7 +315,6 @@ mod tests {
         assert_eq!(result.clone().to_wit().to_model(), result);
     }
 
-    /// A group's resolution, with every way a child can end, survives the component boundary.
     #[test]
     fn a_joined_resolution_survives_model_to_wit_and_back() {
         let by = m::Agent::named("join");
@@ -379,8 +358,6 @@ mod tests {
         }
     }
 
-    /// Both halves of what `take-ready` returns survive the component boundary,
-    /// and every replay policy does too.
     #[test]
     fn a_resolution_survives_model_to_wit_and_back() {
         let answered = m::Resolution::Answered(m::CallResult {
