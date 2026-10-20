@@ -1,10 +1,4 @@
-//! An in-process implementation of all three traits. It exists for two reasons:
-//! an interface with exactly one implementation has never been shown to be one
-//! (anything NATS-shaped that leaked into the traits is awkward to write here), and
-//! it lets the reconcile loop be tested without a broker.
-//!
-//! Entry expiry uses a real clock: a node that stops publishing has to disappear on
-//! its own, or `plan()` will keep placing work on a corpse.
+//! In-process lattice, so the reconcile loop is testable without a broker.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -30,8 +24,6 @@ impl MemoryLattice {
         Self::default()
     }
 
-    /// Drop an entry as though its node had gone quiet, without waiting out a TTL.
-    /// The failover path is the one worth testing and nobody should wait 15s to.
     pub fn expire(&self, key: &str) {
         self.entries.lock().unwrap().remove(key);
     }
@@ -40,9 +32,6 @@ impl MemoryLattice {
 #[async_trait]
 impl Inventory for MemoryLattice {
     async fn publish(&self, key: &str, value: Vec<u8>, ttl: Duration) -> Result<()> {
-        // Per-entry TTL, which NATS cannot do (it is per bucket). Worth noting: the
-        // trait signature allows something the current production impl approximates,
-        // and that is the abstraction being honest rather than NATS-shaped.
         self.entries.lock().unwrap().insert(key.to_string(), (value, Instant::now() + ttl));
         Ok(())
     }
@@ -71,7 +60,6 @@ impl CommandBus for MemoryLattice {
         timeout: Duration,
     ) -> Result<Vec<u8>> {
         let tx = self.handlers.lock().unwrap().get(node).cloned();
-        // The "nobody is listening" case the trait doc asks to be prompt about.
         let Some(tx) = tx else { bail!("no responders for node {node}") };
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         tx.send(Command { verb: verb.to_string(), payload, reply: reply_tx })
@@ -111,9 +99,6 @@ mod tests {
 
     #[tokio::test]
     async fn an_entry_expires_without_anyone_deleting_it() {
-        // THE property. A departed node disappears on its own; that is what
-        // replaced ADR-0016's orphan reaping, and an implementation that cannot do
-        // it would make `plan()` keep placing work on a corpse.
         let l = MemoryLattice::new();
         l.publish("box-a", b"alive".to_vec(), Duration::from_millis(40)).await.unwrap();
         assert_eq!(l.read_all().await.unwrap().len(), 1);
@@ -139,8 +124,6 @@ mod tests {
 
     #[tokio::test]
     async fn sending_to_a_node_nobody_serves_fails_promptly() {
-        // Promptly, not after the timeout: "nothing is running there" and "that
-        // node is slow" have different fixes.
         let l = MemoryLattice::new();
         let started = Instant::now();
         let err = l
@@ -154,7 +137,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_dropped_reply_reads_as_a_timeout() {
-        // A handler that decides not to answer must not hang the sender forever.
         let l = MemoryLattice::new();
         let mut rx = l.serve("box-a").await.unwrap();
         tokio::spawn(async move {
@@ -171,8 +153,6 @@ mod tests {
         l.put("sha256:abc", b"wasm".to_vec()).await.unwrap();
         assert!(l.has("sha256:abc").await);
         assert_eq!(l.get("sha256:abc").await.unwrap(), b"wasm".to_vec());
-        // A re-put of the same name is free rather than an error, which is what
-        // makes a retried distribution pass cost nothing.
         l.put("sha256:abc", b"wasm".to_vec()).await.unwrap();
         assert!(l.get("sha256:missing").await.is_err());
     }

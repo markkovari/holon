@@ -1,18 +1,5 @@
-//! `platform-domain` — the platform control plane as ONE composed wasm HTTP component.
-//! Exports `wasi:http`; imports only contracts.
-//!
-//! It owns every decision and none of the infrastructure access: on save it builds a
-//! desired-state manifest (`manifest.rs`, pure) and stores it as a revision. The native
-//! reconciler polls revisions and makes the lattice match (ADR-0022); this component holds
-//! no lattice credential and cannot start code on any node (same split as ADR-0003).
-//!
-//! Config (wasi:config/store):
-//!   applier-secret   shared secret the reconciler presents on `/api/internal/*`
-//!                    (name kept for compatibility with existing deployments)
-//!   ingress-suffix   DNS suffix an app is reachable on, e.g. `apps.local`;
-//!                    an app answers to `<app>.<tenant>.<suffix>`
-//!   default-egress   comma-separated authorities EVERY tenant may reach, granted by
-//!                    the operator (default none). See `with_operator_egress`.
+//! Owns every decision, none of the infrastructure access: it stores desired-state revisions and the
+//! native reconciler makes the lattice match (ADR-0022); it holds no lattice credential (ADR-0003).
 
 #[allow(warnings)]
 mod bindings {
@@ -44,7 +31,6 @@ mod bindings {
         world: "platform:app/platform-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -87,8 +73,7 @@ guestio::guest_p3_respond!();
 
 struct Component;
 
-/// A request as the handlers see it. Reading a p3 body consumes the request, so
-/// its headers and bearer are taken, and its body read whole, before routing.
+/// Reading a p3 body consumes the request, so headers, bearer and body are taken before routing.
 pub(crate) struct Incoming {
     headers: Fields,
     bearer: Option<String>,
@@ -103,16 +88,14 @@ impl Incoming {
 
 const ACCOUNTS: &str = "tenants";
 const CATALOG: &str = "catalog";
-/// Publisher verifying keys, one row per key, indexed by org (ADR-0073).
+/// One row per key, indexed by org (ADR-0073).
 const ORGKEYS: &str = "orgkeys";
 const DEPLOYMENTS: &str = "deployments";
 const REVISIONS: &str = "revisions";
 const BIN: &str = "wasm";
-/// How long a join code is good for. Long enough to hand over, short enough that a
-/// leaked one in a chat log is usually already dead.
+/// Long enough to hand over, short enough that a leaked one is usually already dead.
 const INVITE_TTL: u64 = 7 * 24 * 3600;
-/// Deployments per tenant in slice 1. Enforced through `quota:meter`, whose limit
-/// is a caller-supplied parameter — the platform is the entitlement store.
+/// `quota:meter` takes the limit as a parameter: the platform is the entitlement store.
 const DEPLOYMENT_BUDGET: u64 = 5;
 
 impl Guest for Component {
@@ -168,8 +151,7 @@ impl Guest for Component {
             (Method::Get, ["api", "projects", project, "goals"]) => {
                 goals::goals_list(&request, project, &query)
             }
-            // Event-bus half of the queue (ADR-0082): a lossy-hint fast path over the durable log;
-            // `goals_list` above is always the fallback.
+            // Lossy-hint fast path over the durable log (ADR-0082); `goals_list` is always the fallback.
             (Method::Get, ["api", "projects", project, "events"]) => {
                 goals::events_list(&request, project, &query)
             }
@@ -204,8 +186,7 @@ impl Guest for Component {
 
             (Method::Get, ["api", "internal", "revisions"]) => internal_revisions(&request),
             (Method::Post, ["api", "internal", "status"]) => internal_status_put(&request),
-            // The push path (ADR-0017), reconciled like everything else: the applier
-            // asks what needs pushing, fetches the bytes, pushes, then reports back.
+            // The push path (ADR-0017): the applier asks, fetches, pushes, then reports back.
             (Method::Get, ["api", "internal", "pending-pushes"]) => internal_pending(&request),
             (Method::Get, ["api", "internal", "artifact"]) => internal_artifact(&request, &query),
             (Method::Post, ["api", "internal", "pushed"]) => internal_pushed(&request),
@@ -228,11 +209,9 @@ impl Guest for Component {
 
 enum Outcome {
     Json(u16, String),
-    /// A body that is not text — the staged `.wasm` the pusher fetches.
     Bytes(u16, String, Vec<u8>),
     Err(u16, String),
-    /// An error with structure. `Err` renders `{"error": "<sentence>"}`; a client that must act
-    /// on the failure (highlight a port, offer a component to add) needs the parts named.
+    /// A client that must act on the failure (highlight a port, offer a component) needs the parts named.
     Structured(u16, Value),
 }
 
@@ -260,8 +239,7 @@ fn usage() -> Outcome {
     )
 }
 
-/// A tenant slug from the email's local part. Slice 1 is single-tenant and
-/// invite-only in spirit; this keeps sign-up usable without inventing an org UI.
+/// Keeps sign-up usable without inventing an org UI.
 fn tenant_of_email(email: &str) -> String {
     let local = email.split('@').next().unwrap_or("tenant");
     let s: String = local
@@ -286,8 +264,7 @@ fn register(request: &Incoming) -> Outcome {
     };
     match accounts::register(&email, &password, &tenant) {
         Ok(p) => {
-            // Record the tenant so the platform can scaffold its namespace and
-            // hold its plan. First account in a tenant owns it.
+            // First account in a tenant owns it.
             if find_one(ACCOUNTS, "tenant", &tenant).is_none() {
                 let doc = json!({
                     "tenant": tenant, "owner": p.subject, "created": now(),
@@ -297,17 +274,14 @@ fn register(request: &Incoming) -> Outcome {
                 });
                 let _ = records::create(ACCOUNTS, &doc.to_string(), &["tenant".to_string()]);
             }
-            // A solo organisation, so every account always has an org to deploy into. If it already
-            // exists this account is joining an existing tenant, and the first account there owns it.
+            // So every account always has an org to deploy into.
             if orgs::role_of(&p.subject, &tenant).is_none() {
                 let role = match find_one(orgs::ORGS, "id", &tenant) {
                     None => {
                         let _ = orgs::create(&tenant, &p.subject, &email);
                         orgs::Role::Owner
                     }
-                    // An existing org is NOT joined automatically by anyone who
-                    // guesses its tenant name — that would make registration an
-                    // access-control bypass. They need an invite.
+                    // Not joined by guessing its tenant name: registration would bypass access control.
                     Some(_) => orgs::Role::Viewer,
                 };
                 let _ = role;
@@ -342,7 +316,7 @@ fn login(request: &Incoming) -> Outcome {
     }
 }
 
-/// The verified caller. Roles come from the RBAC store, never from the token.
+/// Roles come from the RBAC store, never from the token.
 fn caller(request: &Incoming) -> Option<auth_types::Principal> {
     authorizer::introspect(request.bearer.as_deref()?).ok()
 }
@@ -380,7 +354,7 @@ fn visibility_of(v: &Value) -> &str {
     v["visibility"].as_str().unwrap_or("private")
 }
 
-/// Can this principal reference this catalog row? A `policy:guard` decision (ADR-0007/0009).
+/// A `policy:guard` decision (ADR-0007/0009).
 fn may_use(p: &auth_types::Principal, row: &Value) -> bool {
     let attrs = |pairs: &[(&str, &str)]| -> Vec<policy::Attr> {
         pairs
@@ -388,9 +362,7 @@ fn may_use(p: &auth_types::Principal, row: &Value) -> bool {
             .map(|(k, v)| policy::Attr { key: (*k).to_string(), value: (*v).to_string() })
             .collect()
     };
-    // A row uploaded before orgs existed has none; it belongs to its uploader's
-    // personal org, which is named after the tenant. Guessing anything else would
-    // silently widen who can see old rows.
+    // A pre-org row belongs to its uploader's personal org; guessing anything else would widen who sees it.
     let row_org = row["org"].as_str().unwrap_or_else(|| row["tenant"].as_str().unwrap_or_default());
     let resource = attrs(&[
         ("tenant", row["tenant"].as_str().unwrap_or_default()),
@@ -409,15 +381,14 @@ fn may_use(p: &auth_types::Principal, row: &Value) -> bool {
     if visibility_of(row) != "org" {
         return false;
     }
-    // A person can belong to several organisations (ADR-0031) and `policy:guard` compares single
-    // values, so the decision is asked once per membership rather than reshaping the rule engine.
+    // `policy:guard` compares single values, so it is asked once per membership (ADR-0031).
     orgs::memberships(&p.subject)
         .iter()
         .filter_map(|m| m["id"].as_str().map(String::from))
         .any(|org| org == row_org && decide(&org))
 }
 
-/// The rules that implement ADR-0007's visibility table. Registered idempotently.
+/// ADR-0007's visibility table, registered idempotently.
 fn seed_policy() {
     let cond = |left: &str, op: policy::Op, right: &str| policy::Condition {
         left: left.to_string(),
@@ -432,8 +403,7 @@ fn seed_policy() {
             priority: 10,
             conditions: vec![cond("principal.tenant", policy::Op::Eq, "resource.tenant")],
         },
-        // anyone in the same ORGANISATION may use an org-visible row. ADR-0007's middle row: ranks
-        // between own (10) and public (5).
+        // ADR-0007's middle row: ranks between own (10) and public (5).
         policy::Rule {
             id: "catalog-org".into(),
             action: "use".into(),
@@ -471,11 +441,7 @@ fn declared_config(query: &Map<String, Value>) -> Vec<Value> {
         .collect()
 }
 
-/// Check one component's config against the keys its uploader declared.
-///
-/// Two errors, both naming the fix: an unknown key lists the legal ones (almost always a typo);
-/// a missing required key is named outright. A component that declared nothing accepts
-/// nothing: silence means "reads no config". Deny by omission.
+/// A component that declared nothing accepts nothing: deny by omission.
 fn check_config(id: &str, row: &Value, given: &Map<String, Value>) -> Result<(), String> {
     let declared: Vec<(&str, bool)> = row["config_keys"]
         .as_array()
@@ -506,15 +472,8 @@ fn check_config(id: &str, row: &Value, given: &Map<String, Value>) -> Result<(),
     Ok(())
 }
 
-/// Would plugging `plug` into `socket` actually work?
-///
-/// `wac`'s own subtype check on the real bytes, not a name comparison: two components can
-/// both talk about `records:store/store@0.1.0` and still not fit (version, record fields,
-/// resource methods). Name matching is what `plan` does at save time and is the weaker test.
-/// A separate endpoint because the answer is wanted while someone drags an edge, not at deploy.
-///
-/// The reply carries every interface the plug would satisfy, because `wac plug` matches EVERY
-/// common interface and cannot be told to satisfy just one.
+/// wac's subtype check on the real bytes, not a name comparison (version, fields, methods can differ).
+/// Lists every interface the plug would satisfy: `wac plug` matches EVERY common one.
 fn components_satisfies(request: &Incoming) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
@@ -535,9 +494,7 @@ fn components_satisfies(request: &Incoming) -> Outcome {
         return Outcome::Err(422, "a component cannot plug into itself".into());
     }
 
-    // Same visibility rule as a deploy: own row first, then anything this principal
-    // may use. Asking whether two components fit must not become a way to learn that
-    // a private component exists.
+    // Same visibility rule as a deploy, so asking about a fit cannot reveal a private component.
     let find = |id: &str| -> Option<Value> {
         find_one(CATALOG, "key", &format!("{}/{}", p.tenant, id)).map(|(_, _, v)| v).or_else(|| {
             records::list_records(CATALOG, 500, "")
@@ -628,21 +585,15 @@ fn component_add(request: &Incoming, query: &Map<String, Value>) -> Outcome {
         .unwrap_or_else(|| format!("component-{}", surface.sha256));
     let key = format!("{}/{}", p.tenant, id);
 
-    // STAGED BY CONTENT, not by name. `tenant/id` is a mutable pointer, so staging under it let
-    // two workers pushing different builds race and lose bytes. Under a content key identical
-    // bytes land in the same place and different bytes go elsewhere.
-    // The row stays keyed by `tenant/id` (the name people use) and POINTS at the content.
+    // Staged by content, not by name: `tenant/id` is a mutable pointer, and racing workers lost bytes under it.
     let content = surface.sha256.clone();
     let blob_key = format!("sha256/{content}");
     if blob::put(BIN, &blob_key, &bytes, "application/wasm").is_err() {
         return Outcome::Err(500, "could not stage the component bytes".into());
     }
-    // What config this component reads, declared by its uploader: `?config=grace-period-secs!,retries`
-    // (a trailing `!` marks it required). Only the uploader can know; a guessing platform would
-    // reject valid config or accept typos.
+    // Only the uploader can know; a trailing `!` marks a key required.
     let config_keys = declared_config(query);
-    // Which organisation owns this component. `?org=` or the uploader's personal
-    // one, and membership is checked here rather than after the row exists.
+    // Membership is checked before the row exists.
     let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
         Ok((org, _)) => org,
         Err((code, msg)) => return Outcome::Err(code, msg),
@@ -668,13 +619,11 @@ fn component_add(request: &Incoming, query: &Map<String, Value>) -> Outcome {
         "blob_key": blob_key,
         // name -> content, merged: tagging a new build must not forget where old tags point.
         "tags": tags,
-        // The OCI reference. Empty until the push step records a digest — and a
-        // deployment cannot render without one (ADR-0006).
+        // Empty until the push step records a digest; a deployment cannot render without one (ADR-0006).
         "oci_ref": "",
         "surface": surface_json(&surface),
     });
-    // Re-uploading the SAME BYTES is a no-op, not a new version: otherwise a retry or a re-run of
-    // a build script would clear the digest and force a whole distribution round.
+    // Same bytes is a no-op: a retried build would otherwise clear the digest and force a redistribution.
     if let Some((_, _, row)) = &existing {
         if row["content"].as_str() == Some(content.as_str())
             && row["digest"].as_str().unwrap_or_default().starts_with("sha256:")
@@ -692,8 +641,7 @@ fn component_add(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     }
 
     let ok = match existing {
-        // Guarded on the revision read. Two workers moving one name at once is the case content
-        // addressing does NOT solve (one pointer, one value), so the loser is told, not overwritten.
+        // Revision-guarded: two workers moving one name is what content addressing does NOT solve.
         Some((rec, rev, _)) => match records::update(CATALOG, &rec, &doc.to_string(), rev) {
             Ok(_) => true,
             Err(records::StoreError::RevisionConflict(_)) => {
@@ -738,8 +686,7 @@ fn components_list(request: &Incoming) -> Outcome {
                 "uploaded": row["uploaded"], "digest": row["digest"],
                 "deployable": row["digest"].as_str().unwrap_or("").starts_with("sha256:"),
                 "surface": row["surface"],
-                // What config this component reads, so a caller can render a form before deploying. Null on
-                // rows uploaded before declarations existed, which reads as "declared nothing".
+                // Null on rows uploaded before declarations existed: "declared nothing".
                 "config_keys": row["config_keys"],
             })
         })
@@ -747,11 +694,7 @@ fn components_list(request: &Incoming) -> Outcome {
     Outcome::Json(200, json!({ "components": rows }).to_string())
 }
 
-/// Everything this caller may use, filtered.
-///
-/// `?q=` matches the id or description; `?iface=` matches an EXPORT ("who can fill this gap
-/// in my graph", the same match the 422 uses for candidates); `?org=` narrows to one org.
-/// Linear scan over rows the listing already loads; no index.
+/// `?iface=` matches an EXPORT ("who can fill this gap"). Linear scan, no index.
 fn market_search(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
@@ -766,8 +709,7 @@ fn market_search(request: &Incoming, query: &Map<String, Value>) -> Outcome {
         .unwrap_or_default()
         .into_iter()
         .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
-        // Visibility first, always. A search that filtered afterwards would let a
-        // caller learn a private component exists by how many results came back.
+        // Visibility first: filtering afterwards would leak a private component through the result count.
         .filter(|r| may_use(&p, r))
         .filter(|r| {
             if q.is_empty() {
@@ -797,9 +739,7 @@ fn market_search(request: &Incoming, query: &Map<String, Value>) -> Outcome {
                 "visibility": r["visibility"], "description": r["description"],
                 "deprecated": r["deprecated"].as_bool().unwrap_or(false),
                 "uploaded": r["uploaded"], "digest": r["digest"],
-                // ADR-0007 rule 5: public means the provenance is public too —
-                // which key vouched for these bytes, and when. Absent on private
-                // and org rows, which need no signature.
+                // ADR-0007 rule 5: public means the provenance is public too.
                 "signed_by": r["signed_by"], "signed_at": r["signed_at"],
                 "deployable": r["digest"].as_str().unwrap_or("").starts_with("sha256:"),
                 "config_keys": r["config_keys"],
@@ -847,8 +787,7 @@ fn component_publish(request: &Incoming) -> Outcome {
                 }
                 match verify_publish(&org, &digest, &sig) {
                     Some(name) => {
-                        // Bound to the digest it covers. A later push replaces the digest and `internal_pushed`
-                        // demotes the row, so new bytes never inherit a signature on old ones (ADR-0007 rule 1).
+                        // Bound to the digest: a later push demotes the row, so new bytes never inherit a signature (ADR-0007 rule 1).
                         row["signed_digest"] = json!(digest);
                         row["signed_by"] = json!(name);
                         row["signed_at"] = json!(now());
@@ -864,14 +803,11 @@ fn component_publish(request: &Incoming) -> Outcome {
                 }
             }
             row["visibility"] = json!(visibility);
-            // Optional, and only overwritten when given: a publish that changes
-            // visibility should not silently erase a description.
+            // Only overwritten when given: a visibility change must not erase a description.
             if let Some(d) = b["description"].as_str() {
                 row["description"] = json!(d);
             }
-            // ADR-0007: deprecation, never deletion. A component someone deployed
-            // must keep resolving, so the strongest thing an author can do is say
-            // "do not start anything new with this".
+            // ADR-0007: deprecation, never deletion; a deployed component must keep resolving.
             if let Some(d) = b["deprecated"].as_bool() {
                 row["deprecated"] = json!(d);
             }
@@ -884,12 +820,7 @@ fn component_publish(request: &Incoming) -> Outcome {
     }
 }
 
-/// Components with no `oci_ref` yet — the work queue for the pusher.
-///
-/// Derived state, not a queue with its own lifecycle: "needs pushing" IS "has no registry
-/// reference", so lost or duplicated messages cannot desynchronise anything.
-/// Exports and imports travel with it because the OCI config blob `wkg` writes contains them
-/// and the pusher must produce a byte-identical shape.
+/// Derived, not a queue: "needs pushing" IS "has no oci_ref", so lost messages desynchronise nothing.
 fn internal_pending(request: &Incoming) -> Outcome {
     if !internal_ok(request) {
         return Outcome::Err(401, "internal endpoint".into());
@@ -906,9 +837,7 @@ fn internal_pending(request: &Incoming) -> Outcome {
             continue;
         }
         out.push(json!({
-            // The CONTENT key when there is one, so the distributor fetches the bytes this row was created
-            // from, not whatever a concurrent upload staged under the name. Composed artifacts are staged by
-            // name and fall back to it, hence `staged_key` rather than reading the field.
+            // The content key, so the distributor fetches the bytes this row was created from; composed artifacts fall back to the name.
             "key": staged_key(&row),
             "repo": row["key"],
             "sha256": row["surface"]["sha256"],
@@ -920,8 +849,7 @@ fn internal_pending(request: &Incoming) -> Outcome {
     Outcome::Json(200, json!({ "pending": out }).to_string())
 }
 
-/// The staged bytes for one component, so the pusher can send them to the registry. A pull, not
-/// a push: the wasm side avoids the awkward outgoing-body handshake and matches the applier's polling.
+/// A pull, not a push: avoids the outgoing-body handshake and matches the applier's polling.
 fn internal_artifact(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     if !internal_ok(request) {
         return Outcome::Err(401, "internal endpoint".into());
@@ -948,10 +876,7 @@ fn internal_pushed(request: &Incoming) -> Outcome {
     if !digest.starts_with("sha256:") {
         return Outcome::Err(422, "digest must be sha256:...".into());
     }
-    // The distributor reports the STAGED key (`staged_key(row)`): content key `sha256/<hash>` for raw
-    // uploads, name key `tenant/id` only for composed artifacts staged by name. Match the row whose
-    // staged location IS this key, falling back to the name index. Matching the name index alone left
-    // every content-staged part of a linked graph 404ing forever.
+    // Staged location first: matching the name index alone left content-staged parts 404ing forever.
     let found = find_one(CATALOG, "key", &key).or_else(|| {
         all_records(CATALOG, 100_000).into_iter().find_map(|e| {
             let row = serde_json::from_str::<Value>(&e.data).ok()?;
@@ -960,10 +885,7 @@ fn internal_pushed(request: &Incoming) -> Outcome {
     });
     match found {
         Some((rec, rev, mut row)) => {
-            // The bare content address, no registry host (ADR-0024): a node fetches by digest from the
-            // object store, and a registry-qualified name would give the same bytes two identities.
-            // New bytes, so any signature on the old ones says nothing about this row. Demoted rather than
-            // refused; re-publishing with a fresh signature is one call away (ADR-0073).
+            // Bare content address (ADR-0024); new bytes demote a public row rather than inherit its signature (ADR-0073).
             if row["visibility"] == json!("public") && str_of(&row, "signed_digest") != digest {
                 row["visibility"] = json!("private");
                 row["unpublished_reason"] = json!("new bytes pushed; re-sign to publish again");
@@ -976,11 +898,7 @@ fn internal_pushed(request: &Incoming) -> Outcome {
     }
 }
 
-/// Rebuild a collection's id index from the records themselves (ADR-0068).
-///
-/// For the platform's own collections (catalogue, deployments, orgs): an index that dropped an id
-/// hides a record still in the store. Internal, not a user route: it scans the whole bucket.
-/// Converges on what the records say, so a second run reports zero. A tenant's app exposes its own.
+/// Internal: it scans the whole bucket. Converges, so a second run reports zero (ADR-0068).
 fn internal_repair(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     if !internal_ok(request) {
         return Outcome::Err(401, "internal endpoint".into());
@@ -1006,9 +924,7 @@ fn internal_repair(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     }
 }
 
-/// Register a verifying key for an organisation (ADR-0073). The PUBLIC half only; a publisher who
-/// loses theirs registers another. Member, not viewer: adding a key decides whose bytes the
-/// platform later trusts as public.
+/// Member, not viewer: adding a key decides whose bytes the platform later trusts as public (ADR-0073).
 fn key_add(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
@@ -1025,8 +941,7 @@ fn key_add(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     if name.is_empty() || key_b64.is_empty() {
         return Outcome::Err(422, "name and public_key required".into());
     }
-    // Parsed here rather than at first use: a key that cannot verify anything
-    // should be refused by the call that adds it, not by a publish six weeks later.
+    // Parsed now: a key that cannot verify should be refused here, not by a publish weeks later.
     let raw = match B64.decode(key_b64.trim()) {
         Ok(r) => r,
         Err(_) => return Outcome::Err(422, "public_key must be base64".into()),
@@ -1046,8 +961,7 @@ fn key_add(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     }
 }
 
-/// The keys an organisation publishes under. Public information by construction —
-/// a verifying key is what lets anyone else check the signature.
+/// Public by construction: a verifying key is what lets anyone check a signature.
 fn key_list(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
@@ -1073,8 +987,7 @@ fn key_list(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     Outcome::Json(200, json!({ "org": org, "count": keys.len(), "keys": keys }).to_string())
 }
 
-/// The keys an org can publish under RIGHT NOW. A revoked key is skipped, so it
-/// stops verifying new publishes the moment it is revoked — the easy half.
+/// A revoked key is skipped, so it stops verifying new publishes immediately.
 fn org_keys(org: &str) -> Vec<(String, String)> {
     records::find_by(ORGKEYS, "org", &json!(org).to_string())
         .unwrap_or_default()
@@ -1085,17 +998,12 @@ fn org_keys(org: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Revoke a key and unpublish everything it vouched for (ADR-0076).
-///
-/// Possible because a public row records WHICH key vouched for it. Demoted to private, not
-/// deleted: ADR-0007 rule 4 says a referenced digest must stay resolvable, so a consumer who
-/// pinned it keeps running and only loses the platform's word that it is still trusted.
+/// Demoted to private, not deleted (ADR-0076): a referenced digest must stay resolvable (ADR-0007 rule 4).
 fn key_revoke(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
-    // Owner, not member. Adding a key widens what the org can publish; revoking
-    // one retracts published bytes, which is the louder act of the two.
+    // Owner, not member: revoking retracts published bytes, the louder act.
     let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Owner) {
         Ok((org, _)) => org,
         Err((code, msg)) => return Outcome::Err(code, msg),
@@ -1125,9 +1033,7 @@ fn key_revoke(request: &Incoming, query: &Map<String, Value>) -> Outcome {
         return Outcome::Err(404, format!("`{org}` has no key called `{name}`"));
     }
 
-    // Everything that key vouched for. Walked rather than indexed: revocation is
-    // rare and a catalogue scan is cheap next to being wrong about which rows a
-    // compromised key touched.
+    // Walked, not indexed: revocation is rare, and a scan is cheap next to missing a row the key touched.
     let mut unpublished = Vec::new();
     for e in records::list_records(CATALOG, 1000, "").map(|p| p.entries).unwrap_or_default() {
         let Ok(mut row) = serde_json::from_str::<Value>(&e.data) else { continue };
@@ -1153,10 +1059,7 @@ fn key_revoke(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     )
 }
 
-/// Does `signature` cover `digest` under any key this org registered?
-///
-/// The message signed is the digest STRING as the catalogue stores it (`sha256:…`), so anyone
-/// can check it later. Returns the name of the verifying key, for provenance (ADR-0007 rule 5).
+/// The message signed is the digest STRING as stored (`sha256:…`); returns the key name for provenance.
 fn verify_publish(org: &str, digest: &str, signature_b64: &str) -> Option<String> {
     use p256::ecdsa::signature::Verifier;
     let sig_raw = B64.decode(signature_b64.trim()).ok()?;
@@ -1174,16 +1077,10 @@ fn verify_publish(org: &str, digest: &str, signature_b64: &str) -> Option<String
     None
 }
 
-/// How far apart the host's clock and ours may be, in seconds. Narrow on purpose:
-/// it is the only thing bounding how many nonces have to be remembered, and two
-/// machines on one tailnet have no excuse for more.
+/// Narrow on purpose: it bounds how many nonces must be remembered.
 const FETCH_SKEW_SECS: u64 = 60;
 
-/// Claim this request's nonce, exactly once.
-///
-/// One guarded write whose FAILURE is the answer: `cas::set` with expected revision 0 means
-/// "must not exist yet", so the first claim commits and every replay conflicts (ADR-0066).
-/// A missing header is refused: a host that sends none can be replayed.
+/// `cas::set` at revision 0 means "must not exist", so a replay conflicts (ADR-0066); no header is refused.
 pub(crate) fn claim_fetch_nonce(request: &Incoming) -> Result<(), Outcome> {
     let header = |name: &str| -> String {
         request
@@ -1203,15 +1100,13 @@ pub(crate) fn claim_fetch_nonce(request: &Incoming) -> Result<(), Outcome> {
     };
     let now = now();
     if now.abs_diff(ts) > FETCH_SKEW_SECS {
-        // Outside the window the nonce set no longer proves anything, so the
-        // request is refused whether or not it is a replay.
+        // Outside the window the nonce set proves nothing, so it is refused either way.
         return Err(Outcome::Err(409, "stale request".into()));
     }
     let Ok(bucket) = kv::open("default") else {
         return Err(Outcome::Err(503, "store unavailable".into()));
     };
-    // The timestamp is part of the key so a sweeper can drop a whole window by
-    // prefix later, and so two windows cannot collide on one nonce.
+    // Timestamp in the key: a sweeper can drop a window by prefix, and two windows cannot collide.
     let key = format!("fn_{}_{}", ts / FETCH_SKEW_SECS, sanitize_key(&nonce));
     match cas::set(&bucket, &key, b"1", 0) {
         Ok(cas::Outcome::Committed(_)) => Ok(()),
@@ -1222,8 +1117,7 @@ pub(crate) fn claim_fetch_nonce(request: &Incoming) -> Result<(), Outcome> {
     }
 }
 
-/// Nonces are host-generated and already tame, but a key goes into the store and
-/// nothing that reaches a store should be trusted to be well-formed.
+/// Nothing that reaches a store is trusted to be well-formed.
 fn sanitize_key(s: &str) -> String {
     s.chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' })
@@ -1231,16 +1125,12 @@ fn sanitize_key(s: &str) -> String {
         .collect()
 }
 
-/// The app name an environment runs under. An environment IS a derived app (ADR-0078): the
-/// store a component opens is `b-app-{tenant}-{app}` (ADR-0023), so deriving the name gives
-/// each environment its own store with no new isolation machinery.
+/// An environment IS a derived app (ADR-0078), so it gets its own store `b-app-{tenant}-{app}` (ADR-0023).
 fn env_app(app: &str, env: &str) -> String {
     format!("{app}-env-{env}")
 }
 
-/// Environment names are restricted because the derived name is collapsed to a
-/// DNS label before it becomes a bucket, and two names that collapse together
-/// would share a store.
+/// The derived name collapses to a DNS label; two names collapsing together would share a store.
 fn valid_env_name(env: &str) -> bool {
     !env.is_empty()
         && env.len() <= 32
@@ -1249,10 +1139,7 @@ fn valid_env_name(env: &str) -> bool {
         && !env.ends_with('-')
 }
 
-/// Spawn on behalf of a RUNNING INSTANCE, authorised by its own token (ADR-0079).
-///
-/// The token (`{tenant}/{app}/{component}@{node}`, minted by the reconciler, never seen by the
-/// guest) says which instance is calling, so a component can fork its own app and nothing else.
+/// The token (minted by the reconciler, never seen by the guest) names the calling instance (ADR-0079).
 fn internal_env_spawn(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let token = request
         .headers()
@@ -1273,8 +1160,7 @@ fn internal_env_spawn(request: &Incoming, query: &Map<String, Value>) -> Outcome
     if doc["expires"].as_u64().unwrap_or(0) < now() {
         return Outcome::Err(401, "expired".into());
     }
-    // `tenant/app/component@node` — the app is the middle segment, and it is the
-    // only thing this call is allowed to fork.
+    // The app (middle segment) is the only thing this call may fork.
     let instance = str_of(&doc, "instance");
     let app = instance.split('/').nth(1).unwrap_or_default().to_string();
     if app.is_empty() {
@@ -1287,10 +1173,7 @@ fn internal_env_spawn(request: &Incoming, query: &Map<String, Value>) -> Outcome
     spawn_environment(&app, &env)
 }
 
-/// Spawn a parallel environment: the same graph, its own store (ADR-0078).
-///
-/// Recorded as desired state, not started directly: `plan()` stops any instance no manifest
-/// asks for, so anything started behind the reconciler's back is reaped within one pass.
+/// Recorded as desired state: `plan()` reaps anything started behind the reconciler's back (ADR-0078).
 fn env_spawn(request: &Incoming, _query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
@@ -1299,8 +1182,7 @@ fn env_spawn(request: &Incoming, _query: &Map<String, Value>) -> Outcome {
         Ok(v) => v,
         Err(o) => return o,
     };
-    // BEFORE the lookup: admission is about whether the fleet can take more work at all, and
-    // must not depend on the request being otherwise valid.
+    // Before the lookup: admission must not depend on the request being otherwise valid.
     if let Err(refusal) = admit_one_more() {
         return refusal;
     }
@@ -1313,10 +1195,7 @@ fn env_spawn(request: &Incoming, _query: &Map<String, Value>) -> Outcome {
         );
     }
 
-    // The parent's newest revision is what an environment is a copy OF. A missing or invisible parent
-    // is the same 404. Deployments are indexed on `org` and `tenant` only, so look up by record id when
-    // it looks like one, else scan this principal's deployments by name. Revisions are keyed by the
-    // deployment's RECORD ID while a manifest's `app` (and so the store name) is its NAME.
+    // Revisions are keyed by the deployment's RECORD ID; a manifest's `app` (the store name) is its NAME.
     let parent = records::get(DEPLOYMENTS, &app)
         .ok()
         .and_then(|e| serde_json::from_str::<Value>(&e.data).ok().map(|d| (e.id, d)))
@@ -1326,8 +1205,7 @@ fn env_spawn(request: &Incoming, _query: &Map<String, Value>) -> Outcome {
                 .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok().map(|d| (e.id, d)))
                 .find(|(_, d)| str_of(d, "name") == app)
         });
-    // A parent may also be an ENVIRONMENT (so a search can branch from a promising branch). An
-    // environment has no deployment record, so its owner comes from its revision.
+    // An environment may be a parent too (branching from a branch); its owner comes from its revision.
     let (app, owner) = match parent {
         Some((_, doc)) => {
             // Everything downstream keys on the deployment's NAME (the manifest's `app`, the store name).
@@ -1346,17 +1224,11 @@ fn env_spawn(request: &Incoming, _query: &Map<String, Value>) -> Outcome {
     ) {
         return Outcome::Err(code, msg);
     }
-    // Whether there IS a revision to copy is `spawn_environment`'s business; this
-    // route only has to establish that the caller may act for the owning org.
+    // This route only establishes that the caller may act for the owning org.
     spawn_environment(&app, &env)
 }
 
-/// Everything after "who is asking": copy the app's newest revision under a derived name. Shared
-/// by the user and instance routes so both produce the same thing.
-/// The newest revision of `app`, whether deployment or environment, plus its owning org.
-///
-/// Two lookups because revisions are keyed two ways: a deployment's carry its RECORD ID in
-/// `deployment`, an environment's its derived NAME. Without the second, environments could not nest.
+/// Revisions are keyed two ways (deployment RECORD ID, environment NAME); both lookups let environments nest.
 fn parent_of(app: &str) -> Option<(Value, String)> {
     let deployment = all_records(DEPLOYMENTS, 100_000)
         .into_iter()
@@ -1379,9 +1251,7 @@ fn spawn_environment(app: &str, env: &str) -> Outcome {
         return Outcome::Err(404, format!("no deployment or environment `{app}`"));
     };
     let derived = env_app(app, env);
-    // A derived name that collides with a real deployment would put two apps in
-    // one store. Refused rather than resolved: `shop` + env `x` and an app called
-    // `shop-env-x` are indistinguishable once the name is a DNS label.
+    // Refused, not resolved: `shop` + env `x` and an app `shop-env-x` are indistinguishable as a DNS label.
     let name_taken = all_records(DEPLOYMENTS, 100_000)
         .into_iter()
         .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
@@ -1395,11 +1265,7 @@ fn spawn_environment(app: &str, env: &str) -> Outcome {
 
     let mut manifest = latest["manifest"].clone();
     manifest["app"] = json!(derived);
-    // An environment gets a DERIVED front door (ADR-0083, amending ADR-0078): the parent's hostname
-    // on two apps would make the ingress route to whichever it saw last, but an app with no address
-    // cannot be driven. The environment's name is prefixed onto the parent's host, so it cannot
-    // collide with the parent, and two environments collide only if their names do (already refused).
-    // Nesting composes: an environment of an environment is `b.a.parent.org.test`.
+    // A DERIVED front door (ADR-0083): the parent's hostname on two apps would route to whichever came last.
     if let Some(host) = manifest["ingress"]["host"].as_str() {
         let derived = format!("{}.{host}", manifest::dns_label(env));
         manifest["ingress"]["host"] = json!(derived);
@@ -1429,7 +1295,6 @@ fn spawn_environment(app: &str, env: &str) -> Outcome {
     }
 }
 
-/// Every environment of an app, with the revision each was copied from.
 fn env_list(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some(_p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
@@ -1453,8 +1318,7 @@ fn env_list(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     Outcome::Json(200, json!({ "count": envs.len(), "environments": envs }).to_string())
 }
 
-/// Remove an environment. The reconciler stops its instances on the next pass,
-/// for the same reason it started them: nothing wants them any more.
+/// The reconciler stops its instances on the next pass.
 fn env_despawn(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
@@ -1469,8 +1333,7 @@ fn env_despawn(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let derived = env_app(&app, &env);
     let _ = p;
 
-    // Environments nest, so closing one closes what grew out of it, else descendants would run on with
-    // nothing able to name them. Every descendant of `x` is named `x-env-…` (ADR-0078).
+    // Environments nest; descendants of `x` are named `x-env-…` (ADR-0078) and must close with it.
     let prefix = format!("{derived}-env-");
     let mut doomed: Vec<(String, String)> = Vec::new();
     // Paged, not capped at 1000 (see `all_records`).
@@ -1481,9 +1344,7 @@ fn env_despawn(request: &Incoming, query: &Map<String, Value>) -> Outcome {
             continue;
         }
         if row["environment"].is_null() {
-            // Not an environment: a real deployment that happens to be named
-            // this. Refusing beats deleting somebody's app because the names
-            // rhyme.
+            // A real deployment with this name: refusing beats deleting an app because the names rhyme.
             return Outcome::Err(409, format!("`{name}` is a deployment, not an environment"));
         }
         doomed.push((e.id, name));
@@ -1514,7 +1375,6 @@ fn env_despawn(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     )
 }
 
-/// The newest revision row for a deployment id.
 fn newest_revision(id: &str) -> Option<Value> {
     records::find_by(REVISIONS, "deployment", &json!(id).to_string())
         .ok()?
@@ -1523,8 +1383,7 @@ fn newest_revision(id: &str) -> Option<Value> {
         .max_by_key(|v| v["revision"].as_u64().unwrap_or(0))
 }
 
-/// What `repair` WOULD do, changing nothing (ADR-0075). A GET, because it is a question. Nothing
-/// here runs it on a schedule yet.
+/// What `repair` WOULD do, changing nothing (ADR-0075).
 fn internal_verify(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     if !internal_ok(request) {
         return Outcome::Err(401, "internal endpoint".into());
@@ -1568,9 +1427,7 @@ pub(crate) fn internal_ok(request: &Incoming) -> bool {
         .unwrap_or(false)
 }
 
-/// The org a caller acts on behalf of when they name none: their own.
-///
-/// Created at registration so there is never a code path where someone has no org.
+/// Created at registration, so nobody is ever without an org.
 fn personal_org(p: &auth_types::Principal) -> String {
     p.tenant.clone()
 }
@@ -1661,13 +1518,11 @@ fn deployment_create(request: &Incoming, query: &Map<String, Value>) -> Outcome 
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
-    // Which org this is for. `?org=` or the caller's own, and membership at member
     let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
         Ok((org, _)) => org,
         Err((code, msg)) => return Outcome::Err(code, msg),
     };
-    // Typed, so a misspelled field is refused with the legal ones rather than
-    // quietly creating a deployment that is not what was asked for.
+    // Typed: a misspelled field is refused, not silently ignored.
     let b: req::CreateDeployment = match read_body(request)
         .map_err(|_| Outcome::Err(400, "could not read body".into()))
         .and_then(|raw| req::parse(&raw))
@@ -1683,8 +1538,7 @@ fn deployment_create(request: &Incoming, query: &Map<String, Value>) -> Outcome 
     if name.is_empty() {
         return Outcome::Err(422, "name required".into());
     }
-    // Per-ORG deployment budget: people in one company share one allowance, and one person in three
-    // companies does not carry theirs between them. `quota:meter`'s limit is a parameter (ADR-0008).
+    // Per-ORG budget: one company shares one allowance (`quota:meter`'s limit is a parameter, ADR-0008).
     let budget = plan_of(&org).max_deployments;
     if let Err(quota::QuotaError::Exceeded(remaining)) =
         quota::reserve(&format!("deployments/{org}"), 1, budget, 0)
@@ -1719,10 +1573,7 @@ impl std::ops::Deref for TenantPlan {
     }
 }
 
-/// A tenant's approved egress, plus whatever the OPERATOR granted every tenant through the
-/// `default-egress` config. That grant comes from this component's own deployment config, which a
-/// tenant cannot write, so ADR-0008's "stamped by the platform" still holds. Applied at read time,
-/// so it also reaches tenants registered earlier. A local dev lattice uses it for loopback daemons.
+/// The operator's `default-egress` grant is this component's own config, which no tenant can write (ADR-0008).
 fn with_operator_egress(mut tenant: Vec<String>, operator: &str) -> Vec<String> {
     for e in operator.split(',').map(str::trim).filter(|e| !e.is_empty()) {
         if !tenant.iter().any(|t| t == e) {
@@ -1761,11 +1612,7 @@ fn plan_of(tenant: &str) -> TenantPlan {
     }
 }
 
-/// A deployment the caller may act on, and at what level.
-///
-/// Ownership is by ORG membership, not tenant equality: people in one company reach the same
-/// deployments, and one person in three companies carries no access between them. Falls back to
-/// the record's `tenant` for rows written before orgs existed.
+/// By ORG membership, not tenant equality; pre-org rows fall back to the record's `tenant`.
 fn owned_deployment(
     p: &auth_types::Principal,
     id: &str,
@@ -1786,7 +1633,6 @@ fn deployments_list(request: &Incoming) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
-    // Every org the caller belongs to, so a person contracting for three companies sees all three.
     let mine: Vec<String> = orgs::memberships(&p.subject)
         .iter()
         .filter_map(|m| m["id"].as_str().map(String::from))
@@ -1817,8 +1663,6 @@ fn deployment_get(request: &Incoming, id: &str) -> Outcome {
     }
 }
 
-/// Resolve a deployment's nodes into renderable parts: check visibility, require a
-/// digest, and (for `fused`) compose the graph into one artifact first.
 fn resolve_parts(
     p: &auth_types::Principal,
     doc: &Value,
@@ -1846,9 +1690,7 @@ fn resolve_parts(
 
     let mut rows = Vec::new();
     for raw in &node_ids {
-        // A node may name a bare component, a tag, or a digest (see
-        // `parse_component_ref`). The NAME is what finds the row; the tag or
-        // digest then decides which bytes that row should be read as.
+        // The NAME finds the row; a tag or digest then decides which bytes it is read as.
         let r = parse_component_ref(raw);
         let id = &r.name;
 
@@ -1869,9 +1711,7 @@ fn resolve_parts(
             ));
         };
 
-        // Resolve a tag to the content it names. A tag that was never recorded is
-        // an error rather than a silent fall-through to `latest` — deploying
-        // something other than what was asked for is worse than refusing.
+        // An unrecorded tag is an error, not a fall-through to `latest`.
         if let Some(tag) = &r.tag {
             let tagged = row["tags"][tag].as_str().map(str::to_string);
             match tagged {
@@ -1897,9 +1737,7 @@ fn resolve_parts(
             }
             row["content"] = json!(sha);
             row["blob_key"] = json!(key);
-            // The digest on the row describes the CURRENT pointer's distributed
-            // artifact, which is not what was asked for. Cleared so the
-            // distribution step re-derives it for these bytes.
+            // The row's digest describes the CURRENT pointer, not these bytes, so distribution re-derives it.
             row["digest"] = json!("");
         }
         rows.push(row);
@@ -1918,8 +1756,7 @@ fn resolve_parts(
         })
         .unwrap_or_default();
 
-    // The plan validates the strategy: a graph that cannot support the choice is
-    // refused with the reason, not silently switched (ADR-0005).
+    // A graph that cannot support the strategy is refused with the reason, not silently switched (ADR-0005).
     let nodes: Vec<composer::Node> = rows
         .iter()
         .map(|r| composer::Node {
@@ -1975,7 +1812,6 @@ fn resolve_parts(
     }
 
     // `{"id": "gate", "config": {"grace-period-secs": "5"}}` on the graph node.
-    // Read once here so both strategies get the same treatment.
     let given_config = |id: &str| -> Map<String, Value> {
         req::node_config(doc["nodes"].as_array().map(|a| a.as_slice()).unwrap_or_default(), id)
     };
@@ -1995,8 +1831,7 @@ fn resolve_parts(
 
     let part_of = |row: &Value| -> Result<Part, Outcome> {
         let surface = surface_from(&row["surface"]);
-        // Refused HERE, before anything is built: a config error is the author's to fix, whereas reaching a node
-        // it becomes a component that fails in front of a user.
+        // Refused before anything is built: a config error is the author's to fix, not a failure in front of a user.
         let id = row["id"].as_str().unwrap_or_default().to_string();
         let given = given_config(&id);
         if let Err(why) = check_config(&id, row, &given) {
@@ -2008,8 +1843,7 @@ fn resolve_parts(
             Err(why) => return Err(Outcome::Err(422, why)),
         };
 
-        // Checked LAST, on purpose: a missing digest is transient ("save again in a moment") while a bad config
-        // key or secret is a permanent authoring error; reporting the transient one first makes authors wait for nothing.
+        // Checked LAST: a missing digest is transient, a bad config key or secret is a permanent authoring error.
         let digest = row["digest"].as_str().unwrap_or_default().to_string();
         if !digest.starts_with("sha256:") {
             return Err(Outcome::Err(
@@ -2052,9 +1886,7 @@ fn resolve_parts(
     match strategy {
         Strategy::Linked => rows.iter().map(part_of).collect(),
         Strategy::Fused => {
-            // The fused artifact is one component: the root, with everything else
-            // composed into it. Its host imports are the union, and it is the root
-            // that must already be in the registry as a composed artifact.
+            // One component: the root with everything composed into it; host imports are the union.
             let root = plan.roots.first().cloned().ok_or_else(|| {
                 Outcome::Err(422, "no root: something is plugged into every component".into())
             })?;
@@ -2086,8 +1918,7 @@ fn resolve_parts(
                 return Err(Outcome::Err(500, "could not stage the composed artifact".into()));
             }
 
-            // A fused artifact has ONE `wasi:config/store`, so graph configs merge into one namespace. A key used by two
-            // components with different values is ambiguous, so it is refused rather than resolved by iteration order.
+            // ONE `wasi:config/store` per fused artifact: a key with two different values is refused, not resolved by order.
             let mut merged: std::collections::BTreeMap<String, (String, String)> =
                 std::collections::BTreeMap::new();
             for row in &rows {
@@ -2174,7 +2005,6 @@ fn resolve_parts(
     }
 }
 
-/// A readable sentence for a `compose` failure.
 fn compose_detail(e: &composer::ComposeError) -> String {
     match e {
         composer::ComposeError::MissingPart(s) => {
@@ -2190,13 +2020,7 @@ fn compose_detail(e: &composer::ComposeError) -> String {
     }
 }
 
-/// A component reference, in the registry idiom (the field has long been called `oci_ref`):
-///
-///   `shop`                    the moving pointer — whatever was uploaded last
-///   `shop:v2`                 a named pointer, which an author may move
-///   `shop@sha256:<hex>`       exact bytes, which nothing can move
-///
-/// A digest reference makes a deployment reproducible: it survives someone else uploading over the name.
+/// `shop` (moving), `shop:v2` (named pointer), `shop@sha256:<hex>` (exact bytes, reproducible).
 pub struct ComponentRef {
     pub name: String,
     pub tag: Option<String>,
@@ -2204,9 +2028,7 @@ pub struct ComponentRef {
 }
 
 fn parse_component_ref(raw: &str) -> ComponentRef {
-    // `@` binds tighter than `:` — `shop:v2@sha256:x` is a digest reference that
-    // happens to mention where it came from, and the digest wins, because the
-    // whole point of naming one is that nothing else gets a say.
+    // `@` binds tighter than `:`: naming a digest means nothing else gets a say.
     if let Some((left, hex)) = raw.split_once("@sha256:") {
         let (name, tag) = match left.split_once(':') {
             Some((n, t)) => (n.to_string(), Some(t.to_string())),
@@ -2222,10 +2044,7 @@ fn parse_component_ref(raw: &str) -> ComponentRef {
     }
 }
 
-/// Where a catalogue row's bytes are staged.
-///
-/// ASK THE ROW; do not rebuild the key. A row is a pointer at content, so rebuilding `tenant/id`
-/// assumes the name still holds these bytes. The fallback covers rows written before content keys.
+/// Ask the row, do not rebuild `tenant/id`: the name may no longer hold these bytes.
 fn staged_key(row: &Value) -> String {
     match row["blob_key"].as_str().filter(|s| !s.is_empty()) {
         Some(k) => k.to_string(),
@@ -2237,8 +2056,7 @@ fn staged_key(row: &Value) -> String {
     }
 }
 
-/// What each component in a graph exports, by name. Recorded on every revision so the NEXT save can
-/// compare: the catalogue row is overwritten by the upload.
+/// Recorded on every revision so the NEXT save can compare: the catalogue row is overwritten by upload.
 fn surfaces_of(tenant: &str, parts: &[manifest::Part]) -> Value {
     let mut out = serde_json::Map::new();
     for p in parts {
@@ -2255,17 +2073,13 @@ fn surfaces_of(tenant: &str, parts: &[manifest::Part]) -> Value {
     Value::Object(out)
 }
 
-/// Exports that the previous revision had and this one does not.
-///
-/// The ONLY use of the WIT surface: it must never decide whether an artifact CHANGED (two builds
-/// differing in a constant have identical surfaces and different bytes), only whether a change
-/// BREAKS something: a vanished export is one somebody was linking to or serving on.
+/// Surfaces never decide whether an artifact CHANGED (a changed constant keeps them equal),
+/// only whether a change BREAKS something: a vanished export.
 fn lost_exports(before: &Value, after: &Value) -> Vec<String> {
     let mut gone = Vec::new();
     let Some(old) = before.as_object() else { return gone };
     for (component, exports) in old {
-        // A component that is no longer in the graph at all is a deliberate
-        // removal, not a broken upgrade — the author took it out.
+        // A component removed from the graph is deliberate, not a broken upgrade.
         let Some(now) = after.get(component).and_then(|v| v.as_array()) else { continue };
         for e in exports.as_array().cloned().unwrap_or_default() {
             let Some(raw) = e.as_str() else { continue };
@@ -2278,10 +2092,7 @@ fn lost_exports(before: &Value, after: &Value) -> Vec<String> {
     gone
 }
 
-/// Record the composed artifact as a catalog row, and return its digest once the distributor has given one.
-///
-/// Deliberately NOT hashed here: the distributor content-addresses the bytes it fetched, a stronger
-/// check than a hash by the writing process. Omitting `surface.sha256` also skips its prefix check.
+/// Not hashed here: the distributor content-addresses the bytes it fetched, a stronger check.
 fn stage_fused(
     tenant: &str,
     fused_id: &str,
@@ -2289,8 +2100,7 @@ fn stage_fused(
     root_row: &Value,
     plan: &composer::CompositionPlan,
 ) -> String {
-    // The fused surface is the root's exports (composition preserves them) over the
-    // graph's host needs (composition unions them).
+    // Root's exports (preserved) over the graph's host needs (unioned).
     let host_imports: Vec<Value> = plan
         .host_needs
         .iter()
@@ -2305,9 +2115,7 @@ fn stage_fused(
         "host_imports": host_imports,
         "nested_instances": plan.instance_count,
     });
-    // WHAT THIS WAS COMPOSED FROM, by content. Two builds with a changed constant have IDENTICAL exports
-    // and imports and different bytes, so comparing surfaces meant a re-uploaded component was never
-    // re-composed. The uploaded component's own content hash identifies the input.
+    // Inputs by content: a changed constant leaves surfaces IDENTICAL, so comparing them never re-composed.
     let inputs = json!([root_row["surface"]["sha256"]]);
     match find_one(CATALOG, "key", key) {
         Some((rec, rev, mut row)) => {
@@ -2344,8 +2152,7 @@ fn stage_fused(
 fn deployment_save(request: &Incoming, id: &str, query: &Map<String, Value>) -> Outcome {
     // Removing an export is sometimes the point. An author who means it says so.
     let force = query.get("force").and_then(|v| v.as_str()).is_some_and(|v| v == "true");
-    // A save creates desired state, so it is the other way to ask the fleet for work and is admitted
-    // like environment spawns.
+    // A save asks the fleet for work too, so it is admitted like environment spawns.
     if let Err(refusal) = admit_one_more() {
         return refusal;
     }
@@ -2356,7 +2163,7 @@ fn deployment_save(request: &Incoming, id: &str, query: &Map<String, Value>) -> 
     let Some((rec, rev, mut doc)) = owned_deployment(&p, id, orgs::Role::Member) else {
         return Outcome::Err(404, "not_found".into());
     };
-    // A save may also update the graph. An unknown field is refused: `{"noodes": [...]}` once saved the OLD graph and reported success.
+    // Unknown fields are refused: `{"noodes": [...]}` once saved the OLD graph and reported success.
     let update: req::SaveDeployment = match read_body(request)
         .map_err(|_| Outcome::Err(400, "could not read body".into()))
         .and_then(|raw| req::parse(&raw))
@@ -2381,9 +2188,8 @@ fn deployment_save(request: &Incoming, id: &str, query: &Map<String, Value>) -> 
         Ok(parts) => parts,
         Err(o) => return o,
     };
-    // THE isolation change: the plan, the hostname and `env_for` (the storage bucket a running instance
-    // gets) are keyed by the owning ORG. Two orgs cannot see each other's data because the host names the
-    // bucket from a control-plane record the guest cannot write (ADR-0012).
+    // THE isolation change: plan, hostname and bucket are keyed by the owning ORG, from a record
+    // the guest cannot write (ADR-0012).
     let owner_org =
         doc["org"].as_str().or_else(|| doc["tenant"].as_str()).unwrap_or(&p.tenant).to_string();
     let tenant_plan = plan_of(&owner_org);
@@ -2427,9 +2233,7 @@ fn deployment_save(request: &Incoming, id: &str, query: &Map<String, Value>) -> 
         Err(e) => return Outcome::Err(422, e.detail()),
     };
 
-    // The compatibility gate. An upgrade that removes an export breaks whatever was linked to it or serving
-    // on it; refuse here, where the author is, not at start time on a node. `?force=true` for when
-    // removing an export IS the change.
+    // Compatibility gate: refuse a removed export here, where the author is; `?force=true` when that IS the change.
     let surfaces = surfaces_of(&owner_org, &parts);
     if !force {
         if let Some(prev) = newest_revision(id) {
@@ -2492,7 +2296,6 @@ fn manifests(request: &Incoming, id: &str) -> Outcome {
         .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
         .max_by_key(|v| v["revision"].as_u64().unwrap_or(0));
     match latest {
-        // The desired-state document itself, the object the reconciler consumes.
         Some(v) => Outcome::Structured(
             200,
             json!({ "revision": v["revision"], "saved": v["saved"], "manifest": v["manifest"] }),
@@ -2501,11 +2304,7 @@ fn manifests(request: &Incoming, id: &str) -> Outcome {
     }
 }
 
-/// What the applier re-applies on its interval (ADR-0004's drift correction).
-///
-/// Every record in a collection, following the cursor. `list_records` takes a limit and returns a
-/// cursor; one call with a big limit SILENTLY truncates (a flat 1000 once capped a fleet at 500
-/// apps, the rest created and never placed). `cap` is a real backstop: reaching it is reported.
+/// Follows the cursor: one big-limit call SILENTLY truncates (a flat 1000 once capped a fleet at 500 apps).
 fn all_records(collection: &str, cap: usize) -> Vec<records::Entry> {
     const PAGE: u32 = 500;
     let mut out = Vec::new();
@@ -2557,23 +2356,18 @@ fn internal_revisions(request: &Incoming) -> Outcome {
     )
 }
 
-/// Delete a deployment: drop its records, and the lattice follows. The reconciler derives desired
-/// state from these records every pass, so a removed app stops on its own.
+/// The reconciler derives desired state from records, so a removed app stops on its own.
 fn deployment_delete(request: &Incoming, id: &str, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "unauthorized".into());
     };
-    // Deleting destroys the app's storage permanently (ADR-0016), so it is an
-    // owner action rather than a member one.
+    // Destroys the app's storage permanently (ADR-0016): an owner action.
     let Some((rec, _rev, doc)) = owned_deployment(&p, id, orgs::Role::Owner) else {
         return Outcome::Err(404, "not_found".into());
     };
     let name = doc["name"].as_str().unwrap_or("app").to_string();
 
-    // This destroys the app's storage claim, and nothing here can bring it back
-    // (ADR-0016). So the caller has to name what they are deleting: `428 Precondition
-    // Required` is exactly "the request must be made conditional", and an accidental
-    // or replayed DELETE cannot satisfy it.
+    // 428 unless `?confirm=<name>`: an accidental or replayed DELETE cannot satisfy it.
     if query.get("confirm").and_then(|v| v.as_str()) != Some(name.as_str()) {
         return Outcome::Err(
             428,
@@ -2676,15 +2470,11 @@ pub(crate) fn body(request: &Incoming) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it. Without a ceiling a guest
-/// accumulated until wasmtime's 64 MiB per-store cap TRAPPED, reaching the caller as a bare closed
-/// connection. Generous: a backstop against an unbounded read, not a content policy. Components that
-/// legitimately take uploads police themselves with a 413 and are left alone.
+/// Backstop under wasmtime's 64 MiB per-store cap, which traps instead of erroring.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_named!(read_whole_body, MAX_BODY_BYTES);
 
-/// The body read before routing (see `Incoming`).
 pub(crate) fn read_body(request: &Incoming) -> Result<Vec<u8>, ()> {
     request.body.clone()
 }
@@ -2766,7 +2556,7 @@ mod config_tests {
 
     #[test]
     fn a_component_that_declares_nothing_accepts_nothing() {
-        // Silence means "reads no config": deny by omission. The message says so, since an empty list reads as a bug.
+        // The message says so, since an empty list reads as a bug.
         let err = check_config("gate", &json!({ "id": "gate" }), &given(&[("anything", "1")]))
             .unwrap_err();
         assert!(err.contains("declares no config keys"), "{err}");
@@ -2790,8 +2580,7 @@ mod query_tests {
 
     #[test]
     fn a_reference_survives_being_a_query_value() {
-        // The bug: an escaped ref compared unequal to the ref it named, so a token
-        // was told it had not been granted a reference it plainly had.
+        // Regression: an escaped ref compared unequal to the ref it named.
         let (route, q) = split_query("/api/internal/secret?ref=vault%3A%2F%2Facme%2Fstripe");
         assert_eq!(route, "/api/internal/secret");
         assert_eq!(q["ref"], json!("vault://acme/stripe"));
@@ -2815,7 +2604,7 @@ mod query_tests {
 
 const FLEET: &str = "fleet";
 
-/// Where the reconciler's last report is kept. One row, overwritten.
+/// One row, overwritten.
 const FLEET_ROW: &str = "status";
 
 fn internal_status_put(request: &Incoming) -> Outcome {
@@ -2829,13 +2618,10 @@ fn internal_status_put(request: &Incoming) -> Outcome {
         return Outcome::Err(400, "status must be JSON".into());
     };
     body["at"] = json!(now());
-    // A new report accounts for everything admitted before it, so the running
-    // count starts again from zero.
+    // A new report accounts for everything admitted before it.
     body["admitted"] = json!(0);
 
-    // One row, replaced. History would be a metrics system's job, and keeping it
-    // here would grow without bound in the collection the admission check reads
-    // on every spawn.
+    // History is a metrics system's job; here it would grow in the collection admission reads every spawn.
     let existing = records::find_by(FLEET, "row", &json!(FLEET_ROW).to_string())
         .unwrap_or_default()
         .into_iter()
@@ -2851,9 +2637,7 @@ fn internal_status_put(request: &Incoming) -> Outcome {
     }
 }
 
-/// How many spawns have been admitted since the last fleet report. Without it, admission is only as
-/// fresh as the last report and a burst faster than the reporting interval sails through. Counting
-/// admissions since then turns a stale figure into a usable lower bound on the backlog.
+/// Without it a burst faster than the reporting interval sails through; it makes a stale figure a lower bound.
 fn admitted_since_report() -> u64 {
     records::find_by(FLEET, "row", &json!(FLEET_ROW).to_string())
         .unwrap_or_default()
@@ -2879,8 +2663,6 @@ fn note_admission() {
     let _ = records::update(FLEET, &e.id, &doc.to_string(), e.revision);
 }
 
-/// How far behind the fleet is, how old that number is, and how many nodes it
-/// was measured across.
 fn fleet_lag() -> Option<(u64, u64, u64)> {
     let row = records::find_by(FLEET, "row", &json!(FLEET_ROW).to_string())
         .ok()?
@@ -2900,12 +2682,9 @@ fn cfg_u64(key: &str, default: u64) -> u64 {
     config::get(key).ok().flatten().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
-/// May the fleet be asked to run one more thing? Admission belongs HERE, not in the reconciler, which
-/// would be judging its own backlog. Refusing beats queueing: a caller told "not now" can back off
-/// (under ADR-0082 that is a person who can try later).
+/// Admission lives here, not in the reconciler judging its own backlog. Refusing beats queueing.
 fn admit_one_more() -> Result<(), Outcome> {
-    // The limit is PER NODE, times the nodes actually carrying work: a flat number only suits where it was
-    // measured. `max-placement-lag` still overrides as a hard cap.
+    // Per node, times the nodes carrying work; `max-placement-lag` still overrides as a hard cap.
     let per_node = cfg_u64("max-placement-lag-per-node", 70);
     let flat = cfg_u64("max-placement-lag", 0);
     if flat == 0 && per_node == 0 {
@@ -2918,9 +2697,7 @@ fn admit_one_more() -> Result<(), Outcome> {
         return Ok(());
     };
 
-    // FAIL CLOSED on a stale report. If the loop has stopped, accepting more work
-    // is pointless — nothing will place it — and failing open here would mean
-    // unbounded acceptance at exactly the moment nothing is being done.
+    // FAIL CLOSED on a stale report: if the loop stopped, nothing will place more work.
     if age > stale_after {
         return Err(Outcome::Err(
             503,
@@ -2973,7 +2750,6 @@ mod ref_tests {
         assert_eq!(r.digest.as_deref(), Some("abc123"));
     }
 
-    /// A digest wins over a tag in the same reference: naming exact bytes means nothing else gets a say.
     #[test]
     fn a_digest_beats_the_tag_beside_it() {
         let r = parse_ref("shop:v2@sha256:abc123");
@@ -2982,8 +2758,7 @@ mod ref_tests {
         assert_eq!(r.digest.as_deref(), Some("abc123"), "but the digest decides");
     }
 
-    /// A name with no tag and no digest must not be mangled by a stray colon in
-    /// something that is not a reference at all.
+    /// A stray colon in something that is not a reference must not mangle it.
     #[test]
     fn a_name_that_looks_like_a_url_is_still_a_name() {
         let r = parse_ref("shop:8080");

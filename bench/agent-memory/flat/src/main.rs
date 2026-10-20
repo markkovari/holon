@@ -39,12 +39,10 @@ fn main() {
             for i in 0..n { let c = &cents[i % 10]; let row = &mut data[i * dim..(i + 1) * dim]; for j in 0..dim { row[j] = c[j] + 0.8 * r.g(); } unit(row); }
             let q8: Vec<i8> = data.iter().map(|x| (x * 127.0).round() as i8).collect();
             let queries: Vec<Vec<f32>> = (0..20).map(|_| { let mut v: Vec<f32> = cents[3].iter().map(|c| c + 0.8 * r.g()).collect(); unit(&mut v); v }).collect();
-            // flat f32, single thread
             let mut t1 = vec![]; let mut exact = vec![];
             for q in &queries { let t = Instant::now();
                 let top = topk((0..n).map(|i| (i, dot(&data[i * dim..(i + 1) * dim], q))), 10);
                 t1.push(t.elapsed().as_secs_f64() * 1000.0); exact.push(top); }
-            // flat f32, 8 threads
             let mut t8 = vec![];
             for q in &queries { let t = Instant::now();
                 let chunk = n.div_ceil(8);
@@ -58,7 +56,6 @@ fn main() {
                 all.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap()); all.truncate(10);
                 t8.push(t.elapsed().as_secs_f64() * 1000.0);
             }
-            // int8 single thread, recall vs exact
             let mut ti = vec![]; let mut rec = 0.0;
             for (qi, q) in queries.iter().enumerate() {
                 let qq: Vec<i8> = q.iter().map(|x| (x * 127.0).round() as i8).collect();
@@ -69,7 +66,6 @@ fn main() {
             }
             let (a1, b1) = stat(t1); let (a8, b8) = stat(t8); let (ai, bi) = stat(ti);
             println!("{{\"dim\":{dim},\"n\":{n},\"f32_1thr_p50\":{a1:.3},\"f32_1thr_p95\":{b1:.3},\"f32_8thr_p50\":{a8:.3},\"f32_8thr_p95\":{b8:.3},\"i8_1thr_p50\":{ai:.3},\"i8_1thr_p95\":{bi:.3},\"i8_recall10\":{:.3},\"mem_mb_f32\":{:.0}}}", rec / 20.0, (n * dim * 4) as f64 / 1e6);
-            // HNSW (instant-distance) for the bigger ones, dim 256 only
             if dim == 256 && n >= 10_000 && n <= 200_000 {
                 let pts: Vec<P> = (0..n).map(|i| P(data[i * dim..(i + 1) * dim].to_vec())).collect();
                 let t = Instant::now(); let h = Builder::default().ef_construction(100).build(pts.clone(), (0..n).collect::<Vec<usize>>());

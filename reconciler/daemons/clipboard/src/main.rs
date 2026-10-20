@@ -1,10 +1,4 @@
-//! `comp-clipboard` — native daemon for desktop-clipboard
-//!
-//! Reading the clipboard needs the desktop session's pasteboard, which a `wasm32-wasip2` guest lacks
-//! (ADR-0095). `components/desktop-clipboard` is the component side and dials this over HTTP.
-//!
-//! This must run with access to a real desktop session. In a headless environment it answers
-//! `unavailable` rather than crash: the honest answer with no clipboard to read.
+//! Native side of components/desktop-clipboard (ADR-0095): a wasm guest has no pasteboard.
 
 use anyhow::Result;
 use axum::{routing::post, Json, Router};
@@ -14,16 +8,10 @@ use serde_json::{json, Value};
 #[derive(Parser)]
 #[command(name = "comp-clipboard", about = "Native daemon for desktop-clipboard")]
 struct Args {
-    /// Shared secret a caller must send as `Authorization: Bearer
-    /// <token>`. Loopback binding alone is not a boundary — see
-    /// `comp_daemon_kit`'s own doc for why. No token means
-    /// no check, logged loudly rather than silently.
+    /// Shared secret callers must send as `Authorization: Bearer <token>`; unset means no check.
     #[arg(long)]
     token: Option<String>,
-    /// Same, but read from a file (a systemd `LoadCredential` path)
-    /// rather than passed as a value — `--token` is `ps`-readable by
-    /// any local user, which is most of what this exists to close.
-    /// Wins over `--token` when both are given.
+    /// Like `--token` but read from a file, since a flag is `ps`-readable; takes precedence.
     #[arg(long)]
     token_file: Option<std::path::PathBuf>,
 
@@ -38,8 +26,7 @@ async fn handle() -> Json<Value> {
     };
     match clipboard.get_text() {
         Ok(text) => Json(json!({ "text": text })),
-        // No text on the clipboard — could be an image, could be nothing at
-        // all. Either way there is nothing for this contract to hand back.
+        // An image, or nothing: either way this text contract has nothing to return.
         Err(arboard::Error::ContentNotAvailable) => Json(json!({ "error": "empty" })),
         Err(e) => Json(json!({ "error": "unavailable", "detail": e.to_string() })),
     }
@@ -64,8 +51,7 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
 
-    /// The three reply shapes this daemon can send, checked against what the
-    /// component's parser expects (`components/desktop-clipboard/src/lib.rs`).
+    /// Must match the parser in components/desktop-clipboard/src/lib.rs.
     #[test]
     fn the_three_reply_shapes_are_well_formed_json() {
         let ok = json!({ "text": "hello" });

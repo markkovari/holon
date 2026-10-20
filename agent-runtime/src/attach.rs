@@ -1,11 +1,4 @@
-//! Files that come with a run: a photo Mark sent, read from the agent's own inbox and put in
-//! front of its model with the message.
-//!
-//! The inbox is `workspaces/<agent>/inbox/`, where the chat bridge puts what it was sent. A run
-//! names the files (`Cause::attachments`) and nothing else: a name is checked to be a plain file
-//! name, so an attachment cannot reach outside the inbox, and another agent's inbox is not
-//! reachable at all. A file that cannot be read does not fail the run; the model is told, so it
-//! can say so instead of answering as if it had looked.
+//! Photos from the agent's own inbox; only plain file names, so an attachment cannot leave that inbox.
 
 use std::io::Write;
 use std::process::Command;
@@ -13,15 +6,12 @@ use std::process::Command;
 use crate::model::Image;
 use crate::store::Store;
 
-/// More than this is a mistake or an abuse: every picture is sent again with every step of a run.
+/// Every picture is sent again with every step of a run.
 pub const MAX_ATTACHMENTS: usize = 4;
-/// A photo bigger than this is refused outright.
 const MAX_BYTES: u64 = 20 << 20;
-/// Above this a photo is shrunk first: the model does not need a phone's full resolution, and it
-/// is sent again on every step of the run.
+/// The model needs no phone-resolution photo, and it is re-sent on every step.
 const SHRINK_ABOVE: usize = 1_500_000;
 
-/// The media type of a photo by its file name; `None` for anything that is not one.
 pub fn media_type_of(file: &str) -> Option<&'static str> {
     match file.rsplit_once('.')?.1.to_ascii_lowercase().as_str() {
         "jpg" | "jpeg" => Some("image/jpeg"),
@@ -33,7 +23,6 @@ pub fn media_type_of(file: &str) -> Option<&'static str> {
     }
 }
 
-/// A plain file name: letters, digits, dots, dashes and underscores, not starting with a dot.
 pub fn valid_name(file: &str) -> bool {
     !file.is_empty()
         && file.len() <= 120
@@ -49,13 +38,11 @@ fn inbox_file(store: &Store, agent: &str, file: &str) -> Option<std::path::PathB
     path.is_file().then_some(path)
 }
 
-/// Whether `file` is in `agent`'s inbox (and is a name that could be).
 pub fn exists(store: &Store, agent: &str, file: &str) -> bool {
     inbox_file(store, agent, file).is_some()
 }
 
-/// An iPhone's HEIC converted to JPEG, and a large photo shrunk, with the system `sips` (macOS;
-/// nowhere else). `None` when it could not: a HEIC is then unusable, a large photo goes as it is.
+/// macOS only: `None` elsewhere or on failure.
 fn sips(bytes: &[u8], longest: u32) -> Option<Vec<u8>> {
     let dir = tempfile::tempdir().ok()?;
     let (src, out) = (dir.path().join("in"), dir.path().join("out.jpg"));
@@ -72,9 +59,7 @@ fn sips(bytes: &[u8], longest: u32) -> Option<Vec<u8>> {
     done.then(|| std::fs::read(&out).ok()).flatten()
 }
 
-/// A photo from the inbox as a JPEG whose longest side is at most `longest` pixels, ready for a
-/// service with strict picture rules (Jev takes only PNG and JPEG, 256 to 1568 px a side). Off a
-/// Mac, with no `sips`, a PNG or JPEG goes as it is and anything else is refused.
+/// For services with strict picture rules (Jev: PNG or JPEG only, 256 to 1568 px a side).
 pub fn jpeg_of(store: &Store, agent: &str, file: &str, longest: u32) -> Result<Image, String> {
     let path =
         inbox_file(store, agent, file).ok_or_else(|| format!("`{file}` is not in your inbox"))?;
@@ -86,8 +71,6 @@ pub fn jpeg_of(store: &Store, agent: &str, file: &str, longest: u32) -> Result<I
     shrunk(bytes, media_type, longest).ok_or_else(|| format!("`{file}` could not be converted"))
 }
 
-/// `bytes` as a JPEG of at most `longest` pixels, or as they are when already a PNG or JPEG and
-/// `sips` is not there.
 pub fn shrunk(bytes: Vec<u8>, media_type: &str, longest: u32) -> Option<Image> {
     match sips(&bytes, longest) {
         Some(data) => Some(Image { media_type: "image/jpeg".into(), data }),
@@ -98,7 +81,7 @@ pub fn shrunk(bytes: Vec<u8>, media_type: &str, longest: u32) -> Option<Image> {
     }
 }
 
-/// The pictures for these files, and a sentence for each one that could not be used.
+/// An unusable file becomes a sentence for the model, not a failed run.
 pub fn load(store: &Store, agent: &str, files: &[String]) -> (Vec<Image>, Vec<String>) {
     let (mut images, mut problems) = (Vec::new(), Vec::new());
     for file in files.iter().take(MAX_ATTACHMENTS) {

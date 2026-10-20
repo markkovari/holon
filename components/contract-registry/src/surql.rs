@@ -1,8 +1,4 @@
-//! Every statement this component sends, and the readers for what comes back.
-//!
-//! Plain types only, no generated bindings in any signature — the same split
-//! `knowledge-memory` uses, and for the same reason: a live scenario suite can run
-//! these exact strings, and a suite that rebuilt them would be testing itself.
+//! Plain strings, so a live scenario suite runs these exact statements.
 
 use serde_json::Value;
 
@@ -10,12 +6,7 @@ pub const CONTRACTS: &str = "contract";
 pub const REQUESTS: &str = "request";
 pub const BUILDS: &str = "build";
 
-/// The version counter. A singleton row, incremented in the database.
-///
-/// NOT read-then-write: two parts granting amendments at the same generation
-/// boundary is the normal case here, and a read-modify-write on a hot key was
-/// measured landing 7 of 60 concurrent increments (ADR-0084). `n += 1 RETURN n`
-/// is atomic, and `knowledge:graph` resends it if the transaction conflicts.
+/// `n += 1 RETURN n` is atomic; a read-modify-write landed 7 of 60 concurrent increments (ADR-0084).
 pub const SEQ: &str = "contract_seq";
 
 pub fn rid(table: &str, id: &str) -> String {
@@ -30,8 +21,7 @@ pub fn next_version() -> String {
     format!("UPSERT {}:⟨1⟩ SET n += 1 RETURN n;", SEQ)
 }
 
-/// Write a version. `canonical` is false for an amendment awaiting its author's
-/// gate, true for the human's first contract.
+/// `canonical` is false for an amendment awaiting its author's gate.
 pub fn put_contract(
     version: u32,
     body: &str,
@@ -48,18 +38,12 @@ pub fn put_contract(
     )
 }
 
-/// The latest CANONICAL version — what a part builds against.
-///
-/// A proposed amendment nobody has implemented must never be what siblings build
-/// on, so the filter is not "the highest version" but "the highest ratified one".
+/// The highest ratified version: an unimplemented amendment must never be what siblings build on.
 pub fn current_contract() -> String {
     format!("SELECT * FROM {CONTRACTS} WHERE canonical = true ORDER BY version DESC LIMIT 1;")
 }
 
-/// The latest version a part has granted and not yet demonstrated.
-///
-/// `SELECT *` because the sort is on a projected field — SurrealDB rejects an
-/// `ORDER BY` over anything the projection omits.
+/// `SELECT *`: SurrealDB rejects ORDER BY over a field the projection omits.
 pub fn proposed_for(part: &str) -> String {
     format!(
         "SELECT * FROM {CONTRACTS} WHERE canonical = false AND owner = {} ORDER BY version DESC LIMIT 1;",
@@ -71,9 +55,7 @@ pub fn get_contract(version: u32) -> String {
     format!("SELECT * FROM {};", rid(CONTRACTS, &version.to_string()))
 }
 
-/// Make a proposed version canonical. Guarded in the statement rather than after a
-/// read: `WHERE owner = …` means a part cannot ratify a version it does not own
-/// even if two ratifications race.
+/// Guarded in the statement, so a part cannot ratify a version it does not own, even racing.
 pub fn ratify(version: u32, part: &str) -> String {
     format!(
         "UPDATE {} SET canonical = true WHERE owner = {} RETURN version;",
@@ -90,10 +72,8 @@ pub fn put_request(
     body: &str,
     at_version: u32,
 ) -> String {
-    // The edge is the history: who asked whom. Deterministic id, so a retried `ask`
-    // reinforces one row (ADR-0084). `answered` is NOT set here: setting it false on every
-    // ask would silently un-answer a verdict already given, and the answering model would
-    // be paid to re-decide for ever. An absent field reads as unanswered (`!= true`).
+    // Deterministic id, so a retried ask reinforces one row (ADR-0084). `answered` is not set: false on
+    // every ask would un-answer a verdict already given.
     format!(
         "BEGIN;UPSERT {} SET from_part = {}, to_part = {}, subject = {}, body = {}, \
          at_version = {at_version};\
@@ -109,10 +89,7 @@ pub fn put_request(
     )
 }
 
-/// What a part has been asked and has not answered. `SELECT *` is load-bearing: SurrealDB
-/// requires the `ORDER BY` field to be IN THE PROJECTION and otherwise fails the whole
-/// statement with *"Missing order idiom `at_version`"*; narrowing the columns later would
-/// break the sort at a distance.
+/// `SELECT *` is load-bearing: the ORDER BY field must be projected or the statement fails.
 pub fn pending(to_part: &str) -> String {
     format!(
         "SELECT * FROM {REQUESTS} WHERE to_part = {} AND answered != true ORDER BY at_version;",
@@ -124,11 +101,7 @@ pub fn get_request(id: &str) -> String {
     format!("SELECT * FROM {};", rid(REQUESTS, id))
 }
 
-/// Answer one, and refuse to answer it twice.
-///
-/// `WHERE answered = false` is the guard, in the statement: two boundary passes
-/// resolving the same request would otherwise both succeed and the second would
-/// silently overwrite the first part's verdict.
+/// `WHERE answered = false` guards in the statement, so a racing second answer cannot overwrite.
 pub fn answer(id: &str, verdict: &str, answer: &str, version: u32) -> String {
     format!(
         "UPDATE {} SET answered = true, verdict = {}, answer = {}, amended = {version} \
@@ -139,8 +112,7 @@ pub fn answer(id: &str, verdict: &str, answer: &str, version: u32) -> String {
     )
 }
 
-/// Record what a candidate was built against, and edge it to the version so the
-/// question "which decision broke the join" is a traversal.
+/// The edge makes "which decision broke the join" a traversal.
 pub fn built_against(candidate: &str, part: &str, version: u32) -> String {
     format!(
         "BEGIN;UPSERT {} SET part = {}, version = {version};\
@@ -158,11 +130,7 @@ pub fn builds(candidates: &[String]) -> String {
     format!("SELECT * FROM {};", ids.join(", "))
 }
 
-/// The rows a statement answered with, or the database's own words.
-///
-/// `Ok(empty)` for the two shapes that are not failures — a table or a namespace
-/// nobody has written yet. The first `current()` of a run always precedes the
-/// first `publish`.
+/// `Ok(empty)` for an unwritten table or namespace: the first `current()` precedes the first `publish`.
 pub fn rows(body: &str) -> Result<Vec<Value>, String> {
     let v: Value =
         serde_json::from_str(body).map_err(|e| format!("unreadable answer from the graph: {e}"))?;
@@ -180,8 +148,6 @@ pub fn rows(body: &str) -> Result<Vec<Value>, String> {
     Ok(statements.last().and_then(|s| s["result"].as_array().cloned()).unwrap_or_default())
 }
 
-/// A request id: stable for one `(from, to, subject)` within a version, so a
-/// retried ask is one request and a genuinely new ask is a new one.
 pub fn request_id(from_part: &str, to_part: &str, subject: &str, at_version: u32) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in format!("{from_part}|{to_part}|{subject}|{at_version}").as_bytes() {
@@ -191,10 +157,7 @@ pub fn request_id(from_part: &str, to_part: &str, subject: &str, at_version: u32
     format!("{h:016x}")
 }
 
-/// One line per disagreement, or nothing at all.
-///
-/// The message names both sides on purpose: "not composable" without saying which
-/// part is on which version sends the reader to the wrong file.
+/// Names both sides: "not composable" alone sends the reader to the wrong file.
 pub fn disagreements(builds: &[(String, String, u32)]) -> Vec<String> {
     let Some((_, _, agreed)) = builds.first() else {
         return Vec::new();
@@ -222,7 +185,6 @@ pub fn contract_of(row: &Value) -> (u32, String, bool, String, String) {
     )
 }
 
-/// A row's id with the table and whatever quoting the server chose stripped.
 pub fn id_of(row: &Value) -> String {
     row["id"]
         .as_str()

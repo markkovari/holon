@@ -37,7 +37,7 @@ order_placed: jsonpath "$.order_ids[0]"
 order_paid: jsonpath "$.order_ids[1]"
 order_delivered: jsonpath "$.order_ids[2]"
 
-# only the order's own buyer may pay — admin is not an exception here
+# admin is not an exception here
 POST {{base}}/api/orders/{{order_placed}}/pay
 Authorization: Bearer {{admin_token}}
 HTTP 403
@@ -46,7 +46,6 @@ POST {{base}}/api/orders/{{order_placed}}/pay
 Authorization: Bearer {{buyer_token}}
 HTTP 200
 
-# shipping is admin/vendor, gated on the order being paid
 POST {{base}}/api/orders/{{order_placed}}/ship
 Authorization: Bearer {{admin_token}}
 {"carrier": "UPS", "tracking": "1Z999"}
@@ -64,7 +63,6 @@ POST {{base}}/api/shipments/{{shipment_id}}/deliver
 Authorization: Bearer {{admin_token}}
 HTTP 200
 
-# a refund larger than the order total is refused
 POST {{base}}/api/orders/{{order_paid}}/refund
 Authorization: Bearer {{admin_token}}
 {"amount": 2000}

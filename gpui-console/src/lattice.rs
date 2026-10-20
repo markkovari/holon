@@ -235,7 +235,6 @@ impl Lattice {
 
         let specs = boot.runtime.store().list();
         let agents = specs.iter().map(|s| row_from(s, &boot.runtime)).collect();
-        // What ran before this launch, so the board's list of sessions does not start empty.
         let runs: Vec<RunRecord> =
             specs.iter().flat_map(|s| boot.runtime.store().runs(&s.name, 50)).collect();
         Self {
@@ -344,9 +343,6 @@ impl Lattice {
         cx.notify();
     }
 
-    /// Gives `goal` to `agent`, as a person typing it on the board would. The run is followed through
-    /// the runtime's events like any other; `Err` is why it cannot start, in words to show.
-    /// Every agent as the board's Agents tab draws it: its spec, and the projects it is in.
     pub fn roster(&self) -> Vec<agent_board::agents::AgentInfo> {
         let projects = self.rt.store().list_projects();
         self.agents
@@ -383,7 +379,7 @@ impl Lattice {
         }
         let (rt, name, goal) = (self.rt.clone(), agent.to_string(), goal.to_string());
         let (tx, rx) = futures::channel::oneshot::channel();
-        // A run can wait minutes on an approval: its own thread, not one of the executor's.
+        // a run can wait minutes on an approval, so not on the executor's threads
         std::thread::spawn(move || {
             let _ = tx.send(rt.run_agent(&name, "ui", &goal, &Cause::default(), "", true));
         });

@@ -1,11 +1,4 @@
-//! `events` — the organizer's half: creating, listing, amending and cancelling.
-//!
-//! The one thing here that is not CRUD is the pair of counts on a single event.
-//! They come from `quota:meter`, not from counting tickets, and that is a contract
-//! decision rather than a convenience: `tickets` is a different part, the tickets
-//! collection may not exist yet when this is judged, and the meter is the thing
-//! that actually decides whether the next claim succeeds. Counting a collection
-//! would produce a number that agrees with it most of the time.
+//! Counts come from `quota:meter`, which decides claims, not from counting another part's tickets.
 
 use serde_json::json;
 
@@ -17,17 +10,14 @@ use crate::bindings::upload::policy::gate as policy;
 use crate::store::{find_by_str, load, quota_subject, save, with_id, PAGE, QUOTA_PERIOD};
 use crate::{has_role, require, Reply, Route};
 
-/// `claimed` and `remaining`, read off the meter that governs claiming.
 fn counts(event_id: &str, capacity: u64) -> (u64, u64) {
     match quota::peek(&quota_subject(event_id), capacity, QUOTA_PERIOD) {
         Ok(b) => (b.used, b.remaining),
-        // A pool nothing has reserved against yet has no entry; that is an empty
-        // event, not an error.
+        // No entry yet is an empty event, not an error.
         Err(_) => (0, capacity),
     }
 }
 
-/// Amending and cancelling are the owner's, or an admin's.
 fn may_change(doc: &serde_json::Value, subject: &str, is_admin: bool) -> bool {
     is_admin || doc["organizer"].as_str() == Some(subject)
 }
@@ -55,8 +45,6 @@ fn create(route: &Route, body: &str) -> Reply {
 
     let title = input["title"].as_str().unwrap_or_default().trim().to_string();
     let starts_at = input["starts_at"].as_str().unwrap_or_default().trim().to_string();
-    // `as_u64` on a JSON number that is negative or fractional is None, which is the
-    // same refusal as absent — all three are "not a capacity".
     let capacity = input["capacity"].as_u64().unwrap_or(0);
     if title.is_empty() || starts_at.is_empty() || capacity < 1 {
         return Reply::err(400, "invalid");
@@ -69,8 +57,7 @@ fn create(route: &Route, body: &str) -> Reply {
         "organizer": p.subject,
         "state": "open",
     });
-    // Optional, and absent rather than empty when it is not given: a caller reading
-    // `"description": ""` cannot tell "nobody wrote one" from "somebody cleared it".
+    // Absent, not empty: `""` cannot tell "nobody wrote one" from "somebody cleared it".
     if let Some(d) = input["description"].as_str().map(str::trim).filter(|d| !d.is_empty()) {
         doc["description"] = json!(d);
     }
@@ -80,14 +67,10 @@ fn create(route: &Route, body: &str) -> Reply {
         &["state".to_string(), "organizer".to_string()],
     ) {
         Ok(e) => {
-            // The reminder goes on the clock when the event exists, not at the first claim: an
-            // event with no takers still has a notice to send.
             let at = crate::remind::schedule(&e.id, &starts_at);
             let mut out = with_id(&e);
             out["reminder_at"] = match at {
                 Some(t) => json!(t),
-                // Says nothing rather than lying: an event less than the lead time
-                // away gets no reminder, and a caller should be able to see that.
                 None => serde_json::Value::Null,
             };
             Reply::json(201, out)
@@ -106,7 +89,6 @@ fn list(route: &Route) -> Reply {
     } else {
         find_by_str("events", "state", &filter)
     };
-    // Every entry carries its id: a list nothing can be selected from is not a list.
     let events: Vec<_> = entries.iter().map(with_id).collect();
     Reply::json(200, json!({ "events": events }))
 }
@@ -143,16 +125,12 @@ fn patch(route: &Route, id: &str, body: &str) -> Reply {
         return Reply::err(400, "malformed_body");
     };
 
-    // Only these three. `organizer` and `state` are not amendable — one is identity
-    // and the other is what DELETE is for, and a PATCH that could set either would
-    // let a caller hand an event away or resurrect a cancelled one.
+    // Not `organizer` or `state`: a PATCH could hand an event away or resurrect a cancelled one.
     for key in ["title", "starts_at", "capacity", "description"] {
         if let Some(v) = input.get(key) {
             if key == "capacity" && v.as_u64().unwrap_or(0) < 1 {
                 return Reply::err(400, "invalid");
             }
-            // An explicit null CLEARS an optional field. Without this the only way
-            // to remove a description would be to delete the event.
             if key == "description" && (v.is_null() || v.as_str() == Some("")) {
                 doc.as_object_mut().map(|m| m.remove("description"));
                 continue;
@@ -160,8 +138,7 @@ fn patch(route: &Route, id: &str, body: &str) -> Reply {
             doc[key] = v.clone();
         }
     }
-    // The reminder was put on the clock for the OLD start. Moving the event without
-    // moving it would send "tomorrow" a day before a time that is no longer the time.
+    // The reminder was scheduled for the old start.
     let before = serde_json::from_str::<serde_json::Value>(&entry.data)
         .ok()
         .and_then(|d| d["starts_at"].as_str().map(str::to_string));
@@ -172,9 +149,7 @@ fn patch(route: &Route, id: &str, body: &str) -> Reply {
     }
     doc["id"] = json!(entry.id);
     if let Some(starts_at) = moved {
-        // Cancel first: `schedule` replaces a job only when it schedules one, and a new
-        // start it cannot schedule for must not leave the old reminder behind. A
-        // cancelled event keeps no reminder at all, as DELETE left it.
+        // Cancel first: `schedule` replaces a job only when it schedules one.
         crate::remind::cancel(id);
         let at = if doc["state"].as_str() == Some("open") {
             crate::remind::schedule(id, &starts_at)
@@ -201,16 +176,12 @@ fn cancel(route: &Route, id: &str) -> Reply {
     if !may_change(&doc, &p.subject, has_role(&p, "admin")) {
         return Reply::err(403, "forbidden");
     }
-    // SOFT: tickets already issued stay readable, and their holders still have
-    // something to show at a door that has moved rather than vanished.
+    // Soft: issued tickets stay readable for their holders.
     doc["state"] = json!("cancelled");
     if let Err(r) = save("events", &entry, &doc) {
         return r;
     }
-    // A cancelled event must not still remind people to come to it.
     crate::remind::cancel(id);
-    // ...and everyone holding a ticket is told, on the channels they chose: the one
-    // notification nobody would opt out of.
     for subject in crate::remind::holders_of(id) {
         crate::remind::tell(
             &subject,
@@ -223,13 +194,9 @@ fn cancel(route: &Route, id: &str) -> Reply {
     Reply::no_content()
 }
 
-/// The container every event poster lives in. One container, keyed by event id, so
-/// deleting an event's image needs no index and cannot reach another event's.
 const IMAGES: &str = "event-images";
 
-/// `POST|PUT /api/events/{id}/image` and `GET /api/events/{id}/image`. The bytes go to
-/// `blob-store` and the record keeps only the content type: base64 is a third larger than what
-/// it encodes and every read of the event would pay for it.
+/// The record keeps only the content type; base64 would add a third to every event read.
 pub fn image(
     method: &Method,
     route: &Route,
@@ -265,8 +232,7 @@ pub fn image(
             if bytes.is_empty() {
                 return Reply::err(400, "empty_body");
             }
-            // What counts as an image, and how big, is `upload-policy`'s answer
-            // (`allowed-types`, `max-size`), not a match arm here.
+            // What counts as an image is `upload-policy`'s answer, not a match arm here.
             let ct = content_type.split(';').next().unwrap_or("").trim();
             if let Err(e) = policy::check(ct, bytes.len() as u64) {
                 let code = match e {

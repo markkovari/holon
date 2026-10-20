@@ -1,7 +1,5 @@
-//! The runtime's session tools against the real `comp-agentd`, built with THIS crate's dependency
-//! set: reqwest's features are unified per workspace, so a client that works in agent-runtime's own
-//! tests can still be a different client here. Needs the daemon built (`cargo build --bin comp-agentd`
-//! in reconciler/); ignored unless asked for.
+//! Runs here too because reqwest's features unify per workspace, so this crate's client can differ.
+//! Needs `cargo build --bin comp-agentd` in reconciler/.
 
 use std::time::{Duration, Instant};
 

@@ -1,25 +1,4 @@
-//! `comp-ffmpeg` — re-encode a video, for a component that cannot fork a process
-//!
-//! ## Why this is a process and not a component
-//!
-//! Transcoding needs to spawn `ffmpeg`, and a `wasm32-wasip2` guest cannot fork a process (ADR-0095).
-//! So the part that needs an operating system is native and reached over HTTP like the watcher, the
-//! gate and the database.
-//!
-//! `components/video-ffmpeg` is the component side: it holds the WIT contract and dials this.
-//!
-//! ## An allow-list, for the same reason `comp-fswatch` has one
-//!
-//! The input path in a request can come from a model, so a file is refused unless its directory was
-//! listed by an operator: `--allow-path /var/media` permits it and anything beneath. Nothing is
-//! permitted by default.
-//!
-//! ## The target format
-//!
-//! The WIT contract takes one string argument, so there is no room for an "output format" parameter.
-//! The target is fixed: MP4 alongside the input with the same stem (`clip.mov` becomes `clip.mp4`).
-//!
-//!   comp-ffmpeg --addr 127.0.0.1:8010 --allow-path /var/media
+//! Native side of components/video-ffmpeg (ADR-0095): a wasm guest cannot spawn `ffmpeg`.
 
 use std::path::{Path, PathBuf};
 
@@ -32,30 +11,18 @@ use serde_json::{json, Value};
 #[derive(Parser)]
 #[command(name = "comp-ffmpeg", about = "Native daemon for video-ffmpeg")]
 struct Args {
-    /// Shared secret a caller must send as `Authorization: Bearer
-    /// <token>`. Loopback binding alone is not a boundary — see
-    /// `comp_daemon_kit`'s own doc for why. No token means
-    /// no check, logged loudly rather than silently.
+    /// Shared secret callers must send as `Authorization: Bearer <token>`; unset means no check.
     #[arg(long)]
     token: Option<String>,
-    /// Same, but read from a file (a systemd `LoadCredential` path)
-    /// rather than passed as a value — `--token` is `ps`-readable by
-    /// any local user, which is most of what this exists to close.
-    /// Wins over `--token` when both are given.
+    /// Like `--token` but read from a file, since a flag is `ps`-readable; takes precedence.
     #[arg(long)]
     token_file: Option<std::path::PathBuf>,
 
-    /// Where to listen. Loopback by default: this runs ffmpeg on request and
-    /// has no authentication of its own.
+    /// Where to listen; loopback by default, since this runs ffmpeg on request.
     #[arg(long, default_value = "127.0.0.1:8010")]
     addr: String,
 
-    /// A directory this may read input from, repeatable.
-    ///
-    /// An allow-list rather than a root to chroot into, for the same reason
-    /// egress is an allow-list: the input comes from an agent. Empty means
-    /// nothing is permitted, which is what a capability nobody has scoped
-    /// should do.
+    /// A directory this may read input from, repeatable; none means nothing is permitted.
     #[arg(long = "allow-path")]
     allow_path: Vec<PathBuf>,
 }
@@ -75,12 +42,8 @@ struct TranscodeResp {
 }
 
 impl Daemon {
-    /// Is `path` inside something an operator listed? Returns the CANONICAL path; the caller must act on
-    /// that, not the path it was given, or a symlink swapped in after this check resolves somewhere it
-    /// never approved (TOCTOU).
-    ///
-    /// Canonicalises the PARENT directory rather than `path`: a missing file is `no-such-file`, not
-    /// `not-permitted`, and canonicalizing the whole path would fail both the same way.
+    /// Returns the CANONICAL path, which the caller must act on (TOCTOU). Canonicalises the parent so
+    /// a missing file reads as `no-such-file`, not `not-permitted`.
     fn permits(&self, path: &Path) -> Option<PathBuf> {
         let dir = path.parent()?;
         let name = path.file_name()?;
@@ -93,8 +56,7 @@ impl Daemon {
     }
 }
 
-/// The fixed output path for a given input: same directory and stem, `.mp4`. A fixed target because
-/// the WIT contract only carries one string.
+/// A fixed target: the WIT contract carries only one string.
 fn output_path(input: &Path) -> PathBuf {
     input.with_extension("mp4")
 }
@@ -105,9 +67,7 @@ async fn transcode(
 ) -> Json<Value> {
     let requested = PathBuf::from(&req.input);
 
-    // Not-permitted and no-such-file are different answers on purpose: one is an operator's decision, the
-    // other a fact about the disk, and a caller retrying a refusal forever is worse. Act on the
-    // CANONICAL path `permits` approved (see its doc).
+    // Distinct answers on purpose: a refusal is an operator's decision, a missing file a fact.
     let Some(input) = d.permits(&requested) else {
         return Json(json!({ "error": "not-permitted", "detail": req.input }));
     };
@@ -169,9 +129,7 @@ mod tests {
 
     #[test]
     fn a_dot_dot_cannot_walk_out_of_the_allow_list() {
-        // Test scaffolding, not a security-sensitive file: the path only ever
-        // holds this test's own fixtures, torn down at the end of it. Same
-        // pattern as fs-watcher's daemon test.
+        // Test-only fixtures, removed at the end.
         let tmp = std::env::temp_dir().canonicalize().expect("temp dir"); // nosemgrep: rust.lang.security.temp-dir.temp-dir
         let inside = tmp.join("ffmpeg-allowed");
         std::fs::create_dir_all(&inside).expect("mkdir");
@@ -196,8 +154,7 @@ mod tests {
         assert!(d.permits(Path::new("/input.avi")).is_none());
     }
 
-    /// `permits` checks the PARENT directory, not the file: a missing file inside an allowed directory must
-    /// come back permitted (`no-such-file` is the caller's to report), not `not-permitted`.
+    /// A missing file in an allowed directory is permitted: `no-such-file` is the caller's to report.
     #[test]
     fn a_missing_file_in_an_allowed_directory_is_still_permitted() {
         let tmp = std::env::temp_dir().canonicalize().expect("temp dir"); // nosemgrep: rust.lang.security.temp-dir.temp-dir

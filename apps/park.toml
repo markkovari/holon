@@ -1,59 +1,25 @@
-# park — a durable record of an outstanding call (ADR-0100) as HTTP, for
-# agents on the tailnet: `park-gateway` (routes) composed with `park-store`
-# (the contract, each call one request to comp-park), in front of `comp-park`
-# (the engine, on NATS JetStream). The wire is
-# components/park-store/CONTRACT.md.
-#
-#   cargo xtask compose park && cargo xtask host park     # needs NATS, below
-#   holon node render apps/park.toml --out target/selfhost
 name = "park"
-# Whoever reaches the gateway can park, wake or cancel any session's ticket:
-# tailnet only, and left that way on purpose.
+# Whoever reaches the gateway can park, wake or cancel any session's ticket.
 access = "tailnet"
 domain = "park.example.com"
 artifact = "components/target/park_gateway.composed.wasm"
 root = "park-gateway"
 port = 3943
-# The gateway keeps nothing; every byte of state is comp-park's.
+# All state lives in comp-park.
 kv = "memory"
 
-# `park-url` must agree with the [[daemon]] addr below.
 [config]
 park-url = "http://127.0.0.1:8015"
 
-# No `token` here — permissive, same reasoning as apps/vcs.toml. A real
-# deployment sets `token` AND the matching `park-token` in [config] above.
-#
-# `extra_args`: the compose NATS (`docker compose -f infra/compose.yaml up -d
-# nats`, or any `nats-server -js`) — no SurrealDB, unlike vcs: a ticket is one
-# mutable record, not a graph.
-#
-# On a NATS cluster, list every server (a daemon told about one cannot start
-# while it is down) and keep three copies, so that a node going down does not
-# take every ticket out of reach (ADR-0111; a bucket that already exists with
-# fewer is refused, with the command that raises it):
-#
-#   extra_args = ["--nats-url nats://a:4222,nats://b:4222,nats://c:4222 --replicas 3"]
+# No `token`: demo only; a real deployment sets it and the matching `park-token` in [config].
+# On a NATS cluster list every server and use `--replicas 3` (ADR-0111).
 [[daemon]]
 name = "park"
 addr = "127.0.0.1:8015"
 extra_args = ["--nats-url nats://127.0.0.1:4222"]
 
-# `comp-resume` (ADR-0106): the other half of park. Every `--sweep-secs` it runs the recovery
-# pass — a call past its deadline is interrupted, cancelled or re-dispatched as its `replay`
-# says, an answer nobody took is announced again, and a commit whose caller died halfway is
-# finished or rolled back (ADR-0110) — and it hands each resolved ticket to whatever drives the
-# turn. Without it none of that runs.
-#
-# A WORKER: no `addr`, so it is rendered without `--addr`, nothing is told where it is, and the
-# app is given no egress to it. It reads and writes the same NATS and bucket as `comp-park`, so
-# it takes the same `--nats-url` (and `--replicas`, if one is set above).
-#
-# `--sink-url` is required. The address below is `comp-agentd`'s, which serves `POST /park/deliver`
-# when it is started with `--park-url` pointing at `comp-park` (ADR-0113); give `comp-resume` its
-# `--sink-token`, the token `comp-agentd` was given, if it has one. Nothing else in this repository
-# serves it. Until something answers there, a delivery is retried with backoff and the ticket stays
-# `ready`, which a turn that polls `pending` still finds, and the recovery pass runs regardless.
+# `comp-resume` (ADR-0106) runs park's recovery pass; a worker, so no `addr`. Same NATS and `--replicas` as comp-park.
+# The sink is comp-agentd's /park/deliver (ADR-0113); until it answers, deliveries retry and tickets stay `ready`.
 [[daemon]]
 name = "resume"
 extra_args = [

@@ -1,14 +1,4 @@
-//! `dispatch-domain` — service requests, scheduling and the day's manifest.
-//!
-//! This file is the ROUTER and no part may write it: it dispatches to `requests`, `schedule`
-//! and `manifest`, answers `/health` so the harness can tell "not up" from "wrong", and
-//! seeds a fixture. `src/requests.rs`, `src/schedule.rs` and `src/manifest.rs` are the goal;
-//! `CONTRACT.md` is what they must agree on.
-//!
-//! Next to `triage-domain` because there each part imported a capability the others did not;
-//! here `geo:resolve` is imported by TWO parts (`schedule` picks the nearest engineer,
-//! `manifest` filters by radius), so a part that hand-rolls haversine can pass its own gate
-//! and disagree with its sibling. Only the composition sees it.
+//! The router; no part may write it. Two parts import `geo:resolve`: only the composition sees them disagree.
 
 #[allow(warnings)]
 mod bindings {
@@ -34,7 +24,6 @@ mod bindings {
         world: "dispatch:domain/dispatch-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -53,14 +42,11 @@ guestio::guest_p3_respond!();
 
 struct Component;
 
-/// What a handler answers with: a status, and a body that is JSON unless the
-/// handler says otherwise.
 pub struct Reply {
     pub status: u16,
-    /// The JSON body. `Value::Null` means no body at all — see `no_content`.
+    /// `Value::Null` means no body at all.
     pub json: Value,
-    /// A body the router must NOT serialise as JSON, with its content type: `Value::String`
-    /// serialises to a JSON string *literal*, so a CSV parser would read one quoted blob.
+    /// Not serialised as JSON: a `Value::String` would become one quoted blob.
     pub raw: Option<(String, Vec<u8>)>,
 }
 
@@ -71,18 +57,16 @@ impl Reply {
     pub fn err(status: u16, code: &str) -> Self {
         Reply::json(status, json!({ "error": code }))
     }
-    /// 204 carries no body, and a JSON `null` is not "no body".
+    /// A JSON `null` is not "no body".
     pub fn no_content() -> Self {
         Reply::json(204, Value::Null)
     }
-    /// A body sent through byte-for-byte, under the content type you name.
     pub fn raw(status: u16, content_type: &str, bytes: Vec<u8>) -> Self {
         Reply { status, json: Value::Null, raw: Some((content_type.to_string(), bytes)) }
     }
 }
 
-/// The path segments of a request and its query string. No bearer: this API has no auth,
-/// deliberately (the clinic already proves a part can call `auth:identity`).
+/// No bearer: this API has no auth, deliberately.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
@@ -101,18 +85,8 @@ impl Route {
 
 use guestfmt::percent_decode as percent;
 
-/// Three requests written straight to the store, so a part can be judged before the part
-/// upstream exists (all three are written concurrently by different agents, so the fixture
-/// writes the contract's document shape directly).
-///
-///   * the first two are `new` with no engineer: assigning is `schedule`'s job, and
-///     pre-filling would let a part that never assigns pass its own gate;
-///   * the THIRD is pre-assigned because `manifest` must report `by_engineer` and
-///     `total_distance_m`, and the only other way to get an assigned request is `schedule`'s
-///     route, a stub while `manifest` is judged alone. Its `distance_m` is a fixed number the
-///     gate only SUMS.
-///
-/// The first title carries a comma so `manifest`'s CSV has to quote it.
+/// Written straight to the store so a part is judged alone. The third is pre-assigned so `manifest`
+/// has one without `schedule`; the first title's comma forces CSV quoting.
 fn seed() -> Reply {
     let mut ids = Vec::new();
     for (title, notes, lat, lon, state, engineer, distance_m) in [
@@ -142,9 +116,7 @@ fn seed() -> Reply {
     Reply::json(201, json!({ "request_ids": ids }))
 }
 
-/// A ceiling on a body read into memory, not a policy: past this the read gives up
-/// and the body reads as empty, rather than growing until the store's memory cap
-/// traps the component and the connection simply closes.
+/// Past this the body reads as empty, rather than the store's memory cap trapping the component.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
@@ -166,27 +138,20 @@ impl Guest for Component {
             _ => String::new(),
         };
 
-        // The router: `/health` and the fixture here, everything else to the part
-        // that owns it.
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
         let Reply { status, json: payload, raw } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
             ["test", "seed"] => seed(),
-            // The stored document, straight out of the store. Scaffold: `schedule`'s gate
-            // must see what it WROTE without depending on `requests`' `GET /api/requests/{id}`,
-            // a stub that would make the gate blame `schedule`.
+            // Scaffold: `schedule`'s gate sees what it wrote without the `requests` read route.
             ["test", "request", id] => match records::get("requests", id) {
                 Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
                 Err(_) => Reply::err(404, "not_found"),
             },
-            // `manifest.csv` and `manifest` both start with "manifest", and the CSV
-            // arm must come first or a path-segment match on ["manifest"] alone
-            // would swallow it.
+            // The CSV arm must precede a bare ["manifest"] match.
             ["api", "manifest.csv"] | ["api", "manifest"] => {
                 manifest::handle(&method, &route, &body)
             }
-            // Before the `api/requests` arm: these belong to `schedule`, and a match
-            // on ["api","requests",..] would hand them to `requests` instead.
+            // Before the `api/requests` arm: these belong to `schedule`.
             ["api", "requests", _, "assign"]
             | ["api", "requests", _, "transition"]
             | ["api", "queue"] => schedule::handle(&method, &route, &body),

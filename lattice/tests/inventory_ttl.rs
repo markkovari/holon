@@ -1,21 +1,10 @@
-//! The inventory bucket's TTL is whatever the bucket says, and a mismatch is noticed.
-//!
-//! Host, reconciler and ingress each call `create_key_value` on the same bucket with
-//! their own `max_age`, and whoever creates it first decides; they agree only because
-//! three defaults coincide at 15s. That cannot be reasoned about from one process, so
-//! this spawns a real `nats-server`, creates the bucket at one TTL, connects again
-//! asking for another, and asserts the second reports the FIRST one's value.
-//!
-//! Skips when `nats-server` is not on PATH.
-
+//! Host, reconciler and ingress each create the bucket with their own `max_age`; the first wins.
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use comp_lattice::nats::NatsLattice;
 
-/// A port the OS says is free, for the same reason `gatelib` asks rather than hashes:
-/// a guessed port collides under a parallel `cargo test` and fails as
-/// `Address already in use`, which reads as a bug in the code under test.
+/// OS-assigned: a guessed port collides under a parallel `cargo test`.
 fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
         .expect("the OS has no free port")
@@ -24,7 +13,6 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// A JetStream-enabled `nats-server`, killed when the test ends or panics.
 struct Nats {
     child: Child,
     url: String,
@@ -55,8 +43,6 @@ impl Nats {
             .spawn()
             .expect("spawn nats-server");
         let url = format!("nats://127.0.0.1:{port}");
-        // Poll rather than sleep a flat two seconds: JetStream is ready when a
-        // connection succeeds, and waiting for a fixed time is either slow or flaky.
         for _ in 0..100 {
             if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
                 std::thread::sleep(Duration::from_millis(300));
@@ -64,21 +50,18 @@ impl Nats {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        // The loop above never returned `Self`, so `Drop` never runs: reap it
-        // here or it is a zombie, not just a failed test.
+        // No `Self`, so no `Drop`: reap it here or it is a zombie.
         let _ = child.kill();
         let _ = child.wait();
         panic!("nats-server never accepted a connection on {port}");
     }
 }
 
-/// The bucket that already exists wins, and the second process is told so.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_first_process_to_create_the_bucket_decides_the_ttl() {
     let Some(nats) = Nats::start() else { return };
     let lattice = "ttltest";
 
-    // First process: 15s, the default the three defaults coincide at.
     let first = NatsLattice::connect(&nats.url, lattice, Duration::from_secs(15))
         .await
         .expect("first connect");
@@ -88,9 +71,7 @@ async fn the_first_process_to_create_the_bucket_decides_the_ttl() {
         "the process that CREATED the bucket must get what it asked for"
     );
 
-    // Second process: 60s, as a host with `--heartbeat-secs 20` would ask for. It does
-    // not get it. 60 rather than 45 so the numbers are unambiguous (45/3 is exactly
-    // 15, which would test a boundary instead of the phenomenon).
+    // 60, not 45: 45/3 is exactly 15, which would test a boundary instead.
     let second = NatsLattice::connect(&nats.url, lattice, Duration::from_secs(60))
         .await
         .expect("second connect");
@@ -101,9 +82,6 @@ async fn the_first_process_to_create_the_bucket_decides_the_ttl() {
          it has 15s, not handed back its own request"
     );
 
-    // The arithmetic that actually broke: a third of the ttl. Against the request it
-    // is 20s, against reality 5s, so an ingress trusting its own number would re-read
-    // a bucket that had already expired everything in it.
     let refresh_from_request = 60 / 3;
     let refresh_from_reality = second.effective_ttl().as_secs() / 3;
     assert_eq!(refresh_from_reality, 5);
@@ -115,8 +93,6 @@ async fn the_first_process_to_create_the_bucket_decides_the_ttl() {
     );
 }
 
-/// A fresh bucket gets exactly what it asked for — the case that must keep working,
-/// or every deployment reads a warning about nothing.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_bucket_nobody_created_yet_gets_the_requested_ttl() {
     let Some(nats) = Nats::start() else { return };

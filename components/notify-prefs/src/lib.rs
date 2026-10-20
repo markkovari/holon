@@ -1,11 +1,5 @@
-//! `notify-prefs` — read what a subject asked for, then tell them on those channels.
-//!
-//! Fan-out never fails as a whole: `notify` returns one outcome per channel it ATTEMPTED, and attempts every channel the
-//! subject asked for even after one fails (a down email gateway must not lose the in-app copy already written). A caller
-//! getting `[{in-app, ok}, {email, not ok, "gateway 503"}]` knows exactly what to retry, which a single `Err` cannot say.
-//!
-//! Absent is different from empty: an override with an empty channel list means "not this kind"; no override means "use the
-//! defaults". Collapsing them would make it impossible to mute one kind without muting everything.
+//! Fan-out tries every channel even after one fails, reporting one outcome per attempt.
+//! An empty override means "not this kind"; no override means "use the defaults".
 
 #[allow(warnings)]
 mod bindings;
@@ -47,8 +41,7 @@ fn channels_from(v: &serde_json::Value) -> Vec<Channel> {
         .unwrap_or_default()
 }
 
-/// `find_by` indexes the SERIALISED value, so a subject is stored under `"ada"` (quotes included). Getting this wrong returns
-/// `Ok(vec![])`, indistinguishable from a subject with no preference, so every notification would silently use the defaults.
+/// `find_by` indexes the SERIALISED value (`"ada"`, quotes included); a miss looks like no preference.
 fn stored(subject: &str) -> Option<records::Entry> {
     let encoded = serde_json::to_string(subject).ok()?;
     records::find_by(COLLECTION, "subject", &encoded).ok()?.into_iter().next()

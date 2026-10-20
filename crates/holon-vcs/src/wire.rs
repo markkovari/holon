@@ -1,15 +1,4 @@
-//! The JSON `comp-vcs` speaks over HTTP, and that `vcs-store` and `vcs-gateway`
-//! speak to it — one definition for all three (ADR-0099, *The service*).
-//!
-//! Every route is `POST /v1/<the WIT function's name>` with one JSON object as
-//! the body, and answers with the function's `ok` value as the JSON body (`200`)
-//! or an [`ErrorBody`] (`4xx`/`5xx`, see [`status_of`]). The records are the
-//! [`crate::model`] types — which already serialise field for field like the
-//! WIT, kebab-case — plus the request envelopes below for functions that take
-//! more than one argument, and the `files` interface's records (ingest and
-//! materialize), which have no engine-side serde form.
-//!
-//! Bytes (file content, blobs) travel as standard base64 strings ([`Bytes`]).
+//! The JSON `comp-vcs` speaks over HTTP, and `vcs-store`/`vcs-gateway` speak to it (ADR-0099, *The service*).
 
 use serde::{Deserialize, Serialize};
 
@@ -20,8 +9,6 @@ use crate::model::{
     WorkspaceId,
 };
 
-/// Every route, by the WIT function it serves (`holon:vcs/code-store`, then
-/// `holon:vcs/files`).
 pub const ROUTES: &[&str] = &[
     "apply-patch",
     "resolve-conflict",
@@ -39,15 +26,11 @@ pub const ROUTES: &[&str] = &[
     "read-blob",
 ];
 
-/// The path a WIT function is served at.
 pub fn route(func: &str) -> String {
     format!("/v1/{func}")
 }
 
-//
-// `apply-patch` takes a `PatchRequest` and `resolve-conflict` a
-// `ResolutionRequest` as the body directly; the rest are named after their WIT
-// parameters.
+// `apply-patch` and `resolve-conflict` take their request record as the body; the rest are envelopes.
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -89,14 +72,13 @@ pub struct Oplog {
     pub limit: u32,
 }
 
-/// `oplog-head`, `verify`, `repair`: a workspace and nothing else.
+/// `oplog-head`, `verify`, `repair`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Workspace {
     pub workspace: WorkspaceId,
 }
 
-/// Bytes as a base64 string on the wire.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Bytes(pub Vec<u8>);
 
@@ -241,15 +223,8 @@ pub struct ReadBlob {
     pub blob: Hash,
 }
 
-/// A refusal on the wire: `error` is the `vcs-error` case, kebab-case, and
-/// `detail` its payload as JSON (a string for `storage-error`, `not-found` and
-/// `invalid`; a `cas-failure` object; a list of conflict ids; a `symbol-id`).
-/// `message` is for people and never parsed.
-///
-/// Two codes are not `vcs-error` cases: `not-permitted` (a `materialize`
-/// outside the daemon's `--allow-path`, which a component receives as
-/// `invalid`) and `bad-request` (a body that is not the route's JSON, also
-/// `invalid`).
+/// `error` is the `vcs-error` case, `detail` its payload as JSON, `message` for people (never parsed).
+/// Also `not-permitted` (outside `--allow-path`) and `bad-request`; a component sees both as `invalid`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct ErrorBody {
@@ -270,9 +245,7 @@ impl ErrorBody {
         }
     }
 
-    /// Back to the contract's error. Anything this side does not recognise is
-    /// a `storage-error` naming it: the caller learns the store refused, and
-    /// retrying is the only thing it could do about an answer it cannot read.
+    /// Anything unrecognised is a `storage-error`: retrying is all a caller can do with it.
     pub fn into_error(self) -> VcsError {
         let text = |v: &serde_json::Value| match v {
             serde_json::Value::String(s) => s.clone(),
@@ -328,8 +301,7 @@ fn json<T: Serialize>(v: &T) -> serde_json::Value {
     serde_json::to_value(v).unwrap_or(serde_json::Value::Null)
 }
 
-/// The HTTP status a refusal is sent with. Informational: a client decides by
-/// `error`, never by the status alone (a proxy can produce a 502 with no body).
+/// Informational: a client decides by `error`, never by status alone (a proxy can send a bodiless 502).
 pub fn status_of(error: &str) -> u16 {
     match error {
         "invalid" | "bad-request" => 400,
@@ -391,7 +363,6 @@ mod tests {
         }
         .into_error();
         assert!(matches!(e, VcsError::Storage(s) if s.contains("teapot")));
-        // A name-taken whose detail is not a symbol-id cannot be typed.
         let e = ErrorBody::new("name-taken", "not a symbol").into_error();
         assert!(matches!(e, VcsError::Storage(_)));
         assert!(

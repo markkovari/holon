@@ -1,11 +1,3 @@
-//! A text field, because GPUI ships none.
-//!
-//! Typing appends, backspace deletes (with option a word, with command the line), command-v pastes,
-//! enter submits (shift-enter starts a new line) and escape cancels; a caret breathes at the end. That
-//! is all a goal needs and nothing a code editor would: no selection, no cursor in the middle, no IME
-//! composition. The console's own inputs are the same size of thing for the same reason, and a field
-//! that did more would be a thing to maintain for no reader of this board.
-
 use std::time::Duration;
 
 use gpui::{
@@ -15,12 +7,10 @@ use gpui::{
 
 use super::theme::Theme;
 
-/// What a field says to whoever made it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FieldEvent {
     Submit(String),
     Cancel,
-    /// The text, after any key that changed it: what a search follows as it is typed.
     Changed(String),
 }
 
@@ -29,7 +19,6 @@ pub struct TextField {
     placeholder: SharedString,
     focus: FocusHandle,
     theme: Theme,
-    /// One line, and small: a search, not a goal.
     compact: bool,
 }
 
@@ -41,12 +30,10 @@ impl Focusable for TextField {
     }
 }
 
-/// Whether `s` is something to type: anything that is not a control character.
 fn typable(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| !c.is_control())
 }
 
-/// `text` after a backspace: one character, or with `word` the last word, or with `line` all of it.
 pub fn backspace(text: &str, word: bool, line: bool) -> String {
     if line {
         return String::new();
@@ -76,7 +63,6 @@ impl TextField {
         }
     }
 
-    /// A field of one line, for a search: enter takes the text as it is, shift-enter adds no line.
     pub fn compact(
         placeholder: impl Into<SharedString>,
         theme: Theme,
@@ -94,7 +80,6 @@ impl TextField {
         &self.text
     }
 
-    /// Types `s` at the end, as if it had come from the keyboard.
     pub fn push_str(&mut self, s: &str, cx: &mut Context<Self>) {
         self.text.push_str(s);
         cx.notify();
@@ -131,7 +116,7 @@ impl TextField {
                 _ => return,
             },
         }
-        // a key the field used is not also the window's: escape here closes the form, not the board
+        // so escape closes the form, not the board under it
         cx.stop_propagation();
         if self.text.len() != before {
             cx.emit(FieldEvent::Changed(self.text.clone()));
@@ -163,7 +148,6 @@ impl Render for TextField {
                     |el, o| el.opacity(o),
                 )
         });
-        // the caret is where the next character goes: before the placeholder, after the text
         let (before, after) = if empty { (caret, None) } else { (None, caret) };
         div()
             .id("field")

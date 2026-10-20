@@ -1,39 +1,5 @@
-//! `mock-provider` — `llm:inference`, scripted.
-//!
-//! ## The script
-//!
-//! `mock-script` is JSON: an ordered list of rules, first match wins.
-//!
-//! ```json
-//! {
-//!   "rules": [
-//!     { "when": "add a cache",  "seed": 1, "text": "diff for branch one" },
-//!     { "when": "add a cache",  "seed": 2, "text": "diff for branch two" },
-//!     { "when": "add a cache",              "text": "the fallback diff" },
-//!     { "when": "explode",      "error": "provider-denied", "detail": "429" },
-//!     { "when": "*",            "text": "I do not know." }
-//!   ]
-//! }
-//! ```
-//!
-//! `when` is a substring of the whole conversation, or `"*"` for anything. `seed` matches `options.seed`
-//! when present, so N branches asking the SAME question get N different answers.
-//!
-//! ## Delay
-//!
-//! `"delay_ms"` on a rule waits before answering: a mock that returns in microseconds turns a stress test
-//! into a measurement of the harness, while real inference latency decides how many branches are in flight.
-//!
-//! ## Failure modes
-//!
-//! A rule may return an error instead of text (`"error"` names any `infer-error` case): rate-limits,
-//! empty and unusable answers are paths a real provider will not produce on demand.
-//!
-//! ## Embeddings with similarity structure
-//!
-//! `embed` is a **hashing vectoriser** (tokens hashed into dimensions, L2-normalised), so texts sharing
-//! words really are closer. Crude, deterministic and free. Not semantic: "car" and "automobile" are
-//! orthogonal here, so anything asserting *semantic* similarity needs a real provider.
+//! `mock-script` rules, first match wins: `when` (substring or "*"), optional `seed`, then `text`/`error`/`delay_ms`.
+//! `embed` is a hashing vectoriser: texts sharing words are closer, but it is not semantic.
 
 #[allow(warnings)]
 mod bindings;
@@ -59,16 +25,11 @@ fn model_name() -> String {
     cfg("mock-model", "mock-1")
 }
 
-/// Whether this deployment claims an embedding model; `mock-embeddings=false` says it does not.
-///
-/// A test surface: `anthropic-provider` refuses `embed` (no embeddings endpoint), and callers that degrade
-/// to sparse retrieval on `describe()` (`knowledge:memory`) have no other way to exercise that path
-/// without a live vendor. Defaults to available.
+/// `mock-embeddings=false` exercises callers' degraded path (anthropic-provider refuses `embed`).
 fn embeddings_available() -> bool {
     cfg("mock-embeddings", "true") != "false"
 }
 
-/// Everything the caller said, joined — what `when` matches against.
 fn conversation(messages: &[Message]) -> String {
     messages
         .iter()
@@ -96,7 +57,7 @@ fn error_for(name: &str, detail: &str) -> InferError {
     }
 }
 
-/// Find the first rule that matches. Order is significant: a specific rule can sit above a general one.
+/// Order is significant: a specific rule can sit above a general one.
 fn select(
     script: &serde_json::Value,
     text: &str,
@@ -133,7 +94,7 @@ fn completion_from(
     prompt_len: usize,
     default_model: &str,
 ) -> Result<Completion, InferError> {
-    // Before the answer AND before an error: a refusing provider still made you wait, and a retry loop assuming failures are free will surprise somebody.
+    // Before an error too: a refusing provider still made you wait.
     if let Some(ms) = rule["delay_ms"].as_u64() {
         if ms > 0 {
             monotonic_clock::subscribe_duration(ms * 1_000_000).block();
@@ -158,7 +119,6 @@ fn completion_from(
     })
 }
 
-/// Split on anything that is not alphanumeric, lowercased.
 fn tokens(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty())
@@ -166,9 +126,7 @@ fn tokens(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// A hashing vectoriser: each token lands in a dimension by its hash, weighted by
-/// sqrt of its frequency, and the vector is L2-normalised so cosine similarity is
-/// a dot product.
+/// L2-normalised, so cosine similarity is a dot product.
 fn embed_text(text: &str) -> Vec<f32> {
     let mut v = vec![0f32; EMBED_DIM];
     for t in tokens(text) {
@@ -180,7 +138,6 @@ fn embed_text(text: &str) -> Vec<f32> {
         let sign = if d[2] & 1 == 0 { 1.0 } else { -1.0 };
         v[idx] += sign;
     }
-    // sqrt-tf, then normalise.
     for x in v.iter_mut() {
         *x = x.signum() * x.abs().sqrt();
     }
@@ -255,7 +212,6 @@ mod tests {
         a.iter().zip(b).map(|(x, y)| x * y).sum()
     }
 
-    /// The property the whole component exists for.
     #[test]
     fn the_same_question_gets_the_same_answer_every_time() {
         let s = script_of(r#"{"rules":[{"when":"*","text":"always this"}]}"#);
@@ -265,7 +221,6 @@ mod tests {
         assert_eq!(a.usage.completion_tokens, b.usage.completion_tokens);
     }
 
-    /// How N branches asking one question get N different candidates, using the contract's existing seed.
     #[test]
     fn the_seed_is_what_makes_branches_differ() {
         let s = script_of(
@@ -284,7 +239,6 @@ mod tests {
         assert_eq!(pick(9), "fallback");
     }
 
-    /// Order matters, so a specific rule can sit above a general one.
     #[test]
     fn the_first_matching_rule_wins() {
         let s = script_of(
@@ -300,7 +254,6 @@ mod tests {
         );
     }
 
-    /// The paths a real provider will not produce on demand.
     #[test]
     fn failure_modes_can_be_scripted() {
         let s = script_of(
@@ -321,16 +274,13 @@ mod tests {
         ));
     }
 
-    /// A prompt that drifted out of its script must fail loudly, not silently return nothing.
     #[test]
     fn an_unmatched_prompt_is_an_error_not_silence() {
         let s = script_of(r#"{"rules":[{"when":"only this","text":"ok"}]}"#);
         assert!(select(&s, "something the script never anticipated", 0).is_err());
-        // And a script with no rules at all says so, rather than answering.
         assert!(select(&script_of(r#"{"rules":[]}"#), "hello", 0).is_err());
     }
 
-    /// Made-up token counts, but proportional, so a fuel test sees a longer answer cost more.
     #[test]
     fn a_longer_answer_costs_more() {
         let s = script_of(
@@ -341,7 +291,6 @@ mod tests {
         assert!(long.usage.completion_tokens > short.usage.completion_tokens);
     }
 
-    /// An embedding with real similarity structure, so retrieval and ranking tests are not vacuous.
     #[test]
     fn similar_texts_embed_closer_than_dissimilar_ones() {
         let a = embed_text("the cache stores derived artifacts");
@@ -355,7 +304,6 @@ mod tests {
             cosine(&a, &b),
             cosine(&a, &c)
         );
-        // Deterministic, which is the whole point.
         assert_eq!(embed_text("stable"), embed_text("stable"));
         assert_eq!(a.len(), EMBED_DIM);
     }

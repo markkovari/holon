@@ -1,13 +1,8 @@
-//! `ordinal` — turn a number into its English ordinal — 1st, 2nd, 3rd, 111th
-
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::demo::ordinal::suffix::Guest;
 struct Component;
 
-/// A number with its English ordinal suffix: 1->"1st", 2->"2nd", 3->"3rd",
-/// 4->"4th", and the 11/12/13 exception ("11th","12th","13th"), so 111->"111th"
-/// but 21->"21st". UNIMPLEMENTED — the tests are the exact spec.
 pub fn ordinal(n: u32) -> String {
     let suffix = if (11..=13).contains(&(n % 100)) {
         "th"

@@ -1,10 +1,4 @@
-//! portal:app — developer portal / API-key service over composed contracts.
-//!
-//! Two-layer authorization by design: RBAC (auth:identity) gates role-level
-//! verbs (admin drain), policy:guard ABAC gates per-project access via
-//! owner/member attribute rules. API keys are stored as sha256 hashes and
-//! shown in full exactly once, at mint time; the gateway verifies a key with
-//! one indexed lookup and meters it against a per-key hourly quota.
+//! RBAC gates role verbs, policy:guard ABAC gates projects; keys are stored as sha256, shown once at mint.
 
 #[allow(warnings)]
 mod bindings {
@@ -36,7 +30,6 @@ mod bindings {
         world: "portal:app/dev-portal",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -107,7 +100,7 @@ impl Guest for Component {
 enum Outcome {
     Json(u16, String),
     Auth(AuthError),
-    /// 429 with a Retry-After of the payload seconds (quota exhausted).
+    /// 429 with Retry-After of the payload seconds.
     Limited(u64),
     Bad(String),
     Err(u16, String),
@@ -130,8 +123,7 @@ fn usage_json() -> Outcome {
     )
 }
 
-/// Idempotent: ABAC rules for the project domain + RBAC perms for admin.
-/// Gated on one record so steady-state requests pay a single count() read.
+/// Gated on one record, so steady-state requests pay a single count() read.
 fn ensure_seeded() {
     if records::count("meta").map(|n| n > 0).unwrap_or(false) {
         return;
@@ -147,7 +139,6 @@ fn ensure_seeded() {
         right: "principal.subject".into(),
     };
     let mut rules = Vec::new();
-    // owners can do everything; members can read + use keys.
     for action in ["project.read", "project.write", "project.admin"] {
         rules.push(policy::Rule {
             id: format!("owner-{action}"),
@@ -253,7 +244,6 @@ fn introspect(request: &Request) -> Result<Principal, Outcome> {
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
-/// Load the project and enforce `action` for the principal via policy:guard.
 fn authorize_project(
     p: &Principal,
     project_id: &str,
@@ -297,7 +287,7 @@ async fn create_project(request: Request) -> Outcome {
     if req.name.is_empty() || req.name.len() > 100 {
         return Outcome::Bad("name must be 1..100 chars".into());
     }
-    // members is a comma-joined string so policy:guard's `has` op can test it.
+    // Comma-joined so policy:guard's `has` op can test it.
     let data = json!({
         "name": req.name,
         "owner": p.subject,
@@ -435,7 +425,7 @@ async fn mint_key(request: Request, project_id: &str) -> Outcome {
         Err(e) => return store_err(e),
     };
     enqueue_event("key.created", project_id, &entry.id, &key[..10]);
-    // the ONLY response that ever contains the full key.
+    // The only response that ever contains the full key.
     Outcome::Json(
         201,
         json!({
@@ -511,7 +501,7 @@ fn key_usage(request: &Request, key_id: &str) -> Outcome {
             json!({"used": b.used, "limit": b.limit, "remaining": b.remaining, "resets_at": b.resets_at})
                 .to_string(),
         ),
-        // peek never consumes, so exceeded shouldn't occur; belt-and-braces.
+        // `peek` never consumes, so this should not occur.
         Err(quota::QuotaError::Exceeded(_)) => Outcome::Limited(0),
         Err(quota::QuotaError::BackendUnavailable(m)) => Outcome::Err(503, m),
     }
@@ -533,12 +523,11 @@ async fn gateway_echo(request: Request) -> Outcome {
         return Outcome::Err(401, "key revoked".into());
     }
     let limit = data["limit"].as_u64().unwrap_or(DEFAULT_KEY_LIMIT);
-    // reserve = check-and-consume; record-usage only meters and never rejects.
+    // `reserve` checks and consumes; `record-usage` only meters and never rejects.
     let subject = format!("key:{}", entry.id);
     let balance = match quota::reserve(&subject, 1, limit, QUOTA_PERIOD) {
         Ok(b) => b,
         Err(quota::QuotaError::Exceeded(_)) => {
-            // exceeded carries remaining (0 here); peek for the window reset.
             let resets =
                 quota::peek(&subject, limit, QUOTA_PERIOD).map(|b| b.resets_at).unwrap_or(0);
             return Outcome::Limited(resets);
@@ -559,15 +548,12 @@ async fn gateway_echo(request: Request) -> Outcome {
 }
 
 fn enqueue_event(topic: &str, project_id: &str, key_id: &str, prefix: &str) {
-    // durable intent; delivery happens on drain. A lost enqueue is logged by
-    // its absence at drain time, not worth failing the mutation over.
+    // A lost enqueue shows by its absence at drain time; not worth failing the mutation.
     let payload = json!({"project": project_id, "key": key_id, "prefix": prefix}).to_string();
     let _ = outbox::enqueue(topic, payload.as_bytes(), 0);
 }
 
-/// Deliver pending events as signed webhooks. RBAC-gated: admin role only —
-/// wasip2 has no background tasks, so drain is an explicit admin verb (the
-/// same explicit-pump pattern as cache flush + vet's run-reminders).
+/// Admin only: wasip2 has no background tasks, so drain is an explicit verb.
 fn admin_drain(request: &Request) -> Outcome {
     ensure_seeded();
     let Some(token) = bearer(request) else {
@@ -597,14 +583,13 @@ fn admin_drain(request: &Request) -> Outcome {
             Err(_) => (String::new(), String::new()),
         };
         if url.is_empty() {
-            // no endpoint configured -> drop the event, don't retry forever.
+            // No endpoint configured: drop it rather than retry forever.
             let _ = outbox::ack(&ev.id);
             dropped += 1;
             continue;
         }
         let body = json!({"id": ev.id, "topic": ev.topic, "data": payload}).to_string();
-        // stripe-scheme HMAC; the signature rides inside the envelope because
-        // notify:dispatch's message has no header field.
+        // The signature rides inside the envelope: notify:dispatch's message has no header field.
         let envelope = match sign::sign(body.as_bytes(), &secret, sign::Scheme::Stripe) {
             Ok(s) => json!({"payload": body, "signature": s.header, "timestamp": s.timestamp})
                 .to_string(),
@@ -697,8 +682,7 @@ async fn parse<T: for<'a> Deserialize<'a>>(request: Request) -> Result<T, String
     serde_json::from_slice(&body).map_err(|e| format!("bad json: {e}"))
 }
 
-/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
-/// guest traps and the caller just sees a closed connection.
+/// Backstop below wasmtime's 64 MiB per-store cap, past which the guest traps.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
@@ -725,8 +709,7 @@ fn emit(result: Outcome) -> Result<Response, ErrorCode> {
                 answer(code, &[], format!("{{\"error\":\"{msg}\"}}").as_bytes())
             }
         }
-        // resetsAt is absolute unix seconds (no clock import here to derive a
-        // relative Retry-After from it).
+        // Absolute unix seconds: no clock import here to make it relative.
         Outcome::Limited(resets_at) => answer(
             429,
             &[],

@@ -1,5 +1,4 @@
-# COMPOSITION gate — every part together, the real flow end to end.
-# `base` via --variable base=http://127.0.0.1:<port>.
+# Every part together, end to end. `base` via --variable base=http://127.0.0.1:<port>.
 
 GET {{base}}/health
 HTTP 200
@@ -40,7 +39,6 @@ HTTP 200
 [Captures]
 vendor_subject: jsonpath "$.subject"
 
-# a real listing, auto-labeled by Jev
 POST {{base}}/api/listings
 Authorization: Bearer {{vendor_token}}
 {"title": "Desk lamp", "description": "Adjustable LED desk lamp", "price": 3000, "stock": 10}
@@ -48,7 +46,6 @@ HTTP 201
 [Captures]
 listing_id: jsonpath "$.id"
 
-# a buyer asks about it before buying
 POST {{base}}/api/listings/{{listing_id}}/inquiries
 Authorization: Bearer {{buyer_token}}
 {"body": "Does it dim?"}
@@ -61,7 +58,6 @@ Authorization: Bearer {{vendor_token}}
 {"body": "Yes, three brightness levels."}
 HTTP 201
 
-# a real multi-item order (two units of the one listing)
 POST {{base}}/api/orders
 Authorization: Bearer {{buyer_token}}
 {"items": [{"listing_id": "{{listing_id}}", "quantity": 2}]}
@@ -122,7 +118,6 @@ POST {{base}}/api/returns/{{return_id}}/approve
 Authorization: Bearer {{admin_token}}
 HTTP 200
 
-# the vendor can be paid out what the ledger says they're owed
 POST {{base}}/api/vendors/{{vendor_subject}}/payout
 Authorization: Bearer {{admin_token}}
 HTTP 200

@@ -1,5 +1,3 @@
-//! mail-parse — extract sender, subject, and text bodies from raw MIME emails.
-
 #[allow(warnings)]
 mod bindings;
 

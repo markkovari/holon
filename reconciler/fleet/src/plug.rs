@@ -1,17 +1,4 @@
-//! Composition as a library call: wrap `wac_graph`, do not run the `wac` CLI.
-//!
-//! A component states its imports and every capability states what it exports, which is a complete
-//! wiring diagram, so no hand-written `wac plug` chains are needed. Calling `wac_graph` directly
-//! gives which plug satisfies which import and what is unsatisfied as values, in-process.
-//!
-//! * **A flat plug chain is not a composition.** `wac plug root --plug a --plug b` satisfies the
-//!   ROOT's imports and hoists each plug's own imports into the result, and `wasm-tools validate`
-//!   is still happy. [`compose`] recurses so every plug goes in whole.
-//! * **Resolution is per-interface, not per-package.** `cache-backing` exports `cache:store/sink`
-//!   but not `cache:store/cache`, so a package-level match reports "satisfied" for a dangling import.
-//!
-//! It does not decide whether a plug's TYPES fit; `wac_graph::plug` refuses what does not.
-//! `components/wit-reflect` is the sandboxed counterpart; this is the native side for the loop.
+//! Composition via `wac_graph`, not the `wac` CLI: per-interface resolution, plugs composed whole.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -21,23 +8,18 @@ use sha2::{Digest, Sha256};
 /// Namespaces only a HOST can satisfy: a runtime capability, never a composition edge.
 const HOST_NAMESPACES: &[&str] = &["wasi", "wasmcloud", "comp"];
 
-/// What a component imports and exports, read out of the BINARY, not `components/*/wit/`: some
-/// components have no wit directory, a source directory can declare a package it does not export,
-/// and the compiler DROPS an import nothing calls.
+/// Read from the binary, not `wit/`: the compiler drops an import nothing calls.
 #[derive(Debug, Clone, Default)]
 pub struct Surface {
-    /// Interfaces it exports: what it can be plugged in to satisfy.
     pub exports: BTreeSet<String>,
     /// Imports another component could satisfy — the composable edges.
     pub imports: BTreeSet<String>,
     /// Imports only a host can satisfy.
     pub host_imports: BTreeSet<String>,
-    /// Nested component instances already inside this artifact.
     pub nested_instances: u32,
 }
 
-/// Read a component's surface. `Err` for anything that is not a component —
-/// adapters and core modules live in the same directory and are not plugs.
+/// `Err` for anything not a component: adapters and core modules share the directory.
 pub fn surface(bytes: &[u8]) -> Result<Surface, String> {
     if bytes.len() < 8 || &bytes[..4] != b"\0asm" {
         return Err("not wasm (bad magic)".into());
@@ -48,8 +30,7 @@ pub fn surface(bytes: &[u8]) -> Result<Surface, String> {
     }
 
     let mut out = Surface::default();
-    // Only the OUTER component's sections describe THIS component; a composed artifact carries its
-    // plugs' sections too, and counting those would report their imports as unsatisfied.
+    // Only the outer component's sections: a composed artifact carries its plugs' too.
     let mut depth: i32 = 0;
     for payload in wasmparser::Parser::new(0).parse_all(bytes) {
         use wasmparser::Payload::*;
@@ -89,7 +70,6 @@ fn crate_name(stem: &str) -> String {
     stem.replace('_', "-")
 }
 
-/// Every built component, and which interface each one exports.
 #[derive(Debug, Default)]
 pub struct Catalog {
     surfaces: BTreeMap<String, Surface>,
@@ -99,8 +79,7 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    /// Read every component in `dirs`. Earlier directories win, so a gate that rebuilt one crate
-    /// puts its own output first.
+    /// Earlier directories win, so a gate that rebuilt one crate puts its own output first.
     pub fn scan(dirs: &[PathBuf]) -> Self {
         let mut me = Self::default();
         for dir in dirs {
@@ -136,21 +115,16 @@ impl Catalog {
         self.bytes.get(name).map(Vec::as_slice)
     }
 
-    /// Which component exports this interface.
     pub fn exporter(&self, iface: &str) -> Option<&str> {
         self.exporters.get(iface).map(String::as_str)
     }
 
-    /// Every component in the catalogue, in name order.
+    /// In name order.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.surfaces.keys().map(String::as_str)
     }
 
-    /// Imports nothing in the catalogue can satisfy.
-    ///
-    /// Not the same as "broken": an interface with no exporter is usually a types-only interface
-    /// from the component's OWN package. What is worth knowing is an import from an unrelated
-    /// package that nothing provides: that composition will always be incomplete.
+    /// Usually a types-only interface of its own package; an unrelated package never composes.
     pub fn unmet(&self, name: &str) -> Vec<String> {
         let Some(surface) = self.surface(name) else { return Vec::new() };
         surface
@@ -159,9 +133,7 @@ impl Catalog {
             .filter(|iface| self.exporter(iface).is_none())
             .filter(|iface| {
                 let package = format!("{}/", iface.split('/').next().unwrap_or(iface));
-                // Structural, not missing: the component's own package (`audit-log` imports
-                // `audit:log/types`, exports `audit:log/query`), or a CONSUMER of a package whose
-                // other interfaces are provided. A types-only interface has no implementation.
+                // Its own package, or one whose other interfaces are provided.
                 let provided_here = surface.exports.iter().any(|e| e.starts_with(&package));
                 let provided_somewhere = self.exporters.keys().any(|e| e.starts_with(&package));
                 !provided_here && !provided_somewhere
@@ -170,9 +142,7 @@ impl Catalog {
             .collect()
     }
 
-    /// Everything that ends up inside a composed artifact, transitively. Read backwards it answers
-    /// "which apps am I inside": a capability's blast radius is every app that transitively
-    /// composes it.
+    /// Read backwards: a capability's blast radius is every app that transitively composes it.
     pub fn closure(&self, name: &str) -> Vec<String> {
         let mut seen = BTreeSet::new();
         let mut queue = vec![name.to_string()];
@@ -187,11 +157,7 @@ impl Catalog {
         seen.into_iter().collect()
     }
 
-    /// Who consumes what, as edges: `(consumer, interface, provider)`.
-    ///
-    /// This is the capability graph, derived from the built artifacts every time because a
-    /// hand-maintained dependency list goes wrong. An interface with a provider and no consumers
-    /// yields no edge; see [`Catalog::orphan_exports`].
+    /// `(consumer, interface, provider)`; an export with no consumer yields no edge.
     pub fn edges(&self) -> Vec<(String, String, String)> {
         let mut out = Vec::new();
         for (consumer, surface) in &self.surfaces {
@@ -207,8 +173,7 @@ impl Catalog {
         out
     }
 
-    /// Interfaces something exports that nothing in the tree imports. Not a finding on its own, but
-    /// "may I change this interface?" differs for 0 consumers and for 37.
+    /// "May I change this interface?" differs for 0 consumers and for 37.
     pub fn orphan_exports(&self) -> Vec<(String, String)> {
         let consumed: BTreeSet<&String> =
             self.surfaces.values().flat_map(|s| s.imports.iter()).collect();
@@ -222,7 +187,6 @@ impl Catalog {
         out
     }
 
-    /// How many components import this interface.
     pub fn consumer_count(&self, iface: &str) -> usize {
         self.surfaces.values().filter(|s| s.imports.contains(iface)).count()
     }
@@ -236,17 +200,14 @@ impl Catalog {
     }
 }
 
-/// What composing a component would take.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Wiring {
     /// Direct plugs, in the order their interfaces appear.
     pub plugs: Vec<String>,
-    /// `(component, interface)`: an import nothing built can satisfy. Not an error on its own (a
-    /// types-only interface from a component's own package has nothing to implement).
+    /// Not an error alone: a types-only interface has nothing to implement.
     pub missing: Vec<(String, String)>,
 }
 
-/// Who plugs into `name`, from what it imports.
 pub fn wiring(name: &str, catalog: &Catalog) -> Result<Wiring, String> {
     let surface = catalog.surface(name).ok_or_else(|| format!("no built component '{name}'"))?;
     let mut out = Wiring::default();
@@ -265,8 +226,7 @@ pub fn wiring(name: &str, catalog: &Catalog) -> Result<Wiring, String> {
     Ok(out)
 }
 
-/// Compose `name` with everything it imports, recursively. Each plug is composed BEFORE it is
-/// plugged, because a plug that is not whole leaves its own imports hoisted into the result.
+/// Each plug is composed before it is plugged, or its own imports are hoisted into the result.
 pub fn compose(name: &str, catalog: &Catalog) -> Result<Vec<u8>, String> {
     compose_inner(name, catalog, &mut Vec::new())
 }
@@ -327,8 +287,7 @@ fn names(plugs: &[(String, Vec<u8>)]) -> String {
     plugs.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")
 }
 
-/// Compose and write the result, keyed by the content that went into it, so a gate that runs twenty
-/// times composes once and the artifact outlives the run.
+/// Keyed by its inputs, so a gate run twenty times composes once.
 pub fn compose_to(name: &str, catalog: &Catalog, out_dir: &Path) -> Result<PathBuf, String> {
     let mut hasher = Sha256::new();
     hasher.update(catalog.bytes(name).ok_or_else(|| format!("no built component '{name}'"))?);
@@ -351,18 +310,13 @@ pub fn compose_to(name: &str, catalog: &Catalog, out_dir: &Path) -> Result<PathB
     std::fs::create_dir_all(out_dir).map_err(|e| e.to_string())?;
     let bytes = compose(name, catalog)?;
 
-    // Write somewhere else, then RENAME: `fs::write` creates the file before filling it, and the
-    // `is_file()` check above would hand that empty file to the next caller (three `publish.rs`
-    // tests racing on a zero-byte artifact; see `tests/compose_race.rs`).
-    //
-    // The temp name carries the process id and a counter because racers agree on `stamp` (the
-    // digest of the same inputs).
+    // Write elsewhere, then rename: `is_file()` would hand a half-written file to a racer.
+    // The temp name carries pid and counter: racers agree on `stamp`.
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = out_dir.join(format!(".{name}.{stamp}.{}.{seq}.tmp", std::process::id()));
     std::fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
-    // Atomic within a directory. Losing the race is fine: both wrote the same bytes, the filename IS
-    // their digest.
+    // Losing the race is fine: the filename is the digest of identical bytes.
     if let Err(e) = std::fs::rename(&tmp, &out) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e.to_string());
@@ -370,13 +324,7 @@ pub fn compose_to(name: &str, catalog: &Catalog, out_dir: &Path) -> Result<PathB
     Ok(out)
 }
 
-/// What a piece of work TOUCHES, as tags for the knowledge pool (ADR-0090).
-///
-/// Given the files a part may write, this names the component and every interface it imports, the
-/// keys by which a later run with different wording can find a lesson.
-///
-/// Derived, never authored: a tag decides what future runs are shown, so it comes from the artifact
-/// and not from a model that would like to be found (ADR-0084).
+/// Derived from the artifact, never a model, since a tag decides what future runs see (ADR-0084).
 pub fn tags_for(writable: &[String], catalog: &Catalog) -> Vec<String> {
     let mut tags = BTreeSet::new();
     for path in writable {
@@ -433,12 +381,10 @@ mod tests {
             eprintln!("SKIPPED: nothing built — run `cargo xtask build --force`");
             return;
         }
-        // The hardest case: 22 capabilities, one of which (`auth-guard`) has capabilities of its own.
-        // Asserts on the RESULT rather than the plug list.
+        // The hardest case: 22 capabilities, one with its own. Asserts on the result.
         let bytes = compose("vet-domain", &catalog).expect("composed");
         let after = surface(&bytes).expect("the result is a component");
-        // An import that something in the catalogue EXPORTS and that is still there afterwards is a
-        // capability the composition failed to bind. (Imports nothing exports are types-only.)
+        // Still imported yet exported by something: a capability the composition failed to bind.
         let dangling: Vec<&String> =
             after.imports.iter().filter(|i| catalog.exporter(i).is_some()).collect();
         assert!(dangling.is_empty(), "composition left capabilities unsatisfied: {dangling:?}");
@@ -446,8 +392,7 @@ mod tests {
 
     #[test]
     fn a_flat_chain_would_leave_them_dangling() {
-        // Why `compose` recurses, pinned: composing vet-domain the flat way still validates but
-        // leaves the plugs' own imports hoisted.
+        // Why `compose` recurses: the flat way still validates but hoists the plugs' imports.
         let catalog = catalog();
         if catalog.surface("vet-domain").is_none() {
             eprintln!("SKIPPED: nothing built — run `cargo xtask build --force`");

@@ -1,19 +1,8 @@
 #!/usr/bin/env bash
-# What does an idle app actually cost a node?
-#
-# All apps use the SAME component digest, which is the marketplace case: many tenants
-# deploying one popular component. If the host held one compiled module per digest the
-# marginal cost would be a route entry; if it holds one per instance it is a copy of
-# the machine code each time.
+# What an idle app costs a node. All apps share ONE digest (the marketplace case), so with one
+# compiled module per digest the marginal cost should be a route entry, not a machine-code copy.
 set -uo pipefail
-# The repo this script lives in, not whatever the caller happened to be in — and
-# not a hardcoded path either. This read `cd /Users/…/experiments/comp` for a
-# long time: a SIBLING checkout, which meant `just adversarial` built artifacts
-# here and then measured the ones over there. A number from the wrong tree is
-# worse than no number.
 cd "$(dirname "$0")/../.."
-# A temp dir, overridable. This was a hardcoded path under a scratch directory
-# belonging to one session on one machine, which stopped existing when it ended.
 SP=${SP:-$(mktemp -d)}/idle
 rm -rf "$SP"; mkdir -p "$SP/nats" "$SP/n1" "$SP/specs"
 PIDS=(); trap 'for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done' EXIT

@@ -1,5 +1,3 @@
-//! Part 2 — payments, shipments, returns.
-
 use crate::bindings::fsm::workflow::engine as fsm;
 use crate::bindings::ledger::doubleentry::ledger;
 use crate::bindings::p3::http::types::Method;
@@ -7,8 +5,6 @@ use crate::bindings::records::store::store as records;
 use crate::{audit, is_admin, Reply, Route};
 use serde_json::{json, Value};
 
-/// The authenticated principal, or an early `401` — wraps the same
-/// `crate::introspect` the router's auth macros build on.
 macro_rules! authenticated {
     ($route:expr) => {
         match crate::introspect($route) {
@@ -32,12 +28,12 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     }
 }
 
-/// Ask the fsm engine itself whether a transition is legal, never a hand-rolled status string comparison.
+/// The engine decides legality, never a hand-rolled status comparison.
 fn can_fire(machine: &str, instance: &str, event: &str) -> bool {
     matches!(fsm::can_fire(machine, instance, event), Ok(true))
 }
 
-/// The vendor the order's money settles to: read off the first item's listing (the ledger shape is one vendor account per entry).
+/// The first item's listing: the ledger has one vendor account per entry.
 fn order_vendor(order: &Value) -> Option<String> {
     let items = order.get("items")?.as_array()?;
     let listing_id = items.first()?.get("listing_id")?.as_str()?;
@@ -46,7 +42,6 @@ fn order_vendor(order: &Value) -> Option<String> {
     listing.get("vendor")?.as_str().map(str::to_string)
 }
 
-/// True when `subject` is the vendor of any listing in the order.
 fn order_has_vendor(order: &Value, subject: &str) -> bool {
     let items = match order.get("items").and_then(Value::as_array) {
         Some(items) => items,
@@ -208,8 +203,8 @@ fn deliver(route: &Route, shipment_id: &str) -> Reply {
     if order_id.is_empty() {
         return Reply::err(500, "shipment_missing_order");
     }
-    // Cross-machine rule: the ORDER's `deliver` is fired (and confirmed) FIRST so a failure never leaves the
-    // shipment half-applied (`fsm:workflow` has no cross-machine transaction); the shipment's transition goes SECOND.
+    // The ORDER's `deliver` fires first: fsm:workflow has no cross-machine transaction,
+    // so a failure never leaves the shipment half-applied.
     if fsm::fire("order", &order_id, "deliver").is_err() {
         return Reply::json(409, json!({"error": "illegal_transition", "machine": "order"}));
     }

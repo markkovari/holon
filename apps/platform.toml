@@ -7,10 +7,7 @@ kv = "sqlite"
 components = ["platform-domain", "auth-guard", "policy-guard", "record-store", "audit-log", "rate-limiter", "blob-store", "quota", "wit-reflect", "secrets-vault", "event-bus"]
 strategy = "fused"
 
-# `master-key` is a fixed local-dev value, not a real secret — see
-# `secrets-vault`'s own docs for envelope-encryption key rotation in a real
-# deployment. Without it every `/api/secrets` write is refused with "master
-# key missing".
+# `master-key` is a fixed local-dev value, not a real secret; without it every /api/secrets write is refused.
 [config]
 applier-secret = "platform-applier-secret"
 ingress-suffix = "apps.local"

@@ -1,16 +1,5 @@
-//! `poll-domain` — a live poll, as one component.
-//!
-//! `GET /` creates one, `GET /p/{code}` votes in one, and the results are an SVG
-//! the page embeds rather than a chart the page draws.
-//!
-//! The chart comes from `svg:chart` and the QR from `qr:encode` (pure compute), so the page needs
-//! no charting or QR library and the same `<svg>` works in a browser, an email or a screenshot.
-//! `records:store` holds polls and votes; `id:generate` mints the share code and voter id.
-//! One vote per browser is a cookie (`voter=<ulid>`, `HttpOnly`, `SameSite`) plus a vote record
-//! keyed by `(poll, voter)`. An API test with one HTTP client cannot see that, so the e2e is
-//! Playwright with two cookie jars.
-//! Deliberately not identity: a cookie is clearable and this is a poll, not a ballot;
-//! `auth-guard` is for when it matters.
+//! One vote per browser: a cookie plus a `(poll, voter)` record. Clearable, which is fine for a poll,
+//! not a ballot (`auth-guard` is for when it matters). The e2e is Playwright with two cookie jars.
 
 #[allow(warnings)]
 mod bindings {
@@ -34,7 +23,6 @@ mod bindings {
         world: "poll:domain/poll-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -53,13 +41,12 @@ struct Component;
 
 const POLLS: &str = "polls";
 const VOTES: &str = "votes";
-/// How many options a poll may carry; the chart stops being readable long before forty.
+/// The chart stops being readable long before forty.
 const MAX_OPTIONS: usize = 8;
 const MAX_BODY_BYTES: usize = 64 * 1024;
 
 guestio::guest_p3_respond!();
 
-/// What a handler answers with. `set_voter` asks the router for a `set-cookie`.
 struct Reply {
     status: u16,
     body: Vec<u8>,
@@ -87,8 +74,7 @@ impl Reply {
             set_voter: None,
         }
     }
-    /// An SVG document sent as `image/svg+xml`, not JSON: the page embeds it with `<img>` and
-    /// `innerHTML`.
+    /// Not JSON: the page embeds it with `<img>` and `innerHTML`.
     fn svg(body: String) -> Self {
         Reply {
             status: 200,
@@ -105,8 +91,7 @@ impl Reply {
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
-/// The `voter` cookie, or empty. Parsed rather than substring-matched: `xvoter=y` contains
-/// `voter=` and is not this cookie.
+/// Parsed, not substring-matched: `xvoter=y` contains `voter=`.
 fn voter_of(request: &Request) -> String {
     let headers = request.get_headers();
     for raw in headers.get("cookie") {
@@ -129,12 +114,7 @@ fn poll_by_code(code: &str) -> Option<(String, Value)> {
     Some((e.id, v))
 }
 
-/// The form `find_by` wants: the JSON ENCODING of the value, not the value.
-///
-/// `record-store` indexes `serde_json` output, so a string field `AB12` is indexed
-/// under `"AB12"` — quotes included — and `find_by(.., "AB12")` matches nothing while
-/// returning `Ok(vec![])`. An empty result and a wrong query are indistinguishable
-/// from here, which is why this is a named function rather than an inline `format!`.
+/// record-store indexes the JSON encoding (`"AB12"`, quotes included); a raw value silently matches nothing.
 fn json_value(v: &str) -> String {
     serde_json::to_string(v).unwrap_or_default()
 }
@@ -213,14 +193,11 @@ fn vote(code: &str, body: &str, voter: &str) -> Reply {
     if !options.contains(&choice) {
         return Reply::err(400, "invalid");
     }
-    // A voter with no cookie yet gets one; the id is minted before the vote so the
-    // record and the cookie cannot disagree.
+    // Minted before the vote so the record and the cookie cannot disagree.
     let (voter_id, fresh) =
         if voter.is_empty() { (ids::ulid(), true) } else { (voter.to_string(), false) };
 
-    // One vote per browser. Checked by reading this poll's votes rather than a
-    // compound index, because `(poll, voter)` is not a field the store indexes and a
-    // poll's vote count is small by construction.
+    // Read this poll's votes: `(poll, voter)` is not indexed, and a poll's vote count is small.
     let existing = records::find_by(VOTES, "poll", &json_value(&id)).unwrap_or_default();
     let already = existing.iter().any(|e| {
         serde_json::from_str::<Value>(&e.data)
@@ -229,9 +206,7 @@ fn vote(code: &str, body: &str, voter: &str) -> Reply {
     });
     if already {
         let counts = counts_of(&id, &options);
-        // 409 and the counts, not 409 alone: the page has to show the result to
-        // someone who has already voted, and a second request for it would be a
-        // second round trip to say the same thing.
+        // 409 with the counts: the page must show the result to someone who already voted.
         return Reply::json(
             409,
             json!({ "error": "already_voted", "options": options, "counts": counts,
@@ -289,11 +264,7 @@ fn qr_svg(code: &str, base: &str) -> Reply {
     }
 }
 
-/// Where this component is reachable, for the QR to point at.
-///
-/// From the request's own `host` header rather than config: the app is served
-/// through an ingress, a proxy, or a tailnet name, and a hardcoded base URL produces
-/// a QR that works on the machine that generated it and nowhere else.
+/// From the `host` header, not config: a hardcoded base URL makes a QR that works on one machine only.
 fn base_url(request: &Request) -> String {
     let host = request
         .get_headers()
@@ -336,15 +307,11 @@ impl Guest for Component {
         let headers = Fields::new();
         let _ = headers.set("content-type", &[reply.content_type.as_bytes().to_vec()]);
         if let Some(v) = &reply.set_voter {
-            // HttpOnly so a script cannot read or forge it; SameSite=Lax so the
-            // shared link still carries it; no Secure, because this serves over
-            // plain http on a laptop and a Secure cookie would simply be dropped
-            // there — the deployment behind TLS is where that flag belongs.
+            // HttpOnly: scripts cannot read or forge it. No Secure: plain http on a laptop would drop it; TLS deployments add it.
             let cookie = format!("voter={v}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000");
             let _ = headers.set("set-cookie", &[cookie.into_bytes()]);
         }
-        // No caching: a result that updates is the whole app, and a proxy that
-        // remembers the first answer makes it look broken rather than stale.
+        // No caching: a proxy remembering the first answer makes a live poll look broken.
         let _ = headers.set("cache-control", &[b"no-store".to_vec()]);
         respond_with(reply.status, headers, reply.body)
     }

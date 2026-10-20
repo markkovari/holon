@@ -1,21 +1,11 @@
-//! The tree the board draws, built by feeding it what the runtime says happened.
-//!
-//! A node is one agent run or one coding session. Its parent is whatever started it, and that is
-//! known exactly, not guessed: a run announces each tool call before it makes it
-//! ([`Event::ToolStarted`], with the call's span), and whatever the call wakes names that span as
-//! its parent. A coding session names the run that started it. So a delegated agent hangs under the
-//! tool call that asked for it while both are still going, not only once the trace is written.
-//!
-//! Pure on purpose: no window, no clock (the caller says what time it is), so every rule here is
-//! a test and not something to be seen on a screen.
+//! Parents are known, not guessed: a run announces each tool call's span before making it, and what
+//! the call wakes names that span. No window and no clock, so every rule here is a test.
 
 use std::collections::HashMap;
 
 use agent_wire::{Event, Phase, RunRecord, SessionView, Status as RunStatus, Step};
 use serde_json::Value;
 
-/// A finished tree of several nodes stays on the board this long: it is a goal somebody set, and the
-/// list of them is what they come back to.
 pub const KEEP_TREE_MS: u64 = 6 * 3_600_000;
 /// A finished tree of one node is a chat reply or a schedule that fired: it goes sooner.
 pub const KEEP_LONE_MS: u64 = 90_000;
@@ -23,11 +13,9 @@ pub const KEEP_LONE_MS: u64 = 90_000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
     Running,
-    /// Waiting for a person.
     NeedsYou,
     Done,
     Failed,
-    /// Stopped on purpose, or by a limit.
     Stopped,
 }
 
@@ -39,13 +27,10 @@ impl Status {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    /// An agent's run.
     Run,
-    /// A coding session on `comp-agentd`.
     Session,
 }
 
-/// An approval waiting on a person, for the card that is blocked on it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pending {
     pub id: u64,
@@ -59,18 +44,13 @@ pub struct Pending {
 pub struct Node {
     pub id: String,
     pub kind: Kind,
-    /// The agent, or `Coder` for a coding session.
     pub name: String,
-    /// `provider/model`.
     pub model: String,
     pub task: String,
     pub status: Status,
-    /// The tools used so far, each once, in the order first used.
     pub tools: Vec<String>,
-    /// What it is doing now, in a few words.
     pub activity: String,
     pub tokens: u64,
-    /// `None`: the model is not one whose price is known.
     pub cost_micros: Option<u64>,
     pub started_ms: u64,
     pub finished_ms: Option<u64>,
@@ -80,7 +60,6 @@ pub struct Node {
     pub pending: Vec<Pending>,
     /// When the board first saw it: what the enter animation is timed from.
     pub born_ms: u64,
-    /// Every path or name its calls were given, once each: what the other tabs' references are found in.
     pub notes: Vec<String>,
     tokens_in: u64,
     tokens_out: u64,
@@ -112,47 +91,36 @@ impl Node {
         }
     }
 
-    /// How long it has been going, or went for.
     pub fn elapsed_ms(&self, now: u64) -> u64 {
         self.finished_ms.unwrap_or(now).saturating_sub(self.started_ms)
     }
 }
 
-/// What the header says about everything on the board.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Summary {
     pub agents: usize,
     pub running: usize,
     pub waiting: Vec<Waiting>,
-    /// The sum of the costs that are known, in micro-USD.
     pub cost_micros: u64,
 }
 
-/// One line of the list of sessions: a goal, and everything it started.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SessionRow {
-    /// The root node's id: what a selection is.
     pub root: String,
-    /// What was asked.
     pub title: String,
-    /// The agent that was asked.
     pub lead: String,
-    /// How the whole stands: waiting for a person beats working beats how it ended.
     pub status: Status,
     pub agents: usize,
     pub waiting: usize,
     pub cost_micros: u64,
     pub started_ms: u64,
-    /// When the last of it finished, if all of it has.
     pub finished_ms: Option<u64>,
 }
 
-/// One approval, and whose it is.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Waiting {
     pub node: String,
     pub agent: String,
-    /// The agents above it, outermost first: `lead › planner`. Empty for a tree's root.
     pub via: Vec<String>,
     pub pending: Pending,
 }
@@ -160,17 +128,14 @@ pub struct Waiting {
 #[derive(Default)]
 pub struct AgentTree {
     nodes: HashMap<String, Node>,
-    /// Every node id, in the order the board first saw them.
     order: Vec<String>,
-    /// The tool call (by span) that is making each run's calls: a call's span -> the run's id.
+    /// a call's span -> the id of the run making it
     spans: HashMap<String, String>,
-    /// Which node each approval is for.
     approvals: HashMap<u64, String>,
     /// Changes so far: a view that remembers it saw revision N knows whether it is stale.
     pub revision: u64,
 }
 
-/// The first of a call's arguments worth saying aloud.
 fn brief(args: &Value) -> String {
     for k in ["path", "command", "url", "query", "message", "task", "text", "topic", "key"] {
         if let Some(s) = args.get(k).and_then(Value::as_str) {
@@ -181,7 +146,6 @@ fn brief(args: &Value) -> String {
     String::new()
 }
 
-/// Every string in a call's arguments, as a note worth keeping once.
 fn note(notes: &mut Vec<String>, v: &Value) {
     match v {
         Value::String(s) if !s.is_empty() && !notes.contains(s) => {
@@ -193,7 +157,6 @@ fn note(notes: &mut Vec<String>, v: &Value) {
     }
 }
 
-/// `agent:researcher` is a call to another agent; everything else is a tool by its own name.
 fn activity_of(tool: &str, args: &Value) -> String {
     match tool.strip_prefix("agent:") {
         Some(other) => format!("asking {other}"),
@@ -201,8 +164,7 @@ fn activity_of(tool: &str, args: &Value) -> String {
     }
 }
 
-/// What a model's tokens cost, in micro-USD: nothing on this machine, the daemon's own price table
-/// for the hosted models it knows, and unknown for the rest (a made-up price would be worse).
+/// Micro-USD; `None` for a model with no known price, since a made-up one would be worse.
 pub fn price(model: &str, tokens_in: u64, tokens_out: u64) -> Option<u64> {
     if model.starts_with("local/") || model.starts_with("mock") || model.is_empty() {
         return Some(0);
@@ -245,12 +207,10 @@ impl AgentTree {
         self.nodes.len()
     }
 
-    /// Every node, in the order the board first saw them.
     pub fn all(&self) -> impl Iterator<Item = &Node> {
         self.order.iter().filter_map(|id| self.nodes.get(id))
     }
 
-    /// Nodes with no parent, oldest first.
     pub fn roots(&self) -> Vec<&Node> {
         self.order
             .iter()
@@ -259,7 +219,6 @@ impl AgentTree {
             .collect()
     }
 
-    /// The nodes under `id`, in the order they started.
     pub fn children_of(&self, id: &str) -> Vec<&Node> {
         self.nodes
             .get(id)
@@ -267,7 +226,6 @@ impl AgentTree {
             .unwrap_or_default()
     }
 
-    /// The names of the agents above `id`, outermost first.
     pub fn ancestors(&self, id: &str) -> Vec<String> {
         let mut names = Vec::new();
         let mut at = self.nodes.get(id).and_then(|n| n.parent.clone());
@@ -289,8 +247,6 @@ impl AgentTree {
         }
     }
 
-    /// The roots worth showing now, newest first: a tree with anything still going, and a finished
-    /// one for a while (longer when it had several agents in it).
     pub fn visible_roots(&self, now: u64) -> Vec<&Node> {
         let mut shown: Vec<&Node> = self
             .roots()
@@ -313,7 +269,6 @@ impl AgentTree {
         shown
     }
 
-    /// Every session worth listing, newest first.
     pub fn sessions(&self, now: u64) -> Vec<SessionRow> {
         self.visible_roots(now)
             .into_iter()
@@ -349,8 +304,6 @@ impl AgentTree {
             .collect()
     }
 
-    /// Everything said in one tree: what each agent was asked and answered, and every path or name its
-    /// calls were given. What a reference from this session to a component is found in.
     pub fn texts_of(&self, root: &str) -> Vec<String> {
         let mut ids = Vec::new();
         self.subtree(root, &mut ids);
@@ -365,7 +318,6 @@ impl AgentTree {
             .collect()
     }
 
-    /// The header for one tree: as `summary`, of `root` and what it started.
     pub fn summary_of(&self, root: &str) -> Summary {
         let mut s = Summary::default();
         let mut ids = Vec::new();
@@ -390,10 +342,6 @@ impl AgentTree {
         s
     }
 
-    /// Learns what ran before this board was open from the runs the runtime kept, oldest first, so a
-    /// restart does not empty the list of sessions. A run is a node that has already ended; where it
-    /// hangs is known from the tool-call spans its parent's steps recorded, whichever was written
-    /// first. Coding sessions are not kept by the runtime, so only their parents' runs come back.
     pub fn seed(&mut self, runs: &[RunRecord]) {
         let mut runs: Vec<&RunRecord> = runs.iter().collect();
         runs.sort_by_key(|r| r.started_ms);
@@ -432,8 +380,6 @@ impl AgentTree {
         self.revision += 1;
     }
 
-    /// The header: how many agents are on the board, how many are working, who is waiting for a
-    /// person, and what it has all cost.
     pub fn summary(&self, now: u64) -> Summary {
         let mut s = Summary::default();
         for root in self.visible_roots(now) {
@@ -474,7 +420,6 @@ impl AgentTree {
         self.nodes.insert(node.id.clone(), node);
     }
 
-    /// Moves `id` under `parent`, when it is not already there and the parent exists.
     fn adopt(&mut self, id: &str, parent: Option<String>) {
         let Some(parent) = parent.filter(|p| p != id && self.nodes.contains_key(p)) else { return };
         let old = self.nodes.get(id).and_then(|n| n.parent.clone());
@@ -492,7 +437,6 @@ impl AgentTree {
         }
     }
 
-    /// The run of `agent` that is going now, newest first: what an approval it asked for is for.
     fn live_run_of(&self, agent: &str) -> Option<String> {
         self.order
             .iter()
@@ -502,7 +446,6 @@ impl AgentTree {
             .map(|n| n.id.clone())
     }
 
-    /// Says what happened. `now` is the wall clock in unix milliseconds.
     pub fn apply(&mut self, ev: &Event, now: u64) {
         match ev {
             Event::RunStarted { agent, run_id, input, parent_span_id, model, .. } => {
@@ -691,9 +634,7 @@ mod tests {
         t.apply(&started("researcher", "r2", Some("call-1"), "local/system"), T0);
         assert_eq!(t.roots().len(), 1);
         assert_eq!(t.children_of("r1").iter().map(|n| n.id.as_str()).collect::<Vec<_>>(), ["r2"]);
-        // what the parent is doing, in words, while it waits
         assert_eq!(t.node("r1").unwrap().activity, "asking researcher");
-        // a call to another agent is not a tool the parent has
         assert!(t.node("r1").unwrap().tools.is_empty());
     }
 
@@ -806,7 +747,6 @@ mod tests {
         assert_eq!(s.cost_micros, Some(1_500));
         assert_eq!(s.tokens, 1_000);
         assert_eq!(s.tools, ["read_file"]);
-        // the same session again is the same node, updated
         let mut v = session("s1", "r1", Phase::Done, 250_000);
         v.finished_ms = Some(T0 + 9_000);
         v.result = Some("fixed".into());
@@ -916,7 +856,6 @@ mod tests {
         assert_eq!((r.status, r.agents, r.waiting, r.cost_micros), (Status::NeedsYou, 2, 1, 5_000));
         assert_eq!(r.finished_ms, None);
 
-        // the root ending does not end a goal whose session is still going
         t.apply(&finished("r1", "ok", T0 + 40), T0 + 40);
         assert_eq!(t.sessions(T0 + 50)[0].status, Status::NeedsYou);
         let mut done = session("s1", "r1", Phase::Done, 9_000);
@@ -955,7 +894,6 @@ mod tests {
             }))
             .unwrap()
         };
-        // written child first: the parent's call is found whichever was stored first
         let runs = vec![
             record("child", "helper", T0 + 100, Some("call-1"), &[]),
             record(
@@ -976,7 +914,6 @@ mod tests {
             (Status::Done, vec!["read_file".to_string()], Some(T0 + 500))
         );
         assert_eq!(lead.result.as_deref(), Some("fine"));
-        // seeding again is a no-op
         t.seed(&runs);
         assert_eq!(t.len(), 2);
     }

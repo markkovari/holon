@@ -1,16 +1,4 @@
-//! `agent-writer` — a goal and a tree in, a candidate out.
-//!
-//! The model answers with search/replace EDIT blocks (only the changed lines), applied
-//! against `goal.context` to rebuild whole files; whole files stay on the wire. That
-//! shrinks the model's expensive OUTPUT and avoids whole-file rewrites silently dropping
-//! a function. An edit whose SEARCH text is not in the file is a hard error, not a skip;
-//! a FILE block creates a file or replaces most of one.
-//!
-//! `previous` (failed checks and their output — the only feedback that is not a model's
-//! opinion of its own work) goes into the prompt verbatim and first.
-//!
-//! A path outside `writable` is refused: an agent that can name any path can rewrite the
-//! deployment that runs it.
+//! Search/replace edits shrink the model's output and stop whole-file rewrites silently dropping code.
 
 #[allow(warnings)]
 mod bindings;
@@ -23,23 +11,15 @@ use std::collections::HashMap;
 
 struct Component;
 
-// A whole-file block, for creating a file or replacing most of one.
 const FILE_OPEN: &str = "=== FILE:";
 const FILE_CLOSE: &str = "=== END";
-// An edit block: a path, then a git-conflict-shaped search/replace the model
-// already knows how to produce.
+// Git-conflict-shaped: a format models already produce.
 const EDIT_OPEN: &str = "=== EDIT:";
 const S_MARK: &str = "<<<<<<< SEARCH";
 const DIV: &str = "=======";
 const R_MARK: &str = ">>>>>>> REPLACE";
 
-/// What the model is told about the answer FORMAT: a worked example, not a schematic,
-/// as a measured choice. The schematic was followed by Claude but not Qwen3-Coder-30B,
-/// which emitted a ```rust fence with no conflict markers, so the parser discarded the
-/// answer as a format failure. Fixed by an example with real code, naming the four
-/// marker lines as mandatory, and forbidding markdown fences. Qwen3.8-27B, trained in
-/// a tool loop, reached for a tool (`=== READ:`); the fourth rule says it CANNOT read,
-/// phrased as a cost ("asking costs the attempt") rather than a prohibition.
+/// A worked example, not a schematic: Qwen3-Coder ignored the schematic and fenced its answer.
 fn system_prompt() -> String {
     format!(
         "You change code to satisfy a goal. You answer ONLY with blocks.\n\
@@ -92,8 +72,7 @@ fn system_prompt() -> String {
 fn build_prompt(g: &Goal, previous: &[Failure], blocked: &[Blocked]) -> String {
     let mut p = String::new();
 
-    // FAILURES FIRST. A repair whose prompt buries what went wrong under the
-    // original goal is a repair that will mostly rewrite the original answer.
+    // Failures first: a repair that reads the goal first mostly rewrites the original answer.
     if !previous.is_empty() {
         p.push_str("A previous attempt was checked and these checks FAILED.\n");
         p.push_str("Fix these specifically; do not start over.\n\n");
@@ -103,9 +82,7 @@ fn build_prompt(g: &Goal, previous: &[Failure], blocked: &[Blocked]) -> String {
         p.push('\n');
     }
 
-    // AFTER the failures and before the goal, phrased as "not attempted": a model shown
-    // fourteen unrun checks next to one failure will "repair" a test that never ran.
-    // This is context; it explains why the failure list is short.
+    // After the failures, before the goal, as "not attempted": else a model "repairs" a test that never ran.
     if !blocked.is_empty() {
         p.push_str("These checks were NOT ATTEMPTED, because something they need failed first.\n");
         p.push_str("Do not try to fix them — fix what failed, and these will run.\n\n");
@@ -134,7 +111,6 @@ fn build_prompt(g: &Goal, previous: &[Failure], blocked: &[Blocked]) -> String {
     p
 }
 
-/// One change the model asked for: either a whole file, or a search/replace.
 enum Op {
     Whole { path: String, content: String },
     Edit { path: String, search: String, replace: String },
@@ -146,9 +122,7 @@ fn op_path(op: &Op) -> &str {
     }
 }
 
-/// Pull ops out of whatever came back, in document order. Tolerant of prose around the
-/// blocks (refusing a good answer over a preamble wastes paid work); order is preserved
-/// so several edits to one file apply as intended.
+/// Tolerant of prose around blocks: refusing a good answer over a preamble wastes paid work.
 fn parse_ops(answer: &str) -> Vec<Op> {
     let mut out = Vec::new();
     let mut rest = answer;
@@ -198,8 +172,7 @@ fn parse_ops(answer: &str) -> Vec<Op> {
             let body = &after[nl + 1..];
             let Some(end) = body.find(FILE_CLOSE) else { break };
             let mut content = body[..end].to_string();
-            // A model puts a newline before the closing fence; the file should
-            // not gain one every time it is rewritten.
+            // Models put a newline before the closing fence; the file must not gain one per rewrite.
             if content.ends_with('\n') {
                 content.pop();
             }
@@ -212,9 +185,7 @@ fn parse_ops(answer: &str) -> Vec<Op> {
     out
 }
 
-/// Replace the first occurrence of `search` in `cur`. Exact first, then a retry matching
-/// line-by-line ignoring trailing whitespace (the commonest drift in a model's copy of
-/// SEARCH). `None` when not found; the caller rejects the candidate.
+/// Exact first, then line-by-line ignoring trailing whitespace, the commonest drift in a model's SEARCH.
 fn find_replace(cur: &str, search: &str, replace: &str) -> Option<String> {
     if let Some(pos) = cur.find(search) {
         let mut s = String::with_capacity(cur.len() - search.len() + replace.len());
@@ -246,7 +217,6 @@ fn find_replace(cur: &str, search: &str, replace: &str) -> Option<String> {
     Some(s)
 }
 
-/// Fold the ops onto the base tree: whole contents of every touched file, first-touch order.
 fn apply_ops(base: &[File], ops: Vec<Op>) -> Result<Vec<File>, String> {
     let mut work: HashMap<String, String> =
         base.iter().map(|f| (f.path.clone(), f.content.clone())).collect();
@@ -288,15 +258,12 @@ fn apply_ops(base: &[File], ops: Vec<Op>) -> Result<Vec<File>, String> {
         .collect())
 }
 
-/// The temperature at a given repair depth, in milli-units: low first (0.2) so a first
-/// attempt is the likeliest answer, rising to a 1.0 ceiling so a failed branch EXPLORES.
-/// The provider forwards it only to models that accept one, so escalating is always safe.
+/// Low first so a first attempt is the likeliest answer, rising to 1.0 so a failed branch explores.
 fn temperature_for(repair_depth: u32) -> u32 {
     (200 + 300 * repair_depth).min(1000)
 }
 
-/// May this path be written? Exact match, no prefix rule: `src/lib.rs` permitting
-/// `src/lib.rs.bak` reads as fine and is not.
+/// Exact match, no prefix rule: `src/lib.rs` must not permit `src/lib.rs.bak`.
 fn writable(g: &Goal, path: &str) -> bool {
     g.writable.iter().any(|w| w == path)
 }
@@ -320,8 +287,6 @@ impl Guest for Component {
 
         let opts = llm::Options {
             model: String::new(),
-            // Low first, higher on each repair; the provider withholds it from models
-            // that rejected it.
             temperature: temperature_for(previous.len() as u32),
             max_tokens: 0,
             stop: Vec::new(),
@@ -345,8 +310,7 @@ impl Guest for Component {
 
         let ops = parse_ops(&completion.text);
         if ops.is_empty() {
-            // Distinct from an inference failure: one is worth another seed, the other
-            // is worth waiting.
+            // Distinct from an inference failure: one is worth another seed, the other is worth waiting.
             return Err(AgentError::UnusableAnswer(format!(
                 "no edit or file blocks in {} characters of answer; starts: {:?}",
                 completion.text.len(),
@@ -354,20 +318,16 @@ impl Guest for Component {
             )));
         }
 
-        // Refused, not filtered — checked on the ops' target paths, BEFORE any
-        // edit is applied, so an answer that names a path it may not touch never
-        // runs against the tree.
+        // Refused before any edit is applied, so a forbidden path never runs against the tree.
         if let Some(bad) = ops.iter().map(op_path).find(|p| !writable(&g, p)) {
             return Err(AgentError::UnusableAnswer(format!(
                 "wrote {bad:?}, which is not in the writable list"
             )));
         }
 
-        // A diff that does not apply fails loudly here instead of shipping a file with a
-        // function missing.
+        // A diff that does not apply fails here instead of shipping a file with a function missing.
         let files = apply_ops(&g.context, ops).map_err(AgentError::UnusableAnswer)?;
 
-        // The cost travels with the answer, so a caller need not ask a second question.
         Ok(Candidate {
             files,
             prompt_tokens: completion.usage.prompt_tokens,
@@ -414,7 +374,6 @@ mod tests {
         assert_eq!(files[0].content, "pub fn answer() -> u32 { 42 }");
     }
 
-    /// An edit touches only the lines it names.
     #[test]
     fn an_edit_changes_only_its_lines() {
         let base = [("src/lib.rs", "fn a() {}\nfn answer() -> u32 { 41 }\nfn b() {}\n")];
@@ -429,7 +388,6 @@ mod tests {
         assert_eq!(files[0].content, "fn a() {}\nfn answer() -> u32 { 42 }\nfn b() {}\n");
     }
 
-    /// A SEARCH not in the file is a hard error: the candidate is rejected.
     #[test]
     fn an_edit_that_does_not_match_is_an_error() {
         let base = [("a.rs", "hello\n")];
@@ -442,12 +400,8 @@ mod tests {
         );
     }
 
-    /// The model rarely reproduces trailing whitespace exactly; a match that
-    /// differs only there should still apply.
     #[test]
     fn trailing_whitespace_does_not_break_a_match() {
-        // The file is clean; the model's SEARCH carries trailing spaces, so the
-        // exact substring search misses and the line-normalized retry catches it.
         let base = [("a.rs", "let x = 1;\nlet y = 2;\n")];
         let files = run(
             &format!("{EDIT_OPEN} a.rs\n{S_MARK}\nlet x = 1;   \n{DIV}\nlet x = 9;\n{R_MARK}\n"),
@@ -457,7 +411,6 @@ mod tests {
         assert_eq!(files[0].content, "let x = 9;\nlet y = 2;\n");
     }
 
-    /// Several edits to one file apply in order and accumulate.
     #[test]
     fn several_edits_to_one_file_accumulate() {
         let base = [("a.rs", "one\ntwo\nthree\n")];
@@ -502,7 +455,6 @@ mod tests {
         assert!(parse_ops(&format!("{EDIT_OPEN} a.rs\n{S_MARK}\nx\n{DIV}\ny\n")).is_empty());
     }
 
-    /// THE REPAIR LOOP: same goal and seed, different prompt once something has failed.
     #[test]
     fn a_repair_prompt_differs_because_of_the_failure() {
         let g = goal("make it 42", &["src/lib.rs"], &[("src/lib.rs", "fn answer() { 41 }")]);
@@ -517,8 +469,6 @@ mod tests {
         assert!(repair.contains("the-fix"), "and so must which check it was");
     }
 
-    /// A blocked check is context, not something to fix: a candidate that does not
-    /// compile arrives as one failure plus a list of things nobody tried.
     #[test]
     fn a_blocked_check_is_named_but_not_asked_for() {
         let g = goal("make it 42", &["a.rs"], &[]);
@@ -537,13 +487,9 @@ mod tests {
             p.contains("Do not try to fix them"),
             "explicitly, because the model will otherwise"
         );
-        // Context comes after the failure and before the goal: the thing to repair
-        // is read first.
         assert!(p.find("E0308").unwrap() < p.find("NOT ATTEMPTED").unwrap());
         assert!(p.find("NOT ATTEMPTED").unwrap() < p.find("GOAL").unwrap());
 
-        // Nothing blocked, nothing said. A prompt that always carried an empty
-        // section would spend the model's attention on a heading.
         let clean = build_prompt(&g, &[], &[]);
         assert!(!clean.contains("NOT ATTEMPTED"));
     }
@@ -566,8 +512,6 @@ mod tests {
         assert!(p.contains("new.rs"), "including a path that does not exist yet");
     }
 
-    /// Low first, rising with each repair, capped at 1.0 — a stuck branch
-    /// explores instead of re-rolling the same near-miss.
     #[test]
     fn temperature_escalates_with_repair_depth_and_caps() {
         assert_eq!(temperature_for(0), 200, "first attempt is the likely answer");

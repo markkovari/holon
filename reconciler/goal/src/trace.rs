@@ -1,28 +1,17 @@
-//! What a run leaves behind (ADR-0092): the run's history appended to the merged store, so "why did
-//! branch 3 beat branch 7" survives the terminal.
-//!
-//! Writes SurrealQL directly, not `knowledge:memory/observe`: ADR-0084 makes `observe` what a
-//! branch BELIEVES, and an event log written through it would make "branch 7 started at 12:04"
-//! retrievable as advice. `goalrun` is a native driver, not a component, so this does not bypass
-//! `knowledge:graph` (`comp-capgraph` does the same, ADR-0091).
-//!
-//! Nothing here may fail a run: every call returns `()`. Failures are counted and reported once at
-//! the end, so a down database costs one line, not one per event.
+//! A run's history in the store (ADR-0092). Direct SurrealQL, not `observe`, which holds beliefs.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use serde_json::{json, Value};
 
-/// The tables. `run` and `attempt` are nodes; `event` is the append-only log.
+/// `run` and `attempt` are nodes; `event` is the append-only log.
 const RUN: &str = "run";
 const ATTEMPT: &str = "attempt";
 const EVENT: &str = "event";
-/// What the pool gained. Its own table: "what can this system do" is about the capability, not the
-/// run that added it.
+/// Its own table: "what can this system do" is about the capability, not the run.
 const CAPABILITY: &str = "capability";
 
-/// Where the trace goes, and the credentials to get in. An `Option` the caller holds: a run
-/// without a database is supported (ADR-0080).
+/// Optional to the caller: a run without a database is supported (ADR-0080).
 pub struct Trace {
     url: String,
     namespace: String,
@@ -30,18 +19,14 @@ pub struct Trace {
     user: String,
     /// `None` means send NO auth header at all.
     password: Option<String>,
-    /// Writes that did not land. Reported once, at the end.
+    /// Reported once, at the end.
     dropped: AtomicU64,
-    /// Whether the namespace and database have been defined this process.
-    ///
-    /// A fresh SurrealDB has neither, and statements against a missing namespace come back as a 200
-    /// carrying a per-statement error. Done once, lazily, not in `new`, so constructing a `Trace`
-    /// never dials a database.
+    /// Defined lazily, so constructing a `Trace` never dials a database.
     defined: AtomicBool,
 }
 
 impl Trace {
-    /// `url` is the SurrealDB HTTP endpoint. `password` is the value, already read from its file.
+    /// `password` is the value, already read from its file.
     pub fn new(url: &str, database: &str, password: Option<&str>) -> Self {
         Self {
             url: url.trim_end_matches('/').to_string(),
@@ -49,17 +34,14 @@ impl Trace {
             namespace: "comp".to_string(),
             database: database.to_string(),
             user: "root".to_string(),
-            // An Option, not defaulted: an `--unauthenticated` SurrealDB REJECTS a Basic header
-            // naming a user it does not have, so "no password" differs from "the password is root".
+            // An unauthenticated SurrealDB rejects a Basic header naming a user it does not have.
             password: password.map(|p| p.to_string()),
             dropped: AtomicU64::new(0),
             defined: AtomicBool::new(false),
         }
     }
 
-    /// A run began. Carries what makes it replayable (ADR-0078): the seed and the base every branch
-    /// is judged against. `spec` is the goal FILE, relative to the checkout; it joins a run to its
-    /// queue entry, since two goals can open with the same sentence.
+    /// Carries the seed and base for replay (ADR-0078); `spec` joins a run to its queue entry.
     pub fn run_started(
         &self,
         run: &str,
@@ -81,7 +63,6 @@ impl Trace {
         self.event(run, None, "run-started", json!({ "goal": goal, "seed": seed }));
     }
 
-    /// A branch of a generation was spawned.
     pub fn branch_spawned(&self, run: &str, attempt: &str, branch: &str, round: usize) {
         self.send(&format!(
             "UPSERT {} SET id_text = {}, run = {}, branch = {}, round = {round}, \
@@ -99,8 +80,7 @@ impl Trace {
         );
     }
 
-    /// What the gate said (ADR-0088): the score AND the verdict text, since the next attempt reads
-    /// the verdict.
+    /// Score and verdict text, since the next attempt reads the verdict (ADR-0088).
     pub fn gate_verdict(
         &self,
         run: &str,
@@ -117,7 +97,7 @@ impl Trace {
         );
     }
 
-    /// Which lessons reached the prompt. The other half of `attribute`.
+    /// The other half of `attribute`.
     pub fn lesson_read(&self, run: &str, attempt: &str, keys: &[String]) {
         if keys.is_empty() {
             return;
@@ -125,14 +105,8 @@ impl Trace {
         self.event(run, Some(attempt), "lesson-read", json!({ "keys": keys }));
     }
 
-    /// An attempt ended, and what it produced.
-    ///
-    /// `outcome` is `passed`, `failed`, `errored` or `interrupted` (a stopped branch whose partial
-    /// work is discarded, ADR-0092).
-    ///
-    /// PATHS are recorded, not contents: the diff is already in the pull request and a copy here
-    /// could disagree. Cost and duration exist nowhere else once the terminal is gone.
-    // Two over clippy's default threshold; each is its own recorded fact, not fields to extract.
+    /// Paths, not contents: the diff is in the PR and a copy could disagree.
+    // Each is its own recorded fact, not fields to extract.
     #[allow(clippy::too_many_arguments)]
     pub fn attempt_finished(
         &self,
@@ -146,9 +120,7 @@ impl Trace {
         tries: u64,
     ) {
         let paths = file_paths(files);
-        // NONE rather than 0 when nothing was reported: a finished attempt made model calls, so 0
-        // means the provider reported no usage (`tools/claude-shim.mjs` does this on purpose).
-        // Storing 0 would make the wallet read "free" when the truth is "nobody measured".
+        // NONE, not 0: the provider reported no usage (the Claude shim on purpose), not "free".
         let tokens_sql = tokens_sql(tokens);
         self.send(&format!(
             "UPSERT {} SET outcome = {}, score = {score}, paths = {}, files = {}, \
@@ -168,9 +140,7 @@ impl Trace {
         );
     }
 
-    /// A run left the pool able to do something it could not before (ADR-0089). A `capability` node
-    /// rather than only an event, since "what can this system do, and which run taught it" is about
-    /// the capability.
+    /// A node, not only an event: "which run taught it" is about the capability (ADR-0089).
     pub fn capability_added(&self, run: &str, name: &str, path: &str) {
         self.send(&format!(
             "UPSERT {} SET name = {}, path = {}, added_by = {}, added_at = time::now();",
@@ -182,15 +152,13 @@ impl Trace {
         self.event(run, None, "capability-added", json!({ "name": name, "path": path }));
     }
 
-    /// Whether reuse discovery found anything. A MISS is the most useful row: the graph naming a
-    /// capability the pool lacks (ADR-0089).
+    /// A miss is the most useful row: the graph naming a capability the pool lacks (ADR-0089).
     pub fn capsearch(&self, run: &str, query: &str, hits: usize) {
         let kind = if hits == 0 { "capsearch-miss" } else { "capsearch-hit" };
         self.event(run, None, kind, json!({ "query": query, "hits": hits }));
     }
 
-    /// How many of `capsearch`'s hits `capability-advisor` confirmed actually fit the goal. Only
-    /// fires when an advisor was configured AND reachable, so absence means "not asked".
+    /// Only fires with a reachable advisor, so absence means "not asked".
     pub fn capsearch_confirmed(&self, run: &str, confirmed: usize, rejected: usize) {
         self.event(
             run,
@@ -200,7 +168,7 @@ impl Trace {
         );
     }
 
-    /// How the run ended: `merged`, `failed`, `exhausted`, `interrupted`.
+    /// `merged`, `failed`, `exhausted` or `interrupted`.
     pub fn run_resolved(&self, run: &str, outcome: &str, winner: Option<&str>, url: &str) {
         self.send(&format!(
             "UPSERT {} SET outcome = {}, winner = {}, url = {}, resolved_at = time::now();",
@@ -217,7 +185,7 @@ impl Trace {
         );
     }
 
-    /// One line for the operator, or nothing when everything landed. Once, not per failure.
+    /// Once, not per failure; `None` when everything landed.
     pub fn report(&self) -> Option<String> {
         match self.dropped.load(Ordering::Relaxed) {
             0 => None,
@@ -228,8 +196,7 @@ impl Trace {
     }
 
     fn event(&self, run: &str, attempt: Option<&str>, kind: &str, data: Value) {
-        // No id: an event is append-only, so SurrealDB mints one rather than us inventing a key
-        // unique across concurrent branches.
+        // No id: SurrealDB mints one unique across concurrent branches.
         self.send(&format!(
             "CREATE {EVENT} SET run = {}, attempt = {}, kind = {}, data = {}, at = time::now();",
             lit(run),
@@ -239,8 +206,7 @@ impl Trace {
         ));
     }
 
-    /// Define the namespace and database, once. Marked done even when the call fails: retrying
-    /// before every write on a down database would just double the dropped writes.
+    /// Marked done even on failure: retrying on a down database would double the dropped writes.
     fn ensure_defined(&self) {
         if self.defined.swap(true, Ordering::Relaxed) {
             return;
@@ -307,14 +273,13 @@ fn ureq_post(
     if !r.status().is_success() {
         return false;
     }
-    // A 200 can carry per-statement rejections, so check each status.
+    // A 200 can carry per-statement rejections.
     let text = r.text().unwrap_or_default();
     serde_json::from_str::<Vec<Value>>(&text)
         .map(|statements| statements.iter().all(|s| s["status"] == "OK"))
         .unwrap_or(false)
 }
 
-/// `tokens` as SurrealQL: the count, or `NONE` when nothing was reported (see `attempt_finished`).
 fn tokens_sql(tokens: u64) -> String {
     if tokens == 0 {
         "NONE".to_string()
@@ -323,8 +288,7 @@ fn tokens_sql(tokens: u64) -> String {
     }
 }
 
-/// The paths a branch wrote, from the driver's `[{path, content}]`. Sorted and de-duplicated so
-/// rows from repeated runs compare without ordering noise.
+/// Sorted and de-duplicated so repeated runs compare without ordering noise.
 fn file_paths(files: &Value) -> Vec<String> {
     let mut out: Vec<String> = files
         .as_array()
@@ -335,13 +299,12 @@ fn file_paths(files: &Value) -> Vec<String> {
     out
 }
 
-/// A record id. `⟨…⟩` is SurrealDB's quoting for an arbitrary id; run ids carry `/`
-/// (`seed/g1/risk-first`), which is why they need it, and `⟩` is the one character that could end it.
+/// `⟨…⟩` quotes ids carrying `/`; `⟩` is the one character that could end it.
 fn rid(table: &str, id: &str) -> String {
     format!("{table}:⟨{}⟩", id.replace('⟩', ""))
 }
 
-/// A string literal, through JSON so a value cannot carry syntax (ADR-0080).
+/// Through JSON, so a value cannot carry syntax (ADR-0080).
 fn lit(s: &str) -> String {
     Value::String(s.to_string()).to_string()
 }
@@ -350,8 +313,6 @@ fn lit(s: &str) -> String {
 mod tests {
     use super::*;
 
-    /// A goal is prose and contains quotes; unescaped it would break the write or close the string
-    /// and run as SurrealQL.
     #[test]
     fn a_goal_containing_quotes_cannot_break_out_of_its_statement() {
         let nasty = r#"add a "search" box'; DROP TABLE memory; --"#;
@@ -367,17 +328,14 @@ mod tests {
         );
     }
 
-    /// Run ids carry `/`, which is why the id is bracket-quoted, and a `⟩` would end it early.
     #[test]
     fn a_run_id_keeps_its_slashes_and_cannot_end_its_own_quoting() {
         assert_eq!(rid("run", "42/g1/risk-first"), "run:⟨42/g1/risk-first⟩");
         assert_eq!(rid("run", "42⟩; DELETE memory"), "run:⟨42; DELETE memory⟩");
     }
 
-    /// Dropped writes are counted; silence means everything landed.
     #[test]
     fn an_unmeasured_cost_is_absent_rather_than_zero() {
-        // The shim reports no usage on purpose. Stored as 0 a run reads as free; as NONE, unmeasured.
         assert_eq!(tokens_sql(0), "NONE");
         assert_eq!(tokens_sql(1), "1");
         assert_eq!(tokens_sql(31_500), "31500");

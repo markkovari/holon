@@ -1,9 +1,4 @@
-# Libraries that are neither a component nor a native binary, and are built for
-# BOTH targets: `wasm32-wasip2` (inside a component) and the host (inside a daemon
-# or a test). Its own workspace root, like host/, lattice/, reconciler/ and cli/.
-#
-#   cargo test  --manifest-path crates/Cargo.toml --features holon-vcs/native
-#   cargo build --manifest-path crates/Cargo.toml --target wasm32-wasip2
+# Built for both wasm32-wasip2 (inside a component) and the host (daemon, tests).
 [workspace]
 resolver = "2"
 members = ["holon-vcs", "holon-park", "holon-llm", "agent-wire"]
@@ -20,20 +15,14 @@ serde_json = "1"
 sha2 = "0.10"
 sha1 = "0.10"
 hex = "0.4"
-# the wire format's bytes (src/wire.rs)
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 thiserror = "2"
-# symbol extraction (src/extract.rs): syn for Rust, with real byte offsets —
-# `span-locations`, and no `proc-macro` feature, so spans are always the
-# pure-Rust fallback and work outside a macro and on wasm32-wasip2.
+# span-locations without proc-macro: spans use the pure-Rust fallback, so they work on wasm32-wasip2.
 syn = { version = "3", default-features = false, features = ["full", "parsing", "printing"] }
 proc-macro2 = { version = "1.0.91", default-features = false, features = ["span-locations"] }
 quote = { version = "1", default-features = false }
-# native only — see holon-vcs's `native` feature
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "io-util"] }
-# The version the rest of the repository runs (lattice, host, the reconciler): the host's wRPC transport
-# is built on that client type and hands it between crates, so a second copy is a type error waiting to
-# happen, and a daemon that links this crate got two. tests/workspace.rs fails when the locks disagree.
+# Must match the async-nats the host's wRPC transport uses (tests/workspace.rs checks the locks).
 async-nats = "0.49"
 surrealdb = { version = "3.3", default-features = false, features = ["protocol-ws", "rustls"] }
 futures = "0.3"

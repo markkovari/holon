@@ -1,15 +1,5 @@
-//! The manifest: `(graph, strategy, tenant, plan) -> desired state`.
-//!
-//! Emits the document the reconciler diffs against lattice inventory (successor to the Kubernetes YAML
-//! renderer; ADR-0021). Still a pure function: it decides which store a workload may touch and where it
-//! may dial, so it has no I/O and no clock; everything arrives as an argument.
-//!
-//! A manifest names components by digest, the links between them, where they may run, and what they may
-//! reach. Two rules encode expensive lessons:
-//!
-//! 1. **A digest, never a tag** (ADR-0006): re-deriving desired state must select the same bytes.
-//! 2. **`egress` needs both the bare and port-qualified forms** (seen in `examples/jobs/k8s/jobs.yaml`):
-//!    egress is fail-closed, so a missing form is a silent connection refusal at runtime.
+//! Pure: decides which store a workload may touch and where it may dial. A digest, never a tag (ADR-0006);
+//! egress needs both bare and port-qualified forms, since it is fail-closed.
 
 use std::collections::BTreeSet;
 
@@ -19,13 +9,12 @@ use serde_json::{json, Value};
 #[derive(Clone, Debug)]
 pub struct Plan {
     pub replicas: u32,
-    /// Warm pre-instantiated instances, capped against the node's core-instance budget — see `safe_pool_size`.
+    /// Capped against the node's core-instance budget (see `safe_pool_size`).
     pub pool_size: u32,
     pub max_invocations: u32,
-    /// Destinations this tenant may dial, emitted both bare and port-qualified.
-    /// Empty means egress is denied entirely.
+    /// Empty denies egress entirely.
     pub egress: Vec<String>,
-    /// Node labels a deployment must match. The multicloud/multiregion knob.
+    /// The multicloud/multiregion knob.
     pub constraints: Vec<(String, String)>,
 }
 
@@ -42,7 +31,6 @@ impl Default for Plan {
     }
 }
 
-/// How the graph becomes something running (ADR-0005).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Strategy {
     /// One artifact, composed by `wit:reflect` before deploy.
@@ -67,22 +55,19 @@ impl Strategy {
     }
 }
 
-/// One component as the manifest needs it.
 #[derive(Clone, Debug)]
 pub struct Part {
     pub name: String,
-    /// Config this component was given, already validated against the keys its uploader declared (ADR-0010).
+    /// Already validated against the uploader's declared keys (ADR-0010).
     pub config: std::collections::BTreeMap<String, String>,
-    /// Secrets this component asks for, BY REFERENCE. Validated at save and the value is never read, so it
-    /// cannot reach a manifest, a revision, or a log (ADR-0010).
+    /// BY REFERENCE: the value is never read, so it cannot reach a manifest, revision or log (ADR-0010).
     pub secrets: Vec<(String, String)>,
-    /// The content address of the bytes — `sha256:...`, bare (ADR-0024): the digest IS the identity.
+    /// Bare `sha256:...` (ADR-0024): the digest IS the identity.
     pub digest: String,
-    /// Host imports as `ns:pkg/iface` triples, from `wit:reflect`, so the reconciler can place with a set comparison.
+    /// From `wit:reflect`, so the reconciler can place with a set comparison.
     pub host_imports: Vec<HostIface>,
-    /// Nested core modules, for the pool-size ceiling.
+    /// For the pool-size ceiling.
     pub nested_instances: u32,
-    /// Does this export `wasi:http/incoming-handler`?
     pub serves_http: bool,
 }
 
@@ -94,8 +79,7 @@ pub struct HostIface {
 }
 
 impl HostIface {
-    /// The form a node advertises in its inventory and the reconciler matches against. Versionless on
-    /// purpose: requiring equal version strings would make a patch bump unschedulable.
+    /// Versionless on purpose: equal version strings would make a patch bump unschedulable.
     // ponytail: family match; tighten to semver when two incompatible versions of
     // one interface actually coexist.
     fn family(&self) -> String {
@@ -103,18 +87,14 @@ impl HostIface {
     }
 }
 
-/// Host interface families a node can be asked for: the highest-consequence list here, since everything
-/// on it is something a tenant's component may import. Ambient `wasi:*` imports NOT on it (`cli`, `io`,
-/// `clocks`, `random`, `filesystem`) must not appear in `host_needs` or every deployment would be
-/// unschedulable. `wasi:http/types` is type-only with no backend, so it is not listed.
+/// Everything here is something a tenant may import. Ambient wasi:* (cli, io, clocks, random, filesystem)
+/// must not be listed or every deployment is unschedulable; wasi:http/types is type-only.
 const SCHEDULABLE: &[(&str, &str, &[&str])] = &[
     ("wasi", "http", &["incoming-handler", "outgoing-handler"]),
     ("wasi", "keyvalue", &["store", "atomics", "batch"]),
     ("wasi", "config", &["store"]),
     ("wasi", "blobstore", &["blobstore", "container"]),
-    // The `comp:` extensions: without them a component importing one could not be deployed (`unsatisfied_imports`
-    // for an interface the host grants everywhere). `host/src/agent.rs`'s `HOST_IFACES` is the same list from the
-    // other side and the two must agree; nothing checks that.
+    // Must agree with host/src/agent.rs's `HOST_IFACES`; nothing checks that.
     ("comp", "secrets", &["reader"]),
     ("comp", "store", &["cas"]),
 ];
@@ -132,24 +112,20 @@ pub struct ManifestInput<'a> {
     pub strategy: Strategy,
     pub parts: &'a [Part],
     pub plan: &'a Plan,
-    /// `(plug, socket, iface)` — `composer.edge`, the same vocabulary the canvas
-    /// emits and the reconciler turns into a link table.
+    /// `(plug, socket, iface)`, as the canvas emits and the reconciler links.
     pub edges: &'a [(String, String, String)],
-    /// The component traffic enters through.
     pub root: &'a str,
-    /// The Host header this app answers to.
     pub ingress_host: &'a str,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ManifestError {
-    /// A component with no content address. ADR-0006 makes this fatal.
+    /// ADR-0006 makes this fatal.
     NotDigestPinned(String),
     Empty,
     BadName(String),
     /// `fused` must arrive as exactly one part — the composed artifact.
     FusedNotComposed(usize),
-    /// The named root is not in the graph.
     NoRoot(String),
 }
 
@@ -169,8 +145,7 @@ impl ManifestError {
     }
 }
 
-/// One application's identity across the fleet. Derived from tenant + name, never supplied: a tenant able
-/// to set this could name someone else's storage. The host derives its bucket from the same rule.
+/// Derived, never supplied: a tenant able to set this could name someone else's storage.
 pub fn env_for(tenant: &str, name: &str) -> String {
     let e = format!("app-{}-{}", dns_label(tenant), dns_label(name));
     e.chars().take(53).collect::<String>().trim_matches('-').to_string()
@@ -200,11 +175,7 @@ pub fn safe_pool_size(requested: u32, total_modules: u32) -> u32 {
     requested.clamp(1, ceiling)
 }
 
-/// Expand an egress allow-list into every form an authority can arrive in.
-///
-/// * A scheme-qualified entry passes through untouched: splitting on `:` would turn
-///   `https://api.example.com` into the host `https`, silently allow-listing the wrong thing.
-/// * A bare authority is emitted both bare and port-qualified (egress is fail-closed).
+/// A scheme-qualified entry passes through: splitting `https://api.example.com` on `:` would allow-list `https`.
 pub fn expand_egress(egress: &[String]) -> Vec<String> {
     let mut out: BTreeSet<String> = BTreeSet::new();
     for e in egress {
@@ -231,7 +202,6 @@ pub fn expand_egress(egress: &[String]) -> Vec<String> {
     out.into_iter().collect()
 }
 
-/// Build the desired-state document.
 pub fn build(input: &ManifestInput) -> Result<Value, ManifestError> {
     if input.parts.is_empty() {
         return Err(ManifestError::Empty);
@@ -464,8 +434,7 @@ mod tests {
 
     #[test]
     fn constraints_ride_from_the_plan_into_placement() {
-        // The multiregion knob: a tenant's plan can pin them to a jurisdiction and
-        // the reconciler will refuse to place them anywhere else.
+        // A plan can pin a tenant to a jurisdiction; the reconciler places nowhere else.
         let parts = vec![part("api", "sha256:a")];
         let plan =
             Plan { constraints: vec![("region".into(), "eu-central".into())], ..Plan::default() };

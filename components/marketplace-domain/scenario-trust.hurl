@@ -46,7 +46,6 @@ HTTP 201
 order_placed: jsonpath "$.order_ids[0]"
 order_delivered: jsonpath "$.order_ids[2]"
 
-# only the order's own buyer may open a dispute
 POST {{base}}/api/orders/{{order_placed}}/disputes
 Authorization: Bearer {{buyer2_token}}
 {"reason": "not mine to dispute"}
@@ -86,7 +85,6 @@ HTTP 200
 [Asserts]
 jsonpath "$.disputes" count >= 1
 
-# only admin resolves
 POST {{base}}/api/disputes/{{dispute_id}}/resolve
 Authorization: Bearer {{buyer_token}}
 {"resolution": "refund"}

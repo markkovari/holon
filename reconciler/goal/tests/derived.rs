@@ -1,28 +1,16 @@
-//! The graph is derived, and deriving it does not write into the repository.
-//!
-//! Re-running the projection after adding a `slug` interface moved the store but `git status` named
-//! only the component's own sources. That holds by convention (`comp-capgraph` writes to stdout; the
-//! `Justfile` owns the redirect), and a tool that starts writing its own output leaves every rebuild
-//! with a noise diff reviewers learn to skip.
-//!
-//! So a derived artifact is derived on demand, not committed: the capability graph lives in the store
-//! (`comp-capgraph --format json|surql`), and a committed render can go stale silently. Checked:
-//!
-//!   1. Every output format leaves the working tree exactly as it found it.
-//!   2. No build output is tracked.
-//!   3. No WIT package name means two things.
+//! Derived artifacts are derived on demand: deriving writes nothing, and nothing built is tracked.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
-/// The formats `comp-capgraph` emits. The tool refuses `mermaid` and `md`.
+/// The tool refuses `mermaid` and `md`.
 const FORMATS: &[&str] = &["json", "surql"];
 
 fn root() -> std::path::PathBuf {
     comp_fleet::fleet::root_from_manifest()
 }
 
-/// `git status --porcelain`, or `None` when git cannot answer (a checkout with no git is a skip).
+/// `None` when git cannot answer: a checkout with no git is a skip.
 fn tree_state(root: &std::path::Path) -> Option<String> {
     let out =
         Command::new("git").args(["status", "--porcelain"]).current_dir(root).output().ok()?;
@@ -44,8 +32,7 @@ fn capgraph(format: &str) -> Option<Vec<u8>> {
     Some(out.stdout)
 }
 
-/// Deriving the graph writes nothing. Whole-tree comparison, not a list of known outputs, since the
-/// failure worth catching is a NEW file appearing.
+/// Whole-tree comparison, since the failure worth catching is a new file appearing.
 #[test]
 fn deriving_the_graph_does_not_touch_the_working_tree() {
     let root = root();
@@ -68,14 +55,7 @@ fn deriving_the_graph_does_not_touch_the_working_tree() {
     }
 }
 
-/// No build output is tracked.
-///
-/// 58 `.wasm` files were, and all 50 with a same-named component had drifted from it, so about forty
-/// jco examples transpiled frozen copies and a green example proved nothing. `.gitignore` carried
-/// `**/*.wasm` throughout, but git keeps tracking what it already tracks, so the failure was a passing
-/// test about the wrong bytes. `cargo xtask stage-examples` produces them from the build.
-///
-/// The extension list is deliberately short: it guards the case that happened.
+/// Tracked `.wasm` files drifted from their components; `.gitignore` does not untrack them.
 #[test]
 fn no_build_output_is_tracked() {
     const BUILT: &[&str] = &[".wasm", ".rlib", ".rmeta"];
@@ -105,17 +85,7 @@ fn no_build_output_is_tracked() {
     );
 }
 
-/// One package name means one contract, everywhere.
-///
-/// A WIT package name is a GLOBAL identifier, so two files declaring it with different contents is one
-/// name meaning two things, resolved by whichever directory a tool looked in (it caught
-/// `anthropic-vision`'s copy of `vision-describe` with one world appended).
-///
-/// Ported from `tools/check-wit-packages.py` so CI does not depend on a runner `python3`. Comments and
-/// whitespace are normalised away before comparing, or flagging mere explanation differences would
-/// train everyone to ignore this.
-///
-/// Only files git TRACKS: walking the filesystem reported a collision against ignored C# build output.
+/// A WIT package name is global. Comments and whitespace are normalised away; only tracked files.
 #[test]
 fn no_wit_package_name_means_two_things() {
     let root = root();
@@ -140,7 +110,6 @@ fn no_wit_package_name_means_two_things() {
         let Some(end) = text[at..].find(';') else { continue };
         let name = text[at + "package ".len()..at + end].trim().to_string();
 
-        // Everything AFTER the package line, comments and whitespace normalised out.
         let body: String = text[at + end + 1..]
             .lines()
             .map(|l| match l.find("//") {
@@ -174,7 +143,7 @@ fn no_wit_package_name_means_two_things() {
     );
 }
 
-/// A short content digest, only compared for equality, so the std non-cryptographic hash is enough.
+/// Only compared for equality, so the std non-cryptographic hash is enough.
 fn digest_of(text: &str) -> String {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();

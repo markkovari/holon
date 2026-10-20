@@ -1,28 +1,4 @@
-//! The goal runner's client for `contract:registry`, and the generation boundary
-//! it drives.
-//!
-//! ## What happens at a boundary, in order
-//!
-//! 1. **Ratify.** A part that passed its own gate against an amendment it granted has demonstrated it
-//! can implement it, so that version becomes canonical; until then the others build on the last
-//! ratified one (ADR-0084).
-//! 2. **Report what is outstanding.** Unanswered requests stay pending and the run continues: an
-//! unanswered question costs a generation, never a deadlock.
-//! 3. **Read the contract back.** Whatever is canonical now is what the next round builds against.
-//!
-//! ## Answering
-//!
-//! A pending request is answered by ONE cheap model call. The reply is parsed strictly and **an
-//! unparseable reply answers nothing**: the request stays pending for the next boundary, since a
-//! verdict invented from an unreadable reply would put a denial the model never made on the record,
-//! and a denial cannot be taken back.
-//!
-//! An `Answerer` is optional; without one, `boundary` reports what is outstanding and the run
-//! continues on the current contract.
-//!
-//! Unlike `memory.rs`, a failure here is **not** always survivable: an unreadable contract would give
-//! two halves that each pass and cannot compose. So `current` and `composable` propagate errors; only
-//! `ratify` is best-effort.
+//! `contract:registry` client. Unlike `memory.rs`, errors propagate: the halves must compose.
 
 use std::time::Duration;
 
@@ -37,7 +13,6 @@ pub struct Registry {
     pub timeout: Duration,
 }
 
-/// A version of the interface the parts build against.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Version {
     pub number: u32,
@@ -46,7 +21,6 @@ pub struct Version {
     pub owner: String,
 }
 
-/// One thing a part asked another for.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ask {
     pub id: String,
@@ -71,8 +45,7 @@ fn enc(s: &str) -> String {
         .collect()
 }
 
-/// A registry answer, or what it refused with. The probe reports a refusal as a 200 carrying
-/// `{"error":…}`, so a fine transport says nothing about the call having worked.
+/// The probe reports a refusal as a 200 carrying `{"error":…}`.
 fn unwrap_answer(v: Value) -> Result<Value, String> {
     if let Some(kind) = v["error"].as_str() {
         return Err(format!("{kind}: {}", v["detail"].as_str().unwrap_or_default()));
@@ -177,8 +150,7 @@ impl Registry {
             .collect())
     }
 
-    /// `verdict` is `granted` | `denied` | `counter`; the returned version is 0 for anything but a grant,
-    /// since only a grant moves the contract.
+    /// `verdict` is `granted` | `denied` | `counter`; only a grant returns a nonzero version.
     pub fn answer(&self, id: &str, verdict: &str, body: &str) -> Result<u32, String> {
         let v = self.call(
             reqwest::Method::POST,
@@ -225,11 +197,7 @@ impl Registry {
             .collect())
     }
 
-    /// The generation boundary: ratify what has been demonstrated, count what is outstanding, and hand
-    /// back what the next round builds against.
-    ///
-    /// Errors go into `log` rather than being returned, except the final read: a boundary that cannot say
-    /// what the contract is has nothing to hand the next round.
+    /// Errors go into `log`, except the final read: without a contract there is nothing to hand on.
     pub fn boundary(
         &self,
         outcomes: &[PartOutcome],
@@ -280,7 +248,7 @@ impl Registry {
                          passes its gate against it",
                         o.part, ask.subject, o.part
                     )),
-                    // Unanswered, deliberately: it stays pending and is retried at the next boundary.
+                    // Unanswered stays pending and is retried at the next boundary.
                     Err(e) => log.push(format!(
                         "{} could not answer {:?} ({e}) — left pending",
                         o.part, ask.subject
@@ -288,14 +256,11 @@ impl Registry {
                 }
             }
         }
-        // Read it back AFTER answering: a grant made in this pass must reach the next round, or the granting
-        // part never gets to demonstrate it.
+        // After answering, so the granting part gets to demonstrate a grant made in this pass.
         let canonical = self.current()?;
         let mut next = Vec::new();
         for o in outcomes {
-            // The owner of an undemonstrated proposal builds against ITS OWN proposal; everyone else stays on the
-            // last ratified version. Otherwise a granted amendment can never be ratified, since ratification
-            // means "I passed my gate against it".
+            // A proposal's owner builds on it, or a grant could never be ratified.
             match self.proposed(&o.part) {
                 Ok(Some(p)) if p.number > canonical.number => {
                     log.push(format!(
@@ -318,10 +283,7 @@ impl Registry {
     }
 }
 
-/// The model that answers a request on a part's behalf.
-///
-/// A separate struct from `Registry`: a different deployment decision (the run's agreements live in
-/// the registry; this is whichever provider the deployment will spend a small call on).
+/// Apart from `Registry`: which provider spends a small call is a separate deployment decision.
 #[derive(Clone)]
 pub struct Answerer {
     pub url: String,
@@ -332,15 +294,11 @@ pub struct Answerer {
 pub struct Asked<'a> {
     pub part: &'a str,
     pub goal: &'a str,
-    /// Where it has got to: its best score and what is still failing. Not its code: the question is about
-    /// an interface.
+    /// Not its code: the question is about an interface.
     pub state: &'a str,
 }
 
-/// The one strict format the reply has to be in.
-///
-/// A free-form answer would need interpreting, and "well, maybe" interpreted as `granted` amends the
-/// contract every other part builds against.
+/// Strict: "well, maybe" read as `granted` would amend every part's contract.
 pub fn prompt(ask: &Ask, asked: &Asked, contract: &str) -> String {
     format!(
         "You are the {part} half of one application. Another part has asked you to \
@@ -370,10 +328,7 @@ and say what it would have cost.",
     )
 }
 
-/// Pull a verdict and a body out of a reply, or refuse to.
-///
-/// `current` is used for one check: if the contract in force is valid JSON, an amendment must be too;
-/// a `granted` with a paragraph of prose would break every part at once if stored.
+/// If the contract in force is JSON an amendment must be too, or storing it breaks every part.
 pub fn parse_reply(reply: &str, current: &str) -> Result<(String, String), String> {
     let text = reply.trim();
     let mut lines = text.lines();
@@ -389,7 +344,7 @@ pub fn parse_reply(reply: &str, current: &str) -> Result<(String, String), Strin
     if !matches!(verdict.as_str(), "granted" | "denied" | "counter") {
         return Err(format!("{verdict:?} is not a verdict"));
     }
-    // Everything after the separator. A model that omits it has usually also omitted the body.
+    // A model that omits the separator has usually omitted the body too.
     let body = match text.split_once("---") {
         Some((_, rest)) => rest.trim().to_string(),
         None => String::new(),
@@ -412,7 +367,7 @@ pub fn parse_reply(reply: &str, current: &str) -> Result<(String, String), Strin
 }
 
 impl Answerer {
-    /// One call, one answer. The reply is returned raw so strictness is testable without a provider.
+    /// Returned raw so strictness is testable without a provider.
     pub fn reply_to(&self, prompt: &str) -> Result<String, String> {
         let r = client(self.timeout)
             .post(format!("{}/chat", self.url))
@@ -431,7 +386,6 @@ impl Answerer {
     }
 }
 
-/// Where a part has got to, in a sentence the model can use. Not its code.
 pub fn state_of(o: &PartOutcome) -> String {
     match &o.best {
         None => format!("{} has produced nothing yet.", o.part),
@@ -445,11 +399,7 @@ pub fn state_of(o: &PartOutcome) -> String {
     }
 }
 
-/// Which amendments a part has earned the right to make canonical.
-///
-/// A part ratifies a version when it PASSED its own gate against it. Not on behalf of a part that did
-/// not accept (nobody implemented it), nor a version it did not build against (v3 says nothing about
-/// v4). A pure function because it is the decision, and the HTTP around it is not.
+/// A part ratifies only a version it passed its own gate against. Pure: the decision, not the HTTP.
 pub fn ratifiable(outcomes: &[PartOutcome]) -> Vec<(u32, String, u64)> {
     outcomes
         .iter()
@@ -496,13 +446,12 @@ mod tests {
 
     #[test]
     fn a_part_that_built_against_nothing_ratifies_nothing() {
-        // version 0 is "no contract recorded": ratifying it would make a version that does not exist canonical.
+        // Version 0 is "no contract recorded".
         assert!(ratifiable(&[outcome("backend", true, 0, 1000)]).is_empty());
     }
 
     #[test]
     fn a_refusal_is_an_error_even_though_the_transport_was_fine() {
-        // The probe answers a refusal with a 200, so the shape has to be read, not the status code.
         let refused = json!({ "error": "refused", "detail": "v2 is owned by \"backend\"" });
         let e = unwrap_answer(refused).expect_err("a refusal must not read as success");
         assert!(e.contains("refused"), "{e}");
@@ -542,7 +491,7 @@ mod tests {
         )
         .expect_err("prose is not an interface");
         assert!(e.contains("not the interface"), "{e}");
-        // A contract that is not JSON imposes no such rule: the format is the goal's business.
+        // A non-JSON contract imposes no such rule.
         assert!(parse_reply(
             "VERDICT: granted\n---\nGET /api/search -> { hits, total_pages }",
             "GET /api/search -> { hits }",

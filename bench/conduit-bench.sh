@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# conduit app-path bench (docs/apps/CONDUIT.md rung 5). Every request goes
-# browser -> hyper -> wasmtime -> conduit_domain.composed.wasm
-# (conduit-domain + auth-guard + record-store + slug) -> wasi:keyvalue backend.
-#
 # Usage: bench/conduit-bench.sh [memory|nats]
 # Prereqs: oha, a built host + composed wasm (cargo xtask compose conduit + host build).
 set -euo pipefail
@@ -15,15 +11,10 @@ BIN="$ROOT/host/target/release/comp-host"
 COMPONENT="$ROOT/components/target/conduit_domain.composed.wasm"
 
 args=(--component "$COMPONENT" --addr "$ADDR" --kv "$KV")
-# NATS_URL so a run can point at a server of its own rather than whatever is on
-# the default port — which on a developer's machine is usually theirs.
+# NATS_URL: the default port on a developer's machine is usually their own server.
 [ "$KV" = "nats" ] && args+=(--nats-url "${NATS_URL:-nats://127.0.0.1:4222}")
-# PROFILE=1 counts what the app asks the store for and reports on shutdown. Off by
-# default because it takes a lock per operation, which is not what a bench should
-# be measuring.
+# PROFILE=1 is off by default: it takes a lock per store operation.
 [ "${PROFILE:-}" = 1 ] && args+=(--kv-profile)
-# CACHE_MS=<n> turns on the per-node read cache (ADR-0063). Compare a run with and
-# without: the guest-side op counts are identical, only what reaches the store moves.
 [ -n "${CACHE_MS:-}" ] && args+=(--kv-cache-ms "$CACHE_MS")
 VET_TENANT=conduit "$BIN" "${args[@]}" >/tmp/conduit-bench-host.log 2>&1 &
 HPID=$!
@@ -33,7 +24,6 @@ for _ in $(seq 1 100); do curl -sf "$BASE/" >/dev/null 2>&1 && break; sleep 0.1;
 jget() { node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const o=JSON.parse(d);console.log(eval("o"+process.argv[1]))})' "$1"; }
 reg() { curl -s "$BASE/api/users" -d "{\"user\":{\"username\":\"$1\",\"email\":\"$1@b.co\",\"password\":\"password123\"}}" | jget '.user.token'; }
 
-# Seed: author with 3 articles, a reader who follows + favorites.
 AUTHOR=$(reg author)
 for i in 1 2 3; do
   curl -s "$BASE/api/articles" -H "Authorization: Token $AUTHOR" \
@@ -44,7 +34,7 @@ READER=$(reg reader)
 curl -s -X POST "$BASE/api/profiles/author/follow" -H "Authorization: Token $READER" >/dev/null
 curl -s -X POST "$BASE/api/articles/$SLUG/favorite" -H "Authorization: Token $READER" >/dev/null
 
-row() { # name method path [token] [body]
+row() {
   local name="$1" method="$2" path="$3" token="${4:-}" body="${5:-}"
   local h=(); [ -n "$token" ] && h=(-H "authorization: Token $token")
   [ -n "$body" ] && h+=(-H "content-type: application/json" -d "$body")

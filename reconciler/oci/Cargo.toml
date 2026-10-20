@@ -5,9 +5,7 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
-# A library, so the reconciler can pull and the loop's tools can name an artifact without either
-# depending on the other (docs/adr/0115). The `comp-oci` command line, which also composes, stays
-# with the binaries that need `comp-fleet` for it.
+# A library so the reconciler and the loop's tools share it without depending on each other (docs/adr/0115).
 [dependencies]
 anyhow.workspace = true
 reqwest.workspace = true
@@ -15,6 +13,5 @@ serde_json.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
-# The OCI tests stand up a fake registry with axum.
 axum.workspace = true
 tokio.workspace = true

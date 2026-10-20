@@ -1,14 +1,4 @@
-//! `container-docker` — list containers running on the machine
-//!
-//! Listing containers needs a container runtime socket, which a `wasm32-wasip2` guest does
-//! not have (ADR-0095). This component holds the contract and reaches the daemon over HTTP,
-//! like `fs-watcher` reaches `comp-fswatch`. What it may dial is a MANIFEST decision
-//! (ADR-0008): the daemon's address is `docker-url` in `wasi:config` and the egress
-//! allow-list decides whether the call leaves at all; a component that could reach any
-//! address would make the allow-list decorative.
-//!
-//! Config (wasi:config/store):
-//!   docker-url    where `comp-docker` is listening, e.g. http://127.0.0.1:8002
+//! The daemon reaches the runtime socket a wasm guest lacks (ADR-0095); egress is the manifest's call (ADR-0008).
 
 #[allow(warnings)]
 mod bindings;
@@ -23,15 +13,13 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Ten seconds: a slower local socket call is a daemon in trouble, and a caller would rather
-/// hear that than wait.
+/// A slower local socket call is a daemon in trouble.
 const TIMEOUT_NS: u64 = 10_000_000_000;
 
 fn daemon_url() -> Result<String, DockerError> {
     match config::get("docker-url") {
         Ok(Some(u)) if !u.is_empty() => Ok(u),
-        // Unavailable rather than not-permitted: nobody refused anything, the
-        // deployment simply never said where the daemon is.
+        // Unavailable, not not-permitted: nobody refused; the deployment never said where the daemon is.
         _ => Err(DockerError::Unavailable(
             "docker-url is not set — this component has nowhere to ask".into(),
         )),
@@ -53,9 +41,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), DockerError> {
     Ok((scheme, authority, path))
 }
 
-/// POST the request and return the body. Every failure is `unavailable`: the
-/// daemon's own refusals arrive as JSON with a 200, so anything at this level
-/// is the transport rather than an answer.
+/// The daemon's refusals arrive as JSON with a 200, so any failure here is transport.
 fn post(body: Vec<u8>) -> Result<Vec<u8>, DockerError> {
     let url = daemon_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
@@ -63,10 +49,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, DockerError> {
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // A shared secret, if the deployment set one — see
-    // `comp_daemon_kit`'s own doc for why loopback
-    // binding alone is not a boundary. Absent means the daemon was
-    // started with no --token, so there is nothing to send.
+    // Loopback binding alone is not a boundary (see `comp_daemon_kit`); absent means no --token.
     if let Ok(Some(token)) = config::get("docker-token") {
         if !token.is_empty() {
             let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
@@ -111,9 +94,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, DockerError> {
         match stream.blocking_read(8192) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went
-            // wrong, and returning what arrived would be a truncated answer
-            // presented as a whole one.
+            // Anything but `Closed` is a failed read; returning what arrived would be a truncated answer.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -121,8 +102,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, DockerError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser: the daemon's replies are flat, so serde
-/// would be more code than the thing it reads.
+/// Flat replies: serde would be more code than what it reads.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];
@@ -155,8 +135,7 @@ impl Guest for Component {
         let raw = post(b"{}".to_vec())?;
         let text = String::from_utf8_lossy(&raw).into_owned();
 
-        // The daemon reports its refusals in the body rather than an HTTP
-        // status, so a 200 is not itself a success.
+        // Refusals come in the body, so a 200 is not itself a success.
         if let Some(err) = field(&text, "error") {
             let detail = field(&text, "detail").unwrap_or_default().to_string();
             return Err(DockerError::Unavailable(format!("{err}: {detail}")));
@@ -187,7 +166,6 @@ mod tests {
         assert_eq!(cs[1].name, "cache");
     }
 
-    /// No containers running is a valid answer, not a failure.
     #[test]
     fn an_empty_list_is_not_an_error() {
         let json = r#"{"containers":[]}"#;

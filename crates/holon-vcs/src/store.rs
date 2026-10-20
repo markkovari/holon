@@ -1,23 +1,4 @@
-//! Content-addressed blobs and compare-and-set pointers — the two storage
-//! primitives the engine is written against.
-//!
-//! * [`BlobStore`]: immutable bytes named by their SHA-256. `put` is idempotent.
-//!   Implemented by [`crate::mem::MemBlobs`] and, natively, a JetStream
-//!   ObjectStore (`nats::NatsBlobs`).
-//! * [`PointerStore`]: mutable names holding a hash, written ONLY by
-//!   compare-and-set against the revision that was read. A pointer can hold
-//!   `none` — a tombstone — and is never deleted: deleting a key resets its
-//!   revision, and a CAS against a revision from the key's previous life would then
-//!   match (ABA; the lesson of #284). Every value also names the op that wrote it
-//!   ([`PointerValue::op`]), which is what lets recovery tell whether a logged
-//!   intent landed (see [`crate::recovery`]).
-//! * [`Kv`]: the byte-valued CAS map both [`KvPointers`] and
-//!   [`crate::oplog::KvOpLog`] are built on, so the NATS adapter implements one
-//!   trait (JetStream KV `create`/`update`) and the pointer and oplog algorithms
-//!   are shared, and tested, in memory.
-//!
-//! Every trait method returns a `Send` future so an engine over these can be
-//! driven from a multi-threaded runtime; the core itself has no runtime.
+//! Pointers are tombstoned, never deleted: a delete resets the KV revision, so a stale CAS could match (ABA, #284).
 
 use std::future::Future;
 
@@ -26,38 +7,26 @@ use sha2::{Digest, Sha256};
 use crate::error::{Result, VcsError};
 use crate::model::{Hash, OpId};
 
-/// A pointer's revision. Opaque: compared for equality only, never assumed to
-/// increment by one (it is a JetStream stream sequence on NATS).
+/// Compared for equality only: on NATS it is a stream sequence, not a per-key counter.
 pub type Revision = u64;
 
-/// A compare-and-set that did not land: the key is not at the expected revision.
 /// `current` is the revision it is at (`None`: absent), when the store says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CasMismatch {
     pub current: Option<Revision>,
 }
 
-/// Immutable, content-addressed bytes.
 pub trait BlobStore: Send + Sync {
-    /// Store `bytes`; returns their lower-case hex SHA-256. Storing the same bytes
-    /// twice is a no-op that returns the same hash.
+    /// Idempotent; returns the lower-case hex SHA-256.
     fn put(&self, bytes: Vec<u8>) -> impl Future<Output = Result<Hash>> + Send;
-    /// The bytes named `hash`, or `None`.
     fn get(&self, hash: &str) -> impl Future<Output = Result<Option<Vec<u8>>>> + Send;
-    /// Whether `hash` is stored. The default fetches; adapters with a cheaper
-    /// metadata call override it.
     fn contains(&self, hash: &str) -> impl Future<Output = Result<bool>> + Send {
         async move { Ok(self.get(hash).await?.is_some()) }
     }
 }
 
-/// What a pointer holds: a hash (`None` = tombstone) and the op that wrote it.
-///
-/// `op` is `None` only for a pointer written before ops were named in values
-/// (verify reports those as unexplained). The engine writes the id of the op
-/// whose logged intent this write carries out — the op is appended BEFORE the
-/// write, so the id is known — and a fence (a rewrite of the same value to bump
-/// the revision) keeps the op it found.
+/// `value: None` is a tombstone. `op` is the op whose logged intent this write carries out, so recovery
+/// can tell whether it landed; `None` only for values written before ops were named.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PointerValue {
     pub value: Option<Hash>,
@@ -70,18 +39,13 @@ impl PointerValue {
     }
 }
 
-/// Mutable pointers to hashes, compare-and-set only.
 pub trait PointerStore: Send + Sync {
-    /// The pointer's value and revision; `None` when the key has never been
-    /// written. Must never be served from a cache: this is the read a CAS is
-    /// computed from.
+    /// Never served from a cache: this is the read a CAS is computed from.
     fn get(
         &self,
         key: &str,
     ) -> impl Future<Output = Result<Option<(PointerValue, Revision)>>> + Send;
-    /// Write `value` only if the key is at `expected` (`None`: must not exist).
-    /// `Ok(Err(_))` is a lost race — nothing was written — distinct from `Err`, a
-    /// store failure.
+    /// `Ok(Err(_))` is a lost race (nothing written), distinct from `Err`, a store failure.
     fn cas(
         &self,
         key: &str,
@@ -90,8 +54,7 @@ pub trait PointerStore: Send + Sync {
     ) -> impl Future<Output = Result<std::result::Result<Revision, CasMismatch>>> + Send;
 }
 
-/// A byte-valued map with per-key compare-and-set. Keys are what [`escape`]
-/// produces joined with `/`, so they fit JetStream KV's key charset.
+/// Keys are [`escape`]d segments joined with `/`, so they fit JetStream KV's key charset.
 pub trait Kv: Send + Sync {
     fn get(&self, key: &str) -> impl Future<Output = Result<Option<(Vec<u8>, Revision)>>> + Send;
     fn cas(
@@ -102,9 +65,7 @@ pub trait Kv: Send + Sync {
     ) -> impl Future<Output = Result<std::result::Result<Revision, CasMismatch>>> + Send;
 }
 
-/// [`PointerStore`] over any [`Kv`]. A value is `<hash>@<op>`, with `-` for the
-/// tombstone's hash (never an empty value: some KV clients read an empty value
-/// as absent). `<hash>` or `-` alone — no op — is read as `op: None`.
+/// Stores `<hash>@<op>`; a tombstone is `-`, never empty (some KV clients read an empty value as absent).
 pub struct KvPointers<K> {
     kv: K,
 }
@@ -120,7 +81,6 @@ impl<K> KvPointers<K> {
 
 const TOMBSTONE: &str = "-";
 
-/// The byte encoding [`KvPointers`] stores.
 pub fn encode_pointer(v: &PointerValue) -> Vec<u8> {
     let mut s = v.value.clone().unwrap_or_else(|| TOMBSTONE.to_string());
     if let Some(op) = v.op {
@@ -170,20 +130,15 @@ impl<K: Kv> PointerStore for KvPointers<K> {
     }
 }
 
-/// Lower-case hex SHA-256 of `bytes`.
 pub fn sha256_hex(bytes: &[u8]) -> Hash {
     hex::encode(Sha256::digest(bytes))
 }
 
-/// Whether `s` is 64 lower-case hex characters.
 pub fn is_hash(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// Escape one key segment so it is safe in a JetStream KV key and cannot forge a
-/// separator: `[A-Za-z0-9_-]` stays, every other byte (including `/`, `.` and `=`
-/// itself) becomes `=XX`, upper-case hex. Injective, so two workspace ids never
-/// share a key.
+/// Injective and KV-key-safe, so a segment can neither forge a separator nor share a key with another.
 pub fn escape(segment: &str) -> String {
     let mut out = String::with_capacity(segment.len());
     for b in segment.bytes() {
@@ -200,7 +155,6 @@ pub fn escape(segment: &str) -> String {
     out
 }
 
-/// The inverse of [`escape`]: `None` for a string `escape` cannot have produced.
 pub fn unescape(segment: &str) -> Option<String> {
     if segment == "=" {
         return Some(String::new());
@@ -228,8 +182,7 @@ pub fn unescape(segment: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-// Shared stores: several engines (several agents' processes, in a test) over the
-// same backends.
+// Several engines over one backend, as several agents' processes are in tests.
 impl<T: BlobStore> BlobStore for std::sync::Arc<T> {
     fn put(&self, bytes: Vec<u8>) -> impl Future<Output = Result<Hash>> + Send {
         (**self).put(bytes)

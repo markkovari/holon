@@ -1,16 +1,4 @@
-//! A decomposed goal, end to end: two parts, a contract, a negotiation, and one joined tree judged by
-//! the same gate that judged the halves (ADR-0086).
-//!
-//! Eleven components across three apps, a real SurrealDB, a real native checks runner and a scripted
-//! model, so ORCHESTRATION is asserted and not a model's mood.
-//!
-//! **The frontend cannot go green unless the negotiation actually happened.** Its script has two
-//! rules: one writes a request when told to render results, one writes working code when it sees
-//! `total_pages`, which is not in the first contract. A passing frontend means the request was read
-//! from its candidate, answered by a second model call, written to the registry, ratified by the
-//! backend's gate, and laid into the next prompt as `CONTRACT.md`.
-//!
-//! Skipped, loudly, when Docker cannot start the database.
+//! A decomposed goal end to end (ADR-0086); the frontend only passes if the negotiation happened.
 
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -21,16 +9,15 @@ use comp_goal::contract::{Answerer, Registry};
 use comp_goal::generation::{Bounds, Part};
 use serde_json::{json, Value};
 
-// The shared test module of the root's suites, included rather than copied (docs/adr/0115).
+// Shared harness, included rather than copied (docs/adr/0115).
 #[path = "../../tests/harness/mod.rs"]
 mod harness;
 use harness::{Surreal, SURREAL_IMAGE, SURREAL_PASSWORD};
 
-/// The commit the base tree is cached under. Not empty: the runner caches a posted tree by commit and
-/// refuses to guess, and an empty one made every check fail with `need the tree for (no commit given)`.
+/// Not empty: the runner caches a posted tree by commit and refuses to guess.
 const BASE: &str = "compose-base-1";
 
-/// The interface the human wrote. Note what is NOT in it: `total_pages`.
+/// Note what is not in it: `total_pages`.
 const CONTRACT_V1: &str =
     r#"{"routes":[{"method":"GET","path":"/api/search","example":{"hits":[],"has_more":false}}]}"#;
 
@@ -61,8 +48,7 @@ fn artifacts() -> Vec<String> {
     out
 }
 
-/// The gate, as a real process: the runner that judges the branches also judges the composition, or
-/// failures of the join become arguments about the harness.
+/// The same runner judges branches and the composition, or join failures argue about the harness.
 struct Checks {
     child: Child,
     port: u16,
@@ -131,7 +117,7 @@ fn check(id: &str, command: &[&str]) -> Value {
     json!({ "id": id, "required": true, "weight": 1, "command": command })
 }
 
-/// A part's plan. `writable` is disjoint per part on purpose (`compose::merge` refuses an overlap).
+/// `writable` is disjoint per part (`compose::merge` refuses an overlap).
 fn part(name: &str, text: &str, writable: &[&str], checks: Value) -> Part {
     Part {
         name: name.into(),
@@ -187,9 +173,7 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
         timeout: Duration::from_secs(60),
     };
 
-    // --- the human's contract ---
-    // Retried until it lands: the first call touching SurrealDB through two components is also the
-    // readiness check.
+    // Retried: the first call through two components to SurrealDB is also the readiness check.
     let mut published = 0;
     fleet.until("publishing the first contract", Duration::from_secs(180), || {
         match registry.publish(CONTRACT_V1) {
@@ -216,26 +200,21 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
             "frontend",
             "render the results with a pager",
             &["ui/app.ts", compose::REQUEST_PATH],
-            // Neither the id NOR THE COMMAND may contain the trigger string: a repair prompt carries
-            // the failing check's command, so `grep -q total_pages` leaked the answer and the frontend
-            // passed in round one. The scripted model matches on everything the caller said, as a real
-            // model would read it.
+            // Neither id nor command may contain the trigger: a repair prompt carries the command.
             json!([check("pager-renders", &["grep", "-q", "pager", "ui/app.ts"])]),
         ),
     ];
 
-    // --- the run, through the SAME code `comp goal run` uses ---
-    // `compose::run_parts` is the orchestration; the binary only prints and lands.
+    // The same code `comp goal run` uses.
     let run = compose::run_parts(
         &compose::Wiring {
             driver_url: &format!("http://127.0.0.1:{port}/run"),
             driver_host: "composedrive.acme.test",
             checks_url: &format!("http://127.0.0.1:{}/check", checks.port),
-            // This harness starts its own runner on loopback with no token.
+            // Its own runner on loopback, with no token.
             checks_token: None,
             registry: &registry,
             answerer: Some(&answerer),
-            // The parts read, write and attribute against a real pool, covering the decomposed path.
             memory: Some(&pool),
         },
         &parts,
@@ -246,8 +225,7 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
         Duration::from_secs(120),
         BASE,
         &base_tree(),
-        // The goal's own checks, belonging to neither part: the frontend reads a field the backend
-        // serves, which only the joined tree can show.
+        // The frontend reads a field the backend serves, which only the joined tree can show.
         &json!([
             check("both-halves-present", &["test", "-f", "src/api.rs"]),
             check("the-join", &["grep", "-q", "total_pages", "ui/app.ts"]),
@@ -312,10 +290,7 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
         "a question must not land in the pull request: {paths:?}"
     );
 
-    // --- the parts learned, and not from each other's pool ---
-    // The frontend failed twice before the contract moved, so it has something to say; the pool is
-    // keyed by the goal that was ASKED. Asserted, since a pool that quietly does nothing is the
-    // failure mode.
+    // Asserted, since a pool that quietly does nothing is the failure mode.
     let fe_goal = "Render the results with a pager, against the fixtures in .contract-mocks.";
     let learned = pool
         .recall(

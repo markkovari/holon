@@ -1,9 +1,3 @@
-//! Scoping a goal to one component crate: deriving its build-scope from the
-//! repository layout, and trimming a shared workspace manifest down to it.
-
-/// The build-scope for a single component crate: the whole crate (src + wit + Cargo.toml) plus the
-/// shared workspace root, whose members are trimmed to just this crate. Name the component and the
-/// paths the gate needs come from the layout, not a hand-typed list.
 pub(crate) fn component_scope(name: &str) -> (Vec<String>, String, Vec<String>) {
     (
         vec![format!("components/{name}/"), "components/Cargo.toml".to_string()],
@@ -12,10 +6,7 @@ pub(crate) fn component_scope(name: &str) -> (Vec<String>, String, Vec<String>) 
     )
 }
 
-/// The index of the `]` that closes the array opened at `open`, ignoring any inside a `#` comment.
-///
-/// TOML has no block comments and a `#` runs to the end of the line, but a `#` inside a quoted string
-/// is not a comment, so quotes are tracked too (a crate named `"a#b"` is legal).
+/// Ignores a `]` inside a `#` comment; quotes are tracked since `"a#b"` is a legal crate name.
 fn closing_bracket(text: &str, open: usize) -> Option<usize> {
     let mut in_comment = false;
     let mut in_string = false;
@@ -31,18 +22,13 @@ fn closing_bracket(text: &str, open: usize) -> Option<usize> {
     None
 }
 
-/// Rewrite a Cargo manifest's `members = [ … ]` to exactly `keep`.
-///
-/// A flat string edit rather than a toml round-trip, so the rest of the manifest (profiles,
-/// dependencies, comments) survives untouched.
+/// A string edit, not a toml round-trip, so profiles and comments survive untouched.
 pub(crate) fn trim_members(manifest: &str, keep: &[String]) -> String {
     let Some(start) = manifest.find("members") else { return manifest.to_string() };
     let Some(open) = manifest[start..].find('[').map(|i| start + i) else {
         return manifest.to_string();
     };
-    // The first `]` after the opening bracket is NOT necessarily the array's: a comment inside the list
-    // can hold one (`components/Cargo.toml`'s does), and closing on it produced invalid TOML that cargo
-    // refused to load, so every branch scored zero. Skip what a `#` comments out.
+    // A comment inside the list can hold a `]` (`components/Cargo.toml`'s does).
     let Some(close) = closing_bracket(manifest, open) else {
         return manifest.to_string();
     };
@@ -70,8 +56,6 @@ mod tests {
         assert!(out.contains("resolver = \"2\""), "the rest survives");
     }
 
-    /// The real `components/Cargo.toml`, whose members list opens with a comment containing `[workspace]`,
-    /// so the first `]` after the bracket is not the array's.
     #[test]
     fn a_bracket_inside_a_comment_does_not_close_the_members_list() {
         let manifest = concat!(
@@ -97,7 +81,6 @@ mod tests {
         toml_is_parseable(&out);
     }
 
-    /// Parsed with the same crate cargo would use, so "valid TOML" is not an opinion.
     fn toml_is_parseable(text: &str) {
         let parsed: Result<toml::Value, _> = toml::from_str(text);
         assert!(

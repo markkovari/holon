@@ -1,13 +1,4 @@
-//! `desktop-clipboard` — read the desktop session's clipboard
-//!
-//! Reading the clipboard needs the desktop session's pasteboard, which a `wasm32-wasip2`
-//! guest does not have (ADR-0095). This component holds the contract and reaches the daemon
-//! over HTTP like `fs-watcher` reaches `comp-fswatch`. What it may dial is a MANIFEST
-//! decision (ADR-0008): the daemon's address is `clipboard-url` in `wasi:config` and the
-//! egress allow-list decides whether the call leaves at all.
-//!
-//! Config (wasi:config/store):
-//!   clipboard-url    where `comp-clipboard` is listening, e.g. http://127.0.0.1:8003
+//! The daemon reaches the pasteboard a wasm guest lacks (ADR-0095); egress is the manifest's call (ADR-0008).
 
 #[allow(warnings)]
 mod bindings;
@@ -22,15 +13,13 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Ten seconds: a slower local desktop-API call is a daemon in trouble, and a caller would
-/// rather hear that than wait.
+/// A slower local desktop-API call is a daemon in trouble.
 const TIMEOUT_NS: u64 = 10_000_000_000;
 
 fn daemon_url() -> Result<String, ClipboardError> {
     match config::get("clipboard-url") {
         Ok(Some(u)) if !u.is_empty() => Ok(u),
-        // Unavailable rather than empty: nobody looked at the clipboard, the
-        // deployment simply never said where the daemon is.
+        // Unavailable, not empty: the deployment never said where the daemon is.
         _ => Err(ClipboardError::Unavailable(
             "clipboard-url is not set — this component has nowhere to ask".into(),
         )),
@@ -54,9 +43,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), ClipboardError> {
     Ok((scheme, authority, path))
 }
 
-/// POST the request and return the body. Every failure is `unavailable`: the
-/// daemon's own refusals arrive as JSON with a 200, so anything at this level
-/// is the transport rather than an answer.
+/// The daemon's refusals arrive as JSON with a 200, so any failure here is transport.
 fn post(body: Vec<u8>) -> Result<Vec<u8>, ClipboardError> {
     let url = daemon_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
@@ -64,10 +51,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, ClipboardError> {
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // A shared secret, if the deployment set one — see
-    // `comp_daemon_kit`'s own doc for why loopback
-    // binding alone is not a boundary. Absent means the daemon was
-    // started with no --token, so there is nothing to send.
+    // Loopback binding alone is not a boundary (see `comp_daemon_kit`); absent means no --token.
     if let Ok(Some(token)) = config::get("clipboard-token") {
         if !token.is_empty() {
             let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
@@ -112,9 +96,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, ClipboardError> {
         match stream.blocking_read(8192) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went
-            // wrong, and returning what arrived would be a truncated answer
-            // presented as a whole one.
+            // Anything but `Closed` is a failed read; returning what arrived would be a truncated answer.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -122,7 +104,6 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, ClipboardError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];
@@ -136,9 +117,7 @@ impl Guest for Component {
         let raw = post(b"{}".to_vec())?;
         let text = String::from_utf8_lossy(&raw).into_owned();
 
-        // The daemon reports its refusals in the body. Mapping "empty" back
-        // to its own case matters: a caller that cannot tell "nothing there"
-        // from "ask again later" would retry a poll that will never change.
+        // "empty" maps to its own case, or a caller retries a poll that will never change.
         if let Some(err) = field(&text, "error") {
             return Err(match err {
                 "empty" => ClipboardError::Empty,
@@ -166,8 +145,7 @@ mod tests {
         assert!(field(json, "error").is_none());
     }
 
-    /// "empty" carries no detail field — a caller reading a missing field as
-    /// "unavailable" would misreport a clipboard with nothing on it.
+    /// "empty" carries no detail; reading that as unavailable would misreport an empty clipboard.
     #[test]
     fn an_empty_clipboard_is_told_apart_from_an_unavailable_one() {
         let empty = r#"{"error":"empty"}"#;

@@ -1,16 +1,4 @@
-//! eshop:catalog — the eShopOnDapr Catalog.API over composed contracts.
-//!
-//! Read path: the seeded demo catalog (brands / types / items) with
-//! pageIndex/pageSize paging and brand/type filters, exactly the storefront
-//! query surface of the original. Write path: none over HTTP — stock only
-//! moves through the checkout choreography, same as the original:
-//!
-//!   OrderStatusChangedToAwaitingStockValidation  -> OrderStockConfirmed
-//!                                                 | OrderStockRejected
-//!   OrderStatusChangedToPaid                     -> stock decremented
-//!
-//! event:bus is pull-based, so consumption happens on POST /internal/pump
-//! (driven by the eshop-pump loop; Dapr's push subscription stand-in).
+//! eShopOnDapr Catalog.API; stock moves only through the checkout choreography, via POST /internal/pump.
 
 #[allow(warnings)]
 mod bindings {
@@ -33,7 +21,6 @@ mod bindings {
         world: "eshop:catalog/catalog-service",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -102,8 +89,7 @@ fn usage_json() -> Outcome {
     )
 }
 
-/// The eShopOnDapr demo catalog, verbatim (prices in integer cents).
-/// ponytail: seeded in code, no admin CRUD — the original has none either.
+/// ponytail: seeded in code, no admin CRUD (the original has none either).
 const SEED_BRANDS: [&str; 5] = ["Azure", ".NET", "Visual Studio", "SQL Server", "Other"];
 const SEED_TYPES: [&str; 4] = ["Mug", "T-Shirt", "Sheet", "USB Memory Stick"];
 const SEED_ITEMS: [(&str, &str, &str, u64); 12] = [
@@ -122,7 +108,6 @@ const SEED_ITEMS: [(&str, &str, &str, u64); 12] = [
 ];
 const SEED_STOCK: u64 = 100;
 
-/// Idempotent: one count() read steady-state, same gate as helpdesk-domain.
 fn ensure_seeded() -> Result<(), Outcome> {
     if records::count(ITEMS).map(|n| n > 0).unwrap_or(false) {
         return Ok(());
@@ -179,8 +164,7 @@ fn list_items(query: &str) -> Outcome {
     let brand = query_param(query, "brand");
     let typ = query_param(query, "type");
 
-    // ponytail: 12-item demo catalog — fetch the indexed subset (or all) and
-    // page in memory; add real index-ordered paging only if the catalog grows.
+    // ponytail: a 12-item catalog is paged in memory; add index-ordered paging if it grows.
     let entries = match (&brand, &typ) {
         (Some(b), _) => match records::find_by(ITEMS, "brandId", &json!(b).to_string()) {
             Ok(e) => e,
@@ -261,12 +245,8 @@ struct OrderStockEvent {
     items: Vec<StockItem>,
 }
 
-/// Drain this service's consumer group: answer stock-validation requests and
-/// apply paid-order decrements. At-least-once, so both consumers are deduped
-/// through idempotency:guard keyed on the order id — concurrent pump drivers
-/// polling the same unacked batch otherwise double-decrement (caught by the
-/// choreography bench, ESHOP-BENCH.md). Ack only what was handled or replayed;
-/// an in-progress or backend-failed event stays unacked for the next pass.
+/// At-least-once, so both consumers dedupe through idempotency:guard on the order id: concurrent
+/// pumps otherwise double-decrement (ESHOP-BENCH.md). Unhandled events stay unacked for the next pass.
 fn pump() -> Outcome {
     if let Err(o) = ensure_seeded() {
         return o;
@@ -285,10 +265,7 @@ fn pump() -> Outcome {
     }
 }
 
-/// Poll one topic and run `handle` exactly once per order id. The bus offset
-/// is a watermark (ack advances past everything below the highest id), so
-/// events are handled strictly in order and the pass STOPS at the first
-/// skippable event — acking only the contiguous handled prefix.
+/// The offset is a watermark, so the pass stops at the first skippable event and acks only the prefix.
 fn consume(topic: &str, kind: &str, handle: impl Fn(&OrderStockEvent)) -> Result<u32, Outcome> {
     let events = bus::poll(topic, GROUP, 32).map_err(bus_err)?;
     let mut handled = 0;
@@ -305,11 +282,8 @@ fn consume(topic: &str, kind: &str, handle: impl Fn(&OrderStockEvent)) -> Result
                 handled += 1;
                 acked.push(ev.id.clone());
             }
-            // already handled by an earlier delivery: just advance the offset.
             Ok(Some(_)) => acked.push(ev.id.clone()),
-            // a concurrent twin holds the key, or the backend hiccuped —
-            // stop here so the watermark can't pass this event; a later pass
-            // retries it (the reservation expires).
+            // Stop so the watermark cannot pass this event; a later pass retries it.
             Err(_) => break,
         }
     }
@@ -341,8 +315,7 @@ fn validate_stock(req: &OrderStockEvent) {
     let _ = bus::publish(topic, payload.to_string().as_bytes());
 }
 
-/// Decrement, floored at 0. Revision-checked with one retry — pump is the only
-/// writer, the retry covers a concurrent pump replica.
+/// One retry covers a concurrent pump replica.
 fn adjust_stock(product_id: &str, units: u64) {
     for _ in 0..2 {
         let Ok(entry) = records::get(ITEMS, product_id) else { return };

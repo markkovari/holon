@@ -53,7 +53,6 @@ impl BoardActions for LatticeActions {
         self.lattice.read(cx).roster()
     }
 
-    /// The agents that are not paused; those that can start a coding session first.
     fn agents(&self, cx: &App) -> Vec<AgentChoice> {
         let mut v: Vec<AgentChoice> = self
             .lattice
@@ -92,7 +91,6 @@ impl Console {
         window.focus(&focus_handle, cx);
         let tree = lattice.read(cx).tree.clone();
         let actions = Rc::new(LatticeActions { lattice: lattice.clone() });
-        // under an ordinary title bar and the way back, not under the traffic lights
         let board = cx.new(|cx| Board::new(tree, actions, Mode::Dark, cx).with_inset(14.0));
         Self { lattice, focus_handle, message: String::new(), board, show_board: false }
     }

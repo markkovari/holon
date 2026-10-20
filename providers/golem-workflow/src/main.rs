@@ -1,8 +1,3 @@
-//! golem-workflow — a native wasmCloud v2 capability provider that satisfies
-//! `durable:workflow/orchestrator` over wRPC by bridging `trigger(req)` to a
-//! Golem agent's HTTP endpoint (the bridge call is `invoke_golem` in the lib;
-//! see `tests/golem_live.rs`).
-
 use golem_workflow_provider::{invoke_golem, GolemConfig};
 use wasmcloud_provider_sdk::{
     get_connection, load_host_data, run_provider, serve_provider_exports, Context, Provider,
@@ -47,8 +42,7 @@ impl Handler<Option<Context>> for GolemProvider {
     }
 
     async fn start(&self, _cx: Option<Context>, req: RunRequest) -> anyhow::Result<Result<String, RunError>> {
-        // rung: start == trigger, returning the worker id. True fire-and-poll
-        // (status) is a follow-up once Golem's async-invocation API is wired.
+        // start == trigger for now; fire-and-poll needs Golem's async-invocation API.
         let id = req.workflow_id.clone();
         Ok(self.run(&req).await.map(|_| id))
     }

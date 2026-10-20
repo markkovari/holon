@@ -1,13 +1,4 @@
-//! `pdf` — write a PDF document — text laid onto pages, with no native library and no headless browser
-//!
-//! A dependency-free PDF 1.4 writer: flows text blocks down US-Letter pages (612×792 pt, 54 pt margins), starting a new
-//! page when the next line won't fit, and emits a complete file (object table, built-in Type1 Helvetica / Helvetica-Bold,
-//! a content stream per page, `xref`, `trailer`). No state, no host imports, no external crates.
-//!
-//! Object numbering: 1 = Catalog, 2 = Pages, 3 = Helvetica, 4 = Helvetica-Bold, then two consecutive objects per page
-//! (page dict, content stream) from 5. Byte offsets are recorded as the file is serialized so the `xref` table is exact:
-//! a wrong offset is the classic way to produce a file readers reject.
-//!
+//! Byte offsets are recorded while serializing: a wrong xref offset is the classic way to get a file readers reject.
 //! ponytail: Latin-1 text only (code points > 255 become `?`); embed a font subset if Unicode reports matter.
 
 #[allow(warnings)]
@@ -20,10 +11,9 @@ struct Component;
 const PAGE_W: i32 = 612;
 const PAGE_H: i32 = 792;
 const MARGIN: i32 = 54;
-const TOP: i32 = PAGE_H - MARGIN; // first baseline ceiling
+const TOP: i32 = PAGE_H - MARGIN;
 const DEFAULT_SIZE: u32 = 11;
 
-/// A single placed line: baseline position, font, size, escaped bytes.
 struct Line {
     x: i32,
     y: i32,
@@ -32,7 +22,7 @@ struct Line {
     text: Vec<u8>,
 }
 
-/// Map a code point to its WinAnsi (CP1252) byte, or `None` if the built-in fonts have no glyph. Latin-1 is identity; common "smart" punctuation lives in 0x80–0x9F.
+/// WinAnsi (CP1252): Latin-1 is identity; "smart" punctuation lives in 0x80–0x9F.
 fn winansi(c: char) -> Option<u8> {
     Some(match c {
         '—' => 0x97, // em dash
@@ -50,7 +40,6 @@ fn winansi(c: char) -> Option<u8> {
     })
 }
 
-/// Escape one string into PDF-literal bytes for WinAnsi text: `(`, `)`, `\` are backslash-escaped; unrepresentable code points become `?`.
 fn escape(s: &str) -> Vec<u8> {
     let mut out = Vec::with_capacity(s.len() + 2);
     for c in s.chars() {
@@ -65,7 +54,6 @@ fn escape(s: &str) -> Vec<u8> {
     out
 }
 
-/// Lay blocks out into pages of placed lines. A block taller than the space left starts a new page.
 fn layout(doc: &Document) -> Vec<Vec<Line>> {
     let mut pages: Vec<Vec<Line>> = vec![Vec::new()];
     let mut y = TOP;
@@ -79,7 +67,7 @@ fn layout(doc: &Document) -> Vec<Vec<Line>> {
 
     for b in &blocks {
         let size = if b.size == 0 { DEFAULT_SIZE } else { b.size };
-        let leading = (size as i32) * 7 / 5 + 2; // ~1.4× the size
+        let leading = (size as i32) * 7 / 5 + 2;
         y -= b.gap_before as i32;
         if y - leading < MARGIN {
             pages.push(Vec::new());
@@ -97,7 +85,6 @@ fn layout(doc: &Document) -> Vec<Vec<Line>> {
     pages
 }
 
-/// The content stream bytes for one page's lines.
 fn content(lines: &[Line]) -> Vec<u8> {
     let mut s = Vec::new();
     for ln in lines {
@@ -119,7 +106,7 @@ impl Guest for Component {
         let pages = layout(&doc);
         let n_pages = pages.len();
 
-        // Object bodies indexed by (object number - 1). Fonts are 3 and 4; page i occupies objects 5+2i (page dict) and 6+2i (content stream).
+        // Catalog 1, Pages 2, fonts 3 and 4; page i is 5+2i (dict) and 6+2i (content stream).
         let page_obj = |i: usize| 5 + 2 * i;
         let content_obj = |i: usize| 6 + 2 * i;
 

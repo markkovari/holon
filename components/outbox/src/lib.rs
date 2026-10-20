@@ -1,31 +1,5 @@
-//! `outbox` — emit an event reliably after a state change — the transactional outbox, so a crash neither loses nor double-fires it
-//!
-//! A durable, at-least-once event queue implementing the transactional-outbox pattern on `wasi:keyvalue`:
-//! enqueue the event in the same store as the work, then have a relay claim and dispatch it with explicit ack,
-//! so a crash neither loses nor double-fires it. This is the durable-queue half; dispatch is the relay's job.
-//!
-//! Lifecycle:
-//!   enqueue → pending → (claim, leased) → in-flight
-//!     ├─ ack   → removed from queue
-//!     └─ fail  → pending again (with backoff) … or → dead after max-attempts
-//!   dead → (replay) → pending
-//!
-//! Leased claim: `claim` flips a due event to `in-flight` and stamps `not_before = now + lease_seconds`, so
-//! another claimer won't see it until the lease passes and a crashed relay's events become claimable again.
-//! `fail` reschedules with exponential backoff (`base-backoff * 2^(attempts-1)`, shift capped to avoid
-//! overflow) until `attempts` exceeds `max-attempts`, then dead-letters.
-//!
-//! Storage layout (BUCKET = "default"):
-//!   ob_{id}   one tab-delimited line per event (state, attempts, created, not_before, base64(topic), base64(payload))
-//!   ob_idx    newline-joined list of all live event ids, so `claim` / `dead-letters` can enumerate without a key-scan API.
-//!
-//! Config (wasi:config/store):
-//!   max-attempts   retry cap before dead-lettering (default 8)
-//!   base-backoff   backoff base seconds, doubled per attempt (default 5)
-//!
-//! RACE CAVEAT (best-effort, NOT a correctness guarantee): the `ob_idx` index is maintained by
-//! read-modify-write and `wasi:keyvalue@0.2.0-draft` has no compare-and-swap, so concurrent writers can
-//! clobber each other's index updates and drop an id. Assumes a single writer; a true fix needs CAS on the index.
+//! Transactional outbox on wasi:keyvalue: at-least-once, leased claim, backoff, dead-letter.
+//! RACE CAVEAT: `ob_idx` is read-modify-write and keyvalue@0.2.0-draft has no CAS; assumes a single writer.
 
 #[allow(warnings)]
 mod bindings;
@@ -62,12 +36,11 @@ fn now() -> u64 {
     wall_clock::now().seconds
 }
 
-/// A fresh 16-hex id from 8 random bytes (same scheme as idempotency-guard's nonce).
 fn new_id() -> String {
     get_random_bytes(8).iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// Sanitize an opaque id to NATS-legal kv chars (same scheme as idempotency-guard's `id_key`), prefixed with `ob_`.
+/// NATS-legal kv chars only (as idempotency-guard's `id_key`).
 fn ob_key(id: &str) -> String {
     let mut out = String::with_capacity(id.len() + 3);
     out.push_str("ob_");
@@ -101,8 +74,7 @@ fn char_state(c: char) -> Result<State, OutboxError> {
     }
 }
 
-// ---- record (de)serialization: one tab-delimited line `{state}\t{attempts}\t{created}\t{not_before}\t{b64(topic)}\t{b64(payload)}`;
-// topic + payload are base64'd so arbitrary bytes (incl. tabs/newlines) round-trip.
+// topic and payload are base64'd so tabs/newlines round-trip in the tab-delimited line.
 
 fn serialize(ev: &Event) -> String {
     format!(
@@ -271,10 +243,10 @@ impl Guest for Component {
         let now = now();
         ev.attempts = ev.attempts.saturating_add(1);
         if ev.attempts > max_attempts() {
-            // Exhausted retries: dead-letter it (kept in the index for inspection / replay).
+            // Dead-lettered, but kept in the index for inspection / replay.
             ev.state = State::Dead;
         } else {
-            // Exponential backoff: base * 2^(attempts-1), shift capped so the multiply can't overflow.
+            // Shift capped so the multiply can't overflow.
             ev.state = State::Pending;
             let shift = (ev.attempts - 1).min(16);
             let backoff = base_backoff().saturating_mul(1u64 << shift);

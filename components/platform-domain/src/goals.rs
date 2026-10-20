@@ -1,9 +1,3 @@
-//! Projects and their queues — ADR-0082's half of the platform.
-//!
-//! Split out of `lib.rs` because it answers a different question: what is TO BE DONE, where the rest is
-//! about what is DEPLOYED. The lifecycle is a table rather than scattered `if state == …` checks: nothing
-//! leaves `failed` (a requeue makes a NEW goal) and nothing reaches `done` without having run.
-
 use serde_json::{json, Map, Value};
 
 use crate::req;
@@ -11,9 +5,6 @@ use crate::{
     auth_types, bus, caller, now, orgs, personal_org, read_body, records, str_of, Incoming, Outcome,
 };
 
-/// Every route here needs a session and the org the caller acts as, differing only in the required
-/// `orgs::Role`. A plain function because the *check* is one place's business, though the *early return*
-/// has to happen at each call site (see `session!` below).
 fn session(
     request: &Incoming,
     query: &Map<String, Value>,
@@ -28,7 +19,7 @@ fn session(
     }
 }
 
-/// `let (p, org) = session!(request, query, orgs::Role::Member);` — only a macro expanding in place can early-return from its CALLER.
+/// Only a macro expanding in place can early-return from its CALLER.
 macro_rules! session {
     ($request:expr, $query:expr, $role:expr) => {
         match session($request, $query, $role) {
@@ -38,8 +29,7 @@ macro_rules! session {
     };
 }
 
-/// The topic every transition on `project`'s queue publishes to. One per project, so a consumer polls
-/// exactly that log instead of filtering one firehose.
+/// One per project, so a consumer polls exactly that log instead of filtering a firehose.
 fn goal_topic(project: &str) -> String {
     format!("goal.{project}")
 }
@@ -47,8 +37,7 @@ fn goal_topic(project: &str) -> String {
 const PROJECTS: &str = "projects";
 const GOALS: &str = "goals";
 
-/// The goal lifecycle, as the only legal transitions. Nothing may leave `failed` (a requeue makes a NEW
-/// goal, so what was tried stays visible) and nothing may reach `done` without having run.
+/// Nothing leaves `failed` (a requeue makes a NEW goal, so what was tried stays visible).
 fn goal_may(from: &str, to: &str) -> bool {
     matches!(
         (from, to),
@@ -63,7 +52,7 @@ fn goal_may(from: &str, to: &str) -> bool {
     )
 }
 
-/// A project name that is safe as part of a store name and a branch name.
+/// Safe inside a store name and a branch name.
 fn valid_project_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 40
@@ -169,8 +158,7 @@ pub fn goal_create(request: &Incoming, project: &str, query: &Map<String, Value>
     if b.title.trim().is_empty() {
         return Outcome::Err(422, "a goal needs a title".into());
     }
-    // A sub-goal's parent is checked HERE, where the answer is a 422 naming the problem, rather than leaving a
-    // worklist with a child under a parent in another project, or a chain that never ends.
+    // Checked here, where the answer is a 422 naming the problem, not a cross-project child or an endless chain.
     let parent = b.parent.unwrap_or_default();
     if !parent.is_empty() {
         if let Err((code, msg)) = parent_is_usable(&parent, project) {
@@ -182,8 +170,7 @@ pub fn goal_create(request: &Incoming, project: &str, query: &Map<String, Value>
         "title": b.title.trim(),
         "spec": b.spec.unwrap_or_default(),
         "priority": b.priority.unwrap_or(100),
-        // Empty when this is a goal in its own right. A field rather than a table: a sub-goal IS a goal (same
-        // lifecycle, same queue), and a separate table would double every worklist query.
+        // A field, not a table: a sub-goal IS a goal, and a table would double every worklist query.
         "parent": parent,
         // Queued, and it stays there: a human starts every goal (ADR-0082); no loop drains this, on purpose.
         "state": "queued",
@@ -203,17 +190,10 @@ pub fn goal_create(request: &Incoming, project: &str, query: &Map<String, Value>
     }
 }
 
-/// How deep a decomposition may go. A bound rather than a promise that cycles cannot happen: the walk
-/// catches an actual cycle, this catches a chain that is technically a tree and never gets its leaves run.
+/// The walk catches a cycle; this catches a tree that never gets its leaves run.
 const MAX_GOAL_DEPTH: usize = 8;
 
-/// May this goal be a parent, for a child in `project`?
-///
-/// Three refusals, all 422 (fixable by the caller):
-///
-///   * no such goal — usually an id from another environment;
-///   * a different project — a worklist is per project;
-///   * too deep, or a cycle — walked rather than assumed, since a chain closing on itself would hang every reader.
+/// A chain is walked, not assumed: one closing on itself would hang every reader.
 fn parent_is_usable(parent: &str, project: &str) -> Result<(), (u16, String)> {
     let Ok(entry) = records::get(GOALS, parent) else {
         return Err((422, format!("no goal `{parent}` to be a part of")));
@@ -230,7 +210,7 @@ fn parent_is_usable(parent: &str, project: &str) -> Result<(), (u16, String)> {
             ),
         ));
     }
-    // Walk up. `seen` turns an infinite loop into a message: a record written before this check, or edited around it, can still close a cycle.
+    // `seen` turns an infinite loop into a message: a record edited around this check can still close a cycle.
     let mut seen = vec![parent.to_string()];
     let mut at = str_of(&doc, "parent");
     while !at.is_empty() {
@@ -249,7 +229,7 @@ fn parent_is_usable(parent: &str, project: &str) -> Result<(), (u16, String)> {
         let Ok(updoc) = serde_json::from_str::<Value>(&up.data) else { break };
         at = str_of(&updoc, "parent");
     }
-    // `seen` is the PARENT's own chain, so a child hung off it sits one deeper. Checked after the walk, since the depth is not known until then.
+    // `seen` is the PARENT's chain, so a child sits one deeper.
     if seen.len() >= MAX_GOAL_DEPTH {
         return Err((
             422,
@@ -283,14 +263,8 @@ pub fn goals_list(request: &Incoming, project: &str, query: &Map<String, Value>)
     Outcome::Json(200, json!({ "count": rows.len(), "goals": rows }).to_string())
 }
 
-/// `GET /api/projects/{project}/events?group=<name>&max=<n>`
-///
-/// The tier-3 observer: a consumer group polling this SEES transitions as they happen instead of diffing
-/// `goals_list` snapshots, without being a second place state lives (every event was also a real write on
-/// the goal record; a caller that lost them all still gets the right answer from `goals_list`, later).
-///
-/// `group` defaults to the caller's own subject, so two scripts polling with no group do not silently
-/// share (and steal events from) one offset.
+/// A lossy hint: every event is also a real write, so `goals_list` stays the answer. `group` defaults to
+/// the caller's subject, so two scripts with no group do not steal each other's events.
 pub fn events_list(request: &Incoming, project: &str, query: &Map<String, Value>) -> Outcome {
     let (p, _org) = session!(request, query, orgs::Role::Viewer);
     let group = query.get("group").and_then(|v| v.as_str()).unwrap_or(&p.subject);
@@ -316,9 +290,7 @@ pub fn events_list(request: &Incoming, project: &str, query: &Map<String, Value>
     }
 }
 
-/// `POST /api/projects/{project}/events/ack {group, ids}`
-///
-/// Advances `group`'s offset so a later poll does not return the same transitions. Never needed for correctness.
+/// Never needed for correctness.
 pub fn events_ack(request: &Incoming, project: &str, query: &Map<String, Value>) -> Outcome {
     let (_p, _org) = session!(request, query, orgs::Role::Viewer);
     let b: req::AckEvents = match read_body(request)
@@ -334,7 +306,6 @@ pub fn events_ack(request: &Incoming, project: &str, query: &Map<String, Value>)
     }
 }
 
-/// Move a goal, refusing anything the lifecycle does not allow.
 pub fn goal_transition(
     request: &Incoming,
     id: &str,
@@ -348,9 +319,7 @@ pub fn goal_transition(
     let Ok(mut doc) = serde_json::from_str::<Value>(&entry.data) else {
         return Outcome::Err(500, "the goal record is unreadable".into());
     };
-    // A goal with live parts may not be finished or thrown away out from under them: their rows would read as
-    // already handled, or as work for a goal that no longer exists. Refused rather than cascaded: a destructive
-    // multi-record operation should not be inferred from one click.
+    // Refused, not cascaded: a destructive multi-record operation should not be inferred from one click.
     if matches!(to, "done" | "abandoned") {
         let live: Vec<String> = goals_of(&str_of(&doc, "project"))
             .into_iter()
@@ -393,7 +362,7 @@ pub fn goal_transition(
             doc["failed_at"] = json!(now());
         }
         "awaiting-human" => {
-            // Optional: with it, something records which pull request a human should look at and can later watch its status.
+            // Optional: records which pull request a human should look at.
             let pr = read_body(request)
                 .ok()
                 .and_then(|raw| req::parse::<req::ReviewGoal>(&raw).ok())
@@ -406,15 +375,13 @@ pub fn goal_transition(
         _ => {}
     }
 
-    // Guarded on the revision we READ, so two people starting the same goal at once cannot both win and
-    // leave two runs believing they own one goal.
+    // Revision-guarded, so two people starting one goal cannot both win.
     match records::update(GOALS, id, &doc.to_string(), entry.revision) {
         Err(records::StoreError::RevisionConflict(_)) => {
             Outcome::Err(409, format!("`{id}` moved while you were looking at it — read it again"))
         }
         Ok(_) => {
-            // A lossy hint, never the answer (ADR-0081): a dropped event costs a watcher latency, not correctness, so
-            // errors are swallowed; a full or unreachable bus must not make a goal unable to move.
+            // A lossy hint (ADR-0081): errors are swallowed; a full bus must not stop a goal moving.
             let project = str_of(&doc, "project");
             let event =
                 json!({ "id": id, "project": project, "from": from, "to": to, "at": now() });

@@ -6,9 +6,7 @@ license = "MIT"
 publish = false
 description = "What a node and the reconciler need from the fabric between them, as three traits — and one implementation of them over NATS."
 
-# Native, and its own workspace root like host/, reconciler/ and cli/. It is a
-# LIBRARY rather than a binary because it is the one thing those three genuinely
-# share: the wire contract between a node and the reconciler.
+# Standalone workspace root, like host/, reconciler/ and cli/.
 [workspace]
 
 [dependencies]
@@ -22,7 +20,4 @@ zstd = "0.13"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
-# `tests/inventory_ttl.rs` spawns a real `nats-server` and needs a store directory
-# per test that is gone afterwards — two servers sharing one would share a bucket,
-# which is the exact thing the test is about.
 tempfile = "3"

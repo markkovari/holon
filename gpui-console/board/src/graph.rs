@@ -1,42 +1,23 @@
-//! Everything the board knows, as one graph: the components and what they use, the applications and
-//! what they are made of, the goal runs with their attempts and what they added, and the sessions with
-//! what they touched. What the Explore tab walks, one subject at a time.
-//!
-//! A subject's neighbours are sorted into lanes by how they are joined and drawn where the question they
-//! answer is asked: above it where it came from, left what it builds on, right what builds on it, below
-//! what it led to and where it appeared. Pure: maps and sessions in, nodes and lanes out.
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::map::{Key, Kind, Map, Proof};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Rel {
-    /// A component imports what another exports.
     Uses,
-    /// An application is composed of a part.
     Carries,
-    /// A goal run left the pool able to do something: it added a component.
     Added,
-    /// An attempt wrote a component's files.
     Wrote,
-    /// A goal run tried this attempt.
     Tried,
-    /// A session's agents named or touched a component.
     Touched,
-    /// An agent was given a session's goal.
     Ran,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {
-    /// Where it came from.
     Above,
-    /// What it builds on.
     Left,
-    /// What builds on it.
     Right,
-    /// What it led to, and where it appeared.
     Below,
 }
 
@@ -50,7 +31,6 @@ pub struct Node {
     pub proof: Vec<Proof>,
 }
 
-/// One group of a subject's neighbours, joined to it the same way.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lane {
     pub title: &'static str,
@@ -64,10 +44,8 @@ pub struct Graph {
     pub rels: BTreeSet<(Key, Rel, Key)>,
 }
 
-/// A session, as the graph needs it: its root, its goal, how it stands, and the components it named.
 pub struct SessionNode {
     pub root: String,
-    /// The agent that was given the goal.
     pub lead: String,
     pub title: String,
     pub sub: String,
@@ -75,7 +53,6 @@ pub struct SessionNode {
 }
 
 impl Graph {
-    /// The components, the goal runs and the sessions, joined.
     pub fn build(
         components: &Map,
         knowledge: &Map,
@@ -117,7 +94,6 @@ impl Graph {
             ));
         }
         for f in &knowledge.frames {
-            // a run is proved by what its winner became
             let proof = f
                 .items
                 .iter()
@@ -171,9 +147,7 @@ impl Graph {
         g
     }
 
-    /// `key`'s neighbours, lane by lane, each lane heaviest first. Lanes with nobody in them are left out.
     pub fn lanes(&self, key: &str) -> Vec<Lane> {
-        // (relation, whether the subject is its source, the lane's name, where it is drawn)
         const LANES: [(Rel, bool, &str, Side); 14] = [
             (Rel::Ran, false, "run by", Side::Above),
             (Rel::Added, false, "added by", Side::Above),
@@ -210,7 +184,6 @@ impl Graph {
             .collect()
     }
 
-    /// How many neighbours `key` has, all lanes together: what a neighbour's chip says is behind it.
     pub fn degree(&self, key: &str) -> usize {
         self.rels.iter().filter(|(a, _, b)| a == key || b == key).count()
     }
@@ -222,8 +195,6 @@ impl Graph {
         )
     }
 
-    /// What a search finds: names that start with the query first, then names that hold it, then what
-    /// says it in its description; each heaviest first.
     pub fn search(&self, query: &str, limit: usize) -> Vec<Key> {
         let q = query.trim().to_lowercase();
         if q.is_empty() {
@@ -333,7 +304,6 @@ mod tests {
                 ("touched in", Side::Below, vec!["rate-limit the shop".to_string()]),
             ]
         );
-        // the label it was first given, not the run's copy of it
         assert_eq!(g.nodes[&component_key("paginate")].weight, 1);
     }
 
@@ -362,7 +332,6 @@ mod tests {
         assert_eq!(g.search("pag", 5)[0], component_key("paginate"));
         assert_eq!(g.search("store", 5), [component_key("store")], "record-store holds it");
         assert!(g.search("  ", 5).is_empty());
-        // paginate, add pagination, rate-limit the shop, and the agent lead: each once
         let all = g.search("a", 50);
         assert_eq!((all.len(), all.iter().collect::<BTreeSet<_>>().len()), (4, 4));
     }

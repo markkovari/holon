@@ -1,5 +1,3 @@
-//! Session and RBAC persistence on top of `kv`.
-
 use serde::{Deserialize, Serialize};
 
 use crate::bindings::exports::auth::identity::types::{
@@ -10,7 +8,7 @@ use crate::config;
 use crate::kv;
 use crate::tokens;
 
-// The generated WIT types don't derive serde, so we (de)serialize through plain structs.
+// The generated WIT types do not derive serde.
 
 #[derive(Serialize, Deserialize)]
 struct PrincipalDto {
@@ -59,21 +57,18 @@ fn json_err<E: core::fmt::Debug>(e: E) -> AuthError {
     AuthError::Internal(format!("json: {e:?}"))
 }
 
-/// A refresh token maps to its session AND its session family, so a stolen,
-/// already-rotated refresh token can be detected and the whole family killed.
+/// The family lets an already-rotated (stolen) refresh token kill every sibling session.
 #[derive(Serialize, Deserialize)]
 struct RefreshRecord {
     session_id: String,
     family: String,
 }
 
-/// Issue a brand-new session in a brand-new family (the login path).
 pub fn session_issue(p: Principal) -> Result<TokenPair, AuthError> {
     let family = tokens::new_id("fam_");
     session_issue_in_family(p, &family)
 }
 
-/// Issue a session within an existing family (the rotate-on-refresh path).
 fn session_issue_in_family(p: Principal, family: &str) -> Result<TokenPair, AuthError> {
     let session_id = tokens::new_id(tokens::ACCESS_PREFIX);
     let refresh = tokens::new_id(tokens::REFRESH_PREFIX);
@@ -92,7 +87,6 @@ fn session_issue_in_family(p: Principal, family: &str) -> Result<TokenPair, Auth
 
     kv::set(&format!("sess:{session_id}"), &body)?;
     kv::set(&format!("refresh:{refresh}"), &rec)?;
-    // Track the session in its family so a breach can revoke siblings.
     family_add(family, &session_id)?;
 
     Ok(TokenPair {
@@ -107,8 +101,7 @@ pub fn session_refresh(refresh_token: &str) -> Result<TokenPair, AuthError> {
     let refresh_key = format!("refresh:{refresh_token}");
 
     let Some(raw) = kv::get(&refresh_key)? else {
-        // Not an active refresh token. Was it already spent? If so this is a
-        // REUSE of a rotated token — treat as a breach and kill the family.
+        // Reuse of a rotated token is a breach: kill the family.
         if let Some(family) = kv::get(&format!("spent:{refresh_token}"))? {
             revoke_family(&family)?;
             crate::audit::emit(
@@ -130,8 +123,6 @@ pub fn session_refresh(refresh_token: &str) -> Result<TokenPair, AuthError> {
     let family = rec.family;
     let principal = session_lookup(&session_id)?;
 
-    // Rotate: mark this refresh token spent (for reuse detection), drop the old
-    // active mapping + session, mint a fresh pair in the SAME family.
     kv::set(&format!("spent:{refresh_token}"), &family)?;
     kv::delete(&refresh_key)?;
     kv::delete(&format!("sess:{session_id}"))?;
@@ -139,7 +130,6 @@ pub fn session_refresh(refresh_token: &str) -> Result<TokenPair, AuthError> {
 }
 
 pub fn session_revoke(session_id: &str) -> Result<(), AuthError> {
-    // Idempotent: deleting an absent key is fine.
     kv::delete(&format!("sess:{session_id}"))
 }
 
@@ -160,7 +150,6 @@ fn family_add(family: &str, session_id: &str) -> Result<(), AuthError> {
     Ok(())
 }
 
-/// Revoke every session in a family — the breach response to refresh reuse.
 fn revoke_family(family: &str) -> Result<(), AuthError> {
     if let Some(b) = kv::get(&family_key(family))? {
         let members: Vec<String> = serde_json::from_str(&b).map_err(json_err)?;
@@ -182,11 +171,8 @@ pub fn session_lookup(session_id: &str) -> Result<Principal, AuthError> {
     Ok(dto.into())
 }
 
-// All RBAC state for a tenant lives in ONE kv value (`rbac:{tenant}`): subject -> roles
-// plus role -> permissions. Every kv op is a backend round-trip, so one doc makes
-// authorize one trip instead of 2+N. Admin writes are read-modify-write of the doc
-// (cold path, no CAS).
-// ponytail: split per subject if a tenant's subject count ever makes the value heavy.
+// All of a tenant's RBAC is one kv value, so authorize is one round trip, not 2+N.
+// ponytail: split per subject if a tenant's subject count makes the value heavy.
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct RbacDoc {
@@ -204,7 +190,6 @@ fn rbac_key(tenant: &str) -> String {
     format!("rbac:{tenant}")
 }
 
-/// Load a tenant's rbac doc — the ONE kv read an authorize pays for rbac.
 pub fn rbac_load(tenant: &str) -> Result<RbacDoc, AuthError> {
     match kv::get(&rbac_key(tenant))? {
         Some(body) => serde_json::from_str(&body).map_err(json_err),
@@ -272,9 +257,7 @@ pub fn rbac_revoke_role(tenant: &str, subject: &str, role: &str) -> Result<(), A
     Ok(())
 }
 
-/// Permission check against an already-loaded rbac doc — NO I/O. Tries scopes
-/// first, then role-derived permissions. A permission matches if target and
-/// action match, with "*" acting as a wildcard for either field.
+/// No I/O. "*" is a wildcard for target or action.
 pub fn rbac_check_with(doc: &RbacDoc, p: &Principal, required: &Permission) -> bool {
     let scope = format!("{}:{}", required.target, required.action);
     if p.scopes.iter().any(|s| s == &scope || s == "*") {
@@ -287,9 +270,8 @@ pub fn rbac_check_with(doc: &RbacDoc, p: &Principal, required: &Permission) -> b
     })
 }
 
-/// One-shot check that loads the doc itself (the exported rbac `check`).
 pub fn rbac_check(p: &Principal, required: &Permission) -> bool {
-    // kv down -> default (empty) doc: only a direct scope grant can allow.
+    // kv down: empty doc, so only a direct scope grant can allow.
     let doc = rbac_load(&p.tenant).unwrap_or_default();
     rbac_check_with(&doc, p, required)
 }

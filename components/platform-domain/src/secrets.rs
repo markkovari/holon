@@ -1,13 +1,4 @@
-//! The vault's HTTP surface: what a manifest may reference, and how a host reads it.
-//!
-//! Split from `lib.rs` because the mistakes here are about DISCLOSURE: a plaintext must leave only
-//! through one door.
-//!
-//!   * a secret is named per ORGANISATION (`vault_name`): one vault backs the platform, and a global
-//!     namespace is ADR-0012's bucket mistake with worse consequences;
-//!   * `vault://<org>/<name>` is the only form a manifest may carry (ADR-0010), never a value;
-//!   * the plaintext leaves in `secret_fetch` and nowhere else, guarded by an expiring token that
-//!     authorises one reference.
+//! The plaintext leaves only through `secret_fetch`, under an expiring token for one reference.
 
 use serde_json::{json, Map, Value};
 
@@ -17,13 +8,12 @@ use crate::{
     body, caller, claim_fetch_nonce, internal_ok, now, orgs, personal_org, read_body, records,
     str_of, Incoming, Outcome,
 };
-/// Secrets are named per ORGANISATION, never globally: one vault backs the platform, so without the org
-/// two tenants would share a namespace (cf. ADR-0012's storage buckets).
+/// Per ORGANISATION: one vault backs the platform (cf. ADR-0012's buckets).
 pub fn vault_name(org: &str, name: &str) -> String {
     format!("{org}/{name}")
 }
 
-/// `vault://<org>/<name>` — the only form a manifest may contain (ADR-0010).
+/// The only form a manifest may contain (ADR-0010).
 pub fn parse_ref(r: &str) -> Option<(String, String)> {
     let rest = r.strip_prefix("vault://")?;
     let (org, name) = rest.split_once('/')?;
@@ -33,15 +23,9 @@ pub fn parse_ref(r: &str) -> Option<(String, String)> {
     Some((org.to_string(), name.to_string()))
 }
 
-/// Store a secret for an org. Written straight through to the vault, which seals it; nothing here
-/// keeps, logs or echoes it.
 pub(crate) const FETCH_TOKENS: &str = "fetch_tokens";
 
-/// Mint a capability for one instance: exactly these references, for a bounded time.
-///
-/// Issued BY the platform rather than signed by the reconciler: no shared signing key, and revocation is
-/// deleting a row. The reconciler authenticates with the platform secret it already holds (ADR-0003).
-/// The token is a capability, not a secret value, so the host may keep it in an on-disk ledger (ADR-0022).
+/// Issued BY the platform, not signed by the reconciler: no shared key, and revocation is deleting a row.
 pub fn fetch_token_mint(request: &Incoming) -> Outcome {
     if !internal_ok(request) {
         return Outcome::Err(401, "bad platform secret".into());
@@ -55,12 +39,11 @@ pub fn fetch_token_mint(request: &Incoming) -> Outcome {
         .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
         .unwrap_or_default();
-    // `refs` may be empty: this is an instance's proof of who it is (ADR-0079 needs it for instances with no secrets); empty authorises no secret.
+    // Empty `refs` is an instance's proof of identity (ADR-0079); it authorises no secret.
     if instance.is_empty() {
         return Outcome::Err(422, "instance is required".into());
     }
-    // Long enough to outlive an instance's useful life, short enough that a leaked token is not a standing
-    // grant; a restart mints a new one and a start costs 0.43ms (ADR-0040).
+    // A leaked token is not a standing grant; a restart mints a new one (a start costs 0.43ms, ADR-0040).
     let ttl = b["ttl"].as_u64().unwrap_or(3600);
     // The record id is the token: unguessable, unique and already stored (as for invite codes, ADR-0031).
     let doc = json!({
@@ -74,8 +57,7 @@ pub fn fetch_token_mint(request: &Incoming) -> Outcome {
     }
 }
 
-/// Resolve one reference for a host holding a valid token. The plaintext leaves the platform here and
-/// nowhere else. Three checks, cheapest first: token exists, has not expired, authorises THIS reference.
+/// The plaintext leaves the platform here and nowhere else.
 pub fn secret_fetch(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let token = request
         .headers()
@@ -114,8 +96,7 @@ pub fn secret_fetch(request: &Incoming, query: &Map<String, Value>) -> Outcome {
     let Some((org, name)) = parse_ref(&reference) else {
         return Outcome::Err(422, "not a secret reference".into());
     };
-    // `?probe=1` is a host asking "does this resolve" at START for every reference (ADR-0051). Same authorisation,
-    // answered from `describe`, so no plaintext is read, logged or sent.
+    // `?probe=1` (ADR-0051) is answered from `describe`, so no plaintext is read, logged or sent.
     if query.get("probe").is_some() {
         return match vault::describe(&vault_name(&org, &name)) {
             Ok(_) => Outcome::Json(200, json!({ "resolves": true }).to_string()),
@@ -211,8 +192,7 @@ pub fn vault_detail(e: &vault::VaultError) -> String {
     }
 }
 
-/// Every secret a component asks for must resolve, and must belong to the org deploying it. `describe`
-/// makes this safe: it answers "is there a secret by this name" WITHOUT decrypting (ADR-0010).
+/// `describe` answers "is there a secret by this name" WITHOUT decrypting (ADR-0010).
 pub fn check_secrets(id: &str, org: &str, secrets: &[Value]) -> Result<Vec<Value>, String> {
     let mut out = Vec::new();
     for s in secrets {

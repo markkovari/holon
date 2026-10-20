@@ -1,10 +1,3 @@
-//! `agent-matrix`: the Matrix bridge for the agent runtime.
-//!
-//!   agent-matrix init  --server-name node.tailnet.ts.net --homeserver https://node.tailnet.ts.net \
-//!                      --runtime-url http://127.0.0.1:18017 --runtime-token-file <state>/admin-token \
-//!                      --appservice-url http://100.64.0.2:9009        # owner password in $HOLON_OWNER_PASSWORD
-//!   agent-matrix run   [--config ~/.holon-matrix/bridge.json]
-
 use std::path::PathBuf;
 
 use agent_matrix::init::{init, read_token, InitArgs};

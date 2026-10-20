@@ -1,31 +1,19 @@
-//! A run's trace, against a real database (ADR-0092).
-//!
-//! `trace.rs`'s unit tests check the SurrealQL it *builds*; this checks what the database *answers*
-//! (ADR-0061, ADR-0080), since a writer whose statements are rejected fails quietly, counting drops.
-//!
-//!   1. A whole run's history lands: run and attempt nodes, and one event per thing that happened.
-//!   2. **A dropped write never fails a run.** Pointed at a dead address, every call still returns.
-//!   3. A goal containing quotes and SurrealQL survives as *data* (a security bug otherwise, since a
-//!      goal is prose a person typed).
-//!
-//! Skipped, loudly, when Docker cannot start the database.
+//! A run's trace against a real database (ADR-0092); a rejected write fails quietly otherwise.
 
 use std::time::Duration;
 
 use comp_goal::trace::Trace;
 use serde_json::Value;
 
-// The shared test module of the root's suites, included rather than copied (docs/adr/0115).
+// Shared harness, included rather than copied (docs/adr/0115).
 #[path = "../../tests/harness/mod.rs"]
 mod harness;
 use harness::{Store, SURREAL_IMAGE};
 
-/// The database `goalrun` points the graph at. The trace shares the namespace so a run and its
-/// lessons can be joined (ADR-0091).
+/// Shares the graph's namespace so a run and its lessons join (ADR-0091).
 const DB: &str = "goalmemory";
 
-/// Count rows in `table` within the trace's own namespace/database (not the one `harness::Store`
-/// defines), over its own request.
+/// In the trace's own namespace/database, not the one `harness::Store` defines.
 fn count(store: &Store, table: &str) -> u64 {
     let body = format!("SELECT count() FROM {table} GROUP ALL;");
     let text = reqwest::blocking::Client::new()
@@ -71,7 +59,6 @@ fn a_whole_run_lands_and_a_dead_database_never_fails_one() {
     let url = format!("http://127.0.0.1:{}", store.port());
     let trace = Trace::new(&url, DB, Some(harness::SURREAL_PASSWORD));
 
-    // A run as it happens: two branches, one repair, one winner.
     let run = "77/g1";
     trace.run_started(
         run,
@@ -124,38 +111,35 @@ fn a_whole_run_lands_and_a_dead_database_never_fails_one() {
         trace.report()
     );
 
-    // 1. The history is there.
     assert_eq!(count(&store, "run"), 1, "the run node");
     assert_eq!(count(&store, "attempt"), 2, "one node per branch");
     // 1 run-started + 2 capsearch + 2 branch-spawned + 2 lesson-read
     // + 2 gate-verdict + 2 attempt-finished + 1 run-resolved.
     assert_eq!(count(&store, "event"), 12, "one event per thing that happened");
 
-    // The winner is on the run node, not reconstructed from events (ADR-0092).
+    // On the run node, not reconstructed from events (ADR-0092).
     let r = rows(&store, "SELECT outcome, winner, url FROM run;");
     assert_eq!(r[0]["outcome"], "merged");
     assert_eq!(r[0]["winner"], "mvp");
 
-    // `started_at` and `resolved_at` are FIELDS: a timeline reconstructing its bounds from events gets
-    // them wrong when one is missing.
+    // Fields: a timeline reconstructing bounds from events errs when one is missing.
     let bounds = rows(
         &store,
         "SELECT count() FROM run WHERE started_at != NONE AND resolved_at != NONE GROUP ALL;",
     );
     assert_eq!(bounds[0]["count"], 1, "the run carries its own bounds");
 
-    // A capsearch MISS is retrievable on its own: it signals what to build next (ADR-0089).
+    // A miss signals what to build next (ADR-0089).
     let misses = rows(&store, "SELECT data.query AS q FROM event WHERE kind = 'capsearch-miss';");
     assert_eq!(misses[0]["q"], "render a swimlane chart");
 
-    // What the pool gained (ADR-0089), and which run taught it: a capability node, with the run as an
-    // attribute, not the key.
+    // The run is an attribute, not the key.
     trace.capability_added(run, "paginate", "components/paginate");
     let cap = rows(&store, "SELECT name, path, added_by FROM capability;");
     assert_eq!(cap[0]["name"], "paginate");
     assert_eq!(cap[0]["added_by"], run, "a capability must say which run taught it");
 
-    // The branch's paths and cost are on the attempt; both exist nowhere else once the terminal is gone.
+    // Paths and cost exist nowhere else once the terminal is gone.
     let won = rows(
         &store,
         "SELECT paths, files, tokens, elapsed_ms FROM attempt WHERE id_text = '77/g1/mvp';",
@@ -168,7 +152,7 @@ fn a_whole_run_lands_and_a_dead_database_never_fails_one() {
         won[0]["paths"]
     );
 
-    // 3. A goal that contains quotes and SurrealQL is DATA, not syntax.
+    // A goal is prose a person typed: it must stay data.
     let nasty = r#"add a "search" box'; DELETE event; --"#;
     trace.run_started("78/g1", nasty, ".comp/goal.toml", 78, "def456", 1);
     assert!(trace.report().is_none(), "the quoted goal broke its own statement");
@@ -180,7 +164,7 @@ fn a_whole_run_lands_and_a_dead_database_never_fails_one() {
 
 #[test]
 fn a_dead_database_costs_a_line_of_output_and_nothing_else() {
-    // Port 1 is not listening. Every call must still return: a run must not die for lack of telemetry.
+    // Port 1 is not listening; a run must not die for lack of telemetry.
     let trace = Trace::new("http://127.0.0.1:1", DB, None);
     let started = std::time::Instant::now();
 
@@ -201,12 +185,8 @@ fn a_dead_database_costs_a_line_of_output_and_nothing_else() {
     );
 }
 
-/// An unauthenticated database takes writes with NO auth header (the path `comp-trace-seed` and a
-/// local `goalrun` without `--surreal-password` take). `None` was once defaulted to `"root"`, so a
-/// Basic header naming a user the server lacks went out and an `--unauthenticated` SurrealDB rejected
-/// it with a non-JSON body, dropping every write silently.
-///
-/// Its own container, because `--unauthenticated` is a server-start flag.
+/// `None` once defaulted to "root", whose Basic header an `--unauthenticated` server rejects.
+/// Its own container: `--unauthenticated` is a server-start flag.
 #[test]
 fn an_unauthenticated_database_takes_writes_with_no_auth_header() {
     use std::process::{Command, Stdio};
@@ -250,7 +230,6 @@ fn an_unauthenticated_database_takes_writes_with_no_auth_header() {
         std::thread::sleep(Duration::from_millis(250));
     }
 
-    // No password: the case the seeder and a local run use.
     let trace = Trace::new(&url, DB, None);
     trace.run_started("unauth/g1", "a goal with no password", ".comp/goal.toml", 1, "abc", 1);
     trace.run_resolved("unauth/g1", "merged", Some("only"), "");
@@ -263,10 +242,7 @@ fn an_unauthenticated_database_takes_writes_with_no_auth_header() {
     );
 }
 
-/// `goalrun`'s own id scheme joins run to attempts: the seed is the run id and `memory::run_id(seed,
-/// round, branch)` the attempt id. Those ids contain `/` and the console finds attempts with
-/// `WHERE run = <id>`, so they must agree exactly. Written with the REAL function, since a hand-typed
-/// id would keep passing if `run_id`'s format changed.
+/// Written with the real `run_id`, since a hand-typed id would pass after its format changed.
 #[test]
 fn goalruns_own_ids_join_a_run_to_its_attempts() {
     let Some(store) = Store::start() else {
@@ -279,7 +255,6 @@ fn goalruns_own_ids_join_a_run_to_its_attempts() {
         Some(harness::SURREAL_PASSWORD),
     );
 
-    // Exactly what `comp-goalrun` does: the seed is the run, `run_id` the attempt, two branches over two rounds.
     let seed: u64 = 1_700_000_000;
     let run = seed.to_string();
     trace.run_started(&run, "a real goal", ".comp/goal.toml", seed, "deadbeef", 2);
@@ -302,11 +277,10 @@ fn goalruns_own_ids_join_a_run_to_its_attempts() {
     trace.run_resolved(&run, "exhausted", None, "");
     assert!(trace.report().is_none(), "writes dropped: {:?}", trace.report());
 
-    // The console's own query, verbatim from `run_detail`.
+    // Verbatim from the console's `run_detail`.
     let attempts = rows(
         &store,
-        // `started_at` is selected because SurrealDB v3 REQUIRES the ordered field to be in the
-        // projection (omitting it is a 400, not a silent reorder).
+        // SurrealDB v3 requires the ordered field in the projection (a 400 otherwise).
         &format!(
             "SELECT id_text, started_at FROM attempt WHERE run = '{run}' ORDER BY started_at;"
         ),
@@ -316,7 +290,7 @@ fn goalruns_own_ids_join_a_run_to_its_attempts() {
         Some(4),
         "the run and its attempts did not join on goalrun's ids: {attempts:?}"
     );
-    // And the ids are the ones a person reads in the graph: `seed/g1/branch`, not an opaque number.
+    // The ids a person reads in the graph: `seed/g1/branch`.
     let first = attempts[0]["id_text"].as_str().unwrap_or_default().to_string();
     assert!(
         first.starts_with(&format!("{seed}/g")),

@@ -1,18 +1,6 @@
 #!/usr/bin/env bash
-# Cross-machine failover, measured THROUGH the failure rather than after it.
-#
-# `bench/adversarial/five-nodes.sh` already kills the Pi nodes — but it sleeps 20s
-# first and then sends 60 requests, which asks "did it recover" and skips "what did
-# it cost". The interesting window is the one that script sleeps through: between a
-# machine dying and the ingress noticing, requests are being routed at a corpse.
-#
-# So: continuous load through one address while nodes are SIGKILLed underneath it,
-# bucketed per second. Two directions, because they are not the same claim —
-#
-#   A. kill a node on THIS machine, and the replacement must land on the Pi
-#   B. kill the whole Pi, and the replacements must come home
-#
-# Only A proves recovery is not machine-local; only B proves surviving a machine.
+# Cross-machine failover measured THROUGH the failure. Killing a local node proves recovery
+# is not machine-local; killing the whole Pi proves surviving a machine.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)/comp"
 SP=${SP:-$(mktemp -d)}
@@ -20,9 +8,7 @@ HERE=bench/adversarial
 MAC=${MAC:-192.168.1.10}
 PI=${PI:-192.168.1.11}
 KEY="$HOME/.ssh/id_ed25519"
-# Direction B is "kill the whole Pi and the replicas must come home". With no Pi
-# there is no direction B, and direction A's replacement has nowhere else to land —
-# so the run would report a clean failover of a fleet that never spanned machines.
+# Without the Pi this would report a clean failover of a fleet that never spanned machines.
 . bench/preflight.sh
 need_cmd nats-server ssh nats
 need_local_addr "$MAC"
@@ -64,20 +50,13 @@ sleep 26
 echo "=== before ==="
 ./reconciler/target/release/comp-bench inventory --nats-url nats://127.0.0.1:4232 --lattice fail
 
-# The kills, on a timer, so the load generator below runs uninterrupted across them.
 ( sleep 15; echo "$(date +%s) kill mac-2" >>"$SP/events.txt"
   pkill -9 -f "node mac-2 --lattice fail"
   sleep 45; echo "$(date +%s) kill the Pi" >>"$SP/events.txt"
   ssh -n -i "$KEY" -o IdentitiesOnly=yes "markkovari@$PI" "bash -lc 'pkill -9 -f comp-lattice/comp-host'" ) &
 PIDS+=($!)
 
-# Sample the fleet's replica total while the load runs. Zero dropped requests is
-# only half of failover; the other half is how long the fleet stays under-replicated.
-#
-# `kv get --raw` writes NO trailing newline, so several nodes concatenate into one
-# invalid JSON line — which silently produced an empty sample for every second the
-# fleet had more than one node alive, i.e. exactly the interval being measured. The
-# `echo` is the fix. Resolution is one sample per ~5s: five CLI startups per pass.
+# `kv get --raw` writes no trailing newline; the `echo` keeps one JSON document per line.
 ( for i in $(seq 1 110); do
     printf "%s %s\n" "$(date +%s)" \
       "$(nats --server 127.0.0.1:4232 kv ls comp-inventory 2>/dev/null | while read -r k; do

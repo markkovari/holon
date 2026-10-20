@@ -1,15 +1,8 @@
-//! What a whole run has spent, in cents.
-//! Each attempt is priced by `cost_cents` (`cost.rs`); the sum is what a project budget is checked against.
-
 use crate::cost::cost_cents;
 
-/// One attempt's usage: input tokens, output tokens, the model that answered,
-/// and whether it ran during that model's off-peak window (only DeepSeek's
-/// price depends on this — see `cost.rs`; every other model ignores it).
+/// (input tokens, output tokens, model, ran in that model's off-peak window)
 pub type Usage<'a> = (u32, u32, &'a str, bool);
 
-/// The total cost, in whole cents, of every attempt in a run.
-/// Each attempt is priced by `cost_cents`, so per-model pricing lives in one place.
 pub fn spent_cents(attempts: &[Usage]) -> u64 {
     attempts
         .iter()
@@ -17,7 +10,7 @@ pub fn spent_cents(attempts: &[Usage]) -> u64 {
         .sum()
 }
 
-/// Has this run spent past its cap? `cap_cents` of 0 means no cap; equal to the cap is within it.
+/// A `cap_cents` of 0 means no cap.
 pub fn over_budget(cap_cents: u64, attempts: &[Usage]) -> bool {
     if cap_cents == 0 {
         return false;
@@ -36,13 +29,11 @@ mod tests {
 
     #[test]
     fn one_attempt_is_its_own_cost() {
-        // 1M haiku input = 100 cents (see cost.rs).
         assert_eq!(spent_cents(&[(1_000_000, 0, "claude-haiku-4-5-20251001", false)]), 100);
     }
 
     #[test]
     fn attempts_sum() {
-        // 100 (1M haiku input) + 500 (1M haiku output) = 600.
         assert_eq!(
             spent_cents(&[
                 (1_000_000, 0, "claude-haiku-4-5-20251001", false),
@@ -54,7 +45,6 @@ mod tests {
 
     #[test]
     fn attempts_on_different_tiers_are_each_priced_at_their_own_rate() {
-        // haiku 1M input (100) + opus 1M input (1500) = 1600.
         assert_eq!(
             spent_cents(&[
                 (1_000_000, 0, "claude-haiku-4-5-20251001", false),
@@ -77,7 +67,6 @@ mod tests {
 
     #[test]
     fn spend_equal_to_the_cap_is_within_it() {
-        // 1M haiku input = 100 cents; cap 100 is not exceeded.
         assert!(!super::over_budget(100, &[(1_000_000, 0, "claude-haiku-4-5-20251001", false)]));
     }
 

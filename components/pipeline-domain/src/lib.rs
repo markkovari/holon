@@ -1,10 +1,4 @@
-//! pipeline:app — a reliable event pipeline over composed contracts.
-//!
-//! Events live entirely in `outbox:dispatch`; the domain adds nothing durable. It PUMPS the outbox: each tick
-//! it `claim`s due events and, if the (simulated) sink is up, `ack`s them, else `fail`s them so the outbox
-//! reschedules with backoff and, past the retry ceiling, moves them to `dead`. Every transition is published
-//! on event:bus (`pipeline`), and `GET /api/stream` sets its response early then LOOPS, pumping and writing each
-//! transition as an SSE `data:` frame (real server-push on wasip2, as in pulse): retry, backoff, dead-letter, replay.
+//! Events live entirely in outbox:dispatch; the domain adds nothing durable and only pumps it.
 
 #[allow(warnings)]
 mod bindings {
@@ -26,7 +20,6 @@ mod bindings {
         world: "pipeline:app/pipeline-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -49,11 +42,10 @@ guestio::guest_p3_respond!();
 
 struct Component;
 
-/// event-bus topic every state transition is published on (also the SSE cursor).
+/// Every transition is published here; its seq is the SSE cursor.
 const XITIONS: &str = "pipeline";
-/// event-bus topic holding the demo sink up/down control events (latest wins).
+/// Demo sink up/down control events; latest wins.
 const SINK_CTRL: &str = "_sink";
-/// consumer group the relay pump uses to read the latest sink-control event.
 const CTRL_GROUP: &str = "relay";
 const POLL_MS: u64 = 500;
 const MAX_TICKS: u32 = 800; // ~7 min connection cap; the browser reconnects.
@@ -68,7 +60,6 @@ impl Guest for Component {
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         match (&method, seg.as_slice()) {
-            // The SSE route owns the response (it streams); everything else computes an Outcome and emits once.
             // Routes live under /api so the static-dir SPA fallback leaves them.
             (Method::Get, ["api", "stream"]) => stream_events(&path),
             _ => {
@@ -125,7 +116,6 @@ fn usage_json() -> Outcome {
     )
 }
 
-/// Enqueue an event into the durable outbox. Immediately eligible for the relay.
 async fn enqueue_event(request: Request) -> Outcome {
     let body = match parse_body(request).await {
         Ok(v) => v,
@@ -148,7 +138,6 @@ async fn enqueue_event(request: Request) -> Outcome {
     }
 }
 
-/// The demo knob: record the sink up/down as the newest control event; a down sink makes every dispatch `fail`.
 async fn set_sink(request: Request) -> Outcome {
     let body = match parse_body(request).await {
         Ok(v) => v,
@@ -160,7 +149,7 @@ async fn set_sink(request: Request) -> Outcome {
     Outcome::Json(200, json!({"sink_up": up}).to_string())
 }
 
-/// Is the downstream sink currently up? Reads the latest control event (default up). Polls without acking so the latest stays visible.
+/// Polls without acking so the latest stays visible.
 fn sink_up() -> bool {
     let events = bus::poll(SINK_CTRL, CTRL_GROUP, 256).unwrap_or_default();
     events
@@ -170,8 +159,6 @@ fn sink_up() -> bool {
         .unwrap_or(true)
 }
 
-/// One relay pass: claim due events, dispatch to the (simulated) sink, ack delivered ones / fail the rest.
-/// Publishes a transition per event. Idempotent: an empty queue is a no-op.
 fn pump() {
     let up = sink_up();
     let claimed = match queue::claim(CLAIM_MAX, LEASE_SECS) {
@@ -185,7 +172,6 @@ fn pump() {
                 publish_xition(&ev.id, &ev.topic, "acked", ev.attempts);
             }
         } else {
-            // sink down: report the failure; the outbox reschedules with backoff and dead-letters past the cap.
             match queue::fail(&ev.id) {
                 Ok(queue::State::Dead) => {
                     publish_xition(&ev.id, &ev.topic, "dead", ev.attempts + 1)
@@ -209,8 +195,6 @@ fn publish_xition(id: &str, topic: &str, state: &str, attempts: u32) {
     let _ = bus::publish(XITIONS, frame.to_string().as_bytes());
 }
 
-/// Every transition with bus seq > after, oldest-first, plus the new cursor.
-/// The board rebuilds its lane state from this on load, then tails the stream.
 fn snapshot(path: &str) -> Outcome {
     pump(); // advance the pipeline so a plain GET reflects the latest state.
     let after = query_i64(path, "after").unwrap_or(-1);
@@ -218,7 +202,7 @@ fn snapshot(path: &str) -> Outcome {
     Outcome::Json(200, json!({ "transitions": rows, "cursor": cursor }).to_string())
 }
 
-/// Read transitions from the bus log with id (seq) > after. event-bus ids are stringified monotonic per-topic sequences.
+/// event-bus ids are stringified monotonic per-topic sequences.
 fn xitions_after(after: i64) -> (Vec<Value>, i64) {
     // Poll a fresh, throwaway group each call so we always see the full log; never ack (read-only view).
     let events = bus::poll(XITIONS, "snapshot", 4096).unwrap_or_default();
@@ -275,8 +259,6 @@ fn event_json(e: &queue::Event) -> Value {
     })
 }
 
-/// Hold the connection open, pump the relay each tick, and push every new transition as an SSE `data:`
-/// frame. Returns the response at once; a spawned task loops until the client disconnects or the connection cap is hit.
 fn stream_events(path: &str) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
@@ -293,7 +275,7 @@ fn stream_events(path: &str) -> Result<Response, ErrorCode> {
             return;
         }
         for _ in 0..MAX_TICKS {
-            pump(); // drive the pipeline forward each tick.
+            pump();
             let (rows, new_cursor) = xitions_after(cursor);
             cursor = new_cursor;
             let frame = if rows.is_empty() {
@@ -302,7 +284,7 @@ fn stream_events(path: &str) -> Result<Response, ErrorCode> {
                 rows.iter().map(|r| format!("data: {r}\n\n")).collect::<String>()
             };
             if !tx.write_all(frame.into_bytes()).await.is_empty() {
-                break; // client disconnected
+                break;
             }
             monotonic_clock::wait_for(POLL_MS * 1_000_000).await;
         }
@@ -313,7 +295,6 @@ fn stream_events(path: &str) -> Result<Response, ErrorCode> {
     Ok(response)
 }
 
-/// Highest transition seq so far (the "only new" starting cursor).
 fn current_seq() -> i64 {
     bus::poll(XITIONS, "snapshot", 4096)
         .unwrap_or_default()
@@ -339,14 +320,11 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it. Without a ceiling a guest
-/// accumulated until wasmtime's 64 MiB per-store cap TRAPPED, reaching the caller as a bare closed
-/// connection. Generous: a backstop, not a content policy; uploads police themselves with a 413.
+/// Backstop under wasmtime's 64 MiB per-store cap, which traps instead of erroring.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
-/// Read query param `key` as an i64 (for the `after` cursor).
 fn query_i64(path: &str, key: &str) -> Option<i64> {
     let query = path.split('?').nth(1)?;
     query.split('&').find_map(|pair| {
@@ -367,7 +345,6 @@ fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     }
 }
 
-/// `access-control-allow-origin: *` on every non-streamed response.
 fn respond_cors(status: u16, content_type: &str, body: String) -> Result<Response, ErrorCode> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);

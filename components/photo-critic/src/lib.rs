@@ -1,11 +1,3 @@
-//! `photo-critic` — a photo-critique app that runs on the lattice.
-//!
-//! Exports HTTP: `GET /` serves the upload page (which downscales the image in
-//! the browser before upload), `POST /evaluate` takes `{media_type, data}` and
-//! asks Claude's vision API — reached by EGRESS, with the API key from the vault
-//! — for an honest critique, returning `{critique}`. Same egress + secret shape
-//! as `anthropic-provider`, but serving HTTP and sending an image block.
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -23,7 +15,6 @@ mod bindings {
         world: "demo:photocritic/photo-critic",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -77,10 +68,9 @@ fn json_str(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
 }
 
-/// A ceiling on a body read into memory, not a policy: past this the read gives up. Both directions: a request, and a model's reply.
+/// A ceiling, not a policy, in both directions: a request, and a model's reply.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-/// POST a JSON body to Anthropic and return (status, response-bytes).
 async fn post_anthropic(body: Vec<u8>) -> Result<(u16, Vec<u8>), String> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
@@ -116,7 +106,7 @@ async fn post_anthropic(body: Vec<u8>) -> Result<(u16, Vec<u8>), String> {
         buf.reserve(8192);
         let (st, b) = stream.read(buf).await;
         buf = b;
-        // The same ceiling on the way back: a model's answer over a network we do not control, larger than the request that provoked it, is a mistake or an attack.
+        // A reply over the ceiling, from a network we do not control, is a mistake or an attack.
         if buf.len() > MAX_BODY_BYTES {
             return Err(e("the response body is too large"));
         }
@@ -133,7 +123,6 @@ async fn post_anthropic(body: Vec<u8>) -> Result<(u16, Vec<u8>), String> {
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);
 
-/// The whole evaluate path: parse the upload, ask the model, return the critique.
 async fn evaluate(request: Request) -> Result<String, String> {
     // A failed or over-long read is EMPTY, not a plausible prefix: a truncated image would decode into a critique of half a photograph.
     let body = read_body(request).await.unwrap_or_default();
@@ -144,7 +133,7 @@ async fn evaluate(request: Request) -> Result<String, String> {
     if data.is_empty() {
         return Err("empty image".into());
     }
-    // Build the vision request. `data` is base64 (safe inside quotes as-is).
+    // `data` is base64, safe inside quotes as-is.
     let req_body = format!(
         "{{\"model\":{},\"max_tokens\":1024,\"messages\":[{{\"role\":\"user\",\"content\":[\
          {{\"type\":\"image\",\"source\":{{\"type\":\"base64\",\"media_type\":{},\"data\":\"{}\"}}}},\

@@ -19,6 +19,4 @@ package = "llm:component"
 path = "wit"
 world = "llm-inference"
 
-# Minimal world (export only) — no WASI target deps. The mock provider needs
-# nothing; a real provider would add wasi:http + wasi:config here.
 [package.metadata.component.target.dependencies]

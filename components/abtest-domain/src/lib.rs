@@ -1,10 +1,3 @@
-//! abtest:app — an A/B/n experiment console over composed contracts.
-//!
-//! Assignment is `experiment:assign`; per-arm counters in `metrics:collect`
-//! (`exp:{name}:{tenant}:{arm}:exposed` / `…:converted`) give the conversion rate.
-//! Every event publishes on `event:bus` (`abtest`); `GET /api/stream` replies
-//! early then loops, writing each event as an SSE `data:` frame.
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -26,7 +19,6 @@ mod bindings {
         world: "abtest:app/abtest-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -50,7 +42,6 @@ guestio::guest_p3_respond!();
 
 struct Component;
 
-/// event-bus topic every assignment / outcome is published on (also SSE cursor).
 const EVENTS: &str = "abtest";
 const POLL_MS: u64 = 500;
 const MAX_TICKS: u32 = 800;
@@ -113,8 +104,7 @@ fn usage_json() -> Outcome {
     )
 }
 
-/// `exp:{name}:{tenant}:{arm}:{kind}` — kind is "exposed" | "converted". Tenant
-/// "" is kept literal (empty segment) so the global experiment has its own keys.
+/// Tenant "" stays a literal empty segment so the global experiment gets its own keys.
 fn metric_key(name: &str, tenant: &str, arm: &str, kind: &str) -> String {
     format!("exp:{name}:{tenant}:{arm}:{kind}")
 }
@@ -202,8 +192,7 @@ fn cohort(path: &str) -> Outcome {
     }
 }
 
-/// Record an exposure ("exposed") or conversion ("converted") for a subject.
-/// Assigns the subject first (sticky) so the count lands on the right arm.
+/// Assigns first (sticky) so the count lands on the right arm.
 async fn record(request: Request, kind: &str) -> Outcome {
     let body = match parse_body(request).await {
         Ok(v) => v,
@@ -259,7 +248,7 @@ fn results(path: &str) -> Outcome {
 fn publish(kind: &str, exp: &str, tenant: &str, subject: &str, arm: &str) {
     let frame = json!({
         "xid": ids::short_code(8),
-        "kind": kind,     // assign | exposed | converted | reweight
+        "kind": kind,
         "exp": exp, "tenant": tenant, "subject": subject, "arm": arm,
         "at": now(),
     });
@@ -274,8 +263,7 @@ fn stream_events(path: &str) -> Result<Response, ErrorCode> {
 
     let mut cursor = query_i64(path, "after").unwrap_or_else(current_seq);
 
-    // `write_all` hands back what the reader did not take: non-empty means the
-    // client went away, which ends the stream.
+    // A non-empty remainder from `write_all` means the client went away.
     let (mut stream, rx) = bindings::wit_stream::new();
     wit_bindgen::spawn_local(async move {
         if !stream.write_all(b": connected\n\n".to_vec()).await.is_empty() {
@@ -352,8 +340,7 @@ async fn parse_body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
-/// guest traps and the caller just sees a closed connection.
+/// Backstop below wasmtime's 64 MiB per-store cap, past which the guest traps.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

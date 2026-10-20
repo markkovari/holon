@@ -1,87 +1,4 @@
 //! The `holon:vcs/code-store` operations, over the four storage traits.
-//!
-//! # The write path
-//!
-//! Every mutation is: **read** the pointers it depends on (value, revision, the
-//! op each value names) and the graph state → [`decide`] → **log the intent**
-//! (the op, `pending`, with the revision every pointer write expects and every
-//! record it introduces) → **write the graph ahead** → **claim** names →
-//! **CAS the symbol's tip** (the commit point) → **finish** (mirrors, conflict
-//! states, name releases) → mark the op `committed`. A lost CAS undoes the
-//! claims, abandons the op's uncommitted conflicts and marks it `aborted`; the
-//! call re-reads and re-decides, bounded by [`Engine::with_cas_tries`] (default
-//! [`CAS_TRIES`]), then gives `concurrent-modification`. Why each crash point is
-//! recoverable: [`crate::recovery`]'s module doc.
-//!
-//! **A conflict also CASes the tip — to the value it already has.** That bumps
-//! the revision, and it is what makes "is there an open conflict?" safe to ask:
-//! the conflict record is written *before* that CAS, and an applier reads the
-//! open conflicts *after* reading the tip. Either the conflict's CAS happened
-//! before the applier's read (so the applier sees the record and refuses with
-//! `unresolved-conflict`), or both CAS against the same revision and exactly one
-//! lands (the loser re-decides). An uncommitted conflict (`opened-at: 0`)
-//! counts as open for that reason; it is committed when its op commits, and
-//! abandoned when the last op that wrote it aborts.
-//!
-//! # Outcomes, precisely
-//!
-//! * `applied` — the tip moved from `parent` to the new patch, and nothing
-//!   below counts as commuted.
-//! * `commuted` — like `applied`, but at least one other op after the request's
-//!   `read-at` (a view's `as-of`) that had landed when this one did moved the tip
-//!   of ANOTHER symbol in the same component; `commuted-with` lists those
-//!   patches in log order. Conflict-only ops and reverts do not count. Without
-//!   `read-at` it is measured from the op that landed `parent` (an
-//!   over-approximation), and a `create` never commutes. "Had landed" is
-//!   checked after this patch's commit point over the whole log after `read-at`,
-//!   so of two racing edits from one view the second always lists the first, and
-//!   both may list each other.
-//! * `conflicted` — see [`crate::patch`]. The tip does not move. In an N-way race
-//!   from one parent, one edit is `applied` and each of the other N-1 opens its
-//!   own conflict `(winner, loser)`: every patch is kept.
-//! * `duplicate` — nothing was written; `op` is the op that landed the patch.
-//!
-//! # Names
-//!
-//! A live symbol id is reserved by a name pointer `ws/<w>/name/<name key>`
-//! holding the symbol key that has it. `create` claims it (CAS from free, or
-//! from a stale holder — one whose tip is no longer that id — to its key),
-//! `rename` claims the new name and releases the old one, `delete` releases it;
-//! a revert moves them back. Claims happen before the tip CAS and are undone if
-//! it loses; releases after it. So of N creates and renames racing for one name
-//! exactly one claim lands, and the others re-read and get
-//! [`VcsError::NameTaken`] — except two `create`s of the SAME symbol id, which
-//! are two versions of one symbol, not two symbols: the loser becomes a
-//! conflict (or a duplicate), as in step two. A create is `name-taken` when the
-//! holder got the name by a rename (its key is not one the id would be created
-//! at).
-//!
-//! # Resolution with several open conflicts
-//!
-//! `resolve-conflict` moves the tip from the conflict's `left` to a resolution
-//! whose parents are `[left, right]`. Any OTHER open conflict on that symbol was
-//! `(left, other)`; its left is no longer the tip, so in the same op it is
-//! abandoned and re-opened as `(resolution, other)` with the same base.
-//!
-//! # Revert
-//!
-//! `revert-op` refuses (`concurrent-modification`, nothing changed) if any
-//! pointer the op moved was touched by a LATER op — including a conflict's no-op
-//! move, since that conflict names the value as its `left` — or does not hold the
-//! op's `after` value now. Otherwise it logs `revert(op)` with the inverse moves
-//! and the inverse of the op's conflict effects, and carries it out like any
-//! other op (so reverting an apply that only opened a conflict abandons it;
-//! reverting a resolve re-opens the conflict and undoes the sibling
-//! re-pointing; reverting a revert re-applies). An op that is still pending is
-//! settled first; an aborted one is `not-found`.
-//!
-//! # Positions
-//!
-//! A file is its live symbols sorted by order key, ties broken by symbol key
-//! ([`crate::order`]). `patch-request.position` places a `create`
-//! (`first`/`last`/`after(s)`/`before(s)`); the transformation `move(placement)`
-//! re-places an existing symbol (a patch like any other: two concurrent moves
-//! of one symbol conflict). Unplaced creates keep step two's creation order.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
@@ -105,26 +22,19 @@ use crate::patch::{
 };
 use crate::store::{escape, is_hash, BlobStore, PointerStore, PointerValue, Revision};
 
-/// How many CAS races one operation may lose before `concurrent-modification`.
-/// Every loss is somebody else's landed write, so this bounds starvation.
+/// Every lost CAS is someone else's landed write, so this only bounds starvation.
 pub const CAS_TRIES: u32 = 200;
 /// Probe indexes tried when a name's natural key is held by a symbol since renamed.
 pub const MAX_PROBE: u32 = 64;
-/// Content at most this long, and UTF-8, is returned `inline`; larger as `blob`.
 pub const INLINE_MAX: usize = 64 * 1024;
-/// A snapshot re-reads while the oplog moves under it, this many times.
 pub const SNAPSHOT_TRIES: u32 = 64;
-/// How long a pending op is presumed in flight before a reader or repair may
-/// fence it off and abort it. Fencing a live writer is safe — its CAS loses and
-/// it retries — so this is a liveness knob, not a correctness one.
+/// Liveness only: fencing a live writer is safe, its CAS loses and it retries.
 pub const LEASE_MS: u64 = 30_000;
 
-/// The pointer a symbol's tip lives at: `ws/<escaped workspace>/sym/<key>`.
 pub fn symbol_pointer(ws: &str, key: &str) -> String {
     format!("ws/{}/sym/{key}", escape(ws))
 }
 
-/// The pointer reserving a symbol id: `ws/<escaped workspace>/name/<name key>`.
 pub fn name_pointer(ws: &str, id: &SymbolId) -> String {
     format!("ws/{}/name/{}", escape(ws), name_key(id))
 }
@@ -162,7 +72,6 @@ pub(crate) fn yield_now() -> impl Future<Output = ()> {
     YieldNow(false)
 }
 
-/// A symbol pointer as read, with the patch its value names.
 #[derive(Debug, Clone)]
 pub(crate) struct TipRead {
     pub pointer: String,
@@ -177,7 +86,6 @@ impl TipRead {
     }
 }
 
-/// A name pointer as read.
 #[derive(Debug, Clone)]
 pub(crate) struct NameSlot {
     pub pointer: String,
@@ -195,16 +103,12 @@ impl NameSlot {
 }
 
 pub(crate) enum NameRead {
-    /// Held by the live symbol `key`, whose tip is read.
     Held(NameSlot, String, Box<TipRead>),
     /// Free, or held by a symbol that is no longer called this (stale).
     Free(NameSlot),
-    /// A claim on it is in flight; read again.
     Busy,
 }
 
-/// A symbol located by id: its key, its pointer, the tip there, and the name
-/// pointer reserving the id.
 struct Located {
     key: String,
     pointer: String,
@@ -265,7 +169,6 @@ where
         self
     }
 
-    /// How old a pending op must be before it is presumed dead ([`LEASE_MS`]).
     pub fn with_lease_ms(mut self, ms: u64) -> Self {
         self.lease_ms = ms;
         self
@@ -284,11 +187,7 @@ where
         &self.log
     }
 
-    /// Read a symbol pointer and the patch it names. If the op that last wrote
-    /// the pointer may not be finished — the patch record is missing or still
-    /// `pending`, or the pointer was last written by some other op than the one
-    /// that landed the patch (a conflict's no-op write, a revert) — that op is
-    /// settled first, so every decision is made on finished state.
+    /// Settles a possibly unfinished last writer first: decisions see only finished state.
     pub(crate) async fn read_tip(&self, ws: &str, key: &str) -> Result<TipRead> {
         let pointer = symbol_pointer(ws, key);
         let Some((v, rev)) = self.pointers.get(&pointer).await? else {
@@ -315,7 +214,6 @@ where
         Ok(TipRead { pointer, rev: Some(rev), tip: Some(rec), op: v.op })
     }
 
-    /// Read the name pointer reserving `id`.
     pub(crate) async fn read_name(&self, ws: &str, id: &SymbolId) -> Result<NameRead> {
         let pointer = name_pointer(ws, id);
         let (value, rev) = match self.pointers.get(&pointer).await? {
@@ -328,11 +226,7 @@ where
         if t.live_as(id) {
             return Ok(NameRead::Held(slot, holder, Box::new(t)));
         }
-        // Held for a symbol that is not called this — as of the tip we read.
-        // Either a claim is in flight (its op is pending), or was aborted and
-        // not yet undone, or it committed after we read the tip (so read it
-        // again), or the holder has since moved away and its release has not
-        // landed: only that last is stale, and free.
+        // Holder not called this as of our read: settle its claim; only a committed one is stale.
         if let Some(j) = slot.value.op {
             match self.settle(ws, j).await? {
                 OpState::Pending => return Ok(NameRead::Busy),
@@ -353,9 +247,6 @@ where
         Ok(NameRead::Free(slot))
     }
 
-    /// Find where `id` lives, authoritatively: its name pointer if it is live,
-    /// else a dead symbol that was last called `id`, else the first free probe
-    /// slot — where a create would go.
     async fn locate(&self, ws: &str, id: &SymbolId) -> Result<Located> {
         for _ in 0..self.cas_tries {
             if let Some(l) = self.try_locate(ws, id).await? {
@@ -402,7 +293,6 @@ where
         Err(VcsError::Invalid(format!("more than {MAX_PROBE} symbols have been called {id}")))
     }
 
-    /// Record one edit: it lands, commutes, duplicates, or becomes a conflict.
     pub async fn apply_patch(&self, req: PatchRequest) -> Result<CommitResult> {
         validate_request(&req)?;
         let ws = req.workspace.as_str();
@@ -410,7 +300,8 @@ where
         let mut last = None;
         for _ in 0..self.cas_tries {
             let loc = self.locate(ws, &req.symbol).await?;
-            // AFTER the tip read — see the module notes on why the order matters.
+            // AFTER the tip read: a conflict writes its record, then CASes the tip to itself,
+            // so either we see the record or our CAS loses.
             let open = self.graph.open_conflicts_for(ws, &loc.key).await?;
             let placement = req.position.as_ref();
             let h0 = patch::request_hash(&loc.key, req.parent.as_ref(), &change, placement);
@@ -424,9 +315,7 @@ where
                 Some(p) if Some(p) != tip_hash.as_ref() => self.graph.patch(ws, p).await?,
                 _ => None,
             };
-            // A retry of an edit that already landed and took the symbol away
-            // from this name (a rename): the name no longer finds it, the parent
-            // does.
+            // A retried rename that landed: the name no longer finds the symbol, the parent does.
             if let (None, Some(parent)) = (loc.live_tip(), &req.parent) {
                 if let Some(prec) = self.graph.patch(ws, parent).await? {
                     let h = patch::request_hash(&prec.key, Some(parent), &change, None);
@@ -466,9 +355,8 @@ where
             }) {
                 Ok(d) => d,
                 Err(e) => {
-                    // A refusal computed from a tip that has since moved is not an
-                    // answer: e.g. an open conflict whose `left` is a tip we read too
-                    // early to see. Only refuse on a tip that is still current.
+                    // A refusal from a tip that has since moved is not an answer (e.g. a
+                    // conflict whose `left` we read too early): only refuse on a current tip.
                     if self.moved_since(&loc).await? {
                         last = Some((loc.pointer.clone(), tip_hash));
                         continue;
@@ -531,7 +419,6 @@ where
         Err(self.exhausted(last).await)
     }
 
-    /// Whether `loc`'s pointer is no longer at the revision it was read at.
     async fn moved_since(&self, loc: &Located) -> Result<bool> {
         let now = self.pointers.get(&loc.pointer).await?.map(|(_, r)| r);
         Ok(now != loc.rev)
@@ -546,7 +433,6 @@ where
         VcsError::ConcurrentModification(CasFailure { pointer, expected, actual })
     }
 
-    /// Inline content goes to the blob store; a blob reference must exist there.
     async fn normalise(&self, t: &Transformation) -> Result<Change> {
         Ok(match t {
             Transformation::Create(c) => Change::Create(self.content_hash(c).await?),
@@ -585,8 +471,7 @@ where
         })
     }
 
-    /// Move the tip. `Ok(None)`: lost a CAS (or a name claim is in flight);
-    /// nothing is left behind but an aborted op.
+    /// `Ok(None)`: lost a CAS or a name claim is in flight; only an aborted op is left behind.
     async fn land(
         &self,
         req: &PatchRequest,
@@ -717,6 +602,7 @@ where
             },
             loc.guard(),
         );
+        // Claims before the tip CAS, releases after: of racers for a name exactly one claim lands.
         let (moves, guards): (Vec<_>, Vec<_>) =
             claims.into_iter().chain([primary]).chain(releases).unzip();
         let op = NewOp {
@@ -754,10 +640,7 @@ where
         }))
     }
 
-    /// Patches that moved another symbol of `component`'s tip in ops after
-    /// `from` that had landed by now — any id but `ours`: an op logged after
-    /// ours may have landed before it (ids are assigned when an op is logged,
-    /// not when it lands).
+    /// Any op after `from` but `ours`: ids are assigned when logged, not when landed.
     async fn commuted_with(
         &self,
         ws: &str,
@@ -804,7 +687,7 @@ where
         Ok(out)
     }
 
-    /// Record a conflict `left` vs `patch`. `Ok(None)`: lost the CAS.
+    /// `Ok(None)`: lost the CAS.
     #[allow(clippy::too_many_arguments)]
     async fn open_conflict(
         &self,
@@ -844,7 +727,6 @@ where
         let cid = conflict_id(&left, &patch);
         if let Some(existing) = self.graph.conflict(ws, &cid).await? {
             if existing.state == ConflictState::Open && existing.opened_at != 0 {
-                // Another writer already opened exactly this one.
                 return Ok(Some(CommitResult {
                     patch,
                     op: existing.opened_at,
@@ -926,8 +808,6 @@ where
         }))
     }
 
-    /// Settle an open conflict: the tip moves from `left` to a resolution patch
-    /// whose parents are `[left, right]`.
     pub async fn resolve_conflict(&self, req: ResolutionRequest) -> Result<CommitResult> {
         let ws = req.workspace.as_str();
         let change = match &req.resolution {
@@ -945,13 +825,11 @@ where
                 .ok_or_else(|| VcsError::NotFound(format!("conflict {}", req.conflict)))
         };
         for _ in 0..self.cas_tries {
-            // The tip first: reading it finishes whatever op last wrote it — a
-            // resolve of this very conflict that crashed before marking it, say.
+            // Tip first: reading it settles its last writer, maybe a crashed resolve of this one.
             let t = self.read_tip(ws, &find().await?.key).await?;
             let mut c = find().await?;
             if c.opened_at == 0 && c.state == ConflictState::Open && !c.pending.is_empty() {
-                // Written ahead by ops not yet finished: finish them first, so a
-                // conflict whose opening aborted is not resolved.
+                // Settle the writers first, so a conflict whose opening aborted is not resolved.
                 for j in c.pending.clone() {
                     self.settle(ws, j).await?;
                 }
@@ -995,8 +873,7 @@ where
             }
             let tip = t.tip.as_ref().map(|r| r.hash.clone());
             if tip.as_ref() != Some(&c.left.patch) {
-                // Reading the tip settles the op that wrote it — which may have
-                // been this very resolution, crashed before finishing. Look again.
+                // The tip read may have settled this resolution, crashed earlier: look again.
                 let now = self.graph.conflict(ws, &c.id).await?;
                 if now.as_ref().is_some_and(|n| n.state != c.state) {
                     continue;
@@ -1144,7 +1021,6 @@ where
         Ok(t.tip.filter(|r| !r.is_delete()).map(|r| r.hash))
     }
 
-    /// Undo `op` by logging and carrying out its inverse (see the module notes).
     pub async fn revert_op(&self, ws: &str, op: OpId, by: Agent) -> Result<OpEntry> {
         let original = self
             .log
@@ -1172,7 +1048,7 @@ where
             original.entry.moves.iter().map(|m| (m.pointer.as_str(), m)).collect();
         let mut last = None;
         for _ in 0..self.cas_tries {
-            // 1. Nothing later may have touched these pointers (in flight counts).
+            // Nothing later may have touched these pointers (in flight counts).
             let mut after = op;
             loop {
                 let page = self.log.list(ws, Some(after), 256).await?;
@@ -1200,7 +1076,6 @@ where
                     }));
                 }
             }
-            // 2. Every pointer holds the op's `after` now.
             let mut guards = Vec::with_capacity(original.entry.moves.len());
             for m in &original.entry.moves {
                 let (value, guard) = match self.pointers.get(&m.pointer).await? {
@@ -1216,7 +1091,6 @@ where
                 }
                 guards.push(guard);
             }
-            // 3. Log the inverse, and carry it out.
             let moves: Vec<PointerMove> = original
                 .entry
                 .moves
@@ -1268,8 +1142,7 @@ where
         }
     }
 
-    /// The live symbols of a component, as `(path, order key, symbol key, tip)`,
-    /// in file order.
+    /// `(path, order key, symbol key, tip)` of the live symbols, in file order.
     async fn component_order(
         &self,
         ws: &str,
@@ -1285,8 +1158,7 @@ where
             let Some(rec) = t.tip.filter(|r| !r.is_delete()) else { continue };
             let position = match s.position {
                 Some(p) => Some(p),
-                // Finished since the listing was read (read_tip finishes a
-                // pending tip): read the position again.
+                // read_tip may have finished it since the listing: read the position again.
                 None => self.graph.symbol(ws, &s.key).await?.and_then(|s| s.position),
             };
             let key =
@@ -1297,8 +1169,6 @@ where
         Ok(live)
     }
 
-    /// The order key `placement` puts `sym` (filed at `self_key`) at, among the
-    /// OTHER live symbols of its file.
     async fn resolve_order(
         &self,
         ws: &str,
@@ -1390,7 +1260,6 @@ where
         })
     }
 
-    /// A blob as the contract returns content: inline when small and UTF-8.
     async fn present(&self, h: &str) -> Result<Content> {
         let bytes = self.blobs.get(h).await?.ok_or_else(|| {
             VcsError::Storage(format!("blob {h} is missing from the object store"))
@@ -1403,15 +1272,8 @@ where
         Ok(Content::Blob(h.to_string()))
     }
 
-    /// Flatten a component into files. Within a file, live symbols are laid out
-    /// in order-key order (see the module notes on positions). Each symbol's
-    /// content is emitted verbatim; a `\n` is inserted between two symbols only
-    /// when the first does not already end in one. A `kind: file` symbol is just
-    /// a symbol whose content is the whole file.
-    ///
-    /// `at` is exactly the state after that op: the snapshot is read while no op
-    /// is in flight, and re-read if one was logged meanwhile (every pointer write
-    /// is logged before it happens).
+    /// `at` is exact: read with no op in flight, re-read if one was logged meanwhile
+    /// (every pointer write is logged before it happens).
     pub async fn snapshot_export(&self, ws: &str, component: &str) -> Result<Snapshot> {
         for _ in 0..SNAPSHOT_TRIES {
             let before = self.log.latest(ws).await?.unwrap_or(0);
@@ -1503,10 +1365,7 @@ where
         Ok(ConflictSide { patch: s.patch, agent: s.agent, content })
     }
 
-    /// The committed ops after `after`, oldest first, at most `limit`. Aborted
-    /// ops are skipped; a pending one is settled, and the listing stops at the
-    /// first that is still in flight — so a caller paging by the last id it got
-    /// never skips an op that commits later.
+    /// Stops at the first op still in flight, so paging by the last id never skips a later commit.
     pub async fn oplog(&self, ws: &str, after: Option<OpId>, limit: u32) -> Result<Vec<OpEntry>> {
         let mut out = Vec::new();
         let mut cursor = after.unwrap_or(0);
@@ -1534,9 +1393,7 @@ where
         Ok(out)
     }
 
-    /// The settled head: the highest id at and below which every op is
-    /// committed or aborted (0 for an empty log). What an agent's view reflects,
-    /// and what it passes back as `read-at`.
+    /// The highest id at and below which every op is committed or aborted (0 if empty).
     pub async fn oplog_head(&self, ws: &str) -> Result<OpId> {
         let start = self.log.settled(ws).await?;
         let mut s = start;

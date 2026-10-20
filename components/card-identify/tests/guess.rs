@@ -1,13 +1,7 @@
-//! The specification, held out: this file is not writable by the goal.
-//!
-//! The cases that matter here are not the happy path. They are: a photo that is
-//! not a card, a field the model did not establish, and a number written the way
-//! a price source cannot look up. Each one, done wrong, puts a row in somebody's
-//! collection that looks entered and is fiction.
+//! The held-out specification. Each wrong case puts a fictional row in somebody's collection.
 
 use card_identify::{parse, prompt, Condition, Grade, IdentifyError, Variant};
 
-/// The happy path, bare JSON.
 #[test]
 fn a_complete_answer_becomes_a_complete_guess() {
     let g = parse(
@@ -25,8 +19,6 @@ fn a_complete_answer_becomes_a_complete_guess() {
     assert!(g.needs_review.is_empty(), "nothing absent, nothing to review: {:?}", g.needs_review);
 }
 
-/// Models wrap JSON in a fenced block, and in prose, and in both. All three are
-/// the same answer.
 #[test]
 fn json_is_found_inside_a_fence_or_prose() {
     let bare = r#"{"name":"Pikachu","confidence":50}"#;
@@ -40,7 +32,6 @@ fn json_is_found_inside_a_fence_or_prose() {
     assert_eq!(a, c, "prose either side is not information");
 }
 
-/// THE dangerous case. Not a card must be an error, never a blank row.
 #[test]
 fn a_photo_that_is_not_a_card_is_refused() {
     match parse(r#"{"no_card":true,"reason":"this is a booster wrapper"}"#) {
@@ -54,7 +45,6 @@ fn a_photo_that_is_not_a_card_is_refused() {
     ));
 }
 
-/// Two cards in frame: the fields cannot describe both, so neither is stored.
 #[test]
 fn two_cards_in_one_photo_are_refused() {
     assert_eq!(
@@ -63,8 +53,6 @@ fn two_cards_in_one_photo_are_refused() {
     );
 }
 
-/// A name is the one field a person cannot review into existence — they would
-/// have to identify the card themselves, which is the thing they were avoiding.
 #[test]
 fn an_answer_with_no_name_is_refused() {
     assert_eq!(
@@ -78,8 +66,7 @@ fn an_answer_with_no_name_is_refused() {
     );
 }
 
-/// An absent field stays absent and is listed. Nothing is defaulted — a defaulted
-/// condition is money, silently.
+/// A defaulted condition is money, silently.
 #[test]
 fn absent_fields_are_listed_and_never_defaulted() {
     let g = parse(r#"{"name":"Pikachu","set_name":"Base","set_code":"base1","confidence":40}"#)
@@ -95,8 +82,6 @@ fn absent_fields_are_listed_and_never_defaulted() {
     );
 }
 
-/// The model can flag its own uncertainty, and that adds to the list rather than
-/// replacing it.
 #[test]
 fn a_field_the_model_flags_itself_joins_the_list() {
     let g = parse(
@@ -109,7 +94,6 @@ fn a_field_the_model_flags_itself_joins_the_list() {
     assert_eq!(g.needs_review, vec!["condition"], "and still flagged for a person");
 }
 
-/// No duplicates, whether a field is absent or flagged or both.
 #[test]
 fn needs_review_has_no_duplicates() {
     let g = parse(r#"{"name":"Pikachu","confidence":10,"uncertain":["number","number","rarity"]}"#)
@@ -120,9 +104,7 @@ fn needs_review_has_no_duplicates() {
     assert_eq!(g.needs_review, sorted);
 }
 
-/// Numbers are normalised, because a price source keyed on `058/165` finds
-/// nothing for `#58`. This is a lookup requirement, not inference, so confidence
-/// does not move.
+/// A lookup requirement, not inference, so confidence does not move.
 #[test]
 fn a_card_number_is_normalised_to_the_set_total() {
     for written in ["58/165", "058/165", "58 / 165", "#58/165"] {
@@ -133,9 +115,7 @@ fn a_card_number_is_normalised_to_the_set_total() {
     }
 }
 
-/// With no set total there is nothing to pad to, so the number is kept as
-/// written and flagged — padding it to an invented width would produce a key that
-/// matches nothing.
+/// Padding to an invented width would produce a key that matches nothing.
 #[test]
 fn a_number_with_no_set_total_is_kept_bare_and_flagged() {
     let g = parse(r##"{"name":"X","number":"#58","confidence":80}"##).expect("a guess");
@@ -143,14 +123,12 @@ fn a_number_with_no_set_total_is_kept_bare_and_flagged() {
     assert!(g.needs_review.contains(&"number".to_string()), "{:?}", g.needs_review);
 }
 
-/// Set codes are the lookup key and arrive in every casing.
 #[test]
 fn a_set_code_is_lowercased() {
     let g = parse(r#"{"name":"X","set_code":"SV3PT5","confidence":80}"#).expect("a guess");
     assert_eq!(g.set_code, "sv3pt5");
 }
 
-/// Variants arrive as whatever the model felt like writing.
 #[test]
 fn variants_are_read_from_free_text() {
     for (written, expected) in [
@@ -172,8 +150,7 @@ fn variants_are_read_from_free_text() {
     }
 }
 
-/// A variant nobody recognises is not silently Normal — that is a price
-/// difference — it is unknown and flagged.
+/// Silently Normal would be a price difference.
 #[test]
 fn an_unrecognised_variant_is_unknown_rather_than_normal() {
     let g = parse(r#"{"name":"X","variant":"gold crown tera something","confidence":80}"#)
@@ -205,7 +182,6 @@ fn conditions_are_read_from_the_words_the_market_uses() {
     }
 }
 
-/// A slab is a different market from a raw card, and the grade IS the price.
 #[test]
 fn a_graded_card_carries_its_grader_and_grade_in_tenths() {
     let psa = parse(r#"{"name":"X","graded":"PSA 10","confidence":95}"#).expect("psa");
@@ -223,32 +199,26 @@ fn a_graded_card_carries_its_grader_and_grade_in_tenths() {
     assert_eq!(cgc.graded, Some(Grade { grader: "CGC".into(), tenths: 85 }), "object form too");
 }
 
-/// A graded card is not condition-graded as well: the slab settles it, and
-/// carrying both invites two answers to one question.
 #[test]
 fn a_graded_card_does_not_also_need_a_condition_review() {
     let g = parse(r#"{"name":"X","graded":"PSA 10","confidence":95}"#).expect("a guess");
     assert!(!g.needs_review.contains(&"condition".to_string()), "{:?}", g.needs_review);
 }
 
-/// Confidence outside 0..=100 is a broken answer, not something to clamp: a model
-/// that says 150 did not understand the question, and clamping hides that.
+/// A model that says 150 did not understand the question; clamping hides that.
 #[test]
 fn confidence_outside_the_range_is_refused() {
     assert!(matches!(parse(r#"{"name":"X","confidence":150}"#), Err(IdentifyError::Refused(_))));
     assert!(matches!(parse(r#"{"name":"X","confidence":-4}"#), Err(IdentifyError::Refused(_))));
 }
 
-/// An answer with no confidence at all is treated as no confidence, not as full
-/// confidence. Defaulting the other way is how a guess becomes a fact.
+/// Defaulting to full confidence is how a guess becomes a fact.
 #[test]
 fn a_missing_confidence_is_zero() {
     let g = parse(r#"{"name":"Pikachu"}"#).expect("a guess");
     assert_eq!(g.confidence, 0);
 }
 
-/// The prompt lives beside the parser so the two cannot drift, and it has to name
-/// the fields the parser reads.
 #[test]
 fn the_prompt_asks_for_exactly_what_the_parser_reads() {
     let p = prompt();

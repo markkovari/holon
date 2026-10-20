@@ -1,17 +1,4 @@
-//! `browser-automation` — capture a page's rendered content, since a wasm guest cannot render one
-//!
-//! The rendering happens in `comp-browser`, which is native because driving a real
-//! browser needs a process and a `wasm32-wasip2` guest cannot start one (ADR-0095). This
-//! component holds the contract and reaches the daemon over HTTP, like `fs-watcher`
-//! reaches `comp-fswatch`.
-//!
-//! What this may dial is a MANIFEST decision (ADR-0008): the daemon's address is
-//! `browser-url` in `wasi:config` and the egress allow-list decides whether the call
-//! leaves at all. The daemon has its own host allow-list; neither side trusts the url in
-//! the request, because it can come from a model.
-//!
-//! Config (wasi:config/store):
-//!   browser-url    where `comp-browser` is listening, e.g. http://127.0.0.1:8001
+//! Neither side trusts the request's url (it can come from a model); egress is the manifest's call (ADR-0008).
 
 #[allow(warnings)]
 mod bindings;
@@ -26,23 +13,15 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
-/// Thirty seconds. A real page load — navigation, JS, network — is slower than
-/// a poll, and a caller waiting on an HTTP request would rather hear "the
-/// browser is in trouble" than wait past that.
 const TIMEOUT_NS: u64 = 30_000_000_000;
 
-/// A ceiling on how much of the daemon's reply this buffers. The daemon truncates its own
-/// answer to the same size, but this side does not trust that: an unbounded read loop
-/// turns a daemon bug or hostile response into unbounded guest memory. 2 MiB is generous
-/// for a snapshot and below the 16 MiB request-body ceiling because a snapshot is
-/// read-only output, not an upload.
+/// The daemon truncates too, but this side does not trust it: an unbounded read is unbounded guest memory.
 const MAX_REPLY_BYTES: usize = 2 * 1024 * 1024;
 
 fn daemon_url() -> Result<String, BrowserError> {
     match config::get("browser-url") {
         Ok(Some(u)) if !u.is_empty() => Ok(u),
-        // Unavailable rather than not-permitted: nobody refused anything, the
-        // deployment simply never said where the browser daemon is.
+        // Unavailable, not not-permitted: nobody refused; the deployment never said where the daemon is.
         _ => Err(BrowserError::Unavailable(
             "browser-url is not set — this component has nowhere to ask".into(),
         )),
@@ -64,9 +43,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), BrowserError> {
     Ok((scheme, authority, path))
 }
 
-/// POST the request and return the body. Every failure is `unavailable`: the
-/// daemon's own refusals arrive as JSON with a 200, so anything at this level
-/// is the transport rather than an answer.
+/// The daemon's refusals arrive as JSON with a 200, so any failure here is transport.
 fn post(body: Vec<u8>) -> Result<Vec<u8>, BrowserError> {
     let url = daemon_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
@@ -74,10 +51,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, BrowserError> {
 
     let headers = Fields::new();
     let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
-    // A shared secret, if the deployment set one — see
-    // `comp_daemon_kit`'s own doc for why loopback
-    // binding alone is not a boundary. Absent means the daemon was
-    // started with no --token, so there is nothing to send.
+    // Loopback binding alone is not a boundary (see `comp_daemon_kit`); absent means no --token.
     if let Ok(Some(token)) = config::get("browser-token") {
         if !token.is_empty() {
             let _ = headers
@@ -93,8 +67,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, BrowserError> {
     let out = req.body().map_err(|_| net("body"))?;
     {
         let stream = out.write().map_err(|_| net("write"))?;
-        // Chunked: `blocking-write-and-flush` traps above 4096 bytes, and a
-        // request naming a long url is small but not bounded.
+        // `blocking-write-and-flush` traps above 4096 bytes.
         for chunk in body.chunks(4096) {
             stream
                 .blocking_write_and_flush(chunk)
@@ -124,15 +97,12 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, BrowserError> {
         match stream.blocking_read(8192) {
             Ok(c) if c.is_empty() => break,
             Ok(c) => {
-                // A ceiling, not a policy: past this the read stops and the caller is told.
                 if buf.len() + c.len() > MAX_REPLY_BYTES {
                     return Err(net("reply exceeded the size ceiling"));
                 }
                 buf.extend_from_slice(&c);
             }
-            // `Closed` is end-of-body; anything else is a read that went wrong,
-            // and returning what arrived would be a truncated answer presented
-            // as a whole one.
+            // Anything but `Closed` is a failed read; returning what arrived would be a truncated answer.
             Err(StreamError::Closed) => break,
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
@@ -140,8 +110,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, BrowserError> {
     Ok(buf)
 }
 
-/// Pull one JSON string field out without a parser: the daemon's replies have two flat
-/// shapes, so serde would be more code than the thing it reads.
+/// Two flat reply shapes: serde would be more code than what it reads.
 fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
     let rest = &json[at..];
@@ -156,10 +125,7 @@ impl Guest for Component {
         let raw = post(body.into_bytes())?;
         let text = String::from_utf8_lossy(&raw).into_owned();
 
-        // The daemon reports its refusals in the body. Mapping them back to
-        // the variant matters: a caller that cannot tell "you may not visit
-        // that host" from "the browser is down" will retry the first one
-        // forever.
+        // Mapped back to the variant, or a caller retries a permanent "no" forever.
         if let Some(err) = field(&text, "error") {
             let detail = field(&text, "detail").unwrap_or_default().to_string();
             return Err(match err {
@@ -175,8 +141,6 @@ impl Guest for Component {
     }
 }
 
-/// A JSON string literal. A url can contain a quote or a backslash, and this is
-/// building a request out of one.
 fn json_str(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -201,15 +165,12 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use super::*;
 
-    /// A url is caller-supplied and goes into a JSON request. A quote in it
-    /// would end the string early and the rest would be read as structure.
     #[test]
     fn a_url_cannot_break_out_of_the_request_it_is_put_in() {
         assert_eq!(json_str("https://a/b"), r#""https://a/b""#);
         assert_eq!(json_str(r#"https://a"b"#), r#""https://a\"b""#);
         assert_eq!(json_str(r#"https://a\b"#), r#""https://a\\b""#);
-        // Escaped, not stripped: a control character silently removed would
-        // change the url the daemon is asked about, and nobody would know.
+        // Escaped, not stripped: removing it would silently change the url.
         assert_eq!(json_str("https://a\u{1}b"), "\"https://a\\u0001b\"");
     }
 
@@ -220,8 +181,6 @@ mod tests {
         assert!(field(json, "error").is_none());
     }
 
-    /// The daemon's refusal must be told apart from a transport failure, or a
-    /// caller retrying a permanent "no" would never stop.
     #[test]
     fn a_refusal_is_read_back_as_not_permitted() {
         let json = r#"{"error":"not-permitted","detail":"evil.example"}"#;

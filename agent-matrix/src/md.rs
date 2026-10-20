@@ -1,22 +1,12 @@
-//! Markdown in an agent's answer, as the HTML Element displays.
-//!
-//! Models write markdown (`**bold**`, tables, lists) and a plain `body` shows it as pipes and
-//! asterisks. Matrix lets a message carry a `formatted_body` beside the `body`, which a client
-//! renders and one that does not simply shows the body. So the body stays the model's own text,
-//! and this adds the HTML.
-//!
-//! The answer is a model's output, so nothing in it is trusted to be markup: raw HTML in it is
-//! turned into text, not passed through (Element sanitises too; this is the first line, not the
-//! only one). A single line break is kept as a line break, which is how people write in a chat.
+//! The `formatted_body` HTML for an agent's markdown answer; the `body` stays the model's text.
 
 use pulldown_cmark::{html, Event, Options, Parser, Tag};
 
-/// The HTML for `text`, or `None` when it has no markup at all, so a plain sentence is sent as the
-/// plain message it is.
 pub fn to_html(text: &str) -> Option<String> {
     let events: Vec<Event> =
         Parser::new_ext(text, Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH)
             .map(|e| match e {
+                // A model's output is untrusted: raw HTML becomes text.
                 Event::Html(h) | Event::InlineHtml(h) => Event::Text(h),
                 Event::SoftBreak => Event::HardBreak,
                 e => e,

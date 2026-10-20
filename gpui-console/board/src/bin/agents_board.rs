@@ -1,21 +1,4 @@
 #![cfg_attr(target_family = "wasm", no_main)]
-//! `agents-board`: the agent board over a scripted run, with no lattice, model or key, natively or in a
-//! browser.
-//!
-//!   cargo run --bin agents-board                       # watch it
-//!   cargo run --bin agents-board -- --mode light
-//!   cargo run --bin agents-board -- --shoot /tmp/shots --at 4,10,20,30   # photograph it
-//!
-//! `--shoot DIR` writes `DIR/board-<mode>-<seconds>.png` at each time in `--at` (seconds after
-//! start) from inside the process, approves the approval itself after `--auto` seconds, and exits
-//! after the last shot. `--film START:COUNT:STEP_MS` instead takes COUNT shots, STEP_MS apart,
-//! from START seconds in, as `DIR/film-NN.png`: how a motion is looked at. With `--gif FILE` the
-//! same frames are one GIF instead, at the size a person sees the window:
-//!
-//!   cargo run --bin agents-board -- --open --film 0:200:120 --gif docs/media/agents-board.gif
-//!
-//! In a browser (README.md says how it is built) the same choices are the page's query:
-//! `index.html?tab=explore&select=component:record-store&mode=light&auto=6`.
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -30,7 +13,6 @@ use agent_board::map::Tab;
 use agent_board::theme::Mode;
 use agent_board::{Actions, AgentTree, Board};
 
-/// What to show, however it was asked for: flags natively, the page's query in a browser.
 #[derive(Default)]
 struct Opts {
     light: bool,
@@ -41,7 +23,6 @@ struct Opts {
     goal: Option<String>,
     auto: Option<Duration>,
     size: (f32, f32),
-    /// The Matrix server the agents are users on, when the bridge's own files do not say.
     matrix: Option<String>,
 }
 
@@ -55,7 +36,6 @@ fn tab_named(s: &str) -> Option<Tab> {
     }
 }
 
-/// Opens the board and plays the story into it; `options` adds what only one platform has.
 fn run(
     app: Application,
     o: Opts,
@@ -81,7 +61,6 @@ fn run(
                             .with_element(
                                 o.matrix.as_deref().map(agent_board::agents::Element::on),
                             );
-                        // a page has no traffic lights to leave room for
                         if cfg!(target_family = "wasm") {
                             board.with_inset(18.0)
                         } else {
@@ -139,7 +118,6 @@ fn run(
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
     gpui_platform::web_init();
-    // `?tab=components&select=component:x&mode=light&open&form&goal=...&auto=6`
     let query = web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default();
     let mut o = Opts { size: (1320.0, 900.0), ..Default::default() };
     for pair in query.trim_start_matches('?').split('&').filter(|p| !p.is_empty()) {
@@ -171,48 +149,33 @@ mod native {
     use clap::Parser;
     use gpui::{point, TitlebarOptions, WindowKind};
 
-    /// `agents-board`'s flags.
     #[derive(Parser)]
     #[command(name = "agents-board", about = "The agent board over a scripted run")]
     struct Args {
-        /// `dark` or `light`.
         #[arg(long, value_parser = ["dark", "light"], default_value = "dark")]
         mode: String,
-        /// Write screenshots of the window into DIR, from inside the process, and exit.
         #[arg(long, value_name = "DIR")]
         shoot: Option<String>,
-        /// With `--shoot`: the seconds after start to photograph at.
         #[arg(long, value_delimiter = ',', default_values_t = [4.0, 11.0, 24.0])]
         at: Vec<f32>,
-        /// Approve the approval after this many seconds if nobody has (a `--shoot` does, after 6).
         #[arg(long)]
         auto: Option<f32>,
-        /// With `--shoot`: START:COUNT:STEP_MS, a burst of frames to look at a motion.
         #[arg(long, value_parser = parse_film)]
         film: Option<(f32, usize, u64)>,
-        /// Open the list of what is waiting for a person as soon as there is one.
         #[arg(long)]
         open: bool,
-        /// Open the form that gives an agent a goal.
         #[arg(long)]
         form: bool,
-        /// Two seconds in, type GOAL into the form and start it, as a person would.
         #[arg(long, value_name = "GOAL")]
         goal: Option<String>,
-        /// Open on `agents`, `explore` or `map` instead of the sessions.
         #[arg(long, value_parser = ["sessions", "agents", "explore", "map"])]
         tab: Option<String>,
-        /// With `--tab`: look at KEY there (`component:rate-limiter`), as following a reference would.
         #[arg(long, value_name = "KEY", requires = "tab")]
         select: Option<String>,
-        /// The Matrix server the agents are users on (`agent-matrix`'s `--server-name`), when its files in
-        /// `~/.holon-matrix` do not say: the Agents tab then opens each in Element.
         #[arg(long, value_name = "SERVER")]
         matrix: Option<String>,
-        /// With `--film`: write the frames as one GIF at FILE, not as PNGs.
         #[arg(long, value_name = "FILE", requires = "film")]
         gif: Option<String>,
-        /// The window's size, WIDTHxHEIGHT.
         #[arg(long, value_parser = parse_size, default_value = "1320x900")]
         size: (f32, f32),
     }
@@ -258,8 +221,7 @@ mod native {
             gpui_platform::application(),
             o,
             move |w| WindowOptions {
-                // macOS stops drawing a window something covers, and a photograph of it would be its
-                // first frame: while photographing, it is above everything
+                // macOS stops drawing a covered window, so photographs are taken from a pop-up
                 kind: if photographing { WindowKind::PopUp } else { WindowKind::Normal },
                 titlebar: Some(TitlebarOptions {
                     title: Some("Agents".into()),
@@ -272,7 +234,6 @@ mod native {
         );
     }
 
-    /// `--shoot` and `--film`: the window, from inside, at the times asked for.
     #[allow(unused_variables)]
     fn photograph(a: Args, mode: Mode, cx: &mut App) {
         #[cfg(target_os = "macos")]

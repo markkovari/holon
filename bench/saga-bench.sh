@@ -1,9 +1,4 @@
 #!/usr/bin/env bash
-# saga app-path bench (docs/apps/SAGA.md rung 4) — the first bench of a stateful WORKFLOW
-# path, not stateless CRUD. Every request goes browser → hyper → wasmtime →
-# saga_domain.composed.wasm (saga-domain + fsm + records + idempotency +
-# event-bus + ids + timer) → wasi:keyvalue backend.
-#
 # Usage: bench/saga-bench.sh [memory|nats]
 set -euo pipefail
 KV="${1:-memory}"
@@ -22,7 +17,7 @@ for _ in $(seq 1 100); do curl -sf "$B/" >/dev/null 2>&1 && break; sleep 0.1; do
 SEED=$(curl -s -X POST "$B/trips" -d '{"traveler":"seed"}' | jget '.id')
 curl -s -X POST "$B/trips/$SEED/run" >/dev/null
 
-oha_row() { # name method path [body]
+oha_row() {
   local name="$1" method="$2" path="$3" body="${4:-}"; local h=()
   [ -n "$body" ] && h=(-H 'content-type: application/json' -d "$body")
   local j; j=$(oha --output-format json -z 8s -c 20 -m "$method" ${h[@]+"${h[@]}"} "$B$path")
@@ -32,7 +27,7 @@ oha_row() { # name method path [body]
     "$(echo "$j" | jget '.latencyPercentiles.p99*1000')"
 }
 
-batch() { # label body N  -> full create+run latency
+batch() {
   local label="$1" body="$2" n="$3" t0 t1
   t0=$(now)
   for _ in $(seq 1 "$n"); do
@@ -49,8 +44,7 @@ echo "=== saga bench (KV=$KV) ==="
 printf '%-34s %8s  %6s / %-6s\n' 'endpoint (oha -c 20)' rps 'p50' 'p99(ms)'
 oha_row "POST /trips (start)"       POST "/trips" '{"traveler":"b"}'
 oha_row "GET /trips/{id}"           GET  "/trips/$SEED"
-# (POST /internal/pump is O(running sagas) — not a fixed-cost op, so it's not
-#  benched as rps here; see SAGA-BENCH.md takeaways.)
+# POST /internal/pump is O(running sagas), so it is not benched as rps.
 echo "--- full saga, sequential (create + run to terminal) ---"
 batch "commit  (3 legs → committed)"    '{"traveler":"b"}'                    100
 batch "compensate (car fails → rollback)" '{"traveler":"b","failLeg":"car"}'  100

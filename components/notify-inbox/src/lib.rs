@@ -1,12 +1,5 @@
-//! `notify-inbox` — the in-app channel: durable, per subject, with unread state.
-//!
-//! Two counters, because `kv:atomics` can only add: `increment(bucket, key, delta: u64)` has no negative delta, so
-//! an unread count cannot be decremented. Instead two monotonic counters, `d:` delivered and `r:` read, and the badge
-//! is `delivered - read`: both atomic, no read-modify-write racing a delivery.
-//!
-//! The cursor is the delivered counter: a note's `seq` is its ordinal within one subject's inbox, so `since(after: n)`
-//! is both "the next page" and "everything since I last looked" (and a live SSE tail). No scan or `list-keys`: the
-//! highest seq is the delivered counter, so listing is a bounded walk of keys known to exist.
+//! Two monotonic counters, `d:` delivered and `r:` read (kv:atomics has no negative delta); unread = d - r.
+//! A note's `seq` is its ordinal in the subject's inbox, so `since(after)` pages and tails without `list-keys`.
 
 #[allow(warnings)]
 mod bindings;
@@ -17,9 +10,7 @@ use bindings::wasi::keyvalue::atomics;
 use bindings::wasi::keyvalue::store as kv;
 use serde_json::json;
 
-/// The bucket the platform assigned: `comp-host` only opens buckets the scope granted and a miss is `no-such-store`.
-/// So every kv component opens `default` and separates itself by key prefix (`n:`/`d:`/`r:` below). Separating
-/// TENANTS is the caller's job, inside the subject string (as `quota:meter` and `records:store` do).
+/// comp-host opens only buckets the scope granted, so kv components share `default` and split by key prefix.
 const BUCKET: &str = "default";
 
 struct Component;
@@ -85,7 +76,7 @@ impl Guest for Component {
         let bucket = open()?;
         let highest = counter(&bucket, &delivered_key(&subject))?;
         let mut out = Vec::new();
-        // Oldest first from `after`, so a tail appends and a page continues. A gap (deleted note, or a seq claimed by a failed delivery) is skipped, not the end of the walk.
+        // A gap (deleted note, or a seq claimed by a failed delivery) is skipped, not the end of the walk.
         for seq in (after + 1)..=highest {
             if out.len() >= limit as usize {
                 break;

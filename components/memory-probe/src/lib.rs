@@ -1,16 +1,5 @@
-//! `memory-probe` — an instrument for `knowledge:memory` (see wit/probe.wit).
-//!
-//!   POST /observe?ns=&key=&goal=&env=&attempt=&score=      body is the lesson
-//!   POST /promote?goal=&score=&env=&attempt=               body is the lesson
-//!   GET  /recall?goal=&k=&budget=&pools=&min=
-//!   POST /attribute?keys=a,b&run=&ok=
-//!   POST /evaluated?goal=&run=&score=&passed=&artifact=
-//!   POST /decay?days=&min-uses=
-//!   GET  /already-done?goal=&min=
-//!
-//! Every route answers JSON, and reports an error as `{"error":"…"}` with a **200**, as `graph-probe` does: the thing
-//! under test is what the component said, and a status code would flatten "the policy refused this" into the same shape
-//! as "the host refused the link", the two failures this exists to tell apart.
+//! Errors come back as JSON with a 200, as `graph-probe`: a status code would flatten
+//! "the policy refused this" into "the host refused the link".
 
 #[allow(warnings)]
 mod bindings {
@@ -37,7 +26,6 @@ mod bindings {
         world: "comp:memoryprobe/memory-probe",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;
@@ -107,7 +95,7 @@ fn ns_name(ns: Namespace) -> &'static str {
     }
 }
 
-/// `pools=errors,patterns` → the list. Empty means "all" (the component's default) and must stay distinguishable from "one pool".
+/// Empty means "all" (the component's default), distinct from one pool.
 fn pools_of(spec: &str) -> Vec<Namespace> {
     spec.split(',').filter(|s| !s.is_empty()).map(ns_of).collect()
 }
@@ -121,12 +109,11 @@ fn err(e: mem::MemoryError) -> String {
     format!("{{\"error\":\"{kind}\",\"detail\":\"{}\"}}", esc(&msg))
 }
 
-/// A ceiling on a request body, not a policy: past this the read gives up and the body reads as empty.
+/// A ceiling, not a policy: past it the body reads as empty.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body_text!(MAX_BODY_BYTES);
 
-/// A repeated query parameter, as a list: `tags=a,b,c`.
 fn csv_param(query: &str, key: &str) -> Vec<String> {
     param(query, key)
         .split(',')
@@ -145,7 +132,6 @@ fn entry_from(query: &str, text: String) -> Entry {
         env: param(query, "env"),
         attempt: param(query, "attempt"),
         score: signed(query, "score", -1),
-        // Comma-separated, so a test can exercise the structural half of retrieval like everything else here.
         tags: csv_param(query, "tags"),
     }
 }
@@ -169,7 +155,7 @@ impl Guest for Component {
             }
 
             (Method::Post, "/promote") => {
-                // The namespace is not a parameter: `promote` decides it, and passing one would let this probe claim a promotion into `errors`, which the component refuses.
+                // No namespace parameter: `promote` decides it (the component refuses a promotion into `errors`).
                 let e = entry_from(&query, read_body(request).await);
                 match promotion::promote(&e, signed(&query, "score", 0)) {
                     Ok(h) => format!("{{\"handle\":\"{}\"}}", esc(&h)),

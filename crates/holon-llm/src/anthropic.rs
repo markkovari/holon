@@ -1,13 +1,4 @@
 //! Anthropic's Messages API (`POST /v1/messages`).
-//!
-//! What differs from the OpenAI dialect, all of it handled here:
-//! * the system prompt is a top-level field, not a message;
-//! * `max_tokens` is required;
-//! * a message's `content` is a string or a list of typed blocks (text, image, tool_use, tool_result),
-//!   and roles must alternate, so consecutive user turns — a tool result followed by the next prompt —
-//!   are one;
-//! * a reply is a list of blocks, with the cached prefix of the prompt counted beside `input_tokens`;
-//! * a throttled request can be a `200` whose body is `{"type":"error",…}`.
 
 use serde_json::{json, Value};
 
@@ -15,16 +6,11 @@ use crate::model::{
     parse_args, str_of, u64_at, Call, Message, ParseError, Part, Reply, Request, Tool, Usage,
 };
 
-/// The `anthropic-version` header every request carries.
 pub const VERSION: &str = "2023-06-01";
 
-/// What a request without `max_tokens` is given, since without one the API answers 400.
+/// Without `max_tokens` the API answers 400.
 pub const DEFAULT_MAX_TOKENS: u32 = 4096;
 
-/// The request body for `/v1/messages`.
-///
-/// A message that is a single piece of text is `"content": "<text>"`, unless `blocks` asks for the
-/// list form; anything else is a list of blocks, in the order the caller gave the parts.
 pub fn body(req: &Request) -> Value {
     let messages = merge_user_turns(req.messages.iter().map(|m| message(m, req.blocks)).collect());
     let mut v = json!({
@@ -33,8 +19,7 @@ pub fn body(req: &Request) -> Value {
         "messages": messages,
     });
     if let Some(system) = req.system {
-        // The system prompt is identical across every call, so with caching on it is its own
-        // breakpoint; the growing tail is left to the automatic one below.
+        // Identical across every call, so it is its own breakpoint; the tail uses the automatic one.
         v["system"] = if req.cache {
             json!([{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}])
         } else {
@@ -84,8 +69,7 @@ fn block(p: &Part) -> Value {
     }
 }
 
-/// Anthropic wants roles to alternate; tool results followed by the next prompt are two user turns in
-/// a row, so they become one.
+/// Roles must alternate, so tool results followed by the next prompt become one user turn.
 fn merge_user_turns(msgs: Vec<Value>) -> Vec<Value> {
     let blocks = |c: &Value| match c {
         Value::String(t) => vec![json!({"type": "text", "text": t})],
@@ -106,12 +90,7 @@ fn merge_user_turns(msgs: Vec<Value>) -> Vec<Value> {
     out
 }
 
-/// Read a non-streamed `/v1/messages` response.
-///
-/// The text is every `text` block joined; tool calls are the `tool_use` blocks; anything else (a
-/// thinking block) is skipped rather than stringified. Whether an empty text is an error is the caller's
-/// to say: a thinking model can spend its whole budget and reach none, which [`Reply::hit_token_limit`]
-/// tells apart from a model that had nothing to say.
+/// Empty text is not an error here: a thinking model can spend its whole budget ([`Reply::hit_token_limit`]).
 pub fn parse(body: &[u8]) -> Result<Reply, ParseError> {
     let v: Value = serde_json::from_slice(body)
         .map_err(|e| ParseError::Malformed(format!("messages json: {e}")))?;
@@ -148,13 +127,10 @@ fn usage(u: &Value) -> Usage {
     }
 }
 
-/// A streamed reply, assembled as its events arrive. Feed each SSE `data:` payload (see
-/// [`crate::sse::take_frames`]); text is handed to `on_text` as it is generated and everything else is
-/// in the [`Reply`] that [`Stream::finish`] returns.
 #[derive(Default)]
 pub struct Stream {
     reply: Reply,
-    /// The tool_use block being streamed: (id, name, partial JSON).
+    /// (id, name, partial JSON) of the tool_use block being streamed.
     open: Option<(String, String, String)>,
 }
 

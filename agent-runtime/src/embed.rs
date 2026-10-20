@@ -1,13 +1,10 @@
-//! Text embeddings from a local service (`embed/server.py`, EmbeddingGemma 2). Used to
-//! recall memories by meaning rather than by shared words. Optional: with no service
-//! configured, or one that is down, callers fall back to what they did before.
+//! Embeddings from the optional `embed/server.py`; with it absent or down, callers fall back.
 
 use std::time::Duration;
 
 pub struct Embedder {
     url: String,
-    /// The launchd service that runs the embedding server, started on first use and stopped
-    /// after it has sat idle (see `lazy.rs`); empty when it is run by hand.
+    /// A launchd service started on demand (see `lazy.rs`); empty when it is run by hand.
     service: String,
     dim: u32,
     http: reqwest::blocking::Client,
@@ -70,7 +67,7 @@ impl Embedder {
     }
 }
 
-/// Cosine similarity; the service normalises, but a stored vector may not be.
+/// The service normalises, but a stored vector may not be.
 pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;

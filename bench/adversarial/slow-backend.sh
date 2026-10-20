@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
-# Round robin's weak case: a backend that is UP but SLOW.
-#
-# No need to simulate one. A Raspberry Pi 5 is roughly half a MacBook on wasm
-# paths, so a fleet of 2 Mac nodes + 2 Pi nodes IS the heterogeneous case, and an
-# even split of requests makes the Pi the bottleneck for everyone.
-#
-# Same fleet, same load, both algorithms.
+# Round robin's weak case, a backend UP but SLOW: a Pi 5 is about half a Mac on wasm,
+# so 2 Mac + 2 Pi nodes is that fleet without simulating one.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)/comp"
 SP=${SP:-$(mktemp -d)}
@@ -44,8 +39,6 @@ sleep 3
   >"$SP/rec.log" 2>&1 & PIDS+=($!)
 sleep 22
 
-# How much slower IS the Pi? Measure it directly, so the comparison below has a
-# reason rather than an assumption.
 echo "=== per-node latency, measured not assumed ==="
 for target in "mac-1 127.0.0.1:3811" "pi-1 $PI:3811"; do
   set -- $target

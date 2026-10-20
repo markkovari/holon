@@ -1,9 +1,4 @@
-//! `booked-domain` — a Calendly-lite booking service (docs/apps/BOOKED.md) as ONE composed
-//! wasm HTTP component. Exports `wasi:http`; imports only WIT contracts: the
-//! composed auth-guard (`auth:identity`), `records:store`, `lock:mutex` (the
-//! no-double-book guarantee), `email:template` (confirmation), `ical:codec`
-//! (.ics export) and `rrule:recur` (recurring bookings). No bespoke auth,
-//! storage, locking, calendar format, or recurrence math.
+//! Calendly-lite (docs/apps/BOOKED.md); `lock:mutex` is the no-double-book guarantee.
 
 #[allow(warnings)]
 mod bindings {
@@ -33,7 +28,6 @@ mod bindings {
         world: "booked:app/booked-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -132,7 +126,7 @@ fn usage() -> Outcome {
     )
 }
 
-// Date helpers: Hinnant civil<->days; times are minutes-from-midnight.
+// Hinnant civil<->days; times are minutes from midnight.
 
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
@@ -157,7 +151,6 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (y + if m <= 2 { 1 } else { 0 }, m as u32, d)
 }
 
-/// Parse `YYYY-MM-DD` to days-since-epoch; None if malformed.
 fn day_to_days(s: &str) -> Option<i64> {
     let p: Vec<&str> = s.split('-').collect();
     if p.len() != 3 {
@@ -175,14 +168,12 @@ fn days_to_day(days: i64) -> String {
     format!("{:04}-{:02}-{:02}", y, m, d)
 }
 
-/// ISO weekday of a `YYYY-MM-DD`, Monday=0…Sunday=6 (None if malformed).
+/// Monday=0…Sunday=6.
 fn weekday(day: &str) -> Option<i64> {
     day_to_days(day).map(|dd| (((dd % 7) + 3) % 7 + 7) % 7)
 }
 
-/// Unix seconds for a `YYYY-MM-DD` at `min` minutes from midnight (UTC).
-/// ponytail: times are emitted as UTC; a real deploy would carry each resource's
-/// tz into DTSTART/DTEND. The resource's `tz` field is stored for that upgrade.
+/// ponytail: emitted as UTC; carry each resource's stored `tz` into DTSTART/DTEND for a real deploy.
 fn epoch(day: &str, min: i64) -> u64 {
     day_to_days(day).map(|dd| (dd * 86400 + min * 60).max(0) as u64).unwrap_or(0)
 }
@@ -204,7 +195,6 @@ fn is_owner(p: &Principal) -> bool {
     p.roles.iter().any(|r| r == "owner")
 }
 
-/// The email we recorded for a subject at register (for confirmations/reports).
 fn subject_email(subject: &str) -> String {
     records::find_by(USERS, "subject", &json!(subject).to_string())
         .ok()
@@ -225,7 +215,7 @@ async fn register(request: Request) -> Outcome {
         Ok(p) => p,
         Err(e) => return Outcome::Auth(e),
     };
-    // demo self-assign of the global role (an admin would grant it in prod).
+    // Demo self-assign of the global role; an admin would grant it in prod.
     let wanted = body["role"].as_str().unwrap_or("member");
     let role = if ["member", "owner"].contains(&wanted) { wanted } else { "member" };
     let _ = rbac::assign_role(&p.tenant, &p.subject, role);
@@ -344,7 +334,6 @@ async fn set_availability(request: Request, id: &str) -> Outcome {
         Err(o) => return o,
     };
     let windows = b["windows"].as_array().cloned().unwrap_or_default();
-    // replace: delete existing windows for this resource, then recreate.
     for e in records::find_by(AVAIL, "resource", &json!(id).to_string()).unwrap_or_default() {
         let _ = records::delete(AVAIL, &e.id);
     }
@@ -383,7 +372,6 @@ fn get_availability(request: &Request, id: &str) -> Outcome {
     Outcome::Json(200, json!({ "windows": availability(id) }).to_string())
 }
 
-/// (start, end) of every booking for a resource on a day.
 fn bookings_on(resource: &str, day: &str) -> Vec<(i64, i64)> {
     records::find_by(BOOKINGS, "resource", &json!(resource).to_string())
         .unwrap_or_default()
@@ -394,9 +382,7 @@ fn bookings_on(resource: &str, day: &str) -> Vec<(i64, i64)> {
         .collect()
 }
 
-/// Does [start,end) fit inside an availability window for `day`'s weekday? A
-/// resource with NO windows at all is treated as always-available (usable out of
-/// the box); once windows exist, a booking must fit one.
+/// No windows at all means always available; once windows exist a booking must fit one.
 fn fits_availability(resource: &str, day: &str, start: i64, end: i64) -> bool {
     let all = availability(resource);
     if all.is_empty() {
@@ -414,11 +400,8 @@ fn overlaps(start: i64, end: i64, existing: &[(i64, i64)]) -> bool {
     existing.iter().any(|(s, e)| start < *e && *s < end)
 }
 
-/// Book ONE instance under a lock:mutex lease on `book:{resource}:{day}` — the
-/// no-double-book critical section: acquire, re-check overlap, write, release.
-/// Returns the stored booking, or None on conflict / lock contention.
-// One over clippy's default threshold, each a distinct scalar this booking
-// needs; a params struct would only exist to satisfy the lint.
+/// Acquire, re-check overlap, write, release: the no-double-book critical section.
+// One over clippy's threshold; a params struct would exist only for the lint.
 #[allow(clippy::too_many_arguments)]
 fn book_one(
     res_id: &str,
@@ -431,8 +414,7 @@ fn book_one(
     note: &str,
 ) -> Option<Value> {
     let key = format!("book:{res_id}:{day}");
-    // Brief spin: a competing booker holds the lease only for its tiny
-    // check-then-write, so a bounded retry avoids spurious conflicts under load.
+    // A competitor holds the lease only for its check-then-write, so a bounded retry avoids false conflicts.
     let mut lease = None;
     for _ in 0..64 {
         match lock::acquire(&key, &p.subject, 10) {
@@ -466,8 +448,6 @@ fn book_one(
     result
 }
 
-/// Render the booking-confirmation email (seeding a default template on first
-/// use), returning the rendered subject + text for the SPA to show.
 fn confirmation(email_addr: &str, res_name: &str, day: &str, start: i64, end: i64) -> Value {
     if email::get_template(CONFIRM_TMPL).is_err() {
         let _ = email::put_template(
@@ -518,7 +498,6 @@ async fn create_booking(request: Request) -> Outcome {
     let note = b["note"].as_str().unwrap_or("");
     let email_addr = subject_email(&p.subject);
 
-    // instance days: a single booking, or a recurrence expanded via rrule:recur.
     let days = match b.get("repeat").filter(|v| v.is_object()) {
         Some(rep) => expand_repeat(&day, rep),
         None => vec![day.clone()],
@@ -549,8 +528,6 @@ async fn create_booking(request: Request) -> Outcome {
     )
 }
 
-/// Expand a `repeat` object ({freq, interval?, weekdays?, count?, until?}) into
-/// instance days via rrule:recur, over a window from `day` to `until` (or +1yr).
 fn expand_repeat(day: &str, rep: &Value) -> Vec<String> {
     let freq = match rep["freq"].as_str().unwrap_or("weekly") {
         "daily" => rrule::Freq::Daily,
@@ -682,7 +659,7 @@ fn resource_ics(request: &Request, id: &str) -> Outcome {
         Some(r) => r,
         None => return Outcome::Err(404, "no such resource".into()),
     };
-    // owner sees the whole feed; a member sees only their own on this resource.
+    // The owner sees the whole feed; a member only their own on this resource.
     let owner = is_owner(&p);
     let events: Vec<ical::Event> = records::find_by(BOOKINGS, "resource", &json!(id).to_string())
         .unwrap_or_default()
@@ -698,7 +675,7 @@ fn resource_ics(request: &Request, id: &str) -> Outcome {
         .collect();
     let name = format!("{} — booked", res["name"].as_str().unwrap_or("resource"));
     let ics = ical::format_calendar(&events, PRODID, &name);
-    // a feed is meant to be subscribed to (inline), not downloaded.
+    // A feed is subscribed to (inline), not downloaded.
     Outcome::File(200, "text/calendar; charset=utf-8".into(), None, ics.into_bytes())
 }
 
@@ -718,8 +695,6 @@ fn slots(request: &Request, id: &str, path: &str) -> Outcome {
     let wd = weekday(&day).unwrap_or(0);
     let booked = bookings_on(id, &day);
 
-    // windows for this weekday; if the resource has no availability at all,
-    // offer a default 09:00–17:00.
     let windows: Vec<(i64, i64)> = {
         let all = availability(id);
         if all.is_empty() {
@@ -775,8 +750,7 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// Backstop against an unbounded body read: past wasmtime's 64 MiB per-store cap the
-/// guest traps and the caller just sees a closed connection.
+/// Backstop below wasmtime's 64 MiB per-store cap, past which the guest traps.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

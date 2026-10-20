@@ -1,25 +1,4 @@
-//! `fsm-workflow` — enforce a lifecycle — declare the legal state transitions and refuse the illegal ones
-//!
-//! A declarative finite-state-machine engine: an entity's lifecycle (`booked -> confirmed ->
-//! completed`, never `booked -> completed`, nothing out of a terminal state) is a first-class
-//! DEFINITION rather than scattered `if status == ...` checks.
-//!
-//!   * `define` registers a machine (states, initial state, transitions keyed by `event`,
-//!     terminal states), validated up front: `invalid-definition` if the initial state, a
-//!     transition endpoint or a terminal state is not in the state list.
-//!   * `create-instance` / `fire` / `can-fire` / `allowed-events` / `get-status` / `history`:
-//!     `fire` is rejected with `illegal-transition(current)` when no transition matches
-//!     `(current-state, event)`; otherwise the step count increments and a timestamped entry
-//!     joins the append-only history.
-//!
-//! Persisted in `wasi:keyvalue` as JSON; `wasi:clocks/wall-clock` stamps history in Unix
-//! seconds. App-agnostic.
-//!
-//! Storage layout (all values are JSON bytes; name segments byte-sanitized to
-//! kv-safe chars so ids containing `:` etc. never break a key):
-//!   * `fsm_def_{machine}`              -> the machine definition
-//!   * `fsm_inst_{machine}_{instance}`  -> `{ state, steps }`
-//!   * `fsm_hist_{machine}_{instance}`  -> `[ { event, source, target, at }, ... ]`
+//! Name segments are sanitised to kv-safe chars, so ids containing `:` never break a key.
 
 #[allow(warnings)]
 mod bindings;
@@ -40,9 +19,7 @@ fn now() -> u64 {
     wall_clock::now().seconds
 }
 
-/// Sanitize one opaque segment to kv-safe chars (same byte scheme as
-/// idempotency-guard's `id_key` / config-store's `sanitize`): A-Za-z0-9-/=
-/// pass through, anything else becomes `_XX` (uppercase hex of the byte).
+/// Same byte scheme as idempotency-guard and config-store.
 fn sanitize(seg: &str) -> String {
     let mut out = String::with_capacity(seg.len());
     for b in seg.bytes() {
@@ -54,17 +31,14 @@ fn sanitize(seg: &str) -> String {
     out
 }
 
-/// Storage key for a machine definition: `fsm_def_{machine}`.
 fn def_key(machine: &str) -> String {
     format!("fsm_def_{}", sanitize(machine))
 }
 
-/// Storage key for an instance's state: `fsm_inst_{machine}_{instance}`.
 fn inst_key(machine: &str, instance: &str) -> String {
     format!("fsm_inst_{}_{}", sanitize(machine), sanitize(instance))
 }
 
-/// Storage key for an instance's history: `fsm_hist_{machine}_{instance}`.
 fn hist_key(machine: &str, instance: &str) -> String {
     format!("fsm_hist_{}_{}", sanitize(machine), sanitize(instance))
 }
@@ -291,7 +265,6 @@ impl Guest for Component {
 
     fn history(machine: String, instance: String) -> Result<Vec<HistoryEntry>, FsmError> {
         let bucket = open()?;
-        // Require the instance to exist; history may legitimately be empty.
         let _inst = load_inst(&bucket, &machine, &instance)?;
         let hist = load_hist(&bucket, &machine, &instance)?;
         Ok(hist.into_iter().map(StoredHist::into_wit).collect())

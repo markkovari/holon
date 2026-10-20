@@ -1,6 +1,4 @@
-//! Configuration and state. The config holds secrets (the appservice tokens, the
-//! runtime's admin token, a Synapse admin token), so it lives OUTSIDE the repo,
-//! mode 0600, and `init` is the only thing that writes it.
+//! The config holds secrets: it lives outside the repo, mode 0600, written only by `init`.
 
 use std::path::{Path, PathBuf};
 
@@ -8,23 +6,18 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Config {
-    /// Where the bridge reaches Synapse (`https://node.tailnet.ts.net`).
     pub homeserver: String,
-    /// Part of every user id; permanent for the server.
+    /// Permanent: it is part of every user id.
     pub server_name: String,
-    /// The appservice tokens, shared with Synapse through the registration file.
     pub as_token: String,
     pub hs_token: String,
-    /// Where the bridge listens for Synapse's transactions.
     pub listen: String,
     pub runtime_url: String,
     pub runtime_token: String,
-    /// The one person who may talk to the agents (`@mark:server`).
+    /// The only person who may talk to the agents.
     pub owner: String,
-    /// The owner's own session token (from the one login `init` does). Used ONLY to
-    /// accept the owner's invites into rooms the bridge creates, so they are already
-    /// in your list: an appservice cannot act as a user outside its namespace. It is
-    /// as sensitive as a password; the file is mode 0600.
+    /// The owner's session token, used only to accept the owner's invites: an appservice
+    /// cannot act as a user outside its namespace. As sensitive as a password.
     pub admin_token: String,
     pub state_file: PathBuf,
 }
@@ -40,12 +33,10 @@ impl Config {
         write_private(path, &body)
     }
 
-    /// `@agent-<name>:<server>` — the Matrix user that IS this agent.
     pub fn ghost(&self, agent: &str) -> String {
         format!("@agent-{agent}:{}", self.server_name)
     }
 
-    /// The inverse of `ghost`; `None` for anyone who is not an agent's user.
     pub fn agent_of(&self, user_id: &str) -> Option<String> {
         user_id
             .strip_prefix("@agent-")?
@@ -54,13 +45,11 @@ impl Config {
             .map(String::from)
     }
 
-    /// The bridge's own user (it creates spaces, speaks in the control room).
     pub fn bridge_user(&self) -> String {
         format!("@holon-bridge:{}", self.server_name)
     }
 }
 
-/// Writes a file readable by the owner only, atomically.
 pub fn write_private(path: &Path, body: &str) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;

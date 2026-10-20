@@ -1,17 +1,5 @@
-//! Photos: plan an upload, complete it, list and read them back, and take the evaluator's signed result.
-//! `CONTRACT.md` is the shape of all of it.
-//!
-//! The lifecycle, as the `state` field records it:
-//!
-//!   uploading ──complete──▶ uploaded ──submit──▶ processing ──callback──▶ evaluated
-//!                                                           └──callback──▶ failed
-//!
-//! `uploaded` exists so a failed submit is recoverable: completing a multipart upload twice errors at the
-//! store, but submitting twice does not (`job_id` dedupes in `MEDIA_JOBS`), so a retry of `complete` from
-//! `uploaded` or `processing` skips straight to the submit.
-//!
-//! Ownership is `owner == principal.subject`, or an admin for reads. No `policy:guard`: one attribute, one
-//! comparison, the same for every route.
+//! `uploaded` makes a failed submit recoverable: completing twice errors at the store, but submit dedupes
+//! by `job_id`. No policy:guard: ownership is one comparison, the same for every route.
 
 use crate::bindings::media::pipeline::jobs::{self as media, MediaError, PartEtag};
 use crate::bindings::p3::http::types::Method;
@@ -24,7 +12,7 @@ use serde_json::{json, Map, Value};
 const PHOTOS: &str = "photos";
 /// How long a signed rendition URL works: outlives a page view, stops working the same day if pasted around.
 const SIGN_TTL_SECS: u32 = 3600;
-/// Every field the callback carries that is worth keeping (`timings_ms` tells an operator a slow photo from a slow machine).
+/// `timings_ms` tells an operator a slow photo from a slow machine.
 const RESULT_FIELDS: &[&str] =
     &["backend", "sha256", "metadata", "renditions", "sharpness", "vision", "colour", "timings_ms"];
 
@@ -39,15 +27,13 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     }
 }
 
-/// A photo id as `comp-media` will accept it: it becomes part of an object key (CONTRACT.md). Record ids
-/// are ULIDs and always pass; this keeps anything else typed into a path from reaching the store.
+/// It becomes part of an object key: anything but a ULID-like id must not reach the store.
 fn valid_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
         && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
-/// One stored photo as a JSON object, its record id merged in.
 fn doc(entry: &records::Entry) -> Map<String, Value> {
     let mut m = match serde_json::from_str::<Value>(&entry.data) {
         Ok(Value::Object(m)) => m,
@@ -61,7 +47,6 @@ fn str_of<'a>(m: &'a Map<String, Value>, key: &str) -> &'a str {
     m.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
-/// Write `m` back over `entry`, guarded by the revision it was read at.
 fn save(
     entry: &records::Entry,
     m: &Map<String, Value>,
@@ -71,8 +56,7 @@ fn save(
     records::update(PHOTOS, &entry.id, &Value::Object(data).to_string(), entry.revision)
 }
 
-/// `media:pipeline`'s refusal as an HTTP answer. The detail is passed through ("over 512 MiB", "extension
-/// .png not allowed"): it is what the uploader needs and names nothing about the deployment.
+/// The detail is passed through: it is what the uploader needs and names nothing about the deployment.
 fn media_reply(e: MediaError) -> Reply {
     let (status, code, detail) = match e {
         MediaError::Refused(d) => (422, "media_refused", d),
@@ -100,8 +84,7 @@ struct CreateReq {
     content_type: String,
 }
 
-/// `POST /api/photos` — make the record, then ask for the plan. The record comes first because its id IS
-/// the photo id the plan's key is built from; if the plan is refused the record is deleted again.
+/// The record comes first: its id IS the photo id the plan's key is built from.
 fn create(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     if let Err(r) = crate::moderation::require_active(&principal) {
@@ -175,7 +158,6 @@ struct PartReq {
     etag: String,
 }
 
-/// `POST /api/photos/{id}/complete` — stitch the parts, then queue evaluation.
 fn complete(route: &Route, id: &str, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     if let Err(r) = crate::moderation::require_active(&principal) {
@@ -243,7 +225,7 @@ fn complete(route: &Route, id: &str, body: &str) -> Reply {
     Reply::json(200, json!({"id": id, "state": "processing"}))
 }
 
-/// A signed GET for one rendition's key, or null. A failed sign never fails the read around it.
+/// A failed sign never fails the read around it.
 fn signed(m: &Map<String, Value>, rendition: &str) -> Value {
     let key = m
         .get("renditions")
@@ -257,8 +239,7 @@ fn signed(m: &Map<String, Value>, rendition: &str) -> Value {
     media::sign_get(key, SIGN_TTL_SECS).map(Value::String).unwrap_or(Value::Null)
 }
 
-/// `GET /api/photos` — the caller's own photos, newest first. The gallery view: everything but the heavy
-/// parts of the result (256 sharpness tiles per photo), plus a signed thumbnail when there is one.
+/// Omits the heavy parts of the result (256 sharpness tiles per photo).
 fn list(route: &Route) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let owner = serde_json::to_string(&principal.subject).unwrap_or_default();
@@ -287,7 +268,6 @@ fn list(route: &Route) -> Reply {
     Reply::json(200, json!({"photos": out}))
 }
 
-/// `GET /api/photos/{id}` — the whole record, with signed rendition URLs.
 fn get(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     if !valid_id(id) {
@@ -317,21 +297,15 @@ fn get(route: &Route, id: &str) -> Reply {
     Reply::json(200, Value::Object(m))
 }
 
-/// The owner sees `moderation: {hidden, reason, at}` — not which admin did it.
+/// Not which admin did it.
 fn owner_view_of_moderation(m: &mut Map<String, Value>) {
     if let Some(Value::Object(mo)) = m.get_mut("moderation") {
         mo.remove("by");
     }
 }
 
-/// `POST /internal/photos/{id}/evaluated` — `comp-media`'s signed result.
-///
-/// Not behind a login, so the signature is checked before the photo is even looked up, and an unsigned
-/// caller learns nothing, not even whether the id exists.
-///
-/// Idempotent, because the sender retries until a 2xx: a result for an already `evaluated` photo is
-/// acknowledged and changes nothing, and `quests::on_evaluated` runs only on the transition INTO
-/// `evaluated`, so a retried callback can never score a photo twice.
+/// Signature checked before lookup: an unsigned caller learns nothing. Idempotent (the sender retries
+/// until a 2xx); `quests::on_evaluated` runs only on the transition INTO `evaluated`.
 pub fn evaluated(id: &str, raw: &[u8], signature: &str) -> Reply {
     // No secret configured means no callback can be trusted. 503 rather than 401 tells the sender to keep retrying: an unfinished deployment, not a forgery.
     let Some(secret) = config_value("media-callback-secret") else {

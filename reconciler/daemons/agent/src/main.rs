@@ -1,23 +1,5 @@
-//! `comp-agent` — the pull half of continuous deployment.
-//!
-//! Runs on the box, on a timer. Reads the desired state, compares it to what is installed, and where
-//! they differ pulls the artifact BY DIGEST, installs it and restarts the unit. Nothing reaches in
-//! from outside: no inbound port, no CI credential that can touch this network, no webhook.
-//!
-//! ## What is mutable, and where
-//!
-//! ADR-0006: nothing in a deploy may reference a tag, because a tag drifts. The artifact is pulled by
-//! digest and the installed digest is written down. The one mutable thing is which commit of
-//! `apps.lock` is current: a branch in git, whose history IS the deploy history (`git log deploy --
-//! apps.lock`). A tag would put that mutability inside the artifact reference, where nothing can
-//! audit it.
-//!
-//! ## What it will not do
-//!
-//! It deploys apps this box ALREADY HAS a unit for. Installing new apps because a file said to would
-//! let one commit to one branch start arbitrary services on every box running the agent. Adding an
-//! app stays a deliberate operator step (`holon node render`, copy the unit, `systemctl enable
-//! --now`); this keeps the ones already there current.
+//! Pull-based deploy: by digest (ADR-0006), and only for apps this box already has a unit for, so
+//! one commit to the deploy branch cannot start arbitrary services.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -41,7 +23,6 @@ fn main() {
                 interval = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(300);
             }
             "--once" => once = true,
-            // Says what it WOULD do and changes nothing: the first thing to run on a box not yet automated.
             "--dry-run" => dry = true,
             "-h" | "--help" => {
                 eprintln!(
@@ -79,9 +60,7 @@ fn main() {
 
 struct Desired {
     registry: String,
-    /// `https` unless the lock says otherwise. Carried in the LOCK rather than configured per box: which
-    /// scheme a registry speaks is a property of the registry, and a box told `https` about a plaintext
-    /// one fails with `received corrupt message of type InvalidContentType`, naming neither.
+    /// In the lock, not per box: the scheme is the registry's, and a mismatch fails cryptically.
     scheme: String,
     digests: BTreeMap<String, String>,
 }
@@ -119,8 +98,7 @@ fn fetch(url: &str) -> Result<String, String> {
     if !out.status.success() {
         return Err(format!("fetching {url}: {}", String::from_utf8_lossy(&out.stderr).trim()));
     }
-    // The status, said plainly: `curl exited exit status: 22` read as a broken agent when it meant
-    // "nothing has been published yet", the state of every box before the first deploy.
+    // Say it plainly: curl's bare "exit status: 22" read as a broken agent before the first publish.
     match code {
         "200" => {}
         "404" => {
@@ -138,10 +116,7 @@ fn app_dir(app: &str) -> PathBuf {
     PathBuf::from("/srv/comp").join(app)
 }
 
-/// What is installed, as recorded when it was installed.
-///
-/// Read from a file rather than hashing the artifact: a registry's digest is over the manifest, not
-/// the bare `.wasm`, so hashing the disk would differ and every sweep would redeploy.
+/// Recorded at install, not hashed: a registry digest covers the manifest, not the bare `.wasm`.
 fn installed_digest(app: &str) -> Option<String> {
     std::fs::read_to_string(app_dir(app).join("digest")).ok().map(|s| s.trim().to_string())
 }
@@ -151,15 +126,13 @@ fn sweep(lock_url: &str, dry: bool) -> Result<usize, String> {
     if desired.registry.is_empty() {
         return Err("the lock names no registry".into());
     }
-    // Resolved lazily: a dry run changes and pulls nothing, so requiring the puller up front made
-    // `--dry-run`, the command meant to run FIRST, fail before it could say what it would do.
+    // Lazy: `--dry-run` pulls nothing, so it must not fail on a missing puller.
     let mut oci: Option<PathBuf> = None;
 
     let mut updated = 0;
     for (app, digest) in &desired.digests {
         let dir = app_dir(app);
-        // Only apps this box already runs (see the header). A missing directory is not an error and not a
-        // reason to install anything.
+        // Only apps this box already runs; a missing directory is no reason to install anything.
         if !dir.is_dir() {
             continue;
         }
@@ -201,10 +174,7 @@ fn which_oci() -> Result<PathBuf, String> {
     Err("no comp-oci — build it (`cargo build --release --bin comp-oci` in reconciler/) or install it to /usr/local/bin".into())
 }
 
-/// Pull by digest, install, restart, record.
-///
-/// The digest is written AFTER the restart succeeds: written first, a failed restart would leave the
-/// box claiming a version it is not running and the next sweep would agree and do nothing.
+/// The digest is recorded only AFTER the restart succeeds, or a failed restart would never be retried.
 fn update(oci: &Path, registry: &str, scheme: &str, app: &str, digest: &str) -> Result<(), String> {
     let dir = app_dir(app);
     let tmp = dir.join("app.wasm.incoming");
@@ -233,8 +203,7 @@ fn update(oci: &Path, registry: &str, scheme: &str, app: &str, digest: &str) -> 
         return Err(format!("{reference} is not a wasm component"));
     }
 
-    // Rename, not copy: the running host has the old file open, and a partial write over it starts and
-    // traps.
+    // Rename, not copy: the running host has the old file open and a partial write over it traps.
     std::fs::rename(&tmp, dir.join("app.wasm")).map_err(|e| format!("installing: {e}"))?;
 
     let status = Command::new("systemctl")
@@ -272,8 +241,7 @@ mod tests {
         assert_eq!(plain.digests.len(), 1, "`scheme` is not an app");
     }
 
-    /// A truncated fetch must not read as "every app should be removed": the agent only acts on entries
-    /// that ARE present, so an empty lock is a no-op.
+    /// A truncated fetch must not read as "remove every app": an empty lock is a no-op.
     #[test]
     fn an_empty_lock_asks_for_nothing() {
         assert!(parse_lock("# nothing here\n").digests.is_empty());

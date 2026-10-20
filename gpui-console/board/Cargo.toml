@@ -9,27 +9,19 @@ description = "The agent board (ADR-0119): the sessions, the tree of agents and 
 name = "agent_board"
 path = "src/lib.rs"
 
-# The board over a scripted story: natively, or in a browser as wasm (see README.md).
 [[bin]]
 name = "agents-board"
 path = "src/bin/agents_board.rs"
 
 [dependencies]
-# What the runtime says happened, as data that builds for wasm too.
 agent-wire = { path = "../../crates/agent-wire" }
-# Prices a run's tokens the way the session daemon prices its own (`cost_usd_micros`).
 comp-fuel = { path = "../../reconciler/fuel" }
-# GPUI's preview releases, which have a web platform (WebGPU, WebGL2 when there is none). Pinned exactly:
-# a new snapshot of Zed's tree arrives about weekly and can break the API. `runtime_shaders` because
-# this machine has the Command Line Tools and not Xcode.app (no `xcrun metal`); `font-kit` because
-# without it native macOS draws no text at all.
+# exact: snapshots break weekly; font-kit or macOS draws no text
 gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", default-features = false, features = ["runtime_shaders", "font-kit"] }
 anyhow = "1"
 serde_json = "1"
-# `SystemTime::now()` panics on wasm32; this is the clock that does not.
 web-time = "1"
-# The board's films (src/film.rs). Already built for gpui's `image`, so it costs no new crate.
 gif = "0.14"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
@@ -42,8 +34,6 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["Window", "Location", "Request", "RequestInit", "Response", "Headers"] }
 
-# The board's own screenshots (src/capture.rs): a process may read back its OWN windows without the
-# Screen Recording permission another process would need, so the capture is made from inside.
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.24"
 core-foundation = "0.10"

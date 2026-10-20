@@ -1,11 +1,4 @@
-//! Everything an agent leaves on disk, under one state directory:
-//!
-//! ```text
-//! agents/<name>.json      the spec (edit it and the next run uses it)
-//! memory/<name>.jsonl     things the agent chose to remember
-//! runs/<name>.jsonl       one finished run per line, with every step
-//! workspaces/<name>/      the only place its file tools can touch
-//! ```
+//! Everything an agent leaves on disk: agents/, memory/, runs/, workspaces/ under one state dir.
 
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
@@ -25,7 +18,6 @@ pub struct MemoryItem {
     pub text: String,
 }
 
-/// One vector per text, from an embedding service.
 pub type Vectors = Vec<Vec<f32>>;
 
 #[derive(Serialize, Deserialize)]
@@ -34,24 +26,19 @@ struct MemoryVec {
     vec: Vec<f32>,
 }
 
-/// How far below the best match a memory may score and still be recalled. Embedding scores
-/// of unrelated text sit well above zero, so a fixed floor would be arbitrary.
+/// Relative to the best match: unrelated text still scores well above zero.
 const RECALL_SPREAD: f32 = 0.08;
 
-/// How long a deleted agent stays in `trash/` before it is removed for good.
 pub const TRASH_DAYS: u64 = 30;
 
-/// A deleted agent waiting in `trash/`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Trashed {
-    /// The directory under `trash/`: `<name>-<unix seconds of the deletion>`.
     pub id: String,
     pub name: String,
     pub deleted_at: u64,
-    /// The projects it belonged to, so a restore can rejoin the ones that still exist.
+    /// So a restore can rejoin the ones that still exist.
     #[serde(default)]
     pub projects: Vec<String>,
-    /// How many runs of it are kept.
     #[serde(default)]
     pub runs: usize,
 }
@@ -59,27 +46,20 @@ pub struct Trashed {
 #[derive(Clone)]
 pub struct Store {
     dir: PathBuf,
-    /// One in-memory recall index per agent, shared by every clone of the store.
     indexes: Arc<Mutex<HashMap<String, MemoryIndex>>>,
 }
 
-/// An agent's memories and their vectors, kept in memory so a recall is a dot
-/// product per row and not a re-parse of two JSONL files (7.5 ms at a thousand
-/// memories, 75 ms at ten thousand: bench/agent-memory). Both files are
-/// append-only, so each call reads only the bytes added since the last one.
-/// Vectors are stored unit-length: cosine is then a plain dot product.
+/// In memory: a recall is a dot product per row, not a JSONL re-parse (bench/agent-memory).
+/// Vectors are unit-length, so cosine is a plain dot product.
 #[derive(Default)]
 struct MemoryIndex {
-    /// Bytes of `memory/<a>.jsonl` and `memory/<a>.vecs.jsonl` consumed so far,
-    /// always ending on a line boundary.
+    /// Always on a line boundary.
     mem_off: u64,
     side_off: u64,
     items: Vec<MemoryItem>,
-    /// Row in `rows` for each text that has a vector.
     row_of: HashMap<String, usize>,
     rows: Vec<Vec<f32>>,
-    /// `items[i]`'s row, once it has one. Resolved when something changed, so a
-    /// recall on an unchanged index never hashes a text.
+    /// Resolved only when something changed, so a recall on an unchanged index never hashes a text.
     item_row: Vec<Option<usize>>,
     dirty: bool,
 }
@@ -107,8 +87,7 @@ fn dot(a: &[f32], b: &[f32]) -> f32 {
     lanes.iter().sum::<f32>() + tail
 }
 
-/// Complete lines appended to `path` after `*off`, advancing `*off` past them.
-/// A file that shrank was replaced: `None`, and the caller starts over.
+/// `None` when the file shrank (it was replaced): the caller starts over.
 fn read_new_lines<T: for<'a> Deserialize<'a>>(path: &Path, off: &mut u64) -> Option<Vec<T>> {
     let Ok(mut f) = fs::File::open(path) else {
         return (*off == 0).then(Vec::new);
@@ -156,7 +135,6 @@ impl MemoryIndex {
         self.dirty = false;
     }
 
-    /// Catch up with both files. Rebuilds from scratch if either was replaced.
     fn sync(&mut self, mem: &Path, side: &Path) {
         for attempt in 0..2 {
             let items = read_new_lines::<MemoryItem>(mem, &mut self.mem_off);
@@ -193,12 +171,10 @@ impl Store {
         Ok(Self { dir, indexes: Arc::default() })
     }
 
-    /// Where shared connector definitions live (`connectors/<name>.json`); may not exist.
     pub fn connectors_dir(&self) -> PathBuf {
         self.dir.join("connectors")
     }
 
-    /// A model block by name, from `<state>/models.json` (`{"qwen": {"kind": "open_ai", ...}}`).
     pub fn model_alias(&self, name: &str) -> Option<serde_json::Value> {
         let all: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(self.dir.join("models.json")).ok()?).ok()?;
@@ -227,7 +203,6 @@ impl Store {
         serde_json::from_str(&fs::read_to_string(p).ok()?).ok()
     }
 
-    /// Atomic, like `put`.
     pub fn put_project(&self, project: &crate::projects::Project) -> Result<(), String> {
         let p = self.path("projects", &project.name, "json")?;
         let tmp = p.with_extension("json.tmp");
@@ -261,7 +236,7 @@ impl Store {
         serde_json::from_str(&fs::read_to_string(p).ok()?).ok()
     }
 
-    /// Atomic (write then rename) so a crash mid-save can't leave half a spec.
+    /// Write then rename, so a crash mid-save can't leave half a spec.
     pub fn put(&self, spec: &AgentSpec) -> Result<(), String> {
         let p = self.path("agents", &spec.name, "json")?;
         let tmp = p.with_extension("json.tmp");
@@ -271,7 +246,6 @@ impl Store {
         self.workspace(&spec.name).map(|_| ())
     }
 
-    /// The files an agent accumulates, as (where they live, their name in the trash).
     fn agent_files(&self, name: &str) -> Result<[(PathBuf, &'static str); 5], String> {
         Ok([
             (self.path("agents", name, "json")?, "agent.json"),
@@ -282,9 +256,7 @@ impl Store {
         ])
     }
 
-    /// Takes the agent out of service: the spec, its runs, memory and workspace move to
-    /// `trash/<name>-<time>/` and stay there for [`TRASH_DAYS`], so a deletion is
-    /// recoverable (`restore`). Nothing is removed for good here.
+    /// Recoverable: everything moves to `trash/` for [`TRASH_DAYS`].
     pub fn delete(&self, name: &str) -> Result<(), String> {
         let spec = self.path("agents", name, "json")?;
         if !spec.exists() {
@@ -321,7 +293,6 @@ impl Store {
         Ok(())
     }
 
-    /// What is in the trash, newest deletion first.
     pub fn trash(&self) -> Vec<Trashed> {
         let mut v: Vec<Trashed> = fs::read_dir(self.dir.join("trash"))
             .into_iter()
@@ -334,8 +305,7 @@ impl Store {
         v
     }
 
-    /// An entry by its id, else the newest one for that agent name. The text from outside
-    /// is only ever compared with what `trash` listed, never joined into a path.
+    /// Outside text is only compared with what `trash` listed, never joined into a path.
     fn trashed(&self, id_or_name: &str) -> Result<Trashed, String> {
         let all = self.trash();
         all.iter()
@@ -354,8 +324,6 @@ impl Store {
             })
     }
 
-    /// Puts a deleted agent back exactly as it was. Refused while an agent of that name
-    /// exists, so a restore cannot overwrite anything.
     pub fn restore(&self, id_or_name: &str) -> Result<Trashed, String> {
         let t = self.trashed(id_or_name)?;
         let files = self.agent_files(&t.name)?;
@@ -379,14 +347,12 @@ impl Store {
         Ok(t)
     }
 
-    /// Removes one entry from the trash for good.
     pub fn purge(&self, id_or_name: &str) -> Result<Trashed, String> {
         let t = self.trashed(id_or_name)?;
         fs::remove_dir_all(self.dir.join("trash").join(&t.id)).map_err(|e| e.to_string())?;
         Ok(t)
     }
 
-    /// Removes what has been in the trash longer than [`TRASH_DAYS`].
     pub fn sweep_trash(&self, now: u64) -> usize {
         let old: Vec<Trashed> = self
             .trash()
@@ -405,8 +371,6 @@ impl Store {
         Ok(dir)
     }
 
-    /// Puts a file a person sent (a photo from a chat) into the agent's `inbox/` folder under
-    /// a name that cannot collide or escape, and returns that name. Only photos for now.
     pub fn save_inbox(&self, name: &str, filename: &str, bytes: &[u8]) -> Result<String, String> {
         const EXTS: [&str; 6] = ["jpg", "jpeg", "png", "webp", "gif", "heic"];
         const MAX: usize = 20 << 20;
@@ -416,7 +380,6 @@ impl Store {
         if bytes.is_empty() || bytes.len() > MAX {
             return Err(format!("a photo must be 1 byte to {} MB", MAX >> 20));
         }
-        // Only the last path component, and only characters that are safe in a file name.
         let base = filename.rsplit(['/', '\\']).next().unwrap_or_default();
         let safe: String = base
             .chars()
@@ -436,7 +399,6 @@ impl Store {
         Ok(file)
     }
 
-
     pub fn remember(&self, agent: &str, text: &str, now: u64) -> Result<(), String> {
         append(
             &self.path("memory", agent, "jsonl")?,
@@ -448,9 +410,7 @@ impl Store {
         read_lines(&self.path("memory", agent, "jsonl").unwrap_or_default())
     }
 
-    /// Keyword-overlap recall, best first. An empty query returns the most
-    /// recent. Lexical on purpose: it is cheap and explainable, and a model
-    /// asked to "recall" can rephrase and ask again.
+    /// Lexical on purpose: cheap, explainable, and a model can rephrase and ask again.
     pub fn recall(&self, agent: &str, query: &str, k: usize) -> Vec<MemoryItem> {
         let all = self.memories(agent);
         let q = tokens(query);
@@ -469,10 +429,7 @@ impl Store {
         scored.into_iter().take(k).map(|(_, m)| m).collect()
     }
 
-    /// Recall by meaning. `query` is the embedded question; `embed_docs` embeds memory texts
-    /// that have no stored vector yet (`None` when the service is down, and then those are
-    /// skipped). Vectors live in a sidecar file keyed by text, so memories stay append-only.
-    /// Returns the best `k`, dropping any clearly worse than the best match.
+    /// Vectors live in a sidecar keyed by text, so memories stay append-only.
     pub fn recall_semantic(
         &self,
         agent: &str,
@@ -524,12 +481,10 @@ impl Store {
         kept.into_iter().take(k).map(|s| s.1.clone()).collect()
     }
 
-
     pub fn record_run(&self, r: &RunRecord) -> Result<(), String> {
         append(&self.path("runs", &r.agent, "jsonl")?, r)
     }
 
-    /// Newest first.
     pub fn runs(&self, agent: &str, n: usize) -> Vec<RunRecord> {
         let mut v: Vec<RunRecord> =
             read_lines(&self.path("runs", agent, "jsonl").unwrap_or_default());
@@ -538,7 +493,6 @@ impl Store {
         v
     }
 
-    /// Every run in one trace, across all agents, oldest first.
     pub fn trace(&self, trace_id: &str) -> Vec<RunRecord> {
         let mut v: Vec<RunRecord> = self
             .list()
@@ -578,8 +532,7 @@ fn read_lines<T: for<'a> Deserialize<'a>>(path: &Path) -> Vec<T> {
         .collect()
 }
 
-/// A path inside `root`, or why not. Relative only, no `..`, and — after
-/// resolving symlinks in whatever part already exists — still under `root`.
+/// Relative, no `..`, and still under `root` after resolving symlinks in the part that exists.
 pub fn confine(root: &Path, rel: &str) -> Result<PathBuf, String> {
     let p = Path::new(rel);
     if rel.is_empty()
@@ -661,7 +614,6 @@ mod tests {
         let again = s.recall_semantic("a", &[0.0, 1.0], 5, &embed);
         assert_eq!(again[0].text, "lunch is at noon");
         assert_eq!(calls.get(), 3, "vectors are kept, not recomputed");
-        // service down: what has a vector still works; a new memory just is not found yet
         s.remember("a", "ran a 5k", 4).unwrap();
         let down = |_: &[String]| None;
         assert_eq!(s.recall_semantic("a", &[1.0, 0.0], 5, &down).len(), 2);
@@ -685,7 +637,6 @@ mod tests {
         let texts: Vec<_> =
             s.recall_semantic("a", &[1.0, 0.0], 5, &toy).into_iter().map(|m| m.text).collect();
         assert_eq!(texts, ["new pb", "rowed 12k"]);
-        // b's memory is never visible to a, whatever the query is closest to
         assert!(!texts.iter().any(|t| t.contains("lunch")));
         assert_eq!(s.recall_semantic("b", &[0.0, 1.0], 5, &toy)[0].text, "lunch is at noon");
     }
@@ -717,7 +668,6 @@ mod tests {
         let hits = s.recall_semantic("a", &[0.0, 1.0], 5, &toy);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].text, "lunch");
-        // deleting the agent forgets its vectors too
         s.delete("a").unwrap();
         assert!(s.recall_semantic("a", &[0.0, 1.0], 5, &toy).is_empty());
         assert!(!d.join("memory/a.vecs.jsonl").exists());

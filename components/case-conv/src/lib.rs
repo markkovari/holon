@@ -1,38 +1,5 @@
-//! `case-conv` — turn an identifier written in one case convention into another.
-//!
-//! `tests/case.rs` is the specification and is not writable from here.
-//!
-//! Pure compute: split into words, rejoin in the target convention.
-//!
-//! ## Splitting into words
-//!
-//! `_`, `-` and whitespace are explicit separators: consumed, never emitted.
-//! Inside a run with no separators, a new word starts at:
-//!
-//!   * a lowercase-to-uppercase transition (`myVar` -> `my`, `Var`);
-//!   * the LAST letter of an uppercase run, when followed by a lowercase letter —
-//!     the acronym boundary (`HTTPServer` -> `HTTP`, `Server`, not `H`, `TTPServer`
-//!     and not `HTTPS`, `erver`);
-//!   * a letter/digit transition in either direction (`Sensor2` -> `Sensor`, `2`;
-//!     `2Sensors` -> `2`, `Sensors`).
-//!
-//! Consecutive separators collapse (`foo__bar` is two words, not three with an
-//! empty one in the middle), and leading/trailing separators produce no empty
-//! word (`_foo_` is one word).
-//!
-//! ## Rejoining
-//!
-//!   * `snake`: every word lowercased, joined with `_`.
-//!   * `kebab`: every word lowercased, joined with `-`.
-//!   * `camel`: first word lowercased, every other word Capitalized (first
-//!     letter upper, rest lower — so an acronym gets normalized: `HTTP` becomes
-//!     `Http`), no separator.
-//!   * `pascal`: every word Capitalized, no separator.
-//!
-//! An empty string is empty in every convention — there is nothing to split.
+//! Acronym boundary: `HTTPServer` splits as `HTTP`, `Server`; camel/pascal normalise acronyms (`Http`).
 
-/// Split `s` into words per the rules above: a single left-to-right scan with a
-/// one-character lookbehind (plus one lookahead for the acronym case).
 fn words(s: &str) -> Vec<String> {
     let chars: Vec<char> = s.chars().collect();
     let mut result = Vec::new();
@@ -101,8 +68,6 @@ pub fn to_camel(s: &str) -> String {
 pub fn to_pascal(s: &str) -> String {
     words(s).iter().map(|w| capitalize(w)).collect()
 }
-
-// WIT <-> plain-type mapping only; no behaviour, so `tests/case.rs` covers what ships.
 
 #[cfg(target_arch = "wasm32")]
 #[allow(warnings)]

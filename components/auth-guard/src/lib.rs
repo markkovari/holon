@@ -1,28 +1,4 @@
-//! `auth-guard` — register and log a user in, hash their password, issue and introspect a session token, and check whether their role grants an action
-//!
-//! # Exports / imports
-//! Exports: types, jwt, oidc, session, accounts, rbac, authorizer.
-//! Imports (host capabilities): wasi:keyvalue (store + atomics), wasi:http
-//! (outgoing, for OIDC discovery / JWKS), wasi:clocks (expiry), wasi:random
-//! (id generation), wasi:config/store (policy knobs).
-//!
-//! # Claim handling
-//! A verified token's claims become a `principal` per the table in the WIT
-//! (`interface types`): `sub`->subject; `scope`/`scp`->scopes; tenant from
-//! `tenant`/`org`/`urn:zitadel:iam:org:id` else `default-tenant`; roles are
-//! resolved from the RBAC store by (tenant, subject), never trusted from the
-//! token. See [`claims_tenant`] and [`resolve_principal`].
-//!
-//! # Storage layout (wasi:keyvalue, link name "default")
-//! Logical keys (then run through [`kv::safe`] so `:`/`@`/`.` become `_XX`):
-//!   sess:{session-id}        -> JSON principal (+ expiry)
-//!   refresh:{refresh-token}  -> JSON { session-id, family }   (active)
-//!   spent:{refresh-token}    -> family                        (rotated; reuse = breach)
-//!   family:{family}          -> JSON list<session-id>         (revoke-all on breach)
-//!   user:{tenant}:{email}    -> JSON { subject, argon2-phc }
-//!   rbac:{tenant}  -> JSON { subjects: {sub -> list<role>}, roles: {role -> list<permission>} }
-//!   jwks:{issuer} / oidc:{issuer} -> "{expiry}:{json}"        (TTL-cached)
-//!   oidc:issuer / oidc:client-id / oidc:client-secret / hs256-secret  (config)
+//! Roles are resolved from the RBAC store by (tenant, subject), never trusted from the token.
 
 #[allow(warnings)]
 mod bindings;
@@ -114,8 +90,6 @@ impl Session for Component {
 }
 
 impl Rbac for Component {
-    /// Pure check: does the principal hold a role that grants `required`,
-    /// or a matching scope? No I/O — uses what's baked into the principal.
     fn check(p: Principal, required: Permission) -> bool {
         store::rbac_check(&p, &required)
     }
@@ -163,7 +137,6 @@ impl Authorizer for Component {
         if required.iter().any(|r| store::rbac_check_with(&doc, &principal, r)) {
             Ok(principal)
         } else {
-            // Report the first requirement as the unmet one.
             let first = required
                 .into_iter()
                 .next()
@@ -177,8 +150,6 @@ impl Authorizer for Component {
     }
 }
 
-/// Shared authorize logic; `traceparent` is the caller's W3C trace context
-/// ("" when none) used to correlate the audit event.
 fn authorize_impl(
     token: &str,
     required: Permission,
@@ -215,30 +186,22 @@ fn authorize_impl(
     }
 }
 
-/// Detect the token kind (opaque `sess_` session via kv, else a JWS) and verify it into
-/// a `Principal`.
 fn resolve_principal(token: &str) -> Result<Principal, AuthError> {
     resolve_principal_doc(token).map(|(p, _)| p)
 }
 
-/// Resolve the principal AND return the rbac doc its roles came from, so the
-/// authorize paths can permission-check without a second kv round-trip.
+/// Also returns the rbac doc, so authorize needs no second kv round trip.
 fn resolve_principal_doc(token: &str) -> Result<(Principal, store::RbacDoc), AuthError> {
-    // Session tokens carry the `sess_` prefix. The session id IS the whole
-    // token (prefix included) — that's how it was stored at issue time — so we
-    // pass `token` as-is, not the stripped remainder.
+    // The session id is the whole token, prefix included, as stored at issue.
     if token.starts_with(tokens::ACCESS_PREFIX) {
         let mut p = store::session_lookup(token)?;
-        // Re-resolve roles from the store on each check so a role granted AFTER
-        // login takes effect immediately (the principal stored at issue time may
-        // predate the grant). Scopes stay as issued.
+        // Roles are re-resolved per check, so a grant after login takes effect at once.
         let doc = match store::rbac_load(&p.tenant) {
             Ok(doc) => {
                 p.roles = doc.roles_of(&p.subject);
                 doc
             }
-            // kv hiccup: keep the roles issued with the session; role-derived
-            // grants then deny against the empty doc, scope grants still work.
+            // kv hiccup: role grants deny against the empty doc; scope grants still work.
             Err(_) => store::RbacDoc::default(),
         };
         return Ok((p, doc));
@@ -259,8 +222,6 @@ fn resolve_principal_doc(token: &str) -> Result<(Principal, store::RbacDoc), Aut
     ))
 }
 
-/// Extract a tenant id from claims. Looks for an `org`/`tenant` custom claim,
-/// falling back to "" for single-tenant deployments.
 fn claims_tenant(claims: &Claims) -> String {
     for (k, v) in &claims.raw {
         if k == "tenant" || k == "org" || k == "urn:zitadel:iam:org:id" {

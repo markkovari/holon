@@ -1,9 +1,4 @@
-//! A scripted run for the board to watch: an orchestrating agent, the agents it calls, and the
-//! coding sessions they start, with one session that stops to ask a person.
-//!
-//! It feeds the tree the same [`Event`]s the runtime does, so what is drawn here is what the real
-//! console draws, and it is how the board is developed and photographed without a model, a daemon or
-//! an API key. `agents-board` plays it.
+//! A scripted run fed as the runtime's own events, so the board needs no model, daemon or key.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -17,7 +12,6 @@ use super::agents::AgentInfo;
 use super::tree::AgentTree;
 use super::view::{now_ms, Actions, AgentChoice, Scope};
 
-/// One thing that happens `at` milliseconds into the story, built when it does.
 struct Beat {
     at: u64,
     event: Box<dyn Fn(u64) -> Event>,
@@ -102,7 +96,6 @@ fn finished(
     })
 }
 
-/// A session as of one moment. `started` is when the story began, so elapsed time is real.
 #[allow(clippy::too_many_arguments)]
 fn session(
     at: u64,
@@ -160,7 +153,6 @@ const LOCAL: &str = "local/system";
 const HAIKU: &str = "anthropic/claude-haiku-4-5";
 const SHORT: [&str; 4] = ["list_dir", "read_file", "write_file", "run"];
 
-/// The whole story, in the order things happen.
 fn story() -> Vec<Beat> {
     let s1 = "Implement a token bucket in rate-limiter and wire it into eshop-gateway";
     let s2 = "Write tests for the limiter, run them, and fix what fails";
@@ -324,7 +316,6 @@ fn story() -> Vec<Beat> {
     ]
 }
 
-/// What happens once the person has said yes: the rest of the story.
 fn after_approval() -> Vec<Beat> {
     let s1 = "Implement a token bucket in rate-limiter and wire it into eshop-gateway";
     let s2 = "Write tests for the limiter, run them, and fix what fails";
@@ -436,8 +427,6 @@ fn after_approval() -> Vec<Beat> {
     ]
 }
 
-/// What a goal given on the board does in the story: its agent reads, starts a coding session if it
-/// can (`session`), and finishes.
 fn given(
     agent: &'static str,
     run: &'static str,
@@ -474,8 +463,6 @@ fn given(
     v
 }
 
-/// A run that ended before the board was open, as the runtime keeps it. `calls` are its tool calls,
-/// by name and span, which is how the runs they started find their parent.
 #[allow(clippy::too_many_arguments)]
 fn past(
     id: &str,
@@ -499,7 +486,6 @@ fn past(
     .expect("a run record")
 }
 
-/// Goals from earlier today, finished, so the list of sessions has a past to show.
 fn history(now: u64) -> Vec<RunRecord> {
     let min = |m: u64| now.saturating_sub(m * 60_000);
     let mut runs = vec![
@@ -570,7 +556,6 @@ fn history(now: u64) -> Vec<RunRecord> {
             &[],
         ),
     ];
-    // what each answered, which is what its conversation on the Agents tab says back
     let answers = [
         ("h-wasm", "Wasmtime is at 46 and the toolchain pin at 1.99; every gate passes on both."),
         ("h-wasm-plan", "Three places name 45: host/Cargo.toml, wrpc-runtime-wasmtime's pin, and the toolchain file's comment."),
@@ -587,8 +572,6 @@ fn history(now: u64) -> Vec<RunRecord> {
     runs
 }
 
-/// What a person does to the story: an answer ends the wait, and the board hears it as it would; a
-/// goal plays a short story of its own.
 pub struct DemoActions {
     tree: Entity<AgentTree>,
     answered: Cell<Option<bool>>,
@@ -678,8 +661,7 @@ impl Actions for DemoActions {
         let n = self.goals.get() + 1;
         self.goals.set(n);
         let codes = self.agents(cx).iter().any(|c| c.name == agent && c.codes);
-        // shortcut: a demo is given a few goals, so their names are leaked rather than owned by
-        // every beat; own them if the demo ever runs unattended for long
+        // shortcut: goal names are leaked, not owned; own them if the demo ever runs long
         let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
         let beats = given(
             leak(agent.to_string()),
@@ -696,14 +678,12 @@ impl Actions for DemoActions {
     }
 }
 
-/// Plays `beats` into `tree`, each at its own time (milliseconds from when this was called).
 async fn run_beats(tree: &Entity<AgentTree>, beats: Vec<Beat>, cx: &mut AsyncApp) -> bool {
     let mut last = 0;
     for b in beats {
         cx.background_executor().timer(Duration::from_millis(b.at.saturating_sub(last))).await;
         last = last.max(b.at);
         let ev = (b.event)(now_ms());
-        // through a weak handle, which says when the board that held the tree has gone
         let alive = tree.downgrade().update(cx, |t, cx| {
             t.apply(&ev, now_ms());
             cx.notify();
@@ -715,8 +695,7 @@ async fn run_beats(tree: &Entity<AgentTree>, beats: Vec<Beat>, cx: &mut AsyncApp
     true
 }
 
-/// Plays the story into `tree`. If nobody answers the approval within `auto`, it is approved, so an
-/// unattended run (a screenshot) still gets to the end.
+/// Approves by itself after `auto`, so an unattended run (a screenshot) reaches the end.
 pub fn play(tree: Entity<AgentTree>, auto: Option<Duration>, cx: &mut App) -> Rc<DemoActions> {
     tree.update(cx, |t, _| t.seed(&history(now_ms())));
     let actions =
@@ -726,7 +705,6 @@ pub fn play(tree: Entity<AgentTree>, auto: Option<Duration>, cx: &mut App) -> Rc
         if !run_beats(&tree, story(), cx).await {
             return;
         }
-        // the approval: asked of a person, or of the clock
         let step = Duration::from_millis(100);
         let mut left = auto;
         while me.answered.get().is_none() {

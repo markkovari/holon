@@ -1,20 +1,5 @@
-// `price:history`, in Go — the same WIT `components/price-history` exports.
-//
-// The second of the binder's two arithmetic capabilities, re-derived in a language
-// nothing else in this repository uses and dropped into the SAME composition. See
-// ../portfolio-value-go for why the world admits WASI imports the Rust one does not.
-//
-// The three rules that are easy to get wrong and that the app's e2e checks:
-//
-//   - Carry forward, NEVER interpolate. A market has no price on a day nobody
-//     traded, and the last known price is still the price. A straight line between
-//     Friday and Monday invents two days of movement, which on a five-year chart is
-//     most of the line. The point says it was carried.
-//   - Before the first quote there is no price — samples are ABSENT, not zero. A
-//     chart that starts at zero and jumps shows a gain nobody made.
-//   - Stale is returned and LABELLED. Refusing a four-month-old quote leaves a
-//     caller with nothing for every card that stopped trading; returning it silently
-//     puts a confident number on a dead listing. It comes back with its age.
+// Rules: carry forward, NEVER interpolate (the point says it was carried); before the first quote samples are
+// ABSENT, not zero; stale quotes are returned and LABELLED with their age.
 package export_price_history_history
 
 import (
@@ -22,8 +7,7 @@ import (
 	w "wit_component/price_history_history"
 )
 
-// checkCurrency refuses two currencies for one card rather than converting: the
-// rate on the day of an observation is not knowable here.
+// checkCurrency refuses two currencies for one card: the rate on the day is not knowable here.
 func checkCurrency(quotes []w.Quote) (w.PriceError, bool) {
 	var expected string
 	var have bool
@@ -38,8 +22,6 @@ func checkCurrency(quotes []w.Quote) (w.PriceError, bool) {
 	return w.PriceError{}, false
 }
 
-// at is the price at one instant: the latest quote of `kind` at or before `at`,
-// carried forward if it is older.
 func at(quotes []w.Quote, kind w.QuoteKind, instant uint64) (w.Observed, w.PriceError, bool) {
 	matching := make([]w.Quote, 0, len(quotes))
 	for _, q := range quotes {
@@ -87,12 +69,7 @@ func At(quotes []w.Quote, kind w.QuoteKind, instant uint64) witTypes.Result[w.Ob
 	return witTypes.Ok[w.Observed, w.PriceError](obs)
 }
 
-// Series samples `since..=until` every `step` seconds.
-//
-// Samples before the first quote are DROPPED rather than zeroed, so an empty result
-// means "never priced in this window" and a short one means the card started being
-// priced partway through. `until` is always sampled even when the step does not
-// land on it.
+// Series DROPS samples before the first quote rather than zeroing them; `until` is always sampled.
 func Series(quotes []w.Quote, kind w.QuoteKind, since, until, step uint64) witTypes.Result[[]w.Point, w.PriceError] {
 	if step == 0 {
 		return witTypes.Err[[]w.Point, w.PriceError](w.MakePriceErrorZeroStep())

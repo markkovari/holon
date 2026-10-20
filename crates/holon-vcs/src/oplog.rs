@@ -1,37 +1,5 @@
-//! The linear, undoable operation log: every state mutation, with the pointer
-//! moves needed to revert it.
-//!
-//! [`KvOpLog`] is the one implementation, over any [`Kv`] — in memory for tests
-//! and wasm, JetStream KV natively. Per workspace `w` (escaped, see
-//! [`crate::store::escape`]):
-//!
-//! * `oplog/<w>/op/<id:020>` — the entry, JSON ([`StoredOp`]). Created with
-//!   `create` (expected: absent) in state `pending`, then rewritten exactly once,
-//!   by CAS, to `committed` or `aborted` ([`OpLog::finish`]); never deleted.
-//! * `oplog/<w>/head` — the highest id known to be written, as decimal.
-//! * `oplog/<w>/settled` — an id at or below which every op is known to be
-//!   committed or aborted (a hint that only moves forward; readers walk past it).
-//!
-//! # Intents
-//!
-//! An op is appended BEFORE the pointer writes it describes (write-ahead): the
-//! entry carries, besides the contract's [`OpEntry`], everything needed to
-//! finish or undo it from the log alone — the revision and op each pointer
-//! write expects ([`Guard`]), and the patch records, conflict records and
-//! conflict effects it introduces ([`Intent`]). What `pending` means, and who
-//! may move it on, is [`crate::recovery`]'s business; this module only stores.
-//!
-//! # Append
-//!
-//! Read the head `h`; walk forward past any entries that exist beyond it (an
-//! appender that died between writing its entry and advancing the head leaves the
-//! head one behind); `create` the first missing id. Exactly one appender wins a
-//! given id — the others see the key exist and go round again. The winner then
-//! advances the head by CAS, only ever forwards, and helps any lag it finds.
-//!
-//! Entries are dense: id `n+1` is only created after id `n` was seen to exist, so
-//! a reader walking from `after+1` until the first missing id sees a prefix of the
-//! log with no holes.
+//! The write-ahead op log over a [`Kv`]. Entries are dense (id `n+1` is created only after `n`
+//! exists), so a reader walking forward sees a hole-free prefix; the head may lag one behind.
 
 use std::future::Future;
 
@@ -47,37 +15,30 @@ use crate::store::{escape, Kv, Revision};
 pub enum OpState {
     /// Logged; its pointer writes may or may not have happened.
     Pending,
-    /// Its primary pointer write happened and everything after it is done.
     Committed,
     /// Its primary pointer write did not happen and now never can.
     Aborted,
 }
 
-/// What one move's compare-and-set expects: the revision read (`None`: the key
-/// did not exist) and the op the value read named — so the value a pointer held
-/// before this op can be put back exactly, and so the ops that wrote a pointer
-/// form a chain back through time (see [`crate::recovery`]).
+/// `rev` `None`: the key did not exist. `op` lets the old value be put back exactly, and chains a
+/// pointer's writers back through time (see [`crate::recovery`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Guard {
     pub rev: Option<Revision>,
     pub op: Option<OpId>,
 }
 
-/// What an op writes besides pointers — logged so that the graph can be
-/// finished, or rebuilt, from the log.
+/// Logged so the graph can be finished, or rebuilt, from the log alone.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Intent {
     /// One per move, in order.
     pub guards: Vec<Guard>,
-    /// Patch records this op introduces.
     pub patches: Vec<PatchRecord>,
-    /// Conflict records this op writes ahead (uncommitted).
     pub conflicts: Vec<ConflictRecord>,
     /// Conflict state changes it makes when it commits (and a revert inverts).
     pub effects: Vec<ConflictEffect>,
 }
 
-/// An entry as the log keeps it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredOp {
     #[serde(flatten)]
@@ -91,14 +52,12 @@ impl StoredOp {
     pub fn id(&self) -> OpId {
         self.entry.id
     }
-    /// The guard of the move on `pointer`.
     pub fn guard(&self, pointer: &str) -> Option<&Guard> {
         let i = self.entry.moves.iter().position(|m| m.pointer == pointer)?;
         self.intent.guards.get(i)
     }
 }
 
-/// An entry before it has an id.
 #[derive(Debug, Clone)]
 pub struct NewOp {
     pub at: u64,
@@ -109,35 +68,28 @@ pub struct NewOp {
 }
 
 pub trait OpLog: Send + Sync {
-    /// Append in state `pending`, assigning the next id.
     fn append(&self, ws: &str, op: NewOp) -> impl Future<Output = Result<StoredOp>> + Send;
     fn get(&self, ws: &str, id: OpId) -> impl Future<Output = Result<Option<StoredOp>>> + Send;
-    /// Move a pending op to `state` (`committed` or `aborted`), once: returns
-    /// the state it ends in, which is an earlier finisher's if there was one.
+    /// Once: returns the state it ends in, an earlier finisher's if there was one.
     fn finish(
         &self,
         ws: &str,
         id: OpId,
         state: OpState,
     ) -> impl Future<Output = Result<OpState>> + Send;
-    /// Oldest first, ids strictly greater than `after`, at most `limit`, in any
-    /// state.
+    /// Oldest first, ids after `after`, in any state.
     fn list(
         &self,
         ws: &str,
         after: Option<OpId>,
         limit: u32,
     ) -> impl Future<Output = Result<Vec<StoredOp>>> + Send;
-    /// The newest id, `None` for an empty log.
     fn latest(&self, ws: &str) -> impl Future<Output = Result<Option<OpId>>> + Send;
-    /// The settled hint (0 when unset).
     fn settled(&self, ws: &str) -> impl Future<Output = Result<OpId>> + Send;
-    /// Raise the settled hint to at least `to`; never lowers it.
     fn advance_settled(&self, ws: &str, to: OpId) -> impl Future<Output = Result<()>> + Send;
 }
 
-/// How many times one append may lose the race for an id. Every loss is another
-/// appender's success, so this bounds starvation, not livelock (see #284).
+/// Every lost race is another appender's success, so this bounds starvation, not livelock (#284).
 pub const APPEND_TRIES: u32 = 1000;
 
 pub struct KvOpLog<K> {
@@ -153,9 +105,7 @@ impl<K> KvOpLog<K> {
     }
 }
 
-/// The workspace an oplog key's head names: `oplog/<escaped ws>/head` → the
-/// workspace. `None` for any other key (entries, the settled hint, a hashed
-/// over-long key). What a daemon lists to know which workspaces to repair.
+/// `oplog/<escaped ws>/head` → the workspace; what a daemon lists to find workspaces to repair.
 pub fn workspace_of_head_key(key: &str) -> Option<String> {
     let rest = key.strip_prefix("oplog/")?.strip_suffix("/head")?;
     if rest.contains('/') {
@@ -193,7 +143,6 @@ impl<K: Kv> KvOpLog<K> {
         self.counter(&head_key(ws)).await
     }
 
-    /// Move a counter forwards to at least `target`; never backwards.
     async fn advance(&self, key: &str, target: OpId) -> Result<bool> {
         for _ in 0..APPEND_TRIES {
             let (h, rev) = self.counter(key).await?;
@@ -208,7 +157,6 @@ impl<K: Kv> KvOpLog<K> {
         Ok(false)
     }
 
-    /// The last id that exists, starting the walk at the head.
     async fn tail(&self, ws: &str) -> Result<OpId> {
         let (mut n, _) = self.head(ws).await?;
         while self.kv.get(&entry_key(ws, n + 1)).await?.is_some() {
@@ -246,8 +194,7 @@ impl<K: Kv> OpLog for KvOpLog<K> {
             let bytes = serde_json::to_vec(&stored).map_err(VcsError::storage)?;
             match self.kv.cas(&entry_key(ws, id), None, bytes).await? {
                 Ok(_) => {
-                    // The entry is written and readers walk past a lagging head,
-                    // so a head that will not move is not a lost op.
+                    // Readers walk past a lagging head, so a head that will not move loses no op.
                     self.advance(&head_key(ws), id).await?;
                     return Ok(stored);
                 }
@@ -283,8 +230,7 @@ impl<K: Kv> OpLog for KvOpLog<K> {
     }
 
     async fn advance_settled(&self, ws: &str, to: OpId) -> Result<()> {
-        // A hint: losing every race to raise it only means the next reader walks
-        // a little further.
+        // A hint: losing every race only means the next reader walks a little further.
         self.advance(&settled_key(ws), to).await.map(|_| ())
     }
 

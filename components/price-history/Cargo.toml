@@ -7,9 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [lib]
-# `rlib` as well as `cdylib`, so `tests/` can still link the crate. The held-out
-# specification tests the pure core directly; the component is a thin mapping over
-# it, and testing through generated bindings would test wit-bindgen.
+# rlib too: the held-out spec tests the pure core; testing through bindings would test wit-bindgen.
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

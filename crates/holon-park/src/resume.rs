@@ -1,21 +1,4 @@
-//! What a resumer does (ADR-0106), as functions over the engine and two small
-//! traits, so the logic is tested against memory and run against JetStream.
-//!
-//! A resumer has two jobs:
-//!
-//! * **Deliver.** A message on `PARK_WAKE` names a ticket. [`handle`] reads the
-//!   ticket, hands what it holds to a [`Sink`] — the thing that drives the turn —
-//!   and only then closes it. Delivery is at least once: the resolution is read
-//!   with [`Engine::resolution`], which does not consume, and the ticket is taken
-//!   after the sink accepted. A resumer that dies in between redelivers, and the
-//!   sink is expected to treat [`Delivery::idempotency_key`] as the identity of
-//!   what it was handed. That is the other half of "resuming is somebody else's
-//!   job" (ADR-0100): this crate never learns what a turn does with an answer.
-//! * **Recover.** [`sweep`] runs [`Engine::recover`] and announces what it
-//!   moved. See `recover.rs` for the table.
-//!
-//! Nothing above `run` sleeps, spawns or opens a socket. `run` (native only) is the
-//! loop that does, over a real `PARK_WAKE` consumer.
+//! A resumer (ADR-0106): deliver at least once, then close; recover on a timer.
 
 use std::future::Future;
 use std::time::Duration;
@@ -32,8 +15,7 @@ use crate::model::{
 use crate::recover::{Recovered, RecoveryPolicy, Repaired};
 use crate::store::{ParkStore, StoredStatus};
 
-/// What a sink is handed. On the wire (`comp-resume`'s HTTP sink) it is this
-/// JSON, one object, `event` naming which of the three:
+/// `comp-resume`'s HTTP sink receives this as one JSON object:
 ///
 /// ```json
 /// {"ticket": "…", "session": "…", "correlation": "…", "event": "answered",
@@ -51,7 +33,7 @@ use crate::store::{ParkStore, StoredStatus};
 pub struct Delivery {
     pub ticket: TicketId,
     pub session: SessionId,
-    /// What the turn called the call; how it finds it in its own journal.
+    /// How the turn finds the call in its own journal.
     pub correlation: String,
     #[serde(flatten)]
     pub event: Event,
@@ -60,23 +42,18 @@ pub struct Delivery {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "kebab-case")]
 pub enum Event {
-    /// The far side answered, well or badly. `ok: false` is an answer.
+    /// `ok: false` is still an answer.
     Answered { answer: CallResult },
-    /// No answer will come and the call may or may not have happened: tell the
-    /// turn, do not repeat the call.
+    /// The call may or may not have happened: tell the turn, do not repeat the call.
     Interrupted { interruption: Interruption },
-    /// A `safe` call went unanswered past its deadline: send it again. The turn
-    /// owns the payload; this crate only ever held a description of it.
+    /// The turn owns the payload; this crate only ever held a description of it.
     Redispatch { attempt: u32, description: String },
-    /// A group resolved (ADR-0109): how every child ended, and why the group stopped waiting.
-    /// The children are not delivered on their own.
+    /// The children are not delivered on their own (ADR-0109).
     Joined { joined: JoinResult },
 }
 
 impl Delivery {
-    /// The identity of what this delivery says, stable across redeliveries: the
-    /// same answer or interruption is `{ticket}:answered` however many times it
-    /// arrives, and each re-dispatch is its own.
+    /// Stable across redeliveries; each re-dispatch is its own.
     pub fn idempotency_key(&self) -> String {
         match &self.event {
             Event::Answered { .. } => format!("{}:answered", self.ticket),
@@ -87,58 +64,42 @@ impl Delivery {
     }
 }
 
-/// What a sink says about a [`Delivery`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SinkReply {
-    /// Accepted — now, or earlier (a redelivery it already had).
+    /// Accepted now, or earlier (a redelivery it already had).
     Delivered,
-    /// There is nobody to deliver to: the session is gone or closed. Retrying
-    /// would never end, so the ticket is cancelled instead.
+    /// The session is gone or closed: retrying would never end, so the ticket is cancelled.
     Gone(String),
-    /// Not now. The message comes back after a delay.
     Retry(String),
 }
 
-/// Whatever drives the turn.
 pub trait Sink: Send + Sync {
     fn deliver(&self, delivery: &Delivery) -> impl Future<Output = SinkReply> + Send;
 }
 
-/// What [`handle`] decided about one `PARK_WAKE` message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Handled {
-    /// The sink took it and the ticket is closed.
     Delivered,
-    /// Nothing to do: the ticket is gone, already taken or cancelled, or this
-    /// message is about a re-dispatch a later one superseded.
+    /// The ticket is gone, taken or cancelled, or a later re-dispatch superseded this one.
     Stale,
-    /// The sink said nobody is there; the ticket was cancelled.
     Gone,
-    /// Not finished. Nak the message so it returns after [`backoff`].
+    /// Nak the message so it returns after [`backoff`].
     Retry(String),
 }
 
 impl Handled {
-    /// Whether the message may be acknowledged.
     pub fn is_finished(&self) -> bool {
         !matches!(self, Handled::Retry(_))
     }
 }
 
-/// How long to wait before a message's `delivered`-th redelivery: a second,
-/// doubling, to a ceiling of 256. A sink that is down for an hour is retried a
-/// few dozen times, not a few thousand.
+/// Capped at 256s: a sink down for an hour is retried a few dozen times, not a few thousand.
 pub fn backoff(delivered: u64) -> Duration {
     let exp = delivered.saturating_sub(1).min(8) as u32;
     Duration::from_secs(1u64 << exp)
 }
 
-/// One `PARK_WAKE` message, end to end. Errors are the store's (retry the
-/// message); everything the sink can say is in [`Handled`].
-///
-/// A message is a nudge, not the truth: what is done is decided by the ticket
-/// as it is now. A `redispatch` message whose `attempt` the ticket has moved
-/// past, or a `resolved` one for a ticket already taken, is stale and finished.
+/// A message is a nudge, not the truth: what is done is decided by the ticket as it is now.
 pub async fn handle<S: ParkStore, K: Sink>(
     engine: &Engine<S>,
     sink: &K,
@@ -156,8 +117,7 @@ pub async fn handle<S: ParkStore, K: Sink>(
         {
             Event::Redispatch { attempt: *attempt, description: record.call.description.clone() }
         }
-        // A child is consumed by its group and never delivered on its own, so a message that
-        // names one is a leftover.
+        // A child is consumed by its group, so a message that names one is a leftover.
         (WakeKind::Resolved, StoredStatus::Ready | StoredStatus::Interrupted)
             if record.call.parent.is_some() =>
         {
@@ -199,29 +159,21 @@ pub async fn handle<S: ParkStore, K: Sink>(
     }
 }
 
-/// Where a recovery pass puts what it says. `WakeStream` is the real one.
 pub trait Announcer: Send + Sync {
     fn announce(&self, msg: &WakeMessage) -> impl Future<Output = Result<()>> + Send;
 }
 
-/// What one pass did.
 #[derive(Debug, Default)]
 pub struct Swept {
-    /// Index entries a crash had lost, put back.
     pub repaired: Repaired,
-    /// Commits whose caller died, finished or rolled back (ADR-0110).
     pub batches: Vec<BatchRecovered>,
     pub recovered: Vec<Recovered>,
-    /// Announcements that did not land. The tickets already moved; the next
-    /// pass re-announces a resolved one, and a lost `redispatch` costs that
-    /// attempt, which is bounded (`RecoveryPolicy::max_redispatches`).
+    /// The next pass re-announces a resolved one; a lost `redispatch` costs one bounded attempt.
     pub unannounced: Vec<(TicketId, ParkError)>,
 }
 
-/// One pass: repair what a crash left unindexed, finish the commits whose caller died, recover
-/// what never answered, then announce each move. Repair comes first so that the tickets the
-/// pass is about to act on are the ones a `wake` and a `pending` can also see, and commits come
-/// before recovery so that the tickets they park are there for it.
+/// Repair first, so the tickets acted on are ones `wake` and `pending` can see; commits before
+/// recovery, so the tickets they park are there for it.
 pub async fn sweep<S: ParkStore, A: Announcer>(
     engine: &Engine<S>,
     announcer: &A,
@@ -250,21 +202,16 @@ pub async fn sweep<S: ParkStore, A: Announcer>(
     Ok(Swept { repaired, batches, recovered, unannounced })
 }
 
-/// What [`run`] needs beyond an engine, a stream and a sink.
 #[cfg(feature = "native")]
 #[derive(Debug, Clone)]
 pub struct RunConfig {
-    /// The durable consumer's name; resumers sharing one share the work.
+    /// Resumers sharing one durable consumer share the work.
     pub consumer: String,
-    /// How long a delivered message may go unanswered before the server hands
-    /// it to another resumer. Must outlast one sink call.
+    /// Must outlast one sink call, or the server hands the message to another resumer.
     pub ack_wait: Duration,
-    /// Messages handled at once.
     pub concurrency: usize,
-    /// Time between recovery passes.
     pub sweep_every: Duration,
     pub policy: RecoveryPolicy,
-    /// Who the recovery pass signs its interruptions and cancellations as.
     pub by: Agent,
 }
 
@@ -286,12 +233,8 @@ impl Default for RunConfig {
     }
 }
 
-/// Run a resumer until `shutdown` flips to `true`: deliver every message on
-/// `PARK_WAKE` to `sink` and sweep on a timer, concurrently.
-///
-/// Returns once in-flight messages have finished. Dying instead of returning is
-/// the case this is built for: whatever was in flight is redelivered by the
-/// server after `ack_wait`, and the sink sees the same [`Delivery`] again.
+/// Dying instead of returning is the case this is built for: whatever was in flight is
+/// redelivered after `ack_wait`, and the sink sees the same [`Delivery`] again.
 #[cfg(feature = "native")]
 pub async fn run<S, K>(
     engine: std::sync::Arc<Engine<S>>,
@@ -410,8 +353,7 @@ where
         });
     }
 
-    // In-flight messages finish before this returns, and so does a pass that
-    // was under way (a pass cut short only costs a re-announcement).
+    // A sweep cut short by the timeout only costs a re-announcement.
     let _ = permits.acquire_many(concurrency as u32).await;
     let _ = tokio::time::timeout(Duration::from_secs(5), sweeper).await;
     ended

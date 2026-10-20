@@ -1,5 +1,4 @@
-//! Scenarios, written once over any backends and run by `mem.rs` (always) and
-//! `live.rs` (against NATS + SurrealDB, when the env names them).
+//! Scenarios over any backends, run by mem.rs (always) and live.rs (when NATS + SurrealDB are set).
 #![allow(dead_code)]
 
 pub mod crash;
@@ -16,7 +15,6 @@ use holon_vcs::store::{BlobStore, CasMismatch, PointerStore, PointerValue, Revis
 use holon_vcs::{Engine, VcsError};
 use tokio::sync::{Barrier, Notify};
 
-/// One set of backends, shareable by several engines (several agents' processes).
 pub struct Stores<B, P, G, L> {
     pub blobs: Arc<B>,
     pub pointers: Arc<P>,
@@ -57,7 +55,6 @@ where
         Engine::new(self.blobs.clone(), self.pointers.clone(), self.graph.clone(), self.log.clone())
     }
 
-    /// An engine whose pointer store is `p` (a racing wrapper) over the same rest.
     pub fn engine_with<Q: PointerStore>(&self, p: Q) -> Engine<Arc<B>, Q, Arc<G>, Arc<L>> {
         Engine::new(self.blobs.clone(), p, self.graph.clone(), self.log.clone())
     }
@@ -130,7 +127,6 @@ pub async fn replace<B: BlobStore, P: PointerStore, G: Graph, L: OpLog>(
     .await
 }
 
-/// `replace`, from a view read at `read_at`.
 #[allow(clippy::too_many_arguments)]
 pub async fn replace_at<B: BlobStore, P: PointerStore, G: Graph, L: OpLog>(
     e: &E<B, P, G, L>,
@@ -190,9 +186,7 @@ pub async fn file_text<B: BlobStore, P: PointerStore, G: Graph, L: OpLog>(
     String::from_utf8(e.blobs().get(&entry.blob).await.unwrap().unwrap()).unwrap()
 }
 
-/// Two agents, two functions in one file, both from the same state, writing at
-/// the same moment: both land, nothing conflicts, the later one reports it
-/// commuted past the earlier, and the snapshot has both.
+/// Two agents edit two functions in one file at once: both land, the later one commuted.
 pub async fn scenario_a<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str)
 where
     B: BlobStore + 'static,
@@ -212,12 +206,12 @@ where
         ("agent-1", total.clone(), "fn compute_total() -> u32 { 42 }\n"),
         ("agent-2", validate.clone(), "fn validate_order() -> bool { false }\n"),
     ] {
-        let e = s.engine(); // each agent its own engine over the shared stores
+        let e = s.engine();
         let barrier = barrier.clone();
         let ws = ws.to_string();
         tasks.push(tokio::spawn(async move {
             let (parent, read_at) = view_of(&e, &ws, &sym).await;
-            barrier.wait().await; // both have read; now both write
+            barrier.wait().await;
             replace_at(&e, &ws, &sym, &parent, body, agent, read_at).await.unwrap()
         }));
     }
@@ -231,9 +225,7 @@ where
     }
     results.sort_by_key(|r| r.op);
     let (early, late) = (&results[0], &results[1]);
-    // Neither saw the other's edit, so whichever landed second lists the other
-    // (and the first may too, if the second had landed by its check) — and
-    // nothing else is listed.
+    // The second to land lists the other; the first may too, if the second landed before its check.
     assert!(
         late.commuted_with.contains(&early.patch) || early.commuted_with.contains(&late.patch),
         "one of {early:?} / {late:?} must list the other"
@@ -256,8 +248,7 @@ where
     crash::assert_consistent(&setup, ws).await;
 }
 
-/// Two agents, one function, one parent: one lands, the other is a conflict
-/// holding both sides verbatim; export is refused until a resolution lands.
+/// Two agents, one function, one parent: one lands, the other is a conflict holding both sides.
 pub async fn scenario_b<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str)
 where
     B: BlobStore + 'static,
@@ -295,12 +286,10 @@ where
     let (li, loser) = conflicted[0];
     let cid = loser.conflict.clone().unwrap();
 
-    // The tip is the winner's, untouched by the conflict.
     assert_eq!(tip_of(&setup, ws, &total).await, Some(winner.patch.clone()));
     assert_eq!(loser.tip, Some(winner.patch.clone()));
     assert_eq!(content_of(&setup, ws, &total).await, bodies[*wi]);
 
-    // Both sides kept verbatim.
     let open = setup.list_conflicts(ws, Some(ConflictState::Open)).await.unwrap();
     assert_eq!(open.len(), 1);
     let c = &open[0];
@@ -315,7 +304,6 @@ where
     let view = setup.query_symbol(ws, SymbolQuery::Symbol(total.clone())).await.unwrap();
     assert_eq!(view[0].open_conflicts, vec![cid.clone()]);
 
-    // Export refused; a forward edit refused; resolution settles it.
     match setup.snapshot_export(ws, COMPONENT).await {
         Err(VcsError::UnresolvedConflict(ids)) => assert_eq!(ids, vec![cid.clone()]),
         other => panic!("{other:?}"),
@@ -351,7 +339,6 @@ where
     let snap = setup.snapshot_export(ws, COMPONENT).await.unwrap();
     assert_eq!(file_text(&setup, &snap, FILE).await, merged);
 
-    // Resolving again with the same content is a duplicate; with other content, refused.
     let again = setup
         .resolve_conflict(ResolutionRequest {
             workspace: ws.to_string(),
@@ -377,9 +364,7 @@ where
     ));
 }
 
-/// N agents, one function, one parent: exactly one applied, N-1 conflicts (each
-/// loser paired with the winner), every patch recorded; resolving them one by one
-/// re-points the rest at the new tip until none is left.
+/// N agents, one function, one parent: one applied, N-1 conflicts, resolved one by one.
 pub async fn scenario_b_n_way<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str, n: usize)
 where
     B: BlobStore + 'static,
@@ -414,7 +399,6 @@ where
     let ids: BTreeSet<_> = losers.iter().map(|r| r.conflict.clone().unwrap()).collect();
     assert_eq!(ids.len(), n - 1, "one conflict per loser");
 
-    // Zero lost patches: every one is in the graph, and every loser is a side.
     let patches: BTreeSet<_> = results.iter().map(|r| r.patch.clone()).collect();
     assert_eq!(patches.len(), n);
     for p in &patches {
@@ -427,11 +411,9 @@ where
     assert_eq!(rights, loser_patches);
     assert!(open.iter().all(|c| c.left.patch == winner && c.base == Some(base.clone())));
     assert_eq!(tip_of(&setup, ws, &total).await, Some(winner.clone()));
-    // Exactly one op moved the tip; n-1 opened conflicts.
     let ops = setup.oplog(ws, None, 1000).await.unwrap();
     assert_eq!(ops.len(), 1 + n);
 
-    // Resolve one at a time; the rest follow the tip.
     let mut resolved = 0;
     loop {
         let open = setup.list_conflicts(ws, Some(ConflictState::Open)).await.unwrap();
@@ -458,7 +440,6 @@ where
     assert_eq!(resolved, n - 1);
     let all = setup.list_conflicts(ws, Some(ConflictState::Resolved)).await.unwrap();
     assert_eq!(all.len(), n - 1);
-    // Every loser's patch ended up a parent of some resolution.
     let mut parents = BTreeSet::new();
     for c in &all {
         let r = setup.graph().patch(ws, c.resolved_by.as_ref().unwrap()).await.unwrap().unwrap();
@@ -479,7 +460,6 @@ where
     let e = s.engine();
     let total = func("compute_total");
     let base = create(&e, ws, &total, "fn compute_total() {}\n").await;
-    // Creating it again, identically, is a duplicate.
     let again = e
         .apply_patch(req(
             ws,
@@ -493,7 +473,6 @@ where
     assert_eq!((again.outcome, again.patch.clone()), (PatchOutcome::Duplicate, base.clone()));
 
     let a = replace(&e, ws, &total, &base, "v1", "agent-a").await.unwrap();
-    // The same change by another agent, and by blob reference rather than inline.
     let blob = e.blobs().put(b"v1".to_vec()).await.unwrap();
     let b = e
         .apply_patch(req(
@@ -513,10 +492,9 @@ where
     let retry = replace(&e, ws, &total, &base, "v1", "agent-a").await.unwrap();
     assert_eq!(retry.outcome, PatchOutcome::Duplicate);
     assert_eq!(retry.tip, Some(c.patch.clone()));
-    // Only three ops moved anything; duplicates wrote nothing.
+    // Duplicates wrote nothing.
     assert_eq!(e.oplog(ws, None, 100).await.unwrap().len(), 3);
 
-    // Two agents submitting the identical edit at the same moment: one lands.
     let barrier = Arc::new(Barrier::new(2));
     let mut tasks = Vec::new();
     for i in 0..2 {
@@ -536,7 +514,6 @@ where
     assert_eq!(outs, vec![PatchOutcome::Applied, PatchOutcome::Duplicate]);
     assert!(e.list_conflicts(ws, None).await.unwrap().is_empty());
 
-    // A retried conflicting edit gets the same conflict back, not a second one.
     let tip = tip_of(&e, ws, &total).await.unwrap();
     let late = replace(&e, ws, &total, &c.patch, "v-late", "late").await.unwrap();
     assert_eq!(late.outcome, PatchOutcome::Conflicted);
@@ -564,7 +541,7 @@ where
     let r1 = replace(&e, ws, &total, &base, "v1", "a").await.unwrap();
     let r2 = replace(&e, ws, &total, &r1.patch, "v2", "a").await.unwrap();
 
-    // Blocked: r1's pointer moved again (by r2). Nothing changes.
+    // r1's pointer has since moved (by r2).
     match e.revert_op(ws, r1.op, who.clone()).await {
         Err(VcsError::ConcurrentModification(f)) => {
             assert_eq!(f.expected, Some(r1.patch.clone()));
@@ -575,24 +552,21 @@ where
     assert_eq!(content_of(&e, ws, &total).await, "v2");
     assert_eq!(e.oplog(ws, None, 100).await.unwrap().len(), 3);
 
-    // Newest first works, and is itself an op.
     let u2 = e.revert_op(ws, r2.op, who.clone()).await.unwrap();
     assert_eq!(u2.kind, OpKind::Revert(r2.op));
     assert_eq!(u2.moves[0].before, Some(r2.patch.clone()));
     assert_eq!(u2.moves[0].after, Some(r1.patch.clone()));
     assert_eq!(content_of(&e, ws, &total).await, "v1");
-    // r1 is still blocked — the revert moved its pointer.
+    // Still blocked: the revert moved r1's pointer.
     assert!(matches!(
         e.revert_op(ws, r1.op, who.clone()).await,
         Err(VcsError::ConcurrentModification(_))
     ));
-    // Reverting the revert re-applies r2.
     let redo = e.revert_op(ws, u2.id, who.clone()).await.unwrap();
     assert_eq!(redo.kind, OpKind::Revert(u2.id));
     assert_eq!(content_of(&e, ws, &total).await, "v2");
     assert_eq!(tip_of(&e, ws, &total).await, Some(r2.patch.clone()));
 
-    // Reverting the op that only opened a conflict abandons it.
     let stale = replace(&e, ws, &total, &r1.patch, "v-stale", "b").await.unwrap();
     assert_eq!(stale.outcome, PatchOutcome::Conflicted);
     let cid = stale.conflict.clone().unwrap();
@@ -603,7 +577,6 @@ where
     assert_eq!(tip_of(&e, ws, &total).await, Some(r2.patch.clone()));
     e.snapshot_export(ws, COMPONENT).await.unwrap();
 
-    // Reverting a resolve re-opens its conflict and puts the tip back on `left`.
     let stale = replace(&e, ws, &total, &r1.patch, "v-stale-2", "b").await.unwrap();
     let cid = stale.conflict.clone().unwrap();
     let res = e
@@ -623,7 +596,6 @@ where
     assert_eq!(open.iter().map(|c| c.id.clone()).collect::<Vec<_>>(), vec![cid.clone()]);
     assert_eq!(open[0].resolved_by, None);
     assert!(matches!(e.snapshot_export(ws, COMPONENT).await, Err(VcsError::UnresolvedConflict(_))));
-    // …and resolving it again works.
     e.resolve_conflict(ResolutionRequest {
         workspace: ws.to_string(),
         conflict: cid,
@@ -635,7 +607,6 @@ where
     .unwrap();
     assert_eq!(content_of(&e, ws, &total).await, "merged-again");
 
-    // Reverting a create: the symbol is gone, and can be created again.
     let helper = func("helper");
     let h = e
         .apply_patch(req(
@@ -699,16 +670,13 @@ where
         vec![5, 6]
     );
     assert!(e.oplog(ws, None, 0).await.unwrap().is_empty());
-    // Every entry carries what it moved (the create also claimed the name).
     let tip_move = |o: &OpEntry| o.moves.iter().find(|m| m.pointer.contains("/sym/")).cloned();
     assert!(all[0].moves.iter().any(|m| m.pointer.contains("/name/")));
     for w in all.windows(2) {
         assert_eq!(tip_move(&w[1]).unwrap().before, tip_move(&w[0]).unwrap().after);
     }
-    // Other workspaces are other logs.
     assert!(e.oplog(&format!("{ws}/other"), None, 10).await.unwrap().is_empty());
 
-    // Concurrent appends: dense, unique ids.
     let mut tasks = Vec::new();
     for i in 0..8 {
         let e = s.engine();
@@ -742,7 +710,6 @@ where
     let pa = create(&e, ws, &a, "fn a() {}\n").await;
     let pb = create(&e, ws, &b, "fn b() {}\n").await;
 
-    // Validation.
     let bad = |r: Result<CommitResult, VcsError>| matches!(r, Err(VcsError::Invalid(_)));
     assert!(bad(e
         .apply_patch(req(ws, func("c"), Some(pa.clone()), Transformation::Create(inline("x")), "v"))
@@ -795,10 +762,8 @@ where
         .await,
         Err(VcsError::NotFound(_))
     ));
-    // A parent from another symbol is not this symbol's history.
     assert!(bad(replace(&e, ws, &a, &pb, "x", "v").await));
 
-    // Rename: the identity moves; the old name is gone; position is kept.
     let ren = e
         .apply_patch(req(ws, a.clone(), Some(pa.clone()), Transformation::Rename("a2".into()), "v"))
         .await
@@ -812,7 +777,6 @@ where
     let a2 = func("a2");
     assert_eq!(tip_of(&e, ws, &a2).await, Some(ren.patch.clone()));
     assert_eq!(content_of(&e, ws, &a2).await, "fn a() {}\n");
-    // Renaming onto a live name is refused: it is taken.
     assert_eq!(
         e.apply_patch(req(
             ws,
@@ -824,9 +788,7 @@ where
         .await,
         Err(VcsError::NameTaken(b.clone()))
     );
-    // Editing through the new name works.
     let ed = replace(&e, ws, &a2, &ren.patch, "fn a2() {}\n", "v").await.unwrap();
-    // The old name can be taken by a new symbol, which goes after.
     let fresh = create(&e, ws, &a, "fn a() { /* new */ }\n").await;
     let snap = e.snapshot_export(ws, COMPONENT).await.unwrap();
     assert_eq!(file_text(&e, &snap, FILE).await, "fn a2() {}\nfn b() {}\nfn a() { /* new */ }\n");
@@ -839,7 +801,6 @@ where
         .collect();
     assert_eq!(names, vec!["a2", "b", "a"]);
 
-    // Delete: gone from queries and the snapshot; editing it is not-found.
     let del = e
         .apply_patch(req(ws, b.clone(), Some(pb.clone()), Transformation::Delete, "v"))
         .await
@@ -854,7 +815,6 @@ where
     ));
     let snap = e.snapshot_export(ws, COMPONENT).await.unwrap();
     assert_eq!(file_text(&e, &snap, FILE).await, "fn a2() {}\nfn a() { /* new */ }\n");
-    // Recreate after delete: a new patch (parented on the delete), same place.
     let back = e
         .apply_patch(req(ws, b.clone(), None, Transformation::Create(inline("fn b() {}\n")), "v"))
         .await
@@ -865,7 +825,6 @@ where
     assert_eq!(file_text(&e, &snap, FILE).await, "fn a2() {}\nfn b() {}\nfn a() { /* new */ }\n");
     let _ = (ed, fresh);
 
-    // Graph edges: depends_on / dependents / implements / wit-binding.
     let iface =
         SymbolId::new(COMPONENT, "wit/orders.wit", "orders/api.total", SymbolKind::WitInterface);
     create(&e, ws, &iface, "interface api { total: func() -> u32; }\n").await;
@@ -888,7 +847,6 @@ where
     assert_eq!(v.implements, vec![iface.clone()]);
     assert_eq!(v.wit_binding.as_deref(), Some("holon:orders/api.total"));
     assert_eq!(v.author.id, "v");
-    // A new body that no longer uses a2 drops the edge (the binding is kept).
     replace(&e, ws, &caller, &cp, "fn caller() {}\n", "v").await.unwrap();
     let v = &e.query_symbol(ws, SymbolQuery::Symbol(a2.clone())).await.unwrap()[0];
     assert!(v.dependents.is_empty());
@@ -911,8 +869,7 @@ where
         ("src/lib.rs", "pub fn b() {}\n", SymbolKind::Function),
         ("README.md", "# orders\n", SymbolKind::File),
         ("src/a/b.rs", "mod x;\n", SymbolKind::File),
-        // `a-b.rs`, `a.rs` and the directory `a/` — git sorts the directory as
-        // `a/`, which lands between `a.rs` ('.' < '/') and nothing after it.
+        // git sorts the directory as `a/`, so after `a.rs` ('.' < '/').
         ("src/a.rs", "mod a;\n", SymbolKind::File),
         ("src/a-b.rs", "// dash\n", SymbolKind::File),
         ("src/a0.rs", "// zero\n", SymbolKind::File),
@@ -957,9 +914,7 @@ where
     assert_eq!(snap.entries.len(), files.len() - 1);
 }
 
-/// A pointer store that can stop a CAS just before it happens, let the test do
-/// something to the real store, and then let it go — the interleaving a real
-/// race produces, on demand.
+/// Pauses a CAS just before it happens, so a test can produce a race's interleaving on demand.
 pub struct Racing<P> {
     pub inner: Arc<P>,
     armed: AtomicBool,
@@ -1038,8 +993,7 @@ where
     let racing = Arc::new(Racing::new(s.pointers.clone()));
     let victim = Arc::new(s.engine_with(racing.clone()));
 
-    // 1. Another agent's edit to the SAME symbol lands between the victim's read
-    //    and its CAS: the victim re-reads and becomes a conflict against it.
+    // 1. An edit to the SAME symbol lands between the victim's read and CAS: the victim conflicts.
     racing.arm();
     let t = {
         let (v, ws, sym, base) = (victim.clone(), ws.to_string(), total.clone(), base.clone());
@@ -1065,9 +1019,7 @@ where
         .unwrap();
     let tip = tip_of(&other, ws, &total).await.unwrap();
 
-    // 2. Another agent's edit to a DIFFERENT symbol lands in the same window: the
-    //    victim's CAS is on another pointer, so it lands first try — and reports
-    //    that it commuted past it.
+    // 2. An edit to a DIFFERENT symbol in that window: the victim lands first try, commuted.
     racing.arm();
     let before = racing.cas_calls.load(Ordering::SeqCst);
     let t = {
@@ -1082,9 +1034,7 @@ where
     assert_eq!(r.commuted_with, vec![side.patch.clone()]);
     assert_eq!(racing.cas_calls.load(Ordering::SeqCst) - before, 1, "no retry needed");
 
-    // 3. The pointer is rewritten with the SAME value (a revision bump — what a
-    //    conflict's no-op CAS does): the victim loses the CAS, re-reads, and lands
-    //    once. Exactly one op for it.
+    // 3. A same-value rewrite (a revision bump, as a conflict's no-op CAS does): one retry, one op.
     let ops_before = other.oplog(ws, None, 1000).await.unwrap().len();
     racing.bump_next.store(1, Ordering::SeqCst);
     let before = racing.cas_calls.load(Ordering::SeqCst);
@@ -1110,9 +1060,7 @@ where
     assert_eq!(content_of(&other, ws, &total).await, "v3");
     assert_eq!(other.oplog(ws, None, 1000).await.unwrap().len(), ops_before);
 
-    // 5. A conflict and a forward edit race: the conflict's record is written
-    //    before its (no-op) CAS, so an applier that reads in between sees it and
-    //    refuses — it cannot build on a tip a conflict is about to name as `left`.
+    // 5. A conflict record is written before its no-op CAS, so a forward edit reading in between refuses.
     racing.arm();
     let t = {
         let (v, ws, sym, parent) = (victim.clone(), ws.to_string(), total.clone(), r.patch.clone());
@@ -1131,8 +1079,7 @@ where
     crash::assert_consistent(&other, ws).await;
 }
 
-/// `commuted-with` is exactly the other-symbol edits of the component that
-/// landed after `read-at`; without `read-at`, everything after the parent's op.
+/// `commuted-with`: the component's other-symbol edits since `read-at` (else since the parent's op).
 pub async fn commuted_exact<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str)
 where
     B: BlobStore + 'static,
@@ -1158,23 +1105,19 @@ where
     let c = replace(&e, ws, &g, &pg, "g-stale", "e").await.unwrap(); // 9: only a conflict
     assert_eq!((rg.op, rh.op, c.op, c.outcome), (6, 7, 9, PatchOutcome::Conflicted));
 
-    // Read at 5: g's and h's edits landed since; z's (other component) and
-    // the conflict do not count.
+    // z's (another component) and the conflict do not count.
     let rf = replace_at(&e, ws, &f, &pf, "f1", "a", read0).await.unwrap(); // 10
     assert_eq!(
         (rf.outcome, rf.commuted_with.clone()),
         (PatchOutcome::Commuted, vec![rg.patch.clone(), rh.patch.clone()])
     );
-    // Read at 7: only f's edit (op 10) is new.
     let rk = replace_at(&e, ws, &k, &pk, "k1", "a", rh.op).await.unwrap(); // 11
     assert_eq!(rk.commuted_with, vec![rf.patch.clone()]);
-    // Read at the head: nothing new, `applied`.
     let head = e.oplog_head(ws).await.unwrap();
     assert_eq!(head, 11);
     let rk2 = replace_at(&e, ws, &k, &rk.patch, "k2", "a", head).await.unwrap(); // 12
     assert_eq!((rk2.outcome, rk2.commuted_with.clone()), (PatchOutcome::Applied, vec![]));
-    // Without read-at: measured from the parent's op (7) — everything since,
-    // including edits the agent may well have seen. The approximation, pinned.
+    // Without read-at it counts from the parent's op (7), even edits the agent saw: the approximation, pinned.
     let rh2 = replace(&e, ws, &h, &rh.patch, "h2", "c").await.unwrap(); // 13
     assert_eq!(rh2.commuted_with, vec![rf.patch.clone(), rk.patch.clone(), rk2.patch.clone()]);
     // A create with read-at commutes too; without, it never does.
@@ -1193,14 +1136,11 @@ where
     let (tip_k, _) = view_of(&e, ws, &k).await;
     let rk3 = replace_at(&e, ws, &k, &tip_k, "k3", "a", head).await.unwrap();
     assert_eq!((rk3.outcome, rk3.commuted_with), (PatchOutcome::Applied, vec![]));
-    // Every view of one query carries the same as-of.
     let views = e.query_symbol(ws, SymbolQuery::Component(COMPONENT.into())).await.unwrap();
     assert!(views.iter().all(|v| v.as_of == rk3.op));
     crash::assert_consistent(&e, ws).await;
 }
 
-/// N symbols renamed to one name at once: exactly one wins; the rest are
-/// `name-taken` and keep their names.
 pub async fn rename_race<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str, n: usize)
 where
     B: BlobStore + 'static,
@@ -1255,8 +1195,6 @@ where
     crash::assert_consistent(&setup, ws).await;
 }
 
-/// A create and a rename to the same new name, at once, many times: exactly
-/// one lands each time, and the other is `name-taken`.
 pub async fn create_vs_rename<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str, rounds: usize)
 where
     B: BlobStore + 'static,
@@ -1312,8 +1250,6 @@ where
     crash::assert_consistent(&setup, ws).await;
 }
 
-/// A released name is free for reuse; one taken by a rename is not a create's
-/// to take; two creates of one symbol are still a conflict, not a name fight.
 pub async fn names_release_and_reuse<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str)
 where
     B: BlobStore + 'static,
@@ -1328,14 +1264,12 @@ where
         .apply_patch(req(ws, a.clone(), Some(pa), Transformation::Rename("b".into()), "v"))
         .await
         .unwrap();
-    // `a` was released by the rename: a new symbol may have it.
     let fresh_a = create(&e, ws, &a, "fn a() { 2 }\n").await;
     // `b` is held via a rename: creating `b` is not a second version of it.
     assert_eq!(
         e.apply_patch(req(ws, b.clone(), None, Transformation::Create(inline("x")), "v")).await,
         Err(VcsError::NameTaken(b.clone()))
     );
-    // Nor may `a` be renamed onto it.
     assert_eq!(
         e.apply_patch(req(
             ws,
@@ -1347,7 +1281,6 @@ where
         .await,
         Err(VcsError::NameTaken(b.clone()))
     );
-    // Deleting `b` releases it; now the rename goes through.
     e.apply_patch(req(ws, b.clone(), Some(ren.patch.clone()), Transformation::Delete, "v"))
         .await
         .unwrap();
@@ -1367,7 +1300,6 @@ where
     assert_eq!(back.outcome, PatchOutcome::Applied);
     let rec = e.graph().patch(ws, &back.patch).await.unwrap().unwrap();
     assert_eq!(rec.parents.len(), 1, "built on the delete: {rec:?}");
-    // Two creates of the SAME symbol racing: one applied, the other a conflict.
     let barrier = Arc::new(Barrier::new(2));
     let mut tasks = Vec::new();
     for i in 0..2 {
@@ -1410,7 +1342,6 @@ pub async fn layout<B: BlobStore, P: PointerStore, G: Graph, L: OpLog>(
     file_text(e, &snap, FILE).await.lines().collect::<Vec<_>>().join(" ")
 }
 
-/// Placing on create, moving, appending, and the refusals.
 pub async fn positions<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str)
 where
     B: BlobStore + 'static,
@@ -1428,13 +1359,10 @@ where
     create_at(&e, ws, "w", Some(Placement::First)).await.unwrap();
     create_at(&e, ws, "l", Some(Placement::Last)).await.unwrap();
     assert_eq!(layout(&e, ws).await, "w y a x b l");
-    // Unplaced creates still append — after everything placed.
     create_at(&e, ws, "n", None).await.unwrap();
     assert_eq!(layout(&e, ws).await, "w y a x b l n");
-    // Between two neighbours that were themselves inserted.
     create_at(&e, ws, "xb", Some(Placement::Before(func("b")))).await.unwrap();
     assert_eq!(layout(&e, ws).await, "w y a x xb b l n");
-    // Move: a patch like any other; the content is kept.
     let (pa, _) = view_of(&e, ws, &func("a")).await;
     let mv = e
         .apply_patch(req(
@@ -1448,7 +1376,6 @@ where
         .unwrap();
     assert_eq!(layout(&e, ws).await, "w y x xb b l n a");
     assert_eq!(content_of(&e, ws, &func("a")).await, "a\n");
-    // A replace keeps the place.
     replace(&e, ws, &func("a"), &mv.patch, "a2\n", "m").await.unwrap();
     assert_eq!(layout(&e, ws).await, "w y x xb b l n a2");
     let (pa, _) = view_of(&e, ws, &func("a")).await;
@@ -1462,13 +1389,11 @@ where
     .await
     .unwrap();
     assert_eq!(layout(&e, ws).await, "w a2 y x xb b l n");
-    // A rename keeps it too.
     let (pa, _) = view_of(&e, ws, &func("a")).await;
     e.apply_patch(req(ws, func("a"), Some(pa), Transformation::Rename("a3".into()), "m"))
         .await
         .unwrap();
     assert_eq!(layout(&e, ws).await, "w a2 y x xb b l n");
-    // Two concurrent moves of one symbol conflict, like any two edits of it.
     let (py, _) = view_of(&e, ws, &func("y")).await;
     let m1 = e
         .apply_patch(req(
@@ -1495,12 +1420,9 @@ where
     })
     .await
     .unwrap();
-    // The resolution keeps the tip's (left's) place.
     assert_eq!(layout(&e, ws).await, "y w a2 x xb b l n");
-    // A retried placed create is a duplicate, even after the file changed.
     let again = create_at(&e, ws, "x", Some(Placement::After(func("a")))).await.unwrap();
     assert_eq!((again.outcome, again.patch), (PatchOutcome::Duplicate, x.patch));
-    // Refusals.
     let other_file = SymbolId::new(COMPONENT, "src/other.rs", "o", SymbolKind::Function);
     assert!(matches!(
         create_at(&e, ws, "q", Some(Placement::After(other_file))).await,
@@ -1528,8 +1450,6 @@ where
     crash::assert_consistent(&e, ws).await;
 }
 
-/// N agents inserting after the same symbol at the same moment: none conflicts,
-/// all land between their neighbours, tied, in symbol-key order.
 pub async fn concurrent_inserts<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str, n: usize)
 where
     B: BlobStore + 'static,
@@ -1555,13 +1475,11 @@ where
     }
     assert!(e.list_conflicts(ws, None).await.unwrap().is_empty());
     let mut inserted: Vec<String> = (0..n).map(|i| format!("i{i}")).collect();
-    // Whichever read what, each landed between `a` and `b`.
     let text = layout(&e, ws).await;
     let got: Vec<&str> = text.split(' ').collect();
     assert_eq!((got[0], got[n + 1]), ("a", "b"), "{text}");
     let mut middle: Vec<String> = got[1..=n].iter().map(|s| s.to_string()).collect();
-    // The layout is exactly (order key, symbol key) order — so agents that read
-    // the same file computed the same key, tied, and the tie went by symbol key.
+    // Agents that read the same file computed the same key; the tie went by symbol key.
     let views = e.query_symbol(ws, SymbolQuery::Component(COMPONENT.into())).await.unwrap();
     let mut keyed = Vec::new();
     for v in &views[1..=n] {
@@ -1581,8 +1499,7 @@ where
     crash::assert_consistent(&e, ws).await;
 }
 
-/// Build some history, then point an engine at an EMPTY graph over the same
-/// pointers, log and blobs: repair rebuilds it, and every read is as before.
+/// Point an engine at an EMPTY graph over the same pointers, log and blobs: repair rebuilds it.
 pub async fn graph_rebuild<B, P, G, L>(s: Stores<B, P, G, L>, empty: Arc<G>, ws: &str)
 where
     B: BlobStore + 'static,
@@ -1635,8 +1552,7 @@ where
     crash::assert_consistent(&e2, ws).await;
 }
 
-/// One `#[tokio::test]` per scenario, each given fresh `(Stores, workspace)` by
-/// `$make(name)`, which may return `None` to skip.
+/// One `#[tokio::test]` per scenario; `$make(name)` gives fresh `(Stores, workspace)`, or `None` to skip.
 #[macro_export]
 macro_rules! scenario_tests {
     ($make:path) => {

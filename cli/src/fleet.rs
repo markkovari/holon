@@ -1,14 +1,4 @@
 //! The lattice lane: three control processes on real boxes, rendered from one spec.
-//!
-//! A `comp-host` per node holding every app, a `comp-reconciler` converging them
-//! against desired state, and a `comp-ingress` routing by `Host` header. These units
-//! are `cargo xtask host platform` with the trap replaced by `Restart=always` and the
-//! temp dir by `StateDirectory`. Pure spec-to-text so it can be read and tested
-//! before touching a server.
-//!
-//! No supervisor: the reconciler elects a leader through a JetStream KV lease
-//! (`lattice/src/lease.rs`), so a standby is just a second unit on a second box
-//! (ADR-0072).
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -16,39 +6,26 @@ use std::path::PathBuf;
 use anyhow::{bail, Result};
 use serde::Deserialize;
 
-/// One lattice, as a person writes it.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Fleet {
-    /// The lattice name — the first subject token after `comp.`. Two lattices on one
-    /// NATS never see each other's commands, so this is the isolation boundary
-    /// between a staging fleet and a production one.
+    /// The isolation boundary: two lattices on one NATS never see each other's commands.
     pub lattice: String,
-    /// Where the bus is. Every node, the reconciler and the ingress dial this.
     pub nats_url: String,
-    /// The control plane the reconciler polls for desired state.
     pub platform_url: String,
 
-    /// The boxes. Each runs a `comp-host` in node mode.
     pub nodes: Vec<Node>,
 
-    /// Which box runs the ingress. It is the only process that faces the network,
-    /// so it is named rather than defaulted.
+    /// Named, not defaulted: the only process that faces the network.
     pub ingress: Ingress,
 
-    /// Which boxes run a reconciler. More than one is the SUPPORTED case, not a
-    /// mistake: they contend for a lease and exactly one wins, so a second entry
-    /// here is a standby (ADR-0072).
+    /// More than one is a standby: they contend for a lease (ADR-0072).
     #[serde(default)]
     pub reconcilers: Vec<Reconciler>,
 
-    /// Seconds between reconcile passes. Also the floor on how fast anything is
-    /// noticed, other than an activation.
     #[serde(default)]
     pub interval: Option<u64>,
-    /// Seconds an inventory entry survives without a heartbeat — the failover
-    /// detection time. ADR-0035 measured a dead machine noticed 11-12s after the
-    /// kill with this at 15.
+    /// The failover detection time (ADR-0035).
     #[serde(default)]
     pub inventory_ttl: Option<u64>,
 }
@@ -56,15 +33,11 @@ pub struct Fleet {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Node {
-    /// The node's name on the lattice. Must be stable across restarts: inventory is
-    /// keyed by it, so a node that renames itself looks like one death and one birth.
+    /// Must be stable across restarts: inventory is keyed by it.
     pub name: String,
-    /// `host:port` an ingress can reach this node on. NOT loopback — unlike tier 1,
-    /// a node must be reachable from whichever box holds the ingress.
+    /// Not loopback: the ingress dials it from another box.
     pub addr: String,
-    /// Backing store for `wasi:keyvalue`. `sqlite` and `memory` are NODE-LOCAL, and
-    /// the reconciler refuses to spread a stateful app across nodes that use them
-    /// (ADR-0027) — so a real fleet wants `nats`.
+    /// `sqlite` and `memory` are node-local, so a fleet wants `nats` (ADR-0027).
     #[serde(default = "default_node_kv")]
     pub kv: String,
 }
@@ -72,16 +45,12 @@ pub struct Node {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Ingress {
-    /// Which box it runs on. Free-form: it names a host to `scp` to, not a node.
+    /// A host to `scp` to, not a node.
     pub host: String,
-    /// Where it listens. `127.0.0.1:8088` puts a TLS front (Caddy) in front of it,
-    /// which is what `holon node ingress` renders and what ADR's reasoning assumes:
-    /// TLS is not terminated by the ingress.
+    /// Loopback by default: a Caddy in front terminates TLS, not the ingress.
     #[serde(default = "default_ingress_addr")]
     pub addr: String,
-    /// Requests in flight to ONE NODE before shedding with 503; 0 disables it.
-    /// ADR-0041: with no bound an overloaded node answered p99 42 SECONDS with zero
-    /// errors; with 64, p99 747ms and more useful work done.
+    /// Requests in flight to one node before shedding with 503; 0 disables (ADR-0041).
     #[serde(default)]
     pub max_inflight: Option<usize>,
 }
@@ -90,25 +59,20 @@ pub struct Ingress {
 #[serde(deny_unknown_fields)]
 pub struct Reconciler {
     pub host: String,
-    /// Seconds a leader survives without renewing. Failover takes up to this plus
-    /// one interval, so it must be comfortably longer than `interval`.
+    /// Must exceed `interval`: failover takes up to this plus one interval.
     #[serde(default)]
     pub lease_ttl: Option<u64>,
 }
 
 fn default_node_kv() -> String {
-    // nats, not sqlite: this tier exists because there is more than one box, and a
-    // node-local store under a fleet is the bug ADR-0027 refuses at placement time.
+    // A node-local store under a fleet is what ADR-0027 refuses.
     "nats".into()
 }
 fn default_ingress_addr() -> String {
-    // Loopback: Caddy does ACME and terminates TLS, the ingress speaks plain HTTP
-    // behind it. Reimplementing certificate handling inside a reverse proxy whose
-    // whole job is to forward is work with a known-worse outcome.
+    // Caddy terminates TLS in front; the ingress speaks plain HTTP.
     "127.0.0.1:8088".into()
 }
 
-/// Where the lattice binaries and their state live on a box.
 pub struct FleetLayout {
     pub bin_dir: PathBuf,
     pub env_dir: PathBuf,
@@ -154,9 +118,7 @@ pub fn check(f: &Fleet) -> Result<()> {
         if !matches!(n.kv.as_str(), "memory" | "sqlite" | "redis" | "nats") {
             bail!("node {}: kv must be memory|sqlite|redis|nats, got {:?}", n.name, n.kv);
         }
-        // A node that advertises loopback is unreachable from the ingress unless the
-        // ingress happens to be on that same box — and it will fail at request time,
-        // long after the deploy said it worked.
+        // Loopback deploys clean but fails at the first request from another box.
         if n.addr.starts_with("127.") || n.addr.starts_with("localhost:") {
             bail!(
                 "node {} advertises {:?}, which no other box can reach — advertise the address an ingress can dial",
@@ -165,8 +127,7 @@ pub fn check(f: &Fleet) -> Result<()> {
         }
     }
 
-    // A lease shorter than a pass expires before the holder can renew it, so
-    // leadership would flap once per interval forever.
+    // A lease shorter than a pass expires before renewal, so leadership would flap.
     let interval = f.interval.unwrap_or(10);
     for r in &f.reconcilers {
         if let Some(ttl) = r.lease_ttl {
@@ -188,9 +149,6 @@ fn is_label(s: &str) -> bool {
         && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-/// The hardening every lattice unit carries. Identical to the tier-1 set and for the
-/// identical reason: these processes serve a network, and one of them holds the
-/// platform secret.
 fn hardening() -> &'static str {
     "Restart=always\n\
      RestartSec=2\n\
@@ -210,7 +168,6 @@ fn hardening() -> &'static str {
 const GENERATED: &str =
     "# Generated by `holon fleet render` — do not edit; edit the fleet spec and re-deploy.\n";
 
-/// A node: `comp-host` in lattice mode, holding every tenant placed on this box.
 pub fn render_node_unit(f: &Fleet, n: &Node, l: &FleetLayout) -> String {
     let mut s = String::from(GENERATED);
     s.push_str(&format!(
@@ -227,14 +184,8 @@ pub fn render_node_unit(f: &Fleet, n: &Node, l: &FleetLayout) -> String {
         n.addr,
         n.kv
     ));
-    // NO --state-dir, for the same reason tier 1 emits no --sqlite-path: comp-host
-    // already defaults it to $STATE_DIRECTORY, which systemd sets for any unit
-    // declaring StateDirectory= and which DynamicUser makes private to this unit.
-    //
-    // Passing it explicitly would be worse than redundant — systemd does not expand
-    // ${STATE_DIRECTORY} inside ExecStart unless it was set with Environment=, so
-    // the flag would arrive as that literal string and the node would write its
-    // artifacts and instance ledger to a directory of that name.
+    // No --state-dir: comp-host defaults to $STATE_DIRECTORY, and systemd does not expand
+    // ${STATE_DIRECTORY} in ExecStart, so the flag would arrive as that literal string.
     s.push('\n');
     s.push_str(&format!("StateDirectory=comp/node-{}\n", n.name));
     s.push_str(hardening());
@@ -243,7 +194,6 @@ pub fn render_node_unit(f: &Fleet, n: &Node, l: &FleetLayout) -> String {
     s
 }
 
-/// The reconciler: the only process holding the platform secret.
 pub fn render_reconciler_unit(f: &Fleet, r: &Reconciler, l: &FleetLayout) -> String {
     let mut s = String::from(GENERATED);
     s.push_str(&format!(
@@ -265,16 +215,13 @@ pub fn render_reconciler_unit(f: &Fleet, r: &Reconciler, l: &FleetLayout) -> Str
         s.push_str(&format!(" --lease-ttl {t}"));
     }
     s.push('\n');
-    // The secret arrives as an environment file readable only by root before
-    // systemd drops privileges — never as argv, which every process on the box can
-    // read out of /proc.
+    // Env file, never argv: any process on the box can read argv from /proc.
     s.push_str(&format!("EnvironmentFile={}/reconciler.env\n", l.env_dir.display()));
     s.push_str(hardening());
     s.push_str("\n[Install]\nWantedBy=multi-user.target\n");
     s
 }
 
-/// The ingress: the door. Routes by `Host` header from inventory.
 pub fn render_ingress_unit(f: &Fleet, l: &FleetLayout) -> String {
     let mut s = String::from(GENERATED);
     s.push_str(&format!(
@@ -301,7 +248,6 @@ pub fn render_ingress_unit(f: &Fleet, l: &FleetLayout) -> String {
     s
 }
 
-/// The reconciler's environment file. One secret, by reference.
 pub fn render_reconciler_env() -> String {
     let mut s = String::from(GENERATED);
     s.push_str(
@@ -335,10 +281,7 @@ host = "edge"
         toml::from_str(t).unwrap()
     }
 
-    /// `MINIMAL` plus the two tunables — built by PREPENDING, because in TOML every
-    /// key after a `[table]` header belongs to that table. Appending them to
-    /// `MINIMAL` puts them inside `[ingress]`, which is the same trap the app spec
-    /// warns about with "KEEP TABLES LAST".
+    /// Prepended: in TOML every key after a `[table]` header belongs to that table.
     fn tuned() -> String {
         format!("interval = 3\ninventory_ttl = 15\n{MINIMAL}")
     }
@@ -348,16 +291,12 @@ host = "edge"
         let f = fleet(MINIMAL);
         check(&f).unwrap();
         assert_eq!(f.nodes.len(), 1);
-        // nats, not sqlite: a fleet is more than one box by definition, and a
-        // node-local store under one is what ADR-0027 refuses.
         assert_eq!(f.nodes[0].kv, "nats");
-        // Loopback, because Caddy is in front doing ACME.
         assert_eq!(f.ingress.addr, "127.0.0.1:8088");
     }
 
     #[test]
     fn a_node_advertising_loopback_is_refused() {
-        // It would deploy clean and fail at the first request from any other box.
         let f = fleet(
             "lattice = \"p\"\nnats_url = \"nats://a:4222\"\nplatform_url = \"http://a:8080\"\n\
              [[nodes]]\nname = \"n1\"\naddr = \"127.0.0.1:3401\"\n[ingress]\nhost = \"e\"\n",
@@ -378,8 +317,6 @@ host = "edge"
 
     #[test]
     fn a_lease_shorter_than_a_pass_would_flap_forever() {
-        // Renewal happens once per pass, so a lease that expires inside one interval
-        // is lost every time it is held.
         let f = fleet(
             "lattice = \"p\"\nnats_url = \"nats://a:4222\"\nplatform_url = \"http://a:8080\"\n\
              interval = 10\n[[nodes]]\nname = \"n1\"\naddr = \"10.0.0.2:3401\"\n\
@@ -391,8 +328,6 @@ host = "edge"
 
     #[test]
     fn two_reconcilers_are_a_standby_not_an_error() {
-        // The lease makes exactly one of them act. This is ADR-0072's gap closing
-        // with a unit rather than with code, so the spec must accept it.
         let f = fleet(
             "lattice = \"p\"\nnats_url = \"nats://a:4222\"\nplatform_url = \"http://a:8080\"\n\
              [[nodes]]\nname = \"n1\"\naddr = \"10.0.0.2:3401\"\n[ingress]\nhost = \"e\"\n\
@@ -411,11 +346,7 @@ host = "edge"
         assert!(u.contains("--addr 10.0.0.2:3401"), "{u}");
         assert!(u.contains("DynamicUser=yes"), "{u}");
         assert!(u.contains("ProtectSystem=strict"), "{u}");
-        // The one exemption, and it is explained in the unit itself.
         assert!(u.contains("MemoryDenyWriteExecute=no"), "{u}");
-        // The unit declares the directory and comp-host defaults to it. Passing the
-        // flag would send the literal "${STATE_DIRECTORY}" — systemd does not expand
-        // it in ExecStart — so its ABSENCE is the property worth asserting.
         assert!(!u.contains("--state-dir"), "comp-host defaults to $STATE_DIRECTORY: {u}");
         assert!(u.contains("StateDirectory=comp/node-node-1"), "{u}");
     }
@@ -426,9 +357,7 @@ host = "edge"
         let r = Reconciler { host: "c1".into(), lease_ttl: None };
         let u = render_reconciler_unit(&f, &r, &FleetLayout::default());
         assert!(u.contains("EnvironmentFile=/etc/comp/reconciler.env"), "{u}");
-        // Every process on the box can read another's argv out of /proc.
         assert!(!u.contains("--secret"), "the secret must not be on the command line: {u}");
-        // And the rendered file carries no value to commit.
         assert!(render_reconciler_env().contains("PLATFORM_SECRET=\n"));
     }
 
@@ -436,8 +365,6 @@ host = "edge"
     fn the_ingress_is_the_only_thing_that_faces_a_network() {
         let f = fleet(MINIMAL);
         let u = render_ingress_unit(&f, &FleetLayout::default());
-        // Behind Caddy, on loopback. The node units advertise a routable address
-        // because the ingress must dial them; the ingress itself does not.
         assert!(u.contains("--addr 127.0.0.1:8088"), "{u}");
         assert!(u.contains("--lattice prod"), "{u}");
     }
@@ -449,8 +376,6 @@ host = "edge"
         let ru = render_reconciler_unit(&f, &r, &FleetLayout::default());
         assert!(ru.contains("--interval 3"), "{ru}");
         assert!(ru.contains("--lease-ttl 30"), "{ru}");
-        // inventory_ttl is the ingress's to honour — it is the failover detection
-        // time, and the ingress is what stops offering traffic to a corpse.
         let iu = render_ingress_unit(&f, &FleetLayout::default());
         assert!(iu.contains("--inventory-ttl 15"), "{iu}");
     }
@@ -467,8 +392,7 @@ host = "edge"
         ] {
             let help = match help_for(bin) {
                 Some(h) => h,
-                // Not silently skipped in CI: `cargo build --release` runs before
-                // `cargo test` there, so absence means a real build gap locally.
+                // CI builds the release binaries before `cargo test`, so this only skips locally.
                 None => {
                     eprintln!(
                         "skipping {bin}: not built — `cargo build --release` in its workspace"
@@ -489,8 +413,6 @@ host = "edge"
     }
 
     fn help_for(bin: &str) -> Option<String> {
-        // Each binary lives in its own workspace's target dir; the renderer names
-        // /usr/local/bin, which is where they land on a box, not here.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent()?;
         let ws = match bin {
             "comp-host" => "host",

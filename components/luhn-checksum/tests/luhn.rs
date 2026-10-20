@@ -1,7 +1,3 @@
-// The specification for `luhn-checksum`. Not writable by the goal that implements
-// `src/lib.rs` — see `.comp/goals/luhn-checksum.toml`.
-
-// Real numbers whose Luhn-validity is publicly documented: the Wikipedia example and card networks' published test-card IINs.
 const VALID: &[&str] = &[
     "79927398713",      // Wikipedia's own worked example
     "4111111111111111", // Visa test number
@@ -51,8 +47,7 @@ fn checksum_digit_makes_the_number_valid_once_appended() {
 
 #[test]
 fn parity_is_counted_from_the_right_not_the_left() {
-    // These differ only by a leading zero, which must not change which positions
-    // get doubled — the parity is anchored to the RIGHT end.
+    // Parity is anchored to the RIGHT end: a leading zero must not shift it.
     let with_leading_zero = format!("0{}", "7992739871");
     assert_eq!(
         luhn_checksum::checksum_digit(&with_leading_zero),

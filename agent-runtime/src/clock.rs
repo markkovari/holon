@@ -1,12 +1,9 @@
-//! What the `now` tool says. A bare unix number is a poor answer for a model that has to
-//! plan "tomorrow" or "next Friday": it converted one wrongly and a calendar event landed a
-//! day late. So the answer is the local date in words, with the days ahead spelled out, and
-//! UTC and unix time kept for anything that wants them.
+//! `now` spells out local dates: a model given bare unix time once put a calendar event a day late.
 
 const DAYS: [&str; 7] =
     ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-/// (year, month, day) of a day count since 1970-01-01 (Howard Hinnant's civil_from_days).
+/// Howard Hinnant's civil_from_days.
 fn ymd(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -19,7 +16,7 @@ fn ymd(days: i64) -> (i64, u32, u32) {
     (yoe + era * 400 + i64::from(m <= 2), m, d)
 }
 
-/// Days since 1970-01-01 of a civil date (Howard Hinnant's days_from_civil).
+/// Howard Hinnant's days_from_civil.
 pub fn days_from_ymd(y: i64, m: u32, d: u32) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = y.div_euclid(400);
@@ -30,8 +27,7 @@ pub fn days_from_ymd(y: i64, m: u32, d: u32) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-/// A local date-time written `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM` as (days since the epoch, minute
-/// of the day). A bare date is midnight. `None` for anything else, and for a date that is not one.
+/// `YYYY-MM-DD[THH:MM]` as (days since the epoch, minute of the day).
 pub fn parse_local(s: &str) -> Option<(i64, u32)> {
     let (date, time) = match s.split_once('T') {
         Some((d, t)) => (d, Some(t)),
@@ -64,13 +60,11 @@ pub fn parse_local(s: &str) -> Option<(i64, u32)> {
     Some((days, minute))
 }
 
-/// `YYYY-MM-DD` of a day count.
 pub fn date_of(days: i64) -> String {
     let (y, m, d) = ymd(days);
     format!("{y}-{m:02}-{d:02}")
 }
 
-/// `YYYY-MM-DDTHH:MM` of a day count and a minute of the day, carrying minutes past a day over.
 pub fn local_of(days: i64, minute: i64) -> String {
     let days = days + minute.div_euclid(1440);
     let minute = minute.rem_euclid(1440);
@@ -91,8 +85,7 @@ fn offset(secs: i64) -> String {
     format!("UTC{sign}{:02}:{:02}", a / 3600, a % 3600 / 60)
 }
 
-/// The text of `now`. `local` gives the machine's UTC offset in seconds and its zone name
-/// at a unix time (a parameter so a test can pin it).
+/// `local` is a parameter so a test can pin the zone.
 pub fn describe(unix: u64, local: &dyn Fn(u64) -> (i64, String)) -> String {
     let (off, zone) = local(unix);
     let lt = unix as i64 + off;
@@ -114,10 +107,8 @@ pub fn describe(unix: u64, local: &dyn Fn(u64) -> (i64, String)) -> String {
     )
 }
 
-/// This machine's current UTC offset (seconds) and zone name, from the system `date`: the
-/// one place that already knows the user's time zone, and it needs no `unsafe` or C library.
-/// `now` is only ever asked about the present, so the argument is not used; a failure falls
-/// back to UTC.
+/// The system `date` knows the user's zone and needs no `unsafe` or C library; `now` is only
+/// asked about the present, so the argument is unused.
 pub fn local_offset(_unix: u64) -> (i64, String) {
     let out = std::process::Command::new("date").arg("+%z %Z").output();
     let text = out
@@ -127,7 +118,6 @@ pub fn local_offset(_unix: u64) -> (i64, String) {
     text.as_deref().and_then(parse_offset).unwrap_or((0, "UTC".to_string()))
 }
 
-/// `"+0200 CEST"` -> (7200, "CEST").
 fn parse_offset(s: &str) -> Option<(i64, String)> {
     let (z, name) = s.split_once(' ')?;
     let sign = match z.as_bytes().first()? {

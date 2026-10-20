@@ -1,27 +1,10 @@
-//! The goal runner's client for `knowledge:memory` — skip work already done, and
-//! record every verdict so the next run can.
-//!
-//! ## Nothing here may fail a run
-//!
-//! Every function answers with a plain value and swallows what went wrong into a `String` the caller
-//! may print: a knowledge pool that is down, misconfigured or absent must cost a run nothing but the
-//! knowledge. **An error means DO THE WORK**: `already_done` answers `None` when it cannot reach the
-//! pool, never "probably done", since skipping work not done is a silent wrong answer and redoing it
-//! only costs money (ADR-0084).
-//!
-//! ## Why HTTP and not a link
-//!
-//! The reconciler is native and reaches components through the ingress, as it reaches the driver and
-//! selector: `memory-probe` in front of `knowledge-memory` is the shape of `driver-probe` in front of
-//! `agent-driver`.
+//! `knowledge:memory` client. Nothing here may fail a run: an error means do the work (ADR-0084).
 
 use std::time::Duration;
 
 use serde_json::Value;
 
-/// Where the memory app is, and the ingress host that routes to it.
-///
-/// `None` is the default: a run without `--surreal-url` deploys no memory app and makes no calls.
+/// Absent without `--surreal-url`: no memory app, no calls.
 #[derive(Clone)]
 pub struct Memory {
     pub url: String,
@@ -29,7 +12,6 @@ pub struct Memory {
     pub timeout: Duration,
 }
 
-/// What a past passing run of this goal left behind.
 pub struct Prior {
     pub goal: String,
     pub similarity: f64,
@@ -40,14 +22,12 @@ pub struct Prior {
 }
 
 impl Prior {
-    /// One line for a human deciding whether the skip was right.
     pub fn summary(&self) -> String {
         let artifact = if self.artifact.is_empty() {
             "nothing addressable".to_string()
         } else {
             self.artifact.clone()
         };
-        // One line of it: a goal is often a paragraph.
         let goal = self.goal.lines().next().unwrap_or_default();
         let goal = if goal.len() > 72 { format!("{}…", &goal[..71]) } else { goal.to_string() };
         format!(
@@ -77,7 +57,6 @@ impl Memory {
         self.call_with(method, path, String::new())
     }
 
-    /// The same, with a body: `/observe` needs one because a lesson is prose.
     fn call_with(
         &self,
         method: reqwest::Method,
@@ -94,9 +73,7 @@ impl Memory {
         serde_json::from_str(&text).map_err(|e| format!("unreadable answer ({e}): {text}"))
     }
 
-    /// Has this goal already been done? `Ok(None)` means go and do the work.
-    ///
-    /// Called ONCE per goal, before anything is spawned, not per branch.
+    /// `Ok(None)` means do the work. Called once per goal, not per branch.
     pub fn already_done(&self, goal: &str, min_similarity: f64) -> Result<Option<Prior>, String> {
         let v = self.call(
             reqwest::Method::GET,
@@ -118,10 +95,7 @@ impl Memory {
         }))
     }
 
-    /// Forget what nobody read. Returns how many entries went.
-    ///
-    /// Driven by the run, not a daemon: a `decay` that is exposed and never called is the gap ADR-0081
-    /// caught in alpha-swarm2, and a few milliseconds per run beats a scheduler nobody deploys.
+    /// Driven by the run, not a daemon: a decay nothing calls is the gap ADR-0081 caught.
     pub fn decay(&self, days: u32, min_uses: u64) -> Result<u32, String> {
         let v =
             self.call(reqwest::Method::POST, &format!("/decay?days={days}&min-uses={min_uses}"))?;
@@ -131,15 +105,7 @@ impl Memory {
         Ok(v["forgotten"].as_u64().unwrap_or(0) as u32)
     }
 
-    /// Record one verdict.
-    ///
-    /// Called once per BRANCH, not per generation: the count of failed attempts says whether another
-    /// generation is worth buying. Idempotent per `(goal, run)`, so the landing path may call it again
-    /// with the pull request.
-    /// Record that this goal was decomposed into that one.
-    ///
-    /// Idempotent per `(parent, child)`. Failure is REPORTED, never fatal: losing the edge costs the pool
-    /// its memory of the decomposition, not the run its result.
+    /// Idempotent per `(parent, child)`; failure is reported, never fatal.
     pub fn decomposed_into(
         &self,
         parent: &str,
@@ -166,8 +132,7 @@ impl Memory {
         self.sub_goals("/parts-of", goal)
     }
 
-    /// The goals this one is a part of: plural, since one sub-goal reached from two parents is one node
-    /// with two edges.
+    /// Plural: a sub-goal reached from two parents is one node with two edges.
     pub fn parents_of(&self, goal: &str) -> Result<Vec<SubGoal>, String> {
         self.sub_goals("/parents-of", goal)
     }
@@ -191,6 +156,7 @@ impl Memory {
             .collect())
     }
 
+    /// Once per branch; idempotent per `(goal, run)`, so the landing path may call it again.
     pub fn evaluated(
         &self,
         goal: &str,
@@ -219,8 +185,7 @@ pub struct SubGoal {
     pub goal: String,
     pub ordinal: u32,
     pub why: String,
-    /// Whether any run has PASSED on this part, derived from its verdict edges so it cannot disagree with
-    /// the trail; what makes a parent resumable rather than all-or-nothing.
+    /// Derived from verdict edges, so it cannot disagree with the trail; makes a parent resumable.
     pub done: bool,
 }
 
@@ -231,30 +196,19 @@ pub struct Lesson {
     pub dense: bool,
 }
 
-/// The DIVERSITY BUDGET, per branch because branches that all read the same top-k are an expensive way
-/// to run one (ADR-0081). `k = 0` reads nothing: the control arm.
+/// Per branch to avoid herding (ADR-0081); `k = 0` reads nothing, the control arm.
 pub struct Reading {
     pub k: u32,
     pub budget: u32,
     pub pools: Vec<String>,
-    /// Drop dense hits below this cosine. 0 disables it.
-    ///
-    /// A threshold asks for structural evidence WITHOUT whatever the embedding thinks of your goal; a tag
-    /// match is exempt by design (ADR-0090).
+    /// Drop dense hits below this cosine; 0 disables it. A tag match is exempt (ADR-0090).
     pub min_similarity: f64,
-    /// Interfaces the part imports, so retrieval can cross applications.
-    ///
-    /// Text similarity finds a lesson when the wording rhymes; these find it when the CONTRACT is shared,
-    /// which is what repeats: a fact about `csv:codec/codec` holds for a ledger and a clinic alike
-    /// (ADR-0090). Empty is text-only, what the control arm wants.
+    /// Imported interfaces, so retrieval crosses apps that share a contract (ADR-0090).
     pub tags: Vec<String>,
 }
 
 impl Memory {
-    /// What the swarm learned that bears on this goal.
-    ///
-    /// An error is NOT fatal and NOT an empty answer dressed up as one: the caller prints it and runs the
-    /// branch cold.
+    /// An error is not an empty answer: the caller prints it and runs the branch cold.
     pub fn recall(&self, goal: &str, r: &Reading) -> Result<Vec<Lesson>, String> {
         if r.k == 0 {
             return Ok(Vec::new());
@@ -288,7 +242,7 @@ impl Memory {
             .collect())
     }
 
-    /// What happened to the lessons a branch read: the ONLY thing that moves an entry's standing.
+    /// The only thing that moves an entry's standing.
     pub fn attribute(&self, keys: &[String], run: &str, succeeded: bool) -> Result<(), String> {
         if keys.is_empty() {
             return Ok(());
@@ -304,14 +258,8 @@ impl Memory {
     }
 }
 
-/// What a branch learned by failing, in the gate's own words.
-///
-/// Deliberately not a model: the failing check ids and the first line of what the runner said.
-/// Negative knowledge from a real verdict cannot be a hallucination, so it is visible to siblings
-/// immediately (ADR-0081's asymmetry); its worst case is avoiding something that would have worked.
-///
-/// `None` when there is nothing to learn: a branch that passed, or one that never produced a candidate
-/// and so failed for a reason about the harness.
+/// Not a model: a real verdict cannot hallucinate, so siblings see it at once (ADR-0081).
+/// `None` for a pass, or for a branch that never produced a candidate (a harness failure).
 pub fn failure_text(failures: &Value, score: u64) -> Option<String> {
     let list = failures.as_array()?;
     if list.is_empty() {
@@ -378,11 +326,7 @@ impl Memory {
     }
 }
 
-/// What to ask a cheap model when a candidate has passed.
-///
-/// ONE paragraph of transferable advice, not a summary of the diff (which the diff already says). The
-/// ≤900 characters is in the prompt as well as enforced after: a model told the limit writes to it,
-/// one told nothing writes an essay that gets cut mid-sentence.
+/// The ≤900-character limit is in the prompt too: a model told the limit writes to it.
 pub fn distil_prompt(goal: &str, files: &Value, score: u64) -> String {
     let changed: Vec<String> = files
         .as_array()
@@ -409,17 +353,13 @@ transferable here, answer exactly NOTHING and nothing else.",
     )
 }
 
-/// The lesson in a reply, or `None` when the model said there was none.
-///
-/// `NOTHING` is offered because most passing candidates teach nothing, and a pool that records a
-/// platitude for each buries the few that matter.
+/// `NOTHING` is offered: most passing candidates teach nothing, and platitudes bury the rest.
 pub fn distilled(reply: &str) -> Option<String> {
     let text = reply.trim();
     if text.is_empty() || text.eq_ignore_ascii_case("nothing") {
         return None;
     }
-    // A model that pasted the diff back has not distilled anything, and storing it would put a diff in
-    // every future prompt.
+    // A pasted diff is not a lesson, and would land in every future prompt.
     if text.contains("=== ") {
         return None;
     }
@@ -428,11 +368,7 @@ pub fn distilled(reply: &str) -> Option<String> {
 }
 
 impl Memory {
-    /// Promote a distilled lesson to `patterns`, the trusted pool.
-    ///
-    /// The ONLY writer of it, through the registry's `promotion` interface rather than `memory`: an
-    /// agent's world does not contain this call (ADR-0084), the anti-poisoning argument. A score that
-    /// did not pass is refused on the other side.
+    /// The only writer of `patterns`, via `promotion`, which an agent's world lacks (ADR-0084).
     pub fn promote(
         &self,
         goal: &str,
@@ -458,10 +394,7 @@ impl Memory {
     }
 }
 
-/// Lessons as a branch sees them: one bullet each, negative knowledge marked.
-///
-/// The namespace is shown because the three are not worth the same: `errors` did not work, `patterns`
-/// survived a gate; a model handed both undifferentiated weighs them equally.
+/// The namespace is shown: `errors` did not work, `patterns` survived a gate.
 pub fn render(lessons: &[Lesson]) -> String {
     lessons
         .iter()
@@ -477,10 +410,7 @@ pub fn render(lessons: &[Lesson]) -> String {
         .join("\n")
 }
 
-/// The run id a verdict is attributed to.
-///
-/// Stable for one branch of one search, distinct across them, and readable (`gen 1 branch risk-first`);
-/// the seed is in it because that makes a branch replayable (ADR-0078).
+/// Stable per branch of one search, readable, and carries the seed for replay (ADR-0078).
 pub fn run_id(search_seed: u64, round: usize, branch: &str) -> String {
     format!("{search_seed}/g{round}/{branch}")
 }
@@ -500,7 +430,6 @@ mod tests {
     #[test]
     fn a_goal_survives_being_put_in_a_query_string() {
         assert_eq!(enc("make a slug from a title"), "make+a+slug+from+a+title");
-        // The characters that would otherwise end the parameter, or the path.
         assert_eq!(enc("a&b=c?d/e"), "a%26b%3Dc%3Fd%2Fe");
         assert_eq!(enc("café"), "caf%C3%A9");
     }
@@ -555,13 +484,11 @@ mod tests {
             text.contains("`component-tests` failed"),
             "a check with no detail still names itself"
         );
-        // One line, because it is rendered into a bullet list.
         assert_eq!(text.lines().count(), 1, "{text:?}");
     }
 
     #[test]
     fn a_branch_with_nothing_to_teach_writes_nothing() {
-        // A branch that passed, and one that never produced a candidate (a harness failure, not a code one).
         assert!(failure_text(&json!([]), 1000).is_none());
         assert!(failure_text(&json!(null), 0).is_none());
     }
@@ -586,7 +513,7 @@ mod tests {
 
     #[test]
     fn reading_nothing_asks_for_nothing() {
-        // `k = 0` is the control arm and must not cost a round trip.
+        // `k = 0` must not cost a round trip.
         let m = Memory {
             url: "http://127.0.0.1:1".into(),
             host: "nowhere".into(),

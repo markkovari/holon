@@ -1,8 +1,3 @@
-//! `payees-domain` — a payee book (docs/apps/PAYEES.md) as ONE composed wasm HTTP
-//! component. Exports `wasi:http`; imports only WIT contracts: the composed
-//! auth-guard (`auth:identity`), `records:store`, and `iban:validate` (the
-//! country-length + mod-97 check). No bespoke auth, storage, or IBAN math.
-
 #[allow(warnings)]
 mod bindings {
     wit_bindgen::generate!({
@@ -28,7 +23,6 @@ mod bindings {
         world: "payees:app/payees-domain",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::clocks0_3_0_rc_2026_03_15 as clocks;
@@ -299,9 +293,7 @@ async fn body(request: Request) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
-/// The most a request body may be, before the component stops reading it. Without a ceiling a guest
-/// accumulated until wasmtime's 64 MiB per-store cap TRAPPED, reaching the caller as a bare closed
-/// connection. Generous: a backstop, not a content policy; uploads police themselves with a 413.
+/// Backstop under wasmtime's 64 MiB per-store cap, which traps instead of erroring.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_p3_read_body!(MAX_BODY_BYTES);

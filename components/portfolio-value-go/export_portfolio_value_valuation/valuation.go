@@ -1,28 +1,5 @@
-// `portfolio:value`, in Go — the same WIT `components/portfolio-value` exports.
-//
-// This is the binder app's hardest piece of arithmetic (FIFO cost basis, realised
-// and unrealised gain, the series a chart is drawn from) written a second time in a
-// language nothing else in this repository uses, and dropped into the SAME
-// composition. `examples/binder/tests` is the judge: it asserts the money as
-// arithmetic — buy 2 @ 10.00, buy 1 @ 40.00, sell 1 @ 30.00 realises 20.00 under
-// FIFO and 10.00 under average cost — so it fails for a plausible wrong answer and
-// not only for a broken one.
-//
-// Deliberately a re-derivation, not a translation: the point is that two
-// independent implementations agree at the boundary, which is a claim a
-// transliteration cannot make.
-//
-// The rules it has to honour, all of which the specification checks:
-//
-//   - FIFO. A sale consumes the OLDEST unsold lot, at that lot's own cost. Average
-//     cost is easier and answers a different question than the one a collector asks.
-//   - Events are SORTED by `at`, never trusted in the order given, so backfilling
-//     an old purchase does not change the answer. Stable, so two events in the same
-//     second keep their given order — Rust's `sort_by_key` is stable too, and an
-//     unstable sort here would disagree with it exactly on the ties that matter.
-//   - An unpriced holding is carried at COST and counted, not valued at zero and
-//     not dropped. Either of those puts a confident wrong number on the chart.
-//   - Money never converts. Two currencies are an error naming both.
+// A re-derivation, not a translation: two independent implementations must agree at the boundary.
+// Rules: FIFO; events stable-sorted by `at`; unpriced holdings at cost; money never converts.
 package export_portfolio_value_valuation
 
 import (
@@ -41,9 +18,7 @@ func errValuation(e w.ValueError) witTypes.Result[w.Valuation, w.ValueError] {
 	return witTypes.Err[w.Valuation, w.ValueError](e)
 }
 
-// ValueAt is what the collection is worth at `at`, over `events` priced by `quotes`.
-//
-// Events after `at` are ignored, which is also how the history is walked.
+// ValueAt ignores events after `at`, which is also how the history is walked.
 func ValueAt(events []w.Event, quotes []w.Quote, at uint64) witTypes.Result[w.Valuation, w.ValueError] {
 	if len(events) == 0 {
 		// No events means no currency to report a zero IN, so there is no answer.
@@ -67,10 +42,7 @@ func ValueAt(events []w.Event, quotes []w.Quote, at uint64) witTypes.Result[w.Va
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].At < sorted[j].At })
 
 	lots := map[string][]lot{}
-	// Insertion order, so the walk below is deterministic. A Go map's range order
-	// is randomised on purpose; the sums are order-independent but `unquoted` and
-	// any future short-circuit are not, and relying on that is how a test starts
-	// passing four times in five.
+	// Insertion order: Go randomises map range order, and `unquoted` is order-dependent.
 	var ids []string
 	seen := map[string]bool{}
 	touch := func(id string) {
@@ -95,8 +67,7 @@ func ValueAt(events []w.Event, quotes []w.Quote, at uint64) witTypes.Result[w.Va
 				held += l.quantity
 			}
 			if held < e.Quantity {
-				// The event log is wrong. Guessing which event is the lie is a
-				// bigger lie than refusing.
+				// Guessing which event is the lie is a bigger lie than refusing.
 				return errValuation(w.MakeValueErrorOversoldAt(
 					witTypes.Tuple4[string, uint64, uint32, uint32]{
 						F0: e.ItemId, F1: e.At, F2: held, F3: e.Quantity}))
@@ -134,9 +105,7 @@ func ValueAt(events []w.Event, quotes []w.Quote, at uint64) witTypes.Result[w.Va
 		}
 		costBasis += lotCost
 
-		// The latest quote at or before `at`, in the portfolio's currency. `>=`
-		// rather than `>` so ties resolve to the last one given, which is what
-		// Rust's `max_by_key` does.
+		// `>=` so ties resolve to the last one given, as Rust's `max_by_key` does.
 		var best *w.Quote
 		for i := range quotes {
 			q := &quotes[i]
@@ -165,7 +134,6 @@ func ValueAt(events []w.Event, quotes []w.Quote, at uint64) witTypes.Result[w.Va
 	})
 }
 
-// Series is ValueAt sampled every `step` seconds over `since..=until`, for a chart.
 func Series(events []w.Event, quotes []w.Quote, since, until, step uint64) witTypes.Result[[]w.Point, w.ValueError] {
 	if step == 0 {
 		return witTypes.Err[[]w.Point, w.ValueError](w.MakeValueErrorZeroStep())

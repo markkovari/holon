@@ -1,15 +1,4 @@
-//! `comp-docker` — native daemon for container-docker
-//!
-//! Listing containers needs the docker socket, which a `wasm32-wasip2` guest lacks (ADR-0095).
-//! `components/container-docker` is the component side and dials this over HTTP.
-//!
-//! ## What "ps" means here
-//!
-//! `bollard::Docker::list_containers(None)` lists only running containers, like `docker ps` without
-//! `-a`; deliberate, since the contract is about what is running.
-//!
-//! Any connection failure (daemon not running, socket not found) comes back as
-//! `{"error":"unavailable","detail":"..."}` rather than a crash: the honest answer with no docker.
+//! Native side of components/container-docker (ADR-0095); lists running containers only, like `docker ps`.
 
 use anyhow::Result;
 use axum::{routing::post, Json, Router};
@@ -20,16 +9,10 @@ use serde_json::{json, Value};
 #[derive(Parser)]
 #[command(name = "comp-docker", about = "Native daemon for container-docker")]
 struct Args {
-    /// Shared secret a caller must send as `Authorization: Bearer
-    /// <token>`. Loopback binding alone is not a boundary — see
-    /// `comp_daemon_kit`'s own doc for why. No token means
-    /// no check, logged loudly rather than silently.
+    /// Shared secret callers must send as `Authorization: Bearer <token>`; unset means no check.
     #[arg(long)]
     token: Option<String>,
-    /// Same, but read from a file (a systemd `LoadCredential` path)
-    /// rather than passed as a value — `--token` is `ps`-readable by
-    /// any local user, which is most of what this exists to close.
-    /// Wins over `--token` when both are given.
+    /// Like `--token` but read from a file, since a flag is `ps`-readable; takes precedence.
     #[arg(long)]
     token_file: Option<std::path::PathBuf>,
 
@@ -37,14 +20,11 @@ struct Args {
     addr: String,
 }
 
-/// The short id `docker ps` shows: the first 12 characters. A shorter id is returned as-is (only a test
-/// fixture or unusual engine).
 fn short_id(id: &str) -> &str {
     &id[..id.len().min(12)]
 }
 
-/// `bollard` gives each name prefixed with `/` (a Swarm-era convention). The first name, unprefixed, or
-/// empty if the engine reported none.
+/// bollard prefixes each name with `/` (a Swarm-era convention).
 fn primary_name(names: &[String]) -> &str {
     names.first().map(|n| n.strip_prefix('/').unwrap_or(n)).unwrap_or("")
 }

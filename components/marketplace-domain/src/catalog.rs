@@ -1,11 +1,4 @@
-//! Part 1 — `catalog.rs`: listings and order placement (CONTRACT.md).
-//!
-//! Two things this file never does itself, because composed components own them:
-//!
-//!   * the order lifecycle is `fsm:workflow/engine`: the stored `orders` document carries no status field
-//!     and every read merges in `get-status("order", <order id>)`;
-//!   * the category is *drafted* by `jev:decision/decision` and is advisory only: a `decision-error` still
-//!     creates the listing with the `other`/0 fallback.
+//! Order status lives only in fsm:workflow; Jev's category is advisory (a decision-error falls back to other/0).
 
 use crate::bindings::fsm::workflow::engine as fsm;
 use crate::bindings::jev::decision::decision as jev;
@@ -14,16 +7,13 @@ use crate::bindings::records::store::store as records;
 use crate::{audit, introspect, is_admin, Reply, Route};
 use serde_json::{json, Value};
 
-// The two routes whose authorization is a ROLE rather than an ownership check. CONTRACT.md marks
-// `POST /api/listings` `(vendor)` and `POST /api/orders` `(buyer)` and spells out "or admin" where an
-// admin is allowed, so an unlisted role (an admin included) is refused here.
+// CONTRACT.md spells out "or admin" where an admin is allowed, so here an admin is refused too.
 guestauth::guest_role_check!(is_vendor, "vendor");
 guestauth::guest_role_check!(is_buyer, "buyer");
 
-/// CONTRACT.md's fixed taxonomy: the only category a listing carries, and the option list handed to Jev.
+/// CONTRACT.md's fixed taxonomy.
 const CATEGORIES: [&str; 6] = ["electronics", "clothing", "home", "books", "toys", "other"];
 
-/// Jev is asked a question here, never given an order: the answer only annotates a record the vendor may overwrite.
 const LABEL_INSTRUCTIONS: &str =
     "Which single category best fits this item? Answer with exactly one of the options.";
 
@@ -32,8 +22,7 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     match (method, seg.as_slice()) {
         (Method::Post, ["api", "listings"]) => create_listing(route, body),
         (Method::Patch, ["api", "listings", id, "category"]) => override_category(route, id, body),
-        // NOTE: CONTRACT.md's `GET /api/listings?category=` cannot be read here: `Route` carries only `segments`
-        // and `bearer`, and the router strips the query string.
+        // `?category=` cannot be honoured: the router strips the query string.
         (Method::Get, ["api", "listings"]) => list_listings(route),
         (Method::Get, ["api", "listings", id]) => get_listing(route, id),
         (Method::Post, ["api", "listings", id, "delist"]) => delist_listing(route, id),
@@ -44,9 +33,7 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     }
 }
 
-/// CONTRACT.md's machine table, typed into Rust as `lib.rs`'s seed does. `define` on an already-defined
-/// name replaces it with the same definition, so every request that needs a machine re-asserts it rather
-/// than keeping a "defined yet?" flag that would be wrong when a DIFFERENT part runs first.
+/// Re-asserted per request (`define` is idempotent): a "defined yet?" flag is wrong when a different part runs first.
 fn ensure_machines() {
     let def =
         |states: &[&str], initial: &str, transitions: &[(&str, &str, &str)], terminal: &[&str]| {
@@ -112,13 +99,11 @@ fn ensure_machines() {
     );
 }
 
-/// `choice-result.confidence` is a `u32` milli-probability (decision.wit), already in `category_confidence`'s
-/// units, so taken as-is (`1` is 1/1000, not certainty). Clamped to 1000 so a misbehaving provider cannot store more than certain.
+/// Already milli-units (decision.wit); clamped so a misbehaving provider cannot store more than certain.
 fn confidence_milli(raw: u32) -> u32 {
     raw.min(1000)
 }
 
-/// Asks Jev which of the six categories fits, and never fails: on any `decision-error` the caller gets a usable `(category, confidence)`.
 fn label_category(title: &str, description: &str) -> (String, u32) {
     let request = jev::ChoiceRequest {
         state: format!("{title} {description}"),
@@ -147,7 +132,6 @@ fn document_json(id: &str, data: &str) -> Value {
     document
 }
 
-/// An `orders` document as CONTRACT.md wants it on the wire: stored fields, the id, and `status` merged in from the `order` machine.
 fn order_json(id: &str, data: &str) -> Value {
     let mut document = document_json(id, data);
     if let Value::Object(ref mut fields) = document {
@@ -162,7 +146,6 @@ fn parse_json(body: &str) -> Option<Value> {
     serde_json::from_str(body).ok()
 }
 
-/// `POST /api/listings` — vendor creates a listing. `400` if `title` is empty, `price` is not a positive integer, or `stock` is negative.
 fn create_listing(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     if !is_vendor(&principal) {
@@ -221,8 +204,7 @@ fn create_listing(route: &Route, body: &str) -> Reply {
     Reply::json(201, out)
 }
 
-/// `PATCH /api/listings/{id}/category` — the listing's own vendor, or an
-/// admin. A human overriding the label is certain, hence confidence 1000.
+/// A human overriding the label is certain, hence confidence 1000.
 fn override_category(route: &Route, id: &str, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let entry = guestauth::guest_get_or_404!("listings", id);
@@ -255,8 +237,6 @@ fn override_category(route: &Route, id: &str, body: &str) -> Reply {
     }
 }
 
-/// `GET /api/listings` — any authenticated caller, active listings only,
-/// newest first.
 fn list_listings(route: &Route) -> Reply {
     if introspect(route).is_err() {
         return Reply::err(401, "unauthorized");
@@ -279,8 +259,6 @@ fn list_listings(route: &Route) -> Reply {
     Reply::json(200, json!({"listings": listings}))
 }
 
-/// `GET /api/listings/{id}` — any authenticated caller. A delisted listing
-/// 404s for everyone except its own vendor/admin, who still see it.
 fn get_listing(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let entry = match records::get("listings", id) {
@@ -298,7 +276,6 @@ fn get_listing(route: &Route, id: &str) -> Reply {
     Reply::json(200, document_json(&entry.id, &entry.data))
 }
 
-/// `POST /api/listings/{id}/delist` — the listing's own vendor, or an admin.
 fn delist_listing(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let entry = guestauth::guest_get_or_404!("listings", id);
@@ -320,8 +297,7 @@ fn delist_listing(route: &Route, id: &str) -> Reply {
     }
 }
 
-/// `POST /api/orders` — a multi-item order with an atomic stock check. Phase 1 checks EVERY line and
-/// writes nothing; phase 2 runs only once all pass, so an oversell on item 2 of 3 leaves item 1's stock untouched.
+/// Two phases: every line is checked before any write, so an oversell on item 2 leaves item 1's stock untouched.
 fn place_order(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     if !is_buyer(&principal) {
@@ -339,12 +315,8 @@ fn place_order(route: &Route, body: &str) -> Reply {
         _ => return Reply::err(400, "items must not be empty"),
     };
 
-    // ---- phase 1: check every line, write nothing --------------------------
-    // One entry per REQUEST line (so the stored order keeps the caller's own
-    // line structure)...
     let mut lines: Vec<(String, i64, i64)> = Vec::new(); // listing_id, quantity, unit_price
-                                                         // ...plus one running total per LISTING, because a listing named twice in
-                                                         // one order must be checked against its stock cumulatively.
+                                                         // A listing named twice in one order is checked against its stock cumulatively.
     let mut wanted: Vec<(String, i64)> = Vec::new();
 
     for item in requested.iter() {
@@ -398,7 +370,6 @@ fn place_order(route: &Route, body: &str) -> Reply {
         lines.push((listing_id, quantity, unit_price));
     }
 
-    // ---- phase 2: every line checked out — now the writes ------------------
     for (listing_id, total_quantity) in wanted.iter() {
         let entry = match records::get("listings", listing_id) {
             Ok(entry) => entry,
@@ -433,7 +404,7 @@ fn place_order(route: &Route, body: &str) -> Reply {
         Ok(entry) => entry,
         Err(_) => return Reply::err(500, "store_error"),
     };
-    // The machine's own initial state IS `placed`; the instance is the lifecycle from here on, never a document field.
+    // The machine's initial state is `placed`; status is never a document field.
     if fsm::create_instance("order", &entry.id).is_err() {
         return Reply::err(500, "fsm_error");
     }
@@ -446,8 +417,6 @@ fn place_order(route: &Route, body: &str) -> Reply {
     Reply::json(201, out)
 }
 
-/// `GET /api/orders` — a buyer sees their own, an admin sees all. Every
-/// order carries its fsm status merged in.
 fn list_orders(route: &Route) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     ensure_machines();
@@ -470,8 +439,6 @@ fn list_orders(route: &Route) -> Reply {
     Reply::json(200, json!({"orders": orders}))
 }
 
-/// `GET /api/orders/{id}` — the order's own buyer, an admin, or the vendor of
-/// ANY item in it; 403 for anyone else, 404 if it doesn't exist.
 fn get_order(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     ensure_machines();

@@ -1,17 +1,4 @@
-//! `comp-selfimprove` — the recursive gate.
-//!
-//! Everything else ships a change. This DECIDES whether to keep it, using the one judge that cannot be
-//! faked: the running code's own report, read over the lattice. It deploys a candidate over the
-//! running baseline on a live fleet and PROMOTES it only if healthy and strictly more capable;
-//! otherwise it rolls the baseline back.
-//!
-//! The platform already refuses an upgrade that removes an EXPORT. This is the tier above: a
-//! capability at the semantic level (advertised and self-reported) may grow and may not silently
-//! shrink.
-//!
-//! `--baseline-src`/`--candidate-src` build the REAL component from two source trees (the bytes that
-//! deploy carry the capabilities the loop wrote into the manifest); `--baseline`/`--candidate` hand
-//! in capability lists (via `COMP_CAPS`) for a reproducible run without two trees.
+//! Promotes a candidate over the running baseline only if healthy and strictly more capable.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -30,8 +17,7 @@ use serde_json::{json, Value};
     about = "Promote a component version only if it is healthy and more capable, judged over the lattice."
 )]
 struct Args {
-    /// The self-target component. Must export wasi:http and report `{healthy, capability_count,
-    /// capabilities}` (see `version-probe`).
+    /// The self-target component; must report `{healthy, capability_count, capabilities}`.
     #[arg(long, default_value = "version-probe")]
     component: String,
     /// The baseline's advertised capabilities (comma-separated). Ignored with `--baseline-src`.
@@ -40,31 +26,25 @@ struct Args {
     /// The candidate's advertised capabilities (comma-separated). Ignored with `--candidate-src`.
     #[arg(long)]
     candidate: Option<String>,
-    /// A source tree to build the baseline component FROM; its own manifest is what the deployed bytes
-    /// report.
+    /// A source tree to build the baseline from; its own manifest is what the bytes report.
     #[arg(long)]
     baseline_src: Option<PathBuf>,
     /// A source tree to build the candidate component FROM.
     #[arg(long)]
     candidate_src: Option<PathBuf>,
-    /// Judge by BEHAVIOR, not a report: deploy the slug capability baseline and candidate, CALL both over
-    /// the lattice with conformance cases, and promote iff the candidate passes a strict superset.
+    /// Judge by behavior: call both versions with conformance cases; promote on a strict superset.
     #[arg(long, default_value_t = false)]
     behavior: bool,
-    /// The conformance spec for --behavior mode (lines of `<route> => <field>=<expected>`). Defaults to
-    /// the slug capability's spec.
+    /// The conformance spec for --behavior (`<route> => <field>=<expected>` lines).
     #[arg(long)]
     cases: Option<PathBuf>,
 }
 
-/// Build slug-probe (with the bounded-slug feature iff `feature`) composed with the real `slug`
-/// component into one HTTP artifact. A different feature flag gives different bytes, a swap the
-/// fleet can see.
+/// The feature flag gives different bytes, a swap the fleet can see.
 fn build_composed_slug(feature: bool) -> Result<Vec<u8>> {
     let comp = repo_root().join("components");
     let rel = comp.join("target/wasm32-wasip2/release");
-    // slug-probe is p3: its bindings come from `generate!` at compile time, so there is no
-    // cargo-component step before the build.
+    // slug-probe is p3: bindings come from `generate!`, so no cargo-component step.
     let mut build = Command::new("cargo");
     build.current_dir(&comp).args([
         "build",
@@ -85,23 +65,19 @@ fn build_composed_slug(feature: bool) -> Result<Vec<u8>> {
     if !out.status.success() {
         bail!("building slug-probe failed:\n{}", String::from_utf8_lossy(&out.stderr));
     }
-    // Composed by the library rather than shelling out to `wac`: the plug list is derived from what
-    // slug-probe imports (ADR-0087).
+    // The plug list is derived from what slug-probe imports (ADR-0087).
     let catalog = comp_fleet::plug::Catalog::scan(std::slice::from_ref(&rel));
     comp_fleet::plug::compose("slug-probe", &catalog)
         .map_err(|e| anyhow::anyhow!("composing slug-probe: {e}"))
 }
 
-/// One conformance case: call `path` over the lattice and the response's JSON `field` must equal
-/// `expected`.
 struct Case {
     path: String,
     field: String,
     expected: String,
 }
 
-/// Load a capability's conformance cases from its spec file; each non-comment line is
-/// `<route> => <field>=<expected>`. The gate judges ANY capability by the cases its own spec declares.
+/// Each non-comment line is `<route> => <field>=<expected>`.
 fn load_cases(path: &Path) -> Result<Vec<Case>> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
@@ -137,8 +113,7 @@ fn call_json(fleet: &Fleet, host: &str, path: &str) -> Option<Value> {
     serde_json::from_str(&r.text().ok()?).ok()
 }
 
-/// Which case indices a deployed version passes: the response field equals the expected value. A
-/// route it does not serve fails.
+/// A route it does not serve fails.
 fn passing(fleet: &Fleet, host: &str, cases: &[Case]) -> Vec<usize> {
     cases
         .iter()
@@ -153,8 +128,6 @@ fn passing(fleet: &Fleet, host: &str, cases: &[Case]) -> Vec<usize> {
         .collect()
 }
 
-/// The behavioral gate: judge a capability by CALLING it over the lattice with the cases from its own
-/// conformance spec.
 fn behavior_gate(cases_path: &Path) -> Result<()> {
     let (id, host) = ("cap", "cap.improver.test");
     let cases = load_cases(cases_path)?;
@@ -174,13 +147,10 @@ fn behavior_gate(cases_path: &Path) -> Result<()> {
     let api = Api::new(fleet.platform_url())?;
     let mut dep_id: Option<String> = None;
 
-    // Deploy baseline; wait until it serves ANY case (it is live); record passes.
     deploy_capability(&api, &fleet, id, &mut dep_id, host, base, &cases, None)?;
     let base_pass = passing(&fleet, host, &cases);
     println!("  baseline  · passes {:?} of {} cases over the lattice", base_pass, cases.len());
 
-    // Deploy the candidate over the top; wait until what it passes DIFFERS from the baseline (the swap
-    // took effect), then record.
     deploy_capability(&api, &fleet, id, &mut dep_id, host, cand, &cases, Some(&base_pass))?;
     let cand_pass = passing(&fleet, host, &cases);
     println!("  candidate · passes {:?} of {} cases over the lattice", cand_pass, cases.len());
@@ -204,10 +174,8 @@ fn behavior_gate(cases_path: &Path) -> Result<()> {
     }
 }
 
-/// Deploy `wasm` under `id` and wait until it is live: it passes some case (`prev` is None, the
-/// baseline), or what it passes differs from `prev` (the swap took effect).
-// One over clippy's default threshold; each is a distinct deploy-and-wait parameter, not a struct's
-// fields waiting to be extracted.
+/// Live means it passes some case (`prev` None), or passes other than `prev` (the swap landed).
+// Each is a distinct deploy-and-wait parameter, not a struct's fields waiting to be extracted.
 #[allow(clippy::too_many_arguments)]
 fn deploy_capability(
     api: &Api,
@@ -245,15 +213,10 @@ fn deploy_capability(
     bail!("the capability never went live over the lattice\n{}", fleet.node_log("n1"))
 }
 
-/// Build the probe with a tag, in the given `components` dir. Only the TAG is baked in (the
-/// artifact's identity, so two versions are different bytes the fleet can swap); capabilities are
-/// handed to the running instance as config (see `deploy_and_read`).
+/// Only the tag is baked in, so two versions are different bytes; capabilities arrive as config.
 fn build_probe(components: &Path, component: &str, tag: &str) -> Result<Vec<u8>> {
-    // Generate the WIT bindings first. cargo-component hardcodes wasip1 and is used only for codegen; a
-    // fresh source tree has no `bindings.rs` until this runs, and then a plain build targets wasip2.
-    // This is what `cargo xtask build --force` does, inlined so any source tree is buildable. A p3 crate
-    // (depends on `wit-bindgen` itself) makes its bindings at compile time and must NOT go through
-    // cargo-component.
+    // cargo-component only generates bindings (it hardcodes wasip1); the build targets wasip2.
+    // A p3 crate makes its bindings at compile time and must skip it.
     let manifest =
         std::fs::read_to_string(components.join(component).join("Cargo.toml")).unwrap_or_default();
     let p3 = manifest.lines().any(|l| l.trim_start().starts_with("wit-bindgen ="));
@@ -319,8 +282,7 @@ impl Api {
     }
 
     fn upload(&self, id: &str, wasm: Vec<u8>) -> Result<()> {
-        // Declare the `capabilities` config key at upload, so the deployment may hand the running instance
-        // its registry (ADR-0047: a component accepts only the config keys its uploader declared).
+        // A component accepts only config keys its uploader declared (ADR-0047).
         let code = self
             .http
             .post(format!("{}/api/components?id={id}&config=capabilities", self.base))
@@ -360,11 +322,8 @@ fn report(fleet: &Fleet, host: &str) -> Option<Value> {
     serde_json::from_str(&r.text().ok()?).ok()
 }
 
-/// Deploy `wasm` under `id` with the capability registry as node CONFIG (the probe loads it from
-/// `wasi:config` at startup; nothing is baked) and wait until the version tagged `want` answers.
-/// `caps` is a `name:semver` list that rides in the node config on both create and save, so a more
-/// capable version updates the registry too.
-// One over clippy's default threshold; see `deploy_capability`'s note.
+/// `caps` rides in node config on create and save, so a newer version updates the registry.
+// See `deploy_capability`'s note.
 #[allow(clippy::too_many_arguments)]
 fn deploy_and_read(
     api: &Api,
@@ -390,8 +349,7 @@ fn deploy_and_read(
     let deadline = Instant::now() + Duration::from_secs(180);
     let mut last_save = Value::Null;
     while Instant::now() < deadline {
-        // Save carries the nodes (with config), so it both stages the new bytes and updates the registry.
-        // Retried because an upload clears the digest and the push pass must stage it first (ADR-0006).
+        // Retried: an upload clears the digest and the push pass must stage it first (ADR-0006).
         let (sc, sb) =
             api.post(&format!("/api/deployments/{did}/save"), json!({ "nodes": [node.clone()] }));
         last_save = json!({ "code": sc, "body": sb });
@@ -410,8 +368,6 @@ fn deploy_and_read(
     })
 }
 
-/// Read a source tree's capability registry (capman/capabilities.txt) as the `name:semver` list the
-/// probe's config wants.
 fn registry_caps(tree: &Path) -> Result<String> {
     let path = tree.join("components/capman/capabilities.txt");
     let text =
@@ -434,8 +390,7 @@ fn caps_of(report: &Value) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// Parse a capability version. An unparseable version sorts as `0.0.0`, so a candidate shipping a
-/// malformed version looks like a downgrade and is refused: the safe direction.
+/// Unparseable sorts as `0.0.0`, so a malformed version reads as a downgrade: the safe direction.
 fn ver(s: &str) -> Version {
     Version::parse(s.trim()).unwrap_or_else(|_| Version::new(0, 0, 0))
 }
@@ -446,7 +401,6 @@ fn show(caps: &BTreeMap<String, String>) -> String {
 }
 
 struct Verdict {
-    /// A baseline capability the candidate dropped or downgraded: a regression.
     regressions: Vec<String>,
     improvements: Vec<String>,
 }
@@ -485,9 +439,6 @@ fn main() -> Result<()> {
 
     println!("comp-selfimprove: judging a candidate of `{}` over the lattice\n", args.component);
 
-    // Where to build each side, and the capability REGISTRY each advertises: a source tree gives both its
-    // bytes and its registry (capman/capabilities.txt, handed to the instance as config); a caps string
-    // is the registry directly.
     let here = repo_root().join("components");
     let base_dir =
         args.baseline_src.clone().map(|d| d.join("components")).unwrap_or_else(|| here.clone());
@@ -502,7 +453,7 @@ fn main() -> Result<()> {
         None => args.candidate.clone().context("give --candidate-src or --candidate")?,
     };
 
-    // Two genuinely different builds: the TAG differs, so the fleet can swap them.
+    // The tag differs, so the fleet can swap them.
     let base_wasm = build_probe(&base_dir, &args.component, "baseline")?;
     let cand_wasm = build_probe(&cand_dir, &args.component, "candidate")?;
 
@@ -536,8 +487,7 @@ fn main() -> Result<()> {
     let cand_caps = caps_of(&r_cand);
     println!("  candidate · healthy={} · {}", r_cand["healthy"], show(&cand_caps));
 
-    // More capable = kept every capability at no LOWER a version AND advanced at least one. The version
-    // map makes the second half visible: a bare count cannot see `diff-writer` improve in place.
+    // No capability lower and one advanced; a bare count misses in-place gains.
     let healthy = r_cand["healthy"].as_bool().unwrap_or(false);
     let v = compare(&base_caps, &cand_caps);
     println!();
@@ -555,8 +505,7 @@ fn main() -> Result<()> {
         println!("  the fleet is left running the candidate.");
         Ok(())
     } else {
-        // Roll the baseline back onto the fleet: a candidate that is not an improvement does not keep the slot
-        // it was deployed into to be judged.
+        // Not an improvement: it does not keep the slot it was deployed into to be judged.
         let reason = if !healthy {
             "the candidate reported unhealthy".to_string()
         } else if !v.regressions.is_empty() {

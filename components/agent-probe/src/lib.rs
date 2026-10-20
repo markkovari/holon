@@ -1,9 +1,4 @@
-//! `agent-probe` — an instrument for `graph:agent` (see wit/probe.wit).
-//!
-//!   POST /attempt   {text, writable[], context[], previous[], seed}
-//!
-//! The interesting call is the second one: the same goal with a `previous`
-//! failure. If the answer is identical, the repair loop is a re-roll.
+//! Probes graph:agent: an identical answer to a goal with a `previous` failure means repair is a re-roll.
 
 #[allow(warnings)]
 mod bindings {
@@ -23,7 +18,6 @@ mod bindings {
         world: "comp:agentprobe/agent-probe",
         generate_all,
     });
-    /// Stable names for the p3 WASI modules (see `guestio`'s p3 section).
     pub mod p3 {
         pub use super::exports::wasi::http0_3_0_rc_2026_03_15::handler;
         pub use super::wasi::http0_3_0_rc_2026_03_15 as http;

@@ -1,57 +1,33 @@
-//! Chunked, sorted id lists over a store with per-key compare-and-set — the index
-//! layer under `record-store`'s id index and every secondary index.
-//!
-//! Layout: a MANIFEST at `base` names chunk values at `{base}_c{seq:08}` (each a sorted JSON
-//! `Vec<String>`) in id order; an id is IN the list exactly when a named chunk holds it. A legacy
-//! whole-array value is converted on first write.
-//! Every write to a manifest or chunk is a compare-and-set against the revision it was computed
-//! from, and chunk keys are never deleted (no ABA), so a successful `insert`/`remove` is not
-//! undone by a concurrent op on a DIFFERENT id.
-//! Not guaranteed: concurrent `insert`/`remove` of the SAME id (the record is the arbiter;
-//! `repair` rebuilds), and an id whose writer died between writing a chunk and naming it.
-//! An id can transiently sit one chunk before its routed one, so readers sort/dedupe, `page`
-//! reads one chunk back, and `remove` searches every chunk.
-//! Needs `comp:store/cas`; a host without it fails at link time rather than degrading to
-//! read-modify-write.
+//! Every manifest/chunk write is a CAS against the revision it was computed from, and chunk keys are never
+//! deleted (no ABA). Not guaranteed: concurrent ops on the SAME id (`repair` rebuilds); readers sort/dedupe.
 
 use serde::{Deserialize, Serialize};
 
-/// Soft cap on ids per chunk (~30 KB of ULIDs). Appending past it starts a new
-/// chunk; an insert into the MIDDLE of a full chunk just grows it, because moving
-/// ids between chunks cannot be made safe against a concurrent remove without a
-/// multi-key transaction (see `insert`).
+/// Soft cap: a middle insert into a full chunk grows it, since moving ids is unsafe without a multi-key transaction.
 pub const CHUNK_MAX: usize = 1024;
 
-/// How many CAS races one operation may lose before giving up. Every loss means another writer's
-/// CAS landed, so this bounds starvation, not livelock; N writers on one key need about N rounds,
-/// and the treasury gate puts two dozen creates on one id index at once (forty lost all its races
-/// once in thirty runs).
+/// Each loss means another writer's CAS landed, so this bounds starvation, not livelock (the treasury gate
+/// puts two dozen creates on one index; forty lost every race once in thirty runs).
 pub const CAS_TRIES: u32 = 200;
 
-/// The store the lists live in. Implemented over `wasi:keyvalue` +
-/// `comp:store/cas` in the component and over a map in the tests.
 pub trait Kv {
-    /// Value and revision, `None` when absent. Must never be served from a cache.
+    /// Must never be served from a cache.
     fn get(&self, key: &str) -> Result<Option<(u64, Vec<u8>)>, String>;
-    /// Write only if the key is at `expected` (0 = absent). `Ok(Ok(rev))` landed at
-    /// `rev`; `Ok(Err(current))` did not.
+    /// `expected` 0 = absent. `Ok(Ok(rev))` landed; `Ok(Err(current))` did not.
     fn cas(&self, key: &str, value: &[u8], expected: u64) -> Result<Result<u64, u64>, String>;
-    /// A plain read for readers. May be cached.
+    /// May be cached.
     fn read(&self, key: &str) -> Result<Option<Vec<u8>>, String>;
-    /// Plain batched read, answers in input order.
+    /// Answers in input order.
     fn read_many(&self, keys: &[String]) -> Result<Vec<Option<Vec<u8>>>, String>;
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ChunkMeta {
-    /// Chunk-key suffix. Allocation order only; position is the manifest's order.
+    /// Allocation order only; position is the manifest's order.
     pub seq: u32,
-    /// Smallest id in the chunk.
     pub first: String,
-    /// Number of ids in the chunk.
     pub count: u64,
-    /// The chunk's revision when this entry was derived from it. 0 in manifests
-    /// written before it existed, which simply never matches and gets re-derived.
+    /// 0 in manifests written before it existed: never matches, so it gets re-derived.
     #[serde(default)]
     pub rev: u64,
 }
@@ -59,8 +35,7 @@ pub struct ChunkMeta {
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
 pub struct Manifest {
     pub chunks: Vec<ChunkMeta>,
-    /// Lowest chunk seq not yet handed out. Allocation still probes with
-    /// `expected: 0`, so an old manifest without it is only slower, not wrong.
+    /// Allocation still probes with `expected: 0`, so an old manifest without it is only slower.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub next_seq: u32,
 }
@@ -73,9 +48,7 @@ pub fn chunk_key(base: &str, seq: u32) -> String {
     format!("{base}_c{seq:08}")
 }
 
-/// Is `key` a chunk key (`…_c` + eight digits)? Unambiguous for the keys
-/// record-store builds: `sanitize` only ever emits `_` followed by UPPERCASE hex,
-/// so `_c` cannot come out of a sanitized segment.
+/// Unambiguous: `sanitize` only emits `_` + UPPERCASE hex, so `_c` cannot come from a segment.
 pub fn is_chunk_key(key: &str) -> bool {
     let b = key.as_bytes();
     b.len() > 10
@@ -103,8 +76,7 @@ fn parse_head(base: &str, bytes: &[u8]) -> Result<Head, String> {
         .map_err(|e| format!("corrupt id list {base}: {e}"))
 }
 
-/// The head with its revision, for a writer. Absent reads as an empty manifest at
-/// revision 0, which is what a CAS wants for "must not exist yet".
+/// Absent reads as empty at revision 0, which is what a CAS wants for "must not exist yet".
 fn load(kv: &dyn Kv, base: &str) -> Result<(u64, Head), String> {
     match kv.get(base)? {
         None => Ok((0, Head::Chunked(Manifest::default()))),
@@ -112,7 +84,6 @@ fn load(kv: &dyn Kv, base: &str) -> Result<(u64, Head), String> {
     }
 }
 
-/// A chunk with its revision. Absent reads as `(0, [])`.
 fn read_chunk(kv: &dyn Kv, key: &str) -> Result<(u64, Vec<String>), String> {
     match kv.get(key)? {
         None => Ok((0, Vec::new())),
@@ -122,8 +93,7 @@ fn read_chunk(kv: &dyn Kv, key: &str) -> Result<(u64, Vec<String>), String> {
     }
 }
 
-/// Which chunk should hold `id`: the last whose `first` <= id (ids below every
-/// chunk go into the first).
+/// The last chunk whose `first` <= id; ids below every chunk go into the first.
 fn chunk_index_for(m: &Manifest, id: &str) -> usize {
     let mut ci = 0;
     for (i, c) in m.chunks.iter().enumerate() {
@@ -147,9 +117,7 @@ fn meta_for(seq: u32, ids: &[String], rev: u64, old_first: &str) -> ChunkMeta {
     }
 }
 
-/// Create a chunk under a key nobody has used, holding `ids`. `expected: 0` is what
-/// makes the key ours: a key that exists — even as a leftover `[]` — conflicts and
-/// the next seq is tried, so no CAS anywhere can confuse two lives of one key.
+/// `expected: 0` makes the key ours: an existing key (even a leftover `[]`) conflicts, so the next seq is tried.
 fn new_chunk(kv: &dyn Kv, base: &str, m: &Manifest, ids: &[String]) -> Result<(u32, u64), String> {
     let start = m.chunks.iter().map(|c| c.seq + 1).max().unwrap_or(0).max(m.next_seq);
     let body = enc(&ids)?;
@@ -161,7 +129,6 @@ fn new_chunk(kv: &dyn Kv, base: &str, m: &Manifest, ids: &[String]) -> Result<(u
     Err(format!("id list {base}: no free chunk key in {CAS_TRIES} probes from {start}"))
 }
 
-/// Whether a chunk this call wrote is still part of the list.
 #[derive(Debug, PartialEq)]
 enum Named {
     Yes,
@@ -169,11 +136,7 @@ enum Named {
     No,
 }
 
-/// Bring the manifest's entry for chunk `seq` in line with the chunk after a write. The manifest
-/// is read FIRST and the chunk second, and the manifest is CAS'd against the revision read, so an
-/// older derivation cannot overwrite a newer one.
-/// Also where chunks leave the list: an empty chunk is dropped when others remain, via a CAS
-/// taken after reading it empty.
+/// Manifest read FIRST, chunk second, manifest CAS'd: an older derivation cannot overwrite a newer one.
 fn reconcile(kv: &dyn Kv, base: &str, seq: u32) -> Result<Named, String> {
     for _ in 0..CAS_TRIES {
         let (mrev, mut m) = match load(kv, base)? {
@@ -183,7 +146,6 @@ fn reconcile(kv: &dyn Kv, base: &str, seq: u32) -> Result<Named, String> {
         };
         let (crev, ids) = read_chunk(kv, &chunk_key(base, seq))?;
         match m.chunks.iter().position(|c| c.seq == seq) {
-            // First chunk of an empty list: name it.
             None if m.chunks.is_empty() && !ids.is_empty() => {
                 m.chunks.push(meta_for(seq, &ids, crev, ""));
                 m.next_seq = m.next_seq.max(seq + 1);
@@ -207,10 +169,7 @@ fn reconcile(kv: &dyn Kv, base: &str, seq: u32) -> Result<Named, String> {
     Err(format!("id list {base}: manifest update lost {CAS_TRIES} races"))
 }
 
-/// Name a freshly created chunk `seq` (holding `first`) right after the chunk
-/// `routed` that `first` was routed to. `false` if routing for `first` changed in
-/// the meantime — someone else started a chunk covering it — and the caller
-/// should retry into that one instead.
+/// `false` if someone else started a chunk covering `first` meanwhile; the caller retries into that one.
 fn name_new_chunk(
     kv: &dyn Kv,
     base: &str,
@@ -247,8 +206,7 @@ fn name_new_chunk(
     Err(format!("id list {base}: naming a new chunk lost {CAS_TRIES} races"))
 }
 
-/// Take `id` back out of a chunk the manifest does not name. Hygiene only — an
-/// un-named chunk is invisible — so failures are ignored.
+/// Hygiene only (an un-named chunk is invisible), so failures are ignored.
 fn scrub(kv: &dyn Kv, base: &str, seq: u32, id: &str) {
     let key = chunk_key(base, seq);
     for _ in 0..CAS_TRIES {
@@ -263,10 +221,7 @@ fn scrub(kv: &dyn Kv, base: &str, seq: u32, id: &str) {
     }
 }
 
-/// Convert a legacy whole-array list to the chunked layout, guarded like
-/// everything else: fresh chunk keys, then a CAS of the head against the revision
-/// the array was read at. A loser's chunks are un-named and emptied; the caller
-/// re-reads and finds the winner's manifest.
+/// A loser's chunks are un-named and emptied; the caller re-reads and finds the winner's manifest.
 fn convert_legacy(
     kv: &dyn Kv,
     base: &str,
@@ -291,15 +246,11 @@ fn convert_legacy(
     Ok(())
 }
 
-/// Insert `id`, keeping the list sorted and deduplicated.
 pub fn insert(kv: &dyn Kv, base: &str, id: &str) -> Result<(), String> {
     insert_capped(kv, base, id, CHUNK_MAX)
 }
 
-/// `insert` with the chunk cap as a parameter, so tests can reach the new-chunk path.
-/// A full chunk is never split: copying then removing ids lets a `remove` landing between the two
-/// be resurrected from the copy. An APPEND to a full chunk starts a new chunk (ULIDs are
-/// time-ordered, so that is nearly every insert); a middle insert grows it.
+/// A full chunk is never split: a `remove` between copy and delete would be resurrected from the copy.
 pub fn insert_capped(kv: &dyn Kv, base: &str, id: &str, cap: usize) -> Result<(), String> {
     for _ in 0..CAS_TRIES {
         let m = match load(kv, base)? {
@@ -314,9 +265,7 @@ pub fn insert_capped(kv: &dyn Kv, base: &str, id: &str, cap: usize) -> Result<()
         };
 
         if m.chunks.is_empty() {
-            // First id: a fresh chunk, named by `reconcile`. Two callers racing an
-            // empty list each get their own chunk; one is named, the other finds
-            // itself un-named, scrubs, and retries into the winner's.
+            // Racing an empty list: each caller gets its own chunk; the un-named one scrubs and retries.
             let (seq, _) = new_chunk(kv, base, &m, &[id.to_string()])?;
             if reconcile(kv, base, seq)? == Named::Yes {
                 return Ok(());
@@ -331,8 +280,7 @@ pub fn insert_capped(kv: &dyn Kv, base: &str, id: &str, cap: usize) -> Result<()
         let (crev, mut ids) = read_chunk(kv, &key)?;
         let pos = match ids.binary_search_by(|x| x.as_str().cmp(id)) {
             Ok(_) => {
-                // Already there — but an earlier attempt may have died before the
-                // manifest caught up, so make sure it has.
+                // Already there, but an earlier attempt may have died before the manifest caught up.
                 if m.chunks[ci].rev == crev {
                     return Ok(());
                 }
@@ -359,8 +307,7 @@ pub fn insert_capped(kv: &dyn Kv, base: &str, id: &str, cap: usize) -> Result<()
         }
         match reconcile(kv, base, seq)? {
             Named::Yes => return Ok(()),
-            // The chunk was dropped under us: the id went somewhere nobody reads.
-            // Take it back out and insert again through the current manifest.
+            // The chunk was dropped under us: take the id back out and insert through the current manifest.
             Named::No => {
                 scrub(kv, base, seq, id);
                 continue;
@@ -386,8 +333,7 @@ fn remove_in(kv: &dyn Kv, base: &str, seq: u32, id: &str) -> Result<Removed, Str
     if kv.cas(&key, &enc(&ids)?, crev)?.is_err() {
         return Ok(Removed::Retry);
     }
-    // An emptied chunk is not deleted: it is dropped from the manifest here (when
-    // it is not the last one) and its key stays behind as `[]`.
+    // An emptied chunk is dropped from the manifest, never deleted: its key stays as `[]`.
     match reconcile(kv, base, seq)? {
         Named::Yes => Ok(Removed::Done),
         // Dropped while we were in it; look again through the current manifest.
@@ -395,7 +341,7 @@ fn remove_in(kv: &dyn Kv, base: &str, seq: u32, id: &str) -> Result<Removed, Str
     }
 }
 
-/// Remove `id`. Idempotent.
+/// Idempotent.
 pub fn remove(kv: &dyn Kv, base: &str, id: &str) -> Result<(), String> {
     remove_capped(kv, base, id, CHUNK_MAX)
 }
@@ -439,9 +385,7 @@ pub fn remove_capped(kv: &dyn Kv, base: &str, id: &str, cap: usize) -> Result<()
     Err(format!("id list {base}: {CAS_TRIES} attempts all lost the race"))
 }
 
-/// Re-derive every manifest entry from its chunk and drop empty chunks. What a
-/// `repair` runs so a manifest left inconsistent by an older version (or a crash)
-/// converges; a no-op on a consistent list.
+/// What `repair` runs; a no-op on a consistent list.
 pub fn heal(kv: &dyn Kv, base: &str) -> Result<(), String> {
     let seqs: Vec<u32> = match load(kv, base)? {
         (_, Head::Chunked(m)) => m.chunks.iter().map(|c| c.seq).collect(),
@@ -460,8 +404,7 @@ fn read_head(kv: &dyn Kv, base: &str) -> Result<Option<Head>, String> {
     }
 }
 
-/// The named chunks' ids, concatenated, sorted and deduplicated (an id can
-/// transiently sit in two chunks, or one chunk early). Missing chunks are skipped.
+/// Sorted and deduplicated: an id can transiently sit in two chunks, or one chunk early.
 fn fetch(kv: &dyn Kv, keys: &[String]) -> Result<Vec<String>, String> {
     if keys.is_empty() {
         return Ok(Vec::new());
@@ -479,7 +422,7 @@ fn fetch(kv: &dyn Kv, keys: &[String]) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
-/// Every id in the list, in order — a manifest read plus ONE batched chunk fetch.
+/// One manifest read plus ONE batched chunk fetch.
 pub fn read_all(kv: &dyn Kv, base: &str) -> Result<Vec<String>, String> {
     match read_head(kv, base)? {
         None => Ok(Vec::new()),
@@ -491,7 +434,6 @@ pub fn read_all(kv: &dyn Kv, base: &str) -> Result<Vec<String>, String> {
     }
 }
 
-/// Position of the first id strictly after `after` in a sorted list.
 pub fn page_start(ids: &[String], after: &str) -> usize {
     if after.is_empty() {
         return 0;
@@ -502,8 +444,7 @@ pub fn page_start(ids: &[String], after: &str) -> usize {
     }
 }
 
-/// Up to `want` ids strictly after `after`, plus whether more remain — fetches
-/// only the chunks the page touches.
+/// Fetches only the chunks the page touches.
 pub fn page(
     kv: &dyn Kv,
     base: &str,
@@ -562,7 +503,7 @@ pub fn page(
     }
 }
 
-/// Number of ids — the manifest's counts, one read regardless of size.
+/// The manifest's counts: one read regardless of size.
 pub fn count(kv: &dyn Kv, base: &str) -> Result<u64, String> {
     Ok(match read_head(kv, base)? {
         None => 0,

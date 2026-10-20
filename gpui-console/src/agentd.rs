@@ -1,20 +1,5 @@
-//! The coding-session daemon, started beside the console so that an agent granted `session_start`
-//! has somewhere to open one (docs/adr/0119).
-//!
-//! Three ways to have one, in order:
-//!
-//! * `HOLON_AGENTD_URL` names one that is already running (and `HOLON_AGENTD_TOKEN_FILE` its token):
-//!   the console attaches and starts nothing.
-//! * `comp-agentd` is built (`HOLON_AGENTD_BIN`, or `reconciler/target/{release,debug}`): the console
-//!   starts one on a free port with a random token, confined to the agents' workspaces, and stops it
-//!   on exit.
-//! * Neither: sessions are off and `session_start` says so.
-//!
-//! The model a started daemon uses is **`mock` unless the operator says otherwise**: a scripted
-//! provider that lists the workspace and answers, free and deterministic, because a console that
-//! began spending someone's API key the first time an agent asked for a coding session would be a
-//! surprise nobody wanted. `HOLON_AGENTD_PROVIDER` (`anthropic`, `openai`), `HOLON_AGENTD_BASE_URL`,
-//! `HOLON_AGENTD_KEY_FILE` and `HOLON_SESSION_MODEL` choose a real one.
+//! A started daemon runs `mock` unless the operator names a provider, so a console never starts
+//! spending someone's API key the first time an agent asks for a session (ADR-0119).
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -23,11 +8,9 @@ use std::time::{Duration, Instant};
 use agent_runtime::session::AgentdConfig;
 use comp_fleet::fleet::{free_port, repo_root};
 
-/// A `comp-agentd` this process started, stopped when this is dropped.
 pub struct AgentdProc {
     child: Child,
     pub config: AgentdConfig,
-    /// What it answers with, for the status line: `mock`, or the provider and model.
     pub describes: String,
 }
 
@@ -38,9 +21,7 @@ impl Drop for AgentdProc {
     }
 }
 
-/// The daemon to start: the one named, else the NEWEST build there is. Not release before debug: a
-/// release build from last week is a daemon without the state snapshot a session is watched through,
-/// and it answers a state request with a bare 400.
+/// The newest build, not release first: a stale release build lacks the state snapshot (a bare 400).
 fn binary() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("HOLON_AGENTD_BIN") {
         return Some(PathBuf::from(p)).filter(|p| p.exists());
@@ -54,10 +35,8 @@ fn binary() -> Option<PathBuf> {
         .map(|(_, p)| p)
 }
 
-/// Whether the daemon at `url` has what the runtime watches a session through: the state snapshot
-/// (ADR-0107). Asked about a session that cannot exist it answers 404 with a problem document; an
-/// older daemon, which has no such route, answers something else, and a window that shows a session
-/// as "lost the daemon" a second after it was started is a poor way to learn that.
+/// An older daemon has no state snapshot route (ADR-0107); better to learn that here than from a
+/// session shown as "lost the daemon" a second after it started.
 fn probe(url: &str, token: &Option<String>) -> Result<(), String> {
     let http = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(3))
@@ -82,7 +61,6 @@ fn probe(url: &str, token: &Option<String>) -> Result<(), String> {
     }
 }
 
-/// A secret for one run: 16 bytes of the system's randomness, in hex.
 fn token() -> String {
     use std::io::Read;
     let mut b = [0u8; 16];
@@ -92,8 +70,7 @@ fn token() -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// What to do about the daemon: attach, start, or neither. `workspaces` is where the agents'
-/// workspaces are, which is all a started daemon may work under.
+/// `workspaces` is all a started daemon may work under.
 pub fn start(
     workspaces: &Path,
     state: &Path,

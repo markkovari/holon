@@ -1,14 +1,4 @@
-//! `money` — exact money arithmetic in integer minor units tagged with an ISO-4217 currency — never a float
-//!
-//! Exact money arithmetic over integer minor units. Storing money as a float is the classic bug (`0.1 + 0.2 != 0.3`),
-//! so there is no floating point anywhere: an amount is an `s64` count of minor units tagged with an ISO-4217 currency
-//! code, and every operation is integer-only and overflow-checked.
-//!
-//! The currency exponent table is built in (2 for USD/EUR/GBP/..., 0 for JPY/KRW, 3 for BHD/KWD/TND); `parse`/`format`
-//! use it to move between decimal strings and minor units. `allocate` splits a total across N shares with no lost or
-//! gained pennies: the remainder goes out one minor unit at a time to the leading shares so the parts sum back EXACTLY.
-//!
-//! Pure compute: no host imports, no state.
+//! Integer minor units only, never a float; every operation is overflow-checked.
 
 #[allow(warnings)]
 mod bindings;
@@ -17,8 +7,6 @@ use bindings::exports::money::amount::arithmetic::{Amount, Guest, MoneyError};
 
 struct Component;
 
-/// Decimal exponent (number of minor-unit digits) for a currency code, or
-/// `None` if the code is not in our built-in table.
 fn exponent(currency: &str) -> Option<u32> {
     match currency {
         "USD" | "EUR" | "GBP" | "CHF" | "CAD" | "AUD" | "CNY" | "INR" | "SEK" | "NOK" | "DKK"
@@ -29,12 +17,11 @@ fn exponent(currency: &str) -> Option<u32> {
     }
 }
 
-/// Validate `currency` against the table, returning its exponent.
 fn checked_exponent(currency: &str) -> Result<u32, MoneyError> {
     exponent(currency).ok_or_else(|| MoneyError::UnknownCurrency(currency.to_string()))
 }
 
-/// 10^exp as an i64 (exp is at most 3 here, so this never overflows).
+/// exp is at most 3, so this never overflows.
 fn pow10(exp: u32) -> i64 {
     (0..exp).fold(1i64, |acc, _| acc * 10)
 }
@@ -53,7 +40,7 @@ impl Guest for Component {
             None => (digits, ""),
         };
 
-        // Major part must be non-empty and all digits: require at least one major digit, e.g. "0.05".
+        // At least one major digit: "0.05", not ".05".
         if major_str.is_empty() || !major_str.bytes().all(|b| b.is_ascii_digit()) {
             return Err(MoneyError::UnknownCurrency(currency));
         }
@@ -129,7 +116,7 @@ impl Guest for Component {
         let base = total.units / n;
         let remainder = total.units - base * n; // same sign as total.units, |rem| < n
 
-        // Hand out one minor unit to the first |remainder| shares, sign-aware so the parts sum back to total.units exactly.
+        // Sign-aware, so the parts sum back to total.units exactly.
         let extra: i64 = if remainder >= 0 { 1 } else { -1 };
         let count = remainder.unsigned_abs() as usize;
 
