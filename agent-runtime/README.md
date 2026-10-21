@@ -67,6 +67,12 @@ every run), `workspaces/<name>/` (the only place its file tools can reach).
   needs `"api_keys": ["github"]` and `http_get`. The secret, not the spec, decides where a key may go:
   `http_get` sends it only to that host (reachable then without `allow_hosts`), and the model reads
   `[api key]` in its place. An agent can give another agent only keys it holds itself.
+* **One runtime, many faces.** Element (through `agent-matrix`) and the board (`holon-console`,
+  `agents-board --runtime http://127.0.0.1:18017`) drive the same daemon over this API.
+  `GET /stream` (admin) sends each event as a JSON line while the caller stays, and `/keys`
+  (`GET`, `PUT /keys/<name>` with `{"host", "key", "header"?}`, `DELETE`, and
+  `PUT|DELETE /keys/<name>/agents/<agent>`) manages API keys in the vault of the platform
+  `--platform-file` names. `infra/launchd/install.sh` runs it all: nats, the platform, the runtime, the bridge.
 * **Limits**: `max_steps`, `max_tokens` per run, `daily_token_budget`.
   A run always ends with an answer; an over-budget one says why.
 * **Approval**: `http_get` and `write_file` ask a human first unless listed in
