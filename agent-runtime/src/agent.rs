@@ -837,7 +837,7 @@ fn http_get(
         .map_or(authority, |(h, _)| h);
     if !spec.api_keys.is_empty() && vault.is_none() {
         return Err(
-            "API keys need HOLON_PLATFORM_URL, HOLON_SECRETS_ORG and HOLON_FETCH_TOKEN".into()
+            "API keys need a vault: add a key in the console's Keys tab, or set HOLON_PLATFORM_URL, HOLON_SECRETS_ORG and HOLON_FETCH_TOKEN".into()
         );
     }
     // shortcut: every key is fetched (and audited) on every call; cache per run if calls get chatty.
@@ -1165,7 +1165,7 @@ fn exec(
             std::fs::write(&p, audio).map_err(|e| e.to_string())?;
             Ok(format!("wrote {rel} ({:.1}s of speech)", ms as f64 / 1000.0))
         }
-        "http_get" => http_get(spec, &arg(args, "url"), crate::keys::Vault::from_env().as_ref()),
+        "http_get" => http_get(spec, &arg(args, "url"), crate::keys::Vault::configured().as_ref()),
         "list_dir" => {
             let root = store.workspace(&spec.name)?;
             let rel = arg(args, "path");

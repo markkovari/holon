@@ -10,6 +10,7 @@ pub mod field;
 pub mod film;
 pub mod graph;
 pub mod icons;
+pub mod keys;
 pub mod map;
 pub mod store;
 pub mod theme;

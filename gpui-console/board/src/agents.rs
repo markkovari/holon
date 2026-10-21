@@ -11,6 +11,7 @@ pub struct AgentInfo {
     pub triggers: Vec<String>,
     pub capabilities: Vec<String>,
     pub projects: Vec<String>,
+    pub api_keys: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -40,6 +40,14 @@ groups joined by how many times they use each other. Closer in, the components t
 
 ![The Map: five groups joined by bundles, 700 uses from the applications into the shared parts](../docs/media/agents-board-map.png)
 
+**Keys — API keys for agents.** Add one (a name, the host it is for, the key, and a header if the API
+does not take `Authorization: Bearer`) and switch it on for the agents that may use it. Switching a key
+on also grants that agent `http_get`. Keys go to the console's platform vault, encrypted on its NATS
+under a master key made once in `~/.holon-console-state/master-key`. The console mints its agents a
+fetch token for exactly these keys at each launch and on every change, in `~/.comp-secrets/vault.json`.
+
+![The Keys tab: add a key, and switch each key on for the agents that may use it](../docs/media/agents-board-keys.png)
+
 ## Running it
 
 GPUI (its preview releases, `gpui-pre`, which can also draw in a browser) wants macOS with the Xcode command

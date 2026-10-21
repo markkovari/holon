@@ -32,6 +32,7 @@ fn tab_named(s: &str) -> Option<Tab> {
         "agents" => Some(Tab::Agents),
         "map" => Some(Tab::Map),
         "sessions" => Some(Tab::Sessions),
+        "keys" => Some(Tab::Keys),
         _ => None,
     }
 }

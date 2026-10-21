@@ -20,6 +20,7 @@
 mod agentd;
 mod fm;
 mod lattice;
+mod vault;
 
 use std::rc::Rc;
 
@@ -72,6 +73,22 @@ impl BoardActions for LatticeActions {
 
     fn start(&self, agent: &str, goal: &str, cx: &mut App) -> Result<(), String> {
         self.lattice.update(cx, |l, cx| l.start_goal(agent, goal, cx))
+    }
+
+    fn keys(&self, cx: &App) -> Result<Vec<agent_board::keys::KeyRow>, String> {
+        self.lattice.read(cx).keys()
+    }
+
+    fn put_key(&self, key: &agent_board::keys::NewKey, cx: &mut App) -> Result<(), String> {
+        self.lattice.update(cx, |l, _| l.put_key(key))
+    }
+
+    fn remove_key(&self, name: &str, cx: &mut App) -> Result<(), String> {
+        self.lattice.update(cx, |l, cx| l.remove_key(name, cx))
+    }
+
+    fn grant(&self, key: &str, agent: &str, on: bool, cx: &mut App) -> Result<(), String> {
+        self.lattice.update(cx, |l, cx| l.grant(key, agent, on, cx))
     }
 }
 

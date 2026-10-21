@@ -1,6 +1,6 @@
 //! A scripted run fed as the runtime's own events, so the board needs no model, daemon or key.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -9,6 +9,7 @@ use gpui::{App, AsyncApp, Entity};
 use serde_json::{json, Value};
 
 use super::agents::AgentInfo;
+use super::keys::{KeyRow, NewKey};
 use super::tree::AgentTree;
 use super::view::{now_ms, Actions, AgentChoice, Scope};
 
@@ -576,6 +577,8 @@ pub struct DemoActions {
     tree: Entity<AgentTree>,
     answered: Cell<Option<bool>>,
     goals: Cell<u32>,
+    keys: RefCell<Vec<String>>,
+    grants: RefCell<Vec<(String, String)>>,
 }
 
 impl Actions for DemoActions {
@@ -612,6 +615,13 @@ impl Actions for DemoActions {
             triggers: wakes.iter().map(|s| s.to_string()).collect(),
             capabilities: caps.iter().map(|s| s.to_string()).collect(),
             projects: projects.iter().map(|s| s.to_string()).collect(),
+            api_keys: self
+                .grants
+                .borrow()
+                .iter()
+                .filter(|(_, a)| a == name)
+                .map(|(k, _)| k.clone())
+                .collect(),
         };
         vec![
             agent(
@@ -657,6 +667,39 @@ impl Actions for DemoActions {
         ]
     }
 
+    fn keys(&self, _cx: &App) -> Result<Vec<KeyRow>, String> {
+        Ok(self
+            .keys
+            .borrow()
+            .iter()
+            .map(|n| KeyRow { name: n.clone(), reference: format!("vault://demo/{n}") })
+            .collect())
+    }
+
+    fn put_key(&self, k: &NewKey, _cx: &mut App) -> Result<(), String> {
+        if k.name.is_empty() || k.host.is_empty() || k.key.is_empty() {
+            return Err("A key needs a name, a host and the key itself.".into());
+        }
+        self.keys.borrow_mut().retain(|n| n != &k.name);
+        self.keys.borrow_mut().push(k.name.clone());
+        Ok(())
+    }
+
+    fn remove_key(&self, name: &str, _cx: &mut App) -> Result<(), String> {
+        self.keys.borrow_mut().retain(|n| n != name);
+        self.grants.borrow_mut().retain(|(k, _)| k != name);
+        Ok(())
+    }
+
+    fn grant(&self, key: &str, agent: &str, on: bool, _cx: &mut App) -> Result<(), String> {
+        let mut g = self.grants.borrow_mut();
+        g.retain(|(k, a)| !(k == key && a == agent));
+        if on {
+            g.push((key.into(), agent.into()));
+        }
+        Ok(())
+    }
+
     fn start(&self, agent: &str, goal: &str, cx: &mut App) -> Result<(), String> {
         let n = self.goals.get() + 1;
         self.goals.set(n);
@@ -698,8 +741,13 @@ async fn run_beats(tree: &Entity<AgentTree>, beats: Vec<Beat>, cx: &mut AsyncApp
 /// Approves by itself after `auto`, so an unattended run (a screenshot) reaches the end.
 pub fn play(tree: Entity<AgentTree>, auto: Option<Duration>, cx: &mut App) -> Rc<DemoActions> {
     tree.update(cx, |t, _| t.seed(&history(now_ms())));
-    let actions =
-        Rc::new(DemoActions { tree: tree.clone(), answered: Cell::new(None), goals: Cell::new(0) });
+    let actions = Rc::new(DemoActions {
+        tree: tree.clone(),
+        answered: Cell::new(None),
+        goals: Cell::new(0),
+        keys: RefCell::new(vec!["github".into(), "openai".into()]),
+        grants: RefCell::new(vec![("github".into(), "researcher".into())]),
+    });
     let me = actions.clone();
     cx.spawn(async move |cx| {
         if !run_beats(&tree, story(), cx).await {

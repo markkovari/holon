@@ -237,7 +237,7 @@ impl Lattice {
         let agents = specs.iter().map(|s| row_from(s, &boot.runtime)).collect();
         let runs: Vec<RunRecord> =
             specs.iter().flat_map(|s| boot.runtime.store().runs(&s.name, 50)).collect();
-        Self {
+        let this = Self {
             _fleet: Some(boot.fleet),
             _fm: boot.fm,
             _agentd: boot.agentd,
@@ -261,7 +261,12 @@ impl Lattice {
             detail: Vec::new(),
             status_line: "booted".to_string(),
             spawning: false,
+        };
+        // Each launch, so the token in the vault file never runs out while the console is used.
+        if let Err(e) = this.connect_vault() {
+            eprintln!("API keys are off: {e}");
         }
+        this
     }
 
     fn host_for(&self, name: &str) -> String {
@@ -359,8 +364,66 @@ impl Lattice {
                     .filter(|p| p.agents.contains(&a.name))
                     .map(|p| p.name.clone())
                     .collect(),
+                api_keys: self.rt.store().get(&a.name).map(|s| s.api_keys).unwrap_or_default(),
             })
             .collect()
+    }
+
+    // shortcut: these call the local platform on the UI thread (10s timeout); move to the background if it is ever remote.
+    pub fn keys(&self) -> Result<Vec<agent_board::keys::KeyRow>, String> {
+        crate::vault::list(&self.base_url, &self.token)
+    }
+
+    fn connect_vault(&self) -> Result<(), String> {
+        let applier = self._fleet.as_ref().ok_or("The lattice is gone.")?.applier_secret();
+        crate::vault::connect(&self.base_url, &self.token, &self.tenant, applier)
+    }
+
+    pub fn put_key(&mut self, k: &agent_board::keys::NewKey) -> Result<(), String> {
+        if !agent_runtime::keys::safe(&k.name) {
+            return Err("A key's name is letters, digits, - and _ only, e.g. github.".into());
+        }
+        let value = agent_runtime::keys::secret_value(&k.host, &k.key, &k.header)?;
+        crate::vault::put(&self.base_url, &self.token, &k.name, &value)?;
+        self.connect_vault()
+    }
+
+    /// Also taken from every agent that held it: a key that is gone would fail each of their calls.
+    pub fn remove_key(&mut self, name: &str, cx: &mut Context<Self>) -> Result<(), String> {
+        crate::vault::remove(&self.base_url, &self.token, name)?;
+        for mut spec in self.rt.store().list() {
+            if spec.api_keys.iter().any(|k| k == name) {
+                spec.api_keys.retain(|k| k != name);
+                self.rt.update_agent(spec)?;
+            }
+        }
+        self.refresh(cx);
+        self.connect_vault()
+    }
+
+    /// Switching a key on also grants `http_get`, the one tool that sends it.
+    pub fn grant(
+        &mut self,
+        key: &str,
+        agent: &str,
+        on: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let mut spec = self
+            .rt
+            .store()
+            .get(agent)
+            .ok_or_else(|| format!("There is no agent named {agent}."))?;
+        spec.api_keys.retain(|k| k != key);
+        if on {
+            spec.api_keys.push(key.to_string());
+            if !spec.has_capability("http_get") {
+                spec.capabilities.push(agent_runtime::Capability::named("http_get"));
+            }
+        }
+        self.rt.update_agent(spec)?;
+        self.refresh(cx);
+        Ok(())
     }
 
     pub fn start_goal(

@@ -58,13 +58,13 @@ every run), `workspaces/<name>/` (the only place its file tools can reach).
   other is told a photo was attached and asks for it in words instead of failing. A photo that is missing
   or is not an image is said in the message, not fatal. Every step of a run sends the pictures again, so
   they are billed again; keep a photo-reading agent's `max_steps` small.
-* **API keys** live in the platform's vault (`secrets-vault`, ADR-0051). Store one as
-  `POST /api/secrets {"name": "github", "value": "{\"host\": \"api.github.com\", \"key\": \"ghp_...\"}"}`
-  (optional `"header"`, default `Authorization`, and `"scheme"`, default `Bearer`; `""` sends the
-  bare key). Mint a fetch token for just those refs (`POST /api/internal/fetch-token`
-  `{"instance": "agent-runtime", "refs": ["vault://<org>/github"], "ttl": ...}`) and start the
-  runtime with `HOLON_PLATFORM_URL`, `HOLON_SECRETS_ORG` and `HOLON_FETCH_TOKEN`. Give the agent
-  `"api_keys": ["github"]` and `http_get`. The secret, not the spec, decides where a key may go:
+* **API keys** live in the platform's vault (`secrets-vault`, ADR-0051), and the console's Keys tab
+  is the easy way in: add a key there and switch it on for an agent. By hand, a key is a vault secret
+  whose value is `{"host": "api.github.com", "key": "ghp_..."}` (optional `"header"`, default
+  `Authorization`, and `"scheme"`, default `Bearer`; `""` sends the bare key), and the runtime reads it
+  with a fetch token minted for just those refs, from `HOLON_PLATFORM_URL`, `HOLON_SECRETS_ORG` and
+  `HOLON_FETCH_TOKEN`, else from `~/.comp-secrets/vault.json` (what the console writes). The agent
+  needs `"api_keys": ["github"]` and `http_get`. The secret, not the spec, decides where a key may go:
   `http_get` sends it only to that host (reachable then without `allow_hosts`), and the model reads
   `[api key]` in its place. An agent can give another agent only keys it holds itself.
 * **Limits**: `max_steps`, `max_tokens` per run, `daily_token_budget`.
