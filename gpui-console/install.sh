@@ -19,6 +19,8 @@ mkdir -p "$BIN"
 cat > "$BIN/holon-console" <<EOF
 #!/bin/sh
 export PATH="\$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH"
+# Opens on the agent board (Sessions, Agents, Explore, Map, Keys), not the older console view.
+export HOLON_CONSOLE_BOARD="\${HOLON_CONSOLE_BOARD:-1}"
 exec "$ROOT/gpui-console/target/release/gpui-console" "\$@"
 EOF
 chmod +x "$BIN/holon-console"

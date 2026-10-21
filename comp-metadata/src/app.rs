@@ -33,7 +33,9 @@ pub struct AppSpec {
 #[derive(Debug, Deserialize, Clone)]
 pub struct Daemon {
     pub name: String,
-    pub addr: String,
+    /// None for a worker (comp-resume): nothing dials it.
+    #[serde(default)]
+    pub addr: Option<String>,
     #[serde(default)]
     pub allow_flag: Option<String>,
     #[serde(default)]
@@ -56,7 +58,9 @@ impl AppSpec {
     pub fn host_args(&self) -> Vec<String> {
         let mut cfg = self.config.clone();
         for d in &self.daemons {
-            cfg.entry(format!("{}-url", d.name)).or_insert_with(|| format!("http://{}", d.addr));
+            if let Some(addr) = &d.addr {
+                cfg.entry(format!("{}-url", d.name)).or_insert_with(|| format!("http://{addr}"));
+            }
             if let Some(t) = &d.token {
                 cfg.entry(format!("{}-token", d.name)).or_insert_with(|| t.clone());
             }
@@ -66,11 +70,11 @@ impl AppSpec {
             args.push("--config".to_string());
             args.push(format!("{k}={v}"));
         }
-        for d in &self.daemons {
+        for addr in self.daemons.iter().filter_map(|d| d.addr.as_ref()) {
             args.push("--egress".to_string());
-            args.push(d.addr.clone());
+            args.push(addr.clone());
         }
-        if !self.daemons.is_empty() {
+        if self.daemons.iter().any(|d| d.addr.is_some()) {
             args.push("--allow-private-egress".to_string());
         }
         args
@@ -258,5 +262,18 @@ mod tests {
 
         let bare: AppSpec = toml::from_str("name = \"b\"\n").unwrap();
         assert!(bare.host_args().is_empty());
+    }
+
+    #[test]
+    fn a_worker_daemon_has_no_address_and_is_dialled_by_nobody() {
+        let spec: AppSpec =
+            toml::from_str("name = \"p\"\n[[daemon]]\nname = \"resume\"\n").unwrap();
+        assert_eq!(spec.daemons[0].addr, None);
+        assert!(spec.host_args().is_empty());
+        let park = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../apps/park.toml"),
+        )
+        .unwrap();
+        toml::from_str::<AppSpec>(&park).expect("apps/park.toml parses");
     }
 }

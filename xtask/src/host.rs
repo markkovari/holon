@@ -115,7 +115,9 @@ pub(crate) fn host_app(
         run_cmd(&mut build, &format!("build comp-{}", d.name))?;
 
         let mut cmd = Command::new(format!("reconciler/target/release/comp-{}", d.name));
-        cmd.args(["--addr", &d.addr]);
+        if let Some(addr) = &d.addr {
+            cmd.args(["--addr", addr]);
+        }
         if let Some(flag) = &d.allow_flag {
             for v in &d.allow {
                 cmd.args([format!("--{flag}"), v.clone()]);
@@ -129,7 +131,8 @@ pub(crate) fn host_app(
         if let Some(t) = &d.token {
             cmd.args(["--token", t]);
         }
-        println!("{}", format!("  + daemon: comp-{} on {}", d.name, d.addr).cyan());
+        let on = d.addr.as_deref().unwrap_or("no address (a worker)");
+        println!("{}", format!("  + daemon: comp-{} on {on}", d.name).cyan());
         running.push(cmd.spawn().with_context(|| format!("spawning comp-{}", d.name))?);
     }
     let _guard = DaemonGuard(running);
