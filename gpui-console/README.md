@@ -58,6 +58,11 @@ line tools natively; the shaders are compiled at run time.
     HOLON_CONSOLE_BOARD=1 cargo run --bin gpui-console # the console, opened on the board
     cargo test --workspace
 
+To have it like any other app, `./gpui-console/install.sh` builds the console and the binaries it starts
+(`comp-host`, `comp-reconciler`, `comp-ingress`, `comp-stub`, `comp-agentd`; it needs `nats-server`),
+then installs `~/.local/bin/holon-console` and, on macOS, `~/Applications/Holon Console.app`, which logs to
+`~/.holon-console-state/console.log`. Both run this checkout's release build.
+
 The board is its own crate (`board/`), because it also builds for a browser and the console cannot. It
 takes what the runtime says happened as `crates/agent-wire`'s data, which the runtime re-exports.
 
