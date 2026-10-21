@@ -26,6 +26,8 @@ pub struct RunInfo {
     pub finished_ms: u64,
     #[serde(default)]
     pub project: String,
+    #[serde(default)]
+    pub input: String,
 }
 
 impl RunInfo {

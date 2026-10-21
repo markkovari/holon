@@ -212,7 +212,7 @@ impl Actions for Remote {
         // A run can wait minutes on an approval; its progress arrives on the stream.
         std::thread::spawn(move || {
             let _ = http(None)
-                .post(format!("{url}/agents/{agent}/run"))
+                .post(format!("{url}/agents/{agent}/run?why=board"))
                 .bearer_auth(token)
                 .body(goal)
                 .send();

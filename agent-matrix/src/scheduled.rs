@@ -1,9 +1,13 @@
-//! Unasked posts: schedules marked `notify`, and every reminder (asking to be reminded is asking to be told).
+//! Unasked posts: schedules marked `notify`, every reminder (asking to be reminded is asking to be told),
+//! and what was asked on the board, so Element and the board hold one conversation.
 
 use serde_json::Value;
 
 use crate::runtime::{ProjectInfo, RunInfo};
 use crate::state::Data;
+
+/// The trigger of a run asked from the agent board (`agents-board --runtime`, `?why=board`).
+pub const BOARD: &str = "http: board";
 
 pub fn due<'a>(triggers: &[Value], runs: &'a [RunInfo], after_ms: u64) -> Vec<&'a RunInfo> {
     // A schedule is the pair (cron, project): the same cron for two projects is two triggers.
@@ -23,7 +27,7 @@ pub fn due<'a>(triggers: &[Value], runs: &'a [RunInfo], after_ms: u64) -> Vec<&'
         .filter(|r| r.finished_at_ms() > after_ms && worth_saying(r))
         .filter(|r| match r.trigger.strip_prefix("schedule: ") {
             Some(cron) => notified(cron, &r.project),
-            None => r.trigger == "timer",
+            None => r.trigger == "timer" || r.trigger == BOARD,
         })
         .collect();
     out.sort_by_key(|r| r.finished_at_ms());
@@ -75,6 +79,15 @@ pub fn approval_room(agent: &str, projects: &[ProjectInfo], data: &Data) -> Opti
 }
 
 pub fn render(run: &RunInfo, max: usize) -> String {
+    let said = said(run, max);
+    if run.trigger == BOARD && !run.input.trim().is_empty() {
+        format!("> {} (on the board)\n\n{said}", crate::bridge::clip(run.input.trim(), 300))
+    } else {
+        said
+    }
+}
+
+fn said(run: &RunInfo, max: usize) -> String {
     let answer = run.answer.trim();
     match run.status.as_str() {
         "ok" if answer.is_empty() => "(no answer)".to_string(),
@@ -100,6 +113,7 @@ mod tests {
             finished: ms / 1000,
             finished_ms: ms,
             project: String::new(),
+            input: String::new(),
         }
     }
 
@@ -265,5 +279,18 @@ mod tests {
         let run: RunInfo = serde_json::from_str(r#"{"id": "coach-1791979200-372", "agent": "coach", "trigger": "schedule: 0 12 * * *", "input": "x", "started": 1791979200, "finished": 1791979201, "status": "ok", "answer": "Morning, Mark.", "steps": [], "tokens_in": 798, "tokens_out": 33, "started_ms": 1791979200029, "finished_ms": 1791979201313, "model": "openai/deepseek-chat", "trace_id": "91d5adc0e499a22eab1bc7d44ef0a245", "span_id": "26d1119f8e4ca9e9", "parent_span_id": null, "hops": 0, "chain": []}"#).unwrap();
         let agent: crate::runtime::AgentInfo = serde_json::from_str(r#"{"name": "coach", "description": "d", "triggers": [{"kind": "schedule", "cron": "0 12 * * *", "prompt": "Wake Mark with one short motivational message, in character as his rowing coach. Keep it to one or two sentences, warm and honest, no invented numbers.", "notify": true}]}"#).unwrap();
         assert_eq!(ids(due(&agent.triggers, &[run], 0)), ["coach-1791979200-372"]);
+    }
+
+    #[test]
+    fn what_was_asked_on_the_board_is_posted_with_its_question() {
+        let mut b = run("b", BOARD, "ok", 2_000);
+        b.input = "what was my last workout?".into();
+        let runs = vec![run("h", "http", "ok", 2_000), b, run("m", "matrix", "ok", 2_000)];
+        assert_eq!(ids(due(&[], &runs, 1_000)), ["b"], "only the board's, not other callers'");
+        assert_eq!(
+            render(&runs[1], 1_000),
+            "> what was my last workout? (on the board)\n\nanswer b"
+        );
+        assert_eq!(render(&runs[0], 1_000), "answer h");
     }
 }
