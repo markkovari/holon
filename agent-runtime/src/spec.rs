@@ -217,7 +217,7 @@ pub struct AgentSpec {
     /// Empty = none; there is no wildcard.
     #[serde(default)]
     pub allow_hosts: Vec<String>,
-    /// Names in `keys::dir()`; `http_get` sends each only to the host its file names.
+    /// Vault names (`keys::Vault`); `http_get` sends each only to the host its secret names.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub api_keys: Vec<String>,
     #[serde(default)]
