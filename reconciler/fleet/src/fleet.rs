@@ -15,6 +15,27 @@ impl Drop for Kill {
 }
 
 /// `Fixed` is never deleted, so the jetstream store and SQLite DB survive separate launches.
+const APPLIER_SECRET: &str = "test-secret";
+
+/// Made once per kept lattice and never rotated: a new key cannot read what the old one sealed.
+fn master_key(dir: &std::path::Path) -> String {
+    use base64::Engine;
+    let path = dir.join("master-key");
+    if let Ok(k) = std::fs::read_to_string(&path) {
+        return k.trim().to_string();
+    }
+    let mut bytes = [0u8; 32];
+    getrandom::getrandom(&mut bytes).expect("random bytes for the master key");
+    let k = base64::engine::general_purpose::STANDARD.encode(bytes);
+    std::fs::write(&path, &k).expect("writing the master key");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    k
+}
+
 enum Scratch {
     Owned(tempfile::TempDir),
     Fixed(std::path::PathBuf),
@@ -441,6 +462,11 @@ impl Fleet {
         )
     }
 
+    /// The control plane's internal-API secret; it binds to loopback only.
+    pub fn applier_secret(&self) -> &'static str {
+        APPLIER_SECRET
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn start_full(
         lattice: &str,
@@ -517,14 +543,20 @@ impl Fleet {
             cp.current_dir(&root)
                 .arg("--component")
                 .arg(&component)
-                .args(["--addr", &format!("127.0.0.1:{platform_port}"), "--kv", "sqlite"])
-                .arg("--sqlite-path")
-                .arg(sp.join("platform.db"))
+                .args(["--addr", &format!("127.0.0.1:{platform_port}")])
                 .args(["--tenant", "platform", "--app", "control-plane"])
-                .args(["--config", "applier-secret=test-secret"])
-                .args(["--config", "ingress-suffix=test"])
+                .args(["--config", &format!("applier-secret={APPLIER_SECRET}")])
+                .args(["--config", "ingress-suffix=test"]);
+            // A kept lattice (the console's) holds real secrets: its own JetStream and its own key.
+            if let Scratch::Fixed(_) = dir {
+                cp.args(["--kv", "nats", "--nats-url", &format!("nats://127.0.0.1:{nats_port}")])
+                    .args(["--config", &format!("master-key={}", master_key(&sp))]);
+            } else {
                 // Without a master key every vault write is refused; this key guards nothing real.
-                .args(["--config", "master-key=Y29tcC10ZXN0LW9ubHktbWFzdGVyLWtleS0zMmJ5dGU="]);
+                cp.args(["--kv", "sqlite", "--sqlite-path"])
+                    .arg(sp.join("platform.db"))
+                    .args(["--config", "master-key=Y29tcC10ZXN0LW9ubHktbWFzdGVyLWtleS0zMmJ5dGU="]);
+            }
             // Admission control (ADR-0082): set low to see the refusal.
             if let Ok(lag) = std::env::var("COMP_MAX_PLACEMENT_LAG") {
                 cp.args(["--config", &format!("max-placement-lag={lag}")]);
@@ -625,7 +657,7 @@ impl Fleet {
         let mut rec = Command::new(bin_path("comp-reconciler"));
         rec.current_dir(&root)
             .args(["--platform-url", &format!("http://127.0.0.1:{platform_port}")])
-            .args(["--secret", "test-secret", "--nats-url", &nats_url, "--lattice", lattice])
+            .args(["--secret", APPLIER_SECRET, "--nats-url", &nats_url, "--lattice", lattice])
             // Short lease, so a failover test does not wait production's 30s.
             .args(["--interval", "3", "--lease-ttl", "6"]);
         let rec_child = spawn_logged("comp-reconciler", &mut rec, &sp.join("rec.log"));
@@ -763,7 +795,7 @@ impl Fleet {
         let mut rec = Command::new(bin_path("comp-reconciler"));
         rec.current_dir(repo_root())
             .args(["--platform-url", &format!("http://127.0.0.1:{}", self.platform_port)])
-            .args(["--secret", "test-secret", "--nats-url", &self.nats_url])
+            .args(["--secret", APPLIER_SECRET, "--nats-url", &self.nats_url])
             .args(["--lattice", &self.lattice, "--interval", "3", "--lease-ttl", "6"]);
         let k = spawn_logged(
             &format!("comp-reconciler-{n}"),

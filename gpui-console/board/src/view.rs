@@ -20,6 +20,7 @@ use super::explore::{ExploreEvent, ExploreView};
 use super::field::{FieldEvent, TextField};
 use super::graph::{Graph, SessionNode};
 use super::icons::{icon, model_glyph, tool_icon};
+use super::keys::{KeyRow, KeysView, NewKey};
 use super::map::{self as maps, Ref, Tab};
 use super::store::{self, Store};
 use super::theme::{Mode, Theme};
@@ -59,6 +60,22 @@ pub trait Actions {
 
     fn roster(&self, _cx: &App) -> Vec<AgentInfo> {
         Vec::new()
+    }
+
+    fn keys(&self, _cx: &App) -> Result<Vec<KeyRow>, String> {
+        Err("This board has no vault: API keys live in the console's.".into())
+    }
+
+    fn put_key(&self, _key: &NewKey, _cx: &mut App) -> Result<(), String> {
+        Err("This board has no vault: API keys live in the console's.".into())
+    }
+
+    fn remove_key(&self, _name: &str, _cx: &mut App) -> Result<(), String> {
+        Err("This board has no vault.".into())
+    }
+
+    fn grant(&self, _key: &str, _agent: &str, _on: bool, _cx: &mut App) -> Result<(), String> {
+        Err("This board has no vault.".into())
     }
 }
 
@@ -280,6 +297,7 @@ pub struct Board {
     talk: gpui::ScrollHandle,
     talk_seen: (String, usize),
     expanded: HashSet<String>,
+    keys: Entity<KeysView>,
     _tick: Task<()>,
 }
 
@@ -321,6 +339,10 @@ impl Board {
             ExploreEvent::Agent(name) => this.show(Tab::Agents, name, cx),
         })
         .detach();
+        let keys = {
+            let actions = actions.clone();
+            cx.new(|cx| KeysView::new(actions, theme, cx))
+        };
         let say = cx.new(|cx| TextField::compact("Say something…", theme, cx));
         cx.subscribe(&say, |this, _, ev: &FieldEvent, cx| match ev {
             FieldEvent::Submit(text) => this.say_to(text.clone(), cx),
@@ -393,6 +415,7 @@ impl Board {
             talk: gpui::ScrollHandle::new(),
             talk_seen: (String::new(), 0),
             expanded: HashSet::new(),
+            keys,
             _tick: tick,
         }
         .reloaded(cx)
@@ -404,6 +427,9 @@ impl Board {
     }
 
     pub fn reload(&mut self, cx: &mut Context<Self>) {
+        if self.tab == Tab::Keys {
+            self.keys.update(cx, |k, cx| k.refresh(cx));
+        }
         let comps = self.components.clone();
         cx.spawn(async move |this, cx| {
             #[cfg(not(target_family = "wasm"))]
@@ -463,6 +489,7 @@ impl Board {
             Tab::Agents => {
                 self.agent = Some(r.key.strip_prefix("agent:").unwrap_or(&r.key).to_string())
             }
+            Tab::Keys => self.keys.update(cx, |k, cx| k.refresh(cx)),
         }
         cx.notify();
     }
@@ -498,6 +525,10 @@ impl Board {
             Tab::Map => window.focus(&self.components.focus_handle(cx), cx),
             Tab::Explore => window.focus(&self.search.focus_handle(cx), cx),
             Tab::Agents => window.focus(&self.say.focus_handle(cx), cx),
+            Tab::Keys => {
+                self.keys.update(cx, |k, cx| k.refresh(cx));
+                window.focus(&self.keys.read(cx).first_field(cx), cx);
+            }
             Tab::Sessions => {}
         }
         cx.notify();
@@ -520,6 +551,7 @@ impl Board {
         self.explore.update(cx, |v, cx| v.set_theme(theme, cx));
         self.search.update(cx, |f, cx| f.set_theme(theme, cx));
         self.say.update(cx, |f, cx| f.set_theme(theme, cx));
+        self.keys.update(cx, |k, cx| k.set_theme(theme, cx));
         cx.notify();
     }
 
@@ -1513,6 +1545,17 @@ impl Board {
             .when(self.tab == Tab::Map, |c| c.child(self.contents(cx)))
             .when(self.tab == Tab::Explore, |c| c.child(self.explore_side(rows, cx)))
             .when(self.tab == Tab::Agents, |c| c.child(self.agents_side(cx)))
+            .when(self.tab == Tab::Keys, |c| {
+                c.child(
+                    div()
+                        .px(px(18.0))
+                        .pt(px(10.0))
+                        .text_size(px(12.5))
+                        .line_height(px(18.0))
+                        .text_color(t.faint)
+                        .child("API keys for agents. They live in the platform's vault, encrypted; this console hands its agents a token that reads only these."),
+                )
+            })
             .when(self.tab == Tab::Sessions, |c| {
                 c.child(
                     div()
@@ -1574,12 +1617,16 @@ impl Board {
             (Tab::Agents, "Agents"),
             (Tab::Explore, "Explore"),
             (Tab::Map, "Map"),
+            (Tab::Keys, "Keys"),
         ] {
             let on = self.tab == tab;
+            // An icon, so five tabs still fit the sidebar's width.
+            let glyph = tab == Tab::Keys;
             strip = strip.child(
                 div()
                     .id(SharedString::from(format!("tab-{label}")))
-                    .flex_1()
+                    .when(glyph, |el| el.w(px(30.0)).flex_none())
+                    .when(!glyph, |el| el.flex_1())
                     .h(px(28.0))
                     .flex()
                     .items_center()
@@ -1590,7 +1637,14 @@ impl Board {
                     .cursor_pointer()
                     .when(on, |el| el.bg(t.card).text_color(t.text).shadow_sm())
                     .when(!on, |el| el.text_color(t.muted).hover(|s| s.text_color(t.text)))
-                    .child(label)
+                    .when(glyph, |el| {
+                        el.child(icon("key-round").size(px(14.0)).text_color(if on {
+                            t.text
+                        } else {
+                            t.muted
+                        }))
+                    })
+                    .when(!glyph, |el| el.child(label))
                     .on_click(
                         cx.listener(move |this, _, window, cx| this.set_tab(tab, window, cx)),
                     ),
@@ -2549,6 +2603,13 @@ impl Render for Board {
                     ))
                 );
                 (self.agent_page(cx), "Agents", sub)
+            } else if self.tab == Tab::Keys {
+                let n = self.keys.read(cx).count();
+                (
+                    self.keys.clone().into_any_element(),
+                    "Keys",
+                    format!("{n} key{} in the vault", if n == 1 { "" } else { "s" }),
+                )
             } else if self.tab == Tab::Map {
                 let apps = m.items().filter(|(_, i)| i.kind == maps::Kind::App).count();
                 (

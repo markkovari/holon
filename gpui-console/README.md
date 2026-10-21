@@ -40,6 +40,14 @@ groups joined by how many times they use each other. Closer in, the components t
 
 ![The Map: five groups joined by bundles, 700 uses from the applications into the shared parts](../docs/media/agents-board-map.png)
 
+**Keys — API keys for agents.** Add one (a name, the host it is for, the key, and a header if the API
+does not take `Authorization: Bearer`) and switch it on for the agents that may use it. Switching a key
+on also grants that agent `http_get`. Keys go to the console's platform vault, encrypted on its NATS
+under a master key made once in `~/.holon-console-state/master-key`. The console mints its agents a
+fetch token for exactly these keys at each launch and on every change, in `~/.comp-secrets/vault.json`.
+
+![The Keys tab: add a key, and switch each key on for the agents that may use it](../docs/media/agents-board-keys.png)
+
 ## Running it
 
 GPUI (its preview releases, `gpui-pre`, which can also draw in a browser) wants macOS with the Xcode command
@@ -49,6 +57,11 @@ line tools natively; the shaders are compiled at run time.
     cargo run -p agent-board --bin agents-board -- --mode light --tab explore --select component:record-store
     HOLON_CONSOLE_BOARD=1 cargo run --bin gpui-console # the console, opened on the board
     cargo test --workspace
+
+To have it like any other app, `./gpui-console/install.sh` builds the console and the binaries it starts
+(`comp-host`, `comp-reconciler`, `comp-ingress`, `comp-stub`, `comp-agentd`; it needs `nats-server`),
+then installs `~/.local/bin/holon-console` and, on macOS, `~/Applications/Holon Console.app`, which logs to
+`~/.holon-console-state/console.log`. Both run this checkout's release build.
 
 The board is its own crate (`board/`), because it also builds for a browser and the console cannot. It
 takes what the runtime says happened as `crates/agent-wire`'s data, which the runtime re-exports.

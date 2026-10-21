@@ -11,6 +11,7 @@ pub struct AgentInfo {
     pub triggers: Vec<String>,
     pub capabilities: Vec<String>,
     pub projects: Vec<String>,
+    pub api_keys: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -100,7 +101,9 @@ impl Element {
         let read = |f: &str| -> Option<serde_json::Value> {
             serde_json::from_str(&std::fs::read_to_string(dir.join(f)).ok()?).ok()
         };
-        Element::from_files(&read("config.json")?, &read("state.json").unwrap_or_default())
+        // `agent-matrix init` writes bridge.json; config.json is the older name.
+        let config = read("bridge.json").or_else(|| read("config.json"))?;
+        Element::from_files(&config, &read("state.json").unwrap_or_default())
     }
 
     pub fn agent(&self, agent: &str, projects: &[String]) -> String {

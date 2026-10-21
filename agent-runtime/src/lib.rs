@@ -10,6 +10,7 @@ pub mod food;
 pub mod google;
 pub mod html;
 pub mod jev;
+pub mod keys;
 pub mod kv;
 pub mod lazy;
 pub mod model;

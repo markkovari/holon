@@ -12,6 +12,7 @@ pub enum Tab {
     Explore,
     Agents,
     Map,
+    Keys,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -729,6 +729,7 @@ mod tests {
 
     #[test]
     fn an_update_that_changes_no_indexed_field_touches_no_index() {
+        // The treasury bug: every balance update rewrote the unchanged `name` index.
         let fields = vec!["name".to_string(), "name".to_string(), "absent".to_string()];
         let before = serde_json::json!({"name": "a", "units": 10});
         let after = serde_json::json!({"name": "a", "units": 0});

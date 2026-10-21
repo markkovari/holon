@@ -140,16 +140,10 @@ pub fn boot() -> Boot {
             None
         }
     };
-    let runtime = Runtime::new(cfg).expect("opening the agent runtime");
     let port = std::env::var("HOLON_AGENT_RUNTIME_PORT")
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(DEFAULT_RUNTIME_PORT);
-    let token = server::admin_token_in(&runtime_dir).expect("admin token");
-    server::serve(runtime.clone(), &format!("127.0.0.1:{port}"), token).unwrap_or_else(|e| {
-        panic!("{e} — is another console or `agent-runtime` already running on port {port}?")
-    });
-    runtime.start_scheduler();
 
     // The gateway component dials the runtime from inside the tenant's
     // sandbox, and egress is default-deny, so the OPERATOR (this process, as
@@ -162,7 +156,22 @@ pub fn boot() -> Boot {
     let fleet = Fleet::start_with_platform_in_dir("console", 1, dir, &host_args);
     let base_url = fleet.platform_url();
     let tenant = "console".to_string();
-    let token = register_and_login(&base_url, &format!("{tenant}@agents.test"), "password123");
+    let (email, password) = (format!("{tenant}@agents.test"), "password123".to_string());
+    let token = register_and_login(&base_url, &email, &password);
+    // After the lattice: the runtime keeps agents' API keys in this platform's vault.
+    cfg.platform = Some(agent_runtime::keys::Platform {
+        url: base_url.clone(),
+        email,
+        password,
+        applier: fleet.applier_secret().to_string(),
+        vault_file: None,
+    });
+    let runtime = Runtime::new(cfg).expect("opening the agent runtime");
+    let admin = server::admin_token_in(&runtime_dir).expect("admin token");
+    server::serve(runtime.clone(), &format!("127.0.0.1:{port}"), admin).unwrap_or_else(|e| {
+        panic!("{e} — is another console or `agent-runtime` already running on port {port}?")
+    });
+    runtime.start_scheduler();
 
     Boot { fleet, base_url, tenant, token, fm, agentd, runtime, runtime_port: port, runtime_dir }
 }
@@ -359,8 +368,41 @@ impl Lattice {
                     .filter(|p| p.agents.contains(&a.name))
                     .map(|p| p.name.clone())
                     .collect(),
+                api_keys: self.rt.store().get(&a.name).map(|s| s.api_keys).unwrap_or_default(),
             })
             .collect()
+    }
+
+    // shortcut: these call the local platform on the UI thread (10s timeout); move to the background if it is ever remote.
+    pub fn keys(&self) -> Result<Vec<agent_board::keys::KeyRow>, String> {
+        Ok(self
+            .rt
+            .keys()?
+            .into_iter()
+            .map(|k| agent_board::keys::KeyRow { name: k.name, reference: k.reference })
+            .collect())
+    }
+
+    pub fn put_key(&mut self, k: &agent_board::keys::NewKey) -> Result<(), String> {
+        self.rt.put_key(&k.name, &k.host, &k.key, &k.header)
+    }
+
+    pub fn remove_key(&mut self, name: &str, cx: &mut Context<Self>) -> Result<(), String> {
+        self.rt.remove_key(name)?;
+        self.refresh(cx);
+        Ok(())
+    }
+
+    pub fn grant(
+        &mut self,
+        key: &str,
+        agent: &str,
+        on: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.rt.grant_key(key, agent, on)?;
+        self.refresh(cx);
+        Ok(())
     }
 
     pub fn start_goal(

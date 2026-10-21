@@ -10,7 +10,10 @@ pub mod field;
 pub mod film;
 pub mod graph;
 pub mod icons;
+pub mod keys;
 pub mod map;
+#[cfg(not(target_family = "wasm"))]
+pub mod remote;
 pub mod store;
 pub mod theme;
 pub mod tree;

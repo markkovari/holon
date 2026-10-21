@@ -6,14 +6,16 @@
 #   ./install.sh status     what is running
 #
 # Services (label io.holon.<name>): fm (Apple model), qwen (4B model), qwen-large (27B, slower, ~15 GB), embed (EmbeddingGemma 2),
-# runtime (the agents), bridge (Matrix). Logs: ~/Library/Logs/holon/<name>.log. Nothing secret
-# goes in a plist: tokens stay in ~/.holon-agents and ~/.holon-matrix, where the programs read them.
+# nats and platform (the vault agents' API keys live in, ADR-0051), runtime (the agents), bridge
+# (Matrix). Logs: ~/Library/Logs/holon/<name>.log. Nothing secret goes in a plist: tokens stay in
+# ~/.holon-agents, ~/.holon-matrix and ~/.holon-platform, where the programs read them.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 AGENTS="$HOME/Library/LaunchAgents"
 LOGS="$HOME/Library/Logs/holon"
 UID_="$(id -u)"
-SERVICES=(fm qwen qwen-large embed runtime bridge)
+SERVICES=(fm qwen qwen-large embed nats platform runtime bridge)
+PLATFORM="$HOME/.holon-platform"
 # Big local models: installed but not started. The runtime starts one when a model chain needs it
 # (DeepSeek unavailable or not good enough; or, for embed, a recall or routing call) and stops it
 # after 10 idle minutes.
@@ -28,7 +30,9 @@ spec() {
     qwen) echo "$HOME"; echo "$HOME/.local/bin/mlx_lm.server" --model mlx-community/Qwen3-4B-Instruct-2507-4bit --host 127.0.0.1 --port 18101 ;;
     qwen-large) echo "$HOME"; echo "$HOME/.local/bin/mlx_lm.server" --model mlx-community/Qwen3.8-27B-4bit --host 127.0.0.1 --port 18103 --max-tokens 4096 --chat-template-args "$NO_THINKING" ;;
     embed) echo "$REPO/agent-runtime/embed"; echo "$HOME/.local/bin/uv" run --with "sentence-transformers[image]" --with torch server.py --port 18102 ;;
-    runtime) echo "$REPO/agent-runtime"; echo "$REPO/agent-runtime/target/release/agent-runtime" --state-dir "$HOME/.holon-agents" --listen 127.0.0.1:18017 --local-url http://127.0.0.1:18099 --stt-bin "$HOME/.holon-agents/holon-stt" --embed-url http://127.0.0.1:18102 --embed-service io.holon.embed ;;
+    nats) echo "$PLATFORM"; echo /opt/homebrew/bin/nats-server -js -sd "$PLATFORM/nats" -a 127.0.0.1 -p 4222 ;;
+    platform) echo "$REPO"; echo "$REPO/host/target/release/comp-host" --component "$REPO/components/target/platform-domain.composed.wasm" --addr 127.0.0.1:3936 --kv nats --nats-url nats://127.0.0.1:4222 --tenant platform --app control-plane --config-file "$PLATFORM/platform.conf" ;;
+    runtime) echo "$REPO/agent-runtime"; echo "$REPO/agent-runtime/target/release/agent-runtime" --state-dir "$HOME/.holon-agents" --listen 127.0.0.1:18017 --local-url http://127.0.0.1:18099 --stt-bin "$HOME/.holon-agents/holon-stt" --embed-url http://127.0.0.1:18102 --embed-service io.holon.embed --platform-file "$HOME/.holon-agents/platform.json" ;;
     bridge) echo "$REPO/agent-matrix"; echo "$REPO/agent-matrix/target/release/agent-matrix" run --config "$HOME/.holon-matrix/bridge.json" ;;
   esac
 }
@@ -61,9 +65,36 @@ plist() {
   echo "</dict></plist>"
 }
 
+# The platform's secrets, made once: a new master key could not read what the old one sealed.
+platform_conf() {
+  mkdir -p "$PLATFORM/nats"
+  [ -f "$PLATFORM/platform.conf" ] && return
+  ( umask 077; printf 'applier-secret = %s\nmaster-key = %s\ningress-suffix = apps.local\n' \
+      "$(openssl rand -hex 24)" "$(openssl rand -base64 32)" > "$PLATFORM/platform.conf" )
+}
+
+# The runtime's account on the platform, made once, after the platform answers.
+platform_account() {
+  local f="$HOME/.holon-agents/platform.json" pw applier
+  [ -f "$f" ] && return
+  for _ in $(seq 1 60); do curl -s -o /dev/null http://127.0.0.1:3936/ && break; sleep 1; done
+  pw="$(openssl rand -hex 16)"
+  applier="$(sed -n 's/^applier-secret = //p' "$PLATFORM/platform.conf")"
+  curl -fs -X POST -H 'content-type: application/json' http://127.0.0.1:3936/api/register \
+    -d "{\"email\":\"agents@holon.local\",\"password\":\"$pw\"}" >/dev/null
+  mkdir -p "$HOME/.holon-agents"
+  ( umask 077; printf '{"url":"http://127.0.0.1:3936","email":"agents@holon.local","password":"%s","applier":"%s"}\n' \
+      "$pw" "$applier" > "$f" )
+  echo "made the runtime's platform account ($f)"
+}
+
 case "${1:-}" in
   install)
     mkdir -p "$AGENTS" "$LOGS"
+    platform_conf
+    for f in "$REPO/host/target/release/comp-host" "$REPO/components/target/platform-domain.composed.wasm"; do
+      [ -f "$f" ] || { echo "missing $f — cargo xtask host platform builds both"; exit 1; }
+    done
     for b in "$REPO/agent-runtime/target/release/agent-runtime" "$REPO/agent-matrix/target/release/agent-matrix"; do
       [ -x "$b" ] || { echo "missing $b — cargo build --release there first"; exit 1; }
     done
@@ -80,6 +111,7 @@ case "${1:-}" in
       plutil -lint "$f" >/dev/null
       launchctl bootstrap "gui/$UID_" "$f"
       echo "started io.holon.$s"
+      if [ "$s" = platform ]; then platform_account; fi
     done ;;
   uninstall)
     for s in "${SERVICES[@]}"; do

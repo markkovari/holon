@@ -84,6 +84,10 @@ struct Cli {
     /// provider names it.
     #[arg(long, env = "HOLON_SESSION_MODEL", default_value = "")]
     session_model: String,
+    /// A JSON file `{"url", "email", "password", "applier"}`: the platform whose vault keeps
+    /// agents' API keys, and an account on it. Without it there are no API keys to manage.
+    #[arg(long, env = "HOLON_PLATFORM_FILE")]
+    platform_file: Option<PathBuf>,
 }
 
 /// `agent-runtime google-auth [--google-dir DIR]`: sign in to Google once, in a browser.
@@ -142,6 +146,9 @@ fn main() -> Result<(), String> {
         };
         agentd.model = cli.session_model;
         cfg.agentd = Some(agentd);
+    }
+    if let Some(f) = cli.platform_file {
+        cfg.platform = Some(agent_runtime::keys::Platform::load(&f)?);
     }
     let rt = Runtime::new(cfg)?;
     let addr = server::serve(rt.clone(), &cli.listen, token)?;

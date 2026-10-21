@@ -37,6 +37,8 @@ pub struct Config {
     pub embed_service: String,
     pub google: crate::google::GoogleConfig,
     pub agentd: Option<AgentdConfig>,
+    /// Where API keys are kept; without it the runtime has none to manage.
+    pub platform: Option<crate::keys::Platform>,
 }
 
 impl Config {
@@ -53,6 +55,7 @@ impl Config {
             embed_service: String::new(),
             google: Default::default(),
             agentd: None,
+            platform: None,
         }
     }
 }
@@ -780,9 +783,62 @@ impl Runtime {
         fired
     }
 
+    fn platform(&self) -> Result<&crate::keys::Platform, String> {
+        self.cfg.platform.as_ref().ok_or_else(|| "This runtime has no vault for API keys.".into())
+    }
+
+    pub fn keys(&self) -> Result<Vec<crate::keys::KeyRef>, String> {
+        self.platform()?.list()
+    }
+
+    pub fn put_key(&self, name: &str, host: &str, key: &str, header: &str) -> Result<(), String> {
+        let p = self.platform()?;
+        p.put(name, &crate::keys::secret_value(host, key, header)?)?;
+        p.connect()
+    }
+
+    /// Also taken from every agent that held it: a key that is gone would fail each of their calls.
+    pub fn remove_key(&self, name: &str) -> Result<(), String> {
+        let p = self.platform()?;
+        p.remove(name)?;
+        for mut spec in self.store.list() {
+            if spec.api_keys.iter().any(|k| k == name) {
+                spec.api_keys.retain(|k| k != name);
+                self.update_agent(spec)?;
+            }
+        }
+        p.connect()
+    }
+
+    /// Switching a key on also grants `http_get`, the one tool that sends it.
+    pub fn grant_key(&self, key: &str, agent: &str, on: bool) -> Result<(), String> {
+        let mut spec =
+            self.store.get(agent).ok_or_else(|| format!("There is no agent named {agent}."))?;
+        spec.api_keys.retain(|k| k != key);
+        if on {
+            spec.api_keys.push(key.to_string());
+            if !spec.has_capability("http_get") {
+                spec.capabilities.push(crate::spec::Capability::named("http_get"));
+            }
+        }
+        self.update_agent(spec)
+    }
+
     pub fn start_scheduler(self: &Arc<Self>) {
         self.recover();
         self.start_session_watcher();
+        if let Some(p) = self.cfg.platform.clone() {
+            let rt = self.clone();
+            // The fetch token lives 30 days; minting daily keeps a long-running daemon's keys readable.
+            std::thread::spawn(move || {
+                while !rt.stop.load(Ordering::Relaxed) {
+                    if let Err(e) = p.connect() {
+                        eprintln!("API keys: {e}");
+                    }
+                    std::thread::sleep(Duration::from_secs(86_400));
+                }
+            });
+        }
         let rt = self.clone();
         std::thread::spawn(move || {
             let mut swept = 0;
