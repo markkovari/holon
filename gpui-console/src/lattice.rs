@@ -140,16 +140,10 @@ pub fn boot() -> Boot {
             None
         }
     };
-    let runtime = Runtime::new(cfg).expect("opening the agent runtime");
     let port = std::env::var("HOLON_AGENT_RUNTIME_PORT")
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(DEFAULT_RUNTIME_PORT);
-    let token = server::admin_token_in(&runtime_dir).expect("admin token");
-    server::serve(runtime.clone(), &format!("127.0.0.1:{port}"), token).unwrap_or_else(|e| {
-        panic!("{e} — is another console or `agent-runtime` already running on port {port}?")
-    });
-    runtime.start_scheduler();
 
     // The gateway component dials the runtime from inside the tenant's
     // sandbox, and egress is default-deny, so the OPERATOR (this process, as
@@ -162,7 +156,22 @@ pub fn boot() -> Boot {
     let fleet = Fleet::start_with_platform_in_dir("console", 1, dir, &host_args);
     let base_url = fleet.platform_url();
     let tenant = "console".to_string();
-    let token = register_and_login(&base_url, &format!("{tenant}@agents.test"), "password123");
+    let (email, password) = (format!("{tenant}@agents.test"), "password123".to_string());
+    let token = register_and_login(&base_url, &email, &password);
+    // After the lattice: the runtime keeps agents' API keys in this platform's vault.
+    cfg.platform = Some(agent_runtime::keys::Platform {
+        url: base_url.clone(),
+        email,
+        password,
+        applier: fleet.applier_secret().to_string(),
+        vault_file: None,
+    });
+    let runtime = Runtime::new(cfg).expect("opening the agent runtime");
+    let admin = server::admin_token_in(&runtime_dir).expect("admin token");
+    server::serve(runtime.clone(), &format!("127.0.0.1:{port}"), admin).unwrap_or_else(|e| {
+        panic!("{e} — is another console or `agent-runtime` already running on port {port}?")
+    });
+    runtime.start_scheduler();
 
     Boot { fleet, base_url, tenant, token, fm, agentd, runtime, runtime_port: port, runtime_dir }
 }
@@ -237,7 +246,7 @@ impl Lattice {
         let agents = specs.iter().map(|s| row_from(s, &boot.runtime)).collect();
         let runs: Vec<RunRecord> =
             specs.iter().flat_map(|s| boot.runtime.store().runs(&s.name, 50)).collect();
-        let this = Self {
+        Self {
             _fleet: Some(boot.fleet),
             _fm: boot.fm,
             _agentd: boot.agentd,
@@ -261,12 +270,7 @@ impl Lattice {
             detail: Vec::new(),
             status_line: "booted".to_string(),
             spawning: false,
-        };
-        // Each launch, so the token in the vault file never runs out while the console is used.
-        if let Err(e) = this.connect_vault() {
-            eprintln!("API keys are off: {e}");
         }
-        this
     }
 
     fn host_for(&self, name: &str) -> String {
@@ -371,37 +375,24 @@ impl Lattice {
 
     // shortcut: these call the local platform on the UI thread (10s timeout); move to the background if it is ever remote.
     pub fn keys(&self) -> Result<Vec<agent_board::keys::KeyRow>, String> {
-        crate::vault::list(&self.base_url, &self.token)
-    }
-
-    fn connect_vault(&self) -> Result<(), String> {
-        let applier = self._fleet.as_ref().ok_or("The lattice is gone.")?.applier_secret();
-        crate::vault::connect(&self.base_url, &self.token, &self.tenant, applier)
+        Ok(self
+            .rt
+            .keys()?
+            .into_iter()
+            .map(|k| agent_board::keys::KeyRow { name: k.name, reference: k.reference })
+            .collect())
     }
 
     pub fn put_key(&mut self, k: &agent_board::keys::NewKey) -> Result<(), String> {
-        if !agent_runtime::keys::safe(&k.name) {
-            return Err("A key's name is letters, digits, - and _ only, e.g. github.".into());
-        }
-        let value = agent_runtime::keys::secret_value(&k.host, &k.key, &k.header)?;
-        crate::vault::put(&self.base_url, &self.token, &k.name, &value)?;
-        self.connect_vault()
+        self.rt.put_key(&k.name, &k.host, &k.key, &k.header)
     }
 
-    /// Also taken from every agent that held it: a key that is gone would fail each of their calls.
     pub fn remove_key(&mut self, name: &str, cx: &mut Context<Self>) -> Result<(), String> {
-        crate::vault::remove(&self.base_url, &self.token, name)?;
-        for mut spec in self.rt.store().list() {
-            if spec.api_keys.iter().any(|k| k == name) {
-                spec.api_keys.retain(|k| k != name);
-                self.rt.update_agent(spec)?;
-            }
-        }
+        self.rt.remove_key(name)?;
         self.refresh(cx);
-        self.connect_vault()
+        Ok(())
     }
 
-    /// Switching a key on also grants `http_get`, the one tool that sends it.
     pub fn grant(
         &mut self,
         key: &str,
@@ -409,19 +400,7 @@ impl Lattice {
         on: bool,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        let mut spec = self
-            .rt
-            .store()
-            .get(agent)
-            .ok_or_else(|| format!("There is no agent named {agent}."))?;
-        spec.api_keys.retain(|k| k != key);
-        if on {
-            spec.api_keys.push(key.to_string());
-            if !spec.has_capability("http_get") {
-                spec.capabilities.push(agent_runtime::Capability::named("http_get"));
-            }
-        }
-        self.rt.update_agent(spec)?;
+        self.rt.grant_key(key, agent, on)?;
         self.refresh(cx);
         Ok(())
     }

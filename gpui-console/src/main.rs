@@ -20,7 +20,6 @@
 mod agentd;
 mod fm;
 mod lattice;
-mod vault;
 
 use std::rc::Rc;
 
