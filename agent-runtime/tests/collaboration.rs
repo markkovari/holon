@@ -71,7 +71,6 @@ fn subscriber(name: &str, topic: &str, reply: &str) -> AgentSpec {
     s
 }
 
-
 #[test]
 fn an_event_sent_while_an_agent_is_paused_is_delivered_when_it_resumes() {
     let rt = runtime("paused");
@@ -141,7 +140,6 @@ fn an_event_filter_only_wakes_the_agent_for_matching_payloads() {
     std::thread::sleep(Duration::from_millis(200));
     assert_eq!(runs(&rt, "picky").len(), 1);
 }
-
 
 #[test]
 fn a_store_watcher_wakes_only_on_a_real_change_under_its_prefix() {
@@ -239,7 +237,6 @@ fn store_access_and_event_topics_are_granted_by_the_spec_not_assumed() {
     assert!(rt.kv().get("secrets", "k").unwrap().is_none());
     assert_eq!(rt.kv().get("private-nosy", "mine").unwrap().unwrap().value, "ok");
 }
-
 
 #[test]
 fn a_chain_across_agents_is_one_trace_with_parent_links_through_the_tool_call_that_woke_each() {
@@ -389,7 +386,6 @@ fn a_timer_set_by_the_agent_wakes_it_once_later_and_is_persisted_meanwhile() {
     );
 }
 
-
 #[test]
 fn a_cycle_between_agents_is_cut_and_the_refusal_is_logged() {
     let rt = runtime("cycle");
@@ -475,7 +471,6 @@ fn a_chain_longer_than_the_hop_limit_is_refused() {
     assert_eq!(d.trace_id, "0af7651916cd43dd8448eb211c80319c");
 }
 
-
 #[test]
 fn finished_runs_are_exported_to_an_otlp_collector_as_json() {
     let collector = tiny_http::Server::http("127.0.0.1:0").unwrap();
@@ -514,7 +509,6 @@ fn finished_runs_are_exported_to_an_otlp_collector_as_json() {
     assert!(names.iter().any(|n| n.starts_with("chat ")) && names.contains(&"execute_tool now"));
     assert!(spans.iter().all(|s| s["traceId"] == rec.trace_id.as_str()));
 }
-
 
 use agent_runtime::projects::Project;
 
@@ -888,6 +882,27 @@ fn agent_save_with_a_project_joins_it_and_says_so() {
         cox.triggers.as_slice(),
         [Trigger::Schedule { cron, notify: true, project: Some(p), .. }] if cron == "@daily" && p == "rowing"
     ));
+}
+
+#[test]
+fn an_agent_can_only_hand_on_api_keys_it_holds() {
+    let rt = runtime("save-keys");
+    let theirs =
+        r#"{"tool":"agent_save","args":{"name":"thief","description":"d","api_keys":["bank"]}}"#;
+    let mine =
+        r#"{"tool":"agent_save","args":{"name":"helper","description":"d","api_keys":["gh"]}}"#;
+    let mut holon = agent("holon", &[theirs, "ok", mine, "ok"]);
+    holon.capabilities.push(Capability::named("agent_save"));
+    holon.auto_approve = vec!["agent_save".into()];
+    holon.api_keys = vec!["gh".into()];
+    rt.create_agent(holon).unwrap();
+    let ask = || rt.run_agent("holon", "http", "go", &Cause::default(), "", true).unwrap();
+
+    let r = ask();
+    assert!(r.steps.iter().any(|s| matches!(s, Step::Tool { error: true, result, .. } if result.contains("you do not hold it"))));
+    assert!(rt.store().get("thief").is_none());
+    ask();
+    assert_eq!(rt.store().get("helper").unwrap().api_keys, ["gh"]);
 }
 
 #[test]

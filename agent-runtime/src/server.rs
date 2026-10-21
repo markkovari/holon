@@ -9,7 +9,7 @@
 //!   approvals). Needs `Authorization: Bearer <admin token>`, which only the
 //!   operator (the console, or whoever started the daemon) holds.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -472,9 +472,55 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
                 _ => text(req, 404, "no such pending approval"),
             }
         }
+        // What happens, as it happens: one JSON event per line, for as long as the caller stays.
+        // Written to the socket, not through a Response: tiny_http holds a chunked body back in 8 KB blocks.
+        (Method::Get, ["stream"]) => {
+            let rx = rt.subscribe();
+            let mut w = req.into_writer();
+            let head = "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
+            if w.write_all(head.as_bytes()).and_then(|_| w.flush()).is_err() {
+                return;
+            }
+            loop {
+                // A blank line when quiet, so a client that left is noticed and this ends.
+                let mut line = match rx.recv_timeout(std::time::Duration::from_secs(15)) {
+                    Ok(ev) => serde_json::to_vec(&ev).unwrap_or_default(),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Vec::new(),
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                };
+                line.push(b'\n');
+                if w.write_all(&line).and_then(|_| w.flush()).is_err() {
+                    return;
+                }
+            }
+        }
+        (Method::Get, ["keys"]) => match rt.keys() {
+            Ok(k) => json_reply(req, 200, json!(k)),
+            Err(e) => text(req, 503, e),
+        },
+        // `{"host", "key", "header"?}`; the reply never carries the key back.
+        (Method::Put, ["keys", name]) => {
+            let v: Value = serde_json::from_str(&body).unwrap_or_default();
+            let s = |k: &str| v[k].as_str().unwrap_or_default().to_string();
+            match rt.put_key(name, &s("host"), &s("key"), &s("header")) {
+                Ok(()) => text(req, 200, "ok"),
+                Err(e) => text(req, 422, e),
+            }
+        }
+        (Method::Delete, ["keys", name]) => match rt.remove_key(name) {
+            Ok(()) => text(req, 200, "deleted"),
+            Err(e) => text(req, 422, e),
+        },
+        (m @ (Method::Put | Method::Delete), ["keys", key, "agents", agent]) => {
+            match rt.grant_key(key, agent, *m == Method::Put) {
+                Ok(()) => text(req, 200, "ok"),
+                Err(e) => text(req, 422, e),
+            }
+        }
         // The coding sessions agents have started, newest first (docs/adr/0119).
         (Method::Get, ["sessions"]) => {
-            let v: Vec<Value> = rt.sessions().iter().map(crate::session::Describe::to_json).collect();
+            let v: Vec<Value> =
+                rt.sessions().iter().map(crate::session::Describe::to_json).collect();
             json_reply(req, 200, json!(v))
         }
         _ => text(req, 404, "not found"),
@@ -548,6 +594,23 @@ mod tests {
             .is_success());
         assert_eq!(c.get(format!("{base}/agents/echo/run?q=x")).send().unwrap().status(), 423);
         assert_eq!(c.get(format!("{base}/agents/echo/ping")).send().unwrap().status(), 423);
+    }
+
+    #[test]
+    fn the_stream_says_what_happens_as_it_happens_and_only_to_the_operator() {
+        use std::io::BufRead;
+        let (rt, base) = start("stream");
+        rt.create_agent(mock("echo", &["pong"])).unwrap();
+        let c = reqwest::blocking::Client::new();
+        assert_eq!(c.get(format!("{base}/stream")).send().unwrap().status(), 401);
+        let r = c.get(format!("{base}/stream")).bearer_auth("tok").send().unwrap();
+        let mut lines = std::io::BufReader::new(r).lines();
+        c.get(format!("{base}/agents/echo/run?q=ping")).send().unwrap();
+        let first: agent_wire::Event =
+            serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap();
+        assert!(
+            matches!(first, agent_wire::Event::RunStarted { ref agent, .. } if agent == "echo")
+        );
     }
 
     #[test]

@@ -818,7 +818,11 @@ fn entry_text(key: &str, e: &Entry) -> String {
     format!("{key} (v{}, by {}): {}", e.version, e.by, e.value)
 }
 
-fn http_get(spec: &AgentSpec, url: &str) -> Result<String, String> {
+fn http_get(
+    spec: &AgentSpec,
+    url: &str,
+    vault: Option<&crate::keys::Vault>,
+) -> Result<String, String> {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))
@@ -831,7 +835,18 @@ fn http_get(spec: &AgentSpec, url: &str) -> Result<String, String> {
         .rsplit_once(':')
         .filter(|(_, p)| p.chars().all(|c| c.is_ascii_digit()))
         .map_or(authority, |(h, _)| h);
-    if !spec.allow_hosts.iter().any(|a| a == authority || a == host) {
+    if !spec.api_keys.is_empty() && vault.is_none() {
+        return Err(
+            "API keys need a vault: add a key in the console's Keys tab, or set HOLON_PLATFORM_URL, HOLON_SECRETS_ORG and HOLON_FETCH_TOKEN".into()
+        );
+    }
+    // shortcut: every key is fetched (and audited) on every call; cache per run if calls get chatty.
+    let keys = match vault {
+        Some(v) => spec.api_keys.iter().map(|n| v.load(n)).collect::<Result<Vec<_>, _>>()?,
+        None => Vec::new(),
+    };
+    let keys: Vec<_> = keys.into_iter().filter(|k| k.host == authority || k.host == host).collect();
+    if keys.is_empty() && !spec.allow_hosts.iter().any(|a| a == authority || a == host) {
         return Err(format!("{authority} is not in this agent's allowed hosts"));
     }
     let client = reqwest::blocking::Client::builder()
@@ -840,7 +855,11 @@ fn http_get(spec: &AgentSpec, url: &str) -> Result<String, String> {
         .user_agent("holon-agent/0.1")
         .build()
         .map_err(|e| e.to_string())?;
-    let r = client.get(url).send().map_err(|e| e.to_string())?;
+    let mut req = client.get(url);
+    for k in &keys {
+        req = req.header(k.header.as_str(), k.header_value());
+    }
+    let r = req.send().map_err(|e| e.to_string())?;
     let status = r.status();
     let is_html = r
         .headers()
@@ -849,7 +868,10 @@ fn http_get(spec: &AgentSpec, url: &str) -> Result<String, String> {
         .is_some_and(|v| v.contains("html"));
     let body = r.text().map_err(|e| e.to_string())?;
     // Markup is noise to a model and eats its context; give it the text.
-    let body = if is_html { crate::html::html_to_text(&body) } else { body };
+    let mut body = if is_html { crate::html::html_to_text(&body) } else { body };
+    for k in &keys {
+        body = body.replace(&k.key, "[api key]");
+    }
     Ok(format!("HTTP {status}\n{}", clip(&body, 8_000)))
 }
 
@@ -971,8 +993,13 @@ fn exec(
             Some(TaskState::Done { ok: false, answer }) => format!("failed: {answer}"),
         }),
         "session_start" => {
-            let id =
-                host.session_start(spec, run_id, cause, &arg(args, "task"), &arg(args, "workspace"))?;
+            let id = host.session_start(
+                spec,
+                run_id,
+                cause,
+                &arg(args, "task"),
+                &arg(args, "workspace"),
+            )?;
             Ok(format!("session {id} started; collect it with session_result"))
         }
         "session_result" => {
@@ -1012,6 +1039,12 @@ fn exec(
             let existing = store.get(&name);
             let new =
                 crate::admin::build_spec_with(existing.as_ref(), args, &|n| store.model_alias(n))?;
+            let had = existing.as_ref().map_or(&[][..], |e| &e.api_keys[..]);
+            if let Some(k) =
+                new.api_keys.iter().find(|k| !had.contains(k) && !spec.api_keys.contains(k))
+            {
+                return Err(format!("you may not give the API key {k}: you do not hold it"));
+            }
             host.save_agent(new)?;
             let joined = if project.is_empty() {
                 String::new()
@@ -1132,7 +1165,7 @@ fn exec(
             std::fs::write(&p, audio).map_err(|e| e.to_string())?;
             Ok(format!("wrote {rel} ({:.1}s of speech)", ms as f64 / 1000.0))
         }
-        "http_get" => http_get(spec, &arg(args, "url")),
+        "http_get" => http_get(spec, &arg(args, "url"), crate::keys::Vault::configured().as_ref()),
         "list_dir" => {
             let root = store.workspace(&spec.name)?;
             let rel = arg(args, "path");
@@ -1881,13 +1914,86 @@ mod tests {
     #[test]
     fn http_get_enforces_the_allow_list() {
         let mut s = spec();
-        assert!(http_get(&s, "http://example.com/")
+        assert!(http_get(&s, "http://example.com/", None)
             .unwrap_err()
             .contains("not in this agent's allowed hosts"));
-        assert!(http_get(&s, "ftp://example.com").is_err());
+        assert!(http_get(&s, "ftp://example.com", None).is_err());
         s.allow_hosts.push("example.com".into());
-        assert!(http_get(&s, "http://user:pw@example.com/").unwrap_err().contains("credentials"));
-        assert!(http_get(&s, "http://example.com.evil.test/").is_err());
+        assert!(http_get(&s, "http://user:pw@example.com/", None)
+            .unwrap_err()
+            .contains("credentials"));
+        assert!(http_get(&s, "http://example.com.evil.test/", None).is_err());
+    }
+
+    #[test]
+    fn an_api_key_comes_from_the_vault_reaches_only_its_own_host_and_never_the_model() {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = server.server_addr().to_ip().unwrap().port();
+        let here = format!("127.0.0.1:{port}");
+        let secrets = std::collections::HashMap::from([
+            ("svc", format!(r#"{{"host":"{here}","key":"s3cret\n"}}"#)),
+            (
+                "raw",
+                format!(r#"{{"host":"{here}","header":"X-Api-Key","scheme":"","key":"raw1"}}"#),
+            ),
+            ("other", r#"{"host":"api.example.com","key":"nope"}"#.to_string()),
+            ("bad", r#"{"host":"h","key":42}"#.to_string()),
+        ]);
+        std::thread::spawn(move || {
+            for req in server.incoming_requests() {
+                let headers: Vec<(String, String)> = req
+                    .headers()
+                    .iter()
+                    .map(|h| (h.field.to_string().to_lowercase(), h.value.to_string()))
+                    .collect();
+                let header = |n: &str| headers.iter().find(|(k, _)| k == n).map(|(_, v)| v.clone());
+                let (code, body) = if let Some(r) =
+                    req.url().strip_prefix("/api/internal/secret?ref=vault%3A%2F%2Fme%2F")
+                {
+                    match secrets.get(r) {
+                        _ if header("x-fetch-token").as_deref() != Some("tok")
+                            || header("x-fetch-nonce").is_none() =>
+                        {
+                            (401, String::new())
+                        }
+                        Some(v) => (200, v.clone()),
+                        None if r == "denied" => (403, String::new()),
+                        None => (404, String::new()),
+                    }
+                } else {
+                    let got: Vec<String> = ["authorization", "x-api-key"]
+                        .iter()
+                        .filter_map(|n| header(n).map(|v| format!("{n}={v}")))
+                        .collect();
+                    (200, got.join(","))
+                };
+                let _ = req.respond(tiny_http::Response::from_string(body).with_status_code(code));
+            }
+        });
+        let vault = crate::keys::Vault {
+            url: format!("http://{here}"),
+            org: "me".into(),
+            token: "tok".into(),
+        };
+        let get = |keys: &[&str], url: &str, v: &crate::keys::Vault| {
+            let mut s = spec();
+            s.api_keys = keys.iter().map(|k| k.to_string()).collect();
+            http_get(&s, url, Some(v))
+        };
+        let api = format!("http://{here}/x");
+        let got = get(&["svc", "raw", "other"], &api, &vault).unwrap();
+        assert!(got.contains("authorization=Bearer [api key]"), "{got}");
+        assert!(got.contains("x-api-key=[api key]") && !got.contains("nope"), "{got}");
+        assert!(!got.contains("s3cret") && !got.contains("raw1"));
+
+        assert_eq!(get(&["missing"], &api, &vault).unwrap_err(), "no API key called missing");
+        assert!(get(&["denied"], &api, &vault).unwrap_err().contains("does not grant"));
+        assert!(!get(&["bad"], &api, &vault).unwrap_err().contains("42"));
+        let stale = crate::keys::Vault { token: "old".into(), ..vault };
+        assert!(get(&["svc"], &api, &stale).unwrap_err().contains("expired"));
+        let mut s = spec();
+        s.api_keys = vec!["svc".into()];
+        assert!(http_get(&s, &api, None).unwrap_err().contains("HOLON_FETCH_TOKEN"));
     }
 
     #[test]
@@ -1904,7 +2010,7 @@ mod tests {
         });
         let mut s = spec();
         s.allow_hosts.push(format!("127.0.0.1:{port}"));
-        let got = http_get(&s, &format!("http://127.0.0.1:{port}/page")).unwrap();
+        let got = http_get(&s, &format!("http://127.0.0.1:{port}/page"), None).unwrap();
         assert_eq!(got, "HTTP 200 OK\nLog\n10/05 | 12,108m");
     }
 

@@ -36,6 +36,7 @@ icons![
     "git-fork",
     "globe",
     "hexagon",
+    "key-round",
     "loader-circle",
     "message-square",
     "mic",

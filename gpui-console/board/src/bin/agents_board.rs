@@ -24,6 +24,8 @@ struct Opts {
     auto: Option<Duration>,
     size: (f32, f32),
     matrix: Option<String>,
+    /// The runtime to show (its URL and admin token); without it, the scripted demo.
+    runtime: Option<(String, String)>,
 }
 
 fn tab_named(s: &str) -> Option<Tab> {
@@ -32,6 +34,7 @@ fn tab_named(s: &str) -> Option<Tab> {
         "agents" => Some(Tab::Agents),
         "map" => Some(Tab::Map),
         "sessions" => Some(Tab::Sessions),
+        "keys" => Some(Tab::Keys),
         _ => None,
     }
 }
@@ -46,7 +49,15 @@ fn run(
         #[cfg(target_family = "wasm")]
         cx.text_system().add_fonts(agent_board::web_fonts()).expect("the board's fonts");
         let tree = cx.new(|_| AgentTree::default());
-        let actions = demo::play(tree.clone(), o.auto, cx);
+        let actions: Rc<dyn Actions> = match &o.runtime {
+            #[cfg(not(target_family = "wasm"))]
+            Some((url, token)) => {
+                let r = agent_board::remote::Remote::new(url, token);
+                r.follow(tree.clone(), cx);
+                Rc::new(r)
+            }
+            _ => demo::play(tree.clone(), o.auto, cx),
+        };
         let bounds = Bounds::centered(None, size(px(o.size.0), px(o.size.1)), cx);
         let mode = if o.light { Mode::Light } else { Mode::Dark };
         let window = cx
@@ -57,10 +68,9 @@ fn run(
                 }),
                 move |_, cx| {
                     cx.new(|cx| {
-                        let board = Board::new(tree, actions as Rc<dyn Actions>, mode, cx)
-                            .with_element(
-                                o.matrix.as_deref().map(agent_board::agents::Element::on),
-                            );
+                        let board = Board::new(tree, actions, mode, cx).with_element(
+                            o.matrix.as_deref().map(agent_board::agents::Element::on),
+                        );
                         if cfg!(target_family = "wasm") {
                             board.with_inset(18.0)
                         } else {
@@ -168,7 +178,7 @@ mod native {
         form: bool,
         #[arg(long, value_name = "GOAL")]
         goal: Option<String>,
-        #[arg(long, value_parser = ["sessions", "agents", "explore", "map"])]
+        #[arg(long, value_parser = ["sessions", "agents", "explore", "map", "keys"])]
         tab: Option<String>,
         #[arg(long, value_name = "KEY", requires = "tab")]
         select: Option<String>,
@@ -178,6 +188,16 @@ mod native {
         gif: Option<String>,
         #[arg(long, value_parser = parse_size, default_value = "1320x900")]
         size: (f32, f32),
+        /// A running agent-runtime to show and drive, e.g. http://127.0.0.1:18017.
+        #[arg(long, env = "HOLON_RUNTIME_URL")]
+        runtime: Option<String>,
+        /// Its admin token, read from this file.
+        #[arg(
+            long,
+            env = "HOLON_RUNTIME_TOKEN_FILE",
+            default_value = "~/.holon-agents/admin-token"
+        )]
+        runtime_token_file: String,
     }
 
     fn parse_film(s: &str) -> Result<(f32, usize, u64), String> {
@@ -215,6 +235,13 @@ mod native {
                 .or((a.shoot.is_some() || a.gif.is_some()).then(|| Duration::from_secs(6))),
             size: a.size,
             matrix: a.matrix.clone(),
+            runtime: a.runtime.clone().map(|url| {
+                let home = std::env::var("HOME").unwrap_or_default();
+                let f = a.runtime_token_file.replacen('~', &home, 1);
+                let token = std::fs::read_to_string(&f)
+                    .unwrap_or_else(|e| panic!("the runtime's admin token, {f}: {e}"));
+                (url, token.trim().to_string())
+            }),
         };
         let photographing = a.shoot.is_some() || a.gif.is_some();
         run(

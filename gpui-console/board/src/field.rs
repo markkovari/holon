@@ -20,6 +20,7 @@ pub struct TextField {
     focus: FocusHandle,
     theme: Theme,
     compact: bool,
+    masked: bool,
 }
 
 impl EventEmitter<FieldEvent> for TextField {}
@@ -60,6 +61,7 @@ impl TextField {
             focus: cx.focus_handle(),
             theme,
             compact: false,
+            masked: false,
         }
     }
 
@@ -69,6 +71,15 @@ impl TextField {
         cx: &mut Context<Self>,
     ) -> Self {
         Self { compact: true, ..Self::new(placeholder, theme, cx) }
+    }
+
+    /// For a key: what is typed or pasted shows as dots, so it never lands in a screenshot.
+    pub fn masked(
+        placeholder: impl Into<SharedString>,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self { masked: true, ..Self::compact(placeholder, theme, cx) }
     }
 
     pub fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
@@ -129,7 +140,13 @@ impl Render for TextField {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let empty = self.text.is_empty();
-        let shown = if empty { self.placeholder.to_string() } else { self.text.clone() };
+        let shown = if empty {
+            self.placeholder.to_string()
+        } else if self.masked {
+            "•".repeat(self.text.chars().count().min(32))
+        } else {
+            self.text.clone()
+        };
         let focused = self.focus.is_focused(_window);
         let caret = (!empty || focused).then(|| {
             div()
