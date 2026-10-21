@@ -217,6 +217,9 @@ pub struct AgentSpec {
     /// Empty = none; there is no wildcard.
     #[serde(default)]
     pub allow_hosts: Vec<String>,
+    /// Names in `keys::dir()`; `http_get` sends each only to the host its file names.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub api_keys: Vec<String>,
     #[serde(default)]
     pub triggers: Vec<Trigger>,
     #[serde(default = "default_model")]
@@ -271,6 +274,7 @@ impl AgentSpec {
             ],
             auto_approve: Vec::new(),
             allow_hosts: Vec::new(),
+            api_keys: Vec::new(),
             triggers: Vec::new(),
             model: ModelSpec::Local,
             max_steps: default_steps(),
