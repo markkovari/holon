@@ -7,7 +7,6 @@ publish = false
 description = "What a node and the reconciler need from the fabric between them, as three traits — and one implementation of them over NATS."
 
 # Standalone workspace root, like host/, reconciler/ and cli/.
-[workspace]
 
 [dependencies]
 anyhow = "1"

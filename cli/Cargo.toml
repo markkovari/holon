@@ -7,7 +7,6 @@ publish = false
 description = "The Holon CLI: push components, deploy apps onto the lattice, and render the files a bare-metal node needs."
 
 # Native: deliberately outside the wasm32 components/ workspace.
-[workspace]
 
 [[bin]]
 name = "holon"

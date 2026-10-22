@@ -36,13 +36,13 @@ trap cleanup EXIT
 # same shape as the wasmCloud side (control plane on the Mac, host on the Pi).
 mkdir -p "$SP/nats"
 nats-server -js -sd "$SP/nats" -a 0.0.0.0 -p 4232 >"$SP/nats.log" 2>&1 & PIDS+=($!)
-./reconciler/target/release/comp-stub --spec fixtures/one-replica.yaml \
+./target/release/comp-stub --spec fixtures/one-replica.yaml \
   --artifact gate=components/target/gate_domain.composed.wasm --port 8099 >"$SP/plat.log" 2>&1 & PIDS+=($!)
 sleep 2
 ssh -f -n -i "$KEY" -o IdentitiesOnly=yes "markkovari@$PI" \
   "bash -lc 'mkdir -p ~/comp-lattice/v1; exec ~/comp-lattice/comp-host --lattice-nats nats://$MAC:4232 --node pi-v --lattice versus --addr 0.0.0.0:3861 --advertise-addr $PI:3861 --state-dir ~/comp-lattice/v1 > ~/comp-lattice/v1.log 2>&1'"
 sleep 3
-./reconciler/target/release/comp-reconciler --platform-url http://127.0.0.1:8099 \
+./target/release/comp-reconciler --platform-url http://127.0.0.1:8099 \
   --secret test-secret --nats-url nats://127.0.0.1:4232 --lattice versus --interval 3 \
   >"$SP/rec.log" 2>&1 & PIDS+=($!)
 echo "  waiting for comp to place onto the Pi..."
@@ -60,7 +60,7 @@ run() { # label url host
   oha -z "$DURATION" -c "$CONNS" --no-tui --output-format json -m POST -d "$BODY" \
     -H 'content-type: application/json' -H "Host: $3" \
     "$2/api/ratelimit" >"$SP/oha-$1.json" 2>"$SP/oha-$1.err"
-  ./reconciler/target/release/comp-bench summarise "$SP/oha-$1.json" "$1"
+  ./target/release/comp-bench summarise "$SP/oha-$1.json" "$1"
 }
 echo
 echo "=== ${DURATION} x ${CONNS} connections, both runtimes on the Pi, load from this Mac ==="

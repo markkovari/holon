@@ -29,5 +29,5 @@ extra_args = [
     "--callback-secret photoquest-local-dev-callback-secret",
     "--cors-origin http://127.0.0.1:3941 --cors-origin http://localhost:3941",
     "--callback-allow 127.0.0.1:3941",
-    "--apple-helper reconciler/target/comp-media-apple",
+    "--apple-helper target/comp-media-apple",
 ]

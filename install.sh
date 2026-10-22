@@ -58,14 +58,14 @@ mkdir -p "$BIN_DIR"
 
 # --- the source build, for when there is no binary to download ---------------
 #
-# Five top-level cargo workspaces (cli, components, host, lattice, reconciler)
-# and no root manifest, so `cargo build --bin comp-host` from the root finds
-# nothing.
-workspace_of() {
+# One root workspace; `-p` keeps each build to its own package's features
+# (the whole workspace's would bring in OpenSSL).
+package_of() {
   case "$1" in
-    comp-host) echo host ;;
-    holon)     echo cli ;;
-    *)         echo reconciler ;;
+    comp-checks) echo comp-reconciler ;;
+    comp-plug) echo comp-fleet ;;
+    comp-goalrun|comp-goald) echo comp-goal ;;
+    *) echo "$1" ;;
   esac
 }
 
@@ -92,12 +92,11 @@ from_source() {
   fi
   echo ">> building $BINS (this needs Rust, and takes a few minutes)"
   for bin in $BINS; do
-    ws="$(workspace_of "$bin")"
-    ( cd "$src/$ws" && cargo build --release --quiet --bin "$bin" ) || {
-      echo "install.sh: building $bin (in $ws/) failed" >&2
+    ( cd "$src" && cargo build --release --quiet -p "$(package_of "$bin")" --bin "$bin" ) || {
+      echo "install.sh: building $bin failed" >&2
       exit 1
     }
-    cp "$src/$ws/target/release/$bin" "$BIN_DIR/$bin"
+    cp "$src/target/release/$bin" "$BIN_DIR/$bin"
   done
 }
 

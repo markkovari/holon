@@ -177,7 +177,7 @@ export default async function globalSetup() {
 
   // --- one run, written by the driver's own code path ------------------------
   execFileSync(
-    bin("reconciler/target/release/comp-trace-seed"),
+    bin("target/release/comp-trace-seed"),
     ["--surreal-url", `http://127.0.0.1:${SURREAL_PORT}`],
     { stdio: "inherit" },
   );
@@ -186,13 +186,13 @@ export default async function globalSetup() {
   // `comp-plug` derives the composition from the component's own imports, so the
   // suite always runs against what the build actually produces rather than a
   // path someone remembered to update.
-  const composed = execFileSync(bin("reconciler/target/release/comp-plug"), ["console-domain"], {
+  const composed = execFileSync(bin("target/release/comp-plug"), ["console-domain"], {
     cwd: repo,
     encoding: "utf8",
   }).trim();
 
   const host = spawn(
-    bin("host/target/release/comp-host"),
+    bin("target/release/comp-host"),
     [
       "--app", "console",
       "--config", "default-tenant=console",

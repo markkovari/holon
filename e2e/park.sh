@@ -50,7 +50,7 @@ say "building park-store + park-gateway (wasm32-wasip2)"
 say "building comp-host"
 cargo build --release --manifest-path host/Cargo.toml --bin comp-host
 say "building the e2e test (and comp-park with it)"
-cargo test --release --manifest-path reconciler/Cargo.toml --test e2e_park --no-run
+cargo test --release -p comp-park --test e2e_park --no-run
 
 # ---- private JetStream ----------------------------------------------------------
 
@@ -65,12 +65,12 @@ export PARK_E2E_NATS_URL="nats://127.0.0.1:$NATS_PORT"
 # ---- run ------------------------------------------------------------------------
 
 # COMP_HOST set: the harness then treats a missing host as a failure, not a skip.
-export COMP_HOST="$ROOT/host/target/release/comp-host"
+export COMP_HOST="$ROOT/target/release/comp-host"
 status=0
 for run in $(seq "$RUNS"); do
   say "run $run/$RUNS: reconciler/daemons/park/tests/e2e_park.rs (NATS $PARK_E2E_NATS_URL)"
   start=$(date +%s)
-  if ! cargo test --release --manifest-path reconciler/Cargo.toml --test e2e_park -- --nocapture "$@"; then
+  if ! cargo test --release -p comp-park --test e2e_park -- --nocapture "$@"; then
     status=1
     say "run $run failed"
     break

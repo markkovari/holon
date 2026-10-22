@@ -25,7 +25,7 @@ let hostProcess = null;
 
 try {
   hostProcess = spawn(
-    join(ROOT, "host/target/release/comp-host"),
+    join(ROOT, "target/release/comp-host"),
     [
       "--app", "local-ai",
       "--config-file", join(ROOT, "examples/defaults.conf"),

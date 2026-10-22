@@ -65,14 +65,14 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: |
             components -> target
-            reconciler -> target
+            . -> target
 
       - name: Build the components
         run: cargo xtask build --force
 
       - name: Build comp-plug and comp-oci
         working-directory: reconciler
-        run: cargo build --release --bin comp-plug --bin comp-oci
+        run: cargo build --release -p comp-fleet --bin comp-plug --bin comp-oci
 
       # One artifact per app in `apps/`, composed the same way `cargo xtask compose
       # <app>` composes it — derived from the root's imports, not from a written list.
@@ -92,7 +92,7 @@ jobs:
             artifact=$(sed -n 's/^artifact *= *"\(.*\)"/\1/p' "$spec" | head -1)
             [ -n "$artifact" ] || { echo "::warning::$app names no artifact"; continue; }
             root=$(basename "$artifact" .composed.wasm | tr '_' '-')
-            if ./reconciler/target/release/comp-plug "$root" > /tmp/out 2>/tmp/err; then
+            if ./target/release/comp-plug "$root" > /tmp/out 2>/tmp/err; then
               cp "$(cat /tmp/out)" "target/apps/$app.wasm"
               echo "composed $app (root $root)"
             else
@@ -113,7 +113,7 @@ jobs:
           set -euo pipefail
           reg="ghcr.io/$OWNER/holon-apps"
           echo "pushing to $reg"
-          ./reconciler/target/release/comp-oci push "$reg" target/apps --lock apps.lock
+          ./target/release/comp-oci push "$reg" target/apps --lock apps.lock
           cat apps.lock
 
       # The desired state, as data, on a branch of its own. Its history is the

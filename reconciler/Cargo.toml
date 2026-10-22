@@ -16,52 +16,7 @@ description = "Diffs desired manifests against observed lattice inventory and is
 # image, headless_chrome and the rest first. A daemon now lives in `daemons/<name>/`
 # with its one heavy crate, and what several of them share is a package of its own.
 #
-# `default-members` lists every package (tests/workspace.rs fails when one is missing),
-# so everything that says `cd reconciler && cargo build --bin comp-x`, `--test x` or
-# `clippy` — CI, the release and Docker builds, the e2e scripts, xtask — means what it
-# always did. One lockfile, and one `target/` here: the paths to
-# `reconciler/target/release/comp-*` that scripts, gates and docs spell are unchanged.
-[workspace]
-resolver = "2"
-members = ["daemons/*", "fleet", "fuel", "goal", "measure", "oci"]
-default-members = [".", "daemons/*", "fleet", "fuel", "goal", "measure", "oci"]
-
-[workspace.package]
-version = "0.1.0"
-edition = "2021"
-publish = false
-
-# What more than one package here needs, said once, so the versions cannot drift apart.
-[workspace.dependencies]
-axum = { version = "0.8", features = ["http2"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "process", "sync"] }
-futures = "0.3"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-anyhow = "1"
-clap = { version = "4", features = ["derive", "env"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
-image = "0.25"
-async-nats = "0.49"
-rusty-s3 = "0.10"
-base64 = "0.22"
-bytes = "1"
-hmac = "0.12"
-sha1 = "0.10"
-toml = "0.8"
-getrandom = "0.2"
-jiff = "0.2"
-hex = "0.4"
-comp-daemon-kit = { path = "daemons/kit" }
-comp-fleet = { path = "fleet" }
-comp-fuel = { path = "fuel" }
-comp-metadata = { path = "../comp-metadata" }
-comp-oci = { path = "oci" }
-holon-park = { path = "../crates/holon-park", features = ["native"] }
-comp-lattice = { path = "../lattice" }
-sha2 = "0.10"
-tempfile = "3"
-
+# The packages are members of the repository's root workspace: one lockfile and one `target/`, at the root.
 [lib]
 name = "comp_reconciler"
 path = "src/lib.rs"

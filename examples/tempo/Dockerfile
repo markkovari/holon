@@ -20,7 +20,7 @@ RUN cd host && cargo build --release --bin comp-host
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=build /src/host/target/release/comp-host /usr/local/bin/comp-host
+COPY --from=build /src/target/release/comp-host /usr/local/bin/comp-host
 COPY components/target/tempo_domain.composed.wasm /app/tempo.wasm
 COPY examples/tempo/dist /app/dist
 # The ONLY runtime input tempo needs is REDIS_URL (rediss://… for managed TLS).

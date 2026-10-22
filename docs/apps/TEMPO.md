@@ -133,9 +133,9 @@ mutable version tag:
 
 ```bash
 gh auth refresh -s write:packages     # once
-(cd reconciler && cargo build --release --bin comp-oci)   # once
+cargo build --release -p comp-fleet --bin comp-oci   # once
 mkdir -p target/apps && cp components/target/tempo_domain.composed.wasm target/apps/tempo.wasm
-OCI_USER=<you> OCI_PASSWORD="$(gh auth token)" ./reconciler/target/release/comp-oci push \
+OCI_USER=<you> OCI_PASSWORD="$(gh auth token)" ./target/release/comp-oci push \
   ghcr.io/<org>/holon-apps target/apps/tempo.wasm --lock apps.lock
 # prints `tempo sha256:…` and writes it to apps.lock; the only tag it adds is the
 # first twelve hex of the wasm's own sha256, which cannot change meaning

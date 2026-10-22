@@ -3,18 +3,10 @@
 # admitted 77 MB of budget-domain's target in 1d72c91.
 /components/target/
 /components/*/target/
-/xtask/target/
-# rendered units/routes/manifests — output, not source. One rule per lane rather
-# than a bare `/target/`, so a stray source file under it is still noticed.
-/target/selfhost/
-/target/fleet/
-/target/wadm/
-/target/capgraph.json
-# `comp-goalrun` writes a candidate's files here before the gate reads them
-# (reconciler/goal/src/bin/goalrun.rs). Source-shaped, and a `git add -A` picks it up.
-/target/goalrun/
-# `cargo xtask host`'s local sqlite state, one directory per app.
-/target/state/
+# The root workspace's cargo output, and what xtask, the renderers and the goal loop write beside it.
+/target/
+# Where each member built before the root workspace; a checkout may still hold one.
+/*/target/
 **/*.wasm
 
 # Generated bindings. Only Rust's are ignored, and the asymmetry is deliberate:

@@ -70,7 +70,7 @@ docker compose -f infra/compose.yaml --profile media up -d rustfs nats
 
 # 2. The Swift helper, where apps/photoquest.toml's --apple-helper looks for it.
 #    Optional: without it, evaluation runs on the CPU.
-swiftc -O -o reconciler/target/comp-media-apple tools/media-apple/main.swift
+swiftc -O -o target/comp-media-apple tools/media-apple/main.swift
 
 # 3. Compose if needed, start comp-media per [[daemon]], serve on :3941.
 cargo xtask host photoquest

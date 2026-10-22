@@ -7,18 +7,18 @@ PIDS=(); trap 'for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; sleep 1' E
 mkdir -p "$SP/nats" "$SP/plat" "$SP/node"
 
 nats-server -js -sd "$SP/nats" -a 127.0.0.1 -p 4232 >"$SP/nats.log" 2>&1 & PIDS+=($!)
-./host/target/release/comp-host --component components/target/platform_domain.composed.wasm \
+./target/release/comp-host --component components/target/platform_domain.composed.wasm \
   --addr 127.0.0.1:8080 --kv sqlite --sqlite-path "$SP/plat/kv.db" \
   --tenant platform --app control-plane \
   --config applier-secret=s3cret --config ingress-suffix=apps.local >"$SP/plat.log" 2>&1 & PIDS+=($!)
 sleep 3
-./reconciler/target/release/comp-reconciler --platform-url http://127.0.0.1:8080 --secret s3cret \
+./target/release/comp-reconciler --platform-url http://127.0.0.1:8080 --secret s3cret \
   --nats-url nats://127.0.0.1:4232 --lattice orgs --interval 3 >"$SP/rec.log" 2>&1 & PIDS+=($!)
-./host/target/release/comp-host --lattice-nats nats://127.0.0.1:4232 --node n1 --lattice orgs \
+./target/release/comp-host --lattice-nats nats://127.0.0.1:4232 --node n1 --lattice orgs \
   --addr 127.0.0.1:3801 --advertise-addr 127.0.0.1:3801 --state-dir "$SP/node" >"$SP/n1.log" 2>&1 & PIDS+=($!)
 sleep 3
 
-C=./cli/target/debug/comp
+C=./target/debug/comp
 as() { COMP_CREDENTIALS="$SP/$1.json" shift; }
 run() { local who=$1; shift; COMP_CREDENTIALS="$SP/$who.json" $C "$@"; }
 

@@ -53,20 +53,19 @@ jobs:
         with:
           # Not the runner's other toolchains: their patch level varies by image and split the key; the pinned one is in it via rust-toolchain.toml.
           add-rust-environment-hash-key: false
-          workspaces: reconciler -> target
+          workspaces: . -> target
           key: ${{ matrix.target }}
 
-      # Five cargo workspaces, not one, so each binary is built where it lives.
       - name: build
         run: |
           set -euo pipefail
           mkdir -p dist
-          for bin in comp-checks comp-plug comp-relay comp-goalrun comp-goald; do
-            ( cd reconciler && cargo build --release --bin "$bin" )
-            cp "reconciler/target/release/$bin" dist/
-          done
-          ( cd host && cargo build --release --bin comp-host ) && cp host/target/release/comp-host dist/
-          ( cd cli  && cargo build --release --bin holon )     && cp cli/target/release/holon     dist/
+          bins=(comp-checks comp-plug comp-relay comp-goalrun comp-goald comp-host holon)
+          # Their packages, named: without `-p` every member's features merge in, OpenSSL among them.
+          args=(-p comp-reconciler -p comp-fleet -p comp-relay -p comp-goal -p comp-host -p holon)
+          for bin in "${bins[@]}"; do args+=(--bin "$bin"); done
+          cargo build --release "${args[@]}"
+          for bin in "${bins[@]}"; do cp "target/release/$bin" dist/; done
           strip dist/* 2>/dev/null || true
           ls -l dist
 

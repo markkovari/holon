@@ -29,7 +29,7 @@ for APP in "${APPS[@]}"; do
   (cd ../ && cargo xtask bindings && cargo build --release --manifest-path components/Cargo.toml --target-dir components/target --target wasm32-wasip2 -p ${APP} -p auth-guard -p rate-limiter -p audit-log -p policy-guard -p record-store -p id-generate)
 
   echo "Composing WASM components..."
-  ART=$(cd ../ && ./reconciler/target/release/comp-plug ${APP})
+  ART=$(cd ../ && ./target/release/comp-plug ${APP})
 
   echo "Cleaning up old database..."
   rm -f comp-kv.db*

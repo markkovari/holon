@@ -516,7 +516,6 @@ fn encode(s: &str) -> String {
         .collect()
 }
 
-
 fn random_bytes(n: usize) -> Result<Vec<u8>, String> {
     use std::io::Read;
     let mut buf = vec![0u8; n];

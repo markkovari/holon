@@ -29,22 +29,22 @@ DURATION=${DURATION:-20s}
 CONNS=${CONNS:-40}
 PIDS=(); trap 'for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; sleep 1' EXIT
 mkdir -p "$SP/nats" "$SP/plat"
-C=./cli/target/release/comp
+C=./target/release/comp
 run() { local who=$1; shift; COMP_CREDENTIALS="$SP/$who.json" $C "$@"; }
 # `date +%s%3N` is GNU-only; this is the portable spelling and costs no process.
 ms() { perl -MTime::HiRes=time -e "printf(\"%d\", time()*1000)"; }
 
 nats-server -js -sd "$SP/nats" -a 0.0.0.0 -p 4232 >"$SP/nats.log" 2>&1 & PIDS+=($!)
-./host/target/release/comp-host --component components/target/platform_domain.composed.wasm \
+./target/release/comp-host --component components/target/platform_domain.composed.wasm \
   --addr 127.0.0.1:8080 --kv sqlite --sqlite-path "$SP/plat/kv.db" \
   --tenant platform --app control-plane \
   --config applier-secret=s3cret --config ingress-suffix=bench.test >"$SP/plat.log" 2>&1 & PIDS+=($!)
 sleep 3
-./reconciler/target/release/comp-reconciler --platform-url http://127.0.0.1:8080 --secret s3cret \
+./target/release/comp-reconciler --platform-url http://127.0.0.1:8080 --secret s3cret \
   --nats-url nats://127.0.0.1:4232 --lattice bench --interval 3 >"$SP/rec.log" 2>&1 & PIDS+=($!)
 for n in $(seq 1 "$NODES"); do
   mkdir -p "$SP/n$n"
-  ./host/target/release/comp-host --lattice-nats nats://127.0.0.1:4232 --node "n$n" --lattice bench \
+  ./target/release/comp-host --lattice-nats nats://127.0.0.1:4232 --node "n$n" --lattice bench \
     --addr "127.0.0.1:39$(printf '%02d' "$n")" --advertise-addr "127.0.0.1:39$(printf '%02d' "$n")" \
     --state-dir "$SP/n$n" >"$SP/n$n.log" 2>&1 & PIDS+=($!)
 done
@@ -56,7 +56,7 @@ if [ -n "$PI" ]; then
   done
   sleep 2
 fi
-./reconciler/target/release/comp-ingress --addr 127.0.0.1:8095 --nats-url nats://127.0.0.1:4232 \
+./target/release/comp-ingress --addr 127.0.0.1:8095 --nats-url nats://127.0.0.1:4232 \
   --lattice bench --refresh-secs 2 >"$SP/ingress.log" 2>&1 & PIDS+=($!)
 sleep 4
 
@@ -117,7 +117,7 @@ sleep 16
 echo "  placement — every node should hold apps from BOTH orgs:"
 # Straight from inventory, which already covers the remote nodes — this used to
 # scrape every host's log and ssh to the Pi to collect the ones it could not see.
-./reconciler/target/release/comp-bench tenants --nats-url nats://127.0.0.1:4232 --lattice bench
+./target/release/comp-bench tenants --nats-url nats://127.0.0.1:4232 --lattice bench
 
 echo
 echo "=== 3. both orgs under load at once, ${DURATION} x ${CONNS} conns each ==="

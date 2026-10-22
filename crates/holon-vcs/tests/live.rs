@@ -3,7 +3,7 @@
 //!
 //!   HOLON_VCS_NATS_URL=nats://127.0.0.1:4333 \
 //!   HOLON_VCS_SURREAL_URL=127.0.0.1:8000 \
-//!   cargo test --manifest-path crates/Cargo.toml --features holon-vcs/native --test live
+//!   cargo test -p holon-vcs --features native --test live
 //!
 //! `nats-server -js -p 4333 -sd <tmpdir>` and
 //! `docker compose -f infra/compose.yaml --profile graph up -d surreal` are enough.

@@ -19,13 +19,13 @@ trap cleanup EXIT
 
 mkdir -p "$SP/nats"
 nats-server -js -sd "$SP/nats" -a 0.0.0.0 -p 4232 >"$SP/nats.log" 2>&1 & PIDS+=($!)
-./reconciler/target/release/comp-stub --spec fixtures/five-replicas.yaml \
+./target/release/comp-stub --spec fixtures/five-replicas.yaml \
   --artifact gate=components/target/gate_domain.composed.wasm --port 8099 >"$SP/plat.log" 2>&1 & PIDS+=($!)
 sleep 2
 
 for n in 1 2; do
   mkdir -p "$SP/mac$n"
-  ./host/target/release/comp-host --lattice-nats nats://127.0.0.1:4232 --node "mac-$n" \
+  ./target/release/comp-host --lattice-nats nats://127.0.0.1:4232 --node "mac-$n" \
     --lattice slow --addr "127.0.0.1:381$n" --advertise-addr "127.0.0.1:381$n" \
     --state-dir "$SP/mac$n" >"$SP/mac$n.log" 2>&1 & PIDS+=($!)
 done
@@ -34,7 +34,7 @@ for n in 1 2; do
     "bash -lc 'exec ~/comp-lattice/comp-host --lattice-nats nats://$MAC:4232 --node pi-$n --lattice slow --addr 0.0.0.0:381$n --advertise-addr $PI:381$n --state-dir ~/comp-lattice/n$n > ~/comp-lattice/n$n.log 2>&1'"
 done
 sleep 3
-./reconciler/target/release/comp-reconciler --platform-url http://127.0.0.1:8099 \
+./target/release/comp-reconciler --platform-url http://127.0.0.1:8099 \
   --secret test-secret --nats-url nats://127.0.0.1:4232 --lattice slow --interval 3 \
   >"$SP/rec.log" 2>&1 & PIDS+=($!)
 sleep 22
@@ -51,7 +51,7 @@ done
 for mode in round-robin least-outstanding; do
   echo
   echo "=== balance: $mode ==="
-  ./reconciler/target/release/comp-ingress --addr 127.0.0.1:8091 \
+  ./target/release/comp-ingress --addr 127.0.0.1:8091 \
     --nats-url nats://127.0.0.1:4232 --lattice slow --refresh-secs 2 \
     --balance "$mode" >"$SP/ing-$mode.log" 2>&1 &
   ING=$!

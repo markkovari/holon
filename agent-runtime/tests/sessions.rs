@@ -476,14 +476,14 @@ impl Drop for Daemon {
 }
 
 fn daemon_binary() -> std::path::PathBuf {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../reconciler/target");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target");
     ["debug", "release"]
         .iter()
         .map(|p| root.join(p).join("comp-agentd"))
         .find(|p| p.exists())
         .unwrap_or_else(|| {
             panic!(
-                "comp-agentd is not built: run `cargo build --bin comp-agentd` in reconciler/ \
+                "comp-agentd is not built: run `cargo build -p comp-agentd` \
                  (looked in {})",
                 root.display()
             )

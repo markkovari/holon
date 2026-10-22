@@ -206,7 +206,7 @@ pub fn bin_path(name: &str) -> std::path::PathBuf {
             }
         }
     }
-    repo_root().join(format!("reconciler/target/release/{name}"))
+    repo_root().join(format!("target/release/{name}"))
 }
 
 /// Only the owner's tests get `CARGO_BIN_EXE_<name>`; the job builds it first (docs/adr/0115).
@@ -215,7 +215,7 @@ pub fn built_bin(name: &str) -> std::path::PathBuf {
     assert!(
         p.exists(),
         "{name} is not built: {} does not exist. It belongs to another package than this suite, so \
-         `cargo test` does not build it for you: `cd reconciler && cargo build --bin {name}` (with \
+         `cargo test` does not build it for you: `cargo build --bin {name}` (with \
          `--release` when this suite runs with it)",
         p.display()
     );
@@ -268,7 +268,7 @@ fn spawn_logged(name: &str, cmd: &mut Command, log: &std::path::Path) -> Kill {
         // A missing `comp-*` is usually another package's, which cargo does not build here.
         let hint = if e.kind() == std::io::ErrorKind::NotFound && name.starts_with("comp-") {
             format!(
-                " — build it with `cd reconciler && cargo build --bin {name}`; `cargo test` \
+                " — build it with `cargo build --bin {name}`; `cargo test` \
                          builds it for you only in the package that owns it"
             )
         } else {
@@ -486,7 +486,7 @@ impl Fleet {
         let root = repo_root();
         let host_bin = std::env::var("COMP_HOST_BIN")
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| root.join("host/target/release/comp-host"));
+            .unwrap_or_else(|_| root.join("target/release/comp-host"));
         assert!(
             host_bin.exists(),
             "missing {} — cargo build --release in host/",

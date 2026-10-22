@@ -73,17 +73,17 @@ remote_oha() {
         -H content-type:application/json -H Host:shop.eve.test $* \
         http://$MAC:8090/api/ratelimit'" >"$SP/oha-$label.json" 2>"$SP/oha-$label.err"
   fi
-  ./reconciler/target/release/comp-bench summarise "$SP/oha-$label.json" "$label"
+  ./target/release/comp-bench summarise "$SP/oha-$label.json" "$label"
 }
 
 mkdir -p "$SP/nats"
 nats-server -js -sd "$SP/nats" -a 0.0.0.0 -p 4232 >"$SP/nats.log" 2>&1 & PIDS+=($!)
-./reconciler/target/release/comp-stub --spec fixtures/five-replicas.yaml \
+./target/release/comp-stub --spec fixtures/five-replicas.yaml \
   --artifact gate=components/target/gate_domain.composed.wasm --port 8099 >"$SP/plat.log" 2>&1 & PIDS+=($!)
 sleep 2
 for n in 1 2; do
   mkdir -p "$SP/mac$n"
-  ./host/target/release/comp-host --lattice-nats nats://127.0.0.1:4232 --node "mac-$n" \
+  ./target/release/comp-host --lattice-nats nats://127.0.0.1:4232 --node "mac-$n" \
     --lattice stress --addr "127.0.0.1:382$n" --advertise-addr "127.0.0.1:382$n" \
     --state-dir "$SP/mac$n" --label box=mac >"$SP/mac$n.log" 2>&1 & PIDS+=($!)
 done
@@ -92,19 +92,19 @@ for n in 1 2; do
     "bash -lc 'exec ~/comp-lattice/comp-host --lattice-nats nats://$MAC:4232 --node pi-$n --lattice stress --addr 0.0.0.0:382$n --advertise-addr $PI:382$n --state-dir ~/comp-lattice/s$n --label box=pi > ~/comp-lattice/s$n.log 2>&1'"
 done
 sleep 3
-./reconciler/target/release/comp-reconciler --platform-url http://127.0.0.1:8099 \
+./target/release/comp-reconciler --platform-url http://127.0.0.1:8099 \
   --secret test-secret --nats-url nats://127.0.0.1:4232 --lattice stress --interval 3 \
   >"$SP/rec.log" 2>&1 & PIDS+=($!)
 # 0.0.0.0, because the load is arriving from another machine — the whole point.
 # SHED=0 restores the pre-ADR-0041 behaviour (queue without bound) so the two can
 # be compared on the same fleet, same rate, same generator.
-./reconciler/target/release/comp-ingress --addr 0.0.0.0:8090 \
+./target/release/comp-ingress --addr 0.0.0.0:8090 \
   --nats-url nats://127.0.0.1:4232 --lattice stress --refresh-secs 2 \
   --max-inflight "${SHED:-64}" >"$SP/ingress.log" 2>&1 & PIDS+=($!)
 
 echo "  settling (5 replicas over 4 nodes, two machines)..."
 sleep 26
-./reconciler/target/release/comp-bench inventory --nats-url nats://127.0.0.1:4232 --lattice stress
+./target/release/comp-bench inventory --nats-url nats://127.0.0.1:4232 --lattice stress
 
 echo
 echo "=== 1. ceiling: closed-loop from $LOAD_HOST, 200 connections, 10s ==="
@@ -115,7 +115,7 @@ echo "=== 1. ceiling: closed-loop from $LOAD_HOST, 200 connections, 10s ==="
 remote_oha ceiling -c 200 -z 10s
 # One field out of oha's JSON. `comp-bench summarise` prints the whole line; this
 # wants just the rate, so it takes it from the same file with the same tool.
-CEIL=$(./reconciler/target/release/comp-bench summarise "$SP/oha-ceiling.json" ceiling | awk '{print int($2)}')
+CEIL=$(./target/release/comp-bench summarise "$SP/oha-ceiling.json" ceiling | awk '{print int($2)}')
 RATE=${RATE:-$((CEIL * 60 / 100))}
 echo "  -> ceiling ${CEIL} rps; open-loop rate set to ${RATE} rps (60%)"
 
@@ -151,4 +151,4 @@ remote_oha killed -q "$RATE" -c 200 -z 70s --latency-correction
 
 echo
 echo "=== after ==="
-./reconciler/target/release/comp-bench inventory --nats-url nats://127.0.0.1:4232 --lattice stress
+./target/release/comp-bench inventory --nats-url nats://127.0.0.1:4232 --lattice stress
