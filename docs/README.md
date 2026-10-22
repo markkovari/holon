@@ -20,6 +20,7 @@ reasoning rather than their accuracy.
 | know **why a design is the way it is** | [`adr/`](adr/) — every decision, with reading paths |
 | know **what a graph run succeeds or fails at** | [`SCENARIOS.md`](SCENARIOS.md) |
 | know **what a security sweep found** | [`HARDENING.md`](HARDENING.md) |
+| **write Rust** the way the rest of the repo does | [`STYLE.md`](STYLE.md) |
 
 ## What is generated
 
