@@ -28,3 +28,5 @@ agent-wire = { path = "../crates/agent-wire" }
 tempfile = "3"
 
 [dev-dependencies]
+# tests/contract.rs: the runtime contract (api/holon/runtime/v1, ADR-0120) compiles.
+protox = "0.9"
