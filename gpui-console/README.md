@@ -66,8 +66,7 @@ then installs `~/.local/bin/holon-console` and, on macOS, `~/Applications/Holon 
 The board is its own crate (`board/`), because it also builds for a browser and the console cannot. It
 takes what the runtime says happened as `crates/agent-wire`'s data, which the runtime re-exports.
 
-The console starts a `comp-agentd` it finds built under `reconciler/target` (`cd reconciler && cargo build
--p comp-agentd`), on the mock provider unless told otherwise.
+The console starts a `comp-agentd` it finds built under the root `target/` (`cargo build -p comp-agentd`), on the mock provider unless told otherwise.
 
 ### The components and the goal runs
 

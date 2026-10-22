@@ -1,7 +1,7 @@
 # Getting a component you did not build
 
 ```bash
-(cd reconciler && cargo build --release --bin comp-oci)   # once
+cargo build --release -p comp-fleet --bin comp-oci   # once
 
 oci=./target/release/comp-oci
 rel=components/target/wasm32-wasip2/release
@@ -79,7 +79,7 @@ three lines, written down in that file.
 Locally, the same command:
 
 ```bash
-(cd reconciler && cargo build --release --bin comp-oci)
+cargo build --release -p comp-fleet --bin comp-oci
 OCI_USER=me OCI_PASSWORD="$(gh auth token)" ./target/release/comp-oci push \
   ghcr.io/me/holon components/target/wasm32-wasip2/release --lock components.lock
 ```

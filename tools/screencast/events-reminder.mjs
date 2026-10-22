@@ -22,7 +22,7 @@
 // real; only the clock is chosen — waiting a day would prove the same thing slower.
 //
 // Prereq: MailHog on :8025, `target/release/comp-mailrelay 127.0.0.1:3390 127.0.0.1:1025 &`
-// (build: `cargo build --release --bin comp-mailrelay` in reconciler/), and the app on :3230.
+// (build: `cargo build --release -p comp-mailrelay`), and the app on :3230.
 import { chromium } from "playwright";
 
 const BASE = process.env.EVENTS_URL || "http://127.0.0.1:3230";

@@ -60,7 +60,7 @@ say "building vcs-store + vcs-gateway (wasm32-wasip2)"
 say "building comp-host"
 cargo build --release --manifest-path host/Cargo.toml --bin comp-host
 say "building the e2e test (and comp-vcs with it)"
-cargo test --release --manifest-path reconciler/Cargo.toml --test e2e_vcs --no-run
+cargo test --release -p comp-vcs --test e2e_vcs --no-run
 
 # ---- SurrealDB ------------------------------------------------------------------
 
@@ -89,7 +89,7 @@ status=0
 for run in $(seq "$RUNS"); do
   say "run $run/$RUNS: reconciler/daemons/vcs/tests/e2e_vcs.rs (NATS $VCS_E2E_NATS_URL, SurrealDB $VCS_E2E_SURREAL_URL)"
   start=$(date +%s)
-  if ! cargo test --release --manifest-path reconciler/Cargo.toml --test e2e_vcs -- --nocapture "$@"; then
+  if ! cargo test --release -p comp-vcs --test e2e_vcs -- --nocapture "$@"; then
     status=1
     say "run $run failed"
     break

@@ -483,7 +483,7 @@ fn daemon_binary() -> std::path::PathBuf {
         .find(|p| p.exists())
         .unwrap_or_else(|| {
             panic!(
-                "comp-agentd is not built: run `cargo build --bin comp-agentd` in reconciler/ \
+                "comp-agentd is not built: run `cargo build -p comp-agentd` \
                  (looked in {})",
                 root.display()
             )

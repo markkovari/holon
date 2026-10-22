@@ -1,6 +1,7 @@
 # One image, any of the twelve ADR-0095 daemons — `comp-fswatch`, `comp-docker`,
 # `comp-ffmpeg`, ... — picked by build arg rather than one Dockerfile each, since
-# the build is the same for each: `cargo build --bin <name>` at the root, which
+# the build is the same for each: `cargo build -p <name>` at the root (`-p`: without it every
+# member's features are merged in, and one wants OpenSSL), which
 # compiles that daemon's own package and the shared kit, and nothing else's
 # dependencies (docs/adr/0115).
 #
@@ -32,7 +33,7 @@ COPY crates ./crates
 # comp-agentd's build script compiles api/holon/v1/agent.proto (ADR-0102); no other daemon's build
 # reads it.
 COPY api ./api
-RUN cargo build --release --bin "${DAEMON}"
+RUN cargo build --release -p "${DAEMON}" --bin "${DAEMON}"
 
 FROM debian:bookworm-slim
 ARG DAEMON

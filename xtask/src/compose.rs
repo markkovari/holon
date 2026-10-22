@@ -145,14 +145,7 @@ fn derive_pinned(comp_plug_bin: &Path, root: &str, dest: &str, pins: &[&str]) ->
 /// Builds comp-plug and returns its path.
 pub(crate) fn comp_plug() -> Result<PathBuf> {
     let mut build_plug = Command::new("cargo");
-    build_plug.args([
-        "build",
-        "--manifest-path",
-        "reconciler/Cargo.toml",
-        "--release",
-        "--bin",
-        "comp-plug",
-    ]);
+    build_plug.args(["build", "--release", "-p", "comp-fleet", "--bin", "comp-plug"]);
     run_cmd(&mut build_plug, "build comp-plug tool")?;
     Ok(PathBuf::from("target/release/comp-plug"))
 }

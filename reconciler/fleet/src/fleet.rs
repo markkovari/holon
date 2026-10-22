@@ -215,7 +215,7 @@ pub fn built_bin(name: &str) -> std::path::PathBuf {
     assert!(
         p.exists(),
         "{name} is not built: {} does not exist. It belongs to another package than this suite, so \
-         `cargo test` does not build it for you: `cd reconciler && cargo build --bin {name}` (with \
+         `cargo test` does not build it for you: `cargo build --bin {name}` (with \
          `--release` when this suite runs with it)",
         p.display()
     );
@@ -268,7 +268,7 @@ fn spawn_logged(name: &str, cmd: &mut Command, log: &std::path::Path) -> Kill {
         // A missing `comp-*` is usually another package's, which cargo does not build here.
         let hint = if e.kind() == std::io::ErrorKind::NotFound && name.starts_with("comp-") {
             format!(
-                " — build it with `cd reconciler && cargo build --bin {name}`; `cargo test` \
+                " — build it with `cargo build --bin {name}`; `cargo test` \
                          builds it for you only in the package that owns it"
             )
         } else {

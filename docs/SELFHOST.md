@@ -236,7 +236,7 @@ scalers — because the cluster will not.
 graph, because a wadm link names the WIT package it satisfies:
 
 ```bash
-(cd reconciler && cargo build --release --bin comp-capgraph)
+cargo build --release -p comp-goal --bin comp-capgraph
 mkdir -p target && ./target/release/comp-capgraph --format json > target/capgraph.json
 
 # lane 3 — wasmCloud 1.x, over wadm's NATS API

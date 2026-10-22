@@ -4,7 +4,7 @@
 //! Gated on the environment, and LOUD when it skips:
 //!
 //!   HOLON_PARK_NATS_URL=nats://127.0.0.1:4333 \
-//!   cargo test --manifest-path crates/Cargo.toml --features holon-park/native --test live
+//!   cargo test -p holon-park --features native --test live
 //!
 //! `nats-server -js -p 4333 -sd <tmpdir>` is enough — no SurrealDB, no
 //! compose: this crate's only dependency is JetStream.

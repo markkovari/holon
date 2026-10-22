@@ -1,5 +1,5 @@
 //! Runs here too because reqwest's features unify per workspace, so this crate's client can differ.
-//! Needs `cargo build --bin comp-agentd` in reconciler/.
+//! Needs `cargo build -p comp-agentd`.
 
 use std::time::{Duration, Instant};
 

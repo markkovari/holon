@@ -187,7 +187,7 @@ jobs:
           workspaces: . -> target
 
       - name: Build comp-host and holon
-        run: cargo build --release --bin comp-host --bin holon
+        run: cargo build --release -p comp-host -p holon --bin comp-host --bin holon
 
       # Two artifacts, not one: each is a single file in its own directory,
       # matching the `components` job's own wasm-artifact pattern exactly
@@ -394,8 +394,8 @@ jobs:
       # find them by path.
       - name: Build the binaries the gates and suites spawn
         run: |
-          cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug
-          cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-mailrelay
+          cargo build --release -p comp-fleet --bin comp-plug
+          cargo build --release -p comp-mailrelay --bin comp-mailrelay
 
       # Which binaries, established by asking the suites rather than by adding one
       # per failure. The fleet suites (the OTHER job) resolve exactly two by PATH —
@@ -576,8 +576,8 @@ jobs:
       # `reconciler-artifact-suites`'s own comment: this step is what builds them.
       - name: Build the binaries the gates and suites spawn
         run: |
-          cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug
-          cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-mailrelay
+          cargo build --release -p comp-fleet --bin comp-plug
+          cargo build --release -p comp-mailrelay --bin comp-mailrelay
 
       # THE FLEET SUITES — 43 of them, and until #289 nothing ran a single one.
       #
@@ -765,7 +765,7 @@ jobs:
       - name: Compile the code store's e2e suite (run locally by e2e/vcs.sh)
         if: matrix.workspace == 'reconciler'
         working-directory: reconciler
-        run: cargo test --release --test e2e_vcs --no-run
+        run: cargo test --release -p comp-vcs --test e2e_vcs --no-run
 
       # The engine is built for BOTH targets — inside a component it is
       # wasm32-wasip2 with no runtime and no sockets (ADR-0095) — so the core

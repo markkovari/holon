@@ -30,7 +30,7 @@ done
 
 cargo xtask build
 (cd host && cargo build --release --bin comp-host)
-(cd reconciler && cargo build --release --bins)
+cargo build --release -p comp-reconciler -p comp-fleet -p comp-goal --bins
 
 # Expand a leading ~ that a quoted env value keeps literal.
 args=(--checkout "${CHECKOUT/#\~/$HOME}" --repo "$REPO"

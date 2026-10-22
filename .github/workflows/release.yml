@@ -61,7 +61,9 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           bins=(comp-checks comp-plug comp-relay comp-goalrun comp-goald comp-host holon)
-          args=(); for bin in "${bins[@]}"; do args+=(--bin "$bin"); done
+          # Their packages, named: without `-p` every member's features merge in, OpenSSL among them.
+          args=(-p comp-reconciler -p comp-fleet -p comp-relay -p comp-goal -p comp-host -p holon)
+          for bin in "${bins[@]}"; do args+=(--bin "$bin"); done
           cargo build --release "${args[@]}"
           for bin in "${bins[@]}"; do cp "target/release/$bin" dist/; done
           strip dist/* 2>/dev/null || true

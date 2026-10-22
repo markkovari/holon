@@ -26,7 +26,7 @@ fn binary() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("HOLON_AGENTD_BIN") {
         return Some(PathBuf::from(p)).filter(|p| p.exists());
     }
-    let target = repo_root().join("reconciler/target");
+    let target = repo_root().join("target");
     ["release", "debug"]
         .iter()
         .map(|p| target.join(p).join("comp-agentd"))
@@ -56,7 +56,7 @@ fn probe(url: &str, token: &Option<String>) -> Result<(), String> {
     } else {
         Err(format!(
             "comp-agentd at {url} has no state snapshot (it answered {status}): it is older than \
-             ADR-0107; rebuild it with `cargo build --bin comp-agentd` in reconciler/"
+             ADR-0107; rebuild it with `cargo build -p comp-agentd`"
         ))
     }
 }
@@ -94,7 +94,7 @@ pub fn start(
     }
 
     let bin = binary().ok_or(
-        "comp-agentd is not built (cargo build --bin comp-agentd in reconciler/), and \
+        "comp-agentd is not built (cargo build -p comp-agentd), and \
          HOLON_AGENTD_URL is not set",
     )?;
     std::fs::create_dir_all(workspaces).map_err(|e| e.to_string())?;

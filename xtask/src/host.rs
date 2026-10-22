@@ -104,14 +104,7 @@ pub(crate) fn host_app(
     let mut running = Vec::new();
     for d in daemons {
         let mut build = Command::new("cargo");
-        build.args([
-            "build",
-            "--manifest-path",
-            "reconciler/Cargo.toml",
-            "--release",
-            "--bin",
-            &format!("comp-{}", d.name),
-        ]);
+        build.args(["build", "--release", "--bin", &format!("comp-{}", d.name)]);
         run_cmd(&mut build, &format!("build comp-{}", d.name))?;
 
         let mut cmd = Command::new(format!("target/release/comp-{}", d.name));
