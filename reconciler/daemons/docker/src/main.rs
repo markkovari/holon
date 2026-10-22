@@ -1,7 +1,8 @@
 //! Native side of components/container-docker (ADR-0095); lists running containers only, like `docker ps`.
 
 use anyhow::Result;
-use axum::{routing::post, Json, Router};
+use axum::routing::post;
+use axum::{Json, Router};
 use bollard::models::ContainerSummary;
 use clap::Parser;
 use serde_json::{json, Value};

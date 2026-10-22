@@ -10,7 +10,10 @@ use holon_vcs::error::Result as VResult;
 use holon_vcs::graph::{
     ConflictEffect, ConflictRecord, Graph, PatchRecord, PatchStatus, SymbolRecord, SymbolUpdate,
 };
-use holon_vcs::model::*;
+use holon_vcs::model::{
+    Agent, CommitResult, ConflictId, ConflictState, Hash, OpEntry, OpId, OpKind, PatchOutcome,
+    Placement, ResolutionRequest, Snapshot, SymbolId, Transformation,
+};
 use holon_vcs::oplog::{NewOp, OpLog, OpState, StoredOp};
 use holon_vcs::store::{BlobStore, CasMismatch, PointerStore, PointerValue, Revision};
 use holon_vcs::{Engine, VcsError};

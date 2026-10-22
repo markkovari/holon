@@ -13,7 +13,10 @@ use std::sync::Arc;
 use holon_vcs::engine::Engine;
 use holon_vcs::extract::{self, EditKind, ExtractedSymbol, IngestReport};
 use holon_vcs::graph::Graph;
-use holon_vcs::model::*;
+use holon_vcs::model::{
+    Agent, ConflictSide, ConflictState, Content, PatchOutcome, ResolutionRequest, Snapshot,
+    SymbolId, SymbolKind, SymbolQuery, Transformation,
+};
 use holon_vcs::oplog::OpLog;
 use holon_vcs::store::{BlobStore, PointerStore};
 

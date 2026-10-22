@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use agent_matrix::init::{init, read_token, InitArgs};
-use agent_matrix::{serve::serve, Bridge, Config};
+use agent_matrix::serve::serve;
+use agent_matrix::{Bridge, Config};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]

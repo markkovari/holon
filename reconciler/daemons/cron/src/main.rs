@@ -1,7 +1,8 @@
 //! Native side of components/system-cron (ADR-0095): a wasm guest cannot run `crontab -l`.
 
 use anyhow::Result;
-use axum::{routing::post, Json, Router};
+use axum::routing::post;
+use axum::{Json, Router};
 use clap::Parser;
 use serde::Serialize;
 use serde_json::{json, Value};

@@ -9,7 +9,11 @@ use std::sync::Arc;
 
 use holon_vcs::engine::symbol_pointer;
 use holon_vcs::graph::Graph;
-use holon_vcs::model::*;
+use holon_vcs::model::{
+    Agent, CommitResult, ConflictState, Content, Hash, OpEntry, OpId, OpKind, PatchOutcome,
+    PatchRequest, Placement, ResolutionRequest, Snapshot, SymbolId, SymbolKind, SymbolQuery,
+    Transformation,
+};
 use holon_vcs::oplog::OpLog;
 use holon_vcs::store::{BlobStore, CasMismatch, PointerStore, PointerValue, Revision};
 use holon_vcs::{Engine, VcsError};

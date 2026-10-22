@@ -7,7 +7,8 @@ mod bindings;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 
-use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, Key, KeyInit, Nonce};
+use chacha20poly1305::aead::Aead;
+use chacha20poly1305::{ChaCha20Poly1305, Key, KeyInit, Nonce};
 
 use bindings::exports::secrets::vault::vault::{Guest, SecretMeta, VaultError};
 use bindings::wasi::clocks::wall_clock;

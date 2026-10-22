@@ -26,7 +26,9 @@
 //!   comp-browser --addr 127.0.0.1:8001 --allow-host example.com
 
 use anyhow::Result;
-use axum::{extract::State, routing::post, Json, Router};
+use axum::extract::State;
+use axum::routing::post;
+use axum::{Json, Router};
 use clap::Parser;
 use headless_chrome::Browser;
 use serde::Deserialize;

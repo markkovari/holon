@@ -284,7 +284,8 @@ mod tests {
     use super::*;
 
     // A virtual authenticator with a key we hold, so tests can also forge INVALID ceremonies.
-    use p256::ecdsa::{signature::Signer, Signature, SigningKey};
+    use p256::ecdsa::signature::Signer;
+    use p256::ecdsa::{Signature, SigningKey};
 
     const RP: &str = "localhost";
     const ORIGIN: &str = "http://localhost:3053";

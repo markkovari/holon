@@ -17,7 +17,7 @@
 mod gatelib;
 mod photoquest_support;
 use gatelib::{field, Gate};
-use photoquest_support::*;
+use photoquest_support::{parse, result_for, sign, start, SECRET};
 use serde_json::{json, Value};
 
 /// Plan, complete and evaluate one photo for `token`; its id. `sha` makes each file distinct, so a

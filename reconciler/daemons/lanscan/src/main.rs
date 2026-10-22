@@ -5,7 +5,9 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use anyhow::Result;
-use axum::{extract::State, routing::post, Json, Router};
+use axum::extract::State;
+use axum::routing::post;
+use axum::{Json, Router};
 use clap::Parser;
 use serde_json::{json, Value};
 use tokio::net::TcpStream;

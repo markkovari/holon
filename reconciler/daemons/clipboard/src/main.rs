@@ -1,7 +1,8 @@
 //! Native side of components/desktop-clipboard (ADR-0095): a wasm guest has no pasteboard.
 
 use anyhow::Result;
-use axum::{routing::post, Json, Router};
+use axum::routing::post;
+use axum::{Json, Router};
 use clap::Parser;
 use serde_json::{json, Value};
 

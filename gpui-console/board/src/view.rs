@@ -7,11 +7,12 @@ use std::time::Duration;
 
 use web_time::{SystemTime, UNIX_EPOCH};
 
+use gpui::prelude::*;
 use gpui::{
-    canvas, deferred, div, ease_in_out, ease_out_quint, percentage, point, prelude::*,
-    pulsating_between, px, transparent_black, Animation, AnimationExt as _, App, BoxShadow,
-    Context, Entity, FocusHandle, Focusable, FontWeight, Hsla, IntoElement, PathBuilder, Pixels,
-    Render, Rgba, SharedString, Task, Transformation, Window,
+    canvas, deferred, div, ease_in_out, ease_out_quint, percentage, point, pulsating_between, px,
+    transparent_black, Animation, AnimationExt as _, App, BoxShadow, Context, Entity, FocusHandle,
+    Focusable, FontWeight, Hsla, IntoElement, PathBuilder, Pixels, Render, Rgba, SharedString,
+    Task, Transformation, Window,
 };
 
 use super::agents::{self, AgentInfo, Element};

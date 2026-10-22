@@ -2,10 +2,8 @@ use serde_json::Value;
 
 use super::map::{AttemptRow, CatalogRows, KnowledgeRows, RunRow};
 #[cfg(not(target_family = "wasm"))]
-use {
-    super::map::{Kind, Map, Proof},
-    std::path::Path,
-};
+use super::map::{Kind, Map, Proof};
+use std::path::Path;
 
 pub const CATALOG_SQL: &str = "SELECT VALUE name FROM artifact;
 SELECT in.name AS a, out.name AS b FROM imports;

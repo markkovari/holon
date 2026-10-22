@@ -11,7 +11,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use comp_lattice::{nats::NatsLattice, Artifacts, CommandBus, Inventory};
+use comp_lattice::nats::NatsLattice;
+use comp_lattice::{Artifacts, CommandBus, Inventory};
 use comp_reconciler::oci;
 use comp_reconciler::plan::{plan, Cfg, Command, Hysteresis, Manifest, NodeInventory, Outcome};
 use comp_reconciler::settings;
