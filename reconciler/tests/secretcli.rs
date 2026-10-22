@@ -11,13 +11,11 @@ use std::time::Duration;
 
 use comp_fleet::fleet::{repo_root, Fleet};
 
-/// The CLI under test: `cli/target/release/holon`. It lives in its own workspace, so `bin_path` (beside
-/// the running test, then the reconciler's target dir) never finds it. Keep the path in step with the
-/// binary name.
+/// The CLI under test: `target/release/holon`, unless `COMP_COMP_BIN` names another.
 fn comp_bin() -> std::path::PathBuf {
     std::env::var("COMP_COMP_BIN")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| repo_root().join("cli/target/release/holon"))
+        .unwrap_or_else(|_| repo_root().join("target/release/holon"))
 }
 
 /// Stands in for an API key. Long enough that finding it in an unexpected place is unambiguous.

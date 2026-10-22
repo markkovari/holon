@@ -1,5 +1,5 @@
 //! Runs here too because reqwest's features unify per workspace, so this crate's client can differ.
-//! Needs `cargo build --bin comp-agentd` in reconciler/.
+//! Needs `cargo build -p comp-agentd`.
 
 use std::time::{Duration, Instant};
 
@@ -31,7 +31,7 @@ fn a_session_is_watched_through_this_crates_http_client() {
         std::fs::canonicalize(w).unwrap()
     };
     let bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../reconciler/target/debug/comp-agentd");
+        .join("../target/debug/comp-agentd");
     assert!(bin.exists(), "build comp-agentd first");
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let _d = Daemon(

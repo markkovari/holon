@@ -7,7 +7,6 @@ publish = false
 description = "Native Rust host for ANY composed wasm component: serves its wasi:http/incoming-handler over wasmtime and satisfies its wasi:keyvalue / wasi:config / wasi:blobstore imports host-side. No Kubernetes, no NATS required."
 
 # Native binary, deliberately outside the components/ (wasm32) workspace.
-[workspace]
 
 [[bin]]
 name = "comp-host"

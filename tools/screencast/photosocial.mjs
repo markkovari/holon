@@ -46,7 +46,7 @@ try {
   if (!isRunning) {
     console.log("Spawning comp-host on port", PORT);
     hostProcess = spawn(
-      join(ROOT, "host/target/release/comp-host"),
+      join(ROOT, "target/release/comp-host"),
       [
         "--component",
         join(ROOT, "components/target/photosocial_domain.composed.wasm"),

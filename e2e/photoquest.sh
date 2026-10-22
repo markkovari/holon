@@ -114,7 +114,7 @@ cd "$ROOT"
 # other's fingerprints (ring, rustls, … rebuilt on every run).
 say "composing photoquest"
 cargo xtask compose photoquest
-HELPER=reconciler/target/comp-media-apple
+HELPER=target/comp-media-apple
 if [[ "$(uname -s)" == Darwin ]]; then
   if [[ ! -x "$HELPER" || tools/media-apple/main.swift -nt "$HELPER" ]]; then
     say "building comp-media-apple (Core Image, Metal, Vision)"

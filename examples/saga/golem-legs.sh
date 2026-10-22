@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 GOLEM="$ROOT/providers/golem-workflow/.bin/golem"
 AGENT="$ROOT/providers/golem-workflow/golem-agent"
-HOSTBIN="$ROOT/host/target/release/comp-host"
+HOSTBIN="$ROOT/target/release/comp-host"
 SAGA_WASM="$ROOT/components/target/saga_domain.composed.wasm"
 GBASE=http://127.0.0.1:9006
 jget() { node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(eval("(JSON.parse(d))"+process.argv[1]))}catch(e){console.log("")}})' "$1"; }

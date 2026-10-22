@@ -166,12 +166,12 @@ fn sweep(lock_url: &str, dry: bool) -> Result<usize, String> {
 }
 
 fn which_oci() -> Result<PathBuf, String> {
-    for p in ["/usr/local/bin/comp-oci", "reconciler/target/release/comp-oci"] {
+    for p in ["/usr/local/bin/comp-oci", "target/release/comp-oci"] {
         if Path::new(p).is_file() {
             return Ok(PathBuf::from(p));
         }
     }
-    Err("no comp-oci — build it (`cargo build --release --bin comp-oci` in reconciler/) or install it to /usr/local/bin".into())
+    Err("no comp-oci — build it (`cargo build --release -p comp-fleet --bin comp-oci`) or install it to /usr/local/bin".into())
 }
 
 /// The digest is recorded only AFTER the restart succeeds, or a failed restart would never be retried.

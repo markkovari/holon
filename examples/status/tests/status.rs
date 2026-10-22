@@ -68,7 +68,7 @@ fn start_upstream() -> String {
 
 fn start_host(upstream: &str) -> HostGuard {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
-    let bin = root.join("host/target/release/comp-host");
+    let bin = root.join("target/release/comp-host");
     let component = root.join("components/target/status_page.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `cargo xtask e2e status`)");
     assert!(component.exists(), "composed wasm missing (cargo xtask compose status)");

@@ -147,8 +147,8 @@ while read -r cmd; do
     RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" RUSTUP_TOOLCHAIN="$TOOLCHAIN" \
     CARGO_HOME="$HOME/.cache/comp-goalrun/cargo-home" \
     CARGO_TARGET_DIR="$HOME/.cache/goal-rehearse/cargo-target" \
-    COMP_HOST="$ROOT/host/target/release/comp-host" \
-    COMP_PLUG="$ROOT/reconciler/target/release/comp-plug" \
+    COMP_HOST="$ROOT/target/release/comp-host" \
+    COMP_PLUG="$ROOT/target/release/comp-plug" \
     bash -c "$cmd" >"$out" 2>&1
   status=$?
   tail -3 "$out"
@@ -207,8 +207,8 @@ PY
         RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" RUSTUP_TOOLCHAIN="$TOOLCHAIN" \
         CARGO_HOME="$HOME/.cache/comp-goalrun/cargo-home" \
         CARGO_TARGET_DIR="$HOME/.cache/goal-rehearse/cargo-target" \
-        COMP_HOST="$ROOT/host/target/release/comp-host" \
-        COMP_PLUG="$ROOT/reconciler/target/release/comp-plug" \
+        COMP_HOST="$ROOT/target/release/comp-host" \
+        COMP_PLUG="$ROOT/target/release/comp-plug" \
         bash -c "$check" >"$iout" 2>&1
     )
     if [ $? -eq 0 ]; then
@@ -256,8 +256,8 @@ if [ -n "${VIOLATORS:-}" ]; then
         RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" RUSTUP_TOOLCHAIN="$TOOLCHAIN" \
         CARGO_HOME="$HOME/.cache/comp-goalrun/cargo-home" \
         CARGO_TARGET_DIR="$HOME/.cache/goal-rehearse/cargo-target" \
-        COMP_HOST="$ROOT/host/target/release/comp-host" \
-        COMP_PLUG="$ROOT/reconciler/target/release/comp-plug" \
+        COMP_HOST="$ROOT/target/release/comp-host" \
+        COMP_PLUG="$ROOT/target/release/comp-plug" \
         bash -c "$check" >"$vout" 2>&1
     )
     vstatus=$?

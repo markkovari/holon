@@ -82,7 +82,7 @@ fn start_upstream() -> Kill {
 }
 
 fn start_host() -> Kill {
-    let bin = root().join("host/target/release/comp-host");
+    let bin = root().join("target/release/comp-host");
     let component = root().join("components/target/mesh_domain.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `cargo xtask e2e mesh`)");
     assert!(component.exists(), "composed wasm missing (cargo xtask compose mesh)");

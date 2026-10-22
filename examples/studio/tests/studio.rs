@@ -93,7 +93,7 @@ fn upload(stem: &str) -> Value {
 }
 
 fn start_studio() -> Kill {
-    let bin = root().join("host/target/release/comp-host");
+    let bin = root().join("target/release/comp-host");
     let component = root().join("components/target/studio_domain.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `cargo xtask e2e studio`)");
     assert!(component.exists(), "composed wasm missing (cargo xtask compose studio)");
@@ -345,7 +345,7 @@ fn studio_reflects_plans_emits_and_composes() {
     assert!(ok, "and validate: {out}");
 
     // The whole point: a graph wired in a browser produced a working app.
-    let bin = root().join("host/target/release/comp-host");
+    let bin = root().join("target/release/comp-host");
     let child = Command::new(&bin)
         .args(["--component", studio_out.to_str().unwrap(), "--addr", RUN_ADDR, "--kv", "memory"])
         // wasi:config comes from flags, not the environment (the host dropped

@@ -94,7 +94,7 @@ impl Drop for Host {
 }
 
 fn composed() -> Option<std::path::PathBuf> {
-    let out = Command::new(repo_root().join("reconciler/target/release/comp-plug"))
+    let out = Command::new(repo_root().join("target/release/comp-plug"))
         .arg("console-domain")
         .current_dir(repo_root())
         .output()
@@ -112,7 +112,7 @@ fn the_token_lands_in_a_cookie_and_never_in_the_body() {
         eprintln!("SKIPPED: no composed console — run `cargo xtask compose console`");
         return;
     };
-    let host_bin = repo_root().join("host/target/release/comp-host");
+    let host_bin = repo_root().join("target/release/comp-host");
     if !host_bin.exists() {
         eprintln!("SKIPPED: no comp-host binary — run `cargo xtask build --force`");
         return;

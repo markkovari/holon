@@ -14,7 +14,7 @@ import { existsSync } from "node:fs";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "../..");
 const COMPONENT = join(ROOT, "components/target/grocery_domain.composed.wasm");
-const HOST_BIN = join(ROOT, "host/target/release/comp-host");
+const HOST_BIN = join(ROOT, "target/release/comp-host");
 const PORT = process.env.PORT || "3055";
 
 if (!existsSync(COMPONENT)) {

@@ -8,7 +8,6 @@ description = "Matrix bridge for agent-runtime: every agent is a Matrix user, ev
 # Native, outside the components/ (wasm32) workspace — same arrangement as
 # agent-runtime/ and gpui-console/. It talks to the runtime over HTTP only and
 # shares no code with it.
-[workspace]
 
 [lib]
 name = "agent_matrix"

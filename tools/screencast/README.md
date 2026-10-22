@@ -35,7 +35,7 @@ the native host doesn't, so `seed-vet.sh` bootstraps roles + demo users over the
 unguarded `/admin` routes):
 
 ```bash
-# from repo root: cargo xtask compose vet && host/target/release/comp-host --component \
+# from repo root: cargo xtask compose vet && target/release/comp-host --component \
 #   components/target/vet_domain.composed.wasm --addr 127.0.0.1:3007 \
 #   --static-dir examples/jco-vet-clinic/public &
 bash seed-vet.sh

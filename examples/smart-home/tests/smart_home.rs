@@ -30,7 +30,7 @@ fn free_port() -> u16 {
 
 /// Spawn comp-host on the composed artifact `apps/smart-home.toml` names.
 fn start_host(extra: &[&str]) -> HostGuard {
-    let bin = root().join("host/target/release/comp-host");
+    let bin = root().join("target/release/comp-host");
     let component = root().join("components/target/smart-home.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `cargo xtask e2e smart-home`)");
     assert!(component.exists(), "composed wasm missing: {component:?} (run `cargo xtask compose smart-home`)");

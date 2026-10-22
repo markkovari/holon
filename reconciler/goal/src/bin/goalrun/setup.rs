@@ -27,9 +27,7 @@ pub fn warm_caches(goal: &GoalSpec, args: &Args) -> Vec<String> {
         format!("CARGO_TARGET_DIR={cargo_target}"),
         // cargo wants a real registry index and network on a cold cache.
         "CARGO_NET_OFFLINE=false".into(),
-        // Not `bin_path`: the host builds in its own workspace, not the reconciler's.
         format!("COMP_HOST={}", host_bin().display()),
-        // `bin_path` is right here: this one builds in the reconciler's workspace.
         format!("COMP_PLUG={}", plug_bin().display()),
         // The gates live in `reconciler/`, which is never in a goal's `base_paths`.
         format!("COMP_GATES={}", comp_fleet::fleet::repo_root().join("reconciler").display()),
@@ -195,7 +193,7 @@ pub(crate) fn host_bin() -> PathBuf {
     if let Ok(p) = std::env::var("COMP_HOST") {
         return PathBuf::from(p);
     }
-    repo_root().join("host/target/release/comp-host")
+    repo_root().join("target/release/comp-host")
 }
 
 pub(crate) fn plug_bin() -> PathBuf {

@@ -45,7 +45,7 @@ if [ -n "$IDENTITY" ]; then
   echo "== sign with: $IDENTITY"
   # the runtime is what launchd runs, so it is what Calendar access is granted to; the helper is
   # the program it starts for that
-  sign "$REPO/agent-runtime/target/release/agent-runtime" io.holon.agent-runtime
+  sign "$REPO/target/release/agent-runtime" io.holon.agent-runtime
   sign "$HOME/.holon-agents/holon-calendar" io.holon.calendar
 else
   echo "== NOT signed: no code-signing identity found (set HOLON_SIGN_IDENTITY)."
@@ -60,5 +60,5 @@ if [ "$RESTART" = 1 ]; then
 fi
 
 echo "== identity now"
-codesign -dvv "$REPO/agent-runtime/target/release/agent-runtime" 2>&1 | grep -E "^(Identifier|Authority|Signature|TeamIdentifier)" | head -4
-codesign -d -r- "$REPO/agent-runtime/target/release/agent-runtime" 2>&1 | grep designated | cut -c1-160
+codesign -dvv "$REPO/target/release/agent-runtime" 2>&1 | grep -E "^(Identifier|Authority|Signature|TeamIdentifier)" | head -4
+codesign -d -r- "$REPO/target/release/agent-runtime" 2>&1 | grep designated | cut -c1-160

@@ -43,7 +43,7 @@ pub fn components_target() -> PathBuf {
 pub fn host_bin() -> PathBuf {
     match std::env::var("COMP_HOST") {
         Ok(p) if !p.trim().is_empty() => PathBuf::from(p),
-        _ => repo_root().join("host/target/release/comp-host"),
+        _ => repo_root().join("target/release/comp-host"),
     }
 }
 
@@ -722,7 +722,7 @@ impl Drop for MailRelay {
 
 impl MailRelay {
     pub fn start(smtp: &str) -> Option<Self> {
-        let bin = repo_root().join("reconciler/target/release/comp-mailrelay");
+        let bin = repo_root().join("target/release/comp-mailrelay");
         if !bin.exists() {
             eprintln!("SKIPPED: no comp-mailrelay — cargo build --release --bin comp-mailrelay");
             return None;

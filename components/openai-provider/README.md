@@ -23,7 +23,7 @@ cargo xtask stage-examples      # -> ai_inference.composed.wasm   (+ llm-inferen
 # comp-plug takes the first exporter it finds, so hand it a dir holding only this one
 mkdir -p components/target/openai-override
 cp components/target/wasm32-wasip2/release/openai_provider.wasm components/target/openai-override/
-cp "$(reconciler/target/release/comp-plug ai-inference --dir components/target/openai-override)" \
+cp "$(target/release/comp-plug ai-inference --dir components/target/openai-override)" \
    components/target/ai_inference.openai.composed.wasm   # (+ openai-provider)
 ```
 

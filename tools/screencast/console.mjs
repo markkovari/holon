@@ -133,7 +133,7 @@ async function up() {
 
   // The run the GIF opens, written by `trace.rs` — the driver's own code path,
   // so what is on screen is the shape a real run records.
-  execFileSync(bin("reconciler/target/release/comp-trace-seed"), [
+  execFileSync(bin("target/release/comp-trace-seed"), [
     "--surreal-url", `http://127.0.0.1:${SURREAL_PORT}`,
   ], { stdio: "ignore" });
 
@@ -149,11 +149,11 @@ async function up() {
 
   platform = await standInPlatform();
 
-  const composed = execFileSync(bin("reconciler/target/release/comp-plug"), ["console-domain"], {
+  const composed = execFileSync(bin("target/release/comp-plug"), ["console-domain"], {
     cwd: repo, encoding: "utf8",
   }).trim();
 
-  host = spawn(bin("host/target/release/comp-host"), [
+  host = spawn(bin("target/release/comp-host"), [
     "--app", "console",
     "--config", "default-tenant=console",
     "--config", `platform-url=http://127.0.0.1:${PLATFORM_PORT}`,

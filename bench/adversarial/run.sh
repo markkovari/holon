@@ -10,16 +10,16 @@ PIDS=()
 trap 'for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; sleep 1' EXIT
 
 nats-server -js -sd $SP/natsA -a 127.0.0.1 -p 4232 >$SP/natsA.log 2>&1 & PIDS+=($!)
-./reconciler/target/release/comp-stub $SPECS \
+./target/release/comp-stub $SPECS \
   --artifact gate=components/target/gate_domain.composed.wasm --artifact adversary=components/target/wasm32-wasip2/release/adversary.wasm --port 8099 >$SP/plat2.log 2>&1 & PIDS+=($!)
 sleep 2
 
 # ONE host process. Both tenants live in it. That is the whole point.
-./host/target/release/comp-host --lattice-nats nats://127.0.0.1:4232 --node solo \
+./target/release/comp-host --lattice-nats nats://127.0.0.1:4232 --node solo \
   --lattice adv --addr 127.0.0.1:3401 --state-dir $SP/adv \
   --kv ${KV:-sqlite} --nats-url 127.0.0.1:4232 --sqlite-path $SP/adv/kv.db >$SP/solo.log 2>&1 & PIDS+=($!)
 sleep 2
-./reconciler/target/release/comp-reconciler --platform-url http://127.0.0.1:8099 \
+./target/release/comp-reconciler --platform-url http://127.0.0.1:8099 \
   --secret test-secret --nats-url nats://127.0.0.1:4232 --lattice adv \
   --interval 3 --inventory-ttl 15 >$SP/rec2.log 2>&1 & PIDS+=($!)
 

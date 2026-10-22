@@ -48,7 +48,7 @@ fn json_req(method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
 
 fn start_host() -> HostGuard {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
-    let bin = root.join("host/target/release/comp-host");
+    let bin = root.join("target/release/comp-host");
     let component = root.join("components/target/upload_drop.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `cargo xtask e2e drop`)");
     assert!(component.exists(), "composed wasm missing (cargo xtask compose drop)");

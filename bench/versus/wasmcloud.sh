@@ -40,17 +40,17 @@ fi
 # --- comp side: one node, one ingress, the same component -------------------
 mkdir -p "$SP/nats" "$SP/n1"
 nats-server -js -sd "$SP/nats" -a 127.0.0.1 -p 4232 >"$SP/nats.log" 2>&1 & PIDS+=($!)
-./reconciler/target/release/comp-stub --spec fixtures/one-replica.yaml \
+./target/release/comp-stub --spec fixtures/one-replica.yaml \
   --artifact gate=components/target/gate_domain.composed.wasm --port 8099 >"$SP/plat.log" 2>&1 & PIDS+=($!)
 sleep 2
-./host/target/release/comp-host --lattice-nats nats://127.0.0.1:4232 --node n1 \
+./target/release/comp-host --lattice-nats nats://127.0.0.1:4232 --node n1 \
   --lattice versus --addr 127.0.0.1:3861 --advertise-addr 127.0.0.1:3861 \
   --state-dir "$SP/n1" >"$SP/n1.log" 2>&1 & PIDS+=($!)
 sleep 2
-./reconciler/target/release/comp-reconciler --platform-url http://127.0.0.1:8099 \
+./target/release/comp-reconciler --platform-url http://127.0.0.1:8099 \
   --secret test-secret --nats-url nats://127.0.0.1:4232 --lattice versus --interval 3 \
   >"$SP/rec.log" 2>&1 & PIDS+=($!)
-./reconciler/target/release/comp-ingress --addr 127.0.0.1:8098 \
+./target/release/comp-ingress --addr 127.0.0.1:8098 \
   --nats-url nats://127.0.0.1:4232 --lattice versus --refresh-secs 2 >"$SP/ingress.log" 2>&1 & PIDS+=($!)
 echo "  waiting for comp to place the component..."
 sleep 26
@@ -70,7 +70,7 @@ run() { # label url host
   oha -z "$DURATION" -c "$CONNS" --no-tui --output-format json -m POST -d "$BODY" \
     -H 'content-type: application/json' -H "Host: $3" \
     "$2/api/ratelimit" >"$SP/oha-$1.json" 2>"$SP/oha-$1.err"
-  ./reconciler/target/release/comp-bench summarise "$SP/oha-$1.json" "$1"
+  ./target/release/comp-bench summarise "$SP/oha-$1.json" "$1"
 }
 echo
 echo "=== ${DURATION} x ${CONNS} connections per lane ==="

@@ -414,11 +414,7 @@ host = "edge"
 
     fn help_for(bin: &str) -> Option<String> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent()?;
-        let ws = match bin {
-            "comp-host" => "host",
-            _ => "reconciler",
-        };
-        let path = root.join(ws).join("target/release").join(bin);
+        let path = root.join("target/release").join(bin);
         if !path.exists() {
             return None;
         }

@@ -1,6 +1,7 @@
 # One image, any of the twelve ADR-0095 daemons — `comp-fswatch`, `comp-docker`,
 # `comp-ffmpeg`, ... — picked by build arg rather than one Dockerfile each, since
-# the build is the same for each: `cargo build --bin <name>` in `reconciler/`, which
+# the build is the same for each: `cargo build -p <name>` at the root (`-p`: without it every
+# member's features are merged in, and one wants OpenSSL), which
 # compiles that daemon's own package and the shared kit, and nothing else's
 # dependencies (docs/adr/0115).
 #
@@ -17,6 +18,13 @@
 FROM rust:1-slim-bookworm AS build
 ARG DAEMON
 WORKDIR /src
+# The root workspace: Cargo loads every member's manifest, though it builds only this daemon's graph.
+COPY Cargo.toml Cargo.lock ./
+COPY agent-matrix ./agent-matrix
+COPY agent-runtime ./agent-runtime
+COPY cli ./cli
+COPY host ./host
+COPY xtask ./xtask
 COPY reconciler ./reconciler
 COPY lattice ./lattice
 COPY comp-metadata ./comp-metadata
@@ -25,7 +33,7 @@ COPY crates ./crates
 # comp-agentd's build script compiles api/holon/v1/agent.proto (ADR-0102); no other daemon's build
 # reads it.
 COPY api ./api
-RUN cd reconciler && cargo build --release --bin "${DAEMON}"
+RUN cargo build --release -p "${DAEMON}" --bin "${DAEMON}"
 
 FROM debian:bookworm-slim
 ARG DAEMON
@@ -33,5 +41,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 # Copied to a fixed path — the ARG isn't available at CMD time, and a shell CMD
 # that reads it from the environment would need it re-passed on every `docker run`.
-COPY --from=build /src/reconciler/target/release/${DAEMON} /usr/local/bin/daemon
+COPY --from=build /src/target/release/${DAEMON} /usr/local/bin/daemon
 ENTRYPOINT ["/usr/local/bin/daemon"]
