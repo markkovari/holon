@@ -776,7 +776,7 @@ jobs:
         run: |
           rustup target add wasm32-wasip2
           cargo build --release --target wasm32-wasip2 ${{ steps.pkgs.outputs.args }}
-          cargo clippy --all-targets --features holon-vcs/native ${{ steps.pkgs.outputs.args }} -- -D warnings
+          cargo clippy --all-targets --features holon-vcs/native ${{ steps.pkgs.outputs.args }} -- -D warnings -D clippy::undocumented_unsafe_blocks
 
       # Every app spec, checked against the renderer that will deploy it. This is
       # the one collision a single spec cannot see — two apps landing on one port,
@@ -843,7 +843,7 @@ jobs:
       - name: Clippy, every native workspace
         run: |
           set -e
-          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy --workspace --all-targets -- -D warnings -D clippy::undocumented_unsafe_blocks
 
   fmt:
     name: fmt

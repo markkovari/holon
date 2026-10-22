@@ -3,9 +3,8 @@
 use std::rc::Rc;
 use std::time::Duration;
 
-use gpui::{
-    prelude::*, px, size, App, Application, Bounds, WindowBounds, WindowHandle, WindowOptions,
-};
+use gpui::prelude::*;
+use gpui::{px, size, App, Application, Bounds, WindowBounds, WindowHandle, WindowOptions};
 
 use agent_board::demo;
 use agent_board::icons::Assets;

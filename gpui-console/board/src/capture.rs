@@ -13,18 +13,21 @@ use core_graphics::window::{
 };
 
 fn entry(raw: *const std::ffi::c_void) -> CFDictionary<CFString, core_foundation::base::CFType> {
+    // SAFETY: `raw` is a dictionary in a window list the caller holds; get-rule retains, so this only borrows.
     // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
-    unsafe { CFDictionary::wrap_under_get_rule(raw as _) } // the list owns it; this only borrows
+    unsafe { CFDictionary::wrap_under_get_rule(raw as _) }
 }
 
 fn key(raw: CFStringRef) -> CFString {
+    // SAFETY: `raw` is one of CoreGraphics' constant keys, valid for the life of the process.
     // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
-    unsafe { CFString::wrap_under_get_rule(raw) } // a constant CoreGraphics owns
+    unsafe { CFString::wrap_under_get_rule(raw) }
 }
 
 fn keys() -> (CFStringRef, CFStringRef, CFStringRef) {
+    // SAFETY: `extern static`s CoreGraphics initialises and never writes.
     // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
-    unsafe { (kCGWindowOwnerPID, kCGWindowLayer, kCGWindowNumber) } // `extern static`s, never written
+    unsafe { (kCGWindowOwnerPID, kCGWindowLayer, kCGWindowNumber) }
 }
 
 fn own_window() -> Option<u32> {

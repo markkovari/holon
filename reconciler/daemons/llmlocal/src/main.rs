@@ -1,7 +1,9 @@
 //! Native side of components/llm-local (ADR-0095): proxies to a running Ollama, no model runtime here.
 
 use anyhow::Result;
-use axum::{extract::State, routing::post, Json, Router};
+use axum::extract::State;
+use axum::routing::post;
+use axum::{Json, Router};
 use clap::Parser;
 use serde::Deserialize;
 use serde_json::{json, Value};

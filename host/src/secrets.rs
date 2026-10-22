@@ -48,6 +48,7 @@ impl Drop for SecretCache {
         // this — a real `zeroize` would — but it costs nothing and it is the honest
         // gesture. ponytail: use `zeroize` if a secret ever outlives a request.
         for v in self.0.values_mut() {
+            // SAFETY: zero bytes are valid UTF-8, so the String stays well-formed.
             unsafe {
                 for b in v.as_bytes_mut() {
                     std::ptr::write_volatile(b, 0);

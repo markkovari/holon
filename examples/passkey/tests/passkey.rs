@@ -25,7 +25,8 @@ use std::time::Duration;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use p256::ecdsa::{signature::Signer, Signature, SigningKey};
+use p256::ecdsa::signature::Signer;
+use p256::ecdsa::{Signature, SigningKey};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 

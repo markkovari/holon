@@ -4,7 +4,9 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use axum::{extract::State, routing::post, Json, Router};
+use axum::extract::State;
+use axum::routing::post;
+use axum::{Json, Router};
 use clap::Parser;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;

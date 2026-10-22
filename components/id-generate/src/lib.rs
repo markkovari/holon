@@ -59,6 +59,7 @@ fn push_hex(out: &mut String, byte: u8) {
 impl Guest for Component {
     fn ulid() -> String {
         let ms = now_ms();
+        // SAFETY: a component instance is single-threaded, so nothing else reads or writes these statics meanwhile.
         let rand80 = unsafe {
             if ms == LAST_MS {
                 // Same millisecond: increment so the id sorts strictly after the previous one.

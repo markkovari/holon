@@ -13,7 +13,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agent_matrix::init::{init, InitArgs};
-use agent_matrix::{serve::serve, Bridge, Config};
+use agent_matrix::serve::serve;
+use agent_matrix::{Bridge, Config};
 use agent_runtime::speech::SpeechConfig;
 use agent_runtime::{AgentSpec, Capability, Config as RtConfig, ModelSpec, Runtime};
 use serde_json::{json, Value};

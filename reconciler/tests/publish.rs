@@ -4,7 +4,8 @@
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
-use p256::ecdsa::{signature::Signer, Signature, SigningKey};
+use p256::ecdsa::signature::Signer;
+use p256::ecdsa::{Signature, SigningKey};
 use serde_json::{json, Value};
 
 mod harness;

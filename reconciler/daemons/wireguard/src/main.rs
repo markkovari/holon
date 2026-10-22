@@ -2,7 +2,9 @@
 //! `status` takes no interface name to refuse, it reads every allowed one.
 
 use anyhow::Result;
-use axum::{extract::State, routing::post, Json, Router};
+use axum::extract::State;
+use axum::routing::post;
+use axum::{Json, Router};
 use clap::Parser;
 use serde_json::{json, Value};
 use tokio::process::Command;
