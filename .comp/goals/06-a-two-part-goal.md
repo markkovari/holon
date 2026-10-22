@@ -31,7 +31,7 @@ edit the other's files.
 cargo xtask build --force && (cd host && cargo build --release) && (cd reconciler && cargo build --release)
 docker compose -f infra/compose.yaml up -d surreal
 
-reconciler/target/release/comp-goalrun --smoke \
+target/release/comp-goalrun --smoke \
   --checkout . --repo markkovari/holon --base main \
   --anthropic-key ~/.comp-secrets/anthropic --github-token ~/.comp-secrets/ghpat \
   --surreal-url http://127.0.0.1:8000 --surreal-password ~/.comp-secrets/surreal

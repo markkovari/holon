@@ -7,7 +7,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/.." && pwd)"
 ADDR=127.0.0.1:3011
 BASE="http://$ADDR"
-BIN="$ROOT/host/target/release/comp-host"
+BIN="$ROOT/target/release/comp-host"
 COMPONENT="$ROOT/components/target/conduit_domain.composed.wasm"
 
 args=(--component "$COMPONENT" --addr "$ADDR" --kv "$KV")

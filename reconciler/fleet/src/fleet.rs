@@ -206,7 +206,7 @@ pub fn bin_path(name: &str) -> std::path::PathBuf {
             }
         }
     }
-    repo_root().join(format!("reconciler/target/release/{name}"))
+    repo_root().join(format!("target/release/{name}"))
 }
 
 /// Only the owner's tests get `CARGO_BIN_EXE_<name>`; the job builds it first (docs/adr/0115).
@@ -486,7 +486,7 @@ impl Fleet {
         let root = repo_root();
         let host_bin = std::env::var("COMP_HOST_BIN")
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| root.join("host/target/release/comp-host"));
+            .unwrap_or_else(|_| root.join("target/release/comp-host"));
         assert!(
             host_bin.exists(),
             "missing {} — cargo build --release in host/",

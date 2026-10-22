@@ -1138,8 +1138,7 @@ routes = "upstream=http://127.0.0.1:9000"
         let s: Spec = toml::from_str(&src).expect("parses");
         let mut checked = 0;
         for d in &s.daemons {
-            let bin =
-                std::path::PathBuf::from(format!("../reconciler/target/release/comp-{}", d.name));
+            let bin = std::path::PathBuf::from(format!("../target/release/comp-{}", d.name));
             if !bin.exists() {
                 eprintln!("skipping {}: no {} built", d.name, bin.display());
                 continue;
@@ -1154,9 +1153,7 @@ routes = "upstream=http://127.0.0.1:9000"
             checked += 1;
         }
         if checked == 0 {
-            eprintln!(
-                "skipping entirely: no park binaries built under ../reconciler/target/release"
-            );
+            eprintln!("skipping entirely: no park binaries built under ../target/release");
         }
     }
 
@@ -1280,7 +1277,7 @@ routes = "upstream=http://127.0.0.1:9000"
     /// A wrong flag fails only on the box, so ask the binary. Skipped where unbuilt.
     #[test]
     fn every_flag_we_emit_exists_on_comp_host() {
-        let bin = std::path::Path::new("../host/target/release/comp-host");
+        let bin = std::path::Path::new("../target/release/comp-host");
         if !bin.exists() {
             eprintln!("skipping: no comp-host built at {}", bin.display());
             return;
@@ -1344,7 +1341,7 @@ static_dir = "ui/dist"
         let s = spec(MINIMAL);
         let mut checked = 0;
         for (name, allow_flag) in daemons {
-            let bin = std::path::PathBuf::from(format!("../reconciler/target/release/comp-{name}"));
+            let bin = std::path::PathBuf::from(format!("../target/release/comp-{name}"));
             if !bin.exists() {
                 eprintln!("skipping {name}: no {} built", bin.display());
                 continue;
@@ -1372,7 +1369,7 @@ static_dir = "ui/dist"
             checked += 1;
         }
         if checked == 0 {
-            eprintln!("skipping entirely: no comp-<daemon> binaries built under ../reconciler/target/release");
+            eprintln!("skipping entirely: no comp-<daemon> binaries built under ../target/release");
         }
     }
 
@@ -1525,7 +1522,7 @@ repo = "me/holon"
 
     #[test]
     fn every_flag_we_emit_exists_on_comp_goald() {
-        let bin = std::path::Path::new("../reconciler/target/release/comp-goald");
+        let bin = std::path::Path::new("../target/release/comp-goald");
         if !bin.exists() {
             eprintln!("skipping: no comp-goald built at {}", bin.display());
             return;

@@ -47,7 +47,7 @@ fn repo_root() -> PathBuf {
 fn comp_host_bin() -> PathBuf {
     std::env::var("COMP_HOST_BIN")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| repo_root().join("host/target/release/comp-host"))
+        .unwrap_or_else(|_| repo_root().join("target/release/comp-host"))
 }
 
 fn spawn(name: &'static str, mut cmd: Command) -> Kill {

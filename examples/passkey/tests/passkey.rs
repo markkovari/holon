@@ -76,7 +76,7 @@ fn json_of(r: ureq::Response) -> Value {
 
 fn start_host() -> Kill {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
-    let bin = root.join("host/target/release/comp-host");
+    let bin = root.join("target/release/comp-host");
     let component = root.join("components/target/passkey_domain.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `cargo xtask e2e passkey`)");
     assert!(component.exists(), "composed wasm missing (cargo xtask compose passkey)");

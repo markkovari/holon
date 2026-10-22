@@ -154,10 +154,10 @@ pub(crate) fn comp_plug() -> Result<PathBuf> {
         "comp-plug",
     ]);
     run_cmd(&mut build_plug, "build comp-plug tool")?;
-    Ok(PathBuf::from("reconciler/target/release/comp-plug"))
+    Ok(PathBuf::from("target/release/comp-plug"))
 }
 
-/// Builds comp-host — what every e2e suite spawns, from `host/target/release`.
+/// Builds comp-host — what every e2e suite spawns, from `target/release`.
 pub(crate) fn comp_host() -> Result<()> {
     let mut build_host = Command::new("cargo");
     build_host.args([

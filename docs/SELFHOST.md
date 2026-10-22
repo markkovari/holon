@@ -237,10 +237,10 @@ graph, because a wadm link names the WIT package it satisfies:
 
 ```bash
 (cd reconciler && cargo build --release --bin comp-capgraph)
-mkdir -p target && ./reconciler/target/release/comp-capgraph --format json > target/capgraph.json
+mkdir -p target && ./target/release/comp-capgraph --format json > target/capgraph.json
 
 # lane 3 — wasmCloud 1.x, over wadm's NATS API
-./cli/target/release/holon wadm render apps/gate.toml --topology fused --api v1 \
+./target/release/holon wadm render apps/gate.toml --topology fused --api v1 \
   --graph target/capgraph.json --out target/wadm/gate.yaml
 wkg oci push localhost:30500/gate:latest components/target/gate_domain.composed.wasm --insecure localhost:30500
 python3 -c "import json,yaml;print(json.dumps(yaml.safe_load(open('target/wadm/gate.yaml'))))" > target/wadm/gate.json
@@ -249,7 +249,7 @@ tools/wadm.sh wadm.api.default.model.deploy.gate
 tools/wadm.sh wadm.api.default.model.status.gate | cargo xtask wadm-status
 
 # lane 4 — wasmCloud 2.x, a Workload applied to the Kubernetes API
-./cli/target/release/holon wadm render apps/gate.toml --api v2 --namespace wasmcloud-v2 \
+./target/release/holon wadm render apps/gate.toml --api v2 --namespace wasmcloud-v2 \
   --graph target/capgraph.json --out target/wadm/gate.v2.yaml
 kubectl apply -f target/wadm/gate.v2.yaml
 kubectl get workload gate -n wasmcloud-v2
@@ -298,8 +298,8 @@ One app, one process, one hostname.
 ```bash
 cargo xtask compose gate                                   # components -> one .wasm
 (cd cli && cargo build --release)                          # the `holon` CLI
-./cli/target/release/holon node validate apps/*.toml
-./cli/target/release/holon node render apps/gate.toml      # -> target/selfhost/gate/: read it first
+./target/release/holon node validate apps/*.toml
+./target/release/holon node render apps/gate.toml      # -> target/selfhost/gate/: read it first
 ```
 
 That writes `comp-gate.service`, `gate.env` and a route (`gate.caddy`, or `gate.yml` /
@@ -312,7 +312,7 @@ directories, and Caddy told to read what this lane writes:
 
 ```bash
 (cd host && cross build --release --target x86_64-unknown-linux-musl)   # aarch64-… for ARM
-scp host/target/x86_64-unknown-linux-musl/release/comp-host my-vps:/tmp/
+scp target/x86_64-unknown-linux-musl/release/comp-host my-vps:/tmp/
 ssh my-vps bash -s <<'EOF'
 set -e
 sudo install -m 0755 /tmp/comp-host /usr/local/bin/comp-host

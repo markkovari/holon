@@ -79,7 +79,7 @@ wkg oci push --insecure "127.0.0.1:${LOCAL_PORT}" "127.0.0.1:${LOCAL_PORT}/${APP
 
 echo "==> rendering the v2 manifest"
 cargo build --release --manifest-path cli/Cargo.toml
-./cli/target/release/holon wadm render "apps/${APP}.toml" \
+./target/release/holon wadm render "apps/${APP}.toml" \
   --api v2 --namespace "$NAMESPACE" --registry "$REGISTRY_SVC" --replicas 1 \
   --out /tmp/k8s-verify-manifest.yaml
 

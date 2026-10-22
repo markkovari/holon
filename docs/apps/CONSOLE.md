@@ -117,7 +117,7 @@ The console needs `platform-url` pointing at a running platform (default
 `http://127.0.0.1:8080`), and `surreal-url` at the store the loop writes its trace
 to. `cargo xtask host console` sets neither and opens no egress — comp-host denies
 outbound HTTP by default — so it serves a console that shows no runs. To see
-them, run `host/target/release/comp-host` yourself with those `--config` values
+them, run `target/release/comp-host` yourself with those `--config` values
 plus `--egress <host:port> --allow-private-egress`. The e2e recipe brings up
 its own SurrealDB and a stand-in platform, and fails loudly rather than skipping
 if it cannot — a green suite that talked to nothing is worse than a red one.

@@ -14,7 +14,7 @@ ROOT="$(cd "$DIR/../../.." && pwd)"
 HOST="${HOST:-http://127.0.0.1:3009}"
 ADDR="${ADDR:-127.0.0.1:3009}"
 COMPONENT="$ROOT/components/target/conduit_domain.composed.wasm"
-BIN="$ROOT/host/target/release/comp-host"
+BIN="$ROOT/target/release/comp-host"
 
 [ -x "$BIN" ] || { echo "host binary missing: $BIN (build it first)"; exit 1; }
 [ -f "$COMPONENT" ] || { echo "composed wasm missing: $COMPONENT (cargo xtask compose conduit)"; exit 1; }

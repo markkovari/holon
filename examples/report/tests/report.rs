@@ -53,7 +53,7 @@ fn post_csv(path: &str, csv: &str) -> (u16, Value) {
 
 fn start_host() -> HostGuard {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
-    let bin = root.join("host/target/release/comp-host");
+    let bin = root.join("target/release/comp-host");
     let component = root.join("components/target/csv_report.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `cargo xtask e2e report`)");
     assert!(component.exists(), "composed wasm missing (cargo xtask compose report)");

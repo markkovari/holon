@@ -31,9 +31,9 @@ spec() {
     qwen-large) echo "$HOME"; echo "$HOME/.local/bin/mlx_lm.server" --model mlx-community/Qwen3.8-27B-4bit --host 127.0.0.1 --port 18103 --max-tokens 4096 --chat-template-args "$NO_THINKING" ;;
     embed) echo "$REPO/agent-runtime/embed"; echo "$HOME/.local/bin/uv" run --with "sentence-transformers[image]" --with torch server.py --port 18102 ;;
     nats) echo "$PLATFORM"; echo /opt/homebrew/bin/nats-server -js -sd "$PLATFORM/nats" -a 127.0.0.1 -p 4222 ;;
-    platform) echo "$REPO"; echo "$REPO/host/target/release/comp-host" --component "$REPO/components/target/platform-domain.composed.wasm" --addr 127.0.0.1:3936 --kv nats --nats-url nats://127.0.0.1:4222 --tenant platform --app control-plane --config-file "$PLATFORM/platform.conf" ;;
-    runtime) echo "$REPO/agent-runtime"; echo "$REPO/agent-runtime/target/release/agent-runtime" --state-dir "$HOME/.holon-agents" --listen 127.0.0.1:18017 --local-url http://127.0.0.1:18099 --stt-bin "$HOME/.holon-agents/holon-stt" --embed-url http://127.0.0.1:18102 --embed-service io.holon.embed --platform-file "$HOME/.holon-agents/platform.json" ;;
-    bridge) echo "$REPO/agent-matrix"; echo "$REPO/agent-matrix/target/release/agent-matrix" run --config "$HOME/.holon-matrix/bridge.json" ;;
+    platform) echo "$REPO"; echo "$REPO/target/release/comp-host" --component "$REPO/components/target/platform-domain.composed.wasm" --addr 127.0.0.1:3936 --kv nats --nats-url nats://127.0.0.1:4222 --tenant platform --app control-plane --config-file "$PLATFORM/platform.conf" ;;
+    runtime) echo "$REPO/agent-runtime"; echo "$REPO/target/release/agent-runtime" --state-dir "$HOME/.holon-agents" --listen 127.0.0.1:18017 --local-url http://127.0.0.1:18099 --stt-bin "$HOME/.holon-agents/holon-stt" --embed-url http://127.0.0.1:18102 --embed-service io.holon.embed --platform-file "$HOME/.holon-agents/platform.json" ;;
+    bridge) echo "$REPO/agent-matrix"; echo "$REPO/target/release/agent-matrix" run --config "$HOME/.holon-matrix/bridge.json" ;;
   esac
 }
 
@@ -92,14 +92,14 @@ case "${1:-}" in
   install)
     mkdir -p "$AGENTS" "$LOGS"
     platform_conf
-    for f in "$REPO/host/target/release/comp-host" "$REPO/components/target/platform-domain.composed.wasm"; do
+    for f in "$REPO/target/release/comp-host" "$REPO/components/target/platform-domain.composed.wasm"; do
       [ -f "$f" ] || { echo "missing $f — cargo xtask host platform builds both"; exit 1; }
     done
-    for b in "$REPO/agent-runtime/target/release/agent-runtime" "$REPO/agent-matrix/target/release/agent-matrix"; do
+    for b in "$REPO/target/release/agent-runtime" "$REPO/target/release/agent-matrix"; do
       [ -x "$b" ] || { echo "missing $b — cargo build --release there first"; exit 1; }
     done
     # A binary cargo rewrote in place can be killed on launch (OS_REASON_CODESIGNING) until it is re-signed.
-    for b in "$REPO/agent-runtime/target/release/agent-runtime" "$REPO/agent-matrix/target/release/agent-matrix"; do
+    for b in "$REPO/target/release/agent-runtime" "$REPO/target/release/agent-matrix"; do
       codesign --force --sign - "$b" 2>/dev/null || true
     done
     for s in "${SERVICES[@]}"; do

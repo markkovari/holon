@@ -56,4 +56,4 @@ sp="${SURREAL_PASSWORD:-${SURREAL_PASSWORD_FILE:-}}"
 [ "${DRY_RUN:-0}" = "1" ] && args+=(--dry-run)
 [ "$SMOKE" = "1" ] && args+=(--smoke)
 
-exec ./reconciler/target/release/comp-goalrun "${args[@]}"
+exec ./target/release/comp-goalrun "${args[@]}"

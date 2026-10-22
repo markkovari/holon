@@ -114,7 +114,7 @@ pub(crate) fn host_app(
         ]);
         run_cmd(&mut build, &format!("build comp-{}", d.name))?;
 
-        let mut cmd = Command::new(format!("reconciler/target/release/comp-{}", d.name));
+        let mut cmd = Command::new(format!("target/release/comp-{}", d.name));
         if let Some(addr) = &d.addr {
             cmd.args(["--addr", addr]);
         }
@@ -146,7 +146,7 @@ pub(crate) fn host_app(
         format!("Starting {app} on http://{bind_addr} (kv: {kv_mode})...").green().bold()
     );
 
-    let mut host_cmd = Command::new("host/target/release/comp-host");
+    let mut host_cmd = Command::new("target/release/comp-host");
     host_cmd.args([
         "--app",
         app,

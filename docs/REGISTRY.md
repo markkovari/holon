@@ -3,7 +3,7 @@
 ```bash
 (cd reconciler && cargo build --release --bin comp-oci)   # once
 
-oci=./reconciler/target/release/comp-oci
+oci=./target/release/comp-oci
 rel=components/target/wasm32-wasip2/release
 $oci pull ghcr.io/markkovari/holon portfolio-value-c -o $rel/portfolio_value_c.wasm             # by name
 $oci pull ghcr.io/markkovari/holon portfolio-value-c@sha256:… -o $rel/portfolio_value_c.wasm    # by digest, which cannot drift
@@ -80,7 +80,7 @@ Locally, the same command:
 
 ```bash
 (cd reconciler && cargo build --release --bin comp-oci)
-OCI_USER=me OCI_PASSWORD="$(gh auth token)" ./reconciler/target/release/comp-oci push \
+OCI_USER=me OCI_PASSWORD="$(gh auth token)" ./target/release/comp-oci push \
   ghcr.io/me/holon components/target/wasm32-wasip2/release --lock components.lock
 ```
 

@@ -166,7 +166,7 @@ fn sweep(lock_url: &str, dry: bool) -> Result<usize, String> {
 }
 
 fn which_oci() -> Result<PathBuf, String> {
-    for p in ["/usr/local/bin/comp-oci", "reconciler/target/release/comp-oci"] {
+    for p in ["/usr/local/bin/comp-oci", "target/release/comp-oci"] {
         if Path::new(p).is_file() {
             return Ok(PathBuf::from(p));
         }

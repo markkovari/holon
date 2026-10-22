@@ -2,12 +2,7 @@
 # prebuilt artifacts the tempo image needs (components/target/*.composed.wasm
 # and examples/tempo/dist).
 **/node_modules
-host/target
-reconciler/target
-lattice/target
-comp-metadata/target
-xtask/target
-cli/target
+/target
 components/target/wasm32-wasip1
 components/target/*/deps
 examples/*/target

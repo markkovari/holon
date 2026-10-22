@@ -84,7 +84,7 @@ export VCS_E2E_NATS_URL="nats://127.0.0.1:$NATS_PORT"
 # ---- run ------------------------------------------------------------------------
 
 # COMP_HOST set: the harness then treats a missing host as a failure, not a skip.
-export COMP_HOST="$ROOT/host/target/release/comp-host"
+export COMP_HOST="$ROOT/target/release/comp-host"
 status=0
 for run in $(seq "$RUNS"); do
   say "run $run/$RUNS: reconciler/daemons/vcs/tests/e2e_vcs.rs (NATS $VCS_E2E_NATS_URL, SurrealDB $VCS_E2E_SURREAL_URL)"

@@ -61,7 +61,7 @@ e2e scripts and `xtask` all keep their commands. A package left out of that list
 dependency, and stops being tested, built by name and linted with nothing red; so
 [`reconciler/tests/workspace.rs`](../../reconciler/tests/workspace.rs) fails when a member is not a
 default member. There is one `target/`, here, so the many
-`reconciler/target/release/comp-*` paths in scripts, gates and docs stay true, and binary names do
+`target/release/comp-*` paths in scripts, gates and docs stay true, and binary names do
 not change. (There is no committed `Cargo.lock` here, and the split does not add one.)
 
 **A test lives with the binaries it spawns.** `CARGO_BIN_EXE_*` is the reason, and it is also the

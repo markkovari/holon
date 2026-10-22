@@ -19,7 +19,7 @@ cd "$(dirname "$0")/../.."
 nc -z 127.0.0.1 4222 || { echo "NATS not reachable on :4222"; exit 1; }
 cargo build --release --bin comp-host --manifest-path host/Cargo.toml
 
-H=host/target/release/comp-host
+H=target/release/comp-host
 C=components/target
 for w in eshop_identity eshop_catalog eshop_basket eshop_ordering eshop_payment eshop_gateway; do
   [ -f "$C/$w.composed.wasm" ] || { echo "missing $C/$w.composed.wasm — run \`cargo xtask compose eshop\`"; exit 1; }

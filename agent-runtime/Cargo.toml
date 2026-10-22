@@ -6,7 +6,6 @@ publish = false
 description = "The autonomous half of a Holon agent: a tool-using loop over a model, per-agent memory, schedule/event/HTTP triggers, approvals and a run log. Native on purpose (ADR-0095): a wasm component has no background, so nothing in a guest can fire a cron trigger or hold an approval open."
 
 # Native, so kept out of the wasm32 components/ workspace.
-[workspace]
 
 [lib]
 name = "agent_runtime"

@@ -1,0 +1,70 @@
+# Every native Rust package, in one workspace: one lockfile, one `target/`, one `cargo clippy --workspace`.
+# Not here: `components` (wasm32-wasip2, built with cargo-component), `gpui-console` (GPUI pins its own
+# graph), `providers` (an older wasmtime), and the examples, benches and tools that build on their own.
+[workspace]
+resolver = "2"
+members = [
+    "agent-matrix",
+    "agent-runtime",
+    "cli",
+    "comp-metadata",
+    "crates/agent-wire",
+    "crates/holon-llm",
+    "crates/holon-park",
+    "crates/holon-vcs",
+    "host",
+    "lattice",
+    "reconciler",
+    "reconciler/daemons/*",
+    "reconciler/fleet",
+    "reconciler/fuel",
+    "reconciler/goal",
+    "reconciler/measure",
+    "reconciler/oci",
+    "xtask",
+]
+exclude = ["agent-runtime/gateway", "bench", "components", "examples", "gpui-console", "providers", "tools"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+# What more than one package needs, said once, so the versions cannot drift apart.
+[workspace.dependencies]
+anyhow = "1"
+async-nats = "0.49"
+axum = { version = "0.8", features = ["http2"] }
+# No default features: holon-vcs and holon-llm build for wasm32-wasip2 too; a native user adds "std".
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+bytes = "1"
+clap = { version = "4", features = ["derive", "env"] }
+futures = "0.3"
+getrandom = "0.2"
+hex = "0.4"
+hmac = "0.12"
+image = "0.25"
+jiff = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+rusty-s3 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = "0.10"
+sha2 = "0.10"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "process", "sync", "io-util"] }
+toml = "0.8"
+# span-locations without proc-macro: spans use the pure-Rust fallback, so they work on wasm32-wasip2.
+proc-macro2 = { version = "1.0.91", default-features = false, features = ["span-locations"] }
+quote = { version = "1", default-features = false }
+syn = { version = "3", default-features = false, features = ["full", "parsing", "printing"] }
+surrealdb = { version = "3.3", default-features = false, features = ["protocol-ws", "rustls"] }
+comp-daemon-kit = { path = "reconciler/daemons/kit" }
+comp-fleet = { path = "reconciler/fleet" }
+comp-fuel = { path = "reconciler/fuel" }
+comp-lattice = { path = "lattice" }
+comp-metadata = { path = "comp-metadata" }
+comp-oci = { path = "reconciler/oci" }
+holon-park = { path = "crates/holon-park", features = ["native"] }

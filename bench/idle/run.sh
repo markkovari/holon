@@ -23,17 +23,17 @@ EOF
 done
 
 nats-server -js -sd "$SP/nats" -a 127.0.0.1 -p 4272 >"$SP/nats.log" 2>&1 & PIDS+=($!)
-./reconciler/target/release/comp-stub --spec "$SP/specs" \
+./target/release/comp-stub --spec "$SP/specs" \
   --artifact gate=components/target/gate_domain.composed.wasm --port 8409 >"$SP/stub.log" 2>&1 & PIDS+=($!)
 sleep 2
-./host/target/release/comp-host --lattice-nats nats://127.0.0.1:4272 --node n1 --lattice idle \
+./target/release/comp-host --lattice-nats nats://127.0.0.1:4272 --node n1 --lattice idle \
   --addr 127.0.0.1:3991 --advertise-addr 127.0.0.1:3991 --state-dir "$SP/n1" >"$SP/n1.log" 2>&1 & PIDS+=($!)
 sleep 2
 HOSTPID=$(pgrep -f "node n1 --lattice idle" | head -1)
 rss() { ps -o rss= -p "$HOSTPID" | awk '{printf "%.1f", $1/1024}'; }
 echo "  idle host, nothing placed:            $(rss) MiB"
 
-./reconciler/target/release/comp-reconciler --platform-url http://127.0.0.1:8409 \
+./target/release/comp-reconciler --platform-url http://127.0.0.1:8409 \
   --secret test-secret --nats-url nats://127.0.0.1:4272 --lattice idle --interval 3 \
   >"$SP/rec.log" 2>&1 & PIDS+=($!)
 

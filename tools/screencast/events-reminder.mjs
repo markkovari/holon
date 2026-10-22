@@ -21,7 +21,7 @@
 // The event starts in two hours, so its reminder is already due. The schedule is
 // real; only the clock is chosen — waiting a day would prove the same thing slower.
 //
-// Prereq: MailHog on :8025, `reconciler/target/release/comp-mailrelay 127.0.0.1:3390 127.0.0.1:1025 &`
+// Prereq: MailHog on :8025, `target/release/comp-mailrelay 127.0.0.1:3390 127.0.0.1:1025 &`
 // (build: `cargo build --release --bin comp-mailrelay` in reconciler/), and the app on :3230.
 import { chromium } from "playwright";
 

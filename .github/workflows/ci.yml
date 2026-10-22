@@ -184,17 +184,10 @@ jobs:
         with:
           add-rust-environment-hash-key: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          workspaces: |
-            host -> target
-            cli -> target
+          workspaces: . -> target
 
-      - name: Build comp-host
-        working-directory: host
-        run: cargo build --release --bin comp-host
-
-      - name: Build holon
-        working-directory: cli
-        run: cargo build --release --bin holon
+      - name: Build comp-host and holon
+        run: cargo build --release --bin comp-host --bin holon
 
       # Two artifacts, not one: each is a single file in its own directory,
       # matching the `components` job's own wasm-artifact pattern exactly
@@ -206,14 +199,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: comp-host-bin
-          path: host/target/release/comp-host
+          path: target/release/comp-host
           retention-days: 1
 
       - name: Keep holon
         uses: actions/upload-artifact@v4
         with:
           name: holon-bin
-          path: cli/target/release/holon
+          path: target/release/holon
           retention-days: 1
 
   reconciler-artifact-suites:
@@ -250,7 +243,7 @@ jobs:
           shared-key: reconciler-pipeline
           workspaces: |
             components -> target
-            reconciler -> target
+            . -> target
 
       # The tree the `components` job above just tested — not a rebuild of it.
       # CI jobs do not share a filesystem, so this is how the two get to agree.
@@ -269,13 +262,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: comp-host-bin
-          path: host/target/release
+          path: target/release
 
       - name: Fetch holon
         uses: actions/download-artifact@v4
         with:
           name: holon-bin
-          path: cli/target/release
+          path: target/release
 
       # `actions/download-artifact@v4` is documented to preserve Unix file
       # modes, but this is the one place a silent loss of the executable bit
@@ -283,7 +276,7 @@ jobs:
       # `Command::spawn()` rather than here — cheap insurance, not a sign of
       # doubt in the tool.
       - name: Mark the downloaded binaries executable
-        run: chmod +x host/target/release/comp-host cli/target/release/holon
+        run: chmod +x target/release/comp-host target/release/holon
 
       # Four reconciler suites need the BUILT artifacts and nothing else.
       #
@@ -437,7 +430,7 @@ jobs:
       - name: Test the reconciler suites that read built artifacts
         working-directory: reconciler
         env:
-          COMP_HOST: ${{ github.workspace }}/host/target/release/comp-host
+          COMP_HOST: ${{ github.workspace }}/target/release/comp-host
         run: >-
           cargo test --release
           --test capsearch --test contracts --test publish --test secrets
@@ -547,7 +540,7 @@ jobs:
           shared-key: reconciler-pipeline
           workspaces: |
             components -> target
-            reconciler -> target
+            . -> target
 
       # The tree the `components` job above just tested — not a rebuild of it.
       # Several fleet suites (`gendeploy`, `newversion`, `generation`, `memory`,
@@ -568,16 +561,16 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: comp-host-bin
-          path: host/target/release
+          path: target/release
 
       - name: Fetch holon
         uses: actions/download-artifact@v4
         with:
           name: holon-bin
-          path: cli/target/release
+          path: target/release
 
       - name: Mark the downloaded binaries executable
-        run: chmod +x host/target/release/comp-host cli/target/release/holon
+        run: chmod +x target/release/comp-host target/release/holon
 
       # Only `comp-plug` and `comp-mailrelay` built here — same reasoning as
       # `reconciler-artifact-suites`'s own comment: this step is what builds them.
@@ -611,18 +604,12 @@ jobs:
       # up as a flake (`state`'s
       # `a_shared_store_lets_two_replicas_continue_one_count`, see its own comment
       # and the matching override in `.config/nextest.toml`).
-      # `--config-file ../...`: `reconciler` is its OWN Cargo workspace (this
-      # step's `working-directory`), and nextest resolves a bare `--profile`
-      # against `<that workspace>/.config/nextest.toml` — which does not exist —
-      # rather than the repo root's. Found by running this exact command locally
-      # first: it failed with "profile `ci` not found (known profiles: default,
-      # default-miri)", not by reading the docs and assuming.
       - name: Test the suites that spawn a fleet
         working-directory: reconciler
         env:
-          COMP_HOST: ${{ github.workspace }}/host/target/release/comp-host
+          COMP_HOST: ${{ github.workspace }}/target/release/comp-host
         run: >-
-          cargo nextest run --release --config-file ../.config/nextest.toml --profile ci -E "
+          cargo nextest run --release --profile ci -E "
           binary(=agent) | binary(=artifacts) | binary(=bigstatement) | binary(=blink) | binary(=capgraph_stress) |
           binary(=claude_shim_live) | binary(=coldstart) | binary(=compose) | binary(=contrast_audit_live) |
           binary(=crossnode) | binary(=driver) | binary(=e2e) | binary(=envbranch) | binary(=environments) |
@@ -701,7 +688,7 @@ jobs:
           # wanting NATS/SurrealDB/a model are still out.
           #
           # `console_session` is out too: it spawns `comp-host` from
-          # `host/target/release`, which this job does not build.
+          # `target/release`, which this job does not build.
           - workspace: reconciler
             test-args: >-
               --lib --bins
@@ -752,16 +739,22 @@ jobs:
         with:
           add-rust-environment-hash-key: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          workspaces: ${{ matrix.workspace }} -> target
+          workspaces: . -> target
+          key: ${{ matrix.workspace }}
+      # Every package under the entry's directory, so a new daemon is built and tested without a list to update.
+      - name: Pick the packages
+        id: pkgs
+        run: >-
+          echo "args=$(cargo metadata --no-deps --format-version 1
+          | jq -r --arg d "$GITHUB_WORKSPACE/${{ matrix.workspace }}/"
+          '[.packages[] | select(.manifest_path | startswith($d)) | "-p " + .name] | join(" ")')" >> "$GITHUB_OUTPUT"
       - name: Build
-        working-directory: ${{ matrix.workspace }}
-        run: cargo build --release
+        run: cargo build --release ${{ steps.pkgs.outputs.args }}
       - name: Test
-        working-directory: ${{ matrix.workspace }}
         # The reconciler's integration tests want NATS, SurrealDB and a model.
         # `--lib --bins` keeps CI to what it can honestly run; the rest stay a
         # local and deliberate act.
-        run: cargo test --release ${{ matrix.test-args }}
+        run: cargo test --release ${{ steps.pkgs.outputs.args }} ${{ matrix.test-args }}
 
       # `e2e_vcs` (ADR-0099) drives the code store through the real stack —
       # comp-host, comp-vcs, NATS JetStream and SurrealDB — and `e2e/vcs.sh` is
@@ -780,11 +773,10 @@ jobs:
       # `native` must keep compiling (and stay clippy-clean) on the host.
       - name: Build the code store for wasm32-wasip2, and check its native adapters
         if: matrix.workspace == 'crates'
-        working-directory: crates
         run: |
           rustup target add wasm32-wasip2
-          cargo build --release --target wasm32-wasip2
-          cargo clippy --all-targets --features holon-vcs/native -- -D warnings
+          cargo build --release --target wasm32-wasip2 ${{ steps.pkgs.outputs.args }}
+          cargo clippy --all-targets --features holon-vcs/native ${{ steps.pkgs.outputs.args }} -- -D warnings
 
       # Every app spec, checked against the renderer that will deploy it. This is
       # the one collision a single spec cannot see — two apps landing on one port,
@@ -794,7 +786,7 @@ jobs:
       - name: Validate the app specs
         if: matrix.workspace == 'cli'
         working-directory: ${{ github.workspace }}
-        run: ./cli/target/release/holon node validate apps/*.toml
+        run: ./target/release/holon node validate apps/*.toml
 
       # The lattice lane's spec, checked the same way and for the same reason. The
       # example is the only one committed; a real `fleet.toml` names real boxes and
@@ -802,7 +794,7 @@ jobs:
       - name: Validate the fleet spec
         if: matrix.workspace == 'cli'
         working-directory: ${{ github.workspace }}
-        run: ./cli/target/release/holon fleet validate fleet.example.toml
+        run: ./target/release/holon fleet validate fleet.example.toml
 
   lint:
     name: clippy
@@ -851,11 +843,7 @@ jobs:
       - name: Clippy, every native workspace
         run: |
           set -e
-          for ws in host lattice reconciler cli xtask crates comp-metadata; do
-            echo "::group::$ws"
-            cargo clippy --manifest-path "$ws/Cargo.toml" --all-targets -- -D warnings
-            echo "::endgroup::"
-          done
+          cargo clippy --workspace --all-targets -- -D warnings
 
   fmt:
     name: fmt
@@ -864,13 +852,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup component add rustfmt
-      # One config at the repo root (rustfmt.toml's own doc explains why:
-      # `use_small_heuristics = "Max"` matches this code's own measured line
-      # lengths), seven workspaces underneath it — `cargo fmt` finds it by
-      # walking up from wherever it is run, so each one is checked from
-      # inside its own directory.
+      # One config and one workspace at the repo root (rustfmt.toml's own doc
+      # explains the config), so one `cargo fmt --check` covers every member.
       #
-      # `components` is deliberately NOT in this list. Every crate there
+      # `components` is deliberately NOT a member. Every crate there
       # declares `mod bindings;`, generated by `cargo component check` and
       # gitignored — nothing commits it, so a fresh checkout has none, and
       # `cargo fmt --check` fails outright on a `mod` it cannot resolve to a
@@ -882,14 +867,8 @@ jobs:
       # it); there is just no way to gate that one workspace short of
       # committing a generated file this repo has never committed, which
       # is a bigger and separate decision than a formatting sweep.
-      - name: cargo fmt --check, every workspace
-        run: |
-          set -e
-          for ws in host lattice reconciler cli xtask crates comp-metadata; do
-            echo "::group::$ws"
-            (cd "$ws" && cargo fmt --check)
-            echo "::endgroup::"
-          done
+      - name: cargo fmt --check, every member of the root workspace
+        run: cargo fmt --check
 
   # `reconciler/Dockerfile.daemon` builds one daemon per image from a NARROW context — the five
   # directories it COPYs — and nothing built it, so a change that made the context too small went

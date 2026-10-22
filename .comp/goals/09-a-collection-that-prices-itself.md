@@ -127,7 +127,7 @@ price source keyed on `058/165` finds nothing for `#58`; a graded slab carries
 node tools/claude-shim.mjs &          # inference on the subscription, not the API
 cd components && cargo test -p card-identify   # watch it fail first, on purpose
 
-reconciler/target/release/comp-goalrun \
+target/release/comp-goalrun \
   --checkout . --repo markkovari/holon --base main \
   --llm-base-url http://127.0.0.1:8787 \
   --github-token ~/.comp-secrets/ghpat --branches 3 --rounds 2

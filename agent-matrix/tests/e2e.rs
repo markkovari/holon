@@ -1023,5 +1023,4 @@ fn you_can_talk_to_an_agent_and_it_talks_back() {
     assert_eq!(&audio[..4], b"OggS");
     let back = rt.speech().transcribe(&audio, None).expect("transcribing the reply").to_lowercase();
     assert!(back.contains("last row"), "the voice reply says the answer: {back}");
-
 }

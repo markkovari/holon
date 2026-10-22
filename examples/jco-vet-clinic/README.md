@@ -9,7 +9,7 @@ the same in-memory key-value store the components share.
 
 ![Vet clinic: a pet-owner signs in, registers a pet, searches, and books an appointment — the role-scoped owner view of the ~20-component app](../../docs/media/petclinic.gif)
 
-*(The gif runs on the native Rust host — `cargo xtask compose vet`, then `host/target/release/comp-host --component components/target/vet_domain.composed.wasm --addr 127.0.0.1:3007 --static-dir examples/jco-vet-clinic/public` — serving the same SPA + wasm; jco is the in-process variant.)*
+*(The gif runs on the native Rust host — `cargo xtask compose vet`, then `target/release/comp-host --component components/target/vet_domain.composed.wasm --addr 127.0.0.1:3007 --static-dir examples/jco-vet-clinic/public` — serving the same SPA + wasm; jco is the in-process variant.)*
 
 Three roles:
 

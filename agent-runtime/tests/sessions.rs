@@ -476,7 +476,7 @@ impl Drop for Daemon {
 }
 
 fn daemon_binary() -> std::path::PathBuf {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../reconciler/target");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target");
     ["debug", "release"]
         .iter()
         .map(|p| root.join(p).join("comp-agentd"))

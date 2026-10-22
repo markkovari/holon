@@ -35,7 +35,7 @@ app.get("/orders",
    ```bash
    cargo xtask compose accounts-app    # -> components/target/accounts_app.composed.wasm
    cargo build --release --manifest-path host/Cargo.toml --bin comp-host
-   host/target/release/comp-host --component components/target/accounts_app.composed.wasm \
+   target/release/comp-host --component components/target/accounts_app.composed.wasm \
      --addr 127.0.0.1:8001
    ```
 2. Start the app:

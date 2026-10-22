@@ -529,7 +529,7 @@ the bare name precisely so this one case doesn't need special-casing.
   so sourcing that env file and running a single goal silently ran at 900 anyway.
   Both names now reach the same flag. (Both recipes went with the `Justfile`: a
   single goal is `bash goal-demo.sh`, which still reads either name, and the daemon
-  is `reconciler/target/release/comp-goald`, which hands everything after `--`,
+  is `target/release/comp-goald`, which hands everything after `--`,
   `--timeout` included, to `comp-goalrun`.) → ADR-0088
 - ~~**Nothing criticises a gate.**~~ → **built**: every check, the goal's and each
   part's, is run against the untouched base before anything is spent, and a run is

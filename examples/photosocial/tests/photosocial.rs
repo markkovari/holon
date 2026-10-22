@@ -48,7 +48,7 @@ fn req(method: &str, path: &str, token: Option<&str>, body: Option<Value>) -> (u
 
 fn start_host() -> HostGuard {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
-    let bin = root.join("host/target/release/comp-host");
+    let bin = root.join("target/release/comp-host");
     let component = root.join("components/target/photosocial_domain.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `cargo build --release -p comp-host`)");
     assert!(component.exists(), "composed wasm missing (cargo xtask compose photosocial)");

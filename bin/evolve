@@ -16,8 +16,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPO="markkovari/holon"
 KEY="$HOME/.comp-secrets/anthropic"
 TOK="$HOME/.comp-secrets/ghpat"
-GR="$ROOT/reconciler/target/release/comp-goalrun"
-SI="$ROOT/reconciler/target/release/comp-selfimprove"
+GR="$ROOT/target/release/comp-goalrun"
+SI="$ROOT/target/release/comp-selfimprove"
 LOG="$(mktemp)"
 caps_of() { python3 -c "import sys;print(','.join(l.split('#')[0].strip() for l in open(sys.argv[1]) if l.split('#')[0].strip()))" "$1"; }
 
