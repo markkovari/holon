@@ -432,7 +432,7 @@ jobs:
         env:
           COMP_HOST: ${{ github.workspace }}/target/release/comp-host
         run: >-
-          cargo test --release
+          cargo test --release -p comp-reconciler -p comp-goal
           --test capsearch --test contracts --test publish --test secrets
           --test capgraph_edges --test capgraph_store --test console_session
           --test compose_race --test witsurface --test hostsurface
@@ -609,7 +609,7 @@ jobs:
         env:
           COMP_HOST: ${{ github.workspace }}/target/release/comp-host
         run: >-
-          cargo nextest run --release --profile ci -E "
+          cargo nextest run --release --profile ci -p comp-reconciler -p comp-goal -p comp-backup -E "
           binary(=agent) | binary(=artifacts) | binary(=bigstatement) | binary(=blink) | binary(=capgraph_stress) |
           binary(=claude_shim_live) | binary(=coldstart) | binary(=compose) | binary(=contrast_audit_live) |
           binary(=crossnode) | binary(=driver) | binary(=e2e) | binary(=envbranch) | binary(=environments) |
