@@ -1,0 +1,357 @@
+// Holon agent runtime: agents, their runs, one resumable event stream, approvals,
+// projects and API keys. The contract of ADR-0120, served by agent-runtime over
+// REST/JSON + Server-Sent Events and gRPC on one port, as comp-agentd serves
+// agent.proto (ADR-0102). Messages mirror crates/agent-wire field for field.
+//
+// REST: ids in the path, the rest in a JSON body; query strings only for paging and
+// cursors (`limit`, `before`, `after_seq`). Errors are RFC 9457 problem details.
+// Money is integer micro-USD.
+syntax = "proto3";
+
+package holon.runtime.v1;
+
+import "google/protobuf/struct.proto";
+import "holon/v1/agent.proto";
+
+service AgentRuntimeService {
+  // GET /v1/agents
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+  // GET /v1/agents/{name}
+  rpc GetAgent(GetAgentRequest) returns (Agent);
+  // PUT /v1/agents/{name}: creates or replaces.
+  rpc PutAgent(PutAgentRequest) returns (Agent);
+  // DELETE /v1/agents/{name}: to the trash, restorable for 30 days.
+  rpc DeleteAgent(DeleteAgentRequest) returns (DeleteAgentResponse);
+  // POST /v1/agents/{name}:pause and :resume
+  rpc SetPaused(SetPausedRequest) returns (Agent);
+
+  // POST /v1/agents/{agent}/runs. With wait, returns the finished run; without it,
+  // returns at once with status RUNNING and progress arrives on StreamEvents.
+  rpc StartRun(StartRunRequest) returns (Run);
+  // GET /v1/agents/{agent}/runs?limit=&before=: newest first.
+  rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+
+  // POST /v1/topics/{topic}/events: wakes the agents that listen on the topic.
+  rpc PublishEvent(PublishEventRequest) returns (PublishEventResponse);
+
+  // GET /v1/events?after_seq= (SSE; `id` is the seq, Last-Event-ID resumes).
+  // Every event in seq order, with no gap and no repeat across a reconnect.
+  rpc StreamEvents(StreamEventsRequest) returns (stream RuntimeEvent);
+  // GET /v1/state: what a window needs to draw now, and the seq it reflects, so
+  // StreamEvents from that seq continues it exactly (as ADR-0107 does for sessions).
+  rpc GetState(GetStateRequest) returns (RuntimeState);
+
+  // GET /v1/approvals
+  rpc ListApprovals(ListApprovalsRequest) returns (ListApprovalsResponse);
+  // POST /v1/approvals/{id}. FAILED_PRECONDITION if it is no longer pending.
+  rpc SubmitApproval(SubmitApprovalRequest) returns (SubmitApprovalResponse);
+
+  // GET /v1/projects
+  rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
+  // PUT /v1/projects/{name}
+  rpc PutProject(PutProjectRequest) returns (Project);
+  // PUT and DELETE /v1/projects/{project}/agents/{agent}
+  rpc SetMembership(SetMembershipRequest) returns (Project);
+
+  // GET /v1/keys: names and vault references, never a key.
+  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
+  // PUT /v1/keys/{name}. The reply carries no key back.
+  rpc PutKey(PutKeyRequest) returns (ApiKeyRef);
+  // DELETE /v1/keys/{name}: also taken from every agent that held it.
+  rpc DeleteKey(DeleteKeyRequest) returns (DeleteKeyResponse);
+  // PUT and DELETE /v1/keys/{key}/agents/{agent}. Granting also grants http_get.
+  rpc SetKeyGrant(SetKeyGrantRequest) returns (Agent);
+}
+
+// ---- Agents ----
+
+message Agent {
+  string name = 1;
+  string description = 2;
+  bool paused = 3;
+  // The whole spec as agent-runtime stores it (`AgentSpec`): capabilities, triggers,
+  // model, limits, store access, API keys. A Struct, not fields, while the spec is
+  // still moving; clients read the few fields above and pass the rest through.
+  google.protobuf.Struct spec = 4;
+  // Short name of the model a sidebar shows, e.g. "deepseek-chat (+3 fallback)".
+  string model_label = 5;
+  repeated string projects = 6;
+}
+
+message ListAgentsRequest {}
+message ListAgentsResponse { repeated Agent agents = 1; }
+message GetAgentRequest { string name = 1; }
+message PutAgentRequest {
+  string name = 1;
+  google.protobuf.Struct spec = 2;
+}
+message DeleteAgentRequest { string name = 1; }
+message DeleteAgentResponse { string trash_id = 1; }
+message SetPausedRequest {
+  string name = 1;
+  bool paused = 2;
+}
+
+// ---- Runs ----
+
+enum RunStatus {
+  RUN_STATUS_UNSPECIFIED = 0;
+  RUN_STATUS_RUNNING = 1;
+  RUN_STATUS_OK = 2;
+  RUN_STATUS_FAILED = 3;
+  // Stopped for spending more than its token budget.
+  RUN_STATUS_OVER_BUDGET = 4;
+  // Refused before it started: a loop, too many hops, a rate limit, an open circuit.
+  RUN_STATUS_DROPPED = 5;
+}
+
+message StartRunRequest {
+  string agent = 1;
+  string input = 2;
+  // Who or what asked, in words; the run's trigger becomes "http: <why>".
+  string why = 3;
+  // The project the run is for; the agent must be a member.
+  string project = 4;
+  // Names of files in the agent's inbox that came with the message.
+  repeated string attachments = 5;
+  bool wait = 6;
+  // W3C traceparent of the caller, to join its trace.
+  string traceparent = 7;
+}
+
+message Run {
+  string id = 1;
+  string agent = 2;
+  // "http", "http: <why>", "schedule: <cron>", "event: <topic>", "agent: <caller>", "timer", "ui".
+  string trigger = 3;
+  string input = 4;
+  RunStatus status = 5;
+  string answer = 6;
+  repeated Step steps = 7;
+  uint64 tokens_in = 8;
+  uint64 tokens_out = 9;
+  uint64 started_ms = 10;
+  uint64 finished_ms = 11;
+  // "provider/model".
+  string model = 12;
+  string trace_id = 13;
+  string span_id = 14;
+  string parent_span_id = 15;
+  uint32 hops = 16;
+  repeated string chain = 17;
+  string project = 18;
+  repeated string attachments = 19;
+}
+
+message Step {
+  oneof step {
+    ModelStep model = 1;
+    ToolStep tool = 2;
+  }
+}
+
+message ModelStep {
+  string text = 1;
+  string span_id = 2;
+  uint64 t0_ms = 3;
+  uint64 t1_ms = 4;
+  uint64 tokens_in = 5;
+  uint64 tokens_out = 6;
+}
+
+message ToolStep {
+  string name = 1;
+  google.protobuf.Struct args = 2;
+  string result = 3;
+  bool error = 4;
+  // Unset when the call needed no approval.
+  optional bool approved = 5;
+  string span_id = 6;
+  uint64 t0_ms = 7;
+  uint64 t1_ms = 8;
+}
+
+message ListRunsRequest {
+  string agent = 1;
+  uint32 limit = 2;
+  // A run id: only runs that started before it.
+  string before = 3;
+}
+message ListRunsResponse { repeated Run runs = 1; }
+
+message PublishEventRequest {
+  string topic = 1;
+  string payload = 2;
+}
+message PublishEventResponse { uint32 woken = 1; }
+
+// ---- The event stream ----
+
+message StreamEventsRequest {
+  // The last seq the caller saw; 0 for everything the runtime still holds.
+  uint64 after_seq = 1;
+}
+
+// One envelope for everything that happens. `seq` is per runtime, monotonic and
+// without gaps; unknown kinds are ignored, so new ones are additive.
+message RuntimeEvent {
+  uint64 seq = 1;
+  uint64 at_ms = 2;
+  oneof kind {
+    RunStarted run_started = 10;
+    ToolStarted tool_started = 11;
+    StepDone step_done = 12;
+    Run run_finished = 13;
+    ApprovalRequested approval_requested = 14;
+    ApprovalResolved approval_resolved = 15;
+    SessionView session_changed = 16;
+  }
+}
+
+message RunStarted {
+  string agent = 1;
+  string run_id = 2;
+  string trigger = 3;
+  string input = 4;
+  string trace_id = 5;
+  string span_id = 6;
+  // The tool call, in another run, that woke this one.
+  string parent_span_id = 7;
+  string model = 8;
+  repeated string chain = 9;
+}
+
+// A tool call is about to be asked about or made; what it wakes names span_id as its parent.
+message ToolStarted {
+  string agent = 1;
+  string run_id = 2;
+  string span_id = 3;
+  string tool = 4;
+  google.protobuf.Struct args = 5;
+}
+
+message StepDone {
+  string agent = 1;
+  string run_id = 2;
+  Step step = 3;
+}
+
+message ApprovalRequested { Approval approval = 1; }
+message ApprovalResolved {
+  uint64 id = 1;
+  bool approved = 2;
+}
+
+// A coding session an agent started (ADR-0119): the whole of it, replaced by id.
+message SessionView {
+  string id = 1;
+  string agent = 2;
+  string run_id = 3;
+  string call_span = 4;
+  string trace_id = 5;
+  string task = 6;
+  string model = 7;
+  string workspace = 8;
+  SessionPhase phase = 9;
+  uint64 cost_usd_micros = 10;
+  uint64 tokens_in = 11;
+  uint64 tokens_out = 12;
+  repeated string tools = 13;
+  uint32 calls = 14;
+  string activity = 15;
+  uint64 started_ms = 16;
+  optional uint64 finished_ms = 17;
+  optional string result = 18;
+  repeated Approval pending = 19;
+}
+
+enum SessionPhase {
+  SESSION_PHASE_UNSPECIFIED = 0;
+  SESSION_PHASE_RUNNING = 1;
+  SESSION_PHASE_NEEDS_YOU = 2;
+  SESSION_PHASE_DONE = 3;
+  SESSION_PHASE_FAILED = 4;
+  SESSION_PHASE_CANCELLED = 5;
+}
+
+message GetStateRequest {}
+message RuntimeState {
+  // The last event this state reflects: StreamEvents with after_seq = seq continues it.
+  uint64 seq = 1;
+  repeated Run running = 2;
+  repeated Approval approvals = 3;
+  repeated SessionView sessions = 4;
+}
+
+// ---- Approvals ----
+
+message Approval {
+  uint64 id = 1;
+  string agent = 2;
+  string tool = 3;
+  google.protobuf.Struct args = 4;
+  // The agents up the call stack, outermost first.
+  repeated string chain = 5;
+}
+
+message ListApprovalsRequest {}
+message ListApprovalsResponse { repeated Approval approvals = 1; }
+message SubmitApprovalRequest {
+  uint64 id = 1;
+  bool approve = 2;
+  // How far a yes reaches (ADR-0114), as comp-agentd says it; an agent's own call has one reach.
+  holon.v1.ApprovalScope scope = 3;
+  // A denial's reason goes back to the model as the tool's error.
+  string reason = 4;
+}
+message SubmitApprovalResponse {}
+
+// ---- Projects ----
+
+message Project {
+  string name = 1;
+  string description = 2;
+  repeated string agents = 3;
+  // The member that answers when a message addresses nobody.
+  string lead = 4;
+  bool archived = 5;
+}
+
+message ListProjectsRequest {}
+message ListProjectsResponse { repeated Project projects = 1; }
+message PutProjectRequest {
+  string name = 1;
+  string description = 2;
+  string lead = 3;
+}
+message SetMembershipRequest {
+  string project = 1;
+  string agent = 2;
+  bool member = 3;
+}
+
+// ---- API keys (ADR-0051 vault) ----
+
+message ApiKeyRef {
+  string name = 1;
+  // vault://<org>/<name>
+  string ref = 2;
+}
+
+message ListKeysRequest {}
+message ListKeysResponse { repeated ApiKeyRef keys = 1; }
+message PutKeyRequest {
+  string name = 1;
+  // The one host it may be sent to; a pasted URL names its host.
+  string host = 2;
+  string key = 3;
+  // Empty: "Authorization: Bearer <key>". Any other header gets the bare key.
+  string header = 4;
+}
+message DeleteKeyRequest { string name = 1; }
+message DeleteKeyResponse {}
+message SetKeyGrantRequest {
+  string key = 1;
+  string agent = 2;
+  bool granted = 3;
+}
