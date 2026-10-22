@@ -1,0 +1,425 @@
+# REST twin of runtime.proto (ADR-0120): same resources and fields (snake_case), enums as lowercase
+# strings. Streaming is Server-Sent Events. Served by agent-runtime under /v1.
+openapi: 3.0.3
+info:
+  title: Holon Agent Runtime API
+  version: 1.0.0
+  description: >
+    Agents, their runs, one resumable event stream with a state snapshot, approvals, projects
+    and API keys. Starting a run and publishing an event are open (loopback); the rest needs the
+    runtime's admin token.
+servers:
+  - url: http://127.0.0.1:18017
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/agents:
+    get:
+      operationId: listAgents
+      responses:
+        "200":
+          description: Every agent.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agents: { type: array, items: { $ref: "#/components/schemas/Agent" } }
+        "401": { $ref: "#/components/responses/Problem" }
+
+  /v1/agents/{name}:
+    parameters: [{ $ref: "#/components/parameters/Name" }]
+    get:
+      operationId: getAgent
+      responses:
+        "200": { $ref: "#/components/responses/Agent" }
+        "404": { $ref: "#/components/responses/Problem" }
+    put:
+      operationId: putAgent
+      summary: Create or replace. The spec's name must be the one in the path.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [spec]
+              properties:
+                spec: { type: object, description: "An `AgentSpec`, as agent-runtime stores it." }
+      responses:
+        "200": { $ref: "#/components/responses/Agent" }
+        "201": { $ref: "#/components/responses/Agent" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteAgent
+      summary: To the trash, restorable for 30 days.
+      responses:
+        "200": { description: Deleted. }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /v1/agents/{name}:pause:
+    parameters: [{ $ref: "#/components/parameters/Name" }]
+    post:
+      operationId: pauseAgent
+      responses:
+        "200": { $ref: "#/components/responses/Agent" }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /v1/agents/{name}:resume:
+    parameters: [{ $ref: "#/components/parameters/Name" }]
+    post:
+      operationId: resumeAgent
+      responses:
+        "200": { $ref: "#/components/responses/Agent" }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /v1/agents/{name}/runs:
+    parameters: [{ $ref: "#/components/parameters/Name" }]
+    post:
+      operationId: startRun
+      security: []
+      summary: >
+        With `wait`, the finished run. Without, 202 at once; the run is on the event stream.
+        A `traceparent` header joins the caller's trace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StartRunRequest" }
+      responses:
+        "200":
+          description: The finished run (`wait`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        "202": { description: "Started: `{agent, status: running}`." }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "423": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+    get:
+      operationId: listRuns
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 20 } }
+      responses:
+        "200":
+          description: Newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runs: { type: array, items: { $ref: "#/components/schemas/Run" } }
+
+  /v1/topics/{topic}/events:
+    parameters:
+      - { name: topic, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: publishEvent
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                payload: { type: string }
+      responses:
+        "202":
+          description: How many agents it woke.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  woken: { type: integer }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /v1/events:
+    get:
+      operationId: streamEvents
+      summary: >
+        Every event in seq order, with no gap or repeat across a reconnect. SSE: `id` is the seq,
+        `event` the kind, `data` the RuntimeEvent. `Last-Event-ID` resumes like `after_seq`; a
+        comment (`: ping`) every 15 s when quiet. A seq that jumps ahead is a restart: re-read /v1/state.
+      parameters:
+        - { name: after_seq, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        "200":
+          description: The stream.
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/RuntimeEvent" }
+
+  /v1/state:
+    get:
+      operationId: getState
+      responses:
+        "200":
+          description: What to draw now, and the seq it reflects.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  seq: { type: integer }
+                  running: { type: array, items: { $ref: "#/components/schemas/Run" } }
+                  approvals: { type: array, items: { $ref: "#/components/schemas/Approval" } }
+                  sessions: { type: array, items: { type: object } }
+
+  /v1/approvals:
+    get:
+      operationId: listApprovals
+      responses:
+        "200":
+          description: Waiting for a person.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  approvals: { type: array, items: { $ref: "#/components/schemas/Approval" } }
+
+  /v1/approvals/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    post:
+      operationId: submitApproval
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approve]
+              properties:
+                approve: { type: boolean }
+                scope:
+                  type: string
+                  enum: [once, task, session]
+                  default: once
+                  description: How far a yes reaches (ADR-0114); only a coding session's calls reach further.
+      responses:
+        "200": { description: Answered. }
+        "409": { $ref: "#/components/responses/Problem" }
+
+  /v1/projects:
+    get:
+      operationId: listProjects
+      responses:
+        "200":
+          description: Every project.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projects: { type: array, items: { $ref: "#/components/schemas/Project" } }
+
+  /v1/projects/{name}:
+    parameters: [{ $ref: "#/components/parameters/Name" }]
+    put:
+      operationId: putProject
+      summary: Creates it, or changes what the body says; members are set one by one below.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description: { type: string }
+                lead: { type: string, description: "A member, or empty for nobody." }
+      responses:
+        "200":
+          description: The project.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /v1/projects/{name}/agents/{agent}:
+    parameters:
+      - { $ref: "#/components/parameters/Name" }
+      - { name: agent, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: addMember
+      responses:
+        "200": { description: The project. }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: removeMember
+      responses:
+        "200": { description: The project. }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /v1/keys:
+    get:
+      operationId: listKeys
+      responses:
+        "200":
+          description: Names and vault references, never a key.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys: { type: array, items: { $ref: "#/components/schemas/ApiKeyRef" } }
+        "503": { $ref: "#/components/responses/Problem" }
+
+  /v1/keys/{name}:
+    parameters: [{ $ref: "#/components/parameters/Name" }]
+    put:
+      operationId: putKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host, key]
+              properties:
+                host: { type: string, description: "The one host it may go to; a pasted URL names its host." }
+                key: { type: string }
+                header: { type: string, description: "Empty: Authorization: Bearer <key>. Any other gets the bare key." }
+      responses:
+        "200":
+          description: Stored. The reply carries no key back.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiKeyRef" }
+        "422": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteKey
+      summary: Also taken from every agent that held it.
+      responses:
+        "200": { description: Deleted. }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /v1/keys/{key}/agents/{agent}:
+    parameters:
+      - { name: key, in: path, required: true, schema: { type: string } }
+      - { name: agent, in: path, required: true, schema: { type: string } }
+    put:
+      operationId: grantKey
+      summary: Granting also grants http_get, the one tool that sends a key.
+      responses:
+        "200": { $ref: "#/components/responses/Agent" }
+        "422": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: revokeKey
+      responses:
+        "200": { $ref: "#/components/responses/Agent" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, description: "<state-dir>/admin-token" }
+
+  parameters:
+    Name: { name: name, in: path, required: true, schema: { type: string } }
+
+  responses:
+    Agent:
+      description: The agent.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Agent" }
+    Problem:
+      description: Error (RFC 9457 problem details).
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    Agent:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        paused: { type: boolean }
+        spec: { type: object, description: "The whole AgentSpec." }
+        model_label: { type: string, example: "deepseek-chat (+3 fallback)" }
+        projects: { type: array, items: { type: string } }
+
+    StartRunRequest:
+      type: object
+      properties:
+        input: { type: string }
+        why: { type: string, description: 'The run''s trigger becomes "http: <why>".' }
+        project: { type: string, description: The project the run is for; the agent must be a member. }
+        attachments: { type: array, items: { type: string }, description: "Files in the agent's inbox." }
+        wait: { type: boolean, default: false }
+
+    Run:
+      type: object
+      description: A run record, as agent-runtime keeps it (crates/agent-wire `RunRecord`).
+      properties:
+        id: { type: string }
+        agent: { type: string }
+        trigger: { type: string }
+        input: { type: string }
+        status: { type: string, enum: [ok, failed, over_budget, dropped] }
+        answer: { type: string }
+        steps: { type: array, items: { type: object } }
+        tokens_in: { type: integer }
+        tokens_out: { type: integer }
+        started_ms: { type: integer }
+        finished_ms: { type: integer }
+        model: { type: string }
+        trace_id: { type: string }
+        span_id: { type: string }
+        parent_span_id: { type: string, nullable: true }
+        hops: { type: integer }
+        chain: { type: array, items: { type: string } }
+        project: { type: string }
+        attachments: { type: array, items: { type: string } }
+
+    RuntimeEvent:
+      type: object
+      required: [seq, at_ms, event]
+      properties:
+        seq: { type: integer }
+        at_ms: { type: integer }
+        event:
+          type: object
+          description: >
+            Tagged by `type`: run_started, tool_started, step_done, run_finished, approval_requested,
+            approval_resolved, session. Ignore a type you do not know.
+          properties:
+            type: { type: string }
+
+    Approval:
+      type: object
+      properties:
+        id: { type: integer }
+        agent: { type: string }
+        tool: { type: string }
+        args: {}
+        chain: { type: array, items: { type: string } }
+
+    Project:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        agents: { type: array, items: { type: string } }
+        lead: { type: string, nullable: true }
+        archived: { type: boolean }
+
+    ApiKeyRef:
+      type: object
+      properties:
+        name: { type: string }
+        ref: { type: string, example: "vault://me/github" }
+
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: { type: string, example: about:blank }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }

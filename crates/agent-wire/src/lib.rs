@@ -176,6 +176,15 @@ pub struct SessionView {
     pub pending: Vec<Pending>,
 }
 
+/// An event as the runtime's stream carries it: `seq` is monotonic and gapless within one start of
+/// the runtime, and jumps ahead across a restart, which is a reader's cue to re-read the state.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Sequenced {
+    pub seq: u64,
+    pub at_ms: u64,
+    pub event: Event,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {

@@ -60,7 +60,7 @@ impl Config {
     }
 }
 
-pub use agent_wire::Pending;
+pub use agent_wire::{Pending, Sequenced};
 
 struct Slot {
     pending: Pending,
@@ -101,6 +101,7 @@ pub struct Runtime {
     pub(crate) agentd: Option<session::Agentd>,
     pub(crate) sessions: Mutex<Vec<session::Tracked>>,
     observers: Mutex<Vec<Sender<Event>>>,
+    log: Mutex<EventLog>,
     mock_cursor: Mutex<HashMap<String, usize>>,
     last_fired: Mutex<HashMap<(String, usize), u64>>,
     stop: AtomicBool,
@@ -221,6 +222,7 @@ impl Runtime {
             agentd: cfg_agentd,
             sessions: Mutex::new(Vec::new()),
             observers: Mutex::new(Vec::new()),
+            log: Mutex::new(EventLog::new()),
             mock_cursor: Mutex::new(HashMap::new()),
             last_fired: Mutex::new(HashMap::new()),
             stop: AtomicBool::new(false),
@@ -270,6 +272,62 @@ impl Runtime {
         let (tx, rx) = channel();
         self.observers.lock().unwrap().push(tx);
         rx
+    }
+
+    /// What the log still holds after `after_seq`, then everything later, in order: the backlog and
+    /// the subscription are taken under one lock, so nothing falls between them.
+    pub fn follow(&self, after_seq: u64) -> (Vec<Sequenced>, Receiver<Sequenced>) {
+        let mut log = self.log.lock().unwrap();
+        let backlog = log.held.iter().filter(|e| e.seq > after_seq).cloned().collect();
+        let (tx, rx) = channel();
+        log.followers.push(tx);
+        (backlog, rx)
+    }
+
+    /// The last seq handed out, and the runs the log saw start and not yet finish.
+    pub fn snapshot(&self) -> (u64, Vec<agent_wire::RunRecord>) {
+        let log = self.log.lock().unwrap();
+        let mut running: Vec<agent_wire::RunRecord> = Vec::new();
+        for e in &log.held {
+            match &e.event {
+                Event::RunStarted {
+                    agent,
+                    run_id,
+                    trigger,
+                    input,
+                    trace_id,
+                    span_id,
+                    model,
+                    chain,
+                    ..
+                } => running.push(agent_wire::RunRecord {
+                    id: run_id.clone(),
+                    agent: agent.clone(),
+                    trigger: trigger.clone(),
+                    input: input.clone(),
+                    started: e.at_ms / 1000,
+                    finished: 0,
+                    status: agent_wire::Status::Ok,
+                    answer: String::new(),
+                    steps: Vec::new(),
+                    tokens_in: 0,
+                    tokens_out: 0,
+                    started_ms: e.at_ms,
+                    finished_ms: 0,
+                    model: model.clone(),
+                    trace_id: trace_id.clone(),
+                    span_id: span_id.clone(),
+                    parent_span_id: None,
+                    hops: 0,
+                    chain: chain.clone(),
+                    project: String::new(),
+                    attachments: Vec::new(),
+                }),
+                Event::RunFinished(r) => running.retain(|x| x.id != r.id),
+                _ => {}
+            }
+        }
+        (log.next.saturating_sub(1), running)
     }
 
     pub fn trace_otlp(&self, trace_id: &str) -> Value {
@@ -1230,5 +1288,33 @@ impl Host for Runtime {
             crate::otlp::export_async(endpoint.clone(), (**rec).clone());
         }
         self.observers.lock().unwrap().retain(|tx| tx.send(event.clone()).is_ok());
+        self.log.lock().unwrap().push(event);
+    }
+}
+
+/// The recent events, numbered, for `/v1/events` and `/v1/state` (ADR-0120).
+struct EventLog {
+    next: u64,
+    held: std::collections::VecDeque<Sequenced>,
+    followers: Vec<Sender<Sequenced>>,
+}
+
+// shortcut: in memory, the last 10_000 events; a reader further behind re-reads `/v1/state`. Persist it if a client needs history across restarts.
+const HELD_EVENTS: usize = 10_000;
+
+impl EventLog {
+    fn new() -> Self {
+        // From the clock, so a restart's seqs come after every seq the last run handed out.
+        Self { next: unix_now_ms() * 1000, held: Default::default(), followers: Vec::new() }
+    }
+
+    fn push(&mut self, event: Event) {
+        let e = Sequenced { seq: self.next, at_ms: unix_now_ms(), event };
+        self.next += 1;
+        self.followers.retain(|tx| tx.send(e.clone()).is_ok());
+        self.held.push_back(e);
+        if self.held.len() > HELD_EVENTS {
+            self.held.pop_front();
+        }
     }
 }

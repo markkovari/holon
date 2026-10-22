@@ -1536,15 +1536,19 @@ impl Bridge {
             }
             std::thread::sleep(Duration::from_secs(5));
         });
+        // Woken by the runtime's events instead of polling it; one thread, so no pass runs twice at once.
+        // A (re)connect and the stream's quiet pings sweep both, for whatever a dropped stream missed.
         let me = self.clone();
-        std::thread::spawn(move || loop {
-            me.poll_approvals();
-            std::thread::sleep(Duration::from_secs(2));
-        });
-        let me = self.clone();
-        std::thread::spawn(move || loop {
-            me.deliver_scheduled();
-            std::thread::sleep(Duration::from_secs(10));
+        std::thread::spawn(move || {
+            me.rt.follow(|kind| match kind {
+                "approval_requested" | "approval_resolved" => me.poll_approvals(),
+                "run_finished" => me.deliver_scheduled(),
+                "connected" | "ping" => {
+                    me.poll_approvals();
+                    me.deliver_scheduled();
+                }
+                _ => {}
+            })
         });
     }
 }

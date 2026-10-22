@@ -1,10 +1,10 @@
-//! The board on a running `agent-runtime`, over its admin API: the runtime Element talks to is the one shown here.
+//! The board on a running `agent-runtime`, over its `/v1` contract (ADR-0120): the runtime Element talks to.
 
 use std::time::Duration;
 
-use agent_wire::{Event, RunRecord};
+use agent_wire::{Event, Pending, RunRecord, Sequenced};
 use gpui::{App, Entity};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::agents::AgentInfo;
 use super::keys::{KeyRow, NewKey};
@@ -20,31 +20,17 @@ fn http(timeout: Option<Duration>) -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder().timeout(timeout).build().unwrap()
 }
 
-/// The short name a sidebar shows for a model, as the console names it.
-pub fn model_name(m: &Value) -> String {
-    match m["kind"].as_str().unwrap_or("local") {
-        "fallback" => {
-            let models = m["models"].as_array().cloned().unwrap_or_default();
-            match models.split_first() {
-                Some((first, [])) => model_name(first),
-                Some((first, rest)) => format!("{} (+{} fallback)", model_name(first), rest.len()),
-                None => "fallback (empty)".into(),
-            }
-        }
-        "open_ai" | "anthropic" => m["model"].as_str().unwrap_or_default().to_string(),
-        other => other.to_string(),
-    }
-}
-
-pub fn info_of(spec: &Value, projects: &[Value]) -> AgentInfo {
-    let name = spec["name"].as_str().unwrap_or_default().to_string();
+/// A `/v1` agent as the board shows it.
+pub fn info_of(agent: &Value) -> AgentInfo {
     let strings = |v: &Value| -> Vec<String> {
         v.as_array().into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect()
     };
+    let spec = &agent["spec"];
     AgentInfo {
-        description: spec["description"].as_str().unwrap_or_default().to_string(),
-        model: model_name(&spec["model"]),
-        paused: spec["paused"].as_bool().unwrap_or(false),
+        name: agent["name"].as_str().unwrap_or_default().to_string(),
+        description: agent["description"].as_str().unwrap_or_default().to_string(),
+        model: agent["model_label"].as_str().unwrap_or_default().to_string(),
+        paused: agent["paused"].as_bool().unwrap_or(false),
         triggers: spec["triggers"]
             .as_array()
             .into_iter()
@@ -61,14 +47,17 @@ pub fn info_of(spec: &Value, projects: &[Value]) -> AgentInfo {
             .flatten()
             .filter_map(|c| c["name"].as_str().map(String::from))
             .collect(),
-        projects: projects
-            .iter()
-            .filter(|p| strings(&p["agents"]).contains(&name))
-            .filter_map(|p| p["name"].as_str().map(String::from))
-            .collect(),
+        projects: strings(&agent["projects"]),
         api_keys: strings(&spec["api_keys"]),
-        name,
     }
+}
+
+/// What a refusal says: a problem's `detail`, else the body.
+fn said(text: String) -> String {
+    serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(|v| v["detail"].as_str().map(String::from))
+        .unwrap_or(text)
 }
 
 impl Remote {
@@ -80,68 +69,62 @@ impl Remote {
         &self,
         method: reqwest::Method,
         path: &str,
-        body: Option<String>,
-    ) -> Result<String, String> {
+        body: Option<Value>,
+    ) -> Result<Value, String> {
         let mut req = http(Some(Duration::from_secs(10)))
             .request(method, format!("{}{path}", self.url))
             .bearer_auth(&self.token);
         if let Some(b) = body {
-            req = req.header("content-type", "application/json").body(b);
+            req = req.json(&b);
         }
         let r = req
             .send()
             .map_err(|e| format!("The agent runtime at {} did not answer: {e}", self.url))?;
         let ok = r.status().is_success();
         let text = r.text().unwrap_or_default();
-        if ok {
-            Ok(text)
-        } else {
-            Err(text)
+        if !ok {
+            return Err(said(text));
         }
+        Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
     }
 
     fn get(&self, path: &str) -> Result<Value, String> {
-        serde_json::from_str(&self.call(reqwest::Method::GET, path, None)?)
-            .map_err(|e| e.to_string())
+        self.call(reqwest::Method::GET, path, None)
     }
 
-    /// What already happened: the runs the runtime kept, and approvals still waiting.
-    pub fn history(&self) -> (Vec<RunRecord>, Vec<Event>) {
-        let specs = self.get("/agents").unwrap_or_default();
-        let runs = specs
+    /// What already happened: the runs the runtime kept, approvals still waiting, and the seq it reflects.
+    pub fn history(&self) -> (Vec<RunRecord>, Vec<Event>, u64) {
+        let state = self.get("/v1/state").unwrap_or_default();
+        let agents = self.get("/v1/agents").unwrap_or_default();
+        let runs = agents["agents"]
             .as_array()
             .into_iter()
             .flatten()
-            .filter_map(|s| s["name"].as_str())
+            .filter_map(|a| a["name"].as_str())
             .flat_map(|n| {
-                self.get(&format!("/agents/{n}/runs?limit=50"))
+                self.get(&format!("/v1/agents/{n}/runs?limit=50"))
                     .ok()
-                    .and_then(|v| serde_json::from_value::<Vec<RunRecord>>(v).ok())
+                    .and_then(|v| serde_json::from_value::<Vec<RunRecord>>(v["runs"].clone()).ok())
                     .unwrap_or_default()
             })
             .collect();
-        let waiting = self
-            .get("/approvals")
+        let waiting = serde_json::from_value::<Vec<Pending>>(state["approvals"].clone())
             .unwrap_or_default()
-            .as_array()
             .into_iter()
-            .flatten()
-            .filter_map(|p| {
-                Some(Event::ApprovalRequested {
-                    id: p["id"].as_u64()?,
-                    agent: p["agent"].as_str()?.to_string(),
-                    tool: p["tool"].as_str()?.to_string(),
-                    args: p["args"].clone(),
-                    chain: serde_json::from_value(p["chain"].clone()).unwrap_or_default(),
-                })
+            .map(|p| Event::ApprovalRequested {
+                id: p.id,
+                agent: p.agent,
+                tool: p.tool,
+                args: p.args,
+                chain: p.chain,
             })
             .collect();
-        (runs, waiting)
+        (runs, waiting, state["seq"].as_u64().unwrap_or(0))
     }
 
-    /// Seeds the tree, then applies the runtime's events as they come, reconnecting when the stream drops.
+    /// Seeds the tree from the state, then applies the events after it, resuming from the last seq seen.
     pub fn follow(&self, tree: Entity<AgentTree>, cx: &mut App) {
-        let (runs, waiting) = self.history();
+        let (runs, waiting, seq) = self.history();
         tree.update(cx, |t, cx| {
             t.seed(&runs);
             for ev in &waiting {
@@ -151,19 +134,30 @@ impl Remote {
         });
         let (tx, rx) = std::sync::mpsc::channel::<Event>();
         let (url, token) = (self.url.clone(), self.token.clone());
-        std::thread::spawn(move || loop {
-            if let Ok(r) = http(None).get(format!("{url}/stream")).bearer_auth(&token).send() {
-                use std::io::BufRead;
-                for line in std::io::BufReader::new(r).lines() {
-                    let Ok(line) = line else { break };
-                    if let Ok(ev) = serde_json::from_str::<Event>(&line) {
-                        if tx.send(ev).is_err() {
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let mut after = seq;
+            loop {
+                let r = http(None)
+                    .get(format!("{url}/v1/events?after_seq={after}"))
+                    .bearer_auth(&token)
+                    .send();
+                if let Ok(r) = r.and_then(|r| r.error_for_status()) {
+                    for line in std::io::BufReader::new(r).lines().map_while(Result::ok) {
+                        let Some(e) = line
+                            .strip_prefix("data: ")
+                            .and_then(|d| serde_json::from_str::<Sequenced>(d).ok())
+                        else {
+                            continue;
+                        };
+                        after = e.seq;
+                        if tx.send(e.event).is_err() {
                             return;
                         }
                     }
                 }
+                std::thread::sleep(Duration::from_secs(2));
             }
-            std::thread::sleep(Duration::from_secs(2));
         });
         cx.spawn(async move |cx| loop {
             cx.background_executor().timer(Duration::from_millis(100)).await;
@@ -186,9 +180,8 @@ impl Remote {
 
 impl Actions for Remote {
     fn answer(&self, id: u64, approve: bool, scope: Scope, _cx: &mut App) {
-        let verdict = if approve { "approve" } else { "deny" };
-        let path = format!("/approvals/{id}/{verdict}?scope={}", scope.as_str());
-        let _ = self.call(reqwest::Method::POST, &path, None);
+        let body = json!({ "approve": approve, "scope": scope.as_str() });
+        let _ = self.call(reqwest::Method::POST, &format!("/v1/approvals/{id}"), Some(body));
     }
 
     fn agents(&self, cx: &App) -> Vec<AgentChoice> {
@@ -206,35 +199,22 @@ impl Actions for Remote {
         v
     }
 
+    /// Returns at once: the run's progress arrives on the stream, and the bridge posts it in Element.
     fn start(&self, agent: &str, goal: &str, _cx: &mut App) -> Result<(), String> {
-        let (url, token) = (self.url.clone(), self.token.clone());
-        let (agent, goal) = (agent.to_string(), goal.to_string());
-        // A run can wait minutes on an approval; its progress arrives on the stream.
-        std::thread::spawn(move || {
-            let _ = http(None)
-                .post(format!("{url}/agents/{agent}/run?why=board"))
-                .bearer_auth(token)
-                .body(goal)
-                .send();
-        });
-        Ok(())
+        let body = json!({ "input": goal, "why": "board" });
+        self.call(reqwest::Method::POST, &format!("/v1/agents/{agent}/runs"), Some(body))
+            .map(|_| ())
     }
 
     fn roster(&self, _cx: &App) -> Vec<AgentInfo> {
-        let projects = self.get("/projects").unwrap_or_default();
-        let projects = projects.as_array().cloned().unwrap_or_default();
-        self.get("/agents")
-            .unwrap_or_default()
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|s| info_of(s, &projects))
-            .collect()
+        let v = self.get("/v1/agents").unwrap_or_default();
+        v["agents"].as_array().into_iter().flatten().map(info_of).collect()
     }
 
     fn keys(&self, _cx: &App) -> Result<Vec<KeyRow>, String> {
-        let v = self.get("/keys")?;
-        Ok(v.as_array()
+        let v = self.get("/v1/keys")?;
+        Ok(v["keys"]
+            .as_array()
             .into_iter()
             .flatten()
             .map(|k| KeyRow {
@@ -248,37 +228,39 @@ impl Actions for Remote {
         if k.name.is_empty() {
             return Err("A key needs a name, e.g. github.".into());
         }
-        let body = serde_json::json!({ "host": k.host, "key": k.key, "header": k.header });
-        self.call(reqwest::Method::PUT, &format!("/keys/{}", k.name), Some(body.to_string()))
-            .map(|_| ())
+        let body = json!({ "host": k.host, "key": k.key, "header": k.header });
+        self.call(reqwest::Method::PUT, &format!("/v1/keys/{}", k.name), Some(body)).map(|_| ())
     }
 
     fn remove_key(&self, name: &str, _cx: &mut App) -> Result<(), String> {
-        self.call(reqwest::Method::DELETE, &format!("/keys/{name}"), None).map(|_| ())
+        self.call(reqwest::Method::DELETE, &format!("/v1/keys/{name}"), None).map(|_| ())
     }
 
     fn grant(&self, key: &str, agent: &str, on: bool, _cx: &mut App) -> Result<(), String> {
         let m = if on { reqwest::Method::PUT } else { reqwest::Method::DELETE };
-        self.call(m, &format!("/keys/{key}/agents/{agent}"), None).map(|_| ())
+        self.call(m, &format!("/v1/keys/{key}/agents/{agent}"), None).map(|_| ())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn an_agent_reads_as_the_console_shows_it() {
-        let spec = json!({
+        let agent = json!({
             "name": "rower",
             "description": "rowing",
-            "model": {"kind": "fallback", "models": [{"kind": "open_ai", "model": "deepseek-chat"}, {"kind": "local"}]},
-            "capabilities": [{"name": "http_get"}],
-            "triggers": [{"kind": "schedule", "cron": "@daily", "prompt": "x"}],
-            "api_keys": ["concept2"],
+            "paused": false,
+            "model_label": "deepseek-chat (+1 fallback)",
+            "projects": ["rowing"],
+            "spec": {
+                "capabilities": [{"name": "http_get"}],
+                "triggers": [{"kind": "schedule", "cron": "@daily", "prompt": "x"}],
+                "api_keys": ["concept2"],
+            },
         });
-        let a = info_of(&spec, &[json!({"name": "rowing", "agents": ["rower", "coach"]})]);
+        let a = info_of(&agent);
         assert_eq!(a.model, "deepseek-chat (+1 fallback)");
         assert_eq!(
             (a.projects, a.api_keys, a.triggers),
@@ -290,5 +272,14 @@ mod tests {
         );
         assert_eq!(a.capabilities, ["http_get"]);
         assert!(!a.paused);
+    }
+
+    #[test]
+    fn a_refusal_says_its_detail() {
+        assert_eq!(
+            said(r#"{"type":"about:blank","status":404,"detail":"no agent named x"}"#.into()),
+            "no agent named x"
+        );
+        assert_eq!(said("plain".into()), "plain");
     }
 }

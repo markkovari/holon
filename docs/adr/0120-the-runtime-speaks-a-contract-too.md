@@ -3,8 +3,11 @@
 *Element, the board and a webhook drive the same agents, and each of them learned the runtime's
 API by reading its handler.*
 
-**Status: proposed.** The contract is [`api/holon/runtime/v1/runtime.proto`](../../api/holon/runtime/v1/runtime.proto);
-`agent-runtime/tests/contract.rs` compiles it. Nothing serves it yet: the steps are at the end.
+**Status: accepted, and served** as REST/JSON + SSE under `/v1`. The contract is
+[`api/holon/runtime/v1/runtime.proto`](../../api/holon/runtime/v1/runtime.proto), its REST twin
+[`api/holon/runtime/v1/openapi.yaml`](../../api/holon/runtime/v1/openapi.yaml);
+`agent-runtime/tests/contract.rs` compiles the first, `agent-runtime/src/v1.rs` serves both. gRPC is not
+served yet: see the steps at the end.
 
 ## Where the wires are
 
@@ -42,14 +45,16 @@ escaping. That reason still holds for one shortcut, not for the API.
   snapshot, approvals, projects and API keys. Its messages are `crates/agent-wire`'s types field for
   field, so what the runtime emits today maps without loss; it imports `holon.v1.ApprovalScope` rather
   than a copy, because a yes reaches as far in either.
-- **REST/JSON + SSE and gRPC, on one port**, as `comp-agentd` serves them: ids in the path, the rest in a
-  JSON body, query strings only for paging and cursors. Versioned under `/v1`; errors are RFC 9457
-  problem details; money is integer micro-USD.
+- **REST/JSON + SSE, and gRPC from the same schema, on one port**, as `comp-agentd` serves them: ids in
+  the path, the rest in a JSON body, query strings only for paging and cursors; enums lowercase, as
+  `comp-agentd`'s REST says them. Versioned under `/v1`; errors are RFC 9457 problem details; money is
+  integer micro-USD.
 - **One event envelope**, `RuntimeEvent {seq, at_ms, kind}`. `seq` is per runtime, monotonic and gapless;
   `GET /v1/events?after_seq=` resumes (SSE `id` is the seq); `GET /v1/state` is the snapshot with the
   seq it reflects ([ADR-0107](0107-a-client-catches-up-from-a-snapshot-then-tails.md)'s pattern). Unknown
   kinds are ignored, so a new one is additive.
-- **One shortcut stays**: `GET /agents/<n>/run?q=` for a webhook, documented as that and nothing more.
+- **The webhook shortcuts stay**: `GET|POST /agents/<n>/run?q=`, `POST /events/<topic>` and
+  `GET /agents/<n>/ping`, for curl, cron and the gateway component, documented as that and nothing more.
 - **The agent spec is a `Struct` for now.** It is still moving; the fields every client reads (`name`,
   `description`, `paused`, the model's label, projects) are typed beside it.
 
@@ -64,11 +69,14 @@ conventions later; and the providers outside (models, Concept2, Matrix), which s
 
 ## Steps
 
-1. This ADR and the schema, compiled by a test. *(here)*
-2. The runtime's server moves from `tiny_http` to `axum` + `tonic`, the stack `comp-agentd` already uses in
-   this workspace, and serves `/v1` beside the old routes.
-3. The event log carries `seq`; `/v1/events` and `/v1/state` replace `/stream`. The board resumes from
-   `after_seq`; the bridge follows the stream instead of polling runs.
-4. The bridge, the board, the console and the gateway move to `/v1` through one client; the old routes
-   go, but the webhook shortcut. The remaining handlers (store, memory, trash, traces, speech, inbox,
-   sessions) join the schema as they move.
+1. This ADR and the schema, compiled by a test. *Done.*
+2. `/v1` served beside the old routes, on the server the runtime already had (`tiny_http`): REST/JSON
+   and SSE need nothing else, and moving to `axum` + `tonic` is the step that brings gRPC, taken with the
+   first client that wants it. *Done.*
+3. The event log carries `seq` (`Sequenced` in `agent-wire`; the last 10,000 events in memory, seqs from
+   the clock so a restart continues past every earlier one); `/v1/events` and `/v1/state` replace
+   `/stream`. The board resumes from `after_seq`; the bridge is woken by the stream instead of polling
+   runs and approvals every few seconds. *Done.*
+4. The bridge and the board use `/v1`; the routes it replaces are gone. Still on their old routes, until
+   they join the schema: the trash, archiving and deleting a project, memory, the inbox, traces, the
+   store, topics, sessions, speech and embeddings. *Done for what the schema covers.*
