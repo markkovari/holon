@@ -18,7 +18,6 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::agent::Cause;
 use crate::runtime::Runtime;
-use crate::spec::AgentSpec;
 use crate::store::Status;
 use crate::trace::Traceparent;
 
@@ -134,7 +133,7 @@ pub fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn query_param(query: &str, key: &str) -> Option<String> {
+pub(crate) fn query_param(query: &str, key: &str) -> Option<String> {
     query
         .split('&')
         .filter_map(|p| p.split_once('='))
@@ -176,18 +175,9 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
                 Some(_) => text(req, 200, "pong"),
             };
         }
+        // The webhook shortcut (ADR-0120): the raw prompt as the body or `?q=`, the answer as text.
         (Method::Get | Method::Post, ["agents", name, "run"]) => {
             let input = query_param(query, "q").filter(|q| !q.is_empty()).unwrap_or(body);
-            // Join the caller's trace if it sent one; the run becomes its child.
-            let cause = match caller_trace(&req) {
-                Some(tp) => Cause {
-                    trace_id: tp.trace_id,
-                    parent_span_id: Some(tp.span_id),
-                    ..Default::default()
-                },
-                None => Cause::default(),
-            };
-            // `?attach=a.jpg,b.png` names photos in the agent's inbox that came with the message.
             let attachments: Vec<String> = query_param(query, "attach")
                 .map(|v| {
                     v.split(',')
@@ -197,29 +187,10 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
                         .collect()
                 })
                 .unwrap_or_default();
-            if attachments.len() > crate::attach::MAX_ATTACHMENTS {
-                return text(
-                    req,
-                    400,
-                    format!("at most {} attachments", crate::attach::MAX_ATTACHMENTS),
-                );
-            }
-            if let Some(missing) =
-                attachments.iter().find(|f| !crate::attach::exists(rt.store(), name, f))
+            let why = query_param(query, "why").unwrap_or_default();
+            let project = query_param(query, "project").filter(|p| !p.is_empty());
+            return match start_run(rt, name, &input, &why, project, attachments, caller_trace(&req))
             {
-                return text(req, 400, format!("no attachment `{missing}` in {name}'s inbox"));
-            }
-            let cause = Cause { attachments, ..cause };
-            // `?project=` says the message was written inside that project's room.
-            let cause =
-                Cause { project: query_param(query, "project").filter(|p| !p.is_empty()), ..cause };
-            // Who or what woke the agent, in words it reads as the run's `Trigger:` line.
-            let trigger = query_param(query, "why")
-                .map(|w| w.split_whitespace().collect::<Vec<_>>().join(" "))
-                .filter(|w| !w.is_empty())
-                .map(|w| format!("http: {}", w.chars().take(160).collect::<String>()))
-                .unwrap_or_else(|| "http".to_string());
-            return match rt.run_agent(name, &trigger, &input, &cause, "", true) {
                 Ok(r) => {
                     // Hand the caller the run's own span, so it can continue the trace.
                     let tp = [("traceparent", Traceparent::header(&r.trace_id, &r.span_id))];
@@ -230,10 +201,7 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
                     };
                     reply_with(req, status, r.answer, &tp)
                 }
-                Err(e) if e.starts_with("no agent") => text(req, 404, e),
-                Err(e) if e.contains("paused") => text(req, 423, e),
-                Err(e) if e.starts_with("dropped") => text(req, 429, e),
-                Err(e) => text(req, 409, e),
+                Err((status, e)) => text(req, status, e),
             };
         }
         (Method::Post, ["events", topic]) => {
@@ -251,31 +219,26 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
         _ => {}
     }
 
+    if segs.first() == Some(&"v1") {
+        let trace = caller_trace(&req);
+        return match crate::v1::route(rt, &method, &segs[1..], query, &body, authed, trace) {
+            crate::v1::Reply::Json(status, v) => json_reply(req, status, v),
+            crate::v1::Reply::Problem(status, detail) => reply(
+                req,
+                status,
+                "application/problem+json",
+                crate::v1::problem_body(status, &detail).to_string(),
+            ),
+            crate::v1::Reply::Events(after) => {
+                let resume = header_value(&req, "last-event-id").and_then(|v| v.parse().ok());
+                events(rt, req, resume.unwrap_or(after))
+            }
+        };
+    }
     if !authed {
         return text(req, 401, "admin token required");
     }
     match (&method, segs.as_slice()) {
-        (Method::Get, ["agents"]) => json_reply(req, 200, json!(rt.store().list())),
-        (Method::Get, ["agents", name]) => match rt.store().get(name) {
-            Some(s) => json_reply(req, 200, json!(s)),
-            None => text(req, 404, "no such agent"),
-        },
-        (Method::Put, ["agents", name]) => match serde_json::from_str::<AgentSpec>(&body) {
-            Err(e) => text(req, 400, format!("bad spec: {e}")),
-            Ok(spec) if spec.name != *name => text(req, 400, "name in body does not match the URL"),
-            Ok(spec) => {
-                let exists = rt.store().get(name).is_some();
-                let r = if exists { rt.update_agent(spec) } else { rt.create_agent(spec) };
-                match r {
-                    Ok(()) => text(req, if exists { 200 } else { 201 }, "ok"),
-                    Err(e) => text(req, 422, e),
-                }
-            }
-        },
-        (Method::Delete, ["agents", name]) => match rt.delete_agent(name) {
-            Ok(()) => text(req, 200, "deleted"),
-            Err(e) => text(req, 404, e),
-        },
         // A photo (or other file) a person sent, put in the agent's workspace for its tools.
         (Method::Post, ["agents", name, "inbox"]) => {
             let filename = query_param(query, "name").unwrap_or_default();
@@ -296,16 +259,6 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
             Ok(t) => json_reply(req, 200, json!(t)),
             Err(e) => text(req, 404, e),
         },
-        (Method::Post, ["agents", name, action @ ("pause" | "resume")]) => {
-            match rt.set_paused(name, *action == "pause") {
-                Ok(()) => text(req, 200, "ok"),
-                Err(e) => text(req, 404, e),
-            }
-        }
-        (Method::Get, ["agents", name, "runs"]) => {
-            let n = query_param(query, "limit").and_then(|v| v.parse().ok()).unwrap_or(20);
-            json_reply(req, 200, json!(rt.store().runs(name, n)))
-        }
         (Method::Get, ["agents", name, "memory"]) => {
             json_reply(req, 200, json!(rt.store().memories(name)))
         }
@@ -408,21 +361,6 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
             }
         }
         // Projects: membership is the grant (see projects.rs).
-        (Method::Get, ["projects"]) => json_reply(req, 200, json!(rt.store().list_projects())),
-        (Method::Get, ["projects", name]) => match rt.store().get_project(name) {
-            Some(p) => json_reply(req, 200, json!(p)),
-            None => text(req, 404, "no such project"),
-        },
-        (Method::Put, ["projects", name]) => {
-            match serde_json::from_str::<crate::projects::Project>(&body) {
-                Err(e) => text(req, 400, format!("bad project: {e}")),
-                Ok(p) if p.name != *name => text(req, 400, "name in body does not match the URL"),
-                Ok(p) => match rt.put_project(p) {
-                    Ok(()) => text(req, 200, "ok"),
-                    Err(e) => text(req, 422, e),
-                },
-            }
-        }
         (Method::Post, ["projects", name, verb @ ("archive" | "unarchive")]) => {
             let done = if *verb == "archive" {
                 rt.archive_project(name).map(|v| json!({"paused": v}))
@@ -438,85 +376,6 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
             Ok(()) => text(req, 200, "deleted"),
             Err(e) => text(req, 404, e),
         },
-        (Method::Post, ["projects", name, "agents", agent]) => match rt.add_to_project(name, agent)
-        {
-            Ok(()) => text(req, 200, "ok"),
-            Err(e) if e.starts_with("no project") => text(req, 404, e),
-            Err(e) => text(req, 422, e),
-        },
-        (Method::Delete, ["projects", name, "agents", agent]) => {
-            match rt.remove_from_project(name, agent) {
-                Ok(()) => text(req, 200, "ok"),
-                Err(e) => text(req, 404, e),
-            }
-        }
-        (Method::Get, ["approvals"]) => {
-            let v: Vec<Value> = rt
-                .pending_approvals()
-                .into_iter()
-                .map(|p| json!({"id": p.id, "agent": p.agent, "tool": p.tool, "args": p.args, "chain": p.chain}))
-                .collect();
-            json_reply(req, 200, json!(v))
-        }
-        (Method::Post, ["approvals", id, verdict @ ("approve" | "deny")]) => {
-            // `?scope=task|session` is how far an approval of a coding session's tool call reaches
-            // (ADR-0114); an agent's own sensitive call has one reach and ignores it.
-            let scope = query_param(query, "scope").unwrap_or_else(|| "once".into());
-            if !matches!(scope.as_str(), "once" | "task" | "session") {
-                return text(req, 400, "scope is once, task or session");
-            }
-            match id.parse::<u64>() {
-                Ok(id) if rt.resolve_approval_scoped(id, *verdict == "approve", &scope) => {
-                    text(req, 200, "ok")
-                }
-                _ => text(req, 404, "no such pending approval"),
-            }
-        }
-        // What happens, as it happens: one JSON event per line, for as long as the caller stays.
-        // Written to the socket, not through a Response: tiny_http holds a chunked body back in 8 KB blocks.
-        (Method::Get, ["stream"]) => {
-            let rx = rt.subscribe();
-            let mut w = req.into_writer();
-            let head = "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
-            if w.write_all(head.as_bytes()).and_then(|_| w.flush()).is_err() {
-                return;
-            }
-            loop {
-                // A blank line when quiet, so a client that left is noticed and this ends.
-                let mut line = match rx.recv_timeout(std::time::Duration::from_secs(15)) {
-                    Ok(ev) => serde_json::to_vec(&ev).unwrap_or_default(),
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Vec::new(),
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
-                };
-                line.push(b'\n');
-                if w.write_all(&line).and_then(|_| w.flush()).is_err() {
-                    return;
-                }
-            }
-        }
-        (Method::Get, ["keys"]) => match rt.keys() {
-            Ok(k) => json_reply(req, 200, json!(k)),
-            Err(e) => text(req, 503, e),
-        },
-        // `{"host", "key", "header"?}`; the reply never carries the key back.
-        (Method::Put, ["keys", name]) => {
-            let v: Value = serde_json::from_str(&body).unwrap_or_default();
-            let s = |k: &str| v[k].as_str().unwrap_or_default().to_string();
-            match rt.put_key(name, &s("host"), &s("key"), &s("header")) {
-                Ok(()) => text(req, 200, "ok"),
-                Err(e) => text(req, 422, e),
-            }
-        }
-        (Method::Delete, ["keys", name]) => match rt.remove_key(name) {
-            Ok(()) => text(req, 200, "deleted"),
-            Err(e) => text(req, 422, e),
-        },
-        (m @ (Method::Put | Method::Delete), ["keys", key, "agents", agent]) => {
-            match rt.grant_key(key, agent, *m == Method::Put) {
-                Ok(()) => text(req, 200, "ok"),
-                Err(e) => text(req, 422, e),
-            }
-        }
         // The coding sessions agents have started, newest first (docs/adr/0119).
         (Method::Get, ["sessions"]) => {
             let v: Vec<Value> =
@@ -527,11 +386,96 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
     }
 }
 
+/// `GET /v1/events`: what the log still holds after `after`, then every event as it happens, as SSE.
+/// Written to the socket, not through a Response: tiny_http holds a chunked body back in 8 KB blocks.
+fn events(rt: &Arc<Runtime>, req: Request, after: u64) {
+    let (backlog, rx) = rt.follow(after);
+    let mut w = req.into_writer();
+    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
+    if w.write_all(head.as_bytes()).and_then(|_| w.flush()).is_err() {
+        return;
+    }
+    let frame = |e: &crate::runtime::Sequenced| {
+        let kind = serde_json::to_value(&e.event)
+            .ok()
+            .and_then(|v| v["type"].as_str().map(String::from))
+            .unwrap_or_default();
+        format!(
+            "id: {}\nevent: {kind}\ndata: {}\n\n",
+            e.seq,
+            serde_json::to_string(e).unwrap_or_default()
+        )
+    };
+    for e in &backlog {
+        if w.write_all(frame(e).as_bytes()).is_err() {
+            return;
+        }
+    }
+    let _ = w.flush();
+    loop {
+        // A comment when quiet, so a client that left is noticed and this ends.
+        let out = match rx.recv_timeout(std::time::Duration::from_secs(15)) {
+            Ok(e) => frame(&e),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => ": ping\n\n".to_string(),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+        };
+        if w.write_all(out.as_bytes()).and_then(|_| w.flush()).is_err() {
+            return;
+        }
+    }
+}
+
+/// A run through the webhook shortcut or `POST /v1/agents/{name}/runs`: `why` becomes its trigger line,
+/// `project` the project it is for, `attachments` files from the agent's inbox.
+pub(crate) fn start_run(
+    rt: &Arc<Runtime>,
+    name: &str,
+    input: &str,
+    why: &str,
+    project: Option<String>,
+    attachments: Vec<String>,
+    trace: Option<Traceparent>,
+) -> Result<crate::store::RunRecord, (u16, String)> {
+    if attachments.len() > crate::attach::MAX_ATTACHMENTS {
+        return Err((400, format!("at most {} attachments", crate::attach::MAX_ATTACHMENTS)));
+    }
+    if let Some(missing) = attachments.iter().find(|f| !crate::attach::exists(rt.store(), name, f))
+    {
+        return Err((400, format!("no attachment `{missing}` in {name}'s inbox")));
+    }
+    // Join the caller's trace if it sent one; the run becomes its child.
+    let cause = match trace {
+        Some(tp) => {
+            Cause { trace_id: tp.trace_id, parent_span_id: Some(tp.span_id), ..Default::default() }
+        }
+        None => Cause::default(),
+    };
+    let cause = Cause { attachments, project, ..cause };
+    let why = why.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trigger = if why.is_empty() {
+        "http".to_string()
+    } else {
+        format!("http: {}", why.chars().take(160).collect::<String>())
+    };
+    rt.run_agent(name, &trigger, input, &cause, "", true).map_err(|e| {
+        let status = if e.starts_with("no agent") {
+            404
+        } else if e.contains("paused") {
+            423
+        } else if e.starts_with("dropped") {
+            429
+        } else {
+            409
+        };
+        (status, e)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::runtime::Config;
-    use crate::spec::{Capability, ModelSpec, Trigger};
+    use crate::spec::{AgentSpec, Capability, ModelSpec, Trigger};
 
     fn start(tag: &str) -> (Arc<Runtime>, String) {
         let d = crate::testutil::dir(&format!("ar-srv-{tag}"));
@@ -567,26 +511,30 @@ mod tests {
         );
         assert_eq!(rt.store().runs("echo", 10).len(), 1, "a ping is not a run");
 
-        assert_eq!(c.get(format!("{base}/agents")).send().unwrap().status(), 401);
+        let anon = c.get(format!("{base}/v1/agents")).send().unwrap();
+        assert_eq!(anon.status(), 401);
+        assert_eq!(anon.headers()["content-type"], "application/problem+json");
+        assert_eq!(anon.json::<Value>().unwrap()["status"], 401, "an RFC 9457 problem");
         assert_eq!(
-            c.get(format!("{base}/agents")).bearer_auth("wrong").send().unwrap().status(),
+            c.get(format!("{base}/v1/agents")).bearer_auth("wrong").send().unwrap().status(),
             401
         );
         let list: Value =
-            c.get(format!("{base}/agents")).bearer_auth("tok").send().unwrap().json().unwrap();
-        assert_eq!(list[0]["name"], "echo");
+            c.get(format!("{base}/v1/agents")).bearer_auth("tok").send().unwrap().json().unwrap();
+        assert_eq!(list["agents"][0]["name"], "echo");
+        assert_eq!(list["agents"][0]["model_label"], "mock");
         let runs: Value = c
-            .get(format!("{base}/agents/echo/runs"))
+            .get(format!("{base}/v1/agents/echo/runs"))
             .bearer_auth("tok")
             .send()
             .unwrap()
             .json()
             .unwrap();
-        assert_eq!(runs[0]["input"], "ping");
-        assert_eq!(runs[0]["trigger"], "http");
+        assert_eq!(runs["runs"][0]["input"], "ping");
+        assert_eq!(runs["runs"][0]["trigger"], "http");
 
         assert!(c
-            .post(format!("{base}/agents/echo/pause"))
+            .post(format!("{base}/v1/agents/echo:pause"))
             .bearer_auth("tok")
             .send()
             .unwrap()
@@ -597,19 +545,136 @@ mod tests {
     }
 
     #[test]
-    fn the_stream_says_what_happens_as_it_happens_and_only_to_the_operator() {
+    fn the_event_stream_numbers_every_event_and_resumes_without_a_gap() {
         use std::io::BufRead;
-        let (rt, base) = start("stream");
-        rt.create_agent(mock("echo", &["pong"])).unwrap();
+        let (rt, base) = start("events");
+        rt.create_agent(mock("echo", &["pong", "pong"])).unwrap();
         let c = reqwest::blocking::Client::new();
-        assert_eq!(c.get(format!("{base}/stream")).send().unwrap().status(), 401);
-        let r = c.get(format!("{base}/stream")).bearer_auth("tok").send().unwrap();
-        let mut lines = std::io::BufReader::new(r).lines();
-        c.get(format!("{base}/agents/echo/run?q=ping")).send().unwrap();
-        let first: agent_wire::Event =
-            serde_json::from_str(&lines.next().unwrap().unwrap()).unwrap();
+        assert_eq!(c.get(format!("{base}/v1/events")).send().unwrap().status(), 401);
+        let events = |after: u64| {
+            let r = c
+                .get(format!("{base}/v1/events?after_seq={after}"))
+                .bearer_auth("tok")
+                .send()
+                .unwrap();
+            assert_eq!(r.headers()["content-type"], "text/event-stream");
+            std::io::BufReader::new(r)
+                .lines()
+                .map_while(Result::ok)
+                .filter_map(|l| l.strip_prefix("data: ").map(String::from))
+                .map(|d| serde_json::from_str::<crate::runtime::Sequenced>(&d).unwrap())
+        };
+        let mut live = events(0);
+        c.get(format!("{base}/agents/echo/run?q=one")).send().unwrap();
+        let first = live.next().unwrap();
         assert!(
-            matches!(first, agent_wire::Event::RunStarted { ref agent, .. } if agent == "echo")
+            matches!(first.event, agent_wire::Event::RunStarted { ref input, .. } if input == "one")
+        );
+        let rest: Vec<_> = live
+            .by_ref()
+            .take_while(|e| !matches!(e.event, agent_wire::Event::RunFinished(_)))
+            .collect();
+        assert!(rest.iter().zip(rest.iter().skip(1)).all(|(a, b)| b.seq == a.seq + 1), "no gap");
+
+        // A reader that left comes back after the last seq it saw and gets exactly what followed.
+        let (seq, running) = {
+            let state: Value = c
+                .get(format!("{base}/v1/state"))
+                .bearer_auth("tok")
+                .send()
+                .unwrap()
+                .json()
+                .unwrap();
+            (state["seq"].as_u64().unwrap(), state["running"].as_array().unwrap().len())
+        };
+        assert_eq!(running, 0, "nothing runs now");
+        c.get(format!("{base}/agents/echo/run?q=two")).send().unwrap();
+        let resumed = events(seq).next().unwrap();
+        assert_eq!(resumed.seq, seq + 1);
+        assert!(
+            matches!(resumed.event, agent_wire::Event::RunStarted { ref input, .. } if input == "two")
+        );
+    }
+
+    #[test]
+    fn every_operation_the_openapi_twin_names_is_served() {
+        let (rt, base) = start("v1-openapi");
+        rt.create_agent(mock("a", &["hi"])).unwrap();
+        let yaml = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../api/holon/runtime/v1/openapi.yaml"),
+        )
+        .unwrap();
+        let (mut path, mut ops) = (String::new(), Vec::new());
+        for line in yaml.lines() {
+            if let Some(p) = line.strip_prefix("  /v1").and_then(|p| p.strip_suffix(':')) {
+                path = format!("/v1{p}");
+            } else if let Some(m) =
+                ["get", "put", "post", "delete"].iter().find(|m| line == format!("    {m}:"))
+            {
+                ops.push((m.to_uppercase(), path.clone()));
+            }
+        }
+        assert_eq!(ops.len(), 22, "the operations read from openapi.yaml");
+        let c = reqwest::blocking::Client::new();
+        for (method, path) in &ops {
+            let url = path
+                .replace("{name}", "a")
+                .replace("{agent}", "a")
+                .replace("{topic}", "t")
+                .replace("{key}", "k")
+                .replace("{id}", "1");
+            if url == "/v1/events" {
+                continue; // a stream that does not end; its own test reads it
+            }
+            let m = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
+            let r = c
+                .request(m, format!("{base}{url}"))
+                .bearer_auth("tok")
+                .json(&json!({}))
+                .send()
+                .unwrap();
+            let status = r.status().as_u16();
+            let body = r.text().unwrap_or_default();
+            assert!(
+                !body.contains("no such /v1 route"),
+                "{method} {path} is in openapi.yaml and not served: {status}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_v1_run_takes_its_input_and_context_in_the_body_and_can_return_at_once() {
+        let (rt, base) = start("v1-runs");
+        rt.create_agent(mock("echo", &["first", "second"])).unwrap();
+        let c = reqwest::blocking::Client::new();
+        let run =
+            |body: Value| c.post(format!("{base}/v1/agents/echo/runs")).json(&body).send().unwrap();
+        let r = run(json!({"input": "hi", "why": "a test", "wait": true}));
+        assert_eq!(r.status(), 200);
+        let rec: Value = r.json().unwrap();
+        assert_eq!(
+            (rec["answer"].as_str(), rec["trigger"].as_str()),
+            (Some("first"), Some("http: a test"))
+        );
+        let r = run(json!({"input": "later"}));
+        assert_eq!(r.status(), 202, "without wait it returns before the run ends");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while rt.store().runs("echo", 5).len() < 2 {
+            assert!(std::time::Instant::now() < deadline, "the run never happened");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(rt.store().runs("echo", 1)[0].input, "later");
+        let missing = run(json!({"input": "x", "attachments": ["nope.png"], "wait": true}));
+        assert_eq!(missing.status(), 400);
+        assert!(missing.json::<Value>().unwrap()["detail"].as_str().unwrap().contains("nope.png"));
+        assert_eq!(
+            c.post(format!("{base}/v1/agents/nobody/runs"))
+                .json(&json!({}))
+                .send()
+                .unwrap()
+                .status(),
+            404
         );
     }
 
@@ -619,9 +684,9 @@ mod tests {
         let c = reqwest::blocking::Client::new();
         for n in ["in", "out"] {
             assert_eq!(
-                c.put(format!("{base}/agents/{n}"))
+                c.put(format!("{base}/v1/agents/{n}"))
                     .bearer_auth("tok")
-                    .json(&mock(n, &["hi"]))
+                    .json(&json!({"spec": mock(n, &["hi"])}))
                     .send()
                     .unwrap()
                     .status(),
@@ -654,9 +719,9 @@ mod tests {
         let (rt, base) = start("archive-http");
         let c = reqwest::blocking::Client::new();
         assert_eq!(
-            c.put(format!("{base}/agents/a"))
+            c.put(format!("{base}/v1/agents/a"))
                 .bearer_auth("tok")
-                .json(&mock("a", &["hi"]))
+                .json(&json!({"spec": mock("a", &["hi"])}))
                 .send()
                 .unwrap()
                 .status(),
@@ -672,8 +737,8 @@ mod tests {
         let v: Value = post("/projects/p/archive").json().unwrap();
         assert_eq!(v["paused"], json!(["a"]));
         let got: Value =
-            c.get(format!("{base}/projects/p")).bearer_auth("tok").send().unwrap().json().unwrap();
-        assert_eq!(got["archived"], true);
+            c.get(format!("{base}/v1/projects")).bearer_auth("tok").send().unwrap().json().unwrap();
+        assert_eq!(got["projects"][0]["archived"], true);
         let v: Value = post("/projects/p/unarchive").json().unwrap();
         assert_eq!(v["resumed"], json!(["a"]));
         assert_eq!(post("/projects/missing/archive").status(), 404);
@@ -683,9 +748,9 @@ mod tests {
     fn a_run_can_be_started_with_photos_from_the_agents_inbox() {
         let (rt, base) = start("attach-http");
         let c = reqwest::blocking::Client::new();
-        c.put(format!("{base}/agents/chef"))
+        c.put(format!("{base}/v1/agents/chef"))
             .bearer_auth("tok")
-            .json(&mock("chef", &["it is rice"]))
+            .json(&json!({"spec": mock("chef", &["it is rice"])}))
             .send()
             .unwrap();
         let file = rt.store().save_inbox("chef", "lunch.png", &[1, 2, 3]).unwrap();
@@ -709,9 +774,9 @@ mod tests {
         assert_eq!(ok.text().unwrap(), "it is rice");
         assert_eq!(rt.store().runs("chef", 1)[0].attachments, [file]);
         // another agent's inbox is not reachable by name
-        c.put(format!("{base}/agents/other"))
+        c.put(format!("{base}/v1/agents/other"))
             .bearer_auth("tok")
-            .json(&mock("other", &["x"]))
+            .json(&json!({"spec": mock("other", &["x"])}))
             .send()
             .unwrap();
         let theirs = c
@@ -730,9 +795,9 @@ mod tests {
     fn a_photo_sent_to_an_agent_lands_in_its_inbox_and_nowhere_else() {
         let (rt, base) = start("inbox-http");
         let c = reqwest::blocking::Client::new();
-        c.put(format!("{base}/agents/chef"))
+        c.put(format!("{base}/v1/agents/chef"))
             .bearer_auth("tok")
-            .json(&mock("chef", &["hi"]))
+            .json(&json!({"spec": mock("chef", &["hi"])}))
             .send()
             .unwrap();
         let send = |agent: &str, name: &str, bytes: Vec<u8>| {
@@ -772,19 +837,21 @@ mod tests {
         };
         for n in ["a", "b"] {
             let r = c
-                .put(format!("{base}/agents/{n}"))
+                .put(format!("{base}/v1/agents/{n}"))
                 .bearer_auth("tok")
-                .json(&mock(n, &["hi"]))
+                .json(&json!({"spec": mock(n, &["hi"])}))
                 .send()
                 .unwrap();
             assert_eq!(r.status(), 201);
-            assert!(call(reqwest::Method::DELETE, &format!("/agents/{n}")).status().is_success());
+            assert!(call(reqwest::Method::DELETE, &format!("/v1/agents/{n}"))
+                .status()
+                .is_success());
         }
         let listed: Value = call(reqwest::Method::GET, "/trash").json().unwrap();
         assert_eq!(listed.as_array().unwrap().len(), 2);
         let back = call(reqwest::Method::POST, "/trash/a/restore");
         assert_eq!(back.status(), 200);
-        assert_eq!(call(reqwest::Method::GET, "/agents/a").status(), 200, "it is back");
+        assert_eq!(call(reqwest::Method::GET, "/v1/agents/a").status(), 200, "it is back");
         assert_eq!(
             call(reqwest::Method::POST, "/trash/a/restore").status(),
             409,
@@ -807,14 +874,26 @@ mod tests {
         let c = reqwest::blocking::Client::new();
         let mut spec = mock("made", &["hi"]);
         let put = |s: &AgentSpec| {
-            c.put(format!("{base}/agents/made")).bearer_auth("tok").json(s).send().unwrap()
+            c.put(format!("{base}/v1/agents/made"))
+                .bearer_auth("tok")
+                .json(&json!({"spec": s}))
+                .send()
+                .unwrap()
         };
         assert_eq!(put(&spec).status(), 201);
         spec.description = "edited".into();
         assert_eq!(put(&spec).status(), 200);
-        let got: Value =
-            c.get(format!("{base}/agents/made")).bearer_auth("tok").send().unwrap().json().unwrap();
-        assert_eq!(got["description"], "edited");
+        let got: Value = c
+            .get(format!("{base}/v1/agents/made"))
+            .bearer_auth("tok")
+            .send()
+            .unwrap()
+            .json()
+            .unwrap();
+        assert_eq!(
+            (got["description"].as_str(), got["spec"]["description"].as_str()),
+            (Some("edited"), Some("edited"))
+        );
         spec.triggers.push(Trigger::Schedule {
             cron: "bogus".into(),
             prompt: "p".into(),
@@ -823,14 +902,14 @@ mod tests {
         });
         assert_eq!(put(&spec).status(), 422, "a bad cron is refused, not silently never fired");
         assert!(c
-            .delete(format!("{base}/agents/made"))
+            .delete(format!("{base}/v1/agents/made"))
             .bearer_auth("tok")
             .send()
             .unwrap()
             .status()
             .is_success());
         assert_eq!(
-            c.get(format!("{base}/agents/made")).bearer_auth("tok").send().unwrap().status(),
+            c.get(format!("{base}/v1/agents/made")).bearer_auth("tok").send().unwrap().status(),
             404
         );
     }
@@ -852,13 +931,13 @@ mod tests {
         let c = reqwest::blocking::Client::new();
         let pending = loop {
             let v: Value = c
-                .get(format!("{base}/approvals"))
+                .get(format!("{base}/v1/approvals"))
                 .bearer_auth("tok")
                 .send()
                 .unwrap()
                 .json()
                 .unwrap();
-            if let Some(p) = v.get(0) {
+            if let Some(p) = v["approvals"].get(0) {
                 break p.clone();
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
@@ -870,8 +949,9 @@ mod tests {
         assert!(!runner.is_finished(), "run is parked on the approval");
         let id = pending["id"].as_u64().unwrap();
         assert!(c
-            .post(format!("{base}/approvals/{id}/approve"))
+            .post(format!("{base}/v1/approvals/{id}"))
             .bearer_auth("tok")
+            .json(&json!({"approve": true}))
             .send()
             .unwrap()
             .status()
@@ -1114,59 +1194,40 @@ mod tests {
         rt.create_agent(mock("rower", &["x"])).unwrap();
         rt.create_agent(mock("coach", &["x"])).unwrap();
         let c = reqwest::blocking::Client::new();
-        let put = |body: Value| {
-            c.put(format!("{base}/projects/rowing")).bearer_auth("tok").json(&body).send().unwrap()
+        let call = |m: reqwest::Method, path: &str| {
+            c.request(m, format!("{base}{path}")).bearer_auth("tok").send().unwrap()
         };
-        assert_eq!(put(json!({"name": "rowing", "agents": ["rower"]})).status(), 200);
-        assert_eq!(put(json!({"name": "rowing", "agents": ["ghost"]})).status(), 422);
-        assert_eq!(
-            put(json!({"name": "other", "agents": []})).status(),
-            400,
-            "URL and body must agree"
-        );
-
-        let add = c
-            .post(format!("{base}/projects/rowing/agents/coach"))
+        let made = c
+            .put(format!("{base}/v1/projects/rowing"))
             .bearer_auth("tok")
+            .json(&json!({"description": "on the water", "lead": ""}))
             .send()
             .unwrap();
-        assert_eq!(add.status(), 200);
-        let p: Value = c
-            .get(format!("{base}/projects/rowing"))
-            .bearer_auth("tok")
-            .send()
-            .unwrap()
-            .json()
-            .unwrap();
-        assert_eq!(p["agents"], json!(["rower", "coach"]));
-        let list: Value =
-            c.get(format!("{base}/projects")).bearer_auth("tok").send().unwrap().json().unwrap();
-        assert_eq!(list.as_array().unwrap().len(), 1);
-
+        assert_eq!(made.status(), 200);
+        assert_eq!(made.json::<Value>().unwrap()["description"], "on the water");
+        for a in ["rower", "coach"] {
+            assert_eq!(
+                call(reqwest::Method::PUT, &format!("/v1/projects/rowing/agents/{a}")).status(),
+                200
+            );
+        }
+        assert_eq!(call(reqwest::Method::PUT, "/v1/projects/rowing/agents/ghost").status(), 404);
+        assert_eq!(call(reqwest::Method::PUT, "/v1/projects/none/agents/coach").status(), 404);
+        let p: Value =
+            call(reqwest::Method::DELETE, "/v1/projects/rowing/agents/rower").json().unwrap();
+        assert_eq!(p["agents"], json!(["coach"]));
+        let list: Value = call(reqwest::Method::GET, "/v1/projects").json().unwrap();
+        assert_eq!(list["projects"].as_array().unwrap().len(), 1);
+        let agents: Value = call(reqwest::Method::GET, "/v1/agents").json().unwrap();
+        let coach =
+            agents["agents"].as_array().unwrap().iter().find(|a| a["name"] == "coach").unwrap();
+        assert_eq!(coach["projects"], json!(["rowing"]));
         assert_eq!(
-            c.delete(format!("{base}/projects/rowing/agents/rower"))
-                .bearer_auth("tok")
-                .send()
-                .unwrap()
-                .status(),
-            200
+            c.get(format!("{base}/v1/projects")).send().unwrap().status(),
+            401,
+            "admin tier"
         );
-        assert_eq!(
-            c.post(format!("{base}/projects/none/agents/coach"))
-                .bearer_auth("tok")
-                .send()
-                .unwrap()
-                .status(),
-            404
-        );
-        assert_eq!(c.get(format!("{base}/projects")).send().unwrap().status(), 401, "admin tier");
-        assert_eq!(
-            c.delete(format!("{base}/projects/rowing")).bearer_auth("tok").send().unwrap().status(),
-            200
-        );
-        assert_eq!(
-            c.get(format!("{base}/projects/rowing")).bearer_auth("tok").send().unwrap().status(),
-            404
-        );
+        assert_eq!(call(reqwest::Method::DELETE, "/projects/rowing").status(), 200);
+        assert!(rt.store().get_project("rowing").is_none());
     }
 }

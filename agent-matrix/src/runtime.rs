@@ -115,9 +115,15 @@ impl Runtime {
             .send()
             .map_err(|e| e.to_string())?;
         if !r.status().is_success() {
-            return Err(format!("{}: {}", r.status(), r.text().unwrap_or_default()));
+            return Err(format!("{}: {}", r.status(), said(r)));
         }
         r.json().map_err(|e| e.to_string())
+    }
+
+    /// A `/v1` list: the array under `key`.
+    fn listed<T: for<'a> Deserialize<'a>>(&self, path: &str, key: &str) -> Result<Vec<T>, String> {
+        let v: Value = self.admin(path)?;
+        serde_json::from_value(v[key].clone()).map_err(|e| e.to_string())
     }
 
     fn send(&self, method: reqwest::Method, path: &str, body: Option<Value>) -> Result<(), String> {
@@ -130,12 +136,55 @@ impl Runtime {
         if r.status().is_success() {
             Ok(())
         } else {
-            Err(r.text().unwrap_or_default())
+            Err(said(r))
+        }
+    }
+
+    /// Follows `/v1/events` for ever, resuming after the last seq it saw. `on` gets each event's
+    /// type, `"connected"` on every (re)connect and `"ping"` when the stream is quiet.
+    pub fn follow(&self, mut on: impl FnMut(&str)) {
+        use std::io::BufRead;
+        let stream = reqwest::blocking::Client::builder().build().expect("http client");
+        let mut after = 0;
+        loop {
+            if after == 0 {
+                // From now, not the whole log: a (re)start catches up through `on("connected")`.
+                after = self
+                    .admin::<Value>("/v1/state")
+                    .ok()
+                    .and_then(|v| v["seq"].as_u64())
+                    .unwrap_or(0);
+            }
+            let r = stream
+                .get(format!("{}/v1/events?after_seq={after}", self.base))
+                .bearer_auth(&self.token)
+                .send();
+            if let Ok(r) = r.and_then(|r| r.error_for_status()) {
+                on("connected");
+                for line in std::io::BufReader::new(r).lines().map_while(Result::ok) {
+                    if line.starts_with(": ping") {
+                        on("ping");
+                    } else if let Some(v) = line
+                        .strip_prefix("data: ")
+                        .and_then(|d| serde_json::from_str::<Value>(d).ok())
+                    {
+                        after = v["seq"].as_u64().unwrap_or(after);
+                        on(v["event"]["type"].as_str().unwrap_or_default());
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_secs(2));
         }
     }
 
     pub fn agents(&self) -> Result<Vec<AgentInfo>, String> {
-        self.admin("/agents")
+        let v: Value = self.admin("/v1/agents")?;
+        v["agents"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|a| serde_json::from_value(a["spec"].clone()).map_err(|e| e.to_string()))
+            .collect()
     }
 
     pub fn rank(
@@ -177,7 +226,7 @@ impl Runtime {
     }
 
     pub fn runs(&self, agent: &str, n: usize) -> Result<Vec<RunInfo>, String> {
-        self.admin(&format!("/agents/{agent}/runs?limit={n}"))
+        self.listed(&format!("/v1/agents/{agent}/runs?limit={n}"), "runs")
     }
 
     pub fn trash(&self) -> Result<Vec<Trashed>, String> {
@@ -204,7 +253,7 @@ impl Runtime {
             .send()
             .map_err(|e| e.to_string())?;
         if !r.status().is_success() {
-            return Err(r.text().unwrap_or_default());
+            return Err(said(r));
         }
         r.json().map_err(|e| e.to_string())
     }
@@ -226,27 +275,35 @@ impl Runtime {
     }
 
     pub fn projects(&self) -> Result<Vec<ProjectInfo>, String> {
-        self.admin("/projects")
+        self.listed("/v1/projects", "projects")
     }
 
     pub fn approvals(&self) -> Result<Vec<Approval>, String> {
-        self.admin("/approvals")
+        self.listed("/v1/approvals", "approvals")
     }
 
     pub fn resolve(&self, id: u64, approve: bool) -> Result<(), String> {
-        self.send(
-            reqwest::Method::POST,
-            &format!("/approvals/{id}/{}", if approve { "approve" } else { "deny" }),
-            None,
-        )
+        let body = serde_json::json!({ "approve": approve });
+        self.send(reqwest::Method::POST, &format!("/v1/approvals/{id}"), Some(body))
     }
 
+    /// The project as `p` says it: its description, then its members, then its lead, who must be one.
     pub fn put_project(&self, p: &ProjectInfo) -> Result<(), String> {
-        self.send(
-            reqwest::Method::PUT,
-            &format!("/projects/{}", p.name),
-            Some(serde_json::to_value(p).unwrap()),
-        )
+        let path = format!("/v1/projects/{}", p.name);
+        let description = serde_json::json!({ "description": p.description });
+        self.send(reqwest::Method::PUT, &path, Some(description))?;
+        let now = self.projects()?.into_iter().find(|x| x.name == p.name).unwrap_or_default();
+        for a in p.agents.iter().filter(|a| !now.agents.contains(a)) {
+            self.add_to_project(&p.name, a)?;
+        }
+        for a in now.agents.iter().filter(|a| !p.agents.contains(a)) {
+            self.remove_from_project(&p.name, a)?;
+        }
+        if p.lead != now.lead {
+            let lead = serde_json::json!({ "lead": p.lead.clone().unwrap_or_default() });
+            self.send(reqwest::Method::PUT, &path, Some(lead))?;
+        }
+        Ok(())
     }
 
     pub fn delete_project(&self, name: &str) -> Result<(), String> {
@@ -254,11 +311,11 @@ impl Runtime {
     }
 
     pub fn add_to_project(&self, project: &str, agent: &str) -> Result<(), String> {
-        self.send(reqwest::Method::POST, &format!("/projects/{project}/agents/{agent}"), None)
+        self.send(reqwest::Method::PUT, &format!("/v1/projects/{project}/agents/{agent}"), None)
     }
 
     pub fn remove_from_project(&self, project: &str, agent: &str) -> Result<(), String> {
-        self.send(reqwest::Method::DELETE, &format!("/projects/{project}/agents/{agent}"), None)
+        self.send(reqwest::Method::DELETE, &format!("/v1/projects/{project}/agents/{agent}"), None)
     }
 
     pub fn upload_inbox(
@@ -351,25 +408,39 @@ impl Runtime {
         project: Option<&str>,
         attach: &[String],
     ) -> (bool, String) {
-        // POST, so a long conversation is a body and not part of the URL.
+        let body = serde_json::json!({
+            "input": text,
+            "why": why,
+            "project": project.unwrap_or_default(),
+            "attachments": attach,
+            "wait": true,
+        });
         let mut req = self
             .runner
-            .post(format!("{}/agents/{agent}/run", self.base))
-            .query(&[("why", why)])
-            .query(&project.map(|p| [("project", p)]).unwrap_or_default())
-            .body(text.to_string());
-        if !attach.is_empty() {
-            req = req.query(&[("attach", attach.join(","))]);
-        }
+            .post(format!("{}/v1/agents/{agent}/runs", self.base))
+            .bearer_auth(&self.token)
+            .json(&body);
         if let Some(tp) = traceparent {
             req = req.header("traceparent", tp);
         }
         match req.send() {
-            Ok(r) => {
-                let ok = r.status().is_success();
-                (ok, r.text().unwrap_or_default())
-            }
+            Ok(r) if r.status().is_success() => match r.json::<Value>() {
+                Ok(run) => {
+                    (run["status"] == "ok", run["answer"].as_str().unwrap_or_default().to_string())
+                }
+                Err(e) => (false, format!("the agent runtime answered oddly: {e}")),
+            },
+            Ok(r) => (false, said(r)),
             Err(e) => (false, format!("could not reach the agent runtime: {e}")),
         }
     }
+}
+
+/// What a refusal says: a `/v1` problem's `detail`, or the text of an older route.
+fn said(r: reqwest::blocking::Response) -> String {
+    let text = r.text().unwrap_or_default();
+    serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(|v| v["detail"].as_str().map(String::from))
+        .unwrap_or(text)
 }
