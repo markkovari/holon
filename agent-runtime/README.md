@@ -68,11 +68,8 @@ every run), `workspaces/<name>/` (the only place its file tools can reach).
   `http_get` sends it only to that host (reachable then without `allow_hosts`), and the model reads
   `[api key]` in its place. An agent can give another agent only keys it holds itself.
 * **One runtime, many faces.** Element (through `agent-matrix`) and the board (`holon-console`,
-  `agents-board --runtime http://127.0.0.1:18017`) drive the same daemon over this API.
-  `GET /stream` (admin) sends each event as a JSON line while the caller stays, and `/keys`
-  (`GET`, `PUT /keys/<name>` with `{"host", "key", "header"?}`, `DELETE`, and
-  `PUT|DELETE /keys/<name>/agents/<agent>`) manages API keys in the vault of the platform
-  `--platform-file` names. `infra/launchd/install.sh` runs it all: nats, the platform, the runtime, the bridge.
+  `agents-board --runtime http://127.0.0.1:18017`) drive the same daemon over `/v1` (below). Its
+  `/v1/keys` manage API keys in the vault of the platform `--platform-file` names. `infra/launchd/install.sh` runs it all: nats, the platform, the runtime, the bridge.
 * **Limits**: `max_steps`, `max_tokens` per run, `daily_token_budget`.
   A run always ends with an answer; an over-budget one says why.
 * **Approval**: `http_get` and `write_file` ask a human first unless listed in
@@ -135,8 +132,8 @@ chooses everything else.
   (`list_dir`, `read_file`, `write_file`, `run`) run without asking, none by default.
 * A tool call the session is waiting on shows up as an ordinary approval (`session:write_file`,
   the agent that started it, `session <id>` in its chain), so the console, the chat bridge and
-  `GET /approvals` show it as they show any. `POST /approvals/<id>/approve?scope=task|session` says how
-  far a yes reaches. `GET /sessions` lists the sessions this runtime started.
+  `GET /v1/approvals` show it as they show any. `POST /v1/approvals/<id>` with
+  `{"approve": true, "scope": "task"|"session"}` says how far a yes reaches. `GET /sessions` lists the sessions this runtime started.
 * `--agentd-url`, `--agentd-token-file` and `--session-model` (or `HOLON_AGENTD_URL`,
   `HOLON_AGENTD_TOKEN_FILE`, `HOLON_SESSION_MODEL`) say where the daemon is and which model sessions use.
   The console starts a daemon itself. Without one the tools say sessions are not available.
@@ -162,17 +159,31 @@ Standards, end to end:
 
 ## HTTP
 
-Open (loopback; these *are* the triggers): `GET|POST /agents/<n>/run?q=…`,
-`GET /agents/<n>/ping` (no model call), `POST /events/<topic>`.
+The contract is [`api/holon/runtime/v1/runtime.proto`](../api/holon/runtime/v1/runtime.proto)
+(ADR-0120), served as REST/JSON + SSE under `/v1`: ids in the path, the rest in a JSON body, query
+strings only for `limit` and `after_seq`, errors as RFC 9457 problem details.
 
-Admin (`Authorization: Bearer $(cat <state-dir>/admin-token)`): `GET /agents`,
-`PUT|GET|DELETE /agents/<n>` (a delete moves the agent to a trash for 30 days),
-`GET /trash`, `POST /trash/<n>/restore`, `DELETE /trash/<n>` (purge),
-`POST /projects/<n>/archive|unarchive`,
-`POST /agents/<n>/pause|resume`,
-`GET /agents/<n>/runs|memory`, `GET /traces/<trace-id>[?format=runs]`,
-`GET|PUT /store/<ns>[/<key>]`, `GET /topics[/<topic>?after=N]`,
-`GET /approvals`, `POST /approvals/<id>/approve|deny`.
+Open (loopback; these *are* the triggers):
+
+* `POST /v1/agents/<n>/runs` `{"input", "why"?, "project"?, "attachments"?, "wait"?}`: with `wait`,
+  the finished run; without, `202` at once and the run on the stream.
+* `POST /v1/topics/<topic>/events` `{"payload"}`.
+* The webhook shortcuts, for curl, cron and the gateway: `GET|POST /agents/<n>/run?q=…` (the body or
+  `q` is the prompt, the answer is text), `POST /events/<topic>`, `GET /agents/<n>/ping`.
+
+Admin (`Authorization: Bearer $(cat <state-dir>/admin-token)`):
+
+* `GET /v1/agents`, `GET|PUT|DELETE /v1/agents/<n>` (`PUT` takes `{"spec"}`; a delete moves the agent
+  to a trash for 30 days), `POST /v1/agents/<n>:pause|:resume`, `GET /v1/agents/<n>/runs?limit=`.
+* `GET /v1/events?after_seq=` (SSE: `id` is the seq, `Last-Event-ID` resumes) and `GET /v1/state`
+  (what is running and waiting now, and the seq it reflects).
+* `GET /v1/approvals`, `POST /v1/approvals/<id>`.
+* `GET /v1/projects`, `PUT /v1/projects/<n>`, `PUT|DELETE /v1/projects/<n>/agents/<agent>`.
+* `GET /v1/keys`, `PUT|DELETE /v1/keys/<name>`, `PUT|DELETE /v1/keys/<key>/agents/<agent>`.
+* Not in the contract yet: `GET /trash`, `POST /trash/<n>/restore`, `DELETE /trash/<n>`,
+  `POST /projects/<n>/archive|unarchive`, `DELETE /projects/<n>`, `GET /agents/<n>/memory`,
+  `POST /agents/<n>/inbox`, `GET /traces/<trace-id>[?format=runs]`, `GET|PUT /store/<ns>[/<key>]`,
+  `GET /topics[/<topic>?after=N]`, `GET /sessions`, `/speech`, `/embed`.
 
 ## The gateway
 

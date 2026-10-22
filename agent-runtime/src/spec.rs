@@ -119,6 +119,23 @@ pub enum ModelSpec {
     },
 }
 
+impl ModelSpec {
+    /// What a sidebar shows: the model's own name, and for a chain the first it tries and how many
+    /// stand behind it.
+    pub fn label(&self) -> String {
+        match self {
+            ModelSpec::Local => "local".into(),
+            ModelSpec::OpenAi { model, .. } | ModelSpec::Anthropic { model, .. } => model.clone(),
+            ModelSpec::Fallback { models } => match models.split_first() {
+                Some((first, [])) => first.label(),
+                Some((first, rest)) => format!("{} (+{} fallback)", first.label(), rest.len()),
+                None => "fallback (empty)".into(),
+            },
+            ModelSpec::Mock { .. } => "mock".into(),
+        }
+    }
+}
+
 fn default_steps() -> u32 {
     8
 }

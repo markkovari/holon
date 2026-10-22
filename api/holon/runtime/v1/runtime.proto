@@ -4,7 +4,8 @@
 // agent.proto (ADR-0102). Messages mirror crates/agent-wire field for field.
 //
 // REST: ids in the path, the rest in a JSON body; query strings only for paging and
-// cursors (`limit`, `before`, `after_seq`). Errors are RFC 9457 problem details.
+// cursors (`limit`, `after_seq`); enums are lowercase strings, as comp-agentd's REST says
+// them. Errors are RFC 9457 problem details.
 // Money is integer micro-USD.
 syntax = "proto3";
 
@@ -28,7 +29,7 @@ service AgentRuntimeService {
   // POST /v1/agents/{agent}/runs. With wait, returns the finished run; without it,
   // returns at once with status RUNNING and progress arrives on StreamEvents.
   rpc StartRun(StartRunRequest) returns (Run);
-  // GET /v1/agents/{agent}/runs?limit=&before=: newest first.
+  // GET /v1/agents/{agent}/runs?limit=: newest first.
   rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
 
   // POST /v1/topics/{topic}/events: wakes the agents that listen on the topic.
@@ -86,7 +87,7 @@ message PutAgentRequest {
   google.protobuf.Struct spec = 2;
 }
 message DeleteAgentRequest { string name = 1; }
-message DeleteAgentResponse { string trash_id = 1; }
+message DeleteAgentResponse {}
 message SetPausedRequest {
   string name = 1;
   bool paused = 2;
@@ -174,8 +175,6 @@ message ToolStep {
 message ListRunsRequest {
   string agent = 1;
   uint32 limit = 2;
-  // A run id: only runs that started before it.
-  string before = 3;
 }
 message ListRunsResponse { repeated Run runs = 1; }
 
@@ -301,8 +300,6 @@ message SubmitApprovalRequest {
   bool approve = 2;
   // How far a yes reaches (ADR-0114), as comp-agentd says it; an agent's own call has one reach.
   holon.v1.ApprovalScope scope = 3;
-  // A denial's reason goes back to the model as the tool's error.
-  string reason = 4;
 }
 message SubmitApprovalResponse {}
 
