@@ -7,7 +7,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use futures::{Stream, StreamExt};
-use prost_types::{value::Kind, ListValue, Struct, Timestamp};
+use prost_types::value::Kind;
+use prost_types::{ListValue, Struct, Timestamp};
 use serde_json::Value;
 use tonic::{Request, Response, Status};
 

@@ -15,7 +15,7 @@
 mod gatelib;
 mod photoquest_support;
 use gatelib::{field, Gate};
-use photoquest_support::*;
+use photoquest_support::{parse, result_for, sign, start, SECRET};
 use serde_json::{json, Value};
 
 const PASSWORD: &str = "correct horse";

@@ -1,8 +1,9 @@
 use std::time::Duration;
 
+use gpui::prelude::*;
 use gpui::{
-    div, ease_in_out, prelude::*, px, Animation, AnimationExt as _, App, Context, EventEmitter,
-    FocusHandle, Focusable, IntoElement, KeyDownEvent, Render, SharedString, Window,
+    div, ease_in_out, px, Animation, AnimationExt as _, App, Context, EventEmitter, FocusHandle,
+    Focusable, IntoElement, KeyDownEvent, Render, SharedString, Window,
 };
 
 use super::theme::Theme;

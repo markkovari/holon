@@ -1,7 +1,8 @@
 //! The central directory is authoritative: a local header may defer sizes and CRC to a data
 //! descriptor (common in streamed files).
 
-use crate::{crc32, inflate::inflate, File};
+use crate::inflate::inflate;
+use crate::{crc32, File};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ZipError {

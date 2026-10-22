@@ -22,7 +22,7 @@
 mod gatelib;
 mod photoquest_support;
 use gatelib::{field, Gate};
-use photoquest_support::*;
+use photoquest_support::{parse, result_for, sign, start, SECRET};
 use serde_json::{json, Value};
 
 /// A photo taken through the whole pipeline to `evaluated`, with the callback body shaped by `tweak`.

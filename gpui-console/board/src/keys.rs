@@ -1,8 +1,9 @@
 use std::rc::Rc;
 
+use gpui::prelude::*;
 use gpui::{
-    div, prelude::*, px, App, Context, Entity, FocusHandle, Focusable, FontWeight, IntoElement,
-    Render, SharedString, Window,
+    div, px, App, Context, Entity, FocusHandle, Focusable, FontWeight, IntoElement, Render,
+    SharedString, Window,
 };
 
 use super::agents::AgentInfo;

@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use comp_lattice::{nats::NatsLattice, CommandBus, Inventory};
+use comp_lattice::nats::NatsLattice;
+use comp_lattice::{CommandBus, Inventory};
 use comp_reconciler::plan::NodeInventory;
 use comp_reconciler::settings;
 use http_body_util::BodyExt;

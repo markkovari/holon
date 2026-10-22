@@ -3,7 +3,7 @@
 mod bindings;
 
 use crate::bindings::exports::mail::parse::parser::{Email, Guest, ParseError};
-use mailparse::*;
+use mailparse::{parse_mail, ParsedMail};
 
 struct Component;
 

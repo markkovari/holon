@@ -1,7 +1,8 @@
 //! Native side of components/ui-notifier (ADR-0095); headless boxes have no notification bus.
 
 use anyhow::Result;
-use axum::{routing::post, Json, Router};
+use axum::routing::post;
+use axum::{Json, Router};
 use clap::Parser;
 use serde::Deserialize;
 use serde_json::{json, Value};

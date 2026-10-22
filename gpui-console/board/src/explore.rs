@@ -3,9 +3,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use gpui::prelude::*;
 use gpui::{
-    canvas, div, img, point, prelude::*, px, Bounds, Context, EventEmitter, FontWeight,
-    IntoElement, ObjectFit, PathBuilder, Pixels, Render, SharedString, StyledImage, Window,
+    canvas, div, img, point, px, Bounds, Context, EventEmitter, FontWeight, IntoElement, ObjectFit,
+    PathBuilder, Pixels, Render, SharedString, StyledImage, Window,
 };
 
 use super::graph::{Graph, Lane, Side};

@@ -409,9 +409,9 @@ async fn start(
     let (component, from_cache) = match in_memory {
         Some(hit) => (hit, true),
         None => tokio::task::spawn_blocking(move || {
-            // SAFETY: `deserialize_file` maps machine code in unchecked. The file is only ever written by this
-            // process, into a host-private dir, named for a verified digest; nothing off the wire is deserialised.
             if cwasm.exists() {
+                // SAFETY: `deserialize_file` maps machine code in unchecked. The file is only ever written by this
+                // process, into a host-private dir, named for a verified digest; nothing off the wire is deserialised.
                 match unsafe { wasmtime::component::Component::deserialize_file(&engine, &cwasm) } {
                     Ok(c) => return Ok((c, true)),
                     // A stale or truncated cache is not fatal: drop it and compile.

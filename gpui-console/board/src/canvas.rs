@@ -3,11 +3,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use gpui::prelude::*;
 use gpui::{
-    canvas, div, fill, img, point, prelude::*, px, size, App, Bounds, Context, EventEmitter,
-    FocusHandle, Focusable, FontWeight, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ObjectFit, PathBuilder, Pixels, Render, Rgba, ScrollWheelEvent,
-    SharedString, StyledImage, Window,
+    canvas, div, fill, img, point, px, size, App, Bounds, Context, EventEmitter, FocusHandle,
+    Focusable, FontWeight, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ObjectFit, PathBuilder, Pixels, Render, Rgba, ScrollWheelEvent, SharedString,
+    StyledImage, Window,
 };
 
 use super::icons::icon;

@@ -27,9 +27,10 @@ use agent_board::icons::Assets;
 use agent_board::theme::Mode;
 use agent_board::view::Scope;
 use agent_board::{Actions as BoardActions, AgentChoice, Board};
+use gpui::prelude::*;
 use gpui::{
-    div, prelude::*, px, rgb, size, App, Bounds, Context, Entity, FocusHandle, Focusable,
-    KeyDownEvent, SharedString, Window, WindowBounds, WindowOptions,
+    div, px, rgb, size, App, Bounds, Context, Entity, FocusHandle, Focusable, KeyDownEvent,
+    SharedString, Window, WindowBounds, WindowOptions,
 };
 
 use lattice::{spec_from_form, AgentRow, FormInput, Kind, Lattice, Message, View};
