@@ -51,6 +51,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
+          # Not the runner's other toolchains: their patch level varies by image and split the key; the pinned one is in it via rust-toolchain.toml.
+          add-rust-environment-hash-key: false
           workspaces: reconciler -> target
           key: ${{ matrix.target }}
 

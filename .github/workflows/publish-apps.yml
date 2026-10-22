@@ -59,6 +59,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
+          # Not the runner's other toolchains: their patch level varies by image and split the key; the pinned one is in it via rust-toolchain.toml.
+          add-rust-environment-hash-key: false
+          # Only main saves: a PR's cache is readable by nothing but that PR, and evicts main's.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: |
             components -> target
             reconciler -> target

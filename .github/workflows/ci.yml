@@ -87,6 +87,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
+          # Not the runner's other toolchains: their patch level varies by image and split the key; the pinned one is in it via rust-toolchain.toml.
+          add-rust-environment-hash-key: false
+          # Only main saves: a PR's cache is readable by nothing but that PR, and evicts main's.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: components -> target
 
       # The project's own entry point, not an approximation of it. CI that
@@ -178,6 +182,8 @@ jobs:
       # with no one, so it never needed to be part of that story.
       - uses: Swatinem/rust-cache@v2
         with:
+          add-rust-environment-hash-key: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: |
             host -> target
             cli -> target
@@ -227,7 +233,7 @@ jobs:
       # `--depth=1` and one ref: the comparison needs the file at main's tip and
       # nothing else, so this is a few hundred kilobytes rather than the history.
       - name: Fetch main, so the surfaces guard has something to compare against
-        run: git fetch --depth=1 origin main:refs/remotes/origin/main
+        run: git fetch --depth=1 origin +main:refs/remotes/origin/main
 
       # `shared-key` with `reconciler-fleet-suites` — see `native-binaries`'s
       # own comment for the fuller history (a per-job cache key tripled this
@@ -239,6 +245,8 @@ jobs:
       # nothing populated them any more either).
       - uses: Swatinem/rust-cache@v2
         with:
+          add-rust-environment-hash-key: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: reconciler-pipeline
           workspaces: |
             components -> target
@@ -534,6 +542,8 @@ jobs:
       # once nothing populated them.
       - uses: Swatinem/rust-cache@v2
         with:
+          add-rust-environment-hash-key: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: reconciler-pipeline
           workspaces: |
             components -> target
@@ -740,6 +750,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
         with:
+          add-rust-environment-hash-key: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: ${{ matrix.workspace }} -> target
       - name: Build
         working-directory: ${{ matrix.workspace }}
@@ -805,6 +817,8 @@ jobs:
           tool: cargo-component@0.21.1
       - uses: Swatinem/rust-cache@v2
         with:
+          add-rust-environment-hash-key: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: components -> target
       # Clippy needs the generated bindings but not the metadata pass, so this
       # one stays a bare `cargo component check`.
@@ -828,6 +842,9 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup component add clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          add-rust-environment-hash-key: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # These six were never checked at all — not here, not `-D warnings`, not
       # advisory, nothing. A repo-wide sweep cleared what had piled up (0
       # warnings, checked directly); this is what keeps it that way.
@@ -918,7 +935,7 @@ jobs:
       # is the PR's own branch — `origin/main` still needs its own fetch to
       # exist as a ref `--baseline-commit` can name.
       - name: Fetch main, so semgrep has a baseline to diff against
-        run: git fetch origin main:refs/remotes/origin/main
+        run: git fetch origin +main:refs/remotes/origin/main
 
       - name: Install semgrep
         run: pip install semgrep==1.176.0
