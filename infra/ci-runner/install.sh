@@ -19,6 +19,7 @@ IMAGE=holon-ci-runner
 case "${1:-}" in
   install)
     docker build -t "$IMAGE" .
+    RHOME="$(docker run --rm --entrypoint printenv "$IMAGE" HOME)"
     for n in "${RUNNERS[@]}"; do
       # Killing a runner mid-job orphans the job, and its session blocks the next container for minutes.
       busy="$(gh api "repos/$REPO/actions/runners" -q ".runners[] | select(.name == \"$n\") | .busy")"
@@ -27,23 +28,24 @@ case "${1:-}" in
       docker rm "$n" >/dev/null 2>&1 || true
       token=""
       # A registration lives on the volume; only a new volume needs a token.
-      if ! docker run --rm -v "$n:/home/runner" --entrypoint test "$IMAGE" -f /home/runner/.registration/.runner; then
+      if ! docker run --rm -v "$n:$RHOME" --entrypoint test "$IMAGE" -f "$RHOME/.registration/.runner"; then
         token="$(gh api -X POST "repos/$REPO/actions/runners/registration-token" -q .token)"
       fi
       docker run -d --name "$n" --restart unless-stopped --cpus 5 --memory 9g \
-        -v "$n:/home/runner" -v holon-ci-target:/ci-target -e REPO_URL="https://github.com/$REPO" -e RUNNER_NAME="$n" \
+        -v "$n:$RHOME" -v holon-ci-target:/ci-target -e REPO_URL="https://github.com/$REPO" -e RUNNER_NAME="$n" \
         -e REG_TOKEN="$token" "$IMAGE" >/dev/null
       echo "started $n"
     done
     gh variable set CI_RUNNER --repo "$REPO" --body picur
     echo "CI_RUNNER=picur: the heavy jobs now run here" ;;
   uninstall)
+    RHOME="$(docker run --rm --entrypoint printenv "$IMAGE" HOME)"
     gh variable delete CI_RUNNER --repo "$REPO" 2>/dev/null || true
     for n in "${RUNNERS[@]}"; do
       docker rm -f "$n" >/dev/null 2>&1 || true
       id="$(gh api "repos/$REPO/actions/runners" -q ".runners[] | select(.name == \"$n\") | .id")"
       [ -n "$id" ] && gh api -X DELETE "repos/$REPO/actions/runners/$id"
-      docker run --rm -v "$n:/home/runner" --entrypoint rm "$IMAGE" -rf /home/runner/.registration
+      docker run --rm -v "$n:$RHOME" --entrypoint rm "$IMAGE" -rf "$RHOME/.registration"
       echo "removed $n"
     done ;;
   clean)
