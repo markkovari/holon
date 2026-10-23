@@ -1094,11 +1094,11 @@ fn an_approval_id_from_before_a_restart_never_names_a_call_after_it() {
         rt.follow(0)
             .0
             .iter()
-            .filter_map(|e| match e.event {
+            .rev()
+            .find_map(|e| match e.event {
                 agent_runtime::agent::Event::ApprovalRequested { id, .. } => Some(id),
                 _ => None,
             })
-            .last()
             .expect("the approval was announced")
     };
     let cfg = || {
