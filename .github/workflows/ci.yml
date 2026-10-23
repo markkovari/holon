@@ -318,7 +318,7 @@ jobs:
           chmod +x "$RUNNER_TEMP"/fetched/bin/*
           for f in "$RUNNER_TEMP"/fetched/bin/*; do put "$f" target/release; done
           for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
-            [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
+            if [ -e "$f" ]; then put "$f" components/target/wasm32-wasip2/release; fi
           done
 
       # Four reconciler suites need the BUILT artifacts and nothing else.
@@ -634,7 +634,7 @@ jobs:
           chmod +x "$RUNNER_TEMP"/fetched/bin/*
           for f in "$RUNNER_TEMP"/fetched/bin/*; do put "$f" target/release; done
           for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
-            [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
+            if [ -e "$f" ]; then put "$f" components/target/wasm32-wasip2/release; fi
           done
 
       # Only `comp-plug` and `comp-mailrelay` built here — same reasoning as
@@ -747,7 +747,7 @@ jobs:
           chmod +x "$RUNNER_TEMP"/fetched/bin/*
           for f in "$RUNNER_TEMP"/fetched/bin/*; do put "$f" target/release; done
           for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
-            [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
+            if [ -e "$f" ]; then put "$f" components/target/wasm32-wasip2/release; fi
           done
       - name: Build comp-plug
         run: cargo build --release -p comp-fleet --bin comp-plug
@@ -802,7 +802,7 @@ jobs:
           chmod +x "$RUNNER_TEMP"/fetched/bin/*
           for f in "$RUNNER_TEMP"/fetched/bin/*; do put "$f" target/release; done
           for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
-            [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
+            if [ -e "$f" ]; then put "$f" components/target/wasm32-wasip2/release; fi
           done
       - name: Build comp-plug
         run: cargo build --release -p comp-fleet --bin comp-plug
