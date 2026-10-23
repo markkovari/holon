@@ -284,7 +284,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: components-wasm32-wasip2
-          path: components/target/wasm32-wasip2/release
+          path: ${{ runner.temp }}/fetched/wasm
 
       # `publish` spawns `comp-host` through `tests/harness/mod.rs`, so the host
       # has to exist before the step below. Dropped once already when this
@@ -295,21 +295,31 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: comp-host-bin
-          path: target/release
+          path: ${{ runner.temp }}/fetched/bin
 
       - name: Fetch holon
         uses: actions/download-artifact@v4
         with:
           name: holon-bin
-          path: target/release
+          path: ${{ runner.temp }}/fetched/bin
 
       # `actions/download-artifact@v4` is documented to preserve Unix file
       # modes, but this is the one place a silent loss of the executable bit
       # would surface as a confusing "Permission denied" deep in a test's own
       # `Command::spawn()` rather than here — cheap insurance, not a sign of
       # doubt in the tool.
-      - name: Mark the downloaded binaries executable
-        run: chmod +x target/release/comp-host target/release/holon
+      # Fetched aside and renamed into place: on picur every job shares target/, and a download
+      # writing over a binary another job is running fails that job with "Text file busy".
+      - name: Put the fetched artifacts in place
+        run: |
+          # Copied in under a temporary name, then renamed: a rename is atomic only on one filesystem.
+          put() { cp "$1" "$2/.fetched.$$" && mv -f "$2/.fetched.$$" "$2/$(basename "$1")"; }
+          mkdir -p target/release components/target/wasm32-wasip2/release
+          chmod +x "$RUNNER_TEMP"/fetched/bin/*
+          for f in "$RUNNER_TEMP"/fetched/bin/*; do put "$f" target/release; done
+          for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
+            [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
+          done
 
       # Four reconciler suites need the BUILT artifacts and nothing else.
       #
@@ -597,7 +607,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: components-wasm32-wasip2
-          path: components/target/wasm32-wasip2/release
+          path: ${{ runner.temp }}/fetched/wasm
 
       # Same two downloads as `reconciler-artifact-suites`, independently —
       # jobs do not share a filesystem, and this one does not wait on that job
@@ -606,16 +616,26 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: comp-host-bin
-          path: target/release
+          path: ${{ runner.temp }}/fetched/bin
 
       - name: Fetch holon
         uses: actions/download-artifact@v4
         with:
           name: holon-bin
-          path: target/release
+          path: ${{ runner.temp }}/fetched/bin
 
-      - name: Mark the downloaded binaries executable
-        run: chmod +x target/release/comp-host target/release/holon
+      # Fetched aside and renamed into place: on picur every job shares target/, and a download
+      # writing over a binary another job is running fails that job with "Text file busy".
+      - name: Put the fetched artifacts in place
+        run: |
+          # Copied in under a temporary name, then renamed: a rename is atomic only on one filesystem.
+          put() { cp "$1" "$2/.fetched.$$" && mv -f "$2/.fetched.$$" "$2/$(basename "$1")"; }
+          mkdir -p target/release components/target/wasm32-wasip2/release
+          chmod +x "$RUNNER_TEMP"/fetched/bin/*
+          for f in "$RUNNER_TEMP"/fetched/bin/*; do put "$f" target/release; done
+          for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
+            [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
+          done
 
       # Only `comp-plug` and `comp-mailrelay` built here — same reasoning as
       # `reconciler-artifact-suites`'s own comment: this step is what builds them.
@@ -716,11 +736,21 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: comp-host-bin
-          path: target/release
-      - name: Build comp-plug
+          path: ${{ runner.temp }}/fetched/bin
+      # Fetched aside and renamed into place: on picur every job shares target/, and a download
+      # writing over a binary another job is running fails that job with "Text file busy".
+      - name: Put the fetched artifacts in place
         run: |
-          chmod +x target/release/comp-host
-          cargo build --release -p comp-fleet --bin comp-plug
+          # Copied in under a temporary name, then renamed: a rename is atomic only on one filesystem.
+          put() { cp "$1" "$2/.fetched.$$" && mv -f "$2/.fetched.$$" "$2/$(basename "$1")"; }
+          mkdir -p target/release components/target/wasm32-wasip2/release
+          chmod +x "$RUNNER_TEMP"/fetched/bin/*
+          for f in "$RUNNER_TEMP"/fetched/bin/*; do put "$f" target/release; done
+          for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
+            [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
+          done
+      - name: Build comp-plug
+        run: cargo build --release -p comp-fleet --bin comp-plug
       - name: Every gate
         run: components/gates.sh
 
