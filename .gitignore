@@ -3,6 +3,8 @@
 # admitted 77 MB of budget-domain's target in 1d72c91.
 /components/target/
 /components/*/target/
+# Or a link to where it really is (infra/targets.sh).
+**/target
 # The root workspace's cargo output, and what xtask, the renderers and the goal loop write beside it.
 /target/
 # Where each member built before the root workspace; a checkout may still hold one.
