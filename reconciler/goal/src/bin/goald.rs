@@ -431,11 +431,18 @@ fn main() -> Result<()> {
                         }
                         started_this_pass += 1;
                         running.fetch_add(1, Ordering::SeqCst);
-                        let (args, s, running) = (args.clone(), s.clone(), running.clone());
+                        let (args, s, running, claimed) =
+                            (args.clone(), s.clone(), running.clone(), claimed.clone());
                         std::thread::spawn(move || {
-                            if let Err(e) = work(&args, &s, &goal) {
-                                // Logged, not fatal: one goal must not take the daemon down.
-                                eprintln!("[goald] {id} ERROR: {e:#}");
+                            match work(&args, &s, &goal) {
+                                // The goal has left `running`: if it is ever queued again, run it.
+                                Ok(()) => {
+                                    claimed.lock().unwrap().remove(&id);
+                                }
+                                // Logged, not fatal: one goal must not take the daemon down. It stays
+                                // claimed: its state did not move, and running it again every poll
+                                // would spend on a goal the platform cannot be told about.
+                                Err(e) => eprintln!("[goald] {id} ERROR: {e:#}"),
                             }
                             running.fetch_sub(1, Ordering::SeqCst);
                         });

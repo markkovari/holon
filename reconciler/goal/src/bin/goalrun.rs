@@ -402,8 +402,7 @@ fn run() -> Result<i32> {
             trace.as_ref(),
             &reuse,
             capability_confirmed.as_ref(),
-        )
-        .map(|()| goalexit::SUCCESS);
+        );
     }
 
     println!("fleet serving; running the search …\n");
@@ -604,7 +603,7 @@ fn run() -> Result<i32> {
 
     println!("\nopening a pull request on {} …", args.repo);
     let select_url = format!("http://127.0.0.1:{port}/land");
-    match land(&select_url, "goalland.acme.test", &entries, landing, timeout) {
+    let landed = match land(&select_url, "goalland.acme.test", &entries, landing, timeout) {
         Ok(v) if v["url"].is_string() => {
             let url = v["url"].as_str().unwrap();
             println!("\n  PR opened: {url}");
@@ -618,6 +617,7 @@ fn run() -> Result<i32> {
             if let Some(t) = &trace {
                 t.run_resolved(&run, "merged", winner.as_ref().map(|(w, _)| w.as_str()), url);
             }
+            goalexit::SUCCESS
         }
         Ok(v) => {
             println!("\n  the forge answered but opened no PR: {v}");
@@ -625,19 +625,21 @@ fn run() -> Result<i32> {
             if let Some(t) = &trace {
                 t.run_resolved(&run, "failed", winner.as_ref().map(|(w, _)| w.as_str()), "");
             }
+            goalexit::LANDING_FAILED
         }
         Err(e) => {
             println!("\n  landing failed: {e}");
             if let Some(t) = &trace {
                 t.run_resolved(&run, "failed", winner.as_ref().map(|(w, _)| w.as_str()), "");
             }
+            goalexit::LANDING_FAILED
         }
-    }
+    };
     // One line at the end: per-write reports would drown the output when the database is down.
     if let Some(why) = trace.as_ref().and_then(|t| t.report()) {
         println!("trace: {why}");
     }
-    Ok(goalexit::SUCCESS)
+    Ok(landed)
 }
 
 /// Exits only after `run()` dropped its fleet and children; `exit` skips destructors.
@@ -670,7 +672,7 @@ fn decomposed(
     reuse: &[comp_goal::capsearch::Capability],
     // `None` means every hit is trusted unfiltered.
     capability_confirmed: Option<&std::collections::BTreeSet<String>>,
-) -> Result<()> {
+) -> Result<i32> {
     let registry = Registry {
         url: format!("http://127.0.0.1:{port}"),
         host: "goalcontract.acme.test".into(),
@@ -919,7 +921,7 @@ fn decomposed(
         }
 
         resolve("exhausted", "");
-        return Ok(());
+        return Ok(goalexit::EXHAUSTED);
     }
     let report = run.report.as_ref().expect("landable means the gate ran");
     let changes = run.changes.clone().expect("landable means there is a tree");
@@ -946,7 +948,7 @@ fn decomposed(
             }
         }
         resolve("dry-run", "");
-        return Ok(());
+        return Ok(goalexit::SUCCESS);
     }
 
     let title = goal
@@ -999,17 +1001,19 @@ fn decomposed(
             println!("\n  PR opened: {url}");
             println!("  branch: {}  commit: {}", v["branch"], v["commit"]);
             resolve("merged", url);
+            Ok(goalexit::SUCCESS)
         }
         Ok(v) => {
             println!("\n  the forge answered but opened no PR: {v}");
             resolve("failed", "");
+            Ok(goalexit::LANDING_FAILED)
         }
         Err(e) => {
             println!("\n  landing failed: {e}");
             resolve("failed", "");
+            Ok(goalexit::LANDING_FAILED)
         }
     }
-    Ok(())
 }
 
 #[cfg(test)]
