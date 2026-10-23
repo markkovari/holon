@@ -1085,3 +1085,29 @@ fn a_run_that_misses_a_required_tool_is_retried_on_the_next_model_of_its_chain()
     assert_eq!(runs.len(), 2, "the failed attempt is kept, visibly");
     assert_eq!(rt.store().recall("picky", "x", 5).len(), 1);
 }
+
+#[test]
+fn an_approval_id_from_before_a_restart_never_names_a_call_after_it() {
+    let d = dir("approval-ids");
+    let asked = |rt: &Runtime| {
+        assert!(!rt.approve("a", "run", &serde_json::json!({}), &[]), "nobody answered");
+        rt.follow(0)
+            .0
+            .iter()
+            .filter_map(|e| match e.event {
+                agent_runtime::agent::Event::ApprovalRequested { id, .. } => Some(id),
+                _ => None,
+            })
+            .last()
+            .expect("the approval was announced")
+    };
+    let cfg = || {
+        let mut c = Config::new(&d);
+        c.approval_timeout = Duration::from_millis(10);
+        c
+    };
+    let before = asked(&Runtime::new(cfg()).unwrap());
+    // The bridge keeps a poll's approval id on disk; after a restart it must not be reused.
+    let after = asked(&Runtime::new(cfg()).unwrap());
+    assert!(after > before, "{after} after {before}");
+}
