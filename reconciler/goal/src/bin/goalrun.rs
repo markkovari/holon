@@ -545,7 +545,7 @@ fn run() -> Result<i32> {
         }
     }
 
-    if !found.accepted {
+    if !found.accepted() {
         let best = found.best.as_ref().map(|e| e.score).unwrap_or(0);
         println!("\nNothing passed the gate (best score {best}). No PR opened.");
         if let Some(b) = &found.best {
