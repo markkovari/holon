@@ -63,19 +63,24 @@ happen to be in the string today.
 ## The Playwright suite
 
 ```
-cd e2e && npm install && npx playwright install chromium
-cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug   # from the repo root
-cd e2e && bash run_all.sh
+cd e2e && npm ci && npx playwright install chromium
+e2e/run_all.sh                      # from anywhere: every app
+e2e/run_all.sh moderation-domain    # or the ones named
 ```
 
-`run_all.sh` runs one app at a time, for the ten `*-domain` apps whose specs are in
+`run_all.sh` builds `comp-host`, `comp-plug` and the components (`cargo xtask build`;
+`E2E_SKIP_BUILD=1` skips it), then for each of the ten `*-domain` apps whose specs are in
 `tests/` (`book-lending`, `ecommerce-fulfillment`, `moderation`, `photosocial`,
 `pipeline`, `real-estate-escrow`, `smart-home`, `support`, `ticket-triage`,
-`volunteer-shift`): it builds the app's components, composes them with `comp-plug`,
-starts `comp-host` on `127.0.0.1:3000` over `--kv sqlite`, runs
-`tests/<app>.spec.js` against the app's own browser UI, and stops the host. It stops
-at the first app that fails. Run it from inside `e2e/`, because its paths are
-relative to that directory. `playwright.config.js` records a video of every test.
+`volunteer-shift`) composes it with `comp-plug`, starts `comp-host` on `127.0.0.1:3000`
+over `--kv sqlite`, runs `tests/<app>.spec.js` against the app's own browser UI, and stops
+the host. It runs them all and names the ones that failed, with each one's host log.
+
+It runs offline. The model is `mock-provider`: `run_all.sh` puts it first on comp-plug's
+`--dir`, so `llm:inference` resolves to it and not to a real provider. `e2e.conf` scripts
+it, gives `stripe-gateway` its test key (`sk_test_123`, a charge that calls nobody) and
+the outbox a retry policy that dead-letters within `pipeline.spec.js`'s wait. CI runs
+the suite (`e2e (playwright)`). `playwright.config.js` records a video of every test.
 
 To run one app's spec against a host you started yourself: `npx playwright test
 tests/<app>.spec.js`.

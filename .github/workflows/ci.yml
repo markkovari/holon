@@ -754,6 +754,68 @@ jobs:
       - name: Every gate
         run: components/gates.sh
 
+  # The ten showcase apps in a browser (e2e/run_all.sh), offline: mock model, Stripe test key.
+  e2e:
+    name: e2e (playwright)
+    needs: [components, native-binaries]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: ${{ runner.environment == 'github-hosted' }}
+      - name: Clean all but target/, which is the runners' shared volume
+        if: runner.environment == 'self-hosted'
+        run: |
+          git clean -ffdx -e target
+          mkdir -p /ci-target/root /ci-target/components
+          ln -sfn /ci-target/root target
+          ln -sfn /ci-target/components components/target
+      - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
+        with:
+          add-rust-environment-hash-key: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: . -> target
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: Fetch the wasm components
+        uses: actions/download-artifact@v4
+        with:
+          name: components-wasm32-wasip2
+          path: ${{ runner.temp }}/fetched/wasm
+      - name: Fetch comp-host
+        uses: actions/download-artifact@v4
+        with:
+          name: comp-host-bin
+          path: ${{ runner.temp }}/fetched/bin
+      # Fetched aside and renamed into place: on picur every job shares target/, and a download
+      # writing over a binary another job is running fails that job with "Text file busy".
+      - name: Put the fetched artifacts in place
+        run: |
+          # Copied in under a temporary name, then renamed: a rename is atomic only on one filesystem.
+          put() { cp "$1" "$2/.fetched.$$" && mv -f "$2/.fetched.$$" "$2/$(basename "$1")"; }
+          mkdir -p target/release components/target/wasm32-wasip2/release
+          chmod +x "$RUNNER_TEMP"/fetched/bin/*
+          for f in "$RUNNER_TEMP"/fetched/bin/*; do put "$f" target/release; done
+          for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
+            [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
+          done
+      - name: Build comp-plug
+        run: cargo build --release -p comp-fleet --bin comp-plug
+      - name: Install Playwright
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Every app
+        env:
+          E2E_SKIP_BUILD: "1"
+        run: e2e/run_all.sh
+
   workflows:
     name: workflows
     runs-on: ubuntu-latest
