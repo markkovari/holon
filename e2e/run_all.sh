@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
-set -e
+# The Playwright suite: each app composed, hosted on :3000 and driven in a browser, one at a time.
+#
+#   e2e/run_all.sh [app-domain ...]     every app below, or the ones named
+#
+# Offline on purpose: an app's model is `mock-provider` (scripted by e2e.conf, which also
+# gives Stripe its test key and the outbox a short retry policy), so a spec passes or fails
+# on the app, not on a provider. E2E_SKIP_BUILD=1 uses what is built (CI fetches it).
+set -uo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT" || exit 1
 
 APPS=(
   "book-lending-domain"
@@ -13,46 +22,35 @@ APPS=(
   "ticket-triage-domain"
   "volunteer-shift-domain"
 )
+[ $# -gt 0 ] && APPS=("$@")
 
-# Build host if needed
-cargo build --release --manifest-path ../host/Cargo.toml
+if [ "${E2E_SKIP_BUILD:-}" != 1 ]; then
+  cargo build --release -p comp-host --bin comp-host -p comp-fleet --bin comp-plug || exit 1
+  cargo xtask build || exit 1
+fi
 
+# Earlier `--dir`s win: with only the mock in the first, it is what `llm:inference` resolves to.
+MOCKS=$(mktemp -d)
+cp components/target/wasm32-wasip2/release/mock_provider.wasm "$MOCKS/" || exit 1
+trap 'rm -rf "$MOCKS"' EXIT
+
+failed=()
 for APP in "${APPS[@]}"; do
-  echo "=========================================="
-  echo "Running E2E tests for ${APP}"
-  echo "=========================================="
-
-  APP_NAME=${APP%-domain}
-
-  echo "Building WASM components..."
-  # Bindings via xtask (p3 crates make their own), then one plain build.
-  (cd ../ && cargo xtask bindings && cargo build --release --manifest-path components/Cargo.toml --target-dir components/target --target wasm32-wasip2 -p ${APP} -p auth-guard -p rate-limiter -p audit-log -p policy-guard -p record-store -p id-generate)
-
-  echo "Composing WASM components..."
-  ART=$(cd ../ && ./target/release/comp-plug ${APP})
-
-  echo "Cleaning up old database..."
-  rm -f comp-kv.db*
-
-  echo "Starting backend..."
-  cargo run --release --manifest-path ../host/Cargo.toml --bin comp-host -- --app ${APP} --component "${ART}" --addr 127.0.0.1:3000 --kv sqlite --config "default-tenant=${APP_NAME}" &
+  NAME=${APP%-domain}
+  echo "=== $APP"
+  ART=$(target/release/comp-plug --dir "$MOCKS" "$APP") || { failed+=("$APP"); continue; }
+  RUN=$(mktemp -d)
+  (cd "$RUN" && exec "$ROOT/target/release/comp-host" --app "$APP" --component "$ART" \
+    --addr 127.0.0.1:3000 --kv sqlite --config "default-tenant=$NAME" \
+    --config-file "$ROOT/e2e/e2e.conf") >"$RUN/host.log" 2>&1 &
   HOST_PID=$!
-  
-  # Allow the backend to start up
-  sleep 2
-
-  echo "Running Playwright tests for ${APP_NAME}..."
-  npx playwright test tests/${APP_NAME}.spec.js || {
-    echo "Tests failed for ${APP}"
-    kill -9 $HOST_PID
-    exit 1
-  }
-
-  echo "Shutting down backend..."
-  kill -9 $HOST_PID
-  
-  # Wait for process to fully terminate
-  sleep 1
+  for _ in $(seq 1 60); do curl -s -o /dev/null http://127.0.0.1:3000/ && break; sleep 0.25; done
+  if ! (cd e2e && npx playwright test "tests/$NAME.spec.js" --reporter=line); then
+    echo "--- host log ($RUN/host.log)"; tail -n 20 "$RUN/host.log"
+    failed+=("$APP")
+  fi
+  kill "$HOST_PID" 2>/dev/null; wait "$HOST_PID" 2>/dev/null
 done
 
-echo "All tests completed successfully!"
+[ ${#failed[@]} -eq 0 ] || { echo "${#failed[@]} app(s) failed: ${failed[*]}"; exit 1; }
+echo "all ${#APPS[@]} app(s) passed"

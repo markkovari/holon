@@ -284,7 +284,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: components-wasm32-wasip2
-          path: components/target/wasm32-wasip2/release
+          path: ${{ runner.temp }}/fetched/wasm
 
       # `publish` spawns `comp-host` through `tests/harness/mod.rs`, so the host
       # has to exist before the step below. Dropped once already when this
@@ -295,21 +295,31 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: comp-host-bin
-          path: target/release
+          path: ${{ runner.temp }}/fetched/bin
 
       - name: Fetch holon
         uses: actions/download-artifact@v4
         with:
           name: holon-bin
-          path: target/release
+          path: ${{ runner.temp }}/fetched/bin
 
       # `actions/download-artifact@v4` is documented to preserve Unix file
       # modes, but this is the one place a silent loss of the executable bit
       # would surface as a confusing "Permission denied" deep in a test's own
       # `Command::spawn()` rather than here — cheap insurance, not a sign of
       # doubt in the tool.
-      - name: Mark the downloaded binaries executable
-        run: chmod +x target/release/comp-host target/release/holon
+      # Fetched aside and renamed into place: on picur every job shares target/, and a download
+      # writing over a binary another job is running fails that job with "Text file busy".
+      - name: Put the fetched artifacts in place
+        run: |
+          # Copied in under a temporary name, then renamed: a rename is atomic only on one filesystem.
+          put() { cp "$1" "$2/.fetched.$$" && mv -f "$2/.fetched.$$" "$2/$(basename "$1")"; }
+          mkdir -p target/release components/target/wasm32-wasip2/release
+          chmod +x "$RUNNER_TEMP"/fetched/bin/*
+          for f in "$RUNNER_TEMP"/fetched/bin/*; do put "$f" target/release; done
+          for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
+            [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
+          done
 
       # Four reconciler suites need the BUILT artifacts and nothing else.
       #
@@ -597,7 +607,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: components-wasm32-wasip2
-          path: components/target/wasm32-wasip2/release
+          path: ${{ runner.temp }}/fetched/wasm
 
       # Same two downloads as `reconciler-artifact-suites`, independently —
       # jobs do not share a filesystem, and this one does not wait on that job
@@ -606,16 +616,26 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: comp-host-bin
-          path: target/release
+          path: ${{ runner.temp }}/fetched/bin
 
       - name: Fetch holon
         uses: actions/download-artifact@v4
         with:
           name: holon-bin
-          path: target/release
+          path: ${{ runner.temp }}/fetched/bin
 
-      - name: Mark the downloaded binaries executable
-        run: chmod +x target/release/comp-host target/release/holon
+      # Fetched aside and renamed into place: on picur every job shares target/, and a download
+      # writing over a binary another job is running fails that job with "Text file busy".
+      - name: Put the fetched artifacts in place
+        run: |
+          # Copied in under a temporary name, then renamed: a rename is atomic only on one filesystem.
+          put() { cp "$1" "$2/.fetched.$$" && mv -f "$2/.fetched.$$" "$2/$(basename "$1")"; }
+          mkdir -p target/release components/target/wasm32-wasip2/release
+          chmod +x "$RUNNER_TEMP"/fetched/bin/*
+          for f in "$RUNNER_TEMP"/fetched/bin/*; do put "$f" target/release; done
+          for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
+            [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
+          done
 
       # Only `comp-plug` and `comp-mailrelay` built here — same reasoning as
       # `reconciler-artifact-suites`'s own comment: this step is what builds them.
@@ -672,6 +692,130 @@ jobs:
   # `workflow_dispatch` input default is not allowed and nothing said so.
   #
   # `actionlint` catches exactly that, in under a second.
+  # Each component's held-out-spec gate: composed, hosted, and driven over real HTTP with hurl.
+  # Nothing ran them, and they had rotted: a build line that cannot resolve a p3 world, a
+  # comp-host path from before the root workspace, a comparison that assumed sorted keys.
+  gates:
+    name: component gates
+    needs: [native-binaries]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: ${{ runner.environment == 'github-hosted' }}
+      - name: Clean all but target/, which is the runners' shared volume
+        if: runner.environment == 'self-hosted'
+        run: |
+          git clean -ffdx -e target
+          mkdir -p /ci-target/root /ci-target/components
+          ln -sfn /ci-target/root target
+          ln -sfn /ci-target/components components/target
+      - run: rustup target add wasm32-wasip2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-component@0.21.1
+      - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
+        with:
+          add-rust-environment-hash-key: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: |
+            components -> target
+            . -> target
+      - name: Install hurl
+        run: |
+          ver=6.1.1
+          dir="hurl-$ver-$(uname -m)-unknown-linux-gnu"
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL "https://github.com/Orange-OpenSource/hurl/releases/download/$ver/$dir.tar.gz" \
+            | tar xz -C "$HOME/.local/bin" --strip-components=2 "$dir/bin/hurl"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/hurl" --version
+      - name: Fetch comp-host
+        uses: actions/download-artifact@v4
+        with:
+          name: comp-host-bin
+          path: ${{ runner.temp }}/fetched/bin
+      # Fetched aside and renamed into place: on picur every job shares target/, and a download
+      # writing over a binary another job is running fails that job with "Text file busy".
+      - name: Put the fetched artifacts in place
+        run: |
+          # Copied in under a temporary name, then renamed: a rename is atomic only on one filesystem.
+          put() { cp "$1" "$2/.fetched.$$" && mv -f "$2/.fetched.$$" "$2/$(basename "$1")"; }
+          mkdir -p target/release components/target/wasm32-wasip2/release
+          chmod +x "$RUNNER_TEMP"/fetched/bin/*
+          for f in "$RUNNER_TEMP"/fetched/bin/*; do put "$f" target/release; done
+          for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
+            [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
+          done
+      - name: Build comp-plug
+        run: cargo build --release -p comp-fleet --bin comp-plug
+      - name: Every gate
+        run: components/gates.sh
+
+  # The ten showcase apps in a browser (e2e/run_all.sh), offline: mock model, Stripe test key.
+  e2e:
+    name: e2e (playwright)
+    needs: [components, native-binaries]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: ${{ runner.environment == 'github-hosted' }}
+      - name: Clean all but target/, which is the runners' shared volume
+        if: runner.environment == 'self-hosted'
+        run: |
+          git clean -ffdx -e target
+          mkdir -p /ci-target/root /ci-target/components
+          ln -sfn /ci-target/root target
+          ln -sfn /ci-target/components components/target
+      - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
+        with:
+          add-rust-environment-hash-key: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: . -> target
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: Fetch the wasm components
+        uses: actions/download-artifact@v4
+        with:
+          name: components-wasm32-wasip2
+          path: ${{ runner.temp }}/fetched/wasm
+      - name: Fetch comp-host
+        uses: actions/download-artifact@v4
+        with:
+          name: comp-host-bin
+          path: ${{ runner.temp }}/fetched/bin
+      # Fetched aside and renamed into place: on picur every job shares target/, and a download
+      # writing over a binary another job is running fails that job with "Text file busy".
+      - name: Put the fetched artifacts in place
+        run: |
+          # Copied in under a temporary name, then renamed: a rename is atomic only on one filesystem.
+          put() { cp "$1" "$2/.fetched.$$" && mv -f "$2/.fetched.$$" "$2/$(basename "$1")"; }
+          mkdir -p target/release components/target/wasm32-wasip2/release
+          chmod +x "$RUNNER_TEMP"/fetched/bin/*
+          for f in "$RUNNER_TEMP"/fetched/bin/*; do put "$f" target/release; done
+          for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
+            [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
+          done
+      - name: Build comp-plug
+        run: cargo build --release -p comp-fleet --bin comp-plug
+      - name: Install Playwright
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Every app
+        env:
+          E2E_SKIP_BUILD: "1"
+        run: e2e/run_all.sh
+
   workflows:
     name: workflows
     runs-on: ubuntu-latest
