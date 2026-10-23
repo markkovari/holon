@@ -63,6 +63,8 @@ fn reconcile(route: &Route, body: &str) -> Reply {
 
     let mut journal_lines = 0;
     let mut all_journal_lines = Vec::new();
+    // One line per transfer even if a duplicate has not been cleaned up yet.
+    let mut seen = std::collections::HashSet::new();
     let mut after = String::new();
     loop {
         let page = match records::list_records("journal", 200, &after) {
@@ -72,6 +74,10 @@ fn reconcile(route: &Route, body: &str) -> Reply {
         let empty = page.entries.is_empty();
         for e in page.entries {
             if let Ok(v) = serde_json::from_str::<Value>(&e.data) {
+                let transfer = v.get("transfer").and_then(Value::as_str).map(String::from);
+                if transfer.is_some_and(|t| !seen.insert(t)) {
+                    continue;
+                }
                 all_journal_lines.push(v);
                 journal_lines += 1;
             }

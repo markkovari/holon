@@ -159,7 +159,8 @@ fn seed_journal(body: &str) -> Reply {
         return Reply::err(400, "invalid_line");
     }
     let doc = json!({
-        "transfer": req.get("transfer").and_then(Value::as_str).unwrap_or("fixture"),
+        // Absent unless given, so seeded lines are never taken for copies of one transfer's line.
+        "transfer": req.get("transfer").and_then(Value::as_str),
         "from": f("from"), "to": f("to"), "units": units,
         // An explicit `at` is the only way to tell "oldest first" from "first listed".
         "at": req.get("at").and_then(Value::as_str).map(str::to_string)
