@@ -24,6 +24,7 @@ pub mod speech;
 pub mod store;
 pub mod trace;
 pub mod v1;
+pub mod view;
 
 pub use runtime::{Config, Runtime};
 pub use spec::{AgentSpec, Capability, ModelSpec, Trigger};
