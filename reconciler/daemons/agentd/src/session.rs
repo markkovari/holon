@@ -18,10 +18,10 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{oneshot, watch};
 
+use super::machine::{Change, Machine};
 use super::model::{Call, Msg, ToolResult};
 use super::wire::{
-    self, ApprovalScope, Decision, Event, FailCode, Payload, SessionStatus, TaskStatus, Usage,
-    WhenBusy,
+    self, ApprovalScope, Decision, Event, FailCode, Payload, SessionStatus, Usage, WhenBusy,
 };
 
 /// A human's answer to one pending tool call.
@@ -58,21 +58,25 @@ pub struct Session {
 #[derive(Default)]
 struct State {
     closed: bool,
-    usage: Usage,
-    active: Option<Active>,
-    events: Vec<Event>,
-    pending: HashMap<String, oneshot::Sender<Answer>>,
-    tasks: HashMap<String, wire::Task>,
     by_key: HashMap<String, String>,
-    /// Tasks accepted onto a busy session, oldest first (ADR-0112). Memory only: it is
-    /// derived from the log on load, where a task that never started is ended.
-    queue: VecDeque<Queued>,
-    /// The running task, if it is waiting on a human with no loop of its own (ADR-0113).
-    parked: Option<Parked>,
-    /// Tools a person approved for the rest of the session (ADR-0114). Derived from the log on
-    /// load, like everything else: an `approve` with scope `session`, for the tool of the call
-    /// the log shows it was asked about.
-    approved: BTreeSet<String>,
+    events: Vec<Event>,
+    /// Everything the log says, folded by `Machine::apply` as each event is appended or read back.
+    m: Machine,
+    /// The running task's other half, what only this process has. `Some` exactly while `m` has a
+    /// running task: `replay` makes it when the log starts one and lets it go when the log ends it.
+    live: Option<Live>,
+    /// Tickets of parked approvals whose task ended, for whoever ended it to cancel.
+    released: Vec<String>,
+}
+
+impl State {
+    fn live(&mut self, task_id: &str) -> Option<&mut Live> {
+        self.live.as_mut().filter(|l| l.task_id == task_id)
+    }
+
+    fn parked_on(&mut self, call_id: &str) -> Option<&mut Parked> {
+        self.live.as_mut()?.parked.as_mut().filter(|p| p.cp.call().id == call_id)
+    }
 }
 
 /// Where a task stood when it parked on a human (ADR-0113): enough to carry on from the answer
@@ -141,39 +145,32 @@ pub struct Cancelled {
     pub tickets: Vec<String>,
 }
 
-/// A task waiting for the running one to end.
-struct Queued {
+/// What the running task has beyond what the log says: its loop, the waits for an answer, and
+/// steers. A restart ends the task or parks it again, so nothing here is saved but the park.
+struct Live {
     task_id: String,
-    prompt: String,
-    created_at: String,
-}
-
-struct Active {
-    task_id: String,
-    usage: Usage,
     handle: Option<tokio::task::JoinHandle<()>>,
-    /// `(steer_id, message)`, accepted and not yet applied (ADR-0107). They live
-    /// and die with the task: a restart ends the task, so nothing here is saved.
+    pending: HashMap<String, oneshot::Sender<Answer>>,
+    /// Waiting on a human with no loop of its own (ADR-0113).
+    parked: Option<Parked>,
+    /// `(steer_id, message)`, accepted and not yet applied (ADR-0107).
     steers: VecDeque<(String, String)>,
     /// The loop has decided to end the task with its final answer; a steer that
     /// arrives now would be accepted and never read, so it is refused instead.
     finishing: bool,
-    /// Steer idempotency keys, for the same reason: they only matter while the task runs.
     steer_keys: HashMap<String, String>,
-    /// Tools a person approved for the rest of this task (ADR-0114). It ends with the task.
-    approved: BTreeSet<String>,
 }
 
-impl Active {
-    fn new(task_id: &str) -> Active {
-        Active {
+impl Live {
+    fn new(task_id: &str) -> Live {
+        Live {
             task_id: task_id.to_string(),
-            usage: Usage::default(),
             handle: None,
+            pending: HashMap::new(),
+            parked: None,
             steers: VecDeque::new(),
             finishing: false,
             steer_keys: HashMap::new(),
-            approved: BTreeSet::new(),
         }
     }
 }
@@ -273,82 +270,18 @@ impl Session {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(e) => return Err(e).context("events.jsonl"),
         };
-        let mut open: Option<(String, Usage)> = None;
-        // What a person approved beyond one call (ADR-0114), read back out of the log: the tool
-        // is named by the approval that was asked, and the reach by the answer that decided it.
-        let mut asked: HashMap<String, String> = HashMap::new();
-        let mut for_task: HashMap<String, BTreeSet<String>> = HashMap::new();
         let last = text.lines().count();
         for (n, line) in text.lines().enumerate().filter(|(_, l)| !l.trim().is_empty()) {
-            let e: Event = match serde_json::from_str(line) {
-                Ok(e) => e,
+            match serde_json::from_str(line) {
+                Ok(e) => {
+                    replay(&mut st, &meta.id, e);
+                }
                 // A torn last line is what a crash mid-append leaves; anything
                 // earlier is corruption, and silently skipping it would renumber
                 // every event after it.
                 Err(_) if n + 1 == last => break,
                 Err(err) => anyhow::bail!("events.jsonl line {}: {err}", n + 1),
-            };
-            match &e.payload {
-                Payload::TaskQueued { prompt } => {
-                    st.tasks.insert(e.task_id.clone(), task(&meta.id, &e, TaskStatus::Queued));
-                    st.queue.push_back(Queued {
-                        task_id: e.task_id.clone(),
-                        prompt: prompt.clone(),
-                        created_at: e.time.clone(),
-                    });
-                }
-                Payload::TaskStarted { .. } => {
-                    st.queue.retain(|q| q.task_id != e.task_id);
-                    let mut t = task(&meta.id, &e, TaskStatus::Running);
-                    // A task that waited was created when it was accepted, not when it started.
-                    if let Some(queued) = st.tasks.get(&e.task_id) {
-                        t.created_at = queued.created_at.clone();
-                    }
-                    st.tasks.insert(e.task_id.clone(), t);
-                    open = Some((e.task_id.clone(), Usage::default()));
-                }
-                Payload::UsageUpdated { delta, .. } => {
-                    st.usage.add(delta);
-                    if let Some((_, u)) = open.as_mut() {
-                        u.add(delta);
-                    }
-                }
-                Payload::ToolApprovalRequired { call_id, tool_name, .. } => {
-                    asked.insert(call_id.clone(), tool_name.clone());
-                }
-                Payload::ToolApprovalResolved {
-                    call_id,
-                    decision: Decision::Approve,
-                    scope,
-                    ..
-                } => {
-                    if let Some(tool) = asked.get(call_id) {
-                        match scope {
-                            ApprovalScope::Once => {}
-                            ApprovalScope::Task => {
-                                for_task.entry(e.task_id.clone()).or_default().insert(tool.clone());
-                            }
-                            ApprovalScope::Session => {
-                                st.approved.insert(tool.clone());
-                            }
-                        }
-                    }
-                }
-                Payload::TaskCompleted { .. } | Payload::TaskFailed { .. } => {
-                    let done = matches!(e.payload, Payload::TaskCompleted { .. });
-                    if let Some(t) = st.tasks.get_mut(&e.task_id) {
-                        t.status = if done { TaskStatus::Completed } else { TaskStatus::Failed };
-                    }
-                    st.queue.retain(|q| q.task_id != e.task_id);
-                    // Only the running task's end closes it: a queued one cancelled while it ran
-                    // ends too, and must not make the running one look finished.
-                    if open.as_ref().is_some_and(|(id, _)| *id == e.task_id) {
-                        open = None;
-                    }
-                }
-                _ => {}
             }
-            st.events.push(e);
         }
         let s = Session {
             id: meta.id,
@@ -363,30 +296,25 @@ impl Session {
             state: Mutex::new(st),
             history: tokio::sync::Mutex::new(history),
         };
-        if let Some((task_id, usage)) = open {
-            let mut st = s.lock();
-            let restored = if park { restore_parked(dir, &task_id, &st.events) } else { None };
-            match restored {
+        let mut st = s.lock();
+        if let Some((task_id, usage)) = st.m.running.as_ref().map(|r| (r.task_id.clone(), r.usage))
+        {
+            match park.then(|| restore_parked(dir, &task_id, &st.events)).flatten() {
                 Some(cp) => {
-                    // Running, and waiting: what it was. The steers it had not read are in the
-                    // log, and its spend so far is what the log says.
-                    let mut a = Active::new(&task_id);
-                    a.usage = usage;
-                    a.approved = for_task.remove(&task_id).unwrap_or_default();
-                    a.steers = super::state::fold(&st.events)
+                    // Running, and waiting: what it was. The steers it had not read are in the log.
+                    let steers = super::state::fold(&st.events)
                         .pending_steers
                         .into_iter()
                         .filter(|p| p.task_id == task_id)
                         .map(|p| (p.steer_id, p.message))
                         .collect();
-                    st.active = Some(a);
-                    st.parked = Some(Parked { cp, answered: false });
+                    if let Some(l) = st.live(&task_id) {
+                        l.steers = steers;
+                        l.parked = Some(Parked { cp, answered: false });
+                    }
                 }
                 None => {
                     let _ = std::fs::remove_file(dir.join("checkpoint.json"));
-                    if let Some(t) = st.tasks.get_mut(&task_id) {
-                        t.status = TaskStatus::Failed;
-                    }
                     let payload = Payload::TaskFailed {
                         code: FailCode::Internal,
                         message: "comp-agentd restarted while this task ran".into(),
@@ -399,21 +327,16 @@ impl Session {
         // The queue was in memory. A task accepted and never started is ended here, in the
         // log, like the running one: it is not run now, on a prompt from a process that is
         // gone, and the caller finds out and decides (ADR-0112).
-        {
-            let mut st = s.lock();
-            let waiting: Vec<Queued> = st.queue.drain(..).collect();
-            for q in waiting {
-                if let Some(t) = st.tasks.get_mut(&q.task_id) {
-                    t.status = TaskStatus::Failed;
-                }
-                let payload = Payload::TaskFailed {
-                    code: FailCode::Internal,
-                    message: "comp-agentd restarted before this task started".into(),
-                    task_usage: Usage::default(),
-                };
-                s.push(&mut st, &q.task_id, payload);
-            }
+        let waiting: Vec<String> = st.m.queue.iter().map(|q| q.task_id.clone()).collect();
+        for task_id in waiting {
+            let payload = Payload::TaskFailed {
+                code: FailCode::Internal,
+                message: "comp-agentd restarted before this task started".into(),
+                task_usage: Usage::default(),
+            };
+            s.push(&mut st, &task_id, payload);
         }
+        drop(st);
         Ok(s)
     }
 
@@ -470,35 +393,36 @@ impl Session {
     }
 
     fn view_of(&self, s: &State) -> wire::Session {
+        let waiting = s.live.as_ref().is_some_and(|l| !l.pending.is_empty() || l.parked.is_some());
         let status = if s.closed {
             SessionStatus::Closed
-        } else if !s.pending.is_empty() || s.parked.is_some() {
+        } else if waiting {
             SessionStatus::AwaitingApproval
-        } else if s.active.is_some() {
+        } else if s.m.running.is_some() {
             SessionStatus::Running
         } else {
             SessionStatus::Idle
         };
-        let approved_tools = s
-            .approved
-            .iter()
-            .chain(s.active.iter().flat_map(|a| a.approved.iter()))
-            .cloned()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        let approved_tools =
+            s.m.approved
+                .iter()
+                .chain(s.m.running.iter().flat_map(|r| r.approved.iter()))
+                .cloned()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
         wire::Session {
             id: self.id.clone(),
             model: self.model.clone(),
             workspace_dir: self.workspace.display().to_string(),
             status,
-            usage: s.usage,
+            usage: s.m.usage,
             max_budget_usd_micros: self.max_budget,
             auto_approve_tools: self.auto_approve.clone(),
             approved_tools,
             labels: self.labels.clone(),
             created_at: self.created_at.clone(),
-            active_task_id: s.active.as_ref().map(|a| a.task_id.clone()),
+            active_task_id: s.m.running.as_ref().map(|r| r.task_id.clone()),
         }
     }
 
@@ -525,7 +449,9 @@ impl Session {
                 eprintln!("comp-agentd: {}: appending event {seq}: {err}", self.id);
             }
         }
-        s.events.push(e);
+        if replay(s, &self.id, e) {
+            self.remove_checkpoint();
+        }
         self.seq.send_replace(seq);
     }
 
@@ -533,7 +459,7 @@ impl Session {
     /// active one (it was cancelled under the caller).
     pub fn emit(&self, task_id: &str, payload: Payload) {
         let mut s = self.lock();
-        if s.active.as_ref().is_some_and(|a| a.task_id == task_id) {
+        if s.m.is_running(task_id) {
             self.push(&mut s, task_id, payload);
         }
     }
@@ -552,33 +478,21 @@ impl Session {
             return true;
         }
         let s = self.lock();
-        s.approved.contains(tool)
-            || s.active.as_ref().is_some_and(|a| a.task_id == task_id && a.approved.contains(tool))
+        s.m.approved.contains(tool)
+            || s.m
+                .running
+                .as_ref()
+                .is_some_and(|r| r.task_id == task_id && r.approved.contains(tool))
     }
 
-    /// A person's answer to the approval of `tool`'s call `call_id` is decided: the log says so,
-    /// and an approval that was given for more than this call is remembered. One lock for both,
-    /// so that what the log says was approved and what runs without asking cannot differ (and
-    /// `load` reads the same two things back out of the log).
-    ///
-    /// A denial is for the call it answers, whatever reach it was sent with, and the log says
-    /// `once`: nothing here ever remembers a refusal.
-    fn decide(&self, s: &mut State, task_id: &str, call_id: &str, tool: &str, answer: &Answer) {
+    /// A person's answer to the approval of call `call_id` is decided: the log says so, and its
+    /// reach is what `Machine::apply` remembers. A denial is for the call it answers, whatever
+    /// reach it was sent with, and the log says `once`: nothing ever remembers a refusal.
+    fn decide(&self, s: &mut State, task_id: &str, call_id: &str, answer: &Answer) {
         let scope = match answer.decision {
             Decision::Approve => answer.scope,
             Decision::Deny => ApprovalScope::Once,
         };
-        match scope {
-            ApprovalScope::Once => {}
-            ApprovalScope::Task => {
-                if let Some(a) = s.active.as_mut().filter(|a| a.task_id == task_id) {
-                    a.approved.insert(tool.to_string());
-                }
-            }
-            ApprovalScope::Session => {
-                s.approved.insert(tool.to_string());
-            }
-        }
         let payload = Payload::ToolApprovalResolved {
             call_id: call_id.to_string(),
             decision: answer.decision,
@@ -588,12 +502,12 @@ impl Session {
         self.push(s, task_id, payload);
     }
 
-    /// The approval of `tool`'s call `call_id`, which a task held in memory was waiting for, has
-    /// its answer. Dropped, like `emit`, if the task is no longer the running one.
-    pub fn resolved(&self, task_id: &str, call_id: &str, tool: &str, answer: &Answer) {
+    /// The approval of call `call_id`, which a task held in memory was waiting for, has its
+    /// answer. Dropped, like `emit`, if the task is no longer the running one.
+    pub fn resolved(&self, task_id: &str, call_id: &str, answer: &Answer) {
         let mut s = self.lock();
-        if s.active.as_ref().is_some_and(|a| a.task_id == task_id) {
-            self.decide(&mut s, task_id, call_id, tool, answer);
+        if s.m.is_running(task_id) {
+            self.decide(&mut s, task_id, call_id, answer);
         }
     }
 
@@ -611,49 +525,29 @@ impl Session {
         max_queued: usize,
     ) -> Result<Begun, Refusal> {
         let mut s = self.lock();
-        if let Some(t) = key.as_ref().and_then(|k| s.by_key.get(k)).and_then(|id| s.tasks.get(id)) {
+        if let Some(t) = key.as_ref().and_then(|k| s.by_key.get(k)).and_then(|id| s.m.tasks.get(id))
+        {
             return Ok(Begun::Repeat(t.clone()));
         }
         if s.closed {
             return Err(Refusal::Closed);
         }
         let id = wire::new_id("task");
-        let created_at = wire::now();
-        if s.active.is_some() {
+        let prompt = prompt.to_string();
+        if s.m.running.is_some() {
             if when_busy != WhenBusy::Queue || max_queued == 0 {
                 return Err(Refusal::Busy);
             }
-            if s.queue.len() >= max_queued {
+            if s.m.queue.len() >= max_queued {
                 return Err(Refusal::QueueFull(max_queued));
             }
-            let task = wire::Task {
-                id: id.clone(),
-                session_id: self.id.clone(),
-                status: TaskStatus::Queued,
-                created_at: created_at.clone(),
-            };
-            s.tasks.insert(id.clone(), task.clone());
-            s.queue.push_back(Queued {
-                task_id: id.clone(),
-                prompt: prompt.to_string(),
-                created_at,
-            });
             self.remember(&mut s, key, &id);
-            self.push(&mut s, &id, Payload::TaskQueued { prompt: prompt.to_string() });
-            return Ok(Begun::Queued(task));
+            self.push(&mut s, &id, Payload::TaskQueued { prompt });
+            return Ok(Begun::Queued(s.m.tasks[&id].clone()));
         }
-        debug_assert!(s.queue.is_empty(), "an idle session with tasks waiting");
-        let task = wire::Task {
-            id: id.clone(),
-            session_id: self.id.clone(),
-            status: TaskStatus::Running,
-            created_at,
-        };
-        s.active = Some(Active::new(&id));
-        s.tasks.insert(id.clone(), task.clone());
         self.remember(&mut s, key, &id);
-        self.push(&mut s, &id, Payload::TaskStarted { prompt: prompt.to_string() });
-        Ok(Begun::Started(Started { task, prompt: prompt.to_string() }))
+        self.push(&mut s, &id, Payload::TaskStarted { prompt: prompt.clone() });
+        Ok(Begun::Started(Started { task: s.m.tasks[&id].clone(), prompt }))
     }
 
     /// Remember `key` for `task_id`, so a retry says it once.
@@ -674,18 +568,21 @@ impl Session {
         if s.closed {
             return None;
         }
-        let q = s.queue.pop_front()?;
-        debug_assert!(s.active.is_none(), "promoting a queued task over a running one");
-        let task = wire::Task {
-            id: q.task_id.clone(),
-            session_id: self.id.clone(),
-            status: TaskStatus::Running,
-            created_at: q.created_at,
-        };
-        s.tasks.insert(q.task_id.clone(), task.clone());
-        s.active = Some(Active::new(&q.task_id));
+        let q = s.m.queue.front()?.clone();
         self.push(s, &q.task_id, Payload::TaskStarted { prompt: q.prompt.clone() });
-        Some(Started { task, prompt: q.prompt })
+        Some(Started { task: s.m.tasks[&q.task_id].clone(), prompt: q.prompt })
+    }
+
+    /// End the running task as `payload` says, stopping its loop if `abort`, and start the next.
+    fn end_running(&self, s: &mut State, abort: bool, payload: Payload) -> Option<Started> {
+        let task_id = s.m.running.as_ref()?.task_id.clone();
+        if abort {
+            if let Some(h) = s.live.as_ref().and_then(|l| l.handle.as_ref()) {
+                h.abort();
+            }
+        }
+        self.push(s, &task_id, payload);
+        self.promote(s)
     }
 
     /// Accept a steer for the running task `task_id`; it joins the conversation at
@@ -702,7 +599,7 @@ impl Session {
         if s.closed {
             return Err(SteerRefusal::Closed);
         }
-        let Some(a) = s.active.as_mut().filter(|a| a.task_id == task_id) else {
+        let Some(a) = s.live(task_id) else {
             return Err(SteerRefusal::NotRunning);
         };
         if key.as_ref().is_some_and(|k| a.steer_keys.contains_key(k)) {
@@ -725,7 +622,7 @@ impl Session {
     /// the lock, so each is applied once.
     pub fn take_steers(&self, task_id: &str) -> Vec<(String, String)> {
         let mut s = self.lock();
-        match s.active.as_mut().filter(|a| a.task_id == task_id) {
+        match s.live(task_id) {
             Some(a) => a.steers.drain(..).collect(),
             None => Vec::new(),
         }
@@ -738,7 +635,7 @@ impl Session {
     /// never accepted and then dropped on the floor.
     pub fn finishing(&self, task_id: &str) -> Vec<(String, String)> {
         let mut s = self.lock();
-        let Some(a) = s.active.as_mut().filter(|a| a.task_id == task_id) else {
+        let Some(a) = s.live(task_id) else {
             return Vec::new();
         };
         if a.steers.is_empty() {
@@ -749,27 +646,38 @@ impl Session {
         }
     }
 
+    /// The loop of `task_id` is `handle`. A task cancelled before its loop got here has nothing to
+    /// attach to, and its loop is stopped now rather than left running unseen.
     pub fn attach(&self, task_id: &str, handle: tokio::task::JoinHandle<()>) {
         let mut s = self.lock();
-        match s.active.as_mut() {
-            Some(a) if a.task_id == task_id => a.handle = Some(handle),
-            // Already finished or cancelled; nothing left to abort.
-            _ => {}
+        match s.live(task_id) {
+            Some(l) => l.handle = Some(handle),
+            None => handle.abort(),
         }
     }
 
-    /// Charge one model call. Returns (session total, remaining budget).
-    pub fn charge(&self, task_id: &str, delta: Usage) -> (Usage, i64) {
+    /// Charge one model call to the running `task_id`, as the log's `usage_updated`: the session
+    /// total and remaining budget after it. `None` if the task is not running any more, and then
+    /// nothing is charged.
+    pub fn charge(&self, task_id: &str, delta: Usage) -> Option<(Usage, i64)> {
         let mut s = self.lock();
-        s.usage.add(&delta);
-        if let Some(a) = s.active.as_mut().filter(|a| a.task_id == task_id) {
-            a.usage.add(&delta);
+        if !s.m.is_running(task_id) {
+            return None;
         }
-        (s.usage, self.max_budget - s.usage.cost_usd_micros)
+        let mut total = s.m.usage;
+        total.add(&delta);
+        let remaining = self.max_budget - total.cost_usd_micros;
+        let payload = Payload::UsageUpdated {
+            delta,
+            session_total: total,
+            budget_remaining_usd_micros: remaining,
+        };
+        self.push(&mut s, task_id, payload);
+        Some((total, remaining))
     }
 
     pub fn remaining(&self) -> i64 {
-        self.max_budget - self.lock().usage.cost_usd_micros
+        self.max_budget - self.lock().m.usage.cost_usd_micros
     }
 
     /// End `task_id` with its result or a failure, and go idle, or on to the next queued task,
@@ -780,25 +688,16 @@ impl Session {
         outcome: Result<String, (FailCode, String)>,
     ) -> Option<Started> {
         let mut s = self.lock();
-        let a = s.active.take_if(|a| a.task_id == task_id)?;
-        let (status, payload) = match outcome {
-            Ok(result) => {
-                (TaskStatus::Completed, Payload::TaskCompleted { result, task_usage: a.usage })
-            }
-            Err((code, message)) => {
-                (TaskStatus::Failed, Payload::TaskFailed { code, message, task_usage: a.usage })
-            }
+        let usage = s.m.running.as_ref().filter(|r| r.task_id == task_id)?.usage;
+        let payload = match outcome {
+            Ok(result) => Payload::TaskCompleted { result, task_usage: usage },
+            Err((code, message)) => Payload::TaskFailed { code, message, task_usage: usage },
         };
-        if let Some(t) = s.tasks.get_mut(task_id) {
-            t.status = status;
-        }
-        s.pending.clear();
-        self.push(&mut s, task_id, payload);
-        self.promote(&mut s)
+        self.end_running(&mut s, false, payload)
     }
 
     pub fn task(&self, task_id: &str) -> Option<wire::Task> {
-        self.lock().tasks.get(task_id).cloned()
+        self.lock().m.tasks.get(task_id).cloned()
     }
 
     /// Stop `task_id`: the one running, or one still queued, which leaves the queue without
@@ -807,40 +706,20 @@ impl Session {
     /// approval it was parked on, if it was.
     pub fn cancel(&self, task_id: &str, why: &str) -> Cancelled {
         let mut s = self.lock();
+        let failed = |task_usage| Payload::TaskFailed {
+            code: FailCode::Cancelled,
+            message: why.into(),
+            task_usage,
+        };
         let mut next = None;
-        let mut tickets = Vec::new();
-        if let Some(a) = s.active.take_if(|a| a.task_id == task_id) {
-            if let Some(h) = &a.handle {
-                h.abort();
-            }
-            if let Some(t) = s.tasks.get_mut(task_id) {
-                t.status = TaskStatus::Failed;
-            }
-            s.pending.clear();
-            if let Some(p) = s.parked.take() {
-                tickets.extend(p.cp.ticket);
-                self.remove_checkpoint();
-            }
-            let payload = Payload::TaskFailed {
-                code: FailCode::Cancelled,
-                message: why.into(),
-                task_usage: a.usage,
-            };
-            self.push(&mut s, task_id, payload);
-            next = self.promote(&mut s);
-        } else if let Some(i) = s.queue.iter().position(|q| q.task_id == task_id) {
-            s.queue.remove(i);
-            if let Some(t) = s.tasks.get_mut(task_id) {
-                t.status = TaskStatus::Failed;
-            }
-            let payload = Payload::TaskFailed {
-                code: FailCode::Cancelled,
-                message: why.into(),
-                task_usage: Usage::default(),
-            };
-            self.push(&mut s, task_id, payload);
+        if let Some(usage) = s.m.running.as_ref().filter(|r| r.task_id == task_id).map(|r| r.usage)
+        {
+            next = self.end_running(&mut s, true, failed(usage));
+        } else if s.m.queue.iter().any(|q| q.task_id == task_id) {
+            self.push(&mut s, task_id, failed(Usage::default()));
         }
-        Cancelled { task: s.tasks.get(task_id).cloned(), next, tickets }
+        let tickets = std::mem::take(&mut s.released);
+        Cancelled { task: s.m.tasks.get(task_id).cloned(), next, tickets }
     }
 
     // ---- a wait that is parked (ADR-0113) ----
@@ -868,7 +747,7 @@ impl Session {
     /// two leaves something `load` can finish (it parks the approval again) or refuse.
     pub fn begin_park(&self, cp: Checkpoint) -> BeginPark {
         let mut s = self.lock();
-        if !s.active.as_ref().is_some_and(|a| a.task_id == cp.task_id) {
+        if !s.m.is_running(&cp.task_id) {
             return BeginPark::Gone;
         }
         if let Some(p) = self.checkpoint_file() {
@@ -877,7 +756,9 @@ impl Session {
                 return BeginPark::Unsaved(format!("{e:#}"));
             }
         }
-        s.parked = Some(Parked { cp, answered: false });
+        if let Some(l) = s.live(&cp.task_id) {
+            l.parked = Some(Parked { cp, answered: false });
+        }
         BeginPark::Parked
     }
 
@@ -885,7 +766,7 @@ impl Session {
     /// restart can cancel it.
     pub fn set_ticket(&self, call_id: &str, ticket: &str) {
         let mut s = self.lock();
-        let Some(p) = s.parked.as_mut().filter(|p| p.cp.call().id == call_id) else { return };
+        let Some(p) = s.parked_on(call_id) else { return };
         p.cp.ticket = Some(ticket.to_string());
         if let Some(path) = self.checkpoint_file() {
             let r = serde_json::to_vec(&p.cp).map_err(anyhow::Error::from);
@@ -898,31 +779,28 @@ impl Session {
     /// The park did not happen: undo it, and say which ticket, if any, to cancel.
     pub fn abort_park(&self, call_id: &str) -> Option<String> {
         let mut s = self.lock();
-        if !s.parked.as_ref().is_some_and(|p| p.cp.call().id == call_id) {
-            return None;
-        }
+        s.parked_on(call_id)?;
         self.remove_checkpoint();
-        s.parked.take().and_then(|p| p.cp.ticket)
+        s.live.as_mut()?.parked.take().and_then(|p| p.cp.ticket)
     }
 
     /// The approval the running task is parked on, if it is.
     pub fn parked(&self) -> Option<ParkedView> {
         let s = self.lock();
-        s.parked.as_ref().map(|p| view_of_parked(&p.cp))
+        s.live.as_ref()?.parked.as_ref().map(|p| view_of_parked(&p.cp))
     }
 
     /// A human is giving `call_id` its answer: the first to claim it may, and a second is
     /// refused until the first fails to reach the ticket (`unclaim_parked_answer`).
     pub fn claim_parked_answer(&self, call_id: &str) -> Option<ParkedView> {
         let mut s = self.lock();
-        let p = s.parked.as_mut().filter(|p| p.cp.call().id == call_id && !p.answered)?;
+        let p = s.parked_on(call_id).filter(|p| !p.answered)?;
         p.answered = true;
         Some(view_of_parked(&p.cp))
     }
 
     pub fn unclaim_parked_answer(&self, call_id: &str) {
-        let mut s = self.lock();
-        if let Some(p) = s.parked.as_mut().filter(|p| p.cp.call().id == call_id) {
+        if let Some(p) = self.lock().parked_on(call_id) {
             p.answered = false;
         }
     }
@@ -934,11 +812,12 @@ impl Session {
     /// than running a tool that may already have run (ADR-0106's `unsafe`).
     pub fn resume_parked(&self, call_id: &str, answer: &Answer) -> Resume {
         let mut s = self.lock();
-        if s.parked.as_ref().is_some_and(|p| p.cp.call().id == call_id) {
-            let Some(p) = s.parked.take() else { return Resume::Gone };
+        if s.parked_on(call_id).is_some() {
+            let Some(p) = s.live.as_mut().and_then(|l| l.parked.take()) else {
+                return Resume::Gone;
+            };
             self.remove_checkpoint();
-            let task_id = p.cp.task_id.clone();
-            self.decide(&mut s, &task_id, call_id, &p.cp.call().name, answer);
+            self.decide(&mut s, &p.cp.task_id, call_id, answer);
             return Resume::Resumed(p.cp);
         }
         let decided = s.events.iter().rev().any(|e| {
@@ -951,20 +830,25 @@ impl Session {
         }
     }
 
-    /// Register a pending approval; the receiver resolves when someone answers.
-    pub fn await_approval(&self, call_id: &str) -> oneshot::Receiver<Answer> {
+    /// Register a pending approval of `task_id`'s call; the receiver resolves when someone answers.
+    /// For a task that is not running any more there is nobody to answer, and it resolves at once.
+    pub fn await_approval(&self, task_id: &str, call_id: &str) -> oneshot::Receiver<Answer> {
         let (tx, rx) = oneshot::channel();
-        self.lock().pending.insert(call_id.to_string(), tx);
+        if let Some(l) = self.lock().live(task_id) {
+            l.pending.insert(call_id.to_string(), tx);
+        }
         rx
     }
 
     /// Forget a pending approval that timed out.
     pub fn drop_approval(&self, call_id: &str) {
-        self.lock().pending.remove(call_id);
+        if let Some(l) = self.lock().live.as_mut() {
+            l.pending.remove(call_id);
+        }
     }
 
     pub fn answer(&self, call_id: &str, a: Answer) -> bool {
-        let tx = self.lock().pending.remove(call_id);
+        let tx = self.lock().live.as_mut().and_then(|l| l.pending.remove(call_id));
         tx.is_some_and(|tx| tx.send(a).is_ok())
     }
 
@@ -972,45 +856,44 @@ impl Session {
     /// one lock, so nothing is promoted into the gap and nothing new is accepted. Returns the
     /// ticket of the approval the running task was parked on, if it was.
     pub fn close(&self) -> Vec<String> {
-        let why = "session closed";
+        let failed = |task_usage| Payload::TaskFailed {
+            code: FailCode::Cancelled,
+            message: "session closed".into(),
+            task_usage,
+        };
         let mut s = self.lock();
         s.closed = true;
-        let mut tickets = Vec::new();
-        if let Some(a) = s.active.take() {
-            if let Some(h) = &a.handle {
-                h.abort();
-            }
-            if let Some(t) = s.tasks.get_mut(&a.task_id) {
-                t.status = TaskStatus::Failed;
-            }
-            s.pending.clear();
-            if let Some(p) = s.parked.take() {
-                tickets.extend(p.cp.ticket);
-                self.remove_checkpoint();
-            }
-            let payload = Payload::TaskFailed {
-                code: FailCode::Cancelled,
-                message: why.into(),
-                task_usage: a.usage,
-            };
-            self.push(&mut s, &a.task_id, payload);
+        if let Some(usage) = s.m.running.as_ref().map(|r| r.usage) {
+            self.end_running(&mut s, true, failed(usage));
         }
-        let waiting: Vec<Queued> = s.queue.drain(..).collect();
-        for q in waiting {
-            if let Some(t) = s.tasks.get_mut(&q.task_id) {
-                t.status = TaskStatus::Failed;
-            }
-            let payload = Payload::TaskFailed {
-                code: FailCode::Cancelled,
-                message: why.into(),
-                task_usage: Usage::default(),
-            };
-            self.push(&mut s, &q.task_id, payload);
+        let waiting: Vec<String> = s.m.queue.iter().map(|q| q.task_id.clone()).collect();
+        for task_id in waiting {
+            self.push(&mut s, &task_id, failed(Usage::default()));
         }
         if let Err(e) = self.save_meta(&s) {
             eprintln!("comp-agentd: {}: saving closed state: {e:#}", self.id);
         }
-        tickets
+        std::mem::take(&mut s.released)
+    }
+
+    /// The code-store ops of `write_file`s after `after_seq` that no rewind has reverted, with
+    /// their paths, newest first (ADR-0121).
+    pub fn unrewound_edits(&self, after_seq: u64) -> Vec<(u64, String)> {
+        let s = self.lock();
+        let mut ops: Vec<(u64, String)> = s
+            .events
+            .iter()
+            .skip(after_seq as usize)
+            .flat_map(|e| match &e.payload {
+                Payload::FileChanged { path, ops, .. } => {
+                    ops.iter().map(|op| (*op, path.clone())).collect()
+                }
+                _ => vec![],
+            })
+            .filter(|(op, _)| !s.m.rewound.contains(op))
+            .collect();
+        ops.sort_unstable_by_key(|(op, _)| std::cmp::Reverse(*op));
+        ops
     }
 
     pub fn events_after(&self, seq: u64) -> Vec<Event> {
@@ -1022,13 +905,24 @@ impl Session {
     }
 }
 
-fn task(session_id: &str, e: &Event, status: TaskStatus) -> wire::Task {
-    wire::Task {
-        id: e.task_id.clone(),
-        session_id: session_id.into(),
-        status,
-        created_at: e.time.clone(),
+/// Fold `e` into `s` and keep it: the state machine, and the running task's other half, which
+/// it makes when the log starts a task and lets go when the log ends one. True when that let go
+/// of a park, whose checkpoint the caller removes; its ticket is in `released`.
+fn replay(s: &mut State, session_id: &str, e: Event) -> bool {
+    let mut unparked = false;
+    match s.m.apply(session_id, &e) {
+        Change::Started => s.live = Some(Live::new(&e.task_id)),
+        // Dropping the waits wakes any loop still on one, which then finds its task ended.
+        Change::Ended => {
+            if let Some(p) = s.live.take().and_then(|l| l.parked) {
+                s.released.extend(p.cp.ticket);
+                unparked = true;
+            }
+        }
+        Change::None => {}
     }
+    s.events.push(e);
+    unparked
 }
 
 fn view_of_parked(cp: &Checkpoint) -> ParkedView {
@@ -1090,4 +984,62 @@ pub fn load_all(state_dir: &Path, park: bool) -> Result<HashMap<String, Arc<Sess
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session() -> Session {
+        let req = wire::CreateSession {
+            model: "m".into(),
+            workspace_dir: String::new(),
+            max_budget_usd_micros: 100,
+            auto_approve_tools: vec![],
+            labels: BTreeMap::new(),
+        };
+        Session::new(req, PathBuf::from("."), None).unwrap()
+    }
+
+    fn started(s: &Session) -> String {
+        match s.begin("go", None, WhenBusy::Reject, 0) {
+            Ok(Begun::Started(st)) => st.task.id,
+            _ => panic!("an idle session starts the task"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_loop_attached_after_its_task_was_cancelled_is_stopped() {
+        let s = session();
+        let t = started(&s);
+        s.cancel(&t, "cancelled before its loop attached");
+        let h = tokio::spawn(std::future::pending::<()>());
+        let stop = h.abort_handle();
+        s.attach(&t, h);
+        tokio::task::yield_now().await;
+        assert!(stop.is_finished(), "nobody could ever stop it otherwise");
+    }
+
+    #[test]
+    fn a_task_that_is_not_running_is_charged_nothing_and_waits_on_nobody() {
+        let s = session();
+        let t = started(&s);
+        s.cancel(&t, "x");
+        let call = Usage { cost_usd_micros: 5, ..Usage::default() };
+        assert!(s.charge(&t, call).is_none());
+        assert_eq!(s.view().usage.cost_usd_micros, 0);
+        let mut rx = s.await_approval(&t, "c1");
+        assert!(rx.try_recv().is_err(), "resolves at once: nobody can answer it");
+        assert_eq!(s.view().status, SessionStatus::Idle);
+    }
+
+    #[test]
+    fn the_running_task_is_charged_through_its_log() {
+        let s = session();
+        let t = started(&s);
+        let call = Usage { cost_usd_micros: 30, ..Usage::default() };
+        assert_eq!(s.charge(&t, call).map(|(u, left)| (u.cost_usd_micros, left)), Some((30, 70)));
+        let logged = s.events_after(0).into_iter().filter(|e| e.payload.kind() == "usage_updated");
+        assert_eq!(logged.count(), 1);
+    }
 }

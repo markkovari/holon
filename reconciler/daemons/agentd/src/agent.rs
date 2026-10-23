@@ -192,15 +192,9 @@ async fn model_turn(sess: &Session, ctx: &Ctx, task: &str, history: &mut Vec<Msg
         cache_write_tokens: t.cache_write,
         cost_usd_micros: cost as i64,
     };
-    let (total, remaining) = sess.charge(task, delta);
-    sess.emit(
-        task,
-        Payload::UsageUpdated {
-            delta,
-            session_total: total,
-            budget_remaining_usd_micros: remaining,
-        },
-    );
+    let Some((_, remaining)) = sess.charge(task, delta) else {
+        return Model::Ended(Err((FailCode::Cancelled, "the task is not running any more".into())));
+    };
     history.push(Msg::Assistant { text: turn.text.clone(), calls: turn.calls.clone() });
     if remaining < 0 {
         return Model::Ended(Err((
@@ -416,7 +410,7 @@ async fn approval(
     tool_name: &str,
     input: &serde_json::Value,
 ) -> Answer {
-    let rx = sess.await_approval(call_id);
+    let rx = sess.await_approval(task, call_id);
     let expires_at = ctx
         .approval_timeout
         .and_then(|d| jiff::Timestamp::now().checked_add(d).ok())
@@ -446,6 +440,6 @@ async fn approval(
             }
         },
     };
-    sess.resolved(task, call_id, tool_name, &answer);
+    sess.resolved(task, call_id, &answer);
     answer
 }
