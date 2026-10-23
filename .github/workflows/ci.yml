@@ -63,10 +63,20 @@ jobs:
   # keeps debugging it.
   components:
     name: components (wasm32-wasip2)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On picur every target/ stays: it is what makes the job warm.
+          clean: ${{ runner.environment == 'github-hosted' }}
+      - name: Clean all but target/, which is the runners' shared volume
+        if: runner.environment == 'self-hosted'
+        run: |
+          git clean -ffdx -e target
+          mkdir -p /ci-target/root /ci-target/components
+          ln -sfn /ci-target/root target
+          ln -sfn /ci-target/components components/target
 
       - name: Install the wasm target
         run: rustup target add wasm32-wasip2
@@ -86,6 +96,7 @@ jobs:
           tool: cargo-component@0.21.1,wasm-tools
 
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           # Not the runner's other toolchains: their patch level varies by image and split the key; the pinned one is in it via rust-toolchain.toml.
           add-rust-environment-hash-key: false
@@ -154,10 +165,20 @@ jobs:
   # dependencies (docs/adr/0115) and builds in about a second.
   native-binaries:
     name: native binaries (comp-host, holon)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On picur every target/ stays: it is what makes the job warm.
+          clean: ${{ runner.environment == 'github-hosted' }}
+      - name: Clean all but target/, which is the runners' shared volume
+        if: runner.environment == 'self-hosted'
+        run: |
+          git clean -ffdx -e target
+          mkdir -p /ci-target/root /ci-target/components
+          ln -sfn /ci-target/root target
+          ln -sfn /ci-target/components components/target
 
       # ITS OWN cache, not `reconciler-pipeline` (the shared one below, in both
       # reconciler-suites jobs) — that was tried, and it was the wrong fix.
@@ -181,6 +202,7 @@ jobs:
       # jobs sharing overlapping workspaces; this job's workspaces overlap
       # with no one, so it never needed to be part of that story.
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           add-rust-environment-hash-key: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -212,10 +234,20 @@ jobs:
   reconciler-artifact-suites:
     name: reconciler suites (built artifacts)
     needs: [components, native-binaries]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On picur every target/ stays: it is what makes the job warm.
+          clean: ${{ runner.environment == 'github-hosted' }}
+      - name: Clean all but target/, which is the runners' shared volume
+        if: runner.environment == 'self-hosted'
+        run: |
+          git clean -ffdx -e target
+          mkdir -p /ci-target/root /ci-target/components
+          ln -sfn /ci-target/root target
+          ln -sfn /ci-target/components components/target
 
       # `witsurface` asks whether a shape changed WITHOUT its version, and answers
       # it by comparing against the base branch — the shape that shipped, which a
@@ -237,6 +269,7 @@ jobs:
       # `comp-host`/`holon`, so keeping them here was dead weight once
       # nothing populated them any more either).
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           add-rust-environment-hash-key: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -447,10 +480,20 @@ jobs:
   reconciler-fleet-suites:
     name: reconciler suites (fleet)
     needs: [components, native-binaries]
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On picur every target/ stays: it is what makes the job warm.
+          clean: ${{ runner.environment == 'github-hosted' }}
+      - name: Clean all but target/, which is the runners' shared volume
+        if: runner.environment == 'self-hosted'
+        run: |
+          git clean -ffdx -e target
+          mkdir -p /ci-target/root /ci-target/components
+          ln -sfn /ci-target/root target
+          ln -sfn /ci-target/components components/target
 
       # Two of these 41 suites don't just READ the wasm artifact downloaded
       # below — they compile a component fresh, at test-time, on whatever
@@ -515,6 +558,7 @@ jobs:
       # tarball is two lines and cannot surprise this job on a morning nobody touched
       # a workflow — the same reasoning the `actionlint` step gives for pinning.
       - name: Install nats-server
+        if: runner.environment == 'github-hosted'
         run: |
           ver=v2.10.22
           url="https://github.com/nats-io/nats-server/releases/download/${ver}/nats-server-${ver}-linux-amd64.tar.gz"
@@ -534,6 +578,7 @@ jobs:
       # its own small cache for exactly those two), so they were dead weight
       # once nothing populated them.
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           add-rust-environment-hash-key: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -649,7 +694,7 @@ jobs:
 
   native:
     name: native workspaces
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     strategy:
       # One red workspace should not hide the state of the others.
@@ -735,7 +780,18 @@ jobs:
             test-args: ""
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On picur every target/ stays: it is what makes the job warm.
+          clean: ${{ runner.environment == 'github-hosted' }}
+      - name: Clean all but target/, which is the runners' shared volume
+        if: runner.environment == 'self-hosted'
+        run: |
+          git clean -ffdx -e target
+          mkdir -p /ci-target/root /ci-target/components
+          ln -sfn /ci-target/root target
+          ln -sfn /ci-target/components components/target
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           add-rust-environment-hash-key: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -798,16 +854,27 @@ jobs:
 
   lint:
     name: clippy
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On picur every target/ stays: it is what makes the job warm.
+          clean: ${{ runner.environment == 'github-hosted' }}
+      - name: Clean all but target/, which is the runners' shared volume
+        if: runner.environment == 'self-hosted'
+        run: |
+          git clean -ffdx -e target
+          mkdir -p /ci-target/root /ci-target/components
+          ln -sfn /ci-target/root target
+          ln -sfn /ci-target/components components/target
       - run: rustup target add wasm32-wasip2
       - run: rustup component add clippy
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-component@0.21.1
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           add-rust-environment-hash-key: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -828,12 +895,23 @@ jobs:
 
   lint-native:
     name: clippy (native workspaces)
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # On picur every target/ stays: it is what makes the job warm.
+          clean: ${{ runner.environment == 'github-hosted' }}
+      - name: Clean all but target/, which is the runners' shared volume
+        if: runner.environment == 'self-hosted'
+        run: |
+          git clean -ffdx -e target
+          mkdir -p /ci-target/root /ci-target/components
+          ln -sfn /ci-target/root target
+          ln -sfn /ci-target/components components/target
       - run: rustup component add clippy
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           add-rust-environment-hash-key: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
