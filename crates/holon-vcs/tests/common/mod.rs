@@ -561,11 +561,15 @@ where
     assert_eq!(u2.moves[0].before, Some(r2.patch.clone()));
     assert_eq!(u2.moves[0].after, Some(r1.patch.clone()));
     assert_eq!(content_of(&e, ws, &total).await, "v1");
-    // Still blocked: the revert moved r1's pointer.
+    // r2 and its revert cancel out, so r1 can go too: a stack undone newest first.
+    let u1 = e.revert_op(ws, r1.op, who.clone()).await.unwrap();
+    assert_eq!(content_of(&e, ws, &total).await, "v0");
     assert!(matches!(
-        e.revert_op(ws, r1.op, who.clone()).await,
+        e.revert_op(ws, r2.op, who.clone()).await,
         Err(VcsError::ConcurrentModification(_))
     ));
+    e.revert_op(ws, u1.id, who.clone()).await.unwrap();
+    assert_eq!(content_of(&e, ws, &total).await, "v1");
     let redo = e.revert_op(ws, u2.id, who.clone()).await.unwrap();
     assert_eq!(redo.kind, OpKind::Revert(u2.id));
     assert_eq!(content_of(&e, ws, &total).await, "v2");

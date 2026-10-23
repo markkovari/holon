@@ -1,7 +1,7 @@
 //! The operations both transports serve. `rest.rs` and `grpc.rs` only
 //! translate: a request into one of these calls, a `Fail` into a status.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -11,6 +11,7 @@ use holon_park::resume::{Delivery, Event as DeliveryEvent};
 use super::agent;
 use super::park::Answered;
 use super::session::{Answer, Begun, Refusal, Registry, Resume, Session, SteerRefusal};
+use super::tools;
 use super::wire::{self, ApprovalScope, Decision};
 
 pub struct Daemon {
@@ -38,11 +39,20 @@ pub enum Fail {
     /// `comp-resume` to cancel the ticket and stop (ADR-0113).
     Gone(String),
     /// Something this call needs is down and may not be soon: REST `503`, gRPC `UNAVAILABLE`.
-    Unavailable(String),
+    Unavailable(&'static str, String),
     Internal(String),
 }
 
 type R<T> = Result<T, Fail>;
+
+fn vcs_fail(e: holon_vcs::VcsError) -> Fail {
+    match e {
+        holon_vcs::VcsError::Storage(d) => {
+            Fail::Unavailable("vcs-unavailable", format!("comp-vcs: {d}"))
+        }
+        e => Fail::Internal(format!("comp-vcs: {e}")),
+    }
+}
 
 impl Daemon {
     fn get(&self, id: &str) -> R<Arc<Session>> {
@@ -195,6 +205,90 @@ impl Daemon {
         }
     }
 
+    /// Puts the files the events after `after_seq` changed back as they were, by reverting their
+    /// ops in the code store, newest first (ADR-0121). The conversation is not rewound. A revert
+    /// the store refuses stops it there; what was reverted until then is written and recorded.
+    pub async fn rewind(&self, id: &str, after_seq: u64) -> R<wire::Rewound> {
+        let sess = self.get(id)?;
+        let Some(vcs) = &self.ctx.vcs else {
+            return Err(Fail::Conflict(
+                "edits-not-recorded",
+                "this daemon records no edits (--vcs-url)".into(),
+            ));
+        };
+        // shortcut: checked, not held, so a task sent while a rewind runs races it; hold the
+        // session if callers ever do that.
+        if sess.view().status != wire::SessionStatus::Idle {
+            return Err(Fail::Conflict(
+                "session-busy",
+                "rewind a session with no task running".into(),
+            ));
+        }
+        let events = sess.events_after(0);
+        let undone: BTreeSet<u64> = events
+            .iter()
+            .flat_map(|e| match &e.payload {
+                wire::Payload::SessionRewound { ops, .. } => ops.clone(),
+                _ => vec![],
+            })
+            .collect();
+        let mut ops: Vec<(u64, String)> = events
+            .iter()
+            .filter(|e| e.seq > after_seq)
+            .flat_map(|e| match &e.payload {
+                wire::Payload::FileChanged { path, ops, .. } => {
+                    ops.iter().map(|op| (*op, path.clone())).collect()
+                }
+                _ => vec![],
+            })
+            .filter(|(op, _)| !undone.contains(op))
+            .collect();
+        ops.sort_unstable_by_key(|(op, _)| std::cmp::Reverse(*op));
+        let by = holon_vcs::model::Agent::named(format!("agentd:{}/rewind", sess.id));
+        let (mut done, mut paths, mut refused) = (vec![], BTreeSet::new(), None);
+        for (op, path) in &ops {
+            match vcs.revert(&sess.id, *op, by.clone()).await {
+                Ok(()) => {
+                    done.push(*op);
+                    paths.insert(path.clone());
+                }
+                Err(e) => {
+                    refused = Some(e);
+                    break;
+                }
+            }
+        }
+        if !done.is_empty() {
+            let files = vcs.read(&sess.id, &paths).await.map_err(vcs_fail)?;
+            for (p, content) in files {
+                let full = tools::confine(&sess.workspace, &p).map_err(Fail::Internal)?;
+                let r = match content {
+                    Some(b) => full
+                        .parent()
+                        .map_or(Ok(()), std::fs::create_dir_all)
+                        .and_then(|()| std::fs::write(&full, b)),
+                    None => std::fs::remove_file(&full).or_else(|e| match e.kind() {
+                        std::io::ErrorKind::NotFound => Ok(()),
+                        _ => Err(e),
+                    }),
+                };
+                r.map_err(|e| Fail::Internal(format!("{p}: {e}")))?;
+            }
+            sess.note(wire::Payload::SessionRewound {
+                after_seq,
+                ops: done.clone(),
+                paths: paths.iter().cloned().collect(),
+            });
+        }
+        if let Some(e) = refused {
+            return Err(Fail::Conflict(
+                "rewind-refused",
+                format!("rewound {} of {} ops, then: {e}", done.len(), ops.len()),
+            ));
+        }
+        Ok(wire::Rewound { ops: done, paths: paths.into_iter().collect() })
+    }
+
     /// What a client needs to draw a session it was not watching, and the cursor to
     /// keep watching it from (ADR-0107).
     pub fn session_state(&self, id: &str) -> R<wire::SessionState> {
@@ -256,7 +350,7 @@ impl Daemon {
             Ok(()) => Ok(done()),
             Err(e) => {
                 sess.unclaim_parked_answer(call_id);
-                Err(Fail::Unavailable(format!(
+                Err(Fail::Unavailable("park-unavailable", format!(
                     "the answer did not reach comp-park, so nothing has happened ({e}); send it again"
                 )))
             }

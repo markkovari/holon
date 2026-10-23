@@ -121,6 +121,19 @@ pub enum Payload {
     TaskSteered {
         steer_id: String,
     },
+    /// `write_file` changed `path`, recorded in the code store (ADR-0121) as `ops`.
+    FileChanged {
+        call_id: String,
+        path: String,
+        ops: Vec<u64>,
+    },
+    /// A session-level event: the files the events after `after_seq` changed are back as they
+    /// were, by reverting `ops`. The conversation is not rewound.
+    SessionRewound {
+        after_seq: u64,
+        ops: Vec<u64>,
+        paths: Vec<String>,
+    },
 }
 
 impl Payload {
@@ -138,6 +151,8 @@ impl Payload {
             Payload::TaskFailed { .. } => "task_failed",
             Payload::TaskSteerQueued { .. } => "task_steer_queued",
             Payload::TaskSteered { .. } => "task_steered",
+            Payload::FileChanged { .. } => "file_changed",
+            Payload::SessionRewound { .. } => "session_rewound",
         }
     }
 }
@@ -221,6 +236,17 @@ pub struct SendTask {
 #[derive(Deserialize)]
 pub struct SteerTask {
     pub message: String,
+}
+
+#[derive(Deserialize)]
+pub struct Rewind {
+    pub after_seq: u64,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Rewound {
+    pub ops: Vec<u64>,
+    pub paths: Vec<String>,
 }
 
 #[derive(Serialize, Clone)]

@@ -83,7 +83,7 @@ fn cap(mut s: String) -> String {
 // ponytail: check-then-use, so a symlink swapped in between the check and the
 // open escapes. Fine while one agent owns its workspace; openat2/RESOLVE_BENEATH
 // (or cap-std) if workspaces are ever shared with untrusted writers.
-fn confine(workspace: &Path, rel: &str) -> Result<PathBuf, String> {
+pub fn confine(workspace: &Path, rel: &str) -> Result<PathBuf, String> {
     let p = Path::new(rel);
     if p.is_absolute() || p.components().any(|c| matches!(c, Component::ParentDir)) {
         return Err(format!("{rel}: must be relative to the workspace, without `..`"));
@@ -98,6 +98,14 @@ fn confine(workspace: &Path, rel: &str) -> Result<PathBuf, String> {
         return Err(format!("{rel}: resolves outside the workspace"));
     }
     Ok(full)
+}
+
+/// The workspace-relative path a file tool's `input` names, normalized, and where it is: `None`
+/// when it may not be touched.
+pub fn target(workspace: &Path, input: &Value) -> Option<(String, PathBuf)> {
+    let full = confine(workspace, input.get("path")?.as_str()?).ok()?;
+    let rel: PathBuf = full.strip_prefix(workspace).ok()?.components().collect();
+    Some((rel.to_str()?.to_string(), full))
 }
 
 fn list_dir(ws: &Path, rel: &str) -> Result<String, String> {
