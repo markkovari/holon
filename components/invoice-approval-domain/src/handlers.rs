@@ -144,7 +144,9 @@ fn approve(route: &Route, id: &str) -> Reply {
     }
 
     let mut roles = principal.roles.clone();
-    if roles.is_empty() {
+    // Roles by email are the gate's fixture, for `/test/token`'s tokens only: a user who
+    // registers one of these addresses must not become one of them.
+    if roles.is_empty() && principal.scopes.iter().any(|s| s == "test:fixture") {
         if principal.subject == "appr-eng@example.test" {
             roles.push("approver:engineering".to_string());
         } else if principal.subject == "appr-sales@example.test" {

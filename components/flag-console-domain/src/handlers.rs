@@ -136,12 +136,15 @@ fn toggle_flag(route: &Route, name: &str, flag: &str, body: &str) -> Reply {
     let enabled = req.get("enabled").and_then(Value::as_bool).unwrap_or(false);
 
     let mut roles = principal.roles.clone();
+    // Roles by email are the gate's fixture, for `/test/token`'s tokens only: a user who
+    // registers one of these addresses must not become one of them.
+    let fixture = principal.scopes.iter().any(|s| s == "test:fixture");
     if roles.is_empty() {
         if principal.scopes.contains(&"services:write".to_string()) {
             roles.push("admin".to_string());
-        } else if principal.subject == "eng-b@example.test" {
+        } else if fixture && principal.subject == "eng-b@example.test" {
             roles.push("engineer:billing".to_string());
-        } else if principal.subject == "eng-s@example.test" {
+        } else if fixture && principal.subject == "eng-s@example.test" {
             roles.push("engineer:search".to_string());
         }
     }

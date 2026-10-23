@@ -153,7 +153,9 @@ fn resolve(route: &Route, id: &str) -> Reply {
     let queue = ticket.get("queue").and_then(Value::as_str).unwrap_or("").to_string();
 
     let mut roles = principal.roles.clone();
-    if roles.is_empty() {
+    // Roles by email are the gate's fixture, for `/test/token`'s tokens only: a user who
+    // registers one of these addresses must not become one of them.
+    if roles.is_empty() && principal.scopes.iter().any(|s| s == "test:fixture") {
         if principal.subject == "lead@example.test" {
             roles.push("lead".to_string());
         } else if principal.subject == "agent-b@example.test" {
