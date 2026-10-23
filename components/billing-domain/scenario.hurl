@@ -96,5 +96,10 @@ HTTP 200
 [Asserts]
 jsonpath "$.status" == "paid"
 
+# paid is final: it cannot be paid again
+POST {{base}}/api/invoices/{{invoice_id}}/pay
+Authorization: Bearer {{cfo_token}}
+HTTP 400
+
 GET {{base}}/api/invoices
 HTTP 401

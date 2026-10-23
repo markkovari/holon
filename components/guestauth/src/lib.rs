@@ -12,6 +12,24 @@
 
 #![allow(clippy::crate_in_macro_def)]
 
+/// A record's lifecycle as each state's allowed next states: the moves it permits and no others.
+/// A state the table does not list is final. Kept in the record itself, so there is one status.
+pub fn may_move(lifecycle: &[(&str, &[&str])], from: &str, to: &str) -> bool {
+    lifecycle.iter().any(|(state, next)| *state == from && next.contains(&to))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_lifecycle_permits_its_moves_and_no_others() {
+        const INVOICE: &[(&str, &[&str])] = &[("draft", &["sent"]), ("sent", &["paid"])];
+        assert!(super::may_move(INVOICE, "draft", "sent"));
+        assert!(!super::may_move(INVOICE, "draft", "paid"), "not without being sent");
+        assert!(!super::may_move(INVOICE, "paid", "sent"), "paid is final");
+        assert!(!super::may_move(INVOICE, "", "sent"), "no status is no state");
+    }
+}
+
 /// Plain shared type: no field names a `bindings::…` type.
 pub struct Route {
     pub segments: Vec<String>,
