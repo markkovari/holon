@@ -20,7 +20,11 @@ case "${1:-}" in
   install)
     docker build -t "$IMAGE" .
     for n in "${RUNNERS[@]}"; do
-      docker rm -f "$n" >/dev/null 2>&1 || true
+      # Killing a runner mid-job orphans the job, and its session blocks the next container for minutes.
+      busy="$(gh api "repos/$REPO/actions/runners" -q ".runners[] | select(.name == \"$n\") | .busy")"
+      [ "$busy" = true ] && { echo "$n is running a job; try again when it is idle"; exit 1; }
+      docker stop -t 60 "$n" >/dev/null 2>&1 || true
+      docker rm "$n" >/dev/null 2>&1 || true
       token=""
       # A registration lives on the volume; only a new volume needs a token.
       if ! docker run --rm -v "$n:/home/runner" --entrypoint test "$IMAGE" -f /home/runner/.registration/.runner; then
