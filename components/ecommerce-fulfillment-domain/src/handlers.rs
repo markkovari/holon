@@ -11,6 +11,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+/// The order's status lives in its record; `fsm-workflow` keeps the history of its moves.
+const ORDER: &[(&str, &[&str])] = &[("paid", &["shipped"])];
+
 #[derive(Deserialize)]
 struct CreateOrderReq {
     product_id: String,
@@ -178,9 +181,8 @@ fn create_order(route: &Route, body: &str) -> Reply {
         },
     );
 
-    if fsm::create_instance("fulfillment_workflow", &order_entry.id).is_err() {
-        return Reply::err(500, "fsm_create_failed");
-    }
+    // History only: the order is paid and saved, and a missing history must not undo that.
+    let _ = fsm::create_instance("fulfillment_workflow", &order_entry.id);
 
     Reply::json(201, json!({ "id": order_entry.id, "status": "paid", "charge_id": charge_id }))
 }
@@ -208,12 +210,6 @@ fn list_orders(route: &Route) -> Reply {
         for record in page.entries {
             if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&record.data) {
                 parsed["id"] = json!(record.id);
-
-                let status = match fsm::get_status("fulfillment_workflow", &record.id) {
-                    Ok(s) => s.state,
-                    Err(_) => "unknown".to_string(),
-                };
-                parsed["status"] = json!(status);
                 items.push(parsed);
             }
         }
@@ -244,10 +240,6 @@ pub fn fulfill_order(method: &Method, route: &Route, id: &str, _body: &str) -> R
         return Reply::err(403, "forbidden");
     }
 
-    if fsm::fire("fulfillment_workflow", id, "pack_and_ship").is_err() {
-        return Reply::err(500, "fsm_fire_failed");
-    }
-
     let record = match store::get("orders", id) {
         Ok(r) => r,
         Err(_) => return Reply::err(404, "not_found"),
@@ -258,12 +250,18 @@ pub fn fulfill_order(method: &Method, route: &Route, id: &str, _body: &str) -> R
         Err(_) => return Reply::err(500, "bad_data"),
     };
 
+    let status = order_data["status"].as_str().unwrap_or("paid");
+    if !guestauth::may_move(ORDER, status, "shipped") {
+        return Reply::err(409, "already_shipped");
+    }
     order_data["status"] = json!("shipped");
     if store::update("orders", id, &serde_json::to_string(&order_data).unwrap(), record.revision)
         .is_err()
     {
-        return Reply::err(500, "store_update_failed");
+        return Reply::err(409, "conflict");
     }
+    // After the save, so the history never says what the record does not.
+    let _ = fsm::fire("fulfillment_workflow", id, "pack_and_ship");
 
     Reply::json(200, json!({ "id": id, "status": "shipped" }))
 }
