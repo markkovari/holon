@@ -57,6 +57,14 @@ service AgentService {
   // FAILED_PRECONDITION if the task is not the running one, the session is
   // closed, or the task is already writing its final answer (send a task).
   rpc SteerTask(SteerTaskRequest) returns (Task);
+
+  // Put the files the events after after_seq changed back as they were, by
+  // reverting the code-store ops their FileChanged events name (ADR-0121); a
+  // SessionRewound event records it. The conversation is not rewound.
+  // FAILED_PRECONDITION while a task runs, when this daemon records no edits,
+  // or when the store refuses a revert (a file changed outside write_file since):
+  // what was reverted until then stays reverted and is recorded.
+  rpc RewindSession(RewindSessionRequest) returns (RewindSessionResponse);
 }
 
 // ---- Sessions ----
@@ -135,6 +143,18 @@ message CancelTaskRequest {
   string task_id = 2;
 }
 
+message RewindSessionRequest {
+  string session_id = 1;
+  uint64 after_seq = 2;
+}
+
+message RewindSessionResponse {
+  // The code-store ops reverted, newest first.
+  repeated uint64 ops = 1;
+  // The workspace-relative files written back (or removed, for one the agent created).
+  repeated string paths = 2;
+}
+
 message SteerTaskRequest {
   string session_id = 1;
   // The running task, as returned by SendTask or Session.active_task_id.
@@ -193,7 +213,7 @@ message AgentEvent {
   // Monotonic per session, starting at 1, no gaps. The resume cursor.
   uint64 seq = 1;
   string session_id = 2;
-  // Empty only for session-level events (none today).
+  // Empty only for session-level events (SessionRewound).
   string task_id = 3;
   google.protobuf.Timestamp time = 4;
 
@@ -210,7 +230,25 @@ message AgentEvent {
     TaskSteerQueued task_steer_queued = 19;
     TaskSteered task_steered = 20;
     TaskQueued task_queued = 21;
+    FileChanged file_changed = 22;
+    SessionRewound session_rewound = 23;
   }
+}
+
+// write_file changed path, and the code store (ADR-0121) recorded it as ops.
+// Only on a daemon that records edits (--vcs-url).
+message FileChanged {
+  string call_id = 1;
+  string path = 2;
+  repeated uint64 ops = 3;
+}
+
+// A session-level event (task_id empty): RewindSession reverted ops, and paths
+// are back as they were after after_seq.
+message SessionRewound {
+  uint64 after_seq = 1;
+  repeated uint64 ops = 2;
+  repeated string paths = 3;
 }
 
 // A task was accepted onto a busy session (SendTask with WHEN_BUSY_QUEUE) and

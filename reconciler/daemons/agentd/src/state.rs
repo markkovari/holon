@@ -149,6 +149,7 @@ pub fn fold(events: &[Event]) -> Folded {
                     t.push(at(e, Entry::UserMessage { text: s.message, steered: true }));
                 }
             }
+            Payload::FileChanged { .. } | Payload::SessionRewound { .. } => {}
         }
     }
 

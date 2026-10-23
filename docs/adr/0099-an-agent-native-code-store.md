@@ -127,7 +127,9 @@ Tested by stopping a conflict between its record and its CAS
 
 **Revert** refuses with `concurrent-modification`, changing nothing, if any
 pointer the op moved was touched by a later op (a conflict's no-op move counts:
-that conflict names the value) or does not hold the op's `after` now. It appends
+that conflict names the value) or does not hold the op's `after` now. A later op
+that a later revert undid does not count, nor does that revert (a revert of the
+revert does): the pair cancels out, so a stack of edits is undone newest first. It appends
 `revert(op)` with the inverse moves and inverts the conflict state changes the op
 recorded: reverting an apply that only opened a conflict abandons it; reverting
 a resolve re-opens it and undoes the re-pointing; reverting a revert re-applies.

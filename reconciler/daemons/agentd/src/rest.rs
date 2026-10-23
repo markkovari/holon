@@ -39,7 +39,7 @@ fn fail(f: Fail) -> Response {
         Fail::Conflict(kind, d) => problem(StatusCode::CONFLICT, kind, d),
         Fail::Exhausted(kind, d) => problem(StatusCode::TOO_MANY_REQUESTS, kind, d),
         Fail::Gone(d) => problem(StatusCode::GONE, "gone", d),
-        Fail::Unavailable(d) => problem(StatusCode::SERVICE_UNAVAILABLE, "park-unavailable", d),
+        Fail::Unavailable(kind, d) => problem(StatusCode::SERVICE_UNAVAILABLE, kind, d),
         Fail::Internal(d) => problem(StatusCode::INTERNAL_SERVER_ERROR, "internal", d),
     }
 }
@@ -95,6 +95,18 @@ async fn steer(
     let key = headers.get("idempotency-key").and_then(|v| v.to_str().ok()).map(String::from);
     let r = parse::<wire::SteerTask>(&body).and_then(|t| d.steer_task(&id, &task, t.message, key));
     reply(StatusCode::ACCEPTED, r)
+}
+
+async fn rewind(
+    State(d): State<Shared>,
+    UrlPath(id): UrlPath<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    let r = match parse::<wire::Rewind>(&body) {
+        Ok(r) => d.rewind(&id, r.after_seq).await,
+        Err(f) => Err(f),
+    };
+    reply(StatusCode::OK, r)
 }
 
 async fn state(State(d): State<Shared>, UrlPath(id): UrlPath<String>) -> Response {
@@ -162,6 +174,7 @@ pub fn routes(d: Shared) -> Router {
         .route("/v1/sessions/{id}/tasks", post(send_task))
         .route("/v1/sessions/{id}/tasks/{task_id}/cancel", post(cancel))
         .route("/v1/sessions/{id}/tasks/{task_id}/steer", post(steer))
+        .route("/v1/sessions/{id}/rewind", post(rewind))
         .route("/v1/sessions/{id}/state", get(state))
         .route("/v1/sessions/{id}/events", get(events))
         .route("/v1/sessions/{id}/tool-calls/{call_id}/approval", post(approve))
