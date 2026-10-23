@@ -92,12 +92,22 @@ fn state_of(doc: &Value) -> String {
     doc.get("state").and_then(Value::as_str).unwrap_or("new").to_string()
 }
 
-fn conflict(err: fsm::FsmError, fallback: &str) -> Reply {
-    let state = match err {
-        fsm::FsmError::IllegalTransition(current) => current,
-        _ => fallback.to_string(),
-    };
+fn conflict(state: &str) -> Reply {
     Reply::json(409, json!({ "error": "illegal_transition", "state": state }))
+}
+
+/// Where `event` takes a request in `current`, if the engine allows it there. Asked, not fired:
+/// the document is saved first and the machine moved after, so a save that fails leaves the
+/// machine behind the document, where the next `sync` catches it up, never ahead of it.
+fn next_state(id: &str, current: &str, event: &str) -> Option<String> {
+    if !fsm::can_fire(MACHINE, id, event).unwrap_or(false) {
+        return None;
+    }
+    definition()
+        .transitions
+        .into_iter()
+        .find(|t| t.event == event && t.source == current)
+        .map(|t| t.target)
 }
 
 fn save(id: &str, doc: &Value, revision: u64) -> Result<(), Reply> {
@@ -130,17 +140,17 @@ fn assign(id: &str) -> Reply {
         return Reply::err(500, "no_engineer");
     };
 
-    let status = match fsm::fire(MACHINE, id, "assign") {
-        Ok(s) => s,
-        Err(e) => return conflict(e, &current),
+    let Some(next) = next_state(id, &current, "assign") else {
+        return conflict(&current);
     };
 
     doc["engineer"] = json!(engineer);
     doc["distance_m"] = json!(metres.round() as i64);
-    doc["state"] = json!(status.state);
+    doc["state"] = json!(next);
     if let Err(r) = save(id, &doc, revision) {
         return r;
     }
+    let _ = fsm::fire(MACHINE, id, "assign");
     Reply::json(200, with_id(&doc, id))
 }
 
@@ -158,14 +168,14 @@ fn transition(id: &str, body: &str) -> Reply {
     let current = state_of(&doc);
     sync(id, &current);
 
-    let status = match fsm::fire(MACHINE, id, &event) {
-        Ok(s) => s,
-        Err(e) => return conflict(e, &current),
+    let Some(next) = next_state(id, &current, &event) else {
+        return conflict(&current);
     };
-    doc["state"] = json!(status.state);
+    doc["state"] = json!(next);
     if let Err(r) = save(id, &doc, revision) {
         return r;
     }
+    let _ = fsm::fire(MACHINE, id, &event);
     Reply::json(200, with_id(&doc, id))
 }
 
