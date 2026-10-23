@@ -416,10 +416,6 @@ impl Runtime {
         v
     }
 
-    pub(crate) fn session_pending(&self) -> Vec<Pending> {
-        self.sessions.lock().unwrap().iter().flat_map(|t| t.view.pending.clone()).collect()
-    }
-
     fn emit(&self, ev: Event) {
         Host::observe(self, ev);
     }

@@ -218,7 +218,9 @@ impl Runtime {
             busy: Mutex::new(HashMap::new()),
             approvals: Mutex::new(Vec::new()),
             approvals_cv: Condvar::new(),
-            next_approval: AtomicU64::new(1),
+            // From the clock, like the event seqs: an id a client kept from before a restart
+            // (the bridge keeps its polls') never names a different call after it.
+            next_approval: AtomicU64::new(unix_now_ms() * 1000),
             agentd: cfg_agentd,
             sessions: Mutex::new(Vec::new()),
             observers: Mutex::new(Vec::new()),
@@ -284,50 +286,14 @@ impl Runtime {
         (backlog, rx)
     }
 
-    /// The last seq handed out, and the runs the log saw start and not yet finish.
-    pub fn snapshot(&self) -> (u64, Vec<agent_wire::RunRecord>) {
+    /// What `/v1/state` draws, and the last seq it reflects: one lock, so no part of it is newer
+    /// than another.
+    pub fn state(
+        &self,
+    ) -> (u64, Vec<agent_wire::RunRecord>, Vec<Pending>, Vec<session::SessionView>) {
         let log = self.log.lock().unwrap();
-        let mut running: Vec<agent_wire::RunRecord> = Vec::new();
-        for e in &log.held {
-            match &e.event {
-                Event::RunStarted {
-                    agent,
-                    run_id,
-                    trigger,
-                    input,
-                    trace_id,
-                    span_id,
-                    model,
-                    chain,
-                    ..
-                } => running.push(agent_wire::RunRecord {
-                    id: run_id.clone(),
-                    agent: agent.clone(),
-                    trigger: trigger.clone(),
-                    input: input.clone(),
-                    started: e.at_ms / 1000,
-                    finished: 0,
-                    status: agent_wire::Status::Ok,
-                    answer: String::new(),
-                    steps: Vec::new(),
-                    tokens_in: 0,
-                    tokens_out: 0,
-                    started_ms: e.at_ms,
-                    finished_ms: 0,
-                    model: model.clone(),
-                    trace_id: trace_id.clone(),
-                    span_id: span_id.clone(),
-                    parent_span_id: None,
-                    hops: 0,
-                    chain: chain.clone(),
-                    project: String::new(),
-                    attachments: Vec::new(),
-                }),
-                Event::RunFinished(r) => running.retain(|x| x.id != r.id),
-                _ => {}
-            }
-        }
-        (log.next.saturating_sub(1), running)
+        let v = &log.view;
+        (log.next.saturating_sub(1), v.running.clone(), v.approvals.clone(), v.sessions.clone())
     }
 
     pub fn trace_otlp(&self, trace_id: &str) -> Value {
@@ -980,16 +946,7 @@ impl Runtime {
     }
 
     pub fn pending_approvals(&self) -> Vec<Pending> {
-        let mut all: Vec<Pending> = self
-            .approvals
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|s| s.answer.is_none())
-            .map(|s| s.pending.clone())
-            .collect();
-        all.extend(self.session_pending());
-        all
+        self.log.lock().unwrap().view.approvals.clone()
     }
 
     /// `false`: already answered or timed out.
@@ -1297,6 +1254,8 @@ struct EventLog {
     next: u64,
     held: std::collections::VecDeque<Sequenced>,
     followers: Vec<Sender<Sequenced>>,
+    /// Folded from every event, held or not: a run that started 10_000 events ago is still running.
+    view: crate::view::View,
 }
 
 // shortcut: in memory, the last 10_000 events; a reader further behind re-reads `/v1/state`. Persist it if a client needs history across restarts.
@@ -1305,12 +1264,18 @@ const HELD_EVENTS: usize = 10_000;
 impl EventLog {
     fn new() -> Self {
         // From the clock, so a restart's seqs come after every seq the last run handed out.
-        Self { next: unix_now_ms() * 1000, held: Default::default(), followers: Vec::new() }
+        Self {
+            next: unix_now_ms() * 1000,
+            held: Default::default(),
+            followers: Vec::new(),
+            view: Default::default(),
+        }
     }
 
     fn push(&mut self, event: Event) {
         let e = Sequenced { seq: self.next, at_ms: unix_now_ms(), event };
         self.next += 1;
+        self.view.apply(&e);
         self.followers.retain(|tx| tx.send(e.clone()).is_ok());
         self.held.push_back(e);
         if self.held.len() > HELD_EVENTS {

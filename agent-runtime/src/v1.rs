@@ -158,12 +158,12 @@ pub fn route(
                 .unwrap_or(0),
         ),
         (Method::Get, ["state"]) => {
-            let (seq, running) = rt.snapshot();
+            let (seq, running, approvals, sessions) = rt.state();
             let sessions: Vec<Value> =
-                rt.sessions().iter().map(crate::session::Describe::to_json).collect();
+                sessions.iter().map(crate::session::Describe::to_json).collect();
             Reply::Json(
                 200,
-                json!({"seq": seq, "running": running, "approvals": rt.pending_approvals(), "sessions": sessions}),
+                json!({"seq": seq, "running": running, "approvals": approvals, "sessions": sessions}),
             )
         }
         (Method::Get, ["approvals"]) => {
