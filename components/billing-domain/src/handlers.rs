@@ -1,4 +1,4 @@
-//! Clients + invoices (`draft -> sent -> paid`, or `-> overdue`). A `biller`
+//! Clients + invoices (`draft -> sent -> paid`). A `biller`
 //! sees only invoices they created — the row-level rule `auth:identity/rbac`
 //! cannot express, enforced with `policy:guard` exactly as
 //! `crm-domain`/`ticket-triage-domain` enforce their own ownership rule.
@@ -11,6 +11,7 @@ use crate::{audit, introspect, is_admin, Reply, Route};
 use serde_json::{json, Value};
 
 const POLICY_DOMAIN: &str = "invoices";
+const INVOICE: &[(&str, &[&str])] = &[("draft", &["sent"]), ("sent", &["paid"])];
 
 guestauth::guest_owner_or_admin_policy!(POLICY_DOMAIN, "owner");
 guestauth::guest_entries_json!();
@@ -132,7 +133,8 @@ fn send_invoice(route: &Route, id: &str) -> Reply {
         "invoice.send",
         id
     );
-    if inv.get("status").and_then(Value::as_str) != Some("draft") {
+    let status = inv.get("status").and_then(Value::as_str).unwrap_or("");
+    if !guestauth::may_move(INVOICE, status, "sent") {
         return Reply::err(400, "only a draft invoice can be sent");
     }
     inv["status"] = json!("sent");
@@ -152,6 +154,10 @@ fn pay_invoice(route: &Route, id: &str) -> Reply {
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "invoice.pay", id);
     let entry = guestauth::guest_get_or_404!("invoices", id);
     let mut inv: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
+    let status = inv.get("status").and_then(Value::as_str).unwrap_or("");
+    if !guestauth::may_move(INVOICE, status, "paid") {
+        return Reply::err(400, "only a sent invoice can be paid");
+    }
     inv["status"] = json!("paid");
     match records::update("invoices", id, &inv.to_string(), entry.revision) {
         Ok(_) => {

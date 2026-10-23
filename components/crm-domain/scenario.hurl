@@ -117,6 +117,12 @@ Authorization: Bearer {{boss_token}}
 {"stage": "won"}
 HTTP 200
 
+# won is final
+POST {{base}}/api/deals/{{deal_id}}/stage
+Authorization: Bearer {{boss_token}}
+{"stage": "lead"}
+HTTP 409
+
 # an unauthenticated request is refused
 GET {{base}}/api/deals
 HTTP 401

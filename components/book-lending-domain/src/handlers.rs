@@ -164,7 +164,15 @@ fn borrow_book(route: &Route, id: &str) -> Reply {
             audit_log("loan.create", "allow", &principal.subject, &loan_entry.id);
             Reply::json(201, json!({"id": loan_entry.id}))
         }
-        Err(_) => Reply::err(500, "store_error"),
+        Err(_) => {
+            // Two writes and no transaction: put the book back, or it is borrowed with no loan.
+            if let Ok(e) = records::get("books", id) {
+                let mut book: Value = serde_json::from_str(&e.data).unwrap_or(json!({}));
+                book["status"] = json!("available");
+                let _ = records::update("books", id, &book.to_string(), e.revision);
+            }
+            Reply::err(500, "store_error")
+        }
     }
 }
 
@@ -205,6 +213,9 @@ fn return_loan(route: &Route, id: &str) -> Reply {
         return Reply::err(403, "forbidden");
     }
 
+    if loan.get("returned").and_then(Value::as_bool) == Some(true) {
+        return Reply::err(409, "already_returned");
+    }
     loan["returned"] = json!(true);
     if records::update("loans", id, &loan.to_string(), entry.revision).is_err() {
         return Reply::err(500, "store_error");

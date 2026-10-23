@@ -103,5 +103,11 @@ Authorization: Bearer {{recruiter_token}}
 {"stage": "interview"}
 HTTP 200
 
+# forward only: an interviewed candidate does not go back to applied
+POST {{base}}/api/candidates/{{candidate_id}}/stage
+Authorization: Bearer {{recruiter_token}}
+{"stage": "applied"}
+HTTP 409
+
 GET {{base}}/api/postings
 HTTP 401
