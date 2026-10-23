@@ -96,11 +96,13 @@ fn mint(body: &str) -> Reply {
         .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
         .unwrap_or_default();
-    let scopes: Vec<String> = req
+    let mut scopes: Vec<String> = req
         .get("scopes")
         .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
         .unwrap_or_default();
+    // What lets handlers.rs read the fixture's roles by email; no real login carries it.
+    scopes.push("test:fixture".to_string());
     let principal = auth_types::Principal {
         subject: subject.clone(),
         tenant: TENANT.to_string(),

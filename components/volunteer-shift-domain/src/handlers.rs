@@ -193,7 +193,9 @@ fn cancel_signup(route: &Route, shift_id: &str, signup_id: &str) -> Reply {
     let signup_subject = signup.get("subject").and_then(Value::as_str).unwrap_or("").to_string();
 
     let mut roles = principal.roles.clone();
-    if roles.is_empty() {
+    // Roles by email are the gate's fixture, for `/test/token`'s tokens only: a user who
+    // registers one of these addresses must not become one of them.
+    if roles.is_empty() && principal.scopes.iter().any(|s| s == "test:fixture") {
         if principal.subject == "coord@example.test" {
             roles.push("coordinator".to_string());
         } else if principal.subject == "vol-a@example.test"
