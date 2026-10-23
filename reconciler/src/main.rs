@@ -158,10 +158,13 @@ async fn main() -> Result<()> {
     // (ADR-0040: warm start 0.43 ms).
     let known: std::sync::Arc<std::sync::RwLock<(Vec<Manifest>, Vec<NodeInventory>)>> =
         std::sync::Arc::new(std::sync::RwLock::new((Vec::new(), Vec::new())));
+    // Whether this process may act: activations read it, so a standby leaves them to the leader.
+    let leading = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     if !args.dry_run {
         serve_activations(
             commands.clone(),
             known.clone(),
+            leading.clone(),
             cfg.clone(),
             args.clone(),
             command_timeout,
@@ -200,6 +203,12 @@ async fn main() -> Result<()> {
             }
         }
     };
+    // Taken now rather than at the first pass, so a lone reconciler answers activations at once.
+    let held = match lease.as_mut() {
+        Some(l) => l.hold().await,
+        None => true,
+    };
+    leading.store(held, std::sync::atomic::Ordering::Relaxed);
     // `None` until the first pass, so a process that STARTS as a standby says so: with a plain `false` the
     // first pass compares equal and logs nothing, indistinguishable from a hung process.
     let mut was_leader: Option<bool> = None;
@@ -211,6 +220,7 @@ async fn main() -> Result<()> {
         // hysteresis, so on takeover it starts a scale-down cooldown from zero, the safe direction.
         if let Some(l) = lease.as_mut() {
             let leader = l.hold().await;
+            leading.store(leader, std::sync::atomic::Ordering::Relaxed);
             if was_leader != Some(leader) {
                 if leader {
                     eprintln!("comp-reconciler: this process is now the leader ({})", l.id());
@@ -293,6 +303,7 @@ async fn main() -> Result<()> {
             // is held again before each: lost, the rest is left to whoever holds it now.
             if let Some(l) = lease.as_mut() {
                 if !l.hold().await {
+                    leading.store(false, std::sync::atomic::Ordering::Relaxed);
                     eprintln!("comp-reconciler: lost the lease mid-pass; sending nothing more");
                     break;
                 }
@@ -740,12 +751,12 @@ fn fold_load(entries: &[comp_lattice::Entry]) -> comp_reconciler::plan::Load {
 /// refresh would put a heartbeat interval in front of a request (ADR-0037).
 /// Modelled as a command to a pseudo-node called `reconciler`, so it reuses the command bus, subject
 /// naming and reply plumbing.
-/// ponytail: `serve` is a plain subscription, so a standby answers too, from a `known` that is
-/// empty, and the first reply wins. Gating it on the lease broke `tests/blink.rs` (whose blanking
-/// writes are compressed twice, so nothing can read them); fix that test first, then gate it.
+/// Every reconciler subscribes, and only the leader answers: a standby's `known` is empty or stale,
+/// and the first reply is the one a request gets, so a standby that answered could win with an error.
 async fn serve_activations(
     bus: std::sync::Arc<dyn CommandBus>,
     known: std::sync::Arc<std::sync::RwLock<(Vec<Manifest>, Vec<NodeInventory>)>>,
+    leading: std::sync::Arc<std::sync::atomic::AtomicBool>,
     cfg: Cfg,
     args: Args,
     command_timeout: u64,
@@ -760,6 +771,9 @@ async fn serve_activations(
     };
     tokio::spawn(async move {
         while let Some(cmd) = rx.recv().await {
+            if !leading.load(std::sync::atomic::Ordering::Relaxed) {
+                continue;
+            }
             if cmd.verb != "activate" {
                 let _ = cmd.reply.send(br#"{"error":"unknown verb"}"#.to_vec());
                 continue;

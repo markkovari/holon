@@ -42,7 +42,9 @@ fn hold_inventory_empty(
                     // Everything else about the node stays true; only its instances are gone, the
                     // exact shape of the observed failure.
                     v["instances"] = serde_json::json!([]);
-                    let bytes = comp_lattice::snapshot::compress(v.to_string().into_bytes());
+                    // Plain JSON: `publish` compresses, and compressing here too left bytes no reader
+                    // could expand, so the gap was an unreadable inventory, not an empty one.
+                    let bytes = v.to_string().into_bytes();
                     if inv.publish(&e.key, bytes, Duration::from_secs(15)).await.is_ok() {
                         blanked += 1;
                     }
