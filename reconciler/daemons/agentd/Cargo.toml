@@ -9,6 +9,8 @@ publish.workspace = true
 comp-daemon-kit.workspace = true
 comp-fuel.workspace = true
 holon-park.workspace = true
+# The code store (ADR-0099) a session's edits are recorded in, as data: its wire types.
+holon-vcs.workspace = true
 # Both model dialects, as data: the request a turn sends and the stream it reads back.
 holon-llm = { path = "../../../crates/holon-llm" }
 anyhow.workspace = true

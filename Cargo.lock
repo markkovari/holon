@@ -1187,6 +1187,7 @@ dependencies = [
  "hex",
  "holon-llm",
  "holon-park",
+ "holon-vcs",
  "jiff",
  "prost",
  "prost-types",

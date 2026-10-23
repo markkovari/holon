@@ -538,6 +538,12 @@ impl Session {
         }
     }
 
+    /// Append a session-level event, one no task owns.
+    pub fn note(&self, payload: Payload) {
+        let mut s = self.lock();
+        self.push(&mut s, "", payload);
+    }
+
     /// May `task_id` call `tool` without a person saying so: the session was created to allow it
     /// (`auto_approve_tools`), or a person approved it for the session or for this task
     /// (ADR-0114). Asked at each call, so an approval given a moment ago already counts.

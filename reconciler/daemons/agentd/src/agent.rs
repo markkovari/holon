@@ -16,6 +16,7 @@ use super::model::{Call, Msg, Provider, ToolResult};
 use super::park::Park;
 use super::session::{Answer, BeginPark, Checkpoint, Session, Started};
 use super::tools;
+use super::vcs::Vcs;
 use super::wire::{new_id, ApprovalScope, Decision, FailCode, Payload, Usage};
 
 pub struct Ctx {
@@ -32,6 +33,9 @@ pub struct Ctx {
     /// `comp-park`, when the wait for a human is to be parked (ADR-0113). `None`: it is a future
     /// held here, and a restart ends the task, as it always did.
     pub park: Option<Park>,
+    /// `comp-vcs`, to record each `write_file` in (ADR-0121). `None`: edits are not recorded, and
+    /// a session cannot be rewound.
+    pub vcs: Option<Vcs>,
 }
 
 /// How a task's loop begins: from its prompt, or from the answer to the approval it parked on.
@@ -273,6 +277,12 @@ async fn tools_turn(
                 }
             }
         };
+        // What the file held before, for the record of the change (ADR-0121).
+        let recording = match (&ctx.vcs, call.name.as_str()) {
+            (Some(_), "write_file") => tools::target(&sess.workspace, &call.input)
+                .map(|(rel, full)| (rel, std::fs::read(full).ok())),
+            _ => None,
+        };
         let started = Instant::now();
         let out = match answer {
             Some(Answer { decision: Decision::Deny, reason, .. }) => tools::Outcome {
@@ -285,6 +295,22 @@ async fn tools_turn(
             },
             _ => tools::call(&sess.workspace, &call.name, &call.input).await,
         };
+        if let (Some(vcs), Some((path, before)), false) = (&ctx.vcs, recording, out.is_error) {
+            let after =
+                call.input.get("content").and_then(serde_json::Value::as_str).unwrap_or_default();
+            let by = holon_vcs::model::Agent {
+                id: format!("agentd:{}/{task}/{}", sess.id, call.id),
+                goal: None,
+                model: Some(sess.model.clone()),
+            };
+            match vcs.record(&sess.id, &path, before.as_deref(), after.as_bytes(), by).await {
+                Ok(ops) => {
+                    sess.emit(task, Payload::FileChanged { call_id: call.id.clone(), path, ops })
+                }
+                // The edit is made; only its record, and so a rewind past it, is missing.
+                Err(e) => eprintln!("comp-agentd: {}: recording {path}: {e}", sess.id),
+            }
+        }
         sess.emit(
             task,
             Payload::ToolCallFinished {

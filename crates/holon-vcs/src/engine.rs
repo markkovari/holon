@@ -1048,7 +1048,9 @@ where
             original.entry.moves.iter().map(|m| (m.pointer.as_str(), m)).collect();
         let mut last = None;
         for _ in 0..self.cas_tries {
-            // Nothing later may have touched these pointers (in flight counts).
+            // Nothing later may have touched these pointers (in flight counts), unless a later
+            // op undid it: that pair cancels out, so a stack of edits can be undone newest first.
+            let mut later: Vec<(OpId, OpKind, &PointerMove)> = vec![];
             let mut after = op;
             loop {
                 let page = self.log.list(ws, Some(after), 256).await?;
@@ -1065,16 +1067,29 @@ where
                         OpState::Pending => self.settle(ws, e.id()).await?,
                         s => s,
                     };
-                    if state == OpState::Aborted {
+                    if state != OpState::Aborted {
+                        later.push((e.id(), e.entry.kind.clone(), *m));
+                    }
+                }
+            }
+            let ids: BTreeSet<OpId> = later.iter().map(|(id, ..)| *id).collect();
+            let mut undone = BTreeSet::new();
+            for (id, kind, m) in later.iter().rev() {
+                if undone.contains(id) {
+                    continue;
+                }
+                if let OpKind::Revert(x) = kind {
+                    if ids.contains(x) {
+                        undone.insert(*x);
                         continue;
                     }
-                    let actual = self.pointers.get(&m.pointer).await?.and_then(|(v, _)| v.value);
-                    return Err(VcsError::ConcurrentModification(CasFailure {
-                        pointer: m.pointer.clone(),
-                        expected: m.after.clone(),
-                        actual,
-                    }));
                 }
+                let actual = self.pointers.get(&m.pointer).await?.and_then(|(v, _)| v.value);
+                return Err(VcsError::ConcurrentModification(CasFailure {
+                    pointer: m.pointer.clone(),
+                    expected: m.after.clone(),
+                    actual,
+                }));
             }
             let mut guards = Vec::with_capacity(original.entry.moves.len());
             for m in &original.entry.moves {

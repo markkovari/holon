@@ -35,7 +35,7 @@ fn status(f: Fail) -> Status {
         Fail::Conflict(_, d) => Status::failed_precondition(d),
         Fail::Exhausted(_, d) => Status::resource_exhausted(d),
         Fail::Gone(d) => Status::not_found(d),
-        Fail::Unavailable(d) => Status::unavailable(d),
+        Fail::Unavailable(_, d) => Status::unavailable(d),
         Fail::Internal(d) => Status::internal(d),
     }
 }
@@ -163,6 +163,12 @@ pub fn event(e: wire::Event) -> pb::AgentEvent {
         }
         W::ToolCallFinished { call_id, output, is_error, duration_ms } => {
             P::ToolCallFinished(pb::ToolCallFinished { call_id, output, is_error, duration_ms })
+        }
+        W::FileChanged { call_id, path, ops } => {
+            P::FileChanged(pb::FileChanged { call_id, path, ops })
+        }
+        W::SessionRewound { after_seq, ops, paths } => {
+            P::SessionRewound(pb::SessionRewound { after_seq, ops, paths })
         }
         W::UsageUpdated { delta, session_total, budget_remaining_usd_micros } => {
             P::UsageUpdated(pb::UsageUpdated {
@@ -372,6 +378,18 @@ impl AgentService for Grpc {
         self.0
             .steer_task(&r.session_id, &r.task_id, r.message, Some(r.idempotency_key))
             .map(|t| Response::new(task(t)))
+            .map_err(status)
+    }
+
+    async fn rewind_session(
+        &self,
+        r: Request<pb::RewindSessionRequest>,
+    ) -> Result<Response<pb::RewindSessionResponse>, Status> {
+        let r = r.into_inner();
+        self.0
+            .rewind(&r.session_id, r.after_seq)
+            .await
+            .map(|w| Response::new(pb::RewindSessionResponse { ops: w.ops, paths: w.paths }))
             .map_err(status)
     }
 

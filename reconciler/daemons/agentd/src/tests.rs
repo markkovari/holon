@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use super::grpc::pb;
 use super::service::Daemon;
 use super::session::{self, Registry};
-use super::{agent, app, model, park};
+use super::{agent, app, model, park, vcs};
 
 struct Opts {
     token: Option<&'static str>,
@@ -24,6 +24,8 @@ struct Opts {
     park: Option<String>,
     /// Tools every session created here may call without asking (ADR-0114).
     auto_approve: Vec<String>,
+    /// A `comp-vcs` to record edits in (ADR-0121).
+    vcs: Option<String>,
 }
 
 impl Default for Opts {
@@ -37,6 +39,7 @@ impl Default for Opts {
             max_queued: 16,
             park: None,
             auto_approve: vec![],
+            vcs: None,
         }
     }
 }
@@ -70,6 +73,7 @@ async fn serve(o: Opts, root: Arc<tempfile::TempDir>) -> Harness {
             let retry = vec![Duration::from_millis(20), Duration::from_millis(20)];
             park::Park::new(reqwest::Client::new(), url, None).with_retry(retry)
         }),
+        vcs: o.vcs.map(|url| vcs::Vcs::new(reqwest::Client::new(), url, None)),
     };
     let sessions = match &o.state_dir {
         Some(d) => session::load_all(d, parking).unwrap(),
@@ -3211,4 +3215,138 @@ fn what_a_restart_remembers_of_a_log_is_only_what_a_person_approved_for_the_sess
     assert!(remembered(vec![asked("c1", "run"), decided("c1", "deny", Some("session"))]).is_empty());
     // Nor an approval of a call the log never shows asked about: there is no tool to remember.
     assert!(remembered(vec![decided("c9", "approve", Some("session"))]).is_empty());
+}
+
+/// A `comp-vcs` over the in-memory engine, for the tests of a daemon that records edits: the real
+/// engine, so a revert it would refuse is refused here too.
+async fn fake_vcs() -> String {
+    use axum::response::IntoResponse;
+    use holon_vcs::store::BlobStore;
+    use holon_vcs::wire;
+    let e = Arc::new(holon_vcs::mem_engine());
+    let app = axum::Router::new().route(
+        "/v1/{func}",
+        axum::routing::post(
+            move |axum::extract::Path(func): axum::extract::Path<String>,
+                  body: axum::Json<Value>| {
+                let e = e.clone();
+                async move {
+                    let b = body.0;
+                    let r = match func.as_str() {
+                        "ingest-file" => {
+                            let r: wire::IngestFile = serde_json::from_value(b).unwrap();
+                            holon_vcs::extract::ingest_file(
+                                &*e,
+                                &r.workspace,
+                                &r.component,
+                                &r.file.path,
+                                &r.file.content.0,
+                                &r.by,
+                                r.read_at,
+                            )
+                            .await
+                            .map(|rep| json!(wire::IngestReport::from(rep)))
+                        }
+                        "revert-op" => {
+                            let r: wire::RevertOp = serde_json::from_value(b).unwrap();
+                            e.revert_op(&r.workspace, r.op, r.by).await.map(|o| json!(o))
+                        }
+                        "snapshot-export" => {
+                            let r: wire::Export = serde_json::from_value(b).unwrap();
+                            e.snapshot_export(&r.workspace, &r.component).await.map(|s| json!(s))
+                        }
+                        "read-blob" => {
+                            let r: wire::ReadBlob = serde_json::from_value(b).unwrap();
+                            e.blobs().get(&r.blob).await.map(|b| json!(wire::Bytes(b.unwrap())))
+                        }
+                        other => panic!("comp-agentd called {other}"),
+                    };
+                    match r {
+                        Ok(v) => (axum::http::StatusCode::OK, axum::Json(v)).into_response(),
+                        Err(err) => {
+                            let body = wire::ErrorBody::from(&err);
+                            let status =
+                                axum::http::StatusCode::from_u16(wire::status_of(&body.error))
+                                    .unwrap();
+                            (status, axum::Json(body)).into_response()
+                        }
+                    }
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    base
+}
+
+#[tokio::test]
+async fn edits_are_recorded_and_a_rewind_puts_the_files_back() {
+    let write = |path: &str, content: &str| json!({"path": path, "content": content}).to_string();
+    let (readme_one, fresh, readme_two) =
+        (write("README.md", "one"), write("notes/new.txt", "fresh"), write("./README.md", "two"));
+    let base = scripted(vec![
+        asks(&[("c1", "write_file", &readme_one), ("c2", "write_file", &fresh)]),
+        says("Written."),
+        asks(&[("c3", "write_file", &readme_two)]),
+        says("Again."),
+    ])
+    .await;
+    let h =
+        harness(Opts { provider: openai(&base), vcs: Some(fake_vcs().await), ..Opts::default() })
+            .await;
+    let sid = h
+        .session_with(json!({"model": "claude-sonnet-5", "auto_approve_tools": ["write_file"]}))
+        .await;
+    let ws = PathBuf::from(&h.ws);
+    let read = |p: &str| std::fs::read_to_string(ws.join(p)).ok();
+    let mut ev = h.stream(&sid, 0).await;
+
+    h.task(&sid, "write").await;
+    let (kinds, first) = ev.until("task_completed").await;
+    assert_eq!(kinds.iter().filter(|k| *k == "file_changed").count(), 2, "{kinds:?}");
+    let after_first = first["seq"].as_u64().unwrap();
+    // Changed by hand between the tasks: the workspace's own, which a rewind brings back.
+    std::fs::write(ws.join("README.md"), "by hand").unwrap();
+
+    h.task(&sid, "again").await;
+    let (_, changed) = ev.until("file_changed").await;
+    assert_eq!(
+        (changed["call_id"].as_str(), changed["path"].as_str()),
+        (Some("c3"), Some("README.md"))
+    );
+    ev.until("task_completed").await;
+    assert_eq!(read("README.md").as_deref(), Some("two"));
+
+    let (s, r) =
+        h.post(&format!("/v1/sessions/{sid}/rewind"), json!({"after_seq": after_first})).await;
+    assert_eq!((s, &r["paths"]), (200, &json!(["README.md"])), "{r}");
+    assert_eq!(r["ops"], changed["ops"]);
+    assert_eq!(read("README.md").as_deref(), Some("by hand"));
+    assert_eq!(read("notes/new.txt").as_deref(), Some("fresh"));
+    let (_, rewound) = ev.until("session_rewound").await;
+    assert_eq!(
+        (rewound["task_id"].as_str(), rewound["after_seq"].as_u64()),
+        (Some(""), Some(after_first))
+    );
+
+    // Further back: the created file goes, and the README edit is refused, since the hand edit
+    // came after it. What was rewound until then stays rewound, and is recorded.
+    let (s, r) = h.post(&format!("/v1/sessions/{sid}/rewind"), json!({"after_seq": 0})).await;
+    assert_eq!(
+        (s, r["type"].as_str()),
+        (409, Some("https://holon.dev/errors/rewind-refused")),
+        "{r}"
+    );
+    assert_eq!(read("notes/new.txt"), None);
+    assert_eq!(read("README.md").as_deref(), Some("by hand"));
+    let (_, rewound) = ev.until("session_rewound").await;
+    assert_eq!(rewound["paths"], json!(["notes/new.txt"]));
+
+    // A daemon that records nothing says so.
+    let plain = harness(Opts::default()).await;
+    let other = plain.session(1_000_000).await;
+    let (s, r) = plain.post(&format!("/v1/sessions/{other}/rewind"), json!({"after_seq": 0})).await;
+    assert_eq!((s, r["type"].as_str()), (409, Some("https://holon.dev/errors/edits-not-recorded")));
 }

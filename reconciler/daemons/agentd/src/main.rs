@@ -38,6 +38,7 @@ mod state;
 #[cfg(test)]
 mod tests;
 mod tools;
+mod vcs;
 mod wire;
 
 use std::path::PathBuf;
@@ -129,6 +130,19 @@ struct Args {
     /// Same, read from a file. Wins over `--park-token`.
     #[arg(long, requires = "park_url")]
     park_token_file: Option<PathBuf>,
+
+    /// `comp-vcs`'s base URL (ADR-0121). With it, each `write_file` is recorded in the code store,
+    /// a workspace per session, and announced as `file_changed`; `POST
+    /// /v1/sessions/{id}/rewind` puts the files back as they were at an event. Unset: nothing is
+    /// recorded, and a session cannot be rewound.
+    #[arg(long, env = "VCS_URL")]
+    vcs_url: Option<String>,
+    /// Shared secret `comp-vcs` requires, sent as `Authorization: Bearer <token>`.
+    #[arg(long, requires = "vcs_url")]
+    vcs_token: Option<String>,
+    /// Same, read from a file. Wins over `--vcs-token`.
+    #[arg(long, requires = "vcs_url")]
+    vcs_token_file: Option<PathBuf>,
 }
 
 /// A tool this daemon has, so that a name that is a typo is refused at start and not found out
@@ -232,6 +246,11 @@ async fn main() -> Result<()> {
                 args.park_token_file.clone(),
             );
             park::Park::new(reqwest::Client::new(), url, token)
+        }),
+        vcs: args.vcs_url.clone().map(|url| {
+            let token =
+                comp_daemon_kit::resolve_token(args.vcs_token.clone(), args.vcs_token_file.clone());
+            vcs::Vcs::new(reqwest::Client::new(), url, token)
         }),
     };
     let loaded = sessions.len();

@@ -173,6 +173,48 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
 
+  /v1/sessions/{session_id}/rewind:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      operationId: rewindSession
+      summary: Put the files back as they were after an event (ADR-0121).
+      description: |
+        Reverts, newest first, the code-store ops that the `file_changed` events after
+        `after_seq` name and that no rewind has reverted yet, then writes those files back,
+        or removes one the agent created. `session_rewound` records it. The conversation is
+        not rewound. Only on a daemon that records edits (`--vcs-url`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [after_seq]
+              properties:
+                after_seq: { type: integer, format: int64, minimum: 0 }
+      responses:
+        "200":
+          description: Rewound.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ops, paths]
+                properties:
+                  ops: { type: array, items: { type: integer, format: int64 } }
+                  paths: { type: array, items: { type: string } }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409":
+          description: |
+            `session-busy` (a task is running), `edits-not-recorded`, or `rewind-refused`:
+            the store refused a revert, because the file changed outside `write_file` after
+            it. What was reverted until then stays reverted and is recorded.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+
   /v1/sessions/{session_id}/state:
     parameters:
       - $ref: "#/components/parameters/SessionId"
@@ -421,6 +463,8 @@ components:
         - $ref: "#/components/schemas/TaskFailedEvent"
         - $ref: "#/components/schemas/TaskSteerQueuedEvent"
         - $ref: "#/components/schemas/TaskSteeredEvent"
+        - $ref: "#/components/schemas/FileChangedEvent"
+        - $ref: "#/components/schemas/SessionRewoundEvent"
       discriminator:
         propertyName: type
         mapping:
@@ -436,6 +480,8 @@ components:
           task_failed: "#/components/schemas/TaskFailedEvent"
           task_steer_queued: "#/components/schemas/TaskSteerQueuedEvent"
           task_steered: "#/components/schemas/TaskSteeredEvent"
+          file_changed: "#/components/schemas/FileChangedEvent"
+          session_rewound: "#/components/schemas/SessionRewoundEvent"
 
     EventEnvelope:
       type: object
@@ -602,6 +648,30 @@ components:
           required: [steer_id]
           properties:
             steer_id: { type: string }
+
+    FileChangedEvent:
+      description: |
+        `write_file` changed `path` (workspace-relative), and the code store recorded it as
+        `ops` (ADR-0121). Between the call's start and finish; only with `--vcs-url`.
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [call_id, path, ops]
+          properties:
+            call_id: { type: string }
+            path: { type: string }
+            ops: { type: array, items: { type: integer, format: int64 } }
+
+    SessionRewoundEvent:
+      description: A session-level event (`task_id` empty) from `rewindSession`.
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [after_seq, ops, paths]
+          properties:
+            after_seq: { type: integer, format: int64 }
+            ops: { type: array, items: { type: integer, format: int64 } }
+            paths: { type: array, items: { type: string } }
 
     # ---- Session state ----
     SessionState:
