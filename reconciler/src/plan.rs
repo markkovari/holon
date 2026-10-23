@@ -299,6 +299,10 @@ pub struct Outcome {
     pub at_ceiling: Vec<AtCeiling>,
     /// Never silently truncated: a dropped command would read as "converged".
     pub deferred: usize,
+    /// Replicas this plan means to run, every component counted as placed: what the fleet's lag
+    /// is measured against. Not `replicas` summed, which an autoscaled or scaled-to-zero app ignores.
+    #[serde(default)]
+    pub wanted: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -520,16 +524,18 @@ pub fn plan(
                         }
                     }
                 } else {
-                    nodes.clone()
+                    // Riding along: one beside each replica's node, the link stays local.
+                    nodes.iter().map(|(n, _)| (n.clone(), 1)).collect()
                 };
-                for (node, _) in &targets {
-                    want.insert(key(m, &c.id, &c.digest, node), (1, m, c));
-                    *pending.entry(node.clone()).or_default() += 1;
+                for (node, count) in &targets {
+                    want.insert(key(m, &c.id, &c.digest, node), (*count, m, c));
+                    *pending.entry(node.clone()).or_default() += *count as usize;
                 }
             }
         }
     }
 
+    out.wanted = want.values().map(|(n, _, _)| *n as u64).sum();
     let (mut starts, mut stops) = (Vec::new(), Vec::new());
     let all: BTreeSet<&Key> = want.keys().chain(have.keys()).collect();
     let mut still_surplus = BTreeMap::new();
@@ -1272,6 +1278,33 @@ mod tests {
             "the plug follows its own placement"
         );
         assert_ne!(where_("api"), where_("store"), "the graph must actually span");
+    }
+
+    #[test]
+    fn a_plug_with_its_own_placement_gets_every_replica_it_asks_for() {
+        let mut plug = comp("store", "sha256:b", 2);
+        plug.placement.constraints.insert("role".into(), "data".into());
+        let m = app(
+            vec![comp("api", "sha256:a", 1), plug],
+            vec![Link {
+                plug: "store".into(),
+                socket: "api".into(),
+                iface: "records:store/store@0.1.0".into(),
+            }],
+            Strategy::Linked,
+        );
+        let obs = vec![node("edge", &[], &[]), node("data-1", &[("role", "data")], &[])];
+        let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
+        let store: u32 = out
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                Command::Start { component, count, .. } if component == "store" => Some(*count),
+                _ => None,
+            })
+            .sum();
+        assert_eq!(store, 2, "two asked for, one node fits: both go there");
+        assert_eq!(out.wanted, 3);
     }
 
     #[test]
