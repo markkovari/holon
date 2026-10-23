@@ -60,6 +60,37 @@ fn said(text: String) -> String {
         .unwrap_or(text)
 }
 
+/// What `/v1/state` says is going on, as the events that would have said so: the runs going first,
+/// since an approval lands on its run's node and a board that connects mid-run has none until the
+/// run is replayed.
+fn now_events(state: &Value) -> Vec<Event> {
+    let running = serde_json::from_value::<Vec<RunRecord>>(state["running"].clone())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| Event::RunStarted {
+            agent: r.agent,
+            run_id: r.id,
+            trigger: r.trigger,
+            input: r.input,
+            trace_id: r.trace_id,
+            span_id: r.span_id,
+            parent_span_id: r.parent_span_id,
+            model: r.model,
+            chain: r.chain,
+        });
+    let waiting = serde_json::from_value::<Vec<Pending>>(state["approvals"].clone())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| Event::ApprovalRequested {
+            id: p.id,
+            agent: p.agent,
+            tool: p.tool,
+            args: p.args,
+            chain: p.chain,
+        });
+    running.chain(waiting).collect()
+}
+
 impl Remote {
     pub fn new(url: &str, token: &str) -> Self {
         Remote { url: url.trim_end_matches('/').to_string(), token: token.to_string() }
@@ -92,7 +123,8 @@ impl Remote {
         self.call(reqwest::Method::GET, path, None)
     }
 
-    /// What already happened: the runs the runtime kept, approvals still waiting, and the seq it reflects.
+    /// What already happened: the runs the runtime kept, what is going on now (the runs going and
+    /// the approvals waiting, as events), and the seq it reflects.
     pub fn history(&self) -> (Vec<RunRecord>, Vec<Event>, u64) {
         let state = self.get("/v1/state").unwrap_or_default();
         let agents = self.get("/v1/agents").unwrap_or_default();
@@ -108,18 +140,8 @@ impl Remote {
                     .unwrap_or_default()
             })
             .collect();
-        let waiting = serde_json::from_value::<Vec<Pending>>(state["approvals"].clone())
-            .unwrap_or_default()
-            .into_iter()
-            .map(|p| Event::ApprovalRequested {
-                id: p.id,
-                agent: p.agent,
-                tool: p.tool,
-                args: p.args,
-                chain: p.chain,
-            })
-            .collect();
-        (runs, waiting, state["seq"].as_u64().unwrap_or(0))
+        let now = now_events(&state);
+        (runs, now, state["seq"].as_u64().unwrap_or(0))
     }
 
     /// Seeds the tree from the state, then applies the events after it, resuming from the last seq seen.
@@ -272,6 +294,25 @@ mod tests {
         );
         assert_eq!(a.capabilities, ["http_get"]);
         assert!(!a.paused);
+    }
+
+    #[test]
+    fn a_board_that_connects_mid_run_gets_the_run_before_its_waiting_approval() {
+        let state = json!({
+            "seq": 9,
+            "running": [{"id": "r1", "agent": "rower", "trigger": "ui", "input": "row",
+                         "started": 1, "finished": 0, "status": "ok", "answer": "", "steps": [],
+                         "tokens_in": 0, "tokens_out": 0}],
+            "approvals": [{"id": 7, "agent": "rower", "tool": "http_get", "args": {}, "chain": []}],
+        });
+        let events = now_events(&state);
+        assert!(matches!(&events[0], Event::RunStarted { run_id, .. } if run_id == "r1"));
+        assert!(matches!(&events[1], Event::ApprovalRequested { id: 7, .. }));
+        let mut t = AgentTree::default();
+        for e in &events {
+            t.apply(e, 1);
+        }
+        assert_eq!(t.node("r1").unwrap().pending.len(), 1, "the approval found its run");
     }
 
     #[test]
