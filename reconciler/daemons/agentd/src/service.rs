@@ -224,26 +224,7 @@ impl Daemon {
                 "rewind a session with no task running".into(),
             ));
         }
-        let events = sess.events_after(0);
-        let undone: BTreeSet<u64> = events
-            .iter()
-            .flat_map(|e| match &e.payload {
-                wire::Payload::SessionRewound { ops, .. } => ops.clone(),
-                _ => vec![],
-            })
-            .collect();
-        let mut ops: Vec<(u64, String)> = events
-            .iter()
-            .filter(|e| e.seq > after_seq)
-            .flat_map(|e| match &e.payload {
-                wire::Payload::FileChanged { path, ops, .. } => {
-                    ops.iter().map(|op| (*op, path.clone())).collect()
-                }
-                _ => vec![],
-            })
-            .filter(|(op, _)| !undone.contains(op))
-            .collect();
-        ops.sort_unstable_by_key(|(op, _)| std::cmp::Reverse(*op));
+        let ops = sess.unrewound_edits(after_seq);
         let by = holon_vcs::model::Agent::named(format!("agentd:{}/rewind", sess.id));
         let (mut done, mut paths, mut refused) = (vec![], BTreeSet::new(), None);
         for (op, path) in &ops {
