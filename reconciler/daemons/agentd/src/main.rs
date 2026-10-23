@@ -29,6 +29,7 @@
 
 mod agent;
 mod grpc;
+mod machine;
 mod model;
 mod park;
 mod rest;
