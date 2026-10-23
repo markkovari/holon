@@ -269,11 +269,12 @@ fn write_transfer(route: &Route, body: &str) -> Reply {
     let j_entry = match records::create(
         "journal",
         &j_doc.to_string(),
-        &["from".to_string(), "to".to_string()],
+        &["from".to_string(), "to".to_string(), "transfer".to_string()],
     ) {
         Ok(e) => e,
         Err(_) => return do_complete_err(500, "journal_lost"),
     };
+    let j_entry = one_line_for(&t_entry.id).unwrap_or(j_entry);
 
     let mut updated_doc: Value = serde_json::from_str(&t_entry.data).unwrap_or(json!({}));
     updated_doc["state"] = json!("settled");
@@ -315,6 +316,19 @@ fn write_transfer(route: &Route, body: &str) -> Reply {
             "to_units": final_to_units
         }),
     )
+}
+
+/// A transfer's journal line, the earliest if it has several: the rest are deleted. Two writers
+/// that race here see the same lines and delete the same ones (a duplicate was seen once in CI).
+fn one_line_for(transfer: &str) -> Option<records::Entry> {
+    let mut lines = records::find_by("journal", "transfer", &json!(transfer).to_string()).ok()?;
+    lines.sort_by(|a, b| a.id.cmp(&b.id));
+    let mut lines = lines.into_iter();
+    let keep = lines.next()?;
+    for extra in lines {
+        let _ = records::delete("journal", &extra.id);
+    }
+    Some(keep)
 }
 
 fn get_transfer(route: &Route, id: &str) -> Reply {

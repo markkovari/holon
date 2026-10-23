@@ -298,6 +298,38 @@ fn transfers_are_idempotent_and_survive_contention() {
 }
 
 #[test]
+fn a_transfer_counts_once_in_the_journal_even_with_a_duplicate_line() {
+    let Some(gate) = start() else { return };
+    let w = token(&gate, "treasurer", None);
+    let (l, r) = pair(&gate, "50.00");
+    let (c, sent) = gate.with_headers(
+        "POST",
+        "/api/transfers",
+        Some(&w),
+        &[("idempotency-key", "once")],
+        Some(json!({"from": l, "to": r, "amount": "10.00"})),
+    );
+    assert_eq!(c, 201, "{sent}");
+    let transfer = field(&sent, "transfer");
+    // The line a racing write could have left behind: the same transfer, written down again.
+    gate.post(
+        "/test/journal",
+        None,
+        json!({"transfer": transfer, "from": l, "to": r, "units": 1000}),
+    );
+    let (_, report) = gate.with_headers(
+        "POST",
+        "/api/reconcile",
+        Some(&w),
+        &[("idempotency-key", "count-once")],
+        Some(json!({"opened": [{"account": l, "units": 5000}, {"account": r, "units": 5000}]})),
+    );
+    let d = parse(&report);
+    assert_eq!(d["journal_lines"], 1, "one transfer is one line: {report}");
+    assert_eq!(d["balanced"], true, "a duplicate line moved money on paper: {report}");
+}
+
+#[test]
 fn reconcile_reads_the_journal_and_is_idempotent() {
     let Some(gate) = start() else { return };
     let t = token(&gate, "auditor", None);
