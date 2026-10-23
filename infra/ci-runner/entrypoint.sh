@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Registers once (REG_TOKEN, from install.sh), keeping the registration on the home volume; then runs.
 set -euo pipefail
-REG=/home/runner/.registration
+REG="$HOME/.registration"
 FILES=(.runner .credentials .credentials_rsaparams)
 
 [ -x "$HOME/.cargo/bin/rustup" ] ||
@@ -13,7 +13,7 @@ if [ -f "$REG/.runner" ]; then
 else
   : "${REG_TOKEN:?first start needs REG_TOKEN}"
   ./config.sh --unattended --replace --url "$REPO_URL" --token "$REG_TOKEN" \
-    --name "$RUNNER_NAME" --labels picur --work /home/runner/_work
+    --name "$RUNNER_NAME" --labels picur --work "$HOME/_work"
   mkdir -p "$REG" && for f in "${FILES[@]}"; do cp "$f" "$REG/"; done
 fi
 exec ./run.sh
