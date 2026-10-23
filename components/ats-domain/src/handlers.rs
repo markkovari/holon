@@ -11,6 +11,13 @@ use crate::{audit, introspect, is_admin, Reply, Route};
 use serde_json::{json, Value};
 
 const STAGES: &[&str] = &["applied", "screening", "interview", "offer", "hired", "rejected"];
+/// Forward only, skipping allowed; rejected from any open stage; hired and rejected are final.
+const PIPELINE: &[(&str, &[&str])] = &[
+    ("applied", &["screening", "interview", "offer", "hired", "rejected"]),
+    ("screening", &["interview", "offer", "hired", "rejected"]),
+    ("interview", &["offer", "hired", "rejected"]),
+    ("offer", &["hired", "rejected"]),
+];
 const POLICY_DOMAIN: &str = "postings";
 
 guestauth::guest_owner_or_admin_policy!(POLICY_DOMAIN, "assigned_to");
@@ -156,6 +163,10 @@ fn move_stage(route: &Route, id: &str, body: &str) -> Reply {
     let stage = req.get("stage").and_then(Value::as_str).unwrap_or("");
     if !STAGES.contains(&stage) {
         return Reply::err(400, "invalid stage");
+    }
+    let from = candidate.get("stage").and_then(Value::as_str).unwrap_or("applied");
+    if !guestauth::may_move(PIPELINE, from, stage) {
+        return Reply::err(409, &format!("a candidate at {from} cannot move to {stage}"));
     }
     candidate["stage"] = json!(stage);
     match records::update("candidates", id, &candidate.to_string(), entry.revision) {

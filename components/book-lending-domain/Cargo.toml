@@ -10,6 +10,7 @@ publish.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
+guestauth = { path = "../guestauth" }
 guestfmt = { path = "../guestfmt" }
 guestio = { path = "../guestio" }
 wit-bindgen = { workspace = true }

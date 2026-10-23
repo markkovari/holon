@@ -51,3 +51,8 @@ HTTP 200
 POST {{base}}/api/complaints/{{complaint_id}}/resolve
 Authorization: Bearer {{sup_token}}
 HTTP 200
+
+# resolved is final
+POST {{base}}/api/complaints/{{complaint_id}}/escalate
+Authorization: Bearer {{sup_token}}
+HTTP 409

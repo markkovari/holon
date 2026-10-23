@@ -7,6 +7,13 @@ use crate::bindings::policy::guard::guard as policy;
 use crate::bindings::policy::guard::guard::{Attr, Condition, Effect, Op, Rule};
 use crate::bindings::records::store::store as records;
 use crate::bindings::p3::http::types::Method;
+
+/// Reassigning is allowed until it is resolved, which is final.
+const LIFECYCLE: &[(&str, &[&str])] = &[
+    ("open", &["assigned"]),
+    ("assigned", &["assigned", "escalated", "resolved"]),
+    ("escalated", &["assigned", "resolved"]),
+];
 use crate::{Reply, Route};
 use serde_json::{json, Value};
 
@@ -135,6 +142,10 @@ fn assign(route: &Route, id: &str, body: &str) -> Reply {
         Err(_) => return Reply::err(404, "not_found"),
     };
     let mut complaint: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
+    let status = complaint.get("status").and_then(Value::as_str).unwrap_or("open");
+    if !guestauth::may_move(LIFECYCLE, status, "assigned") {
+        return Reply::err(409, "invalid_transition");
+    }
     complaint["status"] = json!("assigned");
     complaint["assignee"] = json!(agent.clone());
     if records::update("complaints", id, &complaint.to_string(), entry.revision).is_err() {
@@ -179,6 +190,10 @@ fn act_on_complaint(route: &Route, id: &str, action: &str, new_status: &str) -> 
         return Reply::err(403, "forbidden");
     }
 
+    let status = complaint.get("status").and_then(Value::as_str).unwrap_or("open");
+    if !guestauth::may_move(LIFECYCLE, status, new_status) {
+        return Reply::err(409, "invalid_transition");
+    }
     complaint["status"] = json!(new_status);
     if records::update("complaints", id, &complaint.to_string(), entry.revision).is_err() {
         return Reply::err(500, "store_error");

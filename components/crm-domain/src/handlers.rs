@@ -10,6 +10,12 @@ use crate::{audit, introspect, is_admin, Reply, Route};
 use serde_json::{json, Value};
 
 const STAGES: &[&str] = &["lead", "qualified", "proposal", "won", "lost"];
+/// Forward only, skipping allowed; lost from any open stage; won and lost are final.
+const PIPELINE: &[(&str, &[&str])] = &[
+    ("lead", &["qualified", "proposal", "won", "lost"]),
+    ("qualified", &["proposal", "won", "lost"]),
+    ("proposal", &["won", "lost"]),
+];
 const POLICY_DOMAIN: &str = "deals";
 
 guestauth::guest_owner_or_admin_policy!(POLICY_DOMAIN, "owner");
@@ -132,6 +138,10 @@ fn move_stage(route: &Route, id: &str, body: &str) -> Reply {
     let stage = req.get("stage").and_then(Value::as_str).unwrap_or("");
     if !STAGES.contains(&stage) {
         return Reply::err(400, "invalid stage");
+    }
+    let from = deal.get("stage").and_then(Value::as_str).unwrap_or("lead");
+    if !guestauth::may_move(PIPELINE, from, stage) {
+        return Reply::err(409, &format!("a {from} deal cannot move to {stage}"));
     }
     deal["stage"] = json!(stage);
     match records::update("deals", id, &deal.to_string(), entry.revision) {

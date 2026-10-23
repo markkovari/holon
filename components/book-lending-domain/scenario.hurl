@@ -51,6 +51,11 @@ POST {{base}}/api/loans/{{loan_id}}/return
 Authorization: Bearer {{alice_token}}
 HTTP 200
 
+# a loan is returned once: a second return would free the book again
+POST {{base}}/api/loans/{{loan_id}}/return
+Authorization: Bearer {{alice_token}}
+HTTP 409
+
 POST {{base}}/api/books/{{book_id}}/borrow
 Authorization: Bearer {{bob_token}}
 HTTP 201
