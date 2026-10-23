@@ -6,13 +6,15 @@ cd "$(dirname "$0")/../.." || exit 1
 
 DOMAIN="feedback-domain"
 PORT="${GATE_PORT:-3934}"
-HOST="${COMP_HOST:-host/target/release/comp-host}"
-PLUG="${COMP_PLUG:-reconciler/target/release/comp-plug}"
+HOST="${COMP_HOST:-target/release/comp-host}"
+PLUG="${COMP_PLUG:-target/release/comp-plug}"
 
-[ -x "$HOST" ] || { echo "no comp-host at '$HOST' — cargo build --release in host/"; exit 1; }
-[ -x "$PLUG" ] || { echo "no comp-plug at '$PLUG' — cargo build --release in reconciler/"; exit 1; }
+[ -x "$HOST" ] || { echo "no comp-host at '$HOST' — cargo build --release -p comp-host"; exit 1; }
+[ -x "$PLUG" ] || { echo "no comp-plug at '$PLUG' — cargo build --release -p comp-fleet --bin comp-plug"; exit 1; }
 
-cargo component build --release --manifest-path components/Cargo.toml --target-dir components/target --target wasm32-wasip2 -p "$DOMAIN" -p auth-guard -p policy-guard -p record-store -p audit-log -p rate-limiter >/tmp/gate-$DOMAIN-build.log 2>&1
+# Bindings via xtask (p3 crates generate their own), then one plain build: `cargo component build`
+# cannot resolve a p3 world's imports.
+{ cargo xtask bindings && cargo build --release --manifest-path components/Cargo.toml --target-dir components/target --target wasm32-wasip2 -p "$DOMAIN" -p auth-guard -p policy-guard -p record-store -p audit-log -p rate-limiter; } >/tmp/gate-$DOMAIN-build.log 2>&1
 if [ $? -ne 0 ]; then
   echo "build failed:"; tail -n 60 /tmp/gate-$DOMAIN-build.log; exit 1
 fi

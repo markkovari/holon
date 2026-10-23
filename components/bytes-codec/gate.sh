@@ -11,10 +11,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
-HOST="${COMP_HOST:-host/target/release/comp-host}"
-PLUG="${COMP_PLUG:-reconciler/target/release/comp-plug}"
-[ -x "$HOST" ] || { echo "no comp-host at '$HOST' — cargo build --release in host/"; exit 1; }
-[ -x "$PLUG" ] || { echo "no comp-plug at '$PLUG' — cargo build --release in reconciler/"; exit 1; }
+HOST="${COMP_HOST:-target/release/comp-host}"
+PLUG="${COMP_PLUG:-target/release/comp-plug}"
+[ -x "$HOST" ] || { echo "no comp-host at '$HOST' — cargo build --release -p comp-host"; exit 1; }
+[ -x "$PLUG" ] || { echo "no comp-plug at '$PLUG' — cargo build --release -p comp-fleet --bin comp-plug"; exit 1; }
 
 ART=$("$PLUG" codec-probe) || { echo "could not compose codec-probe"; exit 1; }
 PORT="${CODEC_PORT:-3219}"
@@ -32,11 +32,13 @@ fails=0
 get() { curl -sf "http://127.0.0.1:$PORT/$1?$2"; }
 # expect <what> <expected> <actual>
 #
-# The expected JSON is written with keys in the order the component emits them —
-# `serde_json` sorts them — because comparing strings is what makes this gate
-# runnable from a shell against any implementation.
+# JSON is compared with its keys sorted: the order is the encoder's (`serde_json` keeps
+# insertion order when anything in the build enables `preserve_order`), not the contract.
+norm() { python3 -c 'import json,sys
+try: print(json.dumps(json.loads(sys.argv[1]), sort_keys=True, separators=(",", ":")))
+except ValueError: print(sys.argv[1])' "$1"; }
 expect() {
-  if [ "$2" = "$3" ]; then return 0; fi
+  if [ "$2" = "$3" ] || [ "$(norm "$2")" = "$(norm "$3")" ]; then return 0; fi
   echo "  FAIL $1"
   echo "       expected $2"
   echo "       got      $3"

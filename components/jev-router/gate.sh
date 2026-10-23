@@ -6,11 +6,11 @@ set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
 PORT="${GATE_PORT:-3910}"
-HOST="${COMP_HOST:-host/target/release/comp-host}"
-PLUG="${COMP_PLUG:-reconciler/target/release/comp-plug}"
+HOST="${COMP_HOST:-target/release/comp-host}"
+PLUG="${COMP_PLUG:-target/release/comp-plug}"
 
-[ -x "$HOST" ] || { echo "no comp-host at '$HOST' — cargo build --release in host/"; exit 1; }
-[ -x "$PLUG" ] || { echo "no comp-plug at '$PLUG' — cargo build --release in reconciler/"; exit 1; }
+[ -x "$HOST" ] || { echo "no comp-host at '$HOST' — cargo build --release -p comp-host"; exit 1; }
+[ -x "$PLUG" ] || { echo "no comp-plug at '$PLUG' — cargo build --release -p comp-fleet --bin comp-plug"; exit 1; }
 
 # `jev:decision/decision` has more than one built exporter in this repository
 # (`jev-decision`'s own trivial reference provider, the real `typesafe-provider`,
@@ -21,14 +21,14 @@ PLUG="${COMP_PLUG:-reconciler/target/release/comp-plug}"
 # else has been built into the shared `components/target`.
 GATE_DIR="components/target-gate-jev-router"
 rm -rf "$GATE_DIR"
-cargo component build --release --manifest-path components/Cargo.toml \
-  --target-dir "$GATE_DIR" --target wasm32-wasip2 -p jev-router -p mock-jev-provider \
+{ cargo xtask bindings && cargo build --release --manifest-path components/Cargo.toml \
+  --target-dir "$GATE_DIR" --target wasm32-wasip2 -p jev-router -p mock-jev-provider; } \
   >/tmp/gate-jev-router-build.log 2>&1
 if [ $? -ne 0 ]; then
   echo "build failed:"; tail -n 60 /tmp/gate-jev-router-build.log; exit 1
 fi
 
-ART=$("$PLUG" jev-router --dir "$GATE_DIR/wasm32-wasip1/release") || {
+ART=$("$PLUG" jev-router --dir "$GATE_DIR/wasm32-wasip2/release") || {
   echo "could not compose jev-router"; exit 1
 }
 
