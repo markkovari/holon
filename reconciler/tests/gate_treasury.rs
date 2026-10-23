@@ -568,9 +568,29 @@ fn the_whole_treasury_api_works() {
          this is a store or shape error, the two parts disagree about the `journal` \
          collection: {report}"
     );
+    // Seen once in CI (13 lines, balances right) and never in ~200 local runs: say what the lines were.
+    let lines = d["journal_lines"].as_i64().unwrap_or(-1);
+    if lines != 10 {
+        let journal = parse(&gate.get("/api/journal?limit=500", Some(&w)).1);
+        let mut by_transfer: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for l in journal["lines"].as_array().into_iter().flatten() {
+            by_transfer.entry(l["transfer"].as_str().unwrap_or("?").to_string()).or_default().push(
+                format!(
+                    "{} at {}",
+                    l["id"].as_str().unwrap_or("?"),
+                    l["at"].as_str().unwrap_or("?")
+                ),
+            );
+        }
+        let twice: Vec<_> = by_transfer.iter().filter(|(_, ids)| ids.len() > 1).collect();
+        panic!(
+            "ten transfers settled and the journal has {lines} lines, naming {} distinct transfers. \
+             Journalled more than once: {twice:#?}. Transfer codes: {counted:?}. Report: {report}",
+            by_transfer.len()
+        );
+    }
     assert_eq!(
-        d["journal_lines"].as_i64().unwrap_or(-1),
-        10,
+        lines, 10,
         "ten transfers settled and the journal has {} lines. `transfers` writes them and \
          `reconcile` reads them, and nothing else in the app would notice if they disagreed \
          about the collection or the field names.",
