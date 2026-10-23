@@ -6,16 +6,18 @@
 #   ./install.sh status     what is running
 #
 # Services (label io.holon.<name>): fm (Apple model), qwen (4B model), qwen-large (27B, slower, ~15 GB), embed (EmbeddingGemma 2),
-# nats and platform (the vault agents' API keys live in, ADR-0051), runtime (the agents), bridge
-# (Matrix). Logs: ~/Library/Logs/holon/<name>.log. Nothing secret goes in a plist: tokens stay in
+# nats and platform (the vault agents' API keys live in, ADR-0051), vcs (the code store, ADR-0099;
+# needs the holon-surreal container), agentd (coding sessions, ADR-0102, their edits recorded in vcs,
+# ADR-0121), runtime (the agents), bridge (Matrix). Logs: ~/Library/Logs/holon/<name>.log. Nothing secret goes in a plist: tokens stay in
 # ~/.holon-agents, ~/.holon-matrix and ~/.holon-platform, where the programs read them.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 AGENTS="$HOME/Library/LaunchAgents"
 LOGS="$HOME/Library/Logs/holon"
 UID_="$(id -u)"
-SERVICES=(fm qwen qwen-large embed nats platform runtime bridge)
+SERVICES=(fm qwen qwen-large embed nats platform vcs agentd runtime bridge)
 PLATFORM="$HOME/.holon-platform"
+STATE="$HOME/.holon-agents"
 # Big local models: installed but not started. The runtime starts one when a model chain needs it
 # (DeepSeek unavailable or not good enough; or, for embed, a recall or routing call) and stops it
 # after 10 idle minutes.
@@ -32,7 +34,9 @@ spec() {
     embed) echo "$REPO/agent-runtime/embed"; echo "$HOME/.local/bin/uv" run --with "sentence-transformers[image]" --with torch server.py --port 18102 ;;
     nats) echo "$PLATFORM"; echo /opt/homebrew/bin/nats-server -js -sd "$PLATFORM/nats" -a 127.0.0.1 -p 4222 ;;
     platform) echo "$REPO"; echo "$REPO/target/release/comp-host" --component "$REPO/components/target/platform-domain.composed.wasm" --addr 127.0.0.1:3936 --kv nats --nats-url nats://127.0.0.1:4222 --tenant platform --app control-plane --config-file "$PLATFORM/platform.conf" ;;
-    runtime) echo "$REPO/agent-runtime"; echo "$REPO/target/release/agent-runtime" --state-dir "$HOME/.holon-agents" --listen 127.0.0.1:18017 --local-url http://127.0.0.1:18099 --stt-bin "$HOME/.holon-agents/holon-stt" --embed-url http://127.0.0.1:18102 --embed-service io.holon.embed --platform-file "$HOME/.holon-agents/platform.json" ;;
+    vcs) echo "$STATE"; echo "$REPO/target/release/comp-vcs" --addr 127.0.0.1:18014 --token-file "$STATE/vcs-token" ;;
+    agentd) echo "$STATE"; echo "$REPO/target/release/comp-agentd" --addr 127.0.0.1:18016 --token-file "$STATE/agentd-token" --workspace-root "$STATE/workspaces" --state-dir "$STATE/agentd" --provider openai --base-url https://api.deepseek.com --api-key-file "$HOME/.comp-secrets/deepseek" --vcs-url http://127.0.0.1:18014 --vcs-token-file "$STATE/vcs-token" ;;
+    runtime) echo "$REPO/agent-runtime"; echo "$REPO/target/release/agent-runtime" --state-dir "$STATE" --listen 127.0.0.1:18017 --local-url http://127.0.0.1:18099 --stt-bin "$STATE/holon-stt" --embed-url http://127.0.0.1:18102 --embed-service io.holon.embed --platform-file "$STATE/platform.json" --agentd-url http://127.0.0.1:18016 --agentd-token-file "$STATE/agentd-token" --session-model deepseek-chat ;;
     bridge) echo "$REPO/agent-matrix"; echo "$REPO/target/release/agent-matrix" run --config "$HOME/.holon-matrix/bridge.json" ;;
   esac
 }
@@ -73,6 +77,14 @@ platform_conf() {
       "$(openssl rand -hex 24)" "$(openssl rand -base64 32)" > "$PLATFORM/platform.conf" )
 }
 
+# The tokens agentd and vcs require of their callers, made once.
+tokens() {
+  mkdir -p "$STATE/workspaces"
+  for t in vcs-token agentd-token; do
+    [ -f "$STATE/$t" ] || ( umask 077; openssl rand -hex 24 > "$STATE/$t" )
+  done
+}
+
 # The runtime's account on the platform, made once, after the platform answers.
 platform_account() {
   local f="$HOME/.holon-agents/platform.json" pw applier
@@ -92,14 +104,19 @@ case "${1:-}" in
   install)
     mkdir -p "$AGENTS" "$LOGS"
     platform_conf
+    tokens
+    [ -f "$HOME/.comp-secrets/deepseek" ] || { echo "missing ~/.comp-secrets/deepseek — agentd's model key"; exit 1; }
+    # vcs keeps its graph in SurrealDB, the holon-surreal container (rocksdb on a volume); it retries until that is up.
+    docker start holon-surreal >/dev/null 2>&1 || echo "warning: could not start holon-surreal; vcs waits for 127.0.0.1:8000"
     for f in "$REPO/target/release/comp-host" "$REPO/components/target/platform-domain.composed.wasm"; do
       [ -f "$f" ] || { echo "missing $f — cargo xtask host platform builds both"; exit 1; }
     done
-    for b in "$REPO/target/release/agent-runtime" "$REPO/target/release/agent-matrix"; do
-      [ -x "$b" ] || { echo "missing $b — cargo build --release there first"; exit 1; }
+    BINS=(agent-runtime agent-matrix comp-vcs comp-agentd)
+    for b in "${BINS[@]/#/$REPO/target/release/}"; do
+      [ -x "$b" ] || { echo "missing $b — cargo build --release -p $(basename "$b") first"; exit 1; }
     done
     # A binary cargo rewrote in place can be killed on launch (OS_REASON_CODESIGNING) until it is re-signed.
-    for b in "$REPO/target/release/agent-runtime" "$REPO/target/release/agent-matrix"; do
+    for b in "${BINS[@]/#/$REPO/target/release/}"; do
       codesign --force --sign - "$b" 2>/dev/null || true
     done
     for s in "${SERVICES[@]}"; do
