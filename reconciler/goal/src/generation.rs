@@ -311,10 +311,56 @@ pub struct Round {
 #[derive(Clone, Debug)]
 pub struct Search {
     pub rounds: Vec<Round>,
-    pub accepted: bool,
+    /// The accepted candidate if `stopped` is `Accepted`, else the best-scoring one.
     pub best: Option<Entry>,
     pub spent_tokens: u64,
     pub stopped: SearchStop,
+}
+
+impl Search {
+    pub fn accepted(&self) -> bool {
+        self.stopped == SearchStop::Accepted
+    }
+}
+
+/// Where a search stands between generations, and the one place its stop rules are written.
+struct Progress {
+    bounds: Bounds,
+    spent: u64,
+    /// Generations in a row that did not beat the best score.
+    stale: u16,
+}
+
+impl Progress {
+    fn new(bounds: Bounds) -> Progress {
+        Progress { bounds, spent: 0, stale: 0 }
+    }
+
+    /// A generation ran, spending `spent`. Why the search stops now, if it does. Checked after the
+    /// generation: what one costs is not known until it runs.
+    fn after(&mut self, spent: u64, improved: bool, done: bool) -> Option<SearchStop> {
+        self.spent += spent;
+        self.stale = if improved { 0 } else { self.stale + 1 };
+        let b = self.bounds;
+        if done {
+            Some(SearchStop::Accepted)
+        } else if b.max_tokens > 0 && self.spent >= b.max_tokens {
+            Some(SearchStop::OverBudget)
+        } else if b.patience > 0 && self.stale >= b.patience {
+            Some(SearchStop::NoProgress)
+        } else {
+            None
+        }
+    }
+}
+
+/// Does this generation's `winner` beat the `best` so far.
+fn beats(best: Option<&Entry>, winner: Option<&Entry>) -> bool {
+    match (best, winner) {
+        (None, Some(_)) => true,
+        (Some(b), Some(w)) => w.score > b.score,
+        _ => false,
+    }
 }
 
 /// Rounds bound cheap generations, the budget expensive ones, patience ones going nowhere.
@@ -374,8 +420,7 @@ pub fn search_with(
     let mut rounds: Vec<Round> = Vec::new();
     let mut carried: Option<Entry> = None;
     let mut best: Option<Entry> = None;
-    let mut spent: u64 = 0;
-    let mut stale: u16 = 0;
+    let mut progress = Progress::new(bounds);
 
     let mut stopped = SearchStop::Exhausted;
     for r in 0..bounds.max_rounds {
@@ -384,36 +429,19 @@ pub fn search_with(
         let entries =
             fan_out_from(driver_url, host, plan, &strategies, carried.as_ref(), seed, timeout);
 
-        spent += entries.iter().map(|e| e.spent_tokens).sum::<u64>();
+        let round_spend = entries.iter().map(|e| e.spent_tokens).sum::<u64>();
         let winner = best_of(&entries);
-        let improved = match (&best, winner.map(|i| &entries[i])) {
-            (None, Some(_)) => true,
-            (Some(b), Some(w)) => w.score > b.score,
-            _ => false,
-        };
+        let improved = beats(best.as_ref(), winner.map(|i| &entries[i]));
         if improved {
             best = winner.map(|i| entries[i].clone());
-            stale = 0;
-        } else {
-            stale += 1;
         }
         // Best so far, not this round's: a regression must not drag the next generation down.
         carried = best.clone();
 
         let any_accepted = entries.iter().any(|e| e.accepted);
         rounds.push(Round { entries, best: winner });
-
-        if any_accepted {
-            stopped = SearchStop::Accepted;
-            break;
-        }
-        // Checked after the generation: what one costs is not known until it runs.
-        if bounds.max_tokens > 0 && spent >= bounds.max_tokens {
-            stopped = SearchStop::OverBudget;
-            break;
-        }
-        if bounds.patience > 0 && stale >= bounds.patience {
-            stopped = SearchStop::NoProgress;
+        if let Some(stop) = progress.after(round_spend, improved, any_accepted) {
+            stopped = stop;
             break;
         }
     }
@@ -425,18 +453,98 @@ pub fn search_with(
         .filter(|e| e.accepted)
         .max_by_key(|e| e.score)
         .cloned();
-    Search {
-        accepted: accepted.is_some(),
-        best: accepted.or(best),
-        rounds,
-        spent_tokens: spent,
-        stopped,
-    }
+    Search { best: accepted.or(best), rounds, spent_tokens: progress.spent, stopped }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_search_stops_for_the_first_rule_that_holds_after_each_generation() {
+        let bounds =
+            |max_tokens, patience| Bounds { branches: 1, max_rounds: 9, max_tokens, patience };
+        let mut p = Progress::new(bounds(100, 2));
+        assert_eq!(p.after(40, true, false), None);
+        assert_eq!(p.after(40, false, false), None);
+        // Over budget and out of patience at once: the money is the reason given.
+        assert_eq!(p.after(40, false, false), Some(SearchStop::OverBudget));
+        let mut p = Progress::new(bounds(0, 2));
+        assert_eq!(p.after(1, false, false), None);
+        assert_eq!(p.after(1, true, false), None, "an improvement resets patience");
+        assert_eq!(p.after(1, false, false), None);
+        assert_eq!(p.after(1, false, false), Some(SearchStop::NoProgress));
+        assert_eq!(p.after(1, false, true), Some(SearchStop::Accepted), "done wins over all");
+    }
+
+    /// A driver that accepts a plan that says `"accept":true`, and scores every plan 1.
+    fn accepting_driver() -> String {
+        use std::io::{Read, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", l.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for mut c in l.incoming().flatten() {
+                let mut buf = vec![0u8; 1 << 16];
+                let mut got = String::new();
+                while let Ok(n) = c.read(&mut buf) {
+                    got.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    let Some((head, body)) = got.split_once("\r\n\r\n") else { continue };
+                    let len = head
+                        .lines()
+                        .find_map(|l| {
+                            l.to_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse().unwrap_or(0))
+                        })
+                        .unwrap_or(0);
+                    if n == 0 || body.len() >= len {
+                        break;
+                    }
+                }
+                let accept = got.contains("\"accept\":true");
+                let reply = json!({"accepted": accept, "score": 1,
+                                   "attempts": [{"score": 1, "digest": "d"}], "files": []})
+                .to_string();
+                let _ = write!(
+                    c,
+                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}",
+                    reply.len()
+                );
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn a_failed_boundary_keeps_the_contracts_agreed_and_does_not_unaccept_a_part() {
+        let driver = accepting_driver();
+        let parts = [
+            Part { name: "a".into(), plan: json!({"accept": true}) },
+            Part { name: "b".into(), plan: json!({"accept": false}) },
+        ];
+        let bounds = Bounds { branches: 1, max_rounds: 3, max_tokens: 0, patience: 0 };
+        let c = compose_search(
+            &driver,
+            "h",
+            &parts,
+            "contract",
+            1,
+            bounds,
+            0,
+            Duration::from_secs(5),
+            |_, _| default_strategies(1),
+            // After round 0 the parts agree on v2 (so `a` runs again on it); after round 1 the
+            // boundary fails and returns nothing.
+            |r, _| match r {
+                0 => vec![("a".into(), "contract".into(), 2), ("b".into(), "contract".into(), 2)],
+                _ => vec![],
+            },
+        );
+        let a = &c.parts[0];
+        assert!(a.accepted);
+        assert_eq!(a.rounds.len(), 2, "accepted on v2, it did not rerun after the failure");
+        assert_eq!(c.contract_version, 2);
+    }
 
     fn entry(name: &str, score: u64, files: Value) -> Entry {
         Entry {
@@ -779,8 +887,7 @@ where
             .map(|(_, b, v)| (b.clone(), *v))
             .unwrap_or_else(|| (contract.to_string(), contract_version))
     };
-    let mut spent: u64 = 0;
-    let mut stale: u16 = 0;
+    let mut progress = Progress::new(bounds);
     let mut stopped = SearchStop::Exhausted;
     let mut rounds_run = 0u16;
 
@@ -813,18 +920,15 @@ where
             .collect();
 
         let mut improved_any = false;
+        let mut round_spend = 0;
         for (&i, h) in running.iter().zip(handles) {
             let entries = h.join().unwrap_or_default();
-            let round_spend: u64 = entries.iter().map(|e| e.spent_tokens).sum();
-            spent += round_spend;
-            outcomes[i].spent_tokens += round_spend;
+            let part_spend: u64 = entries.iter().map(|e| e.spent_tokens).sum();
+            round_spend += part_spend;
+            outcomes[i].spent_tokens += part_spend;
 
             let winner = best_of(&entries);
-            let improved = match (&outcomes[i].best, winner.map(|w| &entries[w])) {
-                (None, Some(_)) => true,
-                (Some(b), Some(w)) => w.score > b.score,
-                _ => false,
-            };
+            let improved = beats(outcomes[i].best.as_ref(), winner.map(|w| &entries[w]));
             let (_, version) = contract_of(&agreed, &parts[i].name);
             if improved {
                 outcomes[i].best = winner.map(|w| entries[w].clone());
@@ -841,22 +945,19 @@ where
             outcomes[i].rounds.push(Round { entries, best: winner });
         }
 
-        if outcomes.iter().all(|o| o.accepted) {
-            stopped = SearchStop::Accepted;
-            break;
-        }
-        if bounds.max_tokens > 0 && spent >= bounds.max_tokens {
-            stopped = SearchStop::OverBudget;
-            break;
-        }
-        stale = if improved_any { 0 } else { stale + 1 };
-        if bounds.patience > 0 && stale >= bounds.patience {
-            stopped = SearchStop::NoProgress;
+        let done = outcomes.iter().all(|o| o.accepted);
+        if let Some(stop) = progress.after(round_spend, improved_any, done) {
+            stopped = stop;
             break;
         }
 
-        // Outstanding requests are resolved here and nowhere else.
+        // Outstanding requests are resolved here and nowhere else. Nothing back is a boundary
+        // that failed, and it keeps the contracts as agreed: it is not every part back on the
+        // version the search began with.
         let next = boundary(r, &outcomes);
+        if next.is_empty() {
+            continue;
+        }
         for (i, p) in parts.iter().enumerate() {
             let (_, was) = contract_of(&agreed, &p.name);
             let (_, now) = contract_of(&next, &p.name);
@@ -865,9 +966,7 @@ where
                 outcomes[i].accepted = false;
             }
         }
-        if !next.is_empty() {
-            agreed = next;
-        }
+        agreed = next;
     }
 
     let blocked: Vec<String> = outcomes
@@ -890,7 +989,7 @@ where
         parts: outcomes,
         contract_version: ended_on,
         blocked,
-        spent_tokens: spent,
+        spent_tokens: progress.spent,
         rounds_run,
         stopped,
     }
