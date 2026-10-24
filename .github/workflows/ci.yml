@@ -746,9 +746,11 @@ jobs:
           mkdir -p target/release components/target/wasm32-wasip2/release
           chmod +x "$RUNNER_TEMP"/fetched/bin/*
           for f in "$RUNNER_TEMP"/fetched/bin/*; do put "$f" target/release; done
-          for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
-            [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
-          done
+          if [ -d "$RUNNER_TEMP"/fetched/wasm ]; then
+            for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
+              [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release || true
+            done
+          fi
       - name: Build comp-plug
         run: cargo build --release -p comp-fleet --bin comp-plug
       - name: Every gate
