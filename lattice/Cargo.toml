@@ -11,7 +11,7 @@ description = "What a node and the reconciler need from the fabric between them,
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
-tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
+tokio.workspace = true
 futures = "0.3"
 bytes = "1"
 async-nats = "0.49"

@@ -101,3 +101,28 @@ async fn a_bucket_nobody_created_yet_gets_the_requested_ttl() {
         .expect("connect");
     assert_eq!(l.effective_ttl(), Duration::from_secs(30));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn lease_release_allows_immediate_failover_without_waiting_for_ttl() {
+    let Some(nats) = Nats::start() else { return };
+    let lattice = "leasetest";
+    let ttl = Duration::from_secs(60);
+
+    let mut first = comp_lattice::lease::Lease::connect(&nats.url, lattice, ttl, "first")
+        .await
+        .expect("first connect");
+    let mut second = comp_lattice::lease::Lease::connect(&nats.url, lattice, ttl, "second")
+        .await
+        .expect("second connect");
+
+    assert!(first.hold().await, "first acquires lease");
+    assert_eq!(first.holder().await.as_deref(), Some("first"));
+
+    assert!(!second.hold().await, "second must not acquire while first holds it");
+
+    first.release().await;
+    assert_eq!(first.holder().await, None, "lease is released");
+
+    assert!(second.hold().await, "second must acquire immediately without waiting for 60s TTL");
+    assert_eq!(second.holder().await.as_deref(), Some("second"));
+}

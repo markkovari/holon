@@ -82,8 +82,9 @@ Each item below was found by reading the code. Where a bug has not been reproduc
 **Reconciler** (`reconciler/`)
 - goald: a crash between opening a PR and posting `/review` leaves the goal `running`, and a
   restart opens a second PR (`goal/src/bin/goald.rs`).
-- The lease's `release()` is never called, so every planned restart waits out the TTL
-  (`lattice/src/lease.rs`).
+- ~~The lease's `release()` is never called, so every planned restart waits out the TTL~~ →
+  **fixed**: `ShutdownListener` installs SIGINT/SIGTERM handlers and calls `release()` on shutdown
+  in `comp-reconciler` and `comp-relay` (`lattice/src/lease.rs`).
 - `plan()` is about 260 lines (`src/plan.rs:336`), and goalrun's `run` and `decomposed` duplicate
   each other's recording and landing (`goal/src/bin/goalrun.rs`). Both are plain extraction work.
 
