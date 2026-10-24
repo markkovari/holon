@@ -51,6 +51,8 @@ toml.workspace = true
 # Versions order by semver, not as strings ("10.0.0" > "2.0.0").
 semver = "1"
 regex = "1"
+rusqlite.workspace = true
+async-nats.workspace = true
 
 # The root's shared test harness signs S3 requests.
 [dev-dependencies]

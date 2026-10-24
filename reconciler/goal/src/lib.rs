@@ -9,4 +9,5 @@ pub mod generation;
 pub mod goalbatch;
 pub mod goalexit;
 pub mod memory;
+pub mod store;
 pub mod trace;

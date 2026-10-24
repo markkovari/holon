@@ -1341,6 +1341,7 @@ name = "comp-goal"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-nats",
  "clap",
  "comp-fleet",
  "comp-fuel",
@@ -1348,6 +1349,7 @@ dependencies = [
  "comp-oci",
  "regex",
  "reqwest 0.12.28",
+ "rusqlite",
  "rusty-s3",
  "semver",
  "serde",
