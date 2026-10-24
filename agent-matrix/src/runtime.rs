@@ -229,6 +229,12 @@ impl Runtime {
         self.listed(&format!("/v1/agents/{agent}/runs?limit={n}"), "runs")
     }
 
+    /// Fetches all runs finished after `after_ms` by querying with an increasing limit
+    /// until reaching runs older than or at `after_ms`, or exhausting available runs.
+    pub fn runs_since(&self, agent: &str, after_ms: u64) -> Result<Vec<RunInfo>, String> {
+        paginate_since(after_ms, |limit| self.runs(agent, limit))
+    }
+
     pub fn trash(&self) -> Result<Vec<Trashed>, String> {
         self.admin("/trash")
     }
@@ -443,4 +449,84 @@ fn said(r: reqwest::blocking::Response) -> String {
         .ok()
         .and_then(|v| v["detail"].as_str().map(String::from))
         .unwrap_or(text)
+}
+
+/// Queries runs with increasing limit starting at 20, doubling up to 1000,
+/// until either all runs are fetched or the oldest run in the batch finished
+/// before or at `after_ms`.
+pub fn paginate_since<F>(after_ms: u64, mut fetch: F) -> Result<Vec<RunInfo>, String>
+where
+    F: FnMut(usize) -> Result<Vec<RunInfo>, String>,
+{
+    let mut limit = 20;
+    loop {
+        let runs = fetch(limit)?;
+        let exhausted = runs.len() < limit;
+        let reached_cutoff = runs.last().is_none_or(|r| r.finished_at_ms() <= after_ms);
+        if exhausted || reached_cutoff || limit >= 1000 {
+            return Ok(runs);
+        }
+        limit = (limit * 2).min(1000);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fake_run(id: &str, finished_ms: u64) -> RunInfo {
+        RunInfo {
+            id: id.into(),
+            trigger: "schedule: @daily".into(),
+            status: "ok".into(),
+            answer: "done".into(),
+            finished: finished_ms / 1000,
+            finished_ms,
+            project: "".into(),
+            input: "".into(),
+        }
+    }
+
+    #[test]
+    fn paginate_since_stops_when_under_limit_or_old_enough() {
+        // Case 1: fewer than 20 runs, all after cutoff
+        let runs_10: Vec<RunInfo> =
+            (0..10).map(|i| fake_run(&format!("r{i}"), 20_000 - i * 100)).collect();
+        let mut calls = 0;
+        let got = paginate_since(10_000, |limit| {
+            calls += 1;
+            assert_eq!(limit, 20);
+            Ok(runs_10.clone())
+        })
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(got.len(), 10);
+
+        // Case 2: exactly 20 runs, oldest is before cutoff (finished_ms = 1_000 <= 10_000)
+        let runs_20: Vec<RunInfo> =
+            (0..20).map(|i| fake_run(&format!("r{i}"), 20_000 - i * 1_000)).collect();
+        calls = 0;
+        let got = paginate_since(10_000, |limit| {
+            calls += 1;
+            assert_eq!(limit, 20);
+            Ok(runs_20.clone())
+        })
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(got.len(), 20);
+
+        // Case 3: 50 runs all newer than cutoff (10_000). First fetch of 20 has oldest 18_100 (> 10_000),
+        // so it doubles to 40 (oldest 16_100 > 10_000), then doubles to 80 (returns all 50, len < 80).
+        let all_runs: Vec<RunInfo> =
+            (0..50).map(|i| fake_run(&format!("r{i}"), 20_000 - i * 100)).collect();
+        let mut limits_requested = Vec::new();
+        let got = paginate_since(10_000, |limit| {
+            limits_requested.push(limit);
+            let n = limit.min(all_runs.len());
+            Ok(all_runs[..n].to_vec())
+        })
+        .unwrap();
+        assert_eq!(limits_requested, vec![20, 40, 80]);
+        assert_eq!(got.len(), 50);
+    }
 }
