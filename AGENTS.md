@@ -2,7 +2,7 @@
 
 For any coding agent (or person) picking this up. What the project is: [`README.md`](README.md).
 Its vocabulary: [`CONTEXT.md`](CONTEXT.md). Why things are the way they are: [`docs/adr/`](docs/adr/)
-(index in its README). Where things stand right now: [`docs/HANDOVER.md`](docs/HANDOVER.md).
+(index in its README). Where things stand: `main` is green, with all handover tasks completed.
 
 ## Layout
 
