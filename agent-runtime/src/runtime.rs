@@ -383,19 +383,30 @@ impl Runtime {
             return Ok(Vec::new());
         }
         let others = self.store.list_projects();
-        let mut paused = Vec::new();
+        let mut to_pause = Vec::new();
         for a in &p.agents {
             let live_elsewhere =
                 others.iter().any(|q| q.name != p.name && !q.archived && q.agents.contains(a));
             if live_elsewhere || self.store.get(a).is_none_or(|s| s.paused) {
                 continue;
             }
-            self.set_paused(a, true)?;
-            paused.push(a.clone());
+            to_pause.push(a.clone());
         }
         p.archived = true;
-        p.paused_by_archive = paused.clone();
+        p.paused_by_archive = to_pause.clone();
         self.store.put_project(&p)?;
+        let mut paused = Vec::new();
+        for a in &to_pause {
+            if let Err(e) = self.set_paused(a, true) {
+                eprintln!("archiving project {name}: failed to pause agent {a}: {e}");
+            } else {
+                paused.push(a.clone());
+            }
+        }
+        if paused.len() != to_pause.len() {
+            p.paused_by_archive = paused.clone();
+            let _ = self.store.put_project(&p);
+        }
         Ok(paused)
     }
 
@@ -824,13 +835,13 @@ impl Runtime {
     /// Also taken from every agent that held it: a key that is gone would fail each of their calls.
     pub fn remove_key(&self, name: &str) -> Result<(), String> {
         let p = self.platform()?;
-        p.remove(name)?;
         for mut spec in self.store.list() {
             if spec.api_keys.iter().any(|k| k == name) {
                 spec.api_keys.retain(|k| k != name);
                 self.update_agent(spec)?;
             }
         }
+        p.remove(name)?;
         p.connect()
     }
 
@@ -840,6 +851,10 @@ impl Runtime {
             self.store.get(agent).ok_or_else(|| format!("There is no agent named {agent}."))?;
         spec.api_keys.retain(|k| k != key);
         if on {
+            let keys = self.keys()?;
+            if !keys.iter().any(|k| k.name == key) {
+                return Err(format!("No key named '{key}' exists in the vault."));
+            }
             spec.api_keys.push(key.to_string());
             if !spec.has_capability("http_get") {
                 spec.capabilities.push(crate::spec::Capability::named("http_get"));
