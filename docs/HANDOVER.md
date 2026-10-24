@@ -55,6 +55,8 @@ against `git log` and `gh pr list` first.
 | agent-runtime: state safety for `archive_project`, `remove_key`, and `grant_key` | #448 |
 | agent-matrix: paginate runs when delivering scheduled results | #449 |
 | comp-agentd: hold session and conversation lock during rewind; evaluate retry deadline | #450 |
+| Documentation update for PRs #445-#450 and system deployments | #451 |
+| components: drop juniper default features in graphql-gateway to remove serde_json preserve_order | #452 |
 
 ## Open, not started
 
@@ -81,5 +83,3 @@ Each item below was found by reading the code. Where a bug has not been reproduc
 **Components**
 - 22 scaffold domains hand-copy their `Reply`, `Route`, `now_secs`, `mint` and `authorize_perm`
   helpers instead of using `guestauth`.
-- Something in the components workspace turns on serde_json's `preserve_order`. bytes-codec's gate
-  now compares JSON with sorted keys; which crate enables it was not found.
