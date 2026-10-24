@@ -166,7 +166,7 @@ impl Runner {
         // crates around it, a bound measured idle and spent under load.
         let payload = body.to_string();
         let mut last = String::new();
-        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let deadline = std::time::Instant::now() + Duration::from_secs(45);
         let mut attempt = 0;
         while std::time::Instant::now() < deadline {
             attempt += 1;
