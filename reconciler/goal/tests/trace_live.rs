@@ -103,7 +103,7 @@ fn a_whole_run_lands_and_a_dead_database_never_fails_one() {
         156_000,
         1,
     );
-    trace.run_resolved(run, "merged", Some("mvp"), "https://example.test/pull/1");
+    trace.run_resolved(run, "pr-opened", Some("mvp"), "https://example.test/pull/1");
 
     assert!(
         trace.report().is_none(),
@@ -119,7 +119,7 @@ fn a_whole_run_lands_and_a_dead_database_never_fails_one() {
 
     // On the run node, not reconstructed from events (ADR-0092).
     let r = rows(&store, "SELECT outcome, winner, url FROM run;");
-    assert_eq!(r[0]["outcome"], "merged");
+    assert_eq!(r[0]["outcome"], "pr-opened");
     assert_eq!(r[0]["winner"], "mvp");
 
     // Fields: a timeline reconstructing bounds from events errs when one is missing.
@@ -232,7 +232,7 @@ fn an_unauthenticated_database_takes_writes_with_no_auth_header() {
 
     let trace = Trace::new(&url, DB, None);
     trace.run_started("unauth/g1", "a goal with no password", ".comp/goal.toml", 1, "abc", 1);
-    trace.run_resolved("unauth/g1", "merged", Some("only"), "");
+    trace.run_resolved("unauth/g1", "pr-opened", Some("only"), "");
 
     assert!(
         trace.report().is_none(),

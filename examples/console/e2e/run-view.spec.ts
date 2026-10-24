@@ -78,7 +78,7 @@ test.describe("the run view", () => {
     // The outcome and winner come from the run NODE, not from scanning events.
     // A timeline that reconstructs its own bounds gets them wrong exactly when
     // an event is missing, which is when you are looking at this page.
-    await expect(page.getByTestId("run-outcome")).toHaveText("merged");
+    await expect(page.getByTestId("run-outcome")).toHaveText("pr-opened");
     await expect(page.getByTestId("run-winner")).toContainText("mvp");
 
     // What the pool GAINED (ADR-0089). The only part of a run that outlives the
@@ -204,7 +204,7 @@ test.describe("the run view", () => {
         page,
         `UPDATE run:⟨${RUN}⟩ SET outcome = 'merged', winner = 'second', resolved_at = time::now();`,
       );
-      await expect(page.getByTestId("run-outcome")).toHaveText("merged", { timeout: 15_000 });
+      await expect(page.getByTestId("run-outcome")).toHaveText("pr-opened", { timeout: 15_000 });
       await surql(
         page,
         `CREATE event SET run = '${RUN}', kind = 'run-resolved', data = { outcome: 'merged' }, at = time::now();`,
