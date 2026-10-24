@@ -16,6 +16,7 @@
 package triage:assist@0.1.0;
 
 world triage-assist-domain {
+    import wasi:config/store@0.2.0-rc.1;
     export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     /// Who the caller is, and whether they may. `authorize` does verification and

@@ -102,6 +102,12 @@ pub fn now_secs() -> u64 {
 
 use guestfmt::rfc3339;
 
+/// The fixture mints only where a gate or demo asks for it (`test-tokens = on`): composed into a
+/// real app, an open `/test/token` would hand anyone a token with any roles.
+fn test_tokens() -> bool {
+    matches!(bindings::wasi::config::store::get("test-tokens"), Ok(Some(v)) if v == "on")
+}
+
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let subject = req.get("subject").and_then(Value::as_str).unwrap_or("treasurer").to_string();
@@ -235,7 +241,7 @@ impl Guest for Component {
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
         let Reply { status, json: payload } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
-            ["test", "token"] => mint(&body),
+            ["test", "token"] if test_tokens() => mint(&body),
             ["test", "seed"] => seed(&body),
             ["test", "journal"] if matches!(method, Method::Post) => seed_journal(&body),
             ["test", "journal"] => peek_journal(),

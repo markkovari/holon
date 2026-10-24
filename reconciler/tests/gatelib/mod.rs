@@ -237,6 +237,12 @@ impl Gate {
             args.push("--config".into());
             args.push((*c).to_string());
         }
+        // Unlike `allow-test-routes`, this changes nothing but whether `POST /test/token` exists, and
+        // these gates log in through it. A gate that sets it (`test-tokens=off`) keeps its own value.
+        if !config.iter().any(|c| c.starts_with("test-tokens=")) {
+            args.push("--config".into());
+            args.push("test-tokens=on".into());
+        }
         for e in egress {
             args.push("--egress".into());
             args.push((*e).to_string());
