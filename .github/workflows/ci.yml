@@ -67,10 +67,10 @@ jobs:
   # keeps debugging it.
   components:
     name: components (wasm32-wasip2)
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # On picur every target/ stays: it is what makes the job warm.
           clean: ${{ runner.environment == 'github-hosted' }}
@@ -141,7 +141,7 @@ jobs:
       # the one this workflow tested, not an approximation of it. `gh run download`
       # pulls them by commit (`docs/REGISTRY.md`).
       - name: Keep the artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: components-wasm32-wasip2
           path: components/target/wasm32-wasip2/release/*.wasm
@@ -169,10 +169,10 @@ jobs:
   # dependencies (docs/adr/0115) and builds in about a second.
   native-binaries:
     name: native binaries (comp-host, holon)
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # On picur every target/ stays: it is what makes the job warm.
           clean: ${{ runner.environment == 'github-hosted' }}
@@ -222,14 +222,14 @@ jobs:
       # one (a single multi-file artifact spanning two unrelated directories)
       # that has not been.
       - name: Keep comp-host
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: comp-host-bin
           path: target/release/comp-host
           retention-days: 1
 
       - name: Keep holon
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: holon-bin
           path: target/release/holon
@@ -238,10 +238,10 @@ jobs:
   reconciler-artifact-suites:
     name: reconciler suites (built artifacts)
     needs: [components, native-binaries]
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # On picur every target/ stays: it is what makes the job warm.
           clean: ${{ runner.environment == 'github-hosted' }}
@@ -285,7 +285,7 @@ jobs:
       # The tree the `components` job above just tested — not a rebuild of it.
       # CI jobs do not share a filesystem, so this is how the two get to agree.
       - name: Fetch the wasm components this job's suites read
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: components-wasm32-wasip2
           path: ${{ runner.temp }}/fetched/wasm
@@ -296,18 +296,18 @@ jobs:
       # `missing …/comp-host — cargo build --release in host/` — now downloaded
       # from `native-binaries` rather than rebuilt (see that job's own comment).
       - name: Fetch comp-host
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: comp-host-bin
           path: ${{ runner.temp }}/fetched/bin
 
       - name: Fetch holon
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: holon-bin
           path: ${{ runner.temp }}/fetched/bin
 
-      # `actions/download-artifact@v4` is documented to preserve Unix file
+      # `actions/download-artifact@v8` is documented to preserve Unix file
       # modes, but this is the one place a silent loss of the executable bit
       # would surface as a confusing "Permission denied" deep in a test's own
       # `Command::spawn()` rather than here — cheap insurance, not a sign of
@@ -494,10 +494,10 @@ jobs:
   reconciler-fleet-suites:
     name: reconciler suites (fleet)
     needs: [components, native-binaries]
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # On picur every target/ stays: it is what makes the job warm.
           clean: ${{ runner.environment == 'github-hosted' }}
@@ -608,7 +608,7 @@ jobs:
       # independently, since jobs do not share a filesystem and this one does
       # not wait on that job either (both only wait on `components`).
       - name: Fetch the wasm components this job's suites read
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: components-wasm32-wasip2
           path: ${{ runner.temp }}/fetched/wasm
@@ -617,13 +617,13 @@ jobs:
       # jobs do not share a filesystem, and this one does not wait on that job
       # either (both only wait on `components` and `native-binaries`).
       - name: Fetch comp-host
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: comp-host-bin
           path: ${{ runner.temp }}/fetched/bin
 
       - name: Fetch holon
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: holon-bin
           path: ${{ runner.temp }}/fetched/bin
@@ -702,10 +702,10 @@ jobs:
   gates:
     name: component gates
     needs: [native-binaries]
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           clean: ${{ runner.environment == 'github-hosted' }}
       - name: Clean all but target/, which is the runners' shared volume
@@ -737,7 +737,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/hurl" --version
       - name: Fetch comp-host
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: comp-host-bin
           path: ${{ runner.temp }}/fetched/bin
@@ -764,10 +764,10 @@ jobs:
   e2e:
     name: e2e (playwright)
     needs: [components, native-binaries]
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           clean: ${{ runner.environment == 'github-hosted' }}
       - name: Clean all but target/, which is the runners' shared volume
@@ -783,18 +783,18 @@ jobs:
           add-rust-environment-hash-key: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: . -> target
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: e2e/package-lock.json
       - name: Fetch the wasm components
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: components-wasm32-wasip2
           path: ${{ runner.temp }}/fetched/wasm
       - name: Fetch comp-host
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: comp-host-bin
           path: ${{ runner.temp }}/fetched/bin
@@ -824,10 +824,10 @@ jobs:
 
   workflows:
     name: workflows
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # NOT `taiki-e/install-action`: it does not carry actionlint, falls back to
       # cargo-binstall, and actionlint is a Go program with no crates.io package —
       # so that path dies at "actionlint is not found" and the lint never runs.
@@ -851,7 +851,7 @@ jobs:
 
   native:
     name: native workspaces
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 30
     strategy:
       # One red workspace should not hide the state of the others.
@@ -936,7 +936,7 @@ jobs:
           - workspace: crates
             test-args: ""
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # On picur every target/ stays: it is what makes the job warm.
           clean: ${{ runner.environment == 'github-hosted' }}
@@ -1011,10 +1011,10 @@ jobs:
 
   lint:
     name: clippy
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # On picur every target/ stays: it is what makes the job warm.
           clean: ${{ runner.environment == 'github-hosted' }}
@@ -1052,10 +1052,10 @@ jobs:
 
   lint-native:
     name: clippy (native workspaces)
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # On picur every target/ stays: it is what makes the job warm.
           clean: ${{ runner.environment == 'github-hosted' }}
@@ -1082,10 +1082,10 @@ jobs:
 
   fmt:
     name: fmt
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup component add rustfmt
       # One config and one workspace at the repo root (rustfmt.toml's own doc
       # explains the config), so one `cargo fmt --check` covers every member.
@@ -1115,7 +1115,7 @@ jobs:
   # `comp-agentd` (the one whose build reads outside `reconciler/`), each built and then run.
   daemon-image:
     name: daemon image (${{ matrix.daemon }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1124,7 +1124,7 @@ jobs:
     env:
       DAEMON: ${{ matrix.daemon }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build the image from the Dockerfile's own context
         run: docker build -f reconciler/Dockerfile.daemon --build-arg DAEMON="$DAEMON" -t "$DAEMON" .
       # `--help` exits 0 and proves the entrypoint is the daemon and that it runs on the slim image.
@@ -1133,7 +1133,7 @@ jobs:
 
   semgrep:
     name: semgrep
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       # NOT `fetch-depth: 1` (the components job's trick): that tool diffs file
@@ -1141,7 +1141,7 @@ jobs:
       # for a real merge-base, and two independent depth-1 shallow histories
       # share no commit to find one from — "fatal: no merge base found".
       # `--baseline-commit` needs actual ancestry, so this needs the ancestry.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -1167,11 +1167,11 @@ jobs:
 
   console:
     name: console SPA
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
