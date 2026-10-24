@@ -107,6 +107,12 @@ pub fn now_secs() -> u64 {
     system_clock::now().seconds as u64
 }
 
+/// The fixture mints only where a gate or demo asks for it (`test-tokens = on`): composed into a
+/// real app, an open `/test/token` would hand anyone a token with any roles.
+fn test_tokens() -> bool {
+    matches!(bindings::wasi::config::store::get("test-tokens"), Ok(Some(v)) if v == "on")
+}
+
 /// Via `session::issue`: a hand-built JWT could drift from what the verifier accepts.
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
@@ -206,7 +212,7 @@ impl Guest for Component {
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
         let Reply { status, json: payload } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
-            ["test", "token"] => mint(&body),
+            ["test", "token"] if test_tokens() => mint(&body),
             ["test", "seed"] => seed(),
             ["test", "stepup"] => mark_stepped_up(&body),
             // Scaffold: a part is judged on what it wrote, without the part owning the read route.

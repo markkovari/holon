@@ -22,7 +22,7 @@ fi
 ART=$("$PLUG" "$DOMAIN") || { echo "could not compose $DOMAIN"; exit 1; }
 
 "$HOST" --app "$DOMAIN" --component "$ART" --addr "127.0.0.1:$PORT" --kv sqlite \
-  --config "default-tenant=invoiceapproval" >/tmp/gate-$DOMAIN-host.log 2>&1 &
+  --config test-tokens=on --config "default-tenant=invoiceapproval" >/tmp/gate-$DOMAIN-host.log 2>&1 &
 HOSTPID=$!
 trap 'kill $HOSTPID 2>/dev/null; rm -f comp-kv.db comp-kv.db-shm comp-kv.db-wal' EXIT
 

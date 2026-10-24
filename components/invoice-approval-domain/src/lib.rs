@@ -96,6 +96,12 @@ pub fn now_secs() -> u64 {
     bindings::p3::clocks::system_clock::now().seconds as u64
 }
 
+/// The fixture mints only where a gate or demo asks for it (`test-tokens = on`): composed into a
+/// real app, an open `/test/token` would hand anyone a token with any roles.
+fn test_tokens() -> bool {
+    matches!(bindings::wasi::config::store::get("test-tokens"), Ok(Some(v)) if v == "on")
+}
+
 /// A test token, minted directly (never a real register/login): the ROUTER's fixture, never `handlers.rs`'s, since a
 /// fixture minting its own tokens can drift from what the verifier accepts and make `handlers.rs` fail for the router's reason.
 fn mint(body: &str) -> Reply {
@@ -151,7 +157,7 @@ impl Guest for Component {
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
         let Reply { status, json: payload } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
-            ["test", "token"] => mint(&body),
+            ["test", "token"] if test_tokens() => mint(&body),
             ["api", ..] => handlers::handle(&method, &route, &body),
             _ => Reply::err(404, "not_found"),
         };
