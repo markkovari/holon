@@ -47,6 +47,15 @@ pub struct Args {
     /// The goal file, relative to the checkout.
     #[arg(long, default_value = ".comp/goal.toml")]
     goal: PathBuf,
+    /// A goal ID to load directly from the SQL/NATS GoalStore instead of reading a file from disk.
+    #[arg(long)]
+    goal_id: Option<String>,
+    /// Deployment mode for the store: solo (SQLite) or distributed (SurrealDB/NATS).
+    #[arg(long)]
+    store_mode: Option<String>,
+    /// Path to SQLite goal database when store_mode is solo. Defaults to `.holon/goals.db`.
+    #[arg(long)]
+    sqlite_path: Option<PathBuf>,
     /// The branch to open the PR against.
     #[arg(long, default_value = "main")]
     base: String,
@@ -187,16 +196,85 @@ fn one() -> u32 {
     1
 }
 
+impl From<comp_goal::store::GoalRecord> for GoalSpec {
+    fn from(r: comp_goal::store::GoalRecord) -> Self {
+        let parts = r
+            .parts
+            .into_iter()
+            .map(|p| PartSpec {
+                name: p.name,
+                text: p.text,
+                writable: p.writable,
+                context: p.context,
+                checks: p
+                    .checks
+                    .into_iter()
+                    .map(|c| CheckSpec {
+                        id: c.id,
+                        may_pass_base: false,
+                        required: c.required,
+                        weight: c.weight,
+                        command: c.command,
+                        needs: Vec::new(),
+                    })
+                    .collect(),
+            })
+            .collect();
+
+        let checks = r
+            .composition_checks
+            .into_iter()
+            .map(|c| CheckSpec {
+                id: c.id,
+                may_pass_base: false,
+                required: c.required,
+                weight: c.weight,
+                command: c.command,
+                needs: Vec::new(),
+            })
+            .collect();
+
+        Self {
+            text: r.text,
+            writable: r.writable,
+            title: Some(r.title),
+            base_paths: Vec::new(),
+            workspace_manifest: None,
+            keep_members: Vec::new(),
+            component: None,
+            context: r.context,
+            checks,
+            contract: None,
+            parts,
+        }
+    }
+}
+
 /// Returns the exit code rather than calling `exit`, which skips destructors and leaked the fleet.
 fn run() -> Result<i32> {
     let args = Args::parse();
 
-    let goal_path = args.checkout.join(&args.goal);
-    let mut goal: GoalSpec = toml::from_str(
-        &std::fs::read_to_string(&goal_path)
-            .with_context(|| format!("reading {}", goal_path.display()))?,
-    )
-    .with_context(|| format!("parsing {}", goal_path.display()))?;
+    let (mut goal, spec_display) = if let Some(ref gid) = args.goal_id {
+        let store = comp_goal::store::build_goal_store(
+            args.store_mode.as_deref(),
+            args.sqlite_path.as_ref().map(|p| p.to_string_lossy().into_owned()).as_deref(),
+            args.surreal_url.as_deref(),
+            None,
+        )?;
+        let record = store
+            .get_goal(gid)?
+            .with_context(|| format!("no goal found with id `{gid}` in store"))?;
+        let spec: GoalSpec = record.into();
+        (spec, format!("store:{}", gid))
+    } else {
+        let goal_path = args.checkout.join(&args.goal);
+        let spec: GoalSpec = toml::from_str(
+            &std::fs::read_to_string(&goal_path)
+                .with_context(|| format!("reading {}", goal_path.display()))?,
+        )
+        .with_context(|| format!("parsing {}", goal_path.display()))?;
+        (spec, args.goal.display().to_string())
+    };
     if goal.checks.is_empty() {
         bail!("the goal has no checks — an empty gate accepts everything");
     }
@@ -368,14 +446,7 @@ fn run() -> Result<i32> {
         Trace::new(url, "goalmemory", surreal_password.as_deref())
     });
     if let Some(t) = &trace {
-        t.run_started(
-            &run,
-            &goal.text,
-            &args.goal.display().to_string(),
-            seed,
-            &base_commit,
-            args.branches.into(),
-        );
+        t.run_started(&run, &goal.text, &spec_display, seed, &base_commit, args.branches.into());
     }
 
     // Above the decomposed dispatch: a part is where reuse is likeliest (ADR-0094).
