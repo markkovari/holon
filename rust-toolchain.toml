@@ -2,6 +2,6 @@
 # within what wasmtime 45 in host/ provides. After changing it, rebuild with `cargo xtask build --force`.
 # The single toolchain file for the whole repository: per-workspace `stable` pins lack the wasip2 target in CI.
 [toolchain]
-channel = "1.98.0"
+channel = "1.99.0"
 targets = ["wasm32-wasip2"]
 components = ["rustfmt", "clippy"]
