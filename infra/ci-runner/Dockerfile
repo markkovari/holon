@@ -7,7 +7,7 @@ ARG RUNNER_VERSION=2.338.1
 ARG NATS_VERSION=v2.10.22
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      build-essential pkg-config libssl-dev clang libclang-dev cmake \
+      build-essential pkg-config libssl-dev clang libclang-dev cmake mold \
       ca-certificates curl git jq unzip zstd python3 sudo \
     && rm -rf /var/lib/apt/lists/*
 
@@ -25,6 +25,8 @@ RUN mkdir /opt/runner && cd /opt/runner \
 
 COPY --chmod=755 entrypoint.sh /entrypoint.sh
 ENV PATH=/home/runner/.cargo/bin:$PATH
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=clang
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=mold"
 USER runner
 WORKDIR /home/runner
 ENTRYPOINT ["/entrypoint.sh"]
