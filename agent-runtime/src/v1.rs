@@ -158,9 +158,8 @@ pub fn route(
                 .unwrap_or(0),
         ),
         (Method::Get, ["state"]) => {
+            // Sessions as the stream's `session` event carries them, so a client replays them alike.
             let (seq, running, approvals, sessions) = rt.state();
-            let sessions: Vec<Value> =
-                sessions.iter().map(crate::session::Describe::to_json).collect();
             Reply::Json(
                 200,
                 json!({"seq": seq, "running": running, "approvals": approvals, "sessions": sessions}),

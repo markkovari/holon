@@ -585,7 +585,7 @@ impl Actions for DemoActions {
     fn answer(&self, id: u64, approve: bool, _scope: Scope, cx: &mut App) {
         self.answered.set(Some(approve));
         self.tree.update(cx, |t, cx| {
-            t.apply(&Event::ApprovalResolved { id, approved: approve }, now_ms());
+            t.apply(&Event::ApprovalResolved { id, approved: approve, timed_out: false }, now_ms());
             cx.notify();
         });
     }

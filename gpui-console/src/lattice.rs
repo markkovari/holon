@@ -318,7 +318,7 @@ impl Lattice {
                 }
                 self.approvals.push(Pending { id, agent, tool, args, chain });
             }
-            Event::ApprovalResolved { id, approved } => {
+            Event::ApprovalResolved { id, approved, .. } => {
                 if let Some(p) = self.approvals.iter().find(|p| p.id == id).cloned() {
                     if let Some(row) = self.row_mut(&p.agent) {
                         row.messages.push(Message::system(format!(

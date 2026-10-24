@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use agent_wire::{Event, Pending, RunRecord, Sequenced};
+use agent_wire::{Event, Pending, RunRecord, Sequenced, SessionView};
 use gpui::{App, Entity};
 use serde_json::{json, Value};
 
@@ -78,6 +78,11 @@ fn now_events(state: &Value) -> Vec<Event> {
             model: r.model,
             chain: r.chain,
         });
+    // A coding session's approval lands on the session's node, which is made by its `session` event.
+    let sessions = serde_json::from_value::<Vec<SessionView>>(state["sessions"].clone())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|v| Event::Session(Box::new(v)));
     let waiting = serde_json::from_value::<Vec<Pending>>(state["approvals"].clone())
         .unwrap_or_default()
         .into_iter()
@@ -88,7 +93,7 @@ fn now_events(state: &Value) -> Vec<Event> {
             args: p.args,
             chain: p.chain,
         });
-    running.chain(waiting).collect()
+    running.chain(sessions).chain(waiting).collect()
 }
 
 impl Remote {
@@ -313,6 +318,42 @@ mod tests {
             t.apply(e, 1);
         }
         assert_eq!(t.node("r1").unwrap().pending.len(), 1, "the approval found its run");
+    }
+
+    #[test]
+    fn a_coding_session_already_going_gets_its_waiting_approval_too() {
+        let view = SessionView {
+            id: "ses-1".into(),
+            agent: "coder".into(),
+            run_id: "r1".into(),
+            call_span: None,
+            trace_id: "t".into(),
+            task: "fix it".into(),
+            model: "m".into(),
+            workspace: "/w".into(),
+            phase: agent_wire::Phase::NeedsYou,
+            cost_micros: 0,
+            tokens_in: 0,
+            tokens_out: 0,
+            tools: vec![],
+            calls: 0,
+            activity: String::new(),
+            started_ms: 1,
+            finished_ms: None,
+            result: None,
+            pending: vec![],
+        };
+        let state = json!({
+            "seq": 3,
+            "sessions": [view],
+            "approvals": [{"id": 9, "agent": "coder", "tool": "session:write_file", "args": {},
+                           "chain": ["session ses-1"]}],
+        });
+        let mut t = AgentTree::default();
+        for e in &now_events(&state) {
+            t.apply(e, 1);
+        }
+        assert_eq!(t.node("session:ses-1").unwrap().pending.len(), 1);
     }
 
     #[test]

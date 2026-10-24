@@ -89,7 +89,7 @@ mod tests {
         };
         v.apply(&at(1, ask(7)));
         v.apply(&at(2, ask(8)));
-        v.apply(&at(3, Event::ApprovalResolved { id: 7, approved: true }));
+        v.apply(&at(3, Event::ApprovalResolved { id: 7, approved: true, timed_out: false }));
         assert_eq!(v.approvals.iter().map(|p| p.id).collect::<Vec<_>>(), [8]);
     }
 }

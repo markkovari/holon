@@ -168,7 +168,7 @@ paths:
                   seq: { type: integer }
                   running: { type: array, items: { $ref: "#/components/schemas/Run" } }
                   approvals: { type: array, items: { $ref: "#/components/schemas/Approval" } }
-                  sessions: { type: array, items: { type: object } }
+                  sessions: { type: array, items: { type: object, description: "A SessionView, as the stream's `session` event carries it." } }
 
   /v1/approvals:
     get:

@@ -1014,19 +1014,19 @@ impl Host for Runtime {
 
         let deadline = std::time::Instant::now() + self.cfg.approval_timeout;
         let mut list = self.approvals.lock().unwrap();
-        let answer = loop {
+        let (answer, timed_out) = loop {
             if let Some(a) = list.iter().find(|s| s.pending.id == id).and_then(|s| s.answer) {
-                break a;
+                break (a, false);
             }
             let left = deadline.saturating_duration_since(std::time::Instant::now());
             if left.is_zero() {
-                break false;
+                break (false, true);
             }
             list = self.approvals_cv.wait_timeout(list, left).unwrap().0;
         };
         list.retain(|s| s.pending.id != id);
         drop(list);
-        self.observe(Event::ApprovalResolved { id, approved: answer });
+        self.observe(Event::ApprovalResolved { id, approved: answer, timed_out });
         answer
     }
 

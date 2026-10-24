@@ -227,6 +227,9 @@ pub enum Event {
     ApprovalResolved {
         id: u64,
         approved: bool,
+        /// Nobody answered in time: `approved` is false, and no person said no.
+        #[serde(default)]
+        timed_out: bool,
     },
     /// A coding session an agent started changed: the whole of it, to be replaced by id.
     Session(Box<SessionView>),
