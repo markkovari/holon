@@ -1497,7 +1497,7 @@ impl Bridge {
                 self.state.write(|d| d.delivered.insert(agent.name.clone(), now_ms));
                 continue;
             };
-            let Ok(runs) = self.rt.runs(&agent.name, 20) else { continue };
+            let Ok(runs) = self.rt.runs_since(&agent.name, after) else { continue };
             let due = crate::scheduled::due(&agent.triggers, &runs, after);
             if due.is_empty() {
                 continue;
