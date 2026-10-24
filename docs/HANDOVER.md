@@ -6,7 +6,7 @@ against `git log` and `gh pr list` first.
 
 ## Where it stands
 
-- `main` is green and nothing is open: every PR through #450 is merged and every local branch is
+- `main` is green and nothing is open: every PR through #452 is merged and every local branch is
   gone.
 - CI runs nineteen jobs, the heavy ones on picur's self-hosted runners (`picur-1`, `picur-2`).
   Includes formatting, clippy, test suites, checks, component gates, and e2e (playwright). All passed.
