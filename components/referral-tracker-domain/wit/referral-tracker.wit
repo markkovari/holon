@@ -7,6 +7,7 @@
 package referral:tracker@0.1.0;
 
 world referral-tracker-domain {
+    import wasi:config/store@0.2.0-rc.1;
     export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     import auth:identity/accounts@0.1.0;

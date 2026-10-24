@@ -108,6 +108,12 @@ pub fn now_secs() -> u64 {
 
 use guestfmt::rfc3339;
 
+/// The fixture mints only where a gate or demo asks for it (`test-tokens = on`): composed into a
+/// real app, an open `/test/token` would hand anyone a token with any roles.
+fn test_tokens() -> bool {
+    matches!(bindings::wasi::config::store::get("test-tokens"), Ok(Some(v)) if v == "on")
+}
+
 /// Via `session::issue`, not a hand-built JWT: a fixture minting its own tokens can drift from the verifier.
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
@@ -224,7 +230,7 @@ impl Guest for Component {
             ["styles.css"] => Reply::Css(include_str!("../ui/styles.css").to_string()),
             ["app.js"] => Reply::Js(include_str!("../ui/app.js").to_string()),
             ["health"] => Reply::json(200, json!({ "ok": true })),
-            ["test", "token"] => mint(&body),
+            ["test", "token"] if test_tokens() => mint(&body),
             ["test", "seed"] => seed(),
             ["test", "rules"] => seed_rules(),
             ["test", "events"] => peek_bus(),
