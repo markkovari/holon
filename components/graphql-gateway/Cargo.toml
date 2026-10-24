@@ -8,7 +8,7 @@ publish.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-juniper = "0.15.11"
+juniper = { version = "0.15.11", default-features = false }
 wit-bindgen-rt = { workspace = true, features = ["bitflags"] }
 
 [lib]
