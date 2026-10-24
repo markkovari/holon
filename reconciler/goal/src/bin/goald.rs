@@ -234,10 +234,71 @@ fn sweep_awaiting_human(
     }
 }
 
+fn find_open_pr_in_pulls(pulls: &[Value], target_title: &str) -> Option<String> {
+    for pull in pulls {
+        if pull["title"].as_str() == Some(target_title) {
+            return pull["html_url"].as_str().map(String::from);
+        }
+    }
+    None
+}
+
+fn find_open_pr(
+    http: &reqwest::blocking::Client,
+    token: Option<&str>,
+    repo: &str,
+    title: &str,
+) -> Option<String> {
+    let mut req = http
+        .get(format!("https://api.github.com/repos/{repo}/pulls?state=open&per_page=30"))
+        .header("User-Agent", "comp-goald")
+        .header("Accept", "application/vnd.github+json");
+    if let Some(t) = token {
+        req = req.bearer_auth(t);
+    }
+    let res = req.send().ok()?;
+    if !res.status().is_success() {
+        return None;
+    }
+    let pulls: Vec<Value> = res.json().ok()?;
+    find_open_pr_in_pulls(&pulls, title)
+}
+
 /// Success is `awaiting-human` (`done` is the human's); failure is terminal `failed` (ADR-0082).
-fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
+fn work(
+    args: &Args,
+    s: &Session,
+    goal: &Value,
+    http: &reqwest::blocking::Client,
+    github_token: Option<&str>,
+) -> Result<()> {
     let id = goal["id"].as_str().unwrap_or_default().to_string();
     let title = goal["title"].as_str().unwrap_or("(untitled)").to_string();
+
+    // If a crash happened after opening a PR but before posting /review, recover without re-running.
+    let pr_marker = args.checkout.join(".comp").join(format!(".pr-{id}"));
+    let recovered_pr = if pr_marker.exists() {
+        std::fs::read_to_string(&pr_marker)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    } else {
+        None
+    }
+    .or_else(|| find_open_pr(http, github_token, &args.repo, &title));
+
+    if let Some(url) = recovered_pr {
+        eprintln!("[goald] {id} found previously opened PR ({url}) -> recovering without rerun");
+        call(
+            s,
+            "POST",
+            &format!("/api/goals/{id}/review"),
+            Some(serde_json::json!({ "pr": url })),
+        )?;
+        let _ = std::fs::remove_file(&pr_marker);
+        return Ok(());
+    }
+
     // The frozen spec: what a run is judged against must not move under it (ADR-0081).
     let spec = goal["frozen_spec"]
         .as_str()
@@ -277,6 +338,7 @@ fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
     let child_pgid = child.id() as i32;
     let stdout = child.stdout.take().expect("stdout was piped");
     let pr: Arc<Mutex<Option<String>>> = Arc::default();
+    let pr_marker_path = pr_marker.clone();
     let echo = {
         let pr = pr.clone();
         std::thread::spawn(move || {
@@ -284,7 +346,12 @@ fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
             for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
                 println!("{line}");
                 if let Some(url) = line.trim().strip_prefix("PR opened: ") {
-                    *pr.lock().unwrap() = Some(url.to_string());
+                    let url = url.to_string();
+                    if let Some(parent) = pr_marker_path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&pr_marker_path, &url);
+                    *pr.lock().unwrap() = Some(url);
                 }
             }
         })
@@ -305,8 +372,28 @@ fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
             "[goald] {id} DONE -> awaiting-human{}",
             pr.as_deref().map(|u| format!(" ({u})")).unwrap_or_default()
         );
-        call(s, "POST", &format!("/api/goals/{id}/review"), Some(serde_json::json!({ "pr": pr })))?;
+        let mut review_result = Err(anyhow::anyhow!("review post failed"));
+        for attempt in 1..=3 {
+            match call(
+                s,
+                "POST",
+                &format!("/api/goals/{id}/review"),
+                Some(serde_json::json!({ "pr": pr })),
+            ) {
+                Ok(v) => {
+                    review_result = Ok(v);
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("[goald] {id} posting review attempt {attempt}/3 failed: {e:#}");
+                    std::thread::sleep(Duration::from_millis(500 * attempt));
+                }
+            }
+        }
+        review_result?;
+        let _ = std::fs::remove_file(&pr_marker);
     } else {
+        let _ = std::fs::remove_file(&pr_marker);
         // Exhausted and broken read differently because the fix differs.
         let reason = comp_goal::goalexit::failure_reason(status.code());
         eprintln!("[goald] {id} FAILED: {reason}");
@@ -362,12 +449,13 @@ fn main() -> Result<()> {
             ),
         }
     }
-    let github_token = args
-        .github_token_file
-        .as_ref()
-        .map(|f| std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display())))
-        .transpose()?
-        .map(|t| t.trim().to_string());
+    let github_token = Arc::new(
+        args.github_token_file
+            .as_ref()
+            .map(|f| std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display())))
+            .transpose()?
+            .map(|t| t.trim().to_string()),
+    );
     let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build()?;
     if args.auto_close_merged_prs {
         eprintln!("[goald] auto-closing awaiting-human goals once their pull request resolves");
@@ -431,10 +519,16 @@ fn main() -> Result<()> {
                         }
                         started_this_pass += 1;
                         running.fetch_add(1, Ordering::SeqCst);
-                        let (args, s, running, claimed) =
-                            (args.clone(), s.clone(), running.clone(), claimed.clone());
+                        let (args, s, running, claimed, http, github_token) = (
+                            args.clone(),
+                            s.clone(),
+                            running.clone(),
+                            claimed.clone(),
+                            http.clone(),
+                            github_token.clone(),
+                        );
                         std::thread::spawn(move || {
-                            match work(&args, &s, &goal) {
+                            match work(&args, &s, &goal, &http, github_token.as_deref()) {
                                 // The goal has left `running`: if it is ever queued again, run it.
                                 Ok(()) => {
                                     claimed.lock().unwrap().remove(&id);
@@ -519,5 +613,19 @@ mod tests {
             Ok(status) => assert_eq!(status, PrStatus::Merged, "PR #273 was merged this session"),
             Err(e) => eprintln!("skipping: no network or GitHub unreachable: {e:#}"),
         }
+    }
+
+    #[test]
+    fn find_open_pr_matches_title() {
+        let pulls = serde_json::json!([
+            { "title": "Other PR", "html_url": "https://github.com/acme/widgets/pull/1" },
+            { "title": "feat: my goal title", "html_url": "https://github.com/acme/widgets/pull/2" }
+        ]);
+        let pulls_vec = pulls.as_array().unwrap();
+        assert_eq!(
+            find_open_pr_in_pulls(pulls_vec, "feat: my goal title"),
+            Some("https://github.com/acme/widgets/pull/2".to_string())
+        );
+        assert_eq!(find_open_pr_in_pulls(pulls_vec, "nonexistent"), None);
     }
 }
