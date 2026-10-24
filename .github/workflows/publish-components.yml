@@ -50,10 +50,10 @@ permissions:
 jobs:
   publish:
     name: push every component by digest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install the wasm target
         run: rustup target add wasm32-wasip2
@@ -100,7 +100,7 @@ jobs:
 
       # The digests, not the tags. This is the file a consumer pins against.
       - name: Keep the digests
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: components-lock
           path: components.lock

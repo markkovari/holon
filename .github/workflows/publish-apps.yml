@@ -44,10 +44,10 @@ concurrency:
 jobs:
   publish:
     name: compose every app and publish it by digest
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install the wasm target
         run: rustup target add wasm32-wasip2

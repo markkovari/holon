@@ -13,7 +13,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO=markkovari/holon
-RUNNERS=(picur-1 picur-2)
+RUNNERS=(picur-1 picur-2 picur-3)
 IMAGE=holon-ci-runner
 
 case "${1:-}" in
@@ -31,7 +31,7 @@ case "${1:-}" in
       if ! docker run --rm -v "$n:$RHOME" --entrypoint test "$IMAGE" -f "$RHOME/.registration/.runner"; then
         token="$(gh api -X POST "repos/$REPO/actions/runners/registration-token" -q .token)"
       fi
-      docker run -d --name "$n" --restart unless-stopped --cpus 5 --memory 9g \
+      docker run -d --name "$n" --restart unless-stopped --cpus 4 --memory 6g \
         -v "$n:$RHOME" -v holon-ci-target:/ci-target -e REPO_URL="https://github.com/$REPO" -e RUNNER_NAME="$n" \
         -e REG_TOKEN="$token" "$IMAGE" >/dev/null
       echo "started $n"
