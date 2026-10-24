@@ -6,11 +6,10 @@ against `git log` and `gh pr list` first.
 
 ## Where it stands
 
-- `main` is green and nothing is open: every PR through #444 is merged and every local branch is
+- `main` is green and nothing is open: every PR through #450 is merged and every local branch is
   gone.
-- CI runs fourteen jobs, the heavy ones on picur's runners. Two of them are new: `component gates`
-  (all 22 `components/*/gate.sh`) and `e2e (playwright)` (all 10 apps, offline). Both passed and
-  had not been run by anything before.
+- CI runs nineteen jobs, the heavy ones on picur's self-hosted runners (`picur-1`, `picur-2`).
+  Includes formatting, clippy, test suites, checks, component gates, and e2e (playwright). All passed.
 
 ## The live system (picur, macOS, launchd)
 
@@ -30,10 +29,8 @@ against `git log` and `gh pr list` first.
 - **Tokens** are in `~/.holon-agents/` (`admin-token`, `agentd-token`, `vcs-token`).
 - **Secrets** are in `~/.comp-secrets/` and the platform vault. Do not read either.
 - **The native board** is `gpui-console`; `gpui-console/install.sh` builds and installs it.
-- **Owner's action: rebuild the runtime and the board.** #443 changed `agent-wire`, the event
-  format both share, and neither installed binary has been rebuilt since. Rebuilding restarts the
-  live agents briefly. Until then, approvals waiting inside a coding session don't show on a board
-  that connects mid-session.
+- **Rebuilt & deployed:** `gpui-console`, `agent-runtime`, `agent-matrix`, and `comp-agentd` were rebuilt
+  and reloaded following #443-#450.
 
 ## Done recently (Oct 22–24)
 
@@ -52,6 +49,12 @@ against `git log` and `gh pr list` first.
 | fsm domains: one source of status (ecommerce, dispatch, triage) | #435, #439, #442 |
 | Approval timeouts are not "no"; approval ids survive restarts | #443, #425 |
 | Component gates and the Playwright suite run again, and in CI | #438 |
+| Documented repo conventions in `AGENTS.md` and handover notes; CI bash fix | #445 |
+| Reconciler & relay: release leader lease on SIGINT and SIGTERM via `ShutdownListener` | #446 |
+| goald: avoid duplicate PRs across crashes and retry review posting | #447 |
+| agent-runtime: state safety for `archive_project`, `remove_key`, and `grant_key` | #448 |
+| agent-matrix: paginate runs when delivering scheduled results | #449 |
+| comp-agentd: hold session and conversation lock during rewind; evaluate retry deadline | #450 |
 
 ## Open, not started
 
@@ -61,30 +64,17 @@ Each item below was found by reading the code. Where a bug has not been reproduc
 - A run still has no `Running` status (`crates/agent-wire` `Status`). Adding one touches about 80
   match sites in the board and the bridge.
 - An agent's state is spread out: a `paused` bool, a trash folder and a project's
-  `paused_by_archive` list. One state enum would replace them. Related, in `runtime.rs`:
-  - `archive_project` pauses the agents, then writes the project;
-  - `remove_key` deletes the key, then updates the agents in a loop;
-  - `grant_key` never checks that the key exists.
-
-  All three can leave partial state after a crash or failure. Not reproduced.
+  `paused_by_archive` list. One state enum would replace them.
 - HTTP status codes are chosen by matching error text (`server.rs`, `v1.rs`), and the old non-`/v1`
   routes duplicate `/v1` (`server.rs:144`).
 - `last_fired` is keyed by trigger index, so editing an agent's triggers shifts it. Timers are taken
   out before they run, so a crash loses them (`runtime.rs`).
-- The bridge reads `runs?limit=20` each pass, so more than 20 runs between passes are missed
-  (`agent-matrix/src/bridge.rs`).
 
 **comp-agentd** (`reconciler/daemons/agentd/`)
-- A task sent while a rewind runs races it (marked `shortcut:` in `service.rs`).
 - Edits made through the `run` tool are not recorded in the code store. A rewind does not rewind
   the conversation.
 
 **Reconciler** (`reconciler/`)
-- goald: a crash between opening a PR and posting `/review` leaves the goal `running`, and a
-  restart opens a second PR (`goal/src/bin/goald.rs`).
-- ~~The lease's `release()` is never called, so every planned restart waits out the TTL~~ →
-  **fixed**: `ShutdownListener` installs SIGINT/SIGTERM handlers and calls `release()` on shutdown
-  in `comp-reconciler` and `comp-relay` (`lattice/src/lease.rs`).
 - `plan()` is about 260 lines (`src/plan.rs:336`), and goalrun's `run` and `decomposed` duplicate
   each other's recording and landing (`goal/src/bin/goalrun.rs`). Both are plain extraction work.
 
@@ -93,7 +83,3 @@ Each item below was found by reading the code. Where a bug has not been reproduc
   helpers instead of using `guestauth`.
 - Something in the components workspace turns on serde_json's `preserve_order`. bytes-codec's gate
   now compares JSON with sorted keys; which crate enables it was not found.
-
-**Leftovers on picur**
-- A test bucket `holon-vcs-livetest` in NATS and a database `vcs_livetest` in SurrealDB, from
-  testing ADR-0121. Both can be dropped.
