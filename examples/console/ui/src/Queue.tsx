@@ -147,7 +147,7 @@ export function build(
       // here would compete with the goal it belongs to for the same glance.
       runsOf(g, runs).forEach((r, ri) => {
         const rid = `run:${r.id_text}`;
-        const passed = r.outcome === "merged" || r.outcome === "passed";
+        const passed = r.outcome === "pr-opened" || r.outcome === "merged" || r.outcome === "passed";
         const border = r.resolved_at ? (passed ? "#065f46" : "#7f1d1d") : "#1e40af";
         nodes.push({
           id: rid,

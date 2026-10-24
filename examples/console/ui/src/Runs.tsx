@@ -392,7 +392,7 @@ function secs(ms: number): string {
 
 function Outcome({ value }: { value?: string }) {
   const tone =
-    value === "merged" || value === "passed"
+    value === "pr-opened" || value === "merged" || value === "passed"
       ? "text-emerald-400"
       : value === "interrupted"
         ? "text-amber-400"

@@ -64,7 +64,7 @@ fn main() {
 
     trace.capability_added(run, "paginate", "components/paginate");
 
-    trace.run_resolved(run, "merged", Some("mvp"), "https://example.test/pull/1");
+    trace.run_resolved(run, "pr-opened", Some("mvp"), "https://example.test/pull/1");
 
     // A half-written seed would make the browser test report a UI bug.
     if let Some(why) = trace.report() {
