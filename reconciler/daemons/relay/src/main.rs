@@ -223,6 +223,7 @@ async fn main() -> Result<()> {
     // A sweep that takes longer than the interval must not queue a burst of catch-up sweeps.
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
+    let mut shutdown = comp_lattice::lease::ShutdownListener::new();
     loop {
         // Only the holder acts. Renewal happens here, once per pass, so the TTL must outlive the interval.
         let acting = match lease.as_mut() {
@@ -243,7 +244,7 @@ async fn main() -> Result<()> {
                     sweep(&http, &args.targets, "publish").await;
                 }
             }
-            _ = tokio::signal::ctrl_c() => {
+            _ = shutdown.wait() => {
                 if let Some(l) = lease.as_mut() {
                     // Hand it over now rather than making a standby wait out the TTL.
                     l.release().await;

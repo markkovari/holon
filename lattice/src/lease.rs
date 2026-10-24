@@ -73,3 +73,41 @@ impl Lease {
         &self.id
     }
 }
+
+/// Listens for process termination signals (SIGINT / Ctrl-C, and SIGTERM on Unix).
+/// Installs the OS signal handler on creation so signals sent during execution are not missed.
+pub struct ShutdownListener {
+    #[cfg(unix)]
+    term: Option<tokio::signal::unix::Signal>,
+}
+
+impl Default for ShutdownListener {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ShutdownListener {
+    pub fn new() -> Self {
+        #[cfg(unix)]
+        let term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
+        Self {
+            #[cfg(unix)]
+            term,
+        }
+    }
+
+    /// Waits for either SIGINT (Ctrl-C) or SIGTERM.
+    pub async fn wait(&mut self) {
+        let ctrl_c = tokio::signal::ctrl_c();
+        #[cfg(unix)]
+        if let Some(term) = self.term.as_mut() {
+            tokio::select! {
+                _ = ctrl_c => {}
+                _ = term.recv() => {}
+            }
+            return;
+        }
+        let _ = ctrl_c.await;
+    }
+}

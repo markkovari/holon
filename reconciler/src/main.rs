@@ -212,9 +212,18 @@ async fn main() -> Result<()> {
     // `None` until the first pass, so a process that STARTS as a standby says so: with a plain `false` the
     // first pass compares equal and logs nothing, indistinguishable from a hung process.
     let mut was_leader: Option<bool> = None;
+    let mut shutdown = comp_lattice::lease::ShutdownListener::new();
 
     loop {
-        tokio::time::sleep(period).await;
+        tokio::select! {
+            _ = tokio::time::sleep(period) => {}
+            _ = shutdown.wait() => {
+                if let Some(l) = lease.as_mut() {
+                    l.release().await;
+                }
+                return Ok(());
+            }
+        }
 
         // A standby does nothing at all: no distribution, no diff, no commands. It holds no inventory cache or
         // hysteresis, so on takeover it starts a scale-down cooldown from zero, the safe direction.
