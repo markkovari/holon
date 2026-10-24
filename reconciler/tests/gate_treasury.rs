@@ -644,6 +644,7 @@ fn the_token_fixture_is_closed_unless_a_gate_opens_it() {
     let Some(gate) = Gate::compose_and_start("treasury", CRATE, &["test-tokens=off"]) else {
         return;
     };
-    let (code, body) = gate.post("/test/token", None, json!({ "subject": "x", "roles": ["admin"] }));
+    let (code, body) =
+        gate.post("/test/token", None, json!({ "subject": "x", "roles": ["admin"] }));
     assert_eq!(code, 404, "an app that does not ask for the fixture must not mint: {body}");
 }
