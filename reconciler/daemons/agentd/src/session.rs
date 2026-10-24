@@ -58,6 +58,7 @@ pub struct Session {
 #[derive(Default)]
 struct State {
     closed: bool,
+    rewinding: bool,
     by_key: HashMap<String, String>,
     events: Vec<Event>,
     /// Everything the log says, folded by `Machine::apply` as each event is appended or read back.
@@ -180,6 +181,24 @@ pub enum Refusal {
     Busy,
     /// Queueing was asked for and this many are already waiting.
     QueueFull(usize),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum RewindRefusal {
+    Closed,
+    Busy,
+}
+
+/// An RAII guard held during a rewind that keeps the session busy and holds the conversation lock.
+pub struct RewindGuard<'a> {
+    sess: &'a Session,
+    _history: tokio::sync::MutexGuard<'a, Vec<Msg>>,
+}
+
+impl Drop for RewindGuard<'_> {
+    fn drop(&mut self) {
+        self.sess.lock().rewinding = false;
+    }
 }
 
 /// A task that has just become the running one and has no loop yet. Whoever is handed one
@@ -398,7 +417,7 @@ impl Session {
             SessionStatus::Closed
         } else if waiting {
             SessionStatus::AwaitingApproval
-        } else if s.m.running.is_some() {
+        } else if s.m.running.is_some() || s.rewinding {
             SessionStatus::Running
         } else {
             SessionStatus::Idle
@@ -534,8 +553,8 @@ impl Session {
         }
         let id = wire::new_id("task");
         let prompt = prompt.to_string();
-        if s.m.running.is_some() {
-            if when_busy != WhenBusy::Queue || max_queued == 0 {
+        if s.m.running.is_some() || s.rewinding {
+            if s.rewinding || when_busy != WhenBusy::Queue || max_queued == 0 {
                 return Err(Refusal::Busy);
             }
             if s.m.queue.len() >= max_queued {
@@ -760,6 +779,25 @@ impl Session {
             l.parked = Some(Parked { cp, answered: false });
         }
         BeginPark::Parked
+    }
+
+    /// Guard the session for a rewind: marks the session as busy/running, ensures no tasks are
+    /// running, waiting, or queued, and holds the history lock for the duration of the rewind
+    /// so no concurrent tasks can race VCS file reverts and writes.
+    pub fn begin_rewind(&self) -> Result<RewindGuard<'_>, RewindRefusal> {
+        let mut s = self.lock();
+        if s.closed {
+            return Err(RewindRefusal::Closed);
+        }
+        let waiting = s.live.as_ref().is_some_and(|l| !l.pending.is_empty() || l.parked.is_some());
+        if s.m.running.is_some() || s.rewinding || waiting || !s.m.queue.is_empty() {
+            return Err(RewindRefusal::Busy);
+        }
+        let Ok(history) = self.history.try_lock() else {
+            return Err(RewindRefusal::Busy);
+        };
+        s.rewinding = true;
+        Ok(RewindGuard { sess: self, _history: history })
     }
 
     /// The ticket for the approval of `call_id` exists. Written to the checkpoint too, so that a
