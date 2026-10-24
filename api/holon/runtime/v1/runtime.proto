@@ -239,6 +239,8 @@ message ApprovalRequested { Approval approval = 1; }
 message ApprovalResolved {
   uint64 id = 1;
   bool approved = 2;
+  // Nobody answered in time: approved is false, and no person said no.
+  bool timed_out = 3;
 }
 
 // A coding session an agent started (ADR-0119): the whole of it, replaced by id.

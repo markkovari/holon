@@ -706,7 +706,7 @@ mod tests {
         assert_eq!(t.node("r1").unwrap().status, Status::NeedsYou);
         assert_eq!(t.summary(T0).waiting.len(), 1);
         assert_eq!(t.summary(T0).waiting[0].pending.id, 7);
-        t.apply(&Event::ApprovalResolved { id: 7, approved: true }, T0);
+        t.apply(&Event::ApprovalResolved { id: 7, approved: true, timed_out: false }, T0);
         assert_eq!(t.node("r1").unwrap().status, Status::Running);
         assert!(t.summary(T0).waiting.is_empty());
     }
@@ -790,7 +790,7 @@ mod tests {
             T0,
         );
         assert_eq!(t.summary(T0).waiting.len(), 1);
-        t.apply(&Event::ApprovalResolved { id: 3, approved: true }, T0);
+        t.apply(&Event::ApprovalResolved { id: 3, approved: true, timed_out: false }, T0);
         assert!(t.summary(T0).waiting.is_empty());
     }
 

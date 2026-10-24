@@ -611,7 +611,7 @@ impl Runtime {
                 return;
             }
             for (aid, _) in t.approvals.drain(..) {
-                events.push(Event::ApprovalResolved { id: aid, approved: false });
+                events.push(Event::ApprovalResolved { id: aid, approved: false, timed_out: false });
             }
             t.view.pending.clear();
             t.view.phase = phase;
@@ -705,7 +705,7 @@ impl Runtime {
                         matches!(e, Entry::ToolCall { call_id, decision: Some(d), .. }
                             if call_id == call && d == "approve")
                     });
-                    events.push(Event::ApprovalResolved { id: *aid, approved });
+                    events.push(Event::ApprovalResolved { id: *aid, approved, timed_out: false });
                 }
             }
             t.approvals = registered;
@@ -749,7 +749,7 @@ impl Runtime {
                 t.view.pending.retain(|p| p.id != id);
             }
         }
-        self.emit(Event::ApprovalResolved { id, approved });
+        self.emit(Event::ApprovalResolved { id, approved, timed_out: false });
         Some(true)
     }
 
