@@ -1,5 +1,6 @@
-//! `MOVES` is the lifecycle, written once. `fire` goes first and its typed errors say what is
-//! missing, so an instance is never defensively re-created (which would reset it to `open`).
+//! `MOVES` is the lifecycle, written once, and the report's `state` is where it stands. The
+//! machine is moved after the save, as history; `fire`'s typed errors say what is missing, so an
+//! instance is never defensively re-created (which would reset it to `open`).
 use crate::bindings::fsm::workflow::engine as fsm;
 use crate::bindings::p3::http::types::Method;
 use crate::bindings::records::store::store as records;
@@ -83,23 +84,23 @@ fn transition(id: &str, body: &str) -> Reply {
     }
 
     let doc_state = doc.get("state").and_then(Value::as_str).unwrap_or(STATES[0]).to_string();
-    let status = match fire(id, event, &doc_state) {
-        Ok(s) => s,
-        Err(fsm::FsmError::IllegalTransition(state)) => {
-            return Reply::json(409, json!({ "error": "illegal", "state": state }))
-        }
-        Err(_) => return Reply::err(503, "fsm_unavailable"),
+    // The report is its own state: `MOVES` says what may follow it, and the machine, moved after
+    // the save, keeps the history. Fired first, a save that failed left the machine a step ahead,
+    // refusing the move the report still needed.
+    let Some((_, _, next)) = MOVES.iter().find(|(e, s, _)| *e == event && *s == doc_state) else {
+        return Reply::json(409, json!({ "error": "illegal", "state": doc_state }));
     };
 
-    doc["state"] = json!(status.state);
+    doc["state"] = json!(next);
     if event == "triage" {
         doc["severity"] = json!(severity);
     }
     if records::update(REPORTS, id, &doc.to_string(), entry.revision).is_err() {
         return Reply::err(500, "store_failed");
     }
+    let _ = fire(id, event, &doc_state);
 
-    let mut out = json!({ "id": id, "state": status.state });
+    let mut out = json!({ "id": id, "state": next });
     if let Some(s) = doc.get("severity") {
         out["severity"] = s.clone();
     }
