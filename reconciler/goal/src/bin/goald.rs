@@ -52,6 +52,12 @@ struct Args {
     /// Close an `awaiting-human` goal once its recorded PR is merged (`done`) or closed (`failed`).
     #[arg(long, default_value_t = false)]
     auto_close_merged_prs: bool,
+    /// Deployment mode: solo (SQLite .holon/goals.db) or distributed (SurrealDB + NATS).
+    #[arg(long)]
+    store_mode: Option<String>,
+    /// Path to SQLite goal database when store_mode is solo. Defaults to `.holon/goals.db`.
+    #[arg(long)]
+    sqlite_path: Option<PathBuf>,
     /// A file holding a GitHub token for `--auto-close-merged-prs`; omit for public repos.
     #[arg(long)]
     github_token_file: Option<PathBuf>,
