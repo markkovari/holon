@@ -752,7 +752,9 @@ jobs:
           for f in "$RUNNER_TEMP"/fetched/bin/*; do put "$f" target/release; done
           if [ -d "$RUNNER_TEMP"/fetched/wasm ]; then
             for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
-              [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release || true
+              if [ -e "$f" ]; then
+                put "$f" components/target/wasm32-wasip2/release
+              fi
             done
           fi
       - name: Build comp-plug
