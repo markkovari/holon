@@ -21,7 +21,7 @@ const STATES: Record<string, string[]> = {
   queued: ["queued", "queue", "not started", "waiting to start", "todo", "backlog"],
   running: ["running", "in flight", "in progress", "active", "going", "right now"],
   "awaiting-human": ["awaiting", "await", "review", "waiting on me", "needs me", "my review", "human"],
-  done: ["done", "finished", "landed", "merged", "complete"],
+  done: ["done", "finished", "landed", "pr-opened", "merged", "complete"],
   failed: ["failed", "fail", "dead letter", "dead-letter", "blew up", "broken", "error"],
 };
 

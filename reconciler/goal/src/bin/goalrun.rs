@@ -615,7 +615,8 @@ fn run() -> Result<i32> {
                 }
             }
             if let Some(t) = &trace {
-                t.run_resolved(&run, "merged", winner.as_ref().map(|(w, _)| w.as_str()), url);
+                // A pull request opened, not merged: nothing here learns when a person merges it.
+                t.run_resolved(&run, "pr-opened", winner.as_ref().map(|(w, _)| w.as_str()), url);
             }
             goalexit::SUCCESS
         }
@@ -789,7 +790,7 @@ fn decomposed(
     let resolve = |outcome: &str, url: &str| {
         if let Some(t) = trace {
             // "composition": the join passed; naming one part's branch would credit half the work.
-            let winner = (outcome == "merged").then_some("composition");
+            let winner = (outcome == "pr-opened").then_some("composition");
             t.run_resolved(&run_key, outcome, winner, url);
             if let Some(why) = t.report() {
                 println!("\ntrace: {why}");
@@ -1000,7 +1001,7 @@ fn decomposed(
             let url = v["url"].as_str().unwrap();
             println!("\n  PR opened: {url}");
             println!("  branch: {}  commit: {}", v["branch"], v["commit"]);
-            resolve("merged", url);
+            resolve("pr-opened", url);
             Ok(goalexit::SUCCESS)
         }
         Ok(v) => {

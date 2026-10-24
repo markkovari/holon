@@ -55,7 +55,7 @@ const FIRST = 260;
 /// same three tones `Outcome` uses in the list, so a colour means one thing on
 /// this page.
 export function tone(outcome?: string): { border: string; text: string } {
-  if (outcome === "merged" || outcome === "passed") return { border: "#065f46", text: "#6ee7b7" };
+  if (outcome === "pr-opened" || outcome === "merged" || outcome === "passed") return { border: "#065f46", text: "#6ee7b7" };
   if (outcome === "interrupted") return { border: "#78350f", text: "#fcd34d" };
   if (outcome) return { border: "#7f1d1d", text: "#fca5a5" };
   return { border: "#334155", text: "#94a3b8" };
