@@ -10,7 +10,9 @@ use holon_park::resume::{Delivery, Event as DeliveryEvent};
 
 use super::agent;
 use super::park::Answered;
-use super::session::{Answer, Begun, Refusal, Registry, Resume, Session, SteerRefusal};
+use super::session::{
+    Answer, Begun, Refusal, Registry, Resume, RewindRefusal, Session, SteerRefusal,
+};
 use super::tools;
 use super::wire::{self, ApprovalScope, Decision};
 
@@ -216,14 +218,18 @@ impl Daemon {
                 "this daemon records no edits (--vcs-url)".into(),
             ));
         };
-        // shortcut: checked, not held, so a task sent while a rewind runs races it; hold the
-        // session if callers ever do that.
-        if sess.view().status != wire::SessionStatus::Idle {
-            return Err(Fail::Conflict(
-                "session-busy",
-                "rewind a session with no task running".into(),
-            ));
-        }
+        let _guard = match sess.begin_rewind() {
+            Ok(g) => g,
+            Err(RewindRefusal::Closed) => {
+                return Err(Fail::Conflict("session-closed", "the session is closed".into()));
+            }
+            Err(RewindRefusal::Busy) => {
+                return Err(Fail::Conflict(
+                    "session-busy",
+                    "rewind a session with no task running".into(),
+                ));
+            }
+        };
         let ops = sess.unrewound_edits(after_seq);
         let by = holon_vcs::model::Agent::named(format!("agentd:{}/rewind", sess.id));
         let (mut done, mut paths, mut refused) = (vec![], BTreeSet::new(), None);

@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use super::grpc::pb;
 use super::service::Daemon;
 use super::session::{self, Registry};
-use super::{agent, app, model, park, vcs};
+use super::{agent, app, model, park, vcs, wire};
 
 struct Opts {
     token: Option<&'static str>,
@@ -3349,4 +3349,46 @@ async fn edits_are_recorded_and_a_rewind_puts_the_files_back() {
     let other = plain.session(1_000_000).await;
     let (s, r) = plain.post(&format!("/v1/sessions/{other}/rewind"), json!({"after_seq": 0})).await;
     assert_eq!((s, r["type"].as_str()), (409, Some("https://holon.dev/errors/edits-not-recorded")));
+}
+
+#[tokio::test]
+async fn rewind_holds_session_busy_and_refuses_tasks_while_running() {
+    let ws = tempfile::tempdir().unwrap();
+    let sess = session::Session::new(
+        wire::CreateSession {
+            model: "claude-sonnet-5".into(),
+            workspace_dir: ws.path().display().to_string(),
+            max_budget_usd_micros: 1_000_000,
+            auto_approve_tools: vec![],
+            labels: Default::default(),
+        },
+        ws.path().to_path_buf(),
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(sess.view().status, wire::SessionStatus::Idle);
+
+    // Acquire rewind guard
+    let guard = sess.begin_rewind().expect("begin_rewind on idle session");
+    assert_eq!(sess.view().status, wire::SessionStatus::Running);
+
+    // Another rewind attempt is refused as busy
+    assert!(matches!(sess.begin_rewind(), Err(session::RewindRefusal::Busy)));
+
+    // Begin a task while rewind runs is refused as busy
+    let begin_res = sess.begin("should race", None, wire::WhenBusy::Reject, 0);
+    assert!(matches!(begin_res, Err(session::Refusal::Busy)));
+
+    // Even if when_busy is Queue, it is refused while rewinding
+    let queue_res = sess.begin("should race queue", None, wire::WhenBusy::Queue, 5);
+    assert!(matches!(queue_res, Err(session::Refusal::Busy)));
+
+    // Drop rewind guard
+    drop(guard);
+    assert_eq!(sess.view().status, wire::SessionStatus::Idle);
+
+    // Can begin a task now that rewind is done
+    let started = sess.begin("after rewind", None, wire::WhenBusy::Reject, 0);
+    assert!(matches!(started, Ok(session::Begun::Started(_))));
 }
