@@ -25,6 +25,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+
 # A second push to the same branch makes the first one's answer irrelevant, and
 # a 200-crate wasm build is not cheap enough to run for an answer nobody wants.
 concurrency:
@@ -837,6 +841,13 @@ jobs:
       # also lints every `run:` block — which is where the first real finding was.
       - name: Lint every workflow
         run: actionlint
+
+      - name: Install zizmor
+        uses: taiki-e/install-action@v2
+        with:
+          tool: zizmor
+      - name: Security audit workflows with zizmor
+        run: zizmor --min-severity medium .github/workflows/
 
   native:
     name: native workspaces
