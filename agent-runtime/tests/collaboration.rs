@@ -975,6 +975,15 @@ fn deleting_an_archived_project_does_not_leave_its_agents_paused() {
 }
 
 #[test]
+fn granting_a_key_without_a_vault_fails_safely() {
+    let rt = runtime("grant-key-novault");
+    rt.create_agent(agent("bot", &["hi"])).unwrap();
+    let err = rt.grant_key("k", "bot", true).unwrap_err();
+    assert!(err.contains("no vault"));
+    assert!(rt.grant_key("k", "bot", false).is_ok());
+}
+
+#[test]
 fn an_agent_with_the_google_tools_reads_adds_and_never_deletes_without_approval() {
     use std::sync::Mutex;
     let seen: Arc<Mutex<Vec<String>>> = Arc::default();
