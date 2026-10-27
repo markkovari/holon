@@ -7,7 +7,7 @@ use std::process::Command;
 const FORMATS: &[&str] = &["json", "surql"];
 
 fn root() -> std::path::PathBuf {
-    comp_fleet::fleet::root_from_manifest()
+    holon_fleet::fleet::root_from_manifest()
 }
 
 /// `None` when git cannot answer: a checkout with no git is a skip.

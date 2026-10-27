@@ -23,15 +23,15 @@ use manifest::{component_scope, trim_members};
 use pool::reading_per_branch;
 use setup::{host_bin, seed_capability_graph, set_fleet_timeouts, wait_serving};
 
-use comp_fleet::fleet::Fleet;
-use comp_goal::compose;
-use comp_goal::contract::{Answerer, Registry};
-use comp_goal::gate::Gate;
-use comp_goal::generation as generation_mod;
-use comp_goal::generation::{land, Bounds, Entry, Part};
-use comp_goal::goalexit;
-use comp_goal::memory::{self, run_id, Memory};
-use comp_goal::trace::Trace;
+use holon_fleet::fleet::Fleet;
+use holon_goal::compose;
+use holon_goal::contract::{Answerer, Registry};
+use holon_goal::gate::Gate;
+use holon_goal::generation as generation_mod;
+use holon_goal::generation::{land, Bounds, Entry, Part};
+use holon_goal::goalexit;
+use holon_goal::memory::{self, run_id, Memory};
+use holon_goal::trace::Trace;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -196,8 +196,8 @@ fn one() -> u32 {
     1
 }
 
-impl From<comp_goal::store::GoalRecord> for GoalSpec {
-    fn from(r: comp_goal::store::GoalRecord) -> Self {
+impl From<holon_goal::store::GoalRecord> for GoalSpec {
+    fn from(r: holon_goal::store::GoalRecord) -> Self {
         let parts = r
             .parts
             .into_iter()
@@ -255,7 +255,7 @@ fn run() -> Result<i32> {
     let args = Args::parse();
 
     let (mut goal, spec_display) = if let Some(ref gid) = args.goal_id {
-        let store = comp_goal::store::build_goal_store(
+        let store = holon_goal::store::build_goal_store(
             args.store_mode.as_deref(),
             args.sqlite_path.as_ref().map(|p| p.to_string_lossy().into_owned()).as_deref(),
             args.surreal_url.as_deref(),
@@ -741,7 +741,7 @@ fn decomposed(
     seed: u64,
     trace: Option<&Trace>,
     // Searched by the caller so a run asks the catalogue once (ADR-0094).
-    reuse: &[comp_goal::capsearch::Capability],
+    reuse: &[holon_goal::capsearch::Capability],
     // `None` means every hit is trusted unfiltered.
     capability_confirmed: Option<&std::collections::BTreeSet<String>>,
 ) -> Result<i32> {
@@ -1091,7 +1091,7 @@ fn decomposed(
 #[cfg(test)]
 mod tests {
     use super::GoalSpec;
-    use comp_goal::gate::egress_authority;
+    use holon_goal::gate::egress_authority;
 
     #[test]
     fn a_goal_can_be_two_parts_and_a_contract() {
@@ -1169,7 +1169,7 @@ command = ["cargo", "test"]
     /// Both halves spawn `branch-0` in round 0; the second must not overwrite the first's row.
     #[test]
     fn two_parts_do_not_share_one_attempt_id() {
-        use comp_goal::memory::run_id;
+        use holon_goal::memory::run_id;
         assert_ne!(
             run_id(7, 0, "access-and-search/branch-0"),
             run_id(7, 0, "reports/branch-0"),

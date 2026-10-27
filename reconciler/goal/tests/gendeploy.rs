@@ -3,8 +3,8 @@
 
 use std::time::{Duration, Instant};
 
-use comp_fleet::fleet::{repo_root, Fleet};
-use comp_goal::generation::{default_strategies, fan_out_from, on_hosts};
+use holon_fleet::fleet::{repo_root, Fleet};
+use holon_goal::generation::{default_strategies, fan_out_from, on_hosts};
 use serde_json::{json, Value};
 
 struct Api {

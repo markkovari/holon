@@ -2,9 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use comp_fleet::fleet::repo_root;
-use comp_fleet::plug::{default_dirs, Catalog};
-use comp_goal::capsearch::{capabilities, find, Capability};
+use holon_fleet::fleet::repo_root;
+use holon_fleet::plug::{default_dirs, Catalog};
+use holon_goal::capsearch::{capabilities, find, Capability};
 
 /// Phrased as a person describes a need, or this tests that a name matches itself.
 const SHOULD_FIND: &[(&str, &str)] = &[
@@ -152,7 +152,7 @@ fn the_same_capability_was_not_built_twice() {
     }
 
     let mut undeclared = Vec::new();
-    for t in comp_goal::capsearch::twins(&catalog) {
+    for t in holon_goal::capsearch::twins(&catalog) {
         // `wasi:` is the system's shape, not a duplicate (65 exporters of incoming-handler).
         if t.interface.starts_with("wasi:") {
             continue;
@@ -257,7 +257,7 @@ fn every_component_has_a_description() {
 /// `comp-catalog` reads sources and `capsearch` artifacts; both must agree on every component.
 #[test]
 fn the_catalogue_and_the_artifacts_agree_on_what_is_reusable() {
-    let root = comp_fleet::fleet::repo_root();
+    let root = holon_fleet::fleet::repo_root();
     let catalog = Catalog::scan(&default_dirs(&root));
     if catalog.is_empty() {
         eprintln!("SKIPPED: nothing is built — run `cargo xtask build --force`");
@@ -281,7 +281,7 @@ fn the_catalogue_and_the_artifacts_agree_on_what_is_reusable() {
         let Some(name) = e["name"].as_str() else { continue };
         let Some(surface) = catalog.surface(name) else { continue };
         checked += 1;
-        let from_artifact = comp_goal::catalogue::offers_a_contract(&surface.exports);
+        let from_artifact = holon_goal::catalogue::offers_a_contract(&surface.exports);
         let from_source = e["reusable_as_is"].as_bool().unwrap_or(false);
         if from_artifact != from_source {
             wrong.push(format!(

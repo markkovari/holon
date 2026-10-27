@@ -3,9 +3,9 @@
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use comp_fleet::fleet::{bin_path, free_port, repo_root, Fleet};
-use comp_goal::generation::{default_strategies, search_with, Bounds};
-use comp_goal::memory::{self, run_id, Memory, Reading};
+use holon_fleet::fleet::{bin_path, free_port, repo_root, Fleet};
+use holon_goal::generation::{default_strategies, search_with, Bounds};
+use holon_goal::memory::{self, run_id, Memory, Reading};
 use serde_json::{json, Value};
 
 // Shared harness, included rather than copied (docs/adr/0115).
@@ -203,7 +203,7 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
         learned.files
     );
     assert!(
-        matches!(second.stopped, comp_goal::generation::SearchStop::Accepted),
+        matches!(second.stopped, holon_goal::generation::SearchStop::Accepted),
         "{:?}",
         second.stopped
     );

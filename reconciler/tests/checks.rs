@@ -13,7 +13,7 @@ use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use comp_fleet::fleet::{bin_path, free_port};
+use holon_fleet::fleet::{bin_path, free_port};
 use serde_json::{json, Value};
 
 struct Runner {

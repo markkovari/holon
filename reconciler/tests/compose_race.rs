@@ -7,8 +7,8 @@
 
 use std::sync::{Arc, Barrier};
 
-use comp_fleet::fleet::repo_root;
-use comp_fleet::plug::{default_dirs, Catalog};
+use holon_fleet::fleet::repo_root;
+use holon_fleet::plug::{default_dirs, Catalog};
 
 /// Every caller gets a whole component, not a file another one is still writing.
 #[test]
@@ -33,7 +33,7 @@ fn composing_the_same_thing_from_several_threads_never_yields_a_partial_file() {
             std::thread::spawn(move || {
                 let catalog = Catalog::scan(&default_dirs(&root));
                 barrier.wait();
-                comp_fleet::plug::compose_to("platform-domain", &catalog, &out)
+                holon_fleet::plug::compose_to("platform-domain", &catalog, &out)
             })
         })
         .collect();

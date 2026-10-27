@@ -19,9 +19,9 @@ use std::process::{Child, Command, Output, Stdio};
 use std::time::Duration;
 
 use async_nats::jetstream::{self, kv, object_store, stream};
-use comp_fleet::fleet::free_port;
 use futures::StreamExt;
 use harness::{RustFs, Surreal, SURREAL_PASSWORD};
+use holon_fleet::fleet::free_port;
 use tokio::io::AsyncReadExt;
 
 const BUCKET: &str = "holon-backups";

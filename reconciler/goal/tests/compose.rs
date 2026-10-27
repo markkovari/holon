@@ -3,10 +3,10 @@
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use comp_fleet::fleet::{bin_path, free_port, repo_root, Fleet};
-use comp_goal::compose;
-use comp_goal::contract::{Answerer, Registry};
-use comp_goal::generation::{Bounds, Part};
+use holon_fleet::fleet::{bin_path, free_port, repo_root, Fleet};
+use holon_goal::compose;
+use holon_goal::contract::{Answerer, Registry};
+use holon_goal::generation::{Bounds, Part};
 use serde_json::{json, Value};
 
 // Shared harness, included rather than copied (docs/adr/0115).
@@ -162,7 +162,7 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
         host: "composecontract.acme.test".into(),
         timeout: Duration::from_secs(30),
     };
-    let pool = comp_goal::memory::Memory {
+    let pool = holon_goal::memory::Memory {
         url: format!("http://127.0.0.1:{port}"),
         host: "memory.acme.test".into(),
         timeout: Duration::from_secs(30),
@@ -295,7 +295,7 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
     let learned = pool
         .recall(
             fe_goal,
-            &comp_goal::memory::Reading {
+            &holon_goal::memory::Reading {
                 k: 5,
                 budget: 1200,
                 pools: vec![],

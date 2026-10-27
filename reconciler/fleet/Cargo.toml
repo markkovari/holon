@@ -1,5 +1,5 @@
 [package]
-name = "comp-fleet"
+name = "holon-fleet"
 description = "A fleet of hosts on a NATS lattice to start, drive and read, the composition it needs as a library call, and the two command lines over composition and artifacts. What the integration tests, the benchmarks and the goal loop share (docs/adr/0115)."
 version.workspace = true
 edition.workspace = true

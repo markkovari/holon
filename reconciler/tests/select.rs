@@ -10,7 +10,7 @@ use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use comp_fleet::fleet::{free_port, repo_root, Fleet};
+use holon_fleet::fleet::{free_port, repo_root, Fleet};
 use serde_json::{json, Value};
 
 mod harness;

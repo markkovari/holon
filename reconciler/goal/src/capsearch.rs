@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use comp_fleet::plug::Catalog;
+use holon_fleet::plug::Catalog;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Capability {

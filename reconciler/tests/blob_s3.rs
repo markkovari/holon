@@ -10,8 +10,8 @@ mod harness;
 
 use std::time::Duration;
 
-use comp_fleet::fleet::{repo_root, Fleet};
 use harness::RustFs;
+use holon_fleet::fleet::{repo_root, Fleet};
 use serde_json::{json, Value};
 
 const S3_BUCKET: &str = "holon-blobs";

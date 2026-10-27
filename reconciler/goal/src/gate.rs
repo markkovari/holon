@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 
-use comp_fleet::fleet::{bin_path, free_port};
+use holon_fleet::fleet::{bin_path, free_port};
 
 pub fn egress_authority(base_url: &str) -> String {
     let rest = base_url.split_once("://").map(|(_, r)| r).unwrap_or(base_url);

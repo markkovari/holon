@@ -10,7 +10,7 @@ HOST="${COMP_HOST:-target/release/comp-host}"
 PLUG="${COMP_PLUG:-target/release/comp-plug}"
 
 [ -x "$HOST" ] || { echo "no comp-host at '$HOST' — cargo build --release -p comp-host"; exit 1; }
-[ -x "$PLUG" ] || { echo "no comp-plug at '$PLUG' — cargo build --release -p comp-fleet --bin comp-plug"; exit 1; }
+[ -x "$PLUG" ] || { echo "no comp-plug at '$PLUG' — cargo build --release -p holon-fleet --bin comp-plug"; exit 1; }
 
 # `jev:decision/decision` has more than one built exporter in this repository
 # (`jev-decision`'s own trivial reference provider, the real `typesafe-provider`,

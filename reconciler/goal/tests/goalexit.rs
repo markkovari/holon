@@ -1,6 +1,6 @@
-//! Held-out judge for `comp_goal::goalexit`: a refused gate once exited 0 like success.
+//! Held-out judge for `holon_goal::goalexit`: a refused gate once exited 0 like success.
 
-use comp_goal::goalexit;
+use holon_goal::goalexit;
 
 #[test]
 fn success_is_the_reserved_zero() {

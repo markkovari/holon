@@ -25,7 +25,7 @@ fn project(db: &Store, generation: u64) {
 /// Every other test writes both halves into its own database; production once split them.
 #[test]
 fn the_projection_targets_the_database_the_pool_lives_in() {
-    let root = comp_fleet::fleet::root_from_manifest();
+    let root = holon_fleet::fleet::root_from_manifest();
     let read = |p: &str| std::fs::read_to_string(root.join(p)).unwrap();
 
     assert!(

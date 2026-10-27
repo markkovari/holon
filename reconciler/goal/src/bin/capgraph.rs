@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use clap::Parser;
-use comp_fleet::fleet::repo_root;
-use comp_fleet::plug::{default_dirs, Catalog};
+use holon_fleet::fleet::repo_root;
+use holon_fleet::plug::{default_dirs, Catalog};
 
 #[derive(Parser)]
 #[command(name = "comp-capgraph", about = "The capability graph: who imports what from whom")]
@@ -48,7 +48,7 @@ fn main() -> Result<(), String> {
     let orphans = catalog.orphan_exports();
 
     if args.twins {
-        let found = comp_goal::capsearch::twins(&catalog);
+        let found = holon_goal::capsearch::twins(&catalog);
         if found.is_empty() {
             println!(
                 "no interface in the catalogue is exported by more than one component.\n\n\
@@ -99,8 +99,8 @@ fn main() -> Result<(), String> {
                 *apps_of.entry(part).or_default() += 1;
             }
         }
-        let pool = comp_goal::capsearch::capabilities(&root, &catalog, &apps_of);
-        let hits = comp_goal::capsearch::find(query, &pool);
+        let pool = holon_goal::capsearch::capabilities(&root, &catalog, &apps_of);
+        let hits = holon_goal::capsearch::find(query, &pool);
         if hits.is_empty() {
             println!(
                 "nothing in the catalogue matches {query:?}.\n\nThat is an answer: build \
@@ -239,7 +239,7 @@ fn lit(s: &str) -> String {
 fn head_commit() -> String {
     let Ok(out) = std::process::Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
-        .current_dir(comp_fleet::fleet::repo_root())
+        .current_dir(holon_fleet::fleet::repo_root())
         .output()
     else {
         return String::new();
@@ -404,7 +404,7 @@ mod tests {
     /// ADR-0091 rests on this: no statement writes or deletes an accumulated table.
     #[test]
     fn the_projection_never_writes_or_deletes_an_accumulated_table() {
-        let root = comp_fleet::fleet::repo_root();
+        let root = holon_fleet::fleet::repo_root();
         let catalog = Catalog::scan(&default_dirs(&root));
         if catalog.is_empty() {
             eprintln!("skipped: nothing built — run `cargo xtask build --force`");
@@ -484,7 +484,7 @@ mod tests {
     /// Or the second rebuild fails on a duplicate id and the projection silently stops updating.
     #[test]
     fn edge_ids_are_generation_scoped_and_nodes_are_not() {
-        let root = comp_fleet::fleet::repo_root();
+        let root = holon_fleet::fleet::repo_root();
         let catalog = Catalog::scan(&default_dirs(&root));
         if catalog.is_empty() {
             eprintln!("skipped: nothing built — run `cargo xtask build --force`");

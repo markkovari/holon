@@ -4,7 +4,7 @@
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use comp_fleet::fleet::free_port;
+use holon_fleet::fleet::free_port;
 use serde_json::{json, Value};
 
 /// Killed on drop, like `reconciler::fleet::Kill`, so it cannot leave an orphan.

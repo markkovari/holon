@@ -25,7 +25,7 @@ APPS=(
 [ $# -gt 0 ] && APPS=("$@")
 
 if [ "${E2E_SKIP_BUILD:-}" != 1 ]; then
-  cargo build --release -p comp-host --bin comp-host -p comp-fleet --bin comp-plug || exit 1
+  cargo build --release -p comp-host --bin comp-host -p holon-fleet --bin comp-plug || exit 1
   cargo xtask build || exit 1
 fi
 

@@ -22,7 +22,7 @@ holon-vcs = { path = "../../../crates/holon-vcs", features = ["native"] }
 # harness the root's suites share (tests/gatelib/mod.rs, included by path), which signs a TOTP
 # code with hmac and sha1 and talks to the host with a blocking reqwest client.
 [dev-dependencies]
-comp-fleet.workspace = true
+holon-fleet.workspace = true
 hmac.workspace = true
 reqwest.workspace = true
 sha1.workspace = true

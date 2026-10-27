@@ -29,4 +29,4 @@ chacha20poly1305 = "0.10"
 # tests/backup.rs drives the real binary against real NATS, SurrealDB and S3 (RustFS),
 # through the harness the root's suites share (tests/harness/mod.rs, included by path).
 [dev-dependencies]
-comp-fleet.workspace = true
+holon-fleet.workspace = true

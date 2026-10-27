@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use comp_fleet::plug;
 use comp_reconciler::spec::AppSpec;
+use holon_fleet::plug;
 use serde_json::{json, Value};
 
 const SECRET: &str = "test-secret";

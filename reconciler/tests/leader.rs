@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use comp_fleet::fleet::Fleet;
+use holon_fleet::fleet::Fleet;
 
 /// Poll a log until it says something, so the test does not sleep on a guess.
 fn wait_for(mut read: impl FnMut() -> String, needle: &str, within: Duration) -> String {

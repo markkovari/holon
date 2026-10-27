@@ -79,7 +79,7 @@ jobs:
 
       - name: Build comp-oci
         working-directory: reconciler
-        run: cargo build --release -p comp-fleet --bin comp-oci
+        run: cargo build --release -p holon-fleet --bin comp-oci
 
       # `GITHUB_TOKEN` as the password is the documented way to authenticate to
       # ghcr from Actions; the username is ignored by ghcr but has to be present.

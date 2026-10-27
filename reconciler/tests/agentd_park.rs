@@ -138,7 +138,7 @@ impl Stack {
         wait_listening(nats_port, "nats-server");
         let nats = format!("nats://127.0.0.1:{nats_port}");
         s.park = Proc::start(
-            comp_fleet::fleet::built_bin("comp-park"),
+            holon_fleet::fleet::built_bin("comp-park"),
             &a(&[
                 "--addr",
                 &format!("127.0.0.1:{park_port}"),
@@ -155,7 +155,7 @@ impl Stack {
         );
         wait_listening(park_port, "comp-park");
         s.resume = Proc::start(
-            comp_fleet::fleet::built_bin("comp-resume"),
+            holon_fleet::fleet::built_bin("comp-resume"),
             &a(&[
                 "--nats-url",
                 &nats,
@@ -210,7 +210,7 @@ impl Stack {
         }
         args.extend(extra.iter().map(|x| x.to_string()));
         self.agentd = Proc::start(
-            comp_fleet::fleet::built_bin("comp-agentd"),
+            holon_fleet::fleet::built_bin("comp-agentd"),
             &args,
             self.dir.join(format!("agentd-{n}.log")),
         );

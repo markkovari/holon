@@ -61,7 +61,7 @@ them are the waits that outlive a process (`comp-park`, `comp-resume`:
 [0100](adr/0100-a-parked-turn-is-a-record-not-a-held-thread.md),
 [0106](adr/0106-a-resumed-turn-knows-what-it-may-repeat.md)) and the agent session daemon
 (`comp-agentd`: [0102](adr/0102-an-agent-session-is-a-contract-first.md)). The rest of the tree is the
-loop's tools: `comp-goal` and its binaries, `comp-fleet` (the test harness, `comp-plug` and
+loop's tools: `holon-goal` and its binaries, `holon-fleet` (the test harness, `comp-plug` and
 `holon-oci`), `holon-fuel` and `holon-measure`. `ARCHITECTURE.md` says what each is, system by system:
 [daemons](ARCHITECTURE.md#capability-daemons), [durable services](ARCHITECTURE.md#durable-services),
 [agent services](ARCHITECTURE.md#agent-services).

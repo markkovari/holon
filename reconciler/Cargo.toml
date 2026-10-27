@@ -63,7 +63,7 @@ async-trait = "0.1"
 [dev-dependencies]
 # The fleet harness the suites start a platform with, and the composition it needs (fleet/): the
 # wasm toolchain lives there, with the pin that explains it, and is not in this package's own tree.
-comp-fleet.workspace = true
+holon-fleet.workspace = true
 async-nats.workspace = true
 futures.workspace = true
 hmac.workspace = true
