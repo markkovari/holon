@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
-use comp_oci::{self as oci, Creds};
+use holon_oci::{self as oci, Creds};
 
 #[derive(Parser)]
 #[command(name = "comp-oci", about = "Push and pull components by digest")]

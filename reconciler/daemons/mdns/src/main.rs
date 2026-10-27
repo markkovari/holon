@@ -83,8 +83,8 @@ async fn handle(State(cfg): State<Config>) -> Json<Value> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("holon-mdns", &token);
+    let token = holon_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
+    holon_daemon_kit::warn_if_unauthenticated("holon-mdns", &token);
     let service_types = if args.service_type.is_empty() {
         vec!["_http._tcp.local.".to_string()]
     } else {
@@ -101,7 +101,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/discover", post(handle))
         .with_state(cfg)
-        .layer(axum::middleware::from_fn(comp_daemon_kit::require_token))
+        .layer(axum::middleware::from_fn(holon_daemon_kit::require_token))
         .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     axum::serve(listener, app).await?;

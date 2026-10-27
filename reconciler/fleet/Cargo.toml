@@ -17,7 +17,7 @@ path = "src/bin/oci.rs"
 
 [dependencies]
 comp-lattice.workspace = true
-comp-oci.workspace = true
+holon-oci.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 getrandom.workspace = true

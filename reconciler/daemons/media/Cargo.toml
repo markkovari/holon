@@ -14,7 +14,7 @@ path = "src/main.rs"
 # HTTP stack and no SDK. async-nats is pinned to lattice's version so the two never
 # disagree about the protocol.
 [dependencies]
-comp-daemon-kit.workspace = true
+holon-daemon-kit.workspace = true
 anyhow.workspace = true
 async-nats.workspace = true
 axum.workspace = true

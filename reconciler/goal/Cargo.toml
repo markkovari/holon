@@ -36,9 +36,9 @@ path = "src/bin/catalog.rs"
 
 [dependencies]
 comp-fleet.workspace = true
-comp-fuel.workspace = true
+holon-fuel.workspace = true
 comp-metadata.workspace = true
-comp-oci.workspace = true
+holon-oci.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 reqwest.workspace = true
