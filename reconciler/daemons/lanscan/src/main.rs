@@ -14,7 +14,7 @@ use tokio::net::TcpStream;
 
 #[derive(Parser)]
 #[command(
-    name = "comp-lanscan",
+    name = "holon-lanscan",
     about = "Report which LAN hosts answer, for a component that cannot look."
 )]
 struct Args {
@@ -89,10 +89,10 @@ async fn scan(State(d): State<std::sync::Arc<Daemon>>) -> Json<Value> {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("comp-lanscan", &token);
+    comp_daemon_kit::warn_if_unauthenticated("holon-lanscan", &token);
     if args.allow_cidr.is_empty() {
         eprintln!(
-            "comp-lanscan: no --allow-cidr given, so every scan will report unavailable. \
+            "holon-lanscan: no --allow-cidr given, so every scan will report unavailable. \
              That is deliberate — a scanner nobody has scoped scans nothing."
         );
     }
@@ -101,12 +101,12 @@ async fn main() -> Result<()> {
         match hosts_in_cidr(cidr) {
             Some(h) => hosts.extend(h),
             None => eprintln!(
-                "comp-lanscan: ignoring {cidr:?} — not a parseable CIDR of /24 or narrower"
+                "holon-lanscan: ignoring {cidr:?} — not a parseable CIDR of /24 or narrower"
             ),
         }
     }
     println!(
-        "comp-lanscan: listening on http://{} | {} CIDR(s), {} host(s) | port {} | timeout {}ms",
+        "holon-lanscan: listening on http://{} | {} CIDR(s), {} host(s) | port {} | timeout {}ms",
         args.addr,
         args.allow_cidr.len(),
         hosts.len(),

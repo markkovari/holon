@@ -1,9 +1,13 @@
 [package]
-name = "comp-cron"
-description = "Read the machine's crontab, for a component that has none. Fronts components/system-cron (docs/adr/0095)."
+name = "holon-cron"
+description = "Read the machine's crontab, for a component that has none. Fronts components/system-cron (docs/adr/0095, ADR-0118)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+
+[[bin]]
+name = "holon-cron"
+path = "src/main.rs"
 
 [dependencies]
 comp-daemon-kit.workspace = true

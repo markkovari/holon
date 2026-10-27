@@ -1228,76 +1228,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "comp-browser"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "comp-daemon-kit",
- "headless_chrome",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "comp-clipboard"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arboard",
- "axum",
- "clap",
- "comp-daemon-kit",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "comp-cron"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "comp-daemon-kit",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "comp-daemon-kit"
 version = "0.1.0"
 dependencies = [
  "axum",
-]
-
-[[package]]
-name = "comp-docker"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "bollard",
- "clap",
- "comp-daemon-kit",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "comp-ffmpeg"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "comp-daemon-kit",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -1393,33 +1327,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "comp-imageopt"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "comp-daemon-kit",
- "image",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "comp-lanscan"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "comp-daemon-kit",
- "futures",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "comp-lattice"
 version = "0.1.0"
 dependencies = [
@@ -1434,35 +1341,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "comp-llmlocal"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "comp-daemon-kit",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "comp-mailrelay"
 version = "0.1.0"
-
-[[package]]
-name = "comp-mdns"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "comp-daemon-kit",
- "mdns-sd",
- "serde_json",
- "tokio",
-]
 
 [[package]]
 name = "comp-measure"
@@ -1475,32 +1355,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml 0.8.23",
-]
-
-[[package]]
-name = "comp-media"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "axum",
- "base64 0.22.1",
- "bytes",
- "clap",
- "comp-daemon-kit",
- "futures",
- "hmac 0.12.1",
- "image",
- "kamadak-exif",
- "md-5 0.10.6",
- "rawler",
- "reqwest 0.12.28",
- "rusty-s3",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "tokio",
 ]
 
 [[package]]
@@ -1589,20 +1443,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "comp-uinotify"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "comp-daemon-kit",
- "notify-rust",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "comp-vcs"
 version = "0.1.0"
 dependencies = [
@@ -1618,18 +1458,6 @@ dependencies = [
  "serde_json",
  "sha1",
  "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "comp-wireguard"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "comp-daemon-kit",
- "serde_json",
  "tokio",
 ]
 
@@ -3075,12 +2903,158 @@ dependencies = [
 ]
 
 [[package]]
+name = "holon-browser"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "comp-daemon-kit",
+ "headless_chrome",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "holon-clipboard"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "axum",
+ "clap",
+ "comp-daemon-kit",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "holon-cron"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "comp-daemon-kit",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "holon-docker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "bollard",
+ "clap",
+ "comp-daemon-kit",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "holon-ffmpeg"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "comp-daemon-kit",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "holon-imageopt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "comp-daemon-kit",
+ "image",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "holon-lanscan"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "comp-daemon-kit",
+ "futures",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "holon-llm"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "holon-llmlocal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "comp-daemon-kit",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "holon-mdns"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "comp-daemon-kit",
+ "mdns-sd",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "holon-media"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "axum",
+ "base64 0.22.1",
+ "bytes",
+ "clap",
+ "comp-daemon-kit",
+ "futures",
+ "hmac 0.12.1",
+ "image",
+ "kamadak-exif",
+ "md-5 0.10.6",
+ "rawler",
+ "reqwest 0.12.28",
+ "rusty-s3",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -3094,6 +3068,20 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "holon-uinotify"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "comp-daemon-kit",
+ "notify-rust",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -3116,6 +3104,18 @@ dependencies = [
  "surrealdb",
  "syn 3.0.9",
  "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "holon-wireguard"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "comp-daemon-kit",
+ "serde_json",
  "tokio",
 ]
 

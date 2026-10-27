@@ -1,10 +1,10 @@
 //! `image-optimizer` — shrink a picture by re-encoding it at lower cost
 //!
-//! The re-encoding happens in `comp-imageopt`, which is native (ADR-0095). This is the component side: it holds
+//! The re-encoding happens in `holon-imageopt` (formerly `comp-imageopt`), which is native (ADR-0095, ADR-0118). This is the component side: it holds
 //! the contract and reaches the daemon over HTTP, as `fs-watcher` reaches `comp-fswatch`.
 //!
 //! Config (wasi:config/store):
-//!   imageopt-url    where `comp-imageopt` is listening, e.g. http://127.0.0.1:8004
+//!   imageopt-url    where `holon-imageopt` is listening, e.g. http://127.0.0.1:8004
 
 #[allow(warnings)]
 mod bindings;

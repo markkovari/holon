@@ -1,9 +1,13 @@
 [package]
-name = "comp-lanscan"
-description = "Which hosts on the local network answer, for a component that cannot look. Fronts components/lan-scanner (docs/adr/0095)."
+name = "holon-lanscan"
+description = "Which hosts on the local network answer, for a component that cannot look. Fronts components/lan-scanner (docs/adr/0095, ADR-0118)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+
+[[bin]]
+name = "holon-lanscan"
+path = "src/main.rs"
 
 [dependencies]
 comp-daemon-kit.workspace = true

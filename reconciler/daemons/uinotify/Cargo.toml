@@ -1,9 +1,13 @@
 [package]
-name = "comp-uinotify"
-description = "Raise a notification on the user's desktop, for a component that cannot reach the notification bus. Fronts components/ui-notifier (docs/adr/0095)."
+name = "holon-uinotify"
+description = "Raise a notification on the user's desktop, for a component that cannot reach the notification bus. Fronts components/ui-notifier (docs/adr/0095, ADR-0118)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+
+[[bin]]
+name = "holon-uinotify"
+path = "src/main.rs"
 
 [dependencies]
 comp-daemon-kit.workspace = true

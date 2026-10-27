@@ -3,7 +3,7 @@
 //
 // Browsing mDNS/DNS-SD needs multicast on the host network, which a
 // wasm32-wasip2 component does not have. See ADR-0095: the daemon behind this
-// (`comp-mdns`) is native for that reason and this component is an HTTP client
+// (`holon-mdns`) is native for that reason and this component is an HTTP client
 // to it, exactly like `fs-watcher` is to `comp-fswatch`.
 package net:mdns@0.2.0;
 

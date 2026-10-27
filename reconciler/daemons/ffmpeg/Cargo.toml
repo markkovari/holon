@@ -1,9 +1,13 @@
 [package]
-name = "comp-ffmpeg"
-description = "Re-encode a video, for a component that cannot fork a process. Fronts components/video-ffmpeg (docs/adr/0095)."
+name = "holon-ffmpeg"
+description = "Re-encode a video, for a component that cannot fork a process. Fronts components/video-ffmpeg (docs/adr/0095, ADR-0118)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+
+[[bin]]
+name = "holon-ffmpeg"
+path = "src/main.rs"
 
 [dependencies]
 comp-daemon-kit.workspace = true

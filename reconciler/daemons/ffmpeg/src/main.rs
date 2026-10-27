@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 #[derive(Parser)]
-#[command(name = "comp-ffmpeg", about = "Native daemon for video-ffmpeg")]
+#[command(name = "holon-ffmpeg", about = "Native daemon for video-ffmpeg")]
 struct Args {
     /// Shared secret callers must send as `Authorization: Bearer <token>`; unset means no check.
     #[arg(long)]
@@ -101,15 +101,15 @@ async fn transcode(
 async fn main() -> Result<()> {
     let args = Args::parse();
     let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("comp-ffmpeg", &token);
+    comp_daemon_kit::warn_if_unauthenticated("holon-ffmpeg", &token);
     if args.allow_path.is_empty() {
         eprintln!(
-            "comp-ffmpeg: no --allow-path given, so every request will be refused. \
+            "holon-ffmpeg: no --allow-path given, so every request will be refused. \
              That is deliberate — a transcoder nobody has scoped reads nothing."
         );
     }
     let allowed = args.allow_path.clone();
-    println!("comp-ffmpeg: listening on http://{} | {} allowed path(s)", args.addr, allowed.len());
+    println!("holon-ffmpeg: listening on http://{} | {} allowed path(s)", args.addr, allowed.len());
     let state = std::sync::Arc::new(Daemon { allowed });
     let app = Router::new()
         .route("/transcode", post(transcode))

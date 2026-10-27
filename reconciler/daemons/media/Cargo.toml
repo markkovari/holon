@@ -1,9 +1,13 @@
 [package]
-name = "comp-media"
-description = "Uploads, evaluates and renders large photos by key, for components/media-pipeline (docs/adr/0098). The only daemon with a queue of its own: the Mac's GPU is the bottleneck, one photo at a time."
+name = "holon-media"
+description = "Uploads, evaluates and renders large photos by key, for components/media-pipeline (docs/adr/0098, ADR-0118). The only daemon with a queue of its own: the Mac's GPU is the bottleneck, one photo at a time."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+
+[[bin]]
+name = "holon-media"
+path = "src/main.rs"
 
 # Decodes camera raw, signs S3 requests, holds the MEDIA_JOBS work queue. rusty-s3 is
 # sans-IO — it signs, the reqwest client we already have sends — so there is no second

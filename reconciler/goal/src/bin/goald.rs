@@ -76,10 +76,18 @@ struct Session {
 
 /// The CLI's credentials file, so `comp login` is the only way a token reaches this box.
 fn session(override_url: Option<String>, login: Option<(String, String)>) -> Result<Session> {
-    let p = std::env::var("COMP_CREDENTIALS").map(PathBuf::from).unwrap_or_else(|_| {
-        PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
-            .join(".config/comp/credentials.json")
-    });
+    let p = std::env::var("HOLON_CREDENTIALS")
+        .or_else(|_| std::env::var("COMP_CREDENTIALS"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+            let holon_path = PathBuf::from(&home).join(".config/holon/credentials.json");
+            if holon_path.exists() {
+                holon_path
+            } else {
+                PathBuf::from(home).join(".config/comp/credentials.json")
+            }
+        });
     let raw = std::fs::read(&p)
         .with_context(|| format!("no session at {} — run `holon login` first", p.display()))?;
     let v: Value = serde_json::from_slice(&raw).context("credentials file is not readable JSON")?;
@@ -319,7 +327,9 @@ fn work(
         return Ok(());
     }
 
-    let bin = std::env::var("COMP_GOALRUN_BIN").unwrap_or_else(|_| "comp-goalrun".into());
+    let bin = std::env::var("HOLON_GOALRUN_BIN")
+        .or_else(|_| std::env::var("COMP_GOALRUN_BIN"))
+        .unwrap_or_else(|_| "comp-goalrun".into());
     eprintln!("[goald] {id} START {title} ({spec})");
     let mut child = Command::new(&bin)
         .arg("--checkout")

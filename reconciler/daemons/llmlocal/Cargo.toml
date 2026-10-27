@@ -1,9 +1,13 @@
 [package]
-name = "comp-llmlocal"
-description = "A prompt in, a completion out, for a component that cannot run a model. Fronts components/llm-local (docs/adr/0095)."
+name = "holon-llmlocal"
+description = "A prompt in, a completion out, for a component that cannot run a model. Fronts components/llm-local (docs/adr/0095, ADR-0118)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+
+[[bin]]
+name = "holon-llmlocal"
+path = "src/main.rs"
 
 [dependencies]
 comp-daemon-kit.workspace = true

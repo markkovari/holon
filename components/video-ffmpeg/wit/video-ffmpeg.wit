@@ -5,7 +5,7 @@
 // satisfied it: the earlier lib.rs returned an `UNIMPLEMENTED:` marker no
 // caller could tell apart from a real path. The daemon behind this needs an
 // ffmpeg process, which a wasm32-wasip2 guest does not have (ADR-0095), so the
-// work happens in `comp-ffmpeg` and this component is an HTTP client to it.
+// work happens in `holon-ffmpeg` and this component is an HTTP client to it.
 package media:video@0.2.0;
 
 interface ffmpeg {
