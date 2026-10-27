@@ -1,5 +1,5 @@
 [package]
-name = "comp-oci"
+name = "holon-oci"
 description = "Artifacts by digest: the pull and the push of a wasm component as an OCI artifact over plain HTTP, and the content addressing around them (docs/adr/0006, docs/adr/0024). No registry crate: four calls on the reqwest client."
 version.workspace = true
 edition.workspace = true

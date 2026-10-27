@@ -10,7 +10,7 @@ name = "holon-lanscan"
 path = "src/main.rs"
 
 [dependencies]
-comp-daemon-kit.workspace = true
+holon-daemon-kit.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true

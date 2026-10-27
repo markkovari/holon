@@ -512,7 +512,7 @@ pub struct GoaldSpec {
     pub max_runs: u32,
     #[serde(default = "default_poll")]
     pub poll: u64,
-    /// Hold DeepSeek runs until its off-peak window (`comp_fuel::offpeak`), up to 2x cheaper.
+    /// Hold DeepSeek runs until its off-peak window (`holon_fuel::offpeak`), up to 2x cheaper.
     #[serde(default)]
     pub enforce_deepseek_offpeak: bool,
     /// `YYYY-MM-DD` off-peak-all-day lines; only with `enforce_deepseek_offpeak`.

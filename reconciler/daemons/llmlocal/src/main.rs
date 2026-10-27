@@ -79,8 +79,8 @@ async fn infer(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<InferReq
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("holon-llmlocal", &token);
+    let token = holon_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
+    holon_daemon_kit::warn_if_unauthenticated("holon-llmlocal", &token);
     println!(
         "holon-llmlocal: listening on http://{} | ollama at {} | model {}",
         args.addr, args.ollama_url, args.model
@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/infer", post(infer))
         .with_state(state)
-        .layer(axum::middleware::from_fn(comp_daemon_kit::require_token))
+        .layer(axum::middleware::from_fn(holon_daemon_kit::require_token))
         .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     axum::serve(listener, app).await?;

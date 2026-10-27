@@ -178,7 +178,7 @@ fn app(d: Arc<Daemon>, token: Option<String>) -> Router {
         .layer(tonic_web::GrpcWebLayer::new());
     let api = rest::routes(d.clone())
         .merge(grpc)
-        .layer(axum::middleware::from_fn(comp_daemon_kit::require_token))
+        .layer(axum::middleware::from_fn(holon_daemon_kit::require_token))
         .layer(axum::Extension(Arc::new(token)));
     rest::health_route(d).merge(api)
 }
@@ -188,7 +188,7 @@ fn off_peak_now() -> bool {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    comp_fuel::offpeak::deepseek_off_peak(now, &[])
+    holon_fuel::offpeak::deepseek_off_peak(now, &[])
 }
 
 fn provider(args: &Args) -> Result<model::Provider> {
@@ -219,8 +219,8 @@ fn provider(args: &Args) -> Result<model::Provider> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("comp-agentd", &token);
+    let token = holon_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
+    holon_daemon_kit::warn_if_unauthenticated("comp-agentd", &token);
     let roots = args
         .workspace_roots
         .iter()
@@ -242,15 +242,17 @@ async fn main() -> Result<()> {
         prices: args.prices.clone(),
         off_peak: off_peak_now,
         park: args.park_url.clone().map(|url| {
-            let token = comp_daemon_kit::resolve_token(
+            let token = holon_daemon_kit::resolve_token(
                 args.park_token.clone(),
                 args.park_token_file.clone(),
             );
             park::Park::new(reqwest::Client::new(), url, token)
         }),
         vcs: args.vcs_url.clone().map(|url| {
-            let token =
-                comp_daemon_kit::resolve_token(args.vcs_token.clone(), args.vcs_token_file.clone());
+            let token = holon_daemon_kit::resolve_token(
+                args.vcs_token.clone(),
+                args.vcs_token_file.clone(),
+            );
             vcs::Vcs::new(reqwest::Client::new(), url, token)
         }),
     };

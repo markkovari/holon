@@ -34,7 +34,7 @@ struct Args {
     /// A file holding that account's password, never a value.
     #[arg(long)]
     password_file: Option<PathBuf>,
-    /// Hold back DeepSeek-billed goals until its off-peak window (`comp_fuel::offpeak`).
+    /// Hold back DeepSeek-billed goals until its off-peak window (`holon_fuel::offpeak`).
     #[arg(long, default_value_t = false)]
     enforce_deepseek_offpeak: bool,
     /// A file of `YYYY-MM-DD` off-peak days, read only with `--enforce-deepseek-offpeak`.
@@ -447,17 +447,17 @@ fn main() -> Result<()> {
 
     // Once at startup: the trailing goalrun args, and so the model, never change between polls.
     let off_peak_days = match &args.holidays {
-        Some(path) => comp_fuel::offpeak::parse_holidays(
+        Some(path) => holon_fuel::offpeak::parse_holidays(
             &std::fs::read_to_string(path)
                 .with_context(|| format!("reading {}", path.display()))?,
         )
         .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?,
         None => Vec::new(),
     };
-    let model = comp_fuel::offpeak::model_arg(&args.goalrun).map(str::to_string);
+    let model = holon_fuel::offpeak::model_arg(&args.goalrun).map(str::to_string);
     if args.enforce_deepseek_offpeak {
         match &model {
-            Some(m) if comp_fuel::offpeak::is_deepseek_model(m) => {
+            Some(m) if holon_fuel::offpeak::is_deepseek_model(m) => {
                 eprintln!("[goald] enforcing DeepSeek off-peak scheduling for model {m}");
             }
             _ => eprintln!(
@@ -513,7 +513,7 @@ fn main() -> Result<()> {
                             .duration_since(UNIX_EPOCH)
                             .unwrap_or_default()
                             .as_secs();
-                        if comp_fuel::offpeak::should_defer(
+                        if holon_fuel::offpeak::should_defer(
                             now,
                             &off_peak_days,
                             args.enforce_deepseek_offpeak,

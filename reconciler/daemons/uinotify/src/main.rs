@@ -37,12 +37,12 @@ async fn handle(Json(req): Json<NotifyReq>) -> Json<Value> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("holon-uinotify", &token);
+    let token = holon_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
+    holon_daemon_kit::warn_if_unauthenticated("holon-uinotify", &token);
     println!("holon-uinotify: listening on http://{}", args.addr);
     let app = Router::new()
         .route("/notify", post(handle))
-        .layer(axum::middleware::from_fn(comp_daemon_kit::require_token))
+        .layer(axum::middleware::from_fn(holon_daemon_kit::require_token))
         .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     axum::serve(listener, app).await?;

@@ -284,7 +284,7 @@ fn surql(catalog: &Catalog, apps: &[App], generation: u64) -> String {
     let mut n_artifacts = 0usize;
     for name in catalog.names() {
         n_artifacts += 1;
-        let digest = catalog.bytes(name).map(comp_oci::digest_of).unwrap_or_default();
+        let digest = catalog.bytes(name).map(holon_oci::digest_of).unwrap_or_default();
         out.push_str(&format!(
             "UPSERT {} SET name = {}, digest = {}, gen = {generation};\n",
             rid("artifact", name),

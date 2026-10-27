@@ -74,12 +74,12 @@ async fn list_jobs() -> Json<Value> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("holon-cron", &token);
+    let token = holon_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
+    holon_daemon_kit::warn_if_unauthenticated("holon-cron", &token);
     println!("holon-cron: listening on http://{}", args.addr);
     let app = Router::new()
         .route("/list-jobs", post(list_jobs))
-        .layer(axum::middleware::from_fn(comp_daemon_kit::require_token))
+        .layer(axum::middleware::from_fn(holon_daemon_kit::require_token))
         .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     axum::serve(listener, app).await?;

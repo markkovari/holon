@@ -4,7 +4,7 @@
 
 /// Artifacts by digest. Their own package (docs/adr/0115), so that the tools that name an artifact need
 /// not depend on the control plane; `comp_reconciler::oci` is the crate, re-exported.
-pub use comp_oci as oci;
+pub use holon_oci as oci;
 
 pub mod plan;
 pub mod settings;

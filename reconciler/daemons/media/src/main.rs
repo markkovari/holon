@@ -181,8 +181,8 @@ fn secret(direct: Option<String>, file: Option<PathBuf>, name: &str) -> Result<S
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("holon-media", &token);
+    let token = holon_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
+    holon_daemon_kit::warn_if_unauthenticated("holon-media", &token);
 
     let creds = Credentials::new(
         secret(args.s3_access_key, args.s3_access_key_file, "s3-access-key")?,
@@ -297,7 +297,7 @@ async fn main() -> Result<()> {
         .route("/jobs", post(submit))
         .route("/sign", post(sign))
         .with_state(d.clone())
-        .layer(axum::middleware::from_fn(comp_daemon_kit::require_token))
+        .layer(axum::middleware::from_fn(holon_daemon_kit::require_token))
         .layer(axum::Extension(Arc::new(token)))
         // Outside the auth layer: a liveness probe carries no token.
         .merge(Router::new().route("/health", get(health)).with_state(d));

@@ -1,5 +1,5 @@
 [package]
-name = "comp-fuel"
+name = "holon-fuel"
 description = "What a run costs and the spend a project budget is checked against: the price table, the off-peak window and a run's total spend (docs/adr/0081)."
 version.workspace = true
 edition.workspace = true

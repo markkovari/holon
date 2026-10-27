@@ -18,7 +18,7 @@ path = "src/bin/resume.rs"
 # The engine, over JetStream KV and the PARK_WAKE work-queue stream. No SurrealDB — unlike vcs,
 # there is no graph here, one ticket is one mutable record.
 [dependencies]
-comp-daemon-kit.workspace = true
+holon-daemon-kit.workspace = true
 holon-park.workspace = true
 anyhow.workspace = true
 axum.workspace = true
