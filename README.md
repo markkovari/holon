@@ -196,11 +196,24 @@ Holon also contains an engineering loop that runs AI agents in parallel over thi
 substrate: each branch explores the same goal in its own environment, a real test
 gate judges every candidate, and a selector opens the winner as a pull request.
 
-```
-goal ──┬─▶ branch 0 (its own env) ─▶ writes code ─▶ real tests ─▶ 1000
-       ├─▶ branch 1 ─▶ … ─▶  500          ↑                        │ selector
-       ├─▶ branch 2 ─▶ … ─▶ 1000    the gate runs the             ▼ picks a winner
-       └─▶ branch 3 ─▶ … ─▶  666    project's own commands   ─▶  pull request
+```mermaid
+flowchart LR
+    Goal["🎯 Goal"] --> B0["Branch 0 (its own env)"]
+    Goal --> B1["Branch 1 (its own env)"]
+    Goal --> B2["Branch 2 (its own env)"]
+    Goal --> B3["Branch 3 (its own env)"]
+
+    B0 --> W0["writes code"] --> T0["gate: real tests"] --> S0["Score: 1000"]
+    B1 --> W1["writes code"] --> T1["gate: real tests"] --> S1["Score: 500"]
+    B2 --> W2["writes code"] --> T2["gate: real tests"] --> S2["Score: 1000"]
+    B3 --> W3["writes code"] --> T3["gate: real tests"] --> S3["Score: 666"]
+
+    S0 --> Selector{"Selector<br/>picks winner"}
+    S1 --> Selector
+    S2 --> Selector
+    S3 --> Selector
+
+    Selector --> PR["🚀 Pull Request / Git Commit"]
 ```
 
 It works, and after a pause (below) it is running again.
