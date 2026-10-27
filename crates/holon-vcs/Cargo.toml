@@ -9,7 +9,14 @@ description = "An agent-native code store: an operation log over a commutative, 
 # default is I/O-free so it builds for wasm32-wasip2; native adds the NATS/SurrealDB adapters (ADR-0095).
 [features]
 default = []
-native = ["dep:tokio", "dep:async-nats", "dep:surrealdb", "dep:futures"]
+native = [
+    "dep:tokio",
+    "dep:async-nats",
+    "dep:surrealdb",
+    "dep:futures",
+    "dep:rusty-s3",
+    "dep:reqwest",
+]
 
 [dependencies]
 serde.workspace = true
@@ -27,6 +34,8 @@ tokio = { workspace = true, optional = true }
 async-nats = { workspace = true, optional = true }
 surrealdb = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
+rusty-s3 = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

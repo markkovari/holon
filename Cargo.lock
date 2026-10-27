@@ -3107,6 +3107,8 @@ dependencies = [
  "hex",
  "proc-macro2",
  "quote",
+ "reqwest 0.12.28",
+ "rusty-s3",
  "serde",
  "serde_json",
  "sha1",

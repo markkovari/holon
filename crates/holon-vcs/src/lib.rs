@@ -17,6 +17,8 @@ pub mod wire;
 #[cfg(feature = "native")]
 pub mod nats;
 #[cfg(feature = "native")]
+pub mod s3;
+#[cfg(feature = "native")]
 pub mod surreal;
 
 pub use engine::Engine;
