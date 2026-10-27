@@ -1,17 +1,12 @@
 <div align="center">
 
 ```text
-       ___          ___          ___          ___          ___     
-      /\__\        /\  \        /\__\        /\  \        /\__\    
-     /:/  /       /::\  \      /:/  /       /::\  \      /::|  |   
-    /:/__/       /:/\:\  \    /:/  /       /:/\:\  \    /:|:|  |   
-   /::\  \ ___  /:/  \:\  \  /:/  /  ___  /:/  \:\  \  /:/|:|  |__ 
-  /:/\:\  /\__\/:/__/ \:\__\/:/__/  /\__\/:/__/ \:\__\/:/ |:| /\__\
-  \/__\:\/:/  /\:\  \ /:/  /\:\  \ /:/  /\:\  \ /:/  /\/__|:|/:/  /
-       \::/  /  \:\  /:/  /  \:\  /:/  /  \:\  /:/  /     |:/:/  / 
-       /:/  /    \:\/:/  /    \:\/:/  /    \:\/:/  /      |::/  /  
-      /:/  /      \::/  /      \::/  /      \::/  /       /:/  /   
-      \/__/        \/__/        \/__/        \/__/        \/__/    
+ ██╗  ██╗  ██████╗  ██╗       ██████╗  ███╗   ██╗
+ ██║  ██║ ██╔═══██╗ ██║      ██╔═══██╗ ████╗  ██║
+ ███████║ ██║   ██║ ██║      ██║   ██║ ██╔██╗ ██║
+ ██╔══██║ ██║   ██║ ██║      ██║   ██║ ██║╚██╗██║
+ ██║  ██║ ╚██████╔╝ ███████╗ ╚██████╔╝ ██║ ╚████║
+ ╚═╝  ╚═╝  ╚═════╝  ╚══════╝  ╚═════╝  ╚═╝  ╚═══╝
 ```
 
 <img src="docs/media/holon-mascot.png" alt="Holo the Mascot" width="220" />
@@ -195,7 +190,8 @@ the CLI. Everything else is a component.
 
 Holon contains an engineering loop that runs AI agents in parallel over this
 substrate: each branch explores the same goal in its own environment, a real test
-gate judges every candidate, and a selector opens the winner as a pull request.
+gate judges every candidate, and a selector lands the winner directly into S3-backed Git
+via Walgit (or opens a pull request for human review).
 
 ```mermaid
 flowchart LR
@@ -214,14 +210,16 @@ flowchart LR
     S2 --> Selector
     S3 --> Selector
 
-    Selector --> PR["🚀 Pull Request / Git Commit"]
+    Selector --> Walgit["📦 Walgit Direct Commit (S3)"]
+    Walgit -.->|"optional review"| PR["🚀 Pull Request / Forge"]
 ```
 
 **Active and proven.** The loop is actively used and runs real workloads: nothing is mocked
 on the path to a landed change. A real model writes the code (`components/anthropic-provider`),
-a real suite gates it (`comp-checks`), and a forge opens the PR (`components/github-forge`).
-It has delivered multi-part decomposed goals as merged pull requests on this repository
-(dispatch, #220; marketplace, #273; single-part goals #275, #279; dual-mode storage #461),
+a real suite gates it (`comp-checks`), and the winner commits directly to S3-backed Git via
+**Walgit** without PR ceremony, or opens a PR when human review is requested (`components/github-forge`).
+It has delivered multi-part decomposed goals as merged changes on this repository
+(dispatch, #220; marketplace, #273; single-part goals #275, #279; dual-mode storage #461; S3 Git lineage #462),
 with `comp-goald` and `comp-agentd` actively driving sessions and queues.
 
 **The safety invariant.** A run is only as good as the checks written for it.
