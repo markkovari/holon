@@ -1,18 +1,68 @@
-# Holon
+<div align="center">
 
-**A library of WebAssembly capability components, and four ways to run what you
-compose from them.**
+```text
+       ___          ___          ___          ___          ___     
+      /\__\        /\  \        /\__\        /\  \        /\__\    
+     /:/  /       /::\  \      /:/  /       /::\  \      /::|  |   
+    /:/__/       /:/\:\  \    /:/  /       /:/\:\  \    /:|:|  |   
+   /::\  \ ___  /:/  \:\  \  /:/  /  ___  /:/  \:\  \  /:/|:|  |__ 
+  /:/\:\  /\__\/:/__/ \:\__\/:/__/  /\__\/:/__/ \:\__\/:/ |:| /\__\
+  \/__\:\/:/  /\:\  \ /:/  /\:\  \ /:/  /\:\  \ /:/  /\/__|:|/:/  /
+       \::/  /  \:\  /:/  /  \:\  /:/  /  \:\  /:/  /     |:/:/  / 
+       /:/  /    \:\/:/  /    \:\/:/  /    \:\/:/  /      |::/  /  
+      /:/  /      \::/  /      \::/  /      \::/  /       /:/  /   
+      \/__/        \/__/        \/__/        \/__/        \/__/    
+```
 
-The boring infrastructure every backend reimplements — sessions, rate limits,
-search, money, validation, idempotency, audit, secrets, a virtual git, a
-knowledge graph — as **`wasm32-wasip2` components**, each a WIT contract plus
-a reference implementation. Compose them into an app with `wac`, then deliver that
-app to a VPS, a fleet, or somebody else's wasmCloud, from one spec.
+<img src="docs/media/holon-mascot.png" alt="Holo the Mascot" width="220" />
 
-The name is the design. A **holon** is a whole that is also a part of a larger
-whole (Koestler's term; *holacracy* descends from it). A component is exactly
-that: a complete thing behind its own contract, and a part of the app it is
-composed into. The graph nests, measured to depth 4.
+# Welcome to Holon 👋
+
+**A library of 200+ WebAssembly capability components, and four ways to run what you compose from them.**
+
+[![Rust](https://img.shields.io/badge/Rust-1.99-orange?logo=rust)](rust-toolchain.toml)
+[![WASI](https://img.shields.io/badge/WASI-0.3%20%2F%20wasip2-blue)](wit/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Components](https://img.shields.io/badge/Components-200%2B-purple)](components/)
+[![Architecture](https://img.shields.io/badge/Docs-ADRs%20(122)-informational)](docs/adr/)
+
+> **Meet Holo!** A *holon* is an entity that is simultaneously a whole and a part of a larger whole (Arthur Koestler's formulation; *holacracy* descends from it). Just like Holo, every component in this repository is complete behind its typed WIT boundary, and an autonomous building block of the applications you compose from it.
+
+</div>
+
+---
+
+### ⚡ Quick Start in 60 Seconds
+
+You don't need a heavy control plane or Kubernetes cluster to explore. Compose and run an application locally on your workstation with one command:
+
+```bash
+# 1. Compose components into a single root .wasm via WAC
+cargo xtask compose link-shortener
+
+# 2. Run it locally on the native host (:3942)
+cargo xtask host link-shortener
+
+# 3. Test your live endpoint
+curl http://localhost:3942/healthz
+```
+
+---
+
+## 🌟 What is Holon?
+
+Every backend team endlessly rebuilds the same boring infrastructure:
+* Sessions, authentication, and RBAC
+* Distributed rate limiting and quota meters
+* Idempotency, caching, and audit logging
+* Virtual Git code stores, knowledge graphs, and event buses
+
+Holon delivers all of these as **production-ready `wasm32-wasip2` components**, each defined by a typed WIT contract plus a reference implementation.
+* **Typed WIT Contracts**: Language-agnostic interfaces. The boundary is enforced by the linker, never by human vigilance.
+* **Composition via `wac`**: Connect components into full applications without glue code.
+* **Write Once, Deliver Anywhere**: Move from a single local binary to a bare-metal NATS lattice or wasmCloud without changing a single line of your business logic.
+
+---
 
 ## The two halves
 
@@ -54,10 +104,12 @@ gating — it needs only whatever toolchain the checks themselves name:
 ```bash
 # on the worker, bound to a tailnet address (never 0.0.0.0)
 head -c 32 /dev/urandom | base64 > ~/.comp-secrets/checks     # the same file on both
-comp-checks --addr 100.111.200.86:8199 --token-file ~/.comp-secrets/checks             --allow 'cargo test' --timeout 120
+comp-checks --addr 100.111.200.86:8199 --token-file ~/.comp-secrets/checks \
+            --allow 'cargo test' --timeout 120
 
 # on the box driving the loop
-comp-goalrun --checks-url http://100.111.200.86:8199/check              --checks-token-file ~/.comp-secrets/checks  …
+comp-goalrun --checks-url http://100.111.200.86:8199/check \
+             --checks-token-file ~/.comp-secrets/checks …
 ```
 
 A token is not optional off the loopback and `comp-checks` refuses to start
