@@ -78,7 +78,7 @@ services:
   # buckets with no rule of their own. Use one, not both.
   rustfs:
     image: rustfs/rustfs:1.0.0
-    profiles: ["media"]
+    profiles: ["media", "git"]
     environment:
       RUSTFS_VOLUMES: /data
       RUSTFS_ADDRESS: 0.0.0.0:9000
@@ -99,6 +99,34 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # ---- git profile -----------------------------------------------------
+  # S3-backed Git server via walgit (ADR-0122). Treats rustfs as the authoritative
+  # repository; local disk is an ephemeral cache. Serves smart HTTP on :8080.
+  #
+  #   docker compose --profile git up -d
+  #
+  walgit:
+    image: ghcr.io/tobi/walgit:latest
+    profiles: ["git"]
+    environment:
+      PORT: "8080"
+      AWS_ACCESS_KEY_ID: rustfsadmin
+      AWS_SECRET_ACCESS_KEY: rustfsadmin
+      WALGIT__SERVER__LISTEN: "0.0.0.0:8080"
+      WALGIT__SERVER__PUBLIC_URL: "http://localhost:8080"
+      WALGIT__SERVER__TLS__MODE: "off"
+      WALGIT__SERVER__AUTH__MODE: "none"
+      WALGIT__STORE__BACKEND: "s3"
+      WALGIT__STORE__BUCKET: "walgit-repos"
+      WALGIT__STORE__S3__ENDPOINT: "http://rustfs:9000"
+      WALGIT__STORE__S3__REGION: "us-east-1"
+      WALGIT__STORE__S3__FORCE_PATH_STYLE: "true"
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
 
   # ---- zitadel profile -------------------------------------------------
   zitadel-db:
