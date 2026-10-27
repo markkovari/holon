@@ -3,8 +3,8 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
-use comp_fleet::fleet::{bin_path, repo_root};
-use comp_goal::gate::{egress_authority, Gate};
+use holon_fleet::fleet::{bin_path, repo_root};
+use holon_goal::gate::{egress_authority, Gate};
 
 use crate::{Args, GoalSpec};
 
@@ -30,7 +30,7 @@ pub fn warm_caches(goal: &GoalSpec, args: &Args) -> Vec<String> {
         format!("COMP_HOST={}", host_bin().display()),
         format!("COMP_PLUG={}", plug_bin().display()),
         // The gates live in `reconciler/`, which is never in a goal's `base_paths`.
-        format!("COMP_GATES={}", comp_fleet::fleet::repo_root().join("reconciler").display()),
+        format!("COMP_GATES={}", holon_fleet::fleet::repo_root().join("reconciler").display()),
     ];
     // A rustup shim cannot pick a toolchain in the cleared env; the operator's, never the agent's.
     let rustup_home = std::env::var("RUSTUP_HOME").unwrap_or_else(|_| format!("{home}/.rustup"));

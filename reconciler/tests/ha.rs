@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use comp_fleet::fleet::Fleet;
+use holon_fleet::fleet::Fleet;
 
 #[test]
 fn a_second_ingress_serves_the_same_fleet_and_outlives_the_first() {

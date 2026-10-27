@@ -16,8 +16,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use comp_fleet::fleet::repo_root;
-use comp_fleet::plug::Catalog;
+use holon_fleet::fleet::repo_root;
+use holon_fleet::plug::Catalog;
 
 /// Every host interface a component in this repository is allowed to import. The first group is the
 /// `std` floor; the rest are asked for on purpose, the count beside each being what it was when the

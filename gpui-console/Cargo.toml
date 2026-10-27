@@ -14,7 +14,7 @@ name = "gpui-console"
 path = "src/main.rs"
 
 [dependencies]
-comp-fleet = { path = "../reconciler/fleet" }
+holon-fleet = { path = "../reconciler/fleet" }
 agent-runtime = { path = "../agent-runtime" }
 agent-board = { path = "board" }
 gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false }

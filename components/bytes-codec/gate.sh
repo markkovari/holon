@@ -14,7 +14,7 @@ cd "$(dirname "$0")/../.." || exit 1
 HOST="${COMP_HOST:-target/release/comp-host}"
 PLUG="${COMP_PLUG:-target/release/comp-plug}"
 [ -x "$HOST" ] || { echo "no comp-host at '$HOST' — cargo build --release -p comp-host"; exit 1; }
-[ -x "$PLUG" ] || { echo "no comp-plug at '$PLUG' — cargo build --release -p comp-fleet --bin comp-plug"; exit 1; }
+[ -x "$PLUG" ] || { echo "no comp-plug at '$PLUG' — cargo build --release -p holon-fleet --bin comp-plug"; exit 1; }
 
 ART=$("$PLUG" codec-probe) || { echo "could not compose codec-probe"; exit 1; }
 PORT="${CODEC_PORT:-3219}"

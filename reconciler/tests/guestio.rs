@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 
-use comp_fleet::fleet::repo_root;
+use holon_fleet::fleet::repo_root;
 
 /// Write sites that may stay as they are, with why. `<crate>/<file>:<payload>`. Empty today.
 const ALLOWED: &[(&str, &str)] = &[];

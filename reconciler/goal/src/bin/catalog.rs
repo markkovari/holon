@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use comp_fleet::fleet::repo_root;
+use holon_fleet::fleet::repo_root;
 use regex::Regex;
 use serde::Serialize;
 
@@ -174,7 +174,7 @@ fn scan(dir: &Path, res: &Regexes) -> Option<Entry> {
     let name = dir.file_name()?.to_string_lossy().to_string();
     let unimplemented =
         std::fs::read_to_string(&lib).map(|t| t.contains("UNIMPLEMENTED:")).unwrap_or(false);
-    let reusable_as_is = comp_goal::catalogue::offers_a_contract(&exports);
+    let reusable_as_is = holon_goal::catalogue::offers_a_contract(&exports);
     Some(Entry {
         reusable_as_is,
         description: first_doc_line(&lib),

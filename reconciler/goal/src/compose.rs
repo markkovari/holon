@@ -486,10 +486,10 @@ pub fn run_parts(
                 .as_array()
                 .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
                 .unwrap_or_default();
-            let tags = comp_fleet::plug::tags_for(
+            let tags = holon_fleet::plug::tags_for(
                 &writable,
-                &comp_fleet::plug::Catalog::scan(&comp_fleet::plug::default_dirs(
-                    &comp_fleet::fleet::repo_root(),
+                &holon_fleet::plug::Catalog::scan(&holon_fleet::plug::default_dirs(
+                    &holon_fleet::fleet::repo_root(),
                 )),
             );
             for (i, s) in ss.iter_mut().enumerate() {

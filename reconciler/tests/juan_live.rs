@@ -16,7 +16,7 @@ use std::process::Command;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use comp_fleet::fleet::{repo_root, Fleet};
+use holon_fleet::fleet::{repo_root, Fleet};
 use serde_json::{json, Value};
 
 /// Parsed out of the chat trigger: what to call the agent, and its joke.

@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 use std::process::Command;
 
-use comp_fleet::fleet::repo_root;
-use comp_fleet::plug::{default_dirs, Catalog};
+use holon_fleet::fleet::repo_root;
+use holon_fleet::plug::{default_dirs, Catalog};
 use serde_json::Value;
 
 /// Skipped loudly: a fresh clone has no artifacts, and an empty catalogue asserts nothing.

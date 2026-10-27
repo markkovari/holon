@@ -13,7 +13,7 @@
 
 use std::time::{Duration, Instant};
 
-use comp_fleet::fleet::Fleet;
+use holon_fleet::fleet::Fleet;
 use serde_json::{json, Value};
 
 mod harness;

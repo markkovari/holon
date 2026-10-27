@@ -20,7 +20,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 fn repo() -> PathBuf {
-    comp_fleet::fleet::root_from_manifest()
+    holon_fleet::fleet::root_from_manifest()
 }
 
 fn measured_root(repo: &Path) -> PathBuf {

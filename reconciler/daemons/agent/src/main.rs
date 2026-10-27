@@ -171,7 +171,7 @@ fn which_oci() -> Result<PathBuf, String> {
             return Ok(PathBuf::from(p));
         }
     }
-    Err("no comp-oci — build it (`cargo build --release -p comp-fleet --bin comp-oci`) or install it to /usr/local/bin".into())
+    Err("no comp-oci — build it (`cargo build --release -p holon-fleet --bin comp-oci`) or install it to /usr/local/bin".into())
 }
 
 /// The digest is recorded only AFTER the restart succeeds, or a failed restart would never be retried.

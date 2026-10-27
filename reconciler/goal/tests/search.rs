@@ -3,8 +3,8 @@
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use comp_fleet::fleet::{bin_path, free_port, repo_root, Fleet};
-use comp_goal::generation::{search, Bounds, SearchStop};
+use holon_fleet::fleet::{bin_path, free_port, repo_root, Fleet};
+use holon_goal::generation::{search, Bounds, SearchStop};
 use serde_json::{json, Value};
 
 struct Checks {

@@ -1,5 +1,5 @@
 [package]
-name = "comp-goal"
+name = "holon-goal"
 description = "The goal loop: generate candidates, join the parts of a decomposed goal, judge them through a gate, remember what each attempt taught, and the tools that drive it and read what it left (docs/adr/0081 to 0092)."
 version.workspace = true
 edition.workspace = true
@@ -35,7 +35,7 @@ name = "comp-catalog"
 path = "src/bin/catalog.rs"
 
 [dependencies]
-comp-fleet.workspace = true
+holon-fleet.workspace = true
 holon-fuel.workspace = true
 comp-metadata.workspace = true
 holon-oci.workspace = true

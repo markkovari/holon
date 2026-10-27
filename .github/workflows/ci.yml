@@ -441,7 +441,7 @@ jobs:
       # find them by path.
       - name: Build the binaries the gates and suites spawn
         run: |
-          cargo build --release -p comp-fleet --bin comp-plug
+          cargo build --release -p holon-fleet --bin comp-plug
           cargo build --release -p comp-mailrelay --bin comp-mailrelay
 
       # Which binaries, established by asking the suites rather than by adding one
@@ -479,7 +479,7 @@ jobs:
         env:
           COMP_HOST: ${{ github.workspace }}/target/release/comp-host
         run: >-
-          cargo test --release -p comp-reconciler -p comp-goal
+          cargo test --release -p comp-reconciler -p holon-goal
           --test capsearch --test contracts --test publish --test secrets
           --test capgraph_edges --test capgraph_store --test console_session
           --test compose_race --test witsurface --test hostsurface
@@ -645,7 +645,7 @@ jobs:
       # `reconciler-artifact-suites`'s own comment: this step is what builds them.
       - name: Build the binaries the gates and suites spawn
         run: |
-          cargo build --release -p comp-fleet --bin comp-plug
+          cargo build --release -p holon-fleet --bin comp-plug
           cargo build --release -p comp-mailrelay --bin comp-mailrelay
 
       # THE FLEET SUITES — 43 of them, and until #289 nothing ran a single one.
@@ -678,7 +678,7 @@ jobs:
         env:
           COMP_HOST: ${{ github.workspace }}/target/release/comp-host
         run: >-
-          cargo nextest run --release --profile ci -p comp-reconciler -p comp-goal -p comp-backup -E "
+          cargo nextest run --release --profile ci -p comp-reconciler -p holon-goal -p comp-backup -E "
           binary(=agent) | binary(=artifacts) | binary(=bigstatement) | binary(=blink) | binary(=capgraph_stress) |
           binary(=claude_shim_live) | binary(=coldstart) | binary(=compose) | binary(=contrast_audit_live) |
           binary(=crossnode) | binary(=driver) | binary(=e2e) | binary(=envbranch) | binary(=environments) |
@@ -758,7 +758,7 @@ jobs:
             done
           fi
       - name: Build comp-plug
-        run: cargo build --release -p comp-fleet --bin comp-plug
+        run: cargo build --release -p holon-fleet --bin comp-plug
       - name: Every gate
         run: components/gates.sh
 
@@ -813,7 +813,7 @@ jobs:
             [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
           done
       - name: Build comp-plug
-        run: cargo build --release -p comp-fleet --bin comp-plug
+        run: cargo build --release -p holon-fleet --bin comp-plug
       - name: Install Playwright
         working-directory: e2e
         run: |

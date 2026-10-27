@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 
-use comp_fleet::fleet::Fleet;
+use holon_fleet::fleet::Fleet;
 
 /// Replica count over time, sampled from the lattice rather than from a log.
 fn wait_for(

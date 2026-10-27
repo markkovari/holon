@@ -9,7 +9,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use comp_fleet::fleet::{repo_root, Fleet};
+use holon_fleet::fleet::{repo_root, Fleet};
 
 /// The CLI under test: `target/release/holon`, unless `COMP_COMP_BIN` names another.
 fn comp_bin() -> std::path::PathBuf {

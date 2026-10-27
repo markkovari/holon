@@ -9,7 +9,7 @@
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use comp_fleet::fleet::{bin_path, free_port, repo_root, Fleet};
+use holon_fleet::fleet::{bin_path, free_port, repo_root, Fleet};
 use serde_json::{json, Value};
 
 struct Checks {

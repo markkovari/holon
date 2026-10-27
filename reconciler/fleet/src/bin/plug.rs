@@ -1,9 +1,9 @@
-//! CLI over [`comp_fleet::plug`] for gates, which are shell scripts.
+//! CLI over [`holon_fleet::plug`] for gates, which are shell scripts.
 
 use std::path::PathBuf;
 
 use clap::Parser;
-use comp_fleet::plug::{compose_to, default_dirs, wiring, Catalog};
+use holon_fleet::plug::{compose_to, default_dirs, wiring, Catalog};
 
 #[derive(Parser)]
 #[command(name = "comp-plug", about = "Compose a component with what it imports")]

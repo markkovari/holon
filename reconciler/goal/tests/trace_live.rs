@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use comp_goal::trace::Trace;
+use holon_goal::trace::Trace;
 use serde_json::Value;
 
 // Shared harness, included rather than copied (docs/adr/0115).
@@ -191,7 +191,7 @@ fn a_dead_database_costs_a_line_of_output_and_nothing_else() {
 fn an_unauthenticated_database_takes_writes_with_no_auth_header() {
     use std::process::{Command, Stdio};
 
-    let port = comp_fleet::fleet::free_port();
+    let port = holon_fleet::fleet::free_port();
     let name = format!("trace-unauth-{port}");
     let started = Command::new("docker")
         .args(["run", "--rm", "-d", "--name", &name])
@@ -260,7 +260,7 @@ fn goalruns_own_ids_join_a_run_to_its_attempts() {
     trace.run_started(&run, "a real goal", ".comp/goal.toml", seed, "deadbeef", 2);
     for round in 0..2 {
         for branch in ["risk-first", "mvp"] {
-            let attempt = comp_goal::memory::run_id(seed, round, branch);
+            let attempt = holon_goal::memory::run_id(seed, round, branch);
             trace.branch_spawned(&run, &attempt, branch, round);
             trace.attempt_finished(
                 &run,

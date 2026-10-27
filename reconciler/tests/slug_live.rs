@@ -5,7 +5,7 @@
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use comp_fleet::fleet::{repo_root, Fleet};
+use holon_fleet::fleet::{repo_root, Fleet};
 use serde_json::{json, Value};
 
 /// Compose slug-probe + slug into one self-contained HTTP component and hand back the bytes
@@ -20,8 +20,8 @@ fn composed_slug_probe() -> Vec<u8> {
     assert!(out.status.success(), "{args:?} failed:\n{}", String::from_utf8_lossy(&out.stderr));
     // Composed by the library, not `wac`: the plug list comes from what slug-probe imports, so it cannot
     // drift from the component (ADR-0087) and `wac` need not be on PATH.
-    let catalog = comp_fleet::plug::Catalog::scan(std::slice::from_ref(&rel));
-    comp_fleet::plug::compose("slug-probe", &catalog).expect("slug-probe composes")
+    let catalog = holon_fleet::plug::Catalog::scan(std::slice::from_ref(&rel));
+    holon_fleet::plug::compose("slug-probe", &catalog).expect("slug-probe composes")
 }
 
 struct Api {
