@@ -8,7 +8,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 #[derive(Parser)]
-#[command(name = "comp-cron", about = "Native daemon for system-cron")]
+#[command(name = "holon-cron", about = "Native daemon for system-cron")]
 struct Args {
     /// Shared secret callers must send as `Authorization: Bearer <token>`; unset means no check.
     #[arg(long)]
@@ -75,8 +75,8 @@ async fn list_jobs() -> Json<Value> {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("comp-cron", &token);
-    println!("comp-cron: listening on http://{}", args.addr);
+    comp_daemon_kit::warn_if_unauthenticated("holon-cron", &token);
+    println!("holon-cron: listening on http://{}", args.addr);
     let app = Router::new()
         .route("/list-jobs", post(list_jobs))
         .layer(axum::middleware::from_fn(comp_daemon_kit::require_token))

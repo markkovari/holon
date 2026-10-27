@@ -53,7 +53,11 @@ impl Scratch {
 /// Keeps the node logs when asked; the scratch directory still exists during `drop`.
 impl Drop for Fleet {
     fn drop(&mut self) {
-        let Some(dest) = std::env::var_os("COMP_FLEET_KEEP_LOGS") else { return };
+        let Some(dest) = std::env::var_os("HOLON_FLEET_KEEP_LOGS")
+            .or_else(|| std::env::var_os("COMP_FLEET_KEEP_LOGS"))
+        else {
+            return;
+        };
         let dest = std::path::PathBuf::from(dest);
         if std::fs::create_dir_all(&dest).is_err() {
             return;
@@ -195,7 +199,9 @@ pub fn max_tree_payload() -> usize {
 
 /// Walks from the current executable: `CARGO_BIN_EXE_*` exists only inside an integration test.
 pub fn bin_path(name: &str) -> std::path::PathBuf {
-    if let Ok(p) = std::env::var(format!("COMP_{}_BIN", name.replace('-', "_").to_uppercase())) {
+    let holon_key = format!("HOLON_{}_BIN", name.replace('-', "_").to_uppercase());
+    let comp_key = format!("COMP_{}_BIN", name.replace('-', "_").to_uppercase());
+    if let Ok(p) = std::env::var(&holon_key).or_else(|_| std::env::var(&comp_key)) {
         return std::path::PathBuf::from(p);
     }
     if let Ok(exe) = std::env::current_exe() {
@@ -224,7 +230,7 @@ pub fn built_bin(name: &str) -> std::path::PathBuf {
 
 /// `CARGO_MANIFEST_DIR` is baked in at compile time; the override lets `bench/` drive a second box.
 pub fn repo_root() -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("COMP_REPO_ROOT") {
+    if let Ok(p) = std::env::var("HOLON_REPO_ROOT").or_else(|_| std::env::var("COMP_REPO_ROOT")) {
         return std::path::PathBuf::from(p);
     }
     root_from_manifest()
@@ -484,7 +490,8 @@ impl Fleet {
         scratch_dir: Option<std::path::PathBuf>,
     ) -> Self {
         let root = repo_root();
-        let host_bin = std::env::var("COMP_HOST_BIN")
+        let host_bin = std::env::var("HOLON_HOST_BIN")
+            .or_else(|_| std::env::var("COMP_HOST_BIN"))
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| root.join("target/release/comp-host"));
         assert!(
@@ -502,8 +509,10 @@ impl Fleet {
             None => Scratch::Owned(tempfile::tempdir().unwrap()),
         };
         let sp = dir.path().to_path_buf();
-        // Set COMP_FLEET_KEEP_LOGS to keep node logs past drop.
-        if let Some(dest) = std::env::var_os("COMP_FLEET_KEEP_LOGS") {
+        // Set HOLON_FLEET_KEEP_LOGS or COMP_FLEET_KEEP_LOGS to keep node logs past drop.
+        if let Some(dest) = std::env::var_os("HOLON_FLEET_KEEP_LOGS")
+            .or_else(|| std::env::var_os("COMP_FLEET_KEEP_LOGS"))
+        {
             eprintln!("fleet logs: {} (copied to {:?} on shutdown)", sp.display(), dest);
         }
         let mut children = Vec::new();
@@ -558,18 +567,26 @@ impl Fleet {
                     .args(["--config", "master-key=Y29tcC10ZXN0LW9ubHktbWFzdGVyLWtleS0zMmJ5dGU="]);
             }
             // Admission control (ADR-0082): set low to see the refusal.
-            if let Ok(lag) = std::env::var("COMP_MAX_PLACEMENT_LAG") {
+            if let Ok(lag) = std::env::var("HOLON_MAX_PLACEMENT_LAG")
+                .or_else(|_| std::env::var("COMP_MAX_PLACEMENT_LAG"))
+            {
                 cp.args(["--config", &format!("max-placement-lag={lag}")]);
             }
             // Report age before admission fails closed.
-            if let Ok(per) = std::env::var("COMP_MAX_PLACEMENT_LAG_PER_NODE") {
+            if let Ok(per) = std::env::var("HOLON_MAX_PLACEMENT_LAG_PER_NODE")
+                .or_else(|_| std::env::var("COMP_MAX_PLACEMENT_LAG_PER_NODE"))
+            {
                 cp.args(["--config", &format!("max-placement-lag-per-node={per}")]);
             }
             // Operator-granted egress for every tenant, never a tenant's own (ADR-0008).
-            if let Ok(egress) = std::env::var("COMP_DEFAULT_EGRESS") {
+            if let Ok(egress) = std::env::var("HOLON_DEFAULT_EGRESS")
+                .or_else(|_| std::env::var("COMP_DEFAULT_EGRESS"))
+            {
                 cp.args(["--config", &format!("default-egress={egress}")]);
             }
-            if let Ok(age) = std::env::var("COMP_STATUS_MAX_AGE") {
+            if let Ok(age) =
+                std::env::var("HOLON_STATUS_MAX_AGE").or_else(|_| std::env::var("COMP_STATUS_MAX_AGE"))
+            {
                 cp.args(["--config", &format!("status-max-age={age}")]);
             }
             children.push(spawn_logged("control-plane", &mut cp, &sp.join("platform.log")));
@@ -645,7 +662,10 @@ impl Fleet {
             }
             c.args(host_args);
             // Loopback is private (ADR-0008); opt-in, and it widens only the address check.
-            if std::env::var_os("COMP_FLEET_ALLOW_PRIVATE_EGRESS").is_some() {
+            if std::env::var_os("HOLON_FLEET_ALLOW_PRIVATE_EGRESS")
+                .or_else(|| std::env::var_os("COMP_FLEET_ALLOW_PRIVATE_EGRESS"))
+                .is_some()
+            {
                 c.arg("--allow-private-egress");
             }
             let child = spawn_logged("comp-host", &mut c, &sp.join(format!("n{n}.log")));
@@ -677,7 +697,9 @@ impl Fleet {
             ing.args(["--max-inflight", &m.to_string()]);
         }
         // A real run's guest call can outlive the 30s default backend timeout.
-        if let Ok(t) = std::env::var("COMP_FLEET_BACKEND_TIMEOUT") {
+        if let Ok(t) = std::env::var("HOLON_FLEET_BACKEND_TIMEOUT")
+            .or_else(|_| std::env::var("COMP_FLEET_BACKEND_TIMEOUT"))
+        {
             ing.args(["--backend-timeout", &t]);
         }
         children.push(spawn_logged("comp-ingress", &mut ing, &sp.join("ingress.log")));

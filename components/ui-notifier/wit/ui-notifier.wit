@@ -4,7 +4,7 @@
 // Raising a desktop notification needs the platform's notification bus
 // (D-Bus on Linux, native APIs on macOS/Windows), which a wasm32-wasip2
 // component does not have. See ADR-0095: the daemon behind this
-// (`comp-uinotify`) is native for that reason and this component is an HTTP
+// (`holon-uinotify`) is native for that reason and this component is an HTTP
 // client to it, exactly like `fs-watcher` is to `comp-fswatch`.
 package os:ui@0.2.0;
 

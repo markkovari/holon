@@ -1,9 +1,13 @@
 [package]
-name = "comp-wireguard"
-description = "Whether a WireGuard tunnel is up, for a component that cannot look. Fronts components/vpn-wireguard (docs/adr/0095)."
+name = "holon-wireguard"
+description = "Whether a WireGuard tunnel is up, for a component that cannot look. Fronts components/vpn-wireguard (docs/adr/0095, ADR-0118)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+
+[[bin]]
+name = "holon-wireguard"
+path = "src/main.rs"
 
 [dependencies]
 comp-daemon-kit.workspace = true

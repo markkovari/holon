@@ -13,16 +13,24 @@ pub struct Session {
 }
 
 fn creds_path() -> PathBuf {
-    std::env::var("COMP_CREDENTIALS").map(PathBuf::from).unwrap_or_else(|_| {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        PathBuf::from(home).join(".config/comp/credentials.json")
-    })
+    std::env::var("HOLON_CREDENTIALS")
+        .or_else(|_| std::env::var("COMP_CREDENTIALS"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+            let holon_path = PathBuf::from(&home).join(".config/holon/credentials.json");
+            if holon_path.exists() {
+                holon_path
+            } else {
+                PathBuf::from(home).join(".config/comp/credentials.json")
+            }
+        })
 }
 
 pub fn load() -> Result<Session> {
     let p = creds_path();
     let raw = std::fs::read(&p)
-        .with_context(|| format!("no session at {} — run `comp login` first", p.display()))?;
+        .with_context(|| format!("no session at {} — run `holon login` first", p.display()))?;
     serde_json::from_slice(&raw).context("credentials file is not readable JSON")
 }
 

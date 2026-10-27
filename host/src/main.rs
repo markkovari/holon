@@ -1449,7 +1449,8 @@ pub(crate) fn store_for(
             },
             // 30s suits a store read; deep LLM/test fan-outs raise it (`data receipt timed out` is this firing).
             Some(std::time::Duration::from_secs(
-                std::env::var("COMP_RPC_TIMEOUT_SECS")
+                std::env::var("HOLON_RPC_TIMEOUT_SECS")
+                    .or_else(|_| std::env::var("COMP_RPC_TIMEOUT_SECS"))
                     .ok()
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(30),

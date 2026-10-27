@@ -36,7 +36,7 @@ use serde_json::{json, Value};
 
 #[derive(Parser)]
 #[command(
-    name = "comp-browser",
+    name = "holon-browser",
     about = "Render a page for a component that cannot start a browser."
 )]
 struct Args {
@@ -155,15 +155,15 @@ async fn snapshot(
 async fn main() -> Result<()> {
     let args = Args::parse();
     let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("comp-browser", &token);
+    comp_daemon_kit::warn_if_unauthenticated("holon-browser", &token);
     if args.allow_host.is_empty() {
         eprintln!(
-            "comp-browser: no --allow-host given, so every request will be refused. \
+            "holon-browser: no --allow-host given, so every request will be refused. \
              That is deliberate — a browser nobody has scoped visits nowhere."
         );
     }
     let allowed = args.allow_host.clone();
-    println!("comp-browser: listening on http://{} | {} allowed host(s)", args.addr, allowed.len());
+    println!("holon-browser: listening on http://{} | {} allowed host(s)", args.addr, allowed.len());
     let state = std::sync::Arc::new(Daemon { allowed });
     let app = Router::new()
         .route("/snapshot", post(snapshot))

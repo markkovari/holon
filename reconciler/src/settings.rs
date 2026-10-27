@@ -12,9 +12,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-/// Where a config file is looked for when `--config` is not given.
-pub const DEFAULT_PATH: &str = "comp.toml";
-pub const ENV_PATH: &str = "COMP_CONFIG";
+/// Where a config file is looked for when `--config` is not given (ADR-0118).
+pub const DEFAULT_PATH: &str = "holon.toml";
+pub const FALLBACK_PATH: &str = "comp.toml";
+pub const ENV_PATH: &str = "HOLON_CONFIG";
+pub const FALLBACK_ENV_PATH: &str = "COMP_CONFIG";
 
 #[derive(Debug, Default, Deserialize, PartialEq)]
 // A silently ignored typo in a config file is worse than no file: unknown keys are an error.
@@ -63,15 +65,27 @@ pub struct Ingress {
 }
 
 impl File {
-    /// Load from `path`, or from `$COMP_CONFIG`, or from `./comp.toml` if it exists. An explicitly
-    /// named file that cannot be read is an error; the implicit one may simply not exist.
+    /// Load from `path`, or from `$HOLON_CONFIG` / `$COMP_CONFIG`, or from `./holon.toml` / `./comp.toml`
+    /// if it exists (ADR-0118). An explicitly named file that cannot be read is an error; the implicit
+    /// one may simply not exist.
     pub fn load(explicit: Option<&Path>) -> Result<Self> {
         let (path, required) = match explicit {
             Some(p) => (p.to_path_buf(), true),
-            None => match std::env::var(ENV_PATH) {
-                Ok(p) if !p.is_empty() => (PathBuf::from(p), true),
-                _ => (PathBuf::from(DEFAULT_PATH), false),
-            },
+            None => {
+                if let Ok(p) = std::env::var(ENV_PATH).or_else(|_| std::env::var(FALLBACK_ENV_PATH)) {
+                    if !p.is_empty() {
+                        (PathBuf::from(p), true)
+                    } else if Path::new(DEFAULT_PATH).exists() {
+                        (PathBuf::from(DEFAULT_PATH), false)
+                    } else {
+                        (PathBuf::from(FALLBACK_PATH), false)
+                    }
+                } else if Path::new(DEFAULT_PATH).exists() {
+                    (PathBuf::from(DEFAULT_PATH), false)
+                } else {
+                    (PathBuf::from(FALLBACK_PATH), false)
+                }
+            }
         };
         if !path.exists() {
             if required {

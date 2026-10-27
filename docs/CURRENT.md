@@ -462,18 +462,18 @@ wrapper. The rest ship as a differently-named product:
 
 | capability crate | native daemon | HTTP wrapper crate | app name |
 |---|---|---|---|
-| `browser-automation` | `comp-browser` | `pdf-generator-domain` | `pdf-generator` |
+| `browser-automation` | `holon-browser` | `pdf-generator-domain` | `pdf-generator` |
 | `container-docker` | `holon-docker` | `docker-manager-domain` | `docker-manager` |
-| `desktop-clipboard` | `comp-clipboard` | `clipboard-sync-domain` | `clipboard-sync` |
+| `desktop-clipboard` | `holon-clipboard` | `clipboard-sync-domain` | `clipboard-sync` |
 | `fs-watcher` | `comp-fswatch` | `fs-watcher-domain` | `fs-watcher` |
 | `image-optimizer` | `holon-imageopt` | `image-optimizer-domain` | `image-optimizer` |
-| `lan-scanner` | `comp-lanscan` | `lan-scanner-domain` | `lan-scanner` |
+| `lan-scanner` | `holon-lanscan` | `lan-scanner-domain` | `lan-scanner` |
 | `llm-local` | `holon-llmlocal` | `local-ai-domain` | `local-ai` |
 | `mdns-discovery` | `holon-mdns` | `mdns-discoverer-domain` | `mdns-discoverer` |
-| `system-cron` | `comp-cron` | `cron-scheduler-domain` | `cron-scheduler` |
-| `ui-notifier` | `comp-uinotify` | `desktop-notifier-domain` | `desktop-notifier` |
+| `system-cron` | `holon-cron` | `cron-scheduler-domain` | `cron-scheduler` |
+| `ui-notifier` | `holon-uinotify` | `desktop-notifier-domain` | `desktop-notifier` |
 | `video-ffmpeg` | `holon-ffmpeg` | `video-transcoder-domain` | `video-transcoder` |
-| `vpn-wireguard` | `comp-wireguard` | `vpn-manager-domain` | `vpn-manager` |
+| `vpn-wireguard` | `holon-wireguard` | `vpn-manager-domain` | `vpn-manager` |
 
 `intent-router` is the one component in the repo where this split doesn't
 apply: it exports `wasi:http/incoming-handler` itself, with no `-domain`

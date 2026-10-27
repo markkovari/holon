@@ -560,7 +560,7 @@
     "config_keys": [
       {
         "name": "browser-url",
-        "description": "where `comp-browser` is listening, e.g. http://127.0.0.1:8001"
+        "description": "where `holon-browser` is listening, e.g. http://127.0.0.1:8001"
       },
       {
         "name": "browser-token",
@@ -1074,7 +1074,7 @@
     "config_keys": [
       {
         "name": "clipboard-url",
-        "description": "where `comp-clipboard` is listening, e.g. http://127.0.0.1:8003"
+        "description": "where `holon-clipboard` is listening, e.g. http://127.0.0.1:8003"
       },
       {
         "name": "clipboard-token",
@@ -2350,7 +2350,7 @@
     "config_keys": [
       {
         "name": "lanscan-url",
-        "description": "where `comp-lanscan` is listening, e.g. http://127.0.0.1:8005"
+        "description": "where `holon-lanscan` is listening, e.g. http://127.0.0.1:8005"
       },
       {
         "name": "lanscan-token",
@@ -4102,7 +4102,7 @@
     "config_keys": [
       {
         "name": "cron-url",
-        "description": "where `comp-cron` is listening, e.g. http://127.0.0.1:8008"
+        "description": "where `holon-cron` is listening, e.g. http://127.0.0.1:8008"
       },
       {
         "name": "cron-token",
@@ -4401,7 +4401,7 @@
     "config_keys": [
       {
         "name": "uinotify-url",
-        "description": "where `comp-uinotify` is listening, e.g. http://127.0.0.1:8009"
+        "description": "where `holon-uinotify` is listening, e.g. http://127.0.0.1:8009"
       },
       {
         "name": "uinotify-token",
@@ -4668,7 +4668,7 @@
     "config_keys": [
       {
         "name": "wireguard-url",
-        "description": "where `comp-wireguard` is listening, e.g. http://127.0.0.1:8011"
+        "description": "where `holon-wireguard` is listening, e.g. http://127.0.0.1:8011"
       },
       {
         "name": "wireguard-token",

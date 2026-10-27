@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 #[derive(Parser)]
-#[command(name = "comp-uinotify", about = "Native daemon for ui-notifier")]
+#[command(name = "holon-uinotify", about = "Native daemon for ui-notifier")]
 struct Args {
     /// Shared secret callers must send as `Authorization: Bearer <token>`; unset means no check.
     #[arg(long)]
@@ -38,8 +38,8 @@ async fn handle(Json(req): Json<NotifyReq>) -> Json<Value> {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("comp-uinotify", &token);
-    println!("comp-uinotify: listening on http://{}", args.addr);
+    comp_daemon_kit::warn_if_unauthenticated("holon-uinotify", &token);
+    println!("holon-uinotify: listening on http://{}", args.addr);
     let app = Router::new()
         .route("/notify", post(handle))
         .layer(axum::middleware::from_fn(comp_daemon_kit::require_token))
