@@ -72,7 +72,8 @@ impl File {
         let (path, required) = match explicit {
             Some(p) => (p.to_path_buf(), true),
             None => {
-                if let Ok(p) = std::env::var(ENV_PATH).or_else(|_| std::env::var(FALLBACK_ENV_PATH)) {
+                if let Ok(p) = std::env::var(ENV_PATH).or_else(|_| std::env::var(FALLBACK_ENV_PATH))
+                {
                     if !p.is_empty() {
                         (PathBuf::from(p), true)
                     } else if Path::new(DEFAULT_PATH).exists() {

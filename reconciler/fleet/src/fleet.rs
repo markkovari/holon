@@ -584,8 +584,8 @@ impl Fleet {
             {
                 cp.args(["--config", &format!("default-egress={egress}")]);
             }
-            if let Ok(age) =
-                std::env::var("HOLON_STATUS_MAX_AGE").or_else(|_| std::env::var("COMP_STATUS_MAX_AGE"))
+            if let Ok(age) = std::env::var("HOLON_STATUS_MAX_AGE")
+                .or_else(|_| std::env::var("COMP_STATUS_MAX_AGE"))
             {
                 cp.args(["--config", &format!("status-max-age={age}")]);
             }

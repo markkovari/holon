@@ -163,7 +163,11 @@ async fn main() -> Result<()> {
         );
     }
     let allowed = args.allow_host.clone();
-    println!("holon-browser: listening on http://{} | {} allowed host(s)", args.addr, allowed.len());
+    println!(
+        "holon-browser: listening on http://{} | {} allowed host(s)",
+        args.addr,
+        allowed.len()
+    );
     let state = std::sync::Arc::new(Daemon { allowed });
     let app = Router::new()
         .route("/snapshot", post(snapshot))
