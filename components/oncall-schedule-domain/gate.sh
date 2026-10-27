@@ -8,7 +8,7 @@ HOST="${COMP_HOST:-target/release/comp-host}"
 PLUG="${COMP_PLUG:-target/release/comp-plug}"
 
 [ -x "$HOST" ] || { echo "no comp-host at '$HOST' — cargo build --release -p comp-host"; exit 1; }
-[ -x "$PLUG" ] || { echo "no comp-plug at '$PLUG' — cargo build --release -p comp-fleet --bin comp-plug"; exit 1; }
+[ -x "$PLUG" ] || { echo "no comp-plug at '$PLUG' — cargo build --release -p holon-fleet --bin comp-plug"; exit 1; }
 
 # Bindings via xtask (p3 crates generate their own), then one plain build: `cargo component build`
 # cannot resolve a p3 world's imports.

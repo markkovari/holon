@@ -2,8 +2,8 @@
 
 use std::time::Duration;
 
-use comp_fleet::fleet::{repo_root, Fleet};
-use comp_goal::memory::{run_id, Memory};
+use holon_fleet::fleet::{repo_root, Fleet};
+use holon_goal::memory::{run_id, Memory};
 use serde_json::Value;
 
 // Shared harness, included rather than copied (docs/adr/0115).

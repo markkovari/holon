@@ -411,7 +411,7 @@ fn work(
     } else {
         let _ = std::fs::remove_file(&pr_marker);
         // Exhausted and broken read differently because the fix differs.
-        let reason = comp_goal::goalexit::failure_reason(status.code());
+        let reason = holon_goal::goalexit::failure_reason(status.code());
         eprintln!("[goald] {id} FAILED: {reason}");
         fail_goal(s, &id, &reason)?;
     }

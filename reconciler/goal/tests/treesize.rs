@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-use comp_fleet::fleet::{max_tree_payload, Fleet, MAX_TREE_BYTES};
+use holon_fleet::fleet::{max_tree_payload, Fleet, MAX_TREE_BYTES};
 
 /// At the ceiling, the framed message would fail on the server where the reason is invisible.
 #[test]
@@ -64,12 +64,12 @@ fn the_server_the_fleet_starts_advertises_that_ceiling() {
 /// A candidate judged after seeding, sending no tree, is judged against the real base.
 #[test]
 fn a_seeded_runner_judges_a_candidate_that_carries_no_tree() {
-    use comp_goal::compose;
+    use holon_goal::compose;
     use serde_json::json;
 
     let dir = tempfile::tempdir().unwrap();
-    let port = comp_fleet::fleet::free_port();
-    let mut child = std::process::Command::new(comp_fleet::fleet::bin_path("comp-checks"))
+    let port = holon_fleet::fleet::free_port();
+    let mut child = std::process::Command::new(holon_fleet::fleet::bin_path("comp-checks"))
         .args(["--addr", &format!("127.0.0.1:{port}")])
         .arg("--work-dir")
         .arg(dir.path())

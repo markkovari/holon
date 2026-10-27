@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use comp_fleet::fleet::{repo_root, Fleet};
+use holon_fleet::fleet::{repo_root, Fleet};
 use semver::Version;
 use serde_json::{json, Value};
 
@@ -66,8 +66,8 @@ fn build_composed_slug(feature: bool) -> Result<Vec<u8>> {
         bail!("building slug-probe failed:\n{}", String::from_utf8_lossy(&out.stderr));
     }
     // The plug list is derived from what slug-probe imports (ADR-0087).
-    let catalog = comp_fleet::plug::Catalog::scan(std::slice::from_ref(&rel));
-    comp_fleet::plug::compose("slug-probe", &catalog)
+    let catalog = holon_fleet::plug::Catalog::scan(std::slice::from_ref(&rel));
+    holon_fleet::plug::compose("slug-probe", &catalog)
         .map_err(|e| anyhow::anyhow!("composing slug-probe: {e}"))
 }
 

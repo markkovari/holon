@@ -19,7 +19,7 @@ use agent_runtime::runtime::Pending;
 use agent_runtime::spec::{validate_name, Capability};
 use agent_runtime::store::{MemoryItem, RunRecord, Status, Step};
 use agent_runtime::{server, AgentSpec, Config, ModelSpec, Runtime, Trigger};
-use comp_fleet::fleet::{repo_root, Fleet};
+use holon_fleet::fleet::{repo_root, Fleet};
 use futures::channel::mpsc;
 use futures::StreamExt;
 use gpui::{AppContext as _, Context, Entity, Subscription};

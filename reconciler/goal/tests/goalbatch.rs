@@ -1,6 +1,6 @@
 //! Held-out judge for `goals_to_start`, the decision behind `holon goal start --queued`.
 
-use comp_goal::goalbatch::goals_to_start;
+use holon_goal::goalbatch::goals_to_start;
 use serde_json::json;
 
 #[test]

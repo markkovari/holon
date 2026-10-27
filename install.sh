@@ -63,8 +63,8 @@ mkdir -p "$BIN_DIR"
 package_of() {
   case "$1" in
     comp-checks) echo comp-reconciler ;;
-    comp-plug) echo comp-fleet ;;
-    comp-goalrun|comp-goald) echo comp-goal ;;
+    comp-plug) echo holon-fleet ;;
+    comp-goalrun|comp-goald) echo holon-goal ;;
     *) echo "$1" ;;
   esac
 }

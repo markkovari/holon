@@ -5,13 +5,13 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use comp_goal::memory::{self, Memory};
+use holon_goal::memory::{self, Memory};
 
-use comp_fleet::fleet::repo_root;
-use comp_goal::contract::Answerer;
-use comp_goal::generation as generation_mod;
-use comp_goal::generation::Entry;
-use comp_goal::trace::Trace;
+use holon_fleet::fleet::repo_root;
+use holon_goal::contract::Answerer;
+use holon_goal::generation as generation_mod;
+use holon_goal::generation::Entry;
+use holon_goal::trace::Trace;
 
 use crate::{Args, GoalSpec};
 /// Asked once per goal, before anything spawns; an unreachable pool answers "not done".
@@ -44,16 +44,16 @@ pub fn search_the_pool(
     run: &str,
     trace: Option<&Trace>,
     advisor_url: Option<&str>,
-) -> (Vec<comp_goal::capsearch::Capability>, Option<BTreeSet<String>>) {
-    let catalog = comp_fleet::plug::Catalog::scan(&comp_fleet::plug::default_dirs(&repo_root()));
+) -> (Vec<holon_goal::capsearch::Capability>, Option<BTreeSet<String>>) {
+    let catalog = holon_fleet::plug::Catalog::scan(&holon_fleet::plug::default_dirs(&repo_root()));
     let mut apps_of: std::collections::BTreeMap<String, usize> = Default::default();
     for name in catalog.names().map(String::from).collect::<Vec<_>>() {
         for part in catalog.closure(&name) {
             *apps_of.entry(part).or_default() += 1;
         }
     }
-    let pool = comp_goal::capsearch::capabilities(&repo_root(), &catalog, &apps_of);
-    let hits = comp_goal::capsearch::find(goal_text, &pool);
+    let pool = holon_goal::capsearch::capabilities(&repo_root(), &catalog, &apps_of);
+    let hits = holon_goal::capsearch::find(goal_text, &pool);
     if let Some(t) = trace {
         t.capsearch(run, goal_text, hits.len());
     }
@@ -74,7 +74,7 @@ pub fn search_the_pool(
         }
         println!();
     }
-    let reuse: Vec<comp_goal::capsearch::Capability> =
+    let reuse: Vec<holon_goal::capsearch::Capability> =
         hits.into_iter().take(5).map(|m| m.capability.clone()).collect();
 
     let confirmed = advisor_url.filter(|_| !reuse.is_empty()).and_then(|url| {
@@ -107,7 +107,7 @@ pub fn search_the_pool(
 fn confirm_with_advisor(
     advisor_url: &str,
     goal_text: &str,
-    hits: &[comp_goal::capsearch::Capability],
+    hits: &[holon_goal::capsearch::Capability],
 ) -> Option<BTreeSet<String>> {
     let http =
         reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().ok()?;
@@ -150,13 +150,13 @@ pub fn lean_context(path: &str, content: String) -> String {
 /// Prose, not an instruction: the gate decides whether reuse happened. `confirmed` splits what Jev
 /// thinks fits from what it does not.
 pub fn pool_context(
-    reuse: &[comp_goal::capsearch::Capability],
+    reuse: &[holon_goal::capsearch::Capability],
     confirmed: Option<&BTreeSet<String>>,
 ) -> Option<Value> {
     if reuse.is_empty() {
         return None;
     }
-    let line = |c: &comp_goal::capsearch::Capability| {
+    let line = |c: &holon_goal::capsearch::Capability| {
         format!(
             "- `{}` (in {} app(s)) exports {} — {}",
             c.name,
@@ -280,9 +280,9 @@ pub(crate) fn reading_per_branch(
     let mut strategies = generation_mod::default_strategies(args.branches);
     let mut read_by_branch: Vec<Vec<String>> = vec![Vec::new(); strategies.len()];
     // Tags make what it learns findable by the next goal on the same interfaces (ADR-0090).
-    let tags = comp_fleet::plug::tags_for(
+    let tags = holon_fleet::plug::tags_for(
         &goal.writable,
-        &comp_fleet::plug::Catalog::scan(&comp_fleet::plug::default_dirs(&repo_root())),
+        &holon_fleet::plug::Catalog::scan(&holon_fleet::plug::default_dirs(&repo_root())),
     );
     if let Some(m) = &memory {
         for (i, s) in strategies.iter_mut().enumerate() {

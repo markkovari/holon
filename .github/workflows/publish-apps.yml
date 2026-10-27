@@ -72,7 +72,7 @@ jobs:
 
       - name: Build comp-plug and comp-oci
         working-directory: reconciler
-        run: cargo build --release -p comp-fleet --bin comp-plug --bin comp-oci
+        run: cargo build --release -p holon-fleet --bin comp-plug --bin comp-oci
 
       # One artifact per app in `apps/`, composed the same way `cargo xtask compose
       # <app>` composes it — derived from the root's imports, not from a written list.

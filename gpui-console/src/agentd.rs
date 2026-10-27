@@ -6,7 +6,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use agent_runtime::session::AgentdConfig;
-use comp_fleet::fleet::{free_port, repo_root};
+use holon_fleet::fleet::{free_port, repo_root};
 
 pub struct AgentdProc {
     child: Child,

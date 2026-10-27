@@ -1,7 +1,7 @@
 //! Seeds one run through `trace::Trace`, so the console's browser test also tests the writer.
 
 use clap::Parser;
-use comp_goal::trace::Trace;
+use holon_goal::trace::Trace;
 use serde_json::json;
 
 #[derive(Parser)]

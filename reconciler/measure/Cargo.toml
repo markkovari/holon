@@ -31,7 +31,7 @@ name = "holon-reuse-ratio"
 path = "src/bin/reuseratio.rs"
 
 [dependencies]
-comp-fleet.workspace = true
+holon-fleet.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 reqwest.workspace = true

@@ -3,9 +3,9 @@ use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use comp_goal::compose;
-use comp_goal::contract::Registry;
-use comp_goal::gate::Gate;
+use holon_goal::compose;
+use holon_goal::contract::Registry;
+use holon_goal::gate::Gate;
 use serde_json::{json, Value};
 
 use crate::setup::wait_serving;
@@ -41,7 +41,7 @@ pub(crate) fn base_tree(checkout: &Path, base_paths: &[String]) -> Result<Vec<Va
         );
     }
     // NATS refuses a message past `max_payload` opaquely; the server config shares this bound.
-    let ceiling = comp_fleet::fleet::max_tree_payload();
+    let ceiling = holon_fleet::fleet::max_tree_payload();
     if bytes > ceiling {
         bail!(
             "the base tree is {:.1} MB, over the {:.1} MB a run can ship — scope the goal with \

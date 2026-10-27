@@ -63,8 +63,9 @@ syn = { version = "3", default-features = false, features = ["full", "parsing", 
 rusqlite = { version = "0.32", features = ["bundled"] }
 surrealdb = { version = "3.3", default-features = false, features = ["protocol-ws", "rustls"] }
 holon-daemon-kit = { path = "reconciler/daemons/kit" }
-comp-fleet = { path = "reconciler/fleet" }
+holon-fleet = { path = "reconciler/fleet" }
 holon-fuel = { path = "reconciler/fuel" }
+holon-goal = { path = "reconciler/goal" }
 comp-lattice = { path = "lattice" }
 comp-metadata = { path = "comp-metadata" }
 holon-oci = { path = "reconciler/oci" }

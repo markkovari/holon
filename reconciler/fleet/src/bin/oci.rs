@@ -80,7 +80,7 @@ fn wasm_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 
 /// Best-effort: the bytes are the artifact, so a module with no surface yields empty lists.
 fn surface(wasm: &[u8]) -> (Vec<String>, Vec<String>) {
-    match comp_fleet::plug::surface(wasm) {
+    match holon_fleet::plug::surface(wasm) {
         Ok(s) => (
             s.exports.into_iter().collect(),
             // Both kinds: a puller wants everything the component will reach for.

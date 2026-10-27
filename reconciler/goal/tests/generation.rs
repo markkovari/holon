@@ -6,8 +6,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use comp_fleet::fleet::{bin_path, free_port, repo_root, Fleet};
-use comp_goal::generation::{fan_out, land};
+use holon_fleet::fleet::{bin_path, free_port, repo_root, Fleet};
+use holon_goal::generation::{fan_out, land};
 use serde_json::{json, Value};
 
 // Shared harness, included rather than copied (docs/adr/0115).
@@ -224,7 +224,7 @@ fn one_goal_four_branches_at_once_and_one_pull_request() {
     fleet.until("both apps serving", Duration::from_secs(180), || {
         let mut warm = plan();
         warm["seed"] = json!(100);
-        let r = comp_goal::generation::fan_out(
+        let r = holon_goal::generation::fan_out(
             &driver_url,
             "gendrive.acme.test",
             &warm,

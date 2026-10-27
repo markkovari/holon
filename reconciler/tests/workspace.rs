@@ -55,7 +55,7 @@ fn every_package_in_this_workspace_is_a_default_member() {
 /// brings its own `wasmparser`, which never meets the one `comp-fleet` reads components with.
 const ONE_COPY: &[(&str, &[&str], &str)] = &[
     ("async-nats", &[], "every daemon, the host's wRPC transport, holon-vcs and holon-park share one NATS client type"),
-    ("wasmparser", &["comp-fleet"], "comp-fleet reads a component with the same reader wac-graph does"),
+    ("wasmparser", &["holon-fleet"], "holon-fleet reads a component with the same reader wac-graph does"),
 ];
 
 fn root() -> PathBuf {
@@ -106,9 +106,7 @@ const FROZEN_COMP_PACKAGES: &[&str] = &[
     "comp-agent",
     "comp-agentd",
     "comp-backup",
-    "comp-fleet",
     "comp-fswatch",
-    "comp-goal",
     "comp-host",
     "comp-lattice",
     "comp-mailrelay",
