@@ -99,3 +99,66 @@ fn one_copy_of_each_crate_whose_types_cross_packages() {
         doubled.join("\n")
     );
 }
+
+/// ADR-0118 Layer 0: Nothing new is named `comp-`. Any package added from ADR-0118 on is `holon-`.
+/// This list is frozen and only gets shorter as packages are migrated to `holon-`.
+const FROZEN_COMP_PACKAGES: &[&str] = &[
+    "comp-agent",
+    "comp-agentd",
+    "comp-backup",
+    "comp-browser",
+    "comp-clipboard",
+    "comp-cron",
+    "comp-daemon-kit",
+    "comp-fleet",
+    "comp-fswatch",
+    "comp-fuel",
+    "comp-goal",
+    "comp-host",
+    "comp-lanscan",
+    "comp-lattice",
+    "comp-mailrelay",
+    "comp-measure",
+    "comp-media",
+    "comp-metadata",
+    "comp-oci",
+    "comp-park",
+    "comp-reconciler",
+    "comp-relay",
+    "comp-uinotify",
+    "comp-vcs",
+    "comp-wireguard",
+];
+
+#[test]
+fn no_new_comp_packages_adr_0118() {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let out = Command::new(cargo)
+        .args(["metadata", "--no-deps", "--format-version", "1", "--manifest-path"])
+        .arg(root().join("Cargo.toml"))
+        .output()
+        .expect("run cargo metadata");
+    assert!(
+        out.status.success(),
+        "cargo metadata failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let meta: Value = serde_json::from_slice(&out.stdout).expect("cargo metadata prints JSON");
+    let allowed: BTreeSet<&str> = FROZEN_COMP_PACKAGES.iter().copied().collect();
+
+    let mut forbidden = Vec::new();
+    if let Some(packages) = meta["packages"].as_array() {
+        for pkg in packages {
+            if let Some(name) = pkg["name"].as_str() {
+                if name.starts_with("comp-") && !allowed.contains(name) {
+                    forbidden.push(name.to_string());
+                }
+            }
+        }
+    }
+    forbidden.sort();
+    assert!(
+        forbidden.is_empty(),
+        "ADR-0118 violation: new packages starting with `comp-` are forbidden; name them `holon-`: {forbidden:?}"
+    );
+}

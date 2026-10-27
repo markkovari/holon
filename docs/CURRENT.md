@@ -463,16 +463,16 @@ wrapper. The rest ship as a differently-named product:
 | capability crate | native daemon | HTTP wrapper crate | app name |
 |---|---|---|---|
 | `browser-automation` | `comp-browser` | `pdf-generator-domain` | `pdf-generator` |
-| `container-docker` | `comp-docker` | `docker-manager-domain` | `docker-manager` |
+| `container-docker` | `holon-docker` | `docker-manager-domain` | `docker-manager` |
 | `desktop-clipboard` | `comp-clipboard` | `clipboard-sync-domain` | `clipboard-sync` |
 | `fs-watcher` | `comp-fswatch` | `fs-watcher-domain` | `fs-watcher` |
-| `image-optimizer` | `comp-imageopt` | `image-optimizer-domain` | `image-optimizer` |
+| `image-optimizer` | `holon-imageopt` | `image-optimizer-domain` | `image-optimizer` |
 | `lan-scanner` | `comp-lanscan` | `lan-scanner-domain` | `lan-scanner` |
-| `llm-local` | `comp-llmlocal` | `local-ai-domain` | `local-ai` |
-| `mdns-discovery` | `comp-mdns` | `mdns-discoverer-domain` | `mdns-discoverer` |
+| `llm-local` | `holon-llmlocal` | `local-ai-domain` | `local-ai` |
+| `mdns-discovery` | `holon-mdns` | `mdns-discoverer-domain` | `mdns-discoverer` |
 | `system-cron` | `comp-cron` | `cron-scheduler-domain` | `cron-scheduler` |
 | `ui-notifier` | `comp-uinotify` | `desktop-notifier-domain` | `desktop-notifier` |
-| `video-ffmpeg` | `comp-ffmpeg` | `video-transcoder-domain` | `video-transcoder` |
+| `video-ffmpeg` | `holon-ffmpeg` | `video-transcoder-domain` | `video-transcoder` |
 | `vpn-wireguard` | `comp-wireguard` | `vpn-manager-domain` | `vpn-manager` |
 
 `intent-router` is the one component in the repo where this split doesn't

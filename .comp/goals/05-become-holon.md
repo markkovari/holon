@@ -40,6 +40,10 @@ does it — carefully, and in one reviewable pull request.
   tool you type is `holon`.
 - **Slice 2 (done):** the doc references that named the CLI `comp` after slice 1
   renamed the binary — a correctness fix, not branding.
+- **Slice 3 (done, ADR-0118 Layer 0 & Layer 1 group 1):** Layer 0 rule enforced
+  by workspace test (`no_new_comp_packages_adr_0118`). First group of leaf daemons
+  renamed to `holon-` (`holon-docker`, `holon-ffmpeg`, `holon-imageopt`,
+  `holon-llmlocal`, `holon-mdns`), systemd unit renderer updated, and architecture maps aligned.
 
 ## Where the rename stops, on purpose
 

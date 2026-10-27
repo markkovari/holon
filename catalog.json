@@ -871,7 +871,7 @@
     "config_keys": [
       {
         "name": "docker-url",
-        "description": "where `comp-docker` is listening, e.g. http://127.0.0.1:8002"
+        "description": "where `holon-docker` is listening, e.g. http://127.0.0.1:8002"
       },
       {
         "name": "docker-token",
@@ -2024,7 +2024,7 @@
     "config_keys": [
       {
         "name": "imageopt-url",
-        "description": "where `comp-imageopt` is listening, e.g. http://127.0.0.1:8004"
+        "description": "where `holon-imageopt` is listening, e.g. http://127.0.0.1:8004"
       },
       {
         "name": "imageopt-token",
@@ -2437,7 +2437,7 @@
     "config_keys": [
       {
         "name": "llmlocal-url",
-        "description": "where `comp-llmlocal` is listening, e.g. http://127.0.0.1:8006"
+        "description": "where `holon-llmlocal` is listening, e.g. http://127.0.0.1:8006"
       },
       {
         "name": "llmlocal-token",
@@ -2631,7 +2631,7 @@
     "config_keys": [
       {
         "name": "mdns-url",
-        "description": "where `comp-mdns` is listening, e.g. http://127.0.0.1:8007"
+        "description": "where `holon-mdns` is listening, e.g. http://127.0.0.1:8007"
       },
       {
         "name": "mdns-token",
@@ -4560,7 +4560,7 @@
     "config_keys": [
       {
         "name": "ffmpeg-url",
-        "description": "where `comp-ffmpeg` is listening, e.g. http://127.0.0.1:8010"
+        "description": "where `holon-ffmpeg` is listening, e.g. http://127.0.0.1:8010"
       },
       {
         "name": "ffmpeg-token",

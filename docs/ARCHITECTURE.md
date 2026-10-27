@@ -413,9 +413,9 @@ flowchart TB
   end
   subgraph grp_nd["Native daemons"]
     n_d_files["<b>Files and desktop</b><br/>comp-fswatch · comp-clipboard<br/>comp-uinotify · comp-cron"]:::native
-    n_d_net["<b>Network</b><br/>comp-lanscan · comp-mdns<br/>comp-wireguard"]:::native
-    n_d_proc["<b>Processes and codecs</b><br/>comp-docker · comp-ffmpeg<br/>comp-browser · comp-imageopt"]:::native
-    n_d_data["<b>Models, data, gate</b><br/>comp-llmlocal · comp-media<br/>comp-mailrelay · comp-checks"]:::native
+    n_d_net["<b>Network</b><br/>comp-lanscan · holon-mdns<br/>comp-wireguard"]:::native
+    n_d_proc["<b>Processes and codecs</b><br/>holon-docker · holon-ffmpeg<br/>comp-browser · holon-imageopt"]:::native
+    n_d_data["<b>Models, data, gate</b><br/>holon-llmlocal · comp-media<br/>comp-mailrelay · comp-checks"]:::native
   end
   n_broker(["<b>Runtime · comp-host</b><br/>wasi:http/outgoing-handler dials a loopback address; the address comes from wasi:config/store, set per instance. The guest holds no socket."]):::ghost
   n_machine["<b>The machine</b><br/>docker socket · crontab · desktop session · LAN · WireGuard · Chrome · ffmpeg · Ollama — what the daemon, and only the daemon, may touch."]:::ext

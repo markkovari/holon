@@ -1275,32 +1275,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "comp-docker"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "bollard",
- "clap",
- "comp-daemon-kit",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "comp-ffmpeg"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "comp-daemon-kit",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "comp-fleet"
 version = "0.1.0"
 dependencies = [
@@ -1393,20 +1367,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "comp-imageopt"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "comp-daemon-kit",
- "image",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "comp-lanscan"
 version = "0.1.0"
 dependencies = [
@@ -1434,35 +1394,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "comp-llmlocal"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "comp-daemon-kit",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "comp-mailrelay"
 version = "0.1.0"
-
-[[package]]
-name = "comp-mdns"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "comp-daemon-kit",
- "mdns-sd",
- "serde_json",
- "tokio",
-]
 
 [[package]]
 name = "comp-measure"
@@ -3075,12 +3008,79 @@ dependencies = [
 ]
 
 [[package]]
+name = "holon-docker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "bollard",
+ "clap",
+ "comp-daemon-kit",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "holon-ffmpeg"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "comp-daemon-kit",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "holon-imageopt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "comp-daemon-kit",
+ "image",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "holon-llm"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "holon-llmlocal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "comp-daemon-kit",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "holon-mdns"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "comp-daemon-kit",
+ "mdns-sd",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

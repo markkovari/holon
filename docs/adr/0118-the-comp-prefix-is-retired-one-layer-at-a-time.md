@@ -4,8 +4,7 @@
 platform underneath still answers to `comp`. A name with two spellings costs a decision every time
 something is named, and renaming all of it at once would break every wire it appears on.*
 
-**Status: proposed.** Nothing is renamed. This decides the rule, the layers and their order; each layer
-is its own PR, and the first is cheap.
+**Status: accepted.** Layer 0 (the test guard against new `comp-` crates) and Layer 1 (first group of leaf daemons: `ffmpeg`, `docker`, `imageopt`, `llmlocal`, `mdns`) are in progress. Each layer is its own PR.
 
 ## What carries the name, counted
 

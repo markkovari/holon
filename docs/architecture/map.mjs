@@ -89,7 +89,7 @@ export const SYS = [
   purpose:'What a guest cannot do, done by small native daemons, each with its own allow-list.',
   blurb:'Watching a directory, scanning a LAN, running ffmpeg or a gate: a wasm32-wasip2 component has no watch syscall, no raw socket, no process. Each of these is a small native daemon, one per capability, which the component reaches over loopback HTTP; its address comes from wasi:config.',
   entry:'loopback HTTP from a component through wasi:http/outgoing-handler',
-  parts:[['native','comp-fswatch'],['native','comp-docker'],['native','comp-ffmpeg'],['native','comp-media'],['native','comp-checks'],['spec','+ more']],
+  parts:[['native','comp-fswatch'],['native','holon-docker'],['native','holon-ffmpeg'],['native','comp-media'],['native','comp-checks'],['spec','+ more']],
   uses:['s3','nats'],
   boundary:['Each daemon is its own process with its own allow-list and its own blast radius: no shared daemon, no shared allow-list (ADR-0095).',
             'They bind loopback. comp-checks bounds the command with --allow but not the tree it runs over, so off loopback it refuses to start without a token.',
@@ -375,9 +375,9 @@ export const DIA = {
    N('cap',2,0,'wasm','Capability crate',['a WIT contract and nothing else','fs-watcher · lan-scanner · \u2026']),
    N('broker',0,1,'ext','Runtime \u00b7 comp-host',['wasi:http/outgoing-handler dials a loopback address; the address comes from wasi:config/store, set per instance. The guest holds no socket.'],{cs:4,ghost:1,sys:'runtime'}),
    N('d-files',0,2,'native','Files and desktop',['comp-fswatch · comp-clipboard','comp-uinotify · comp-cron']),
-   N('d-net',1,2,'native','Network',['comp-lanscan · comp-mdns','comp-wireguard']),
-   N('d-proc',2,2,'native','Processes and codecs',['comp-docker · comp-ffmpeg','comp-browser · comp-imageopt']),
-   N('d-data',3,2,'native','Models, data, gate',['comp-llmlocal · comp-media','comp-mailrelay · comp-checks']),
+   N('d-net',1,2,'native','Network',['comp-lanscan · holon-mdns','comp-wireguard']),
+   N('d-proc',2,2,'native','Processes and codecs',['holon-docker · holon-ffmpeg','comp-browser · holon-imageopt']),
+   N('d-data',3,2,'native','Models, data, gate',['holon-llmlocal · comp-media','comp-mailrelay · comp-checks']),
    N('machine',0,3,'ext','The machine',['docker socket · crontab · desktop session · LAN · WireGuard · Chrome · ffmpeg · Ollama \u2014 what the daemon, and only the daemon, may touch.'],{cs:4})
   ],
   groups:[

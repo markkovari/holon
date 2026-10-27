@@ -1,9 +1,13 @@
 [package]
-name = "comp-mdns"
-description = "What a device is announcing on the local network, for a component that cannot browse mDNS. Fronts components/mdns-discovery (docs/adr/0095)."
+name = "holon-mdns"
+description = "What a device is announcing on the local network, for a component that cannot browse mDNS. Fronts components/mdns-discovery (docs/adr/0095, ADR-0118)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+
+[[bin]]
+name = "holon-mdns"
+path = "src/main.rs"
 
 [dependencies]
 comp-daemon-kit.workspace = true

@@ -16,7 +16,7 @@ Why the split exists: [ADR-0098](../../docs/adr/0098-photos-live-in-object-stora
 All requests and responses are JSON. Every route except `GET /health` requires
 `Authorization: Bearer <token>` when the daemon has one (`comp_daemon_kit`).
 Errors are HTTP 200 with `{"error": "refused"|"not-found"|"unavailable", "detail": "…"}` —
-the same convention as `comp-imageopt` — so a non-200 always means transport.
+the same convention as `holon-imageopt` (formerly `comp-imageopt`) — so a non-200 always means transport.
 
 | route | body | answer |
 |---|---|---|

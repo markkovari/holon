@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 #[derive(Parser)]
-#[command(name = "comp-llmlocal", about = "Proxy a prompt to a local Ollama server.")]
+#[command(name = "holon-llmlocal", about = "Proxy a prompt to a local Ollama server.")]
 struct Args {
     /// Shared secret callers must send as `Authorization: Bearer <token>`; unset means no check.
     #[arg(long)]
@@ -80,9 +80,9 @@ async fn infer(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<InferReq
 async fn main() -> Result<()> {
     let args = Args::parse();
     let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("comp-llmlocal", &token);
+    comp_daemon_kit::warn_if_unauthenticated("holon-llmlocal", &token);
     println!(
-        "comp-llmlocal: listening on http://{} | ollama at {} | model {}",
+        "holon-llmlocal: listening on http://{} | ollama at {} | model {}",
         args.addr, args.ollama_url, args.model
     );
     let state = std::sync::Arc::new(Daemon {
