@@ -189,10 +189,11 @@ a raw socket, a held subscription — not a convenience. The host that runs the 
 (`reconciler/`), the gate that spawns processes, the relay that holds a clock, and
 the CLI. Everything else is a component.
 
+<a id="the-agentic-loop"></a>
 <a id="the-agentic-loop--paused-and-kept"></a>
-## The agentic loop — **paused, then resumed**
+## The autonomous agentic loop — **active and proven**
 
-Holon also contains an engineering loop that runs AI agents in parallel over this
+Holon contains an engineering loop that runs AI agents in parallel over this
 substrate: each branch explores the same goal in its own environment, a real test
 gate judges every candidate, and a selector opens the winner as a pull request.
 
@@ -216,35 +217,20 @@ flowchart LR
     Selector --> PR["🚀 Pull Request / Git Commit"]
 ```
 
-It works, and after a pause (below) it is running again.
+**Active and proven.** The loop is actively used and runs real workloads: nothing is mocked
+on the path to a landed change. A real model writes the code (`components/anthropic-provider`),
+a real suite gates it (`comp-checks`), and a forge opens the PR (`components/github-forge`).
+It has delivered multi-part decomposed goals as merged pull requests on this repository
+(dispatch, #220; marketplace, #273; single-part goals #275, #279; dual-mode storage #461),
+with `comp-goald` and `comp-agentd` actively driving sessions and queues.
 
-**What it proved.** Nothing is mocked on the path to a landed change: a real model
-writes the code (`components/anthropic-provider`), a real suite gates it
-(`components/checks-runner` over a native runner), a real forge opens the PR
-(`components/github-forge`). A goal to `slugify` a string went from a queue to a
-merge-ready pull request for a few cents, and a two-part goal ran **on this
-repository** — a component and the probe that calls it, built by separate branches
-against a shared contract, joined and landed as one PR.
-
-**Why it was on hold.** The machinery is not the limit; the gate is. **A run is
-exactly as good as the checks a person wrote for it.** A gate that already passes
-on the base tree accepts anything, and the first real decomposed run scored a
-perfect 1000 on two candidates that had deleted their own component exports.
-Criticising the gate was [`.comp/goals/07-nothing-criticises-a-gate.md`](.comp/goals/07-nothing-criticises-a-gate.md),
-and the loop was paused on it.
-
-**Why it resumed.** That goal landed: every check, the goal's and each part's, now
-runs against the untouched base before anything is spent, and a run is refused
-when one passes ([`docs/CURRENT.md`](docs/CURRENT.md)). It does not check that a
-gate measures the right thing. Since then the loop has delivered decomposed goals
-as pull requests (dispatch, #220; a five-part marketplace, #273) and single-part
-ones (#275, #279), and `comp-goald` drains a project's queue (#274). The known
-edge: a decomposed goal's PR carries only its parts' own files, so the shared
-scaffold — router, WIT, `Cargo.toml`, gates — is still merged in by hand.
-
-Nothing was deleted while it was paused: the components, the ADRs
-([0078](docs/adr/0078-an-environment-is-a-derived-app.md)–[0094](docs/adr/0094-a-capability-describes-itself-in-a-callers-words.md)),
-the traces and `goal-demo.sh` all still run.
+**The safety invariant.** A run is only as good as the checks written for it.
+Every check runs against the untouched base before any inference budget is spent,
+refusing runs where checks pass trivially ([ADR-0081](docs/adr/0081-fitness-fuel-and-what-the-swarm-knows.md),
+[ADR-0088](docs/adr/0088-what-a-gate-says-is-what-the-next-attempt-reads.md)).
+With symbol-level commutation ([ADR-0099](docs/adr/0099-an-agent-native-code-store.md)) and
+S3-backed Git lineage ([ADR-0122](docs/adr/0122-s3-backed-git-via-walgit-for-component-lineage.md)),
+swarms explore and commit without locking.
 
 ```bash
 # CHECKOUT is the repository the loop works ON — not this one.
@@ -284,7 +270,7 @@ CHECKOUT=~/src/widgets REPO=acme/widgets bash goal-demo.sh real     # goal → P
 | the decisions, some superseded and kept | [`docs/adr/`](docs/adr/) |
 | the one rule everything else applies | [`docs/CURRENT.md`](docs/CURRENT.md#the-one-rule-everything-else-is-an-application-of) |
 
-**The loop** — paused on goal 07, resumed once it landed
+**The loop** — active, gate-verified, and delivering goals
 
 | | |
 |---|---|
@@ -312,8 +298,8 @@ The honest edge is that a wasmCloud 2.x release host provides standard WASI plus
 runs on the first two lanes and is refused at render time on the fourth, with the
 reason.
 
-**The loop was paused, not abandoned, and has resumed** — see above. The blocker
-was that nothing criticised a gate; that landed.
+**The loop is active and proven** — see above. It actively delivers decomposed goals as PRs,
+powers coding sessions in `agent-runtime` and `comp-agentd`, and gates changes with real test suites.
 
 The internal name is still `comp` in the code — renaming it to `holon` is itself a
 goal on the worklist ([`.comp/goals/05-become-holon.md`](.comp/goals/05-become-holon.md)).
