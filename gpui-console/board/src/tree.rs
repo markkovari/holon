@@ -173,7 +173,7 @@ pub fn price(model: &str, tokens_in: u64, tokens_out: u64) -> Option<u64> {
     known
         .iter()
         .any(|k| model.contains(k))
-        .then(|| comp_fuel::cost::cost_usd_micros(tokens_in, tokens_out, 0, 0, model, false))
+        .then(|| holon_fuel::cost::cost_usd_micros(tokens_in, tokens_out, 0, 0, model, false))
 }
 
 fn run_status(s: RunStatus) -> Status {

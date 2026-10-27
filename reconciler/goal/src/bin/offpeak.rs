@@ -1,7 +1,7 @@
 //! Exits 0 when DeepSeek is off-peak: a cron gate, `comp-offpeak && comp-goalrun ...`.
 
 use clap::Parser;
-use comp_fuel::offpeak::{deepseek_off_peak, parse_holidays};
+use holon_fuel::offpeak::{deepseek_off_peak, parse_holidays};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 

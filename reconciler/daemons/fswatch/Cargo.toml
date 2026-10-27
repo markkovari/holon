@@ -6,7 +6,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-comp-daemon-kit.workspace = true
+holon-daemon-kit.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true

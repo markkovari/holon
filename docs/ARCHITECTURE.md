@@ -452,7 +452,7 @@ flowchart TB
 - Each daemon is its own process with its own allow-list and its own blast radius: no shared daemon, no shared allow-list ([ADR-0095](adr/0095-what-is-allowed-to-be-native.md)).
 - They bind loopback. comp-checks bounds the command with --allow but not the tree it runs over, so off loopback it refuses to start without a token.
 - A missing dependency (Docker, Ollama, Chrome, ffmpeg, a desktop session) is reported as unavailable, never answered with a plausible constant.
-- The twelve [ADR-0095](adr/0095-what-is-allowed-to-be-native.md) daemons are each their own Cargo package, with one heavy crate and the shared comp-daemon-kit, so building or shipping one compiles none of the others ([ADR-0115](adr/0115-the-reconciler-is-a-workspace-of-single-purpose-packages.md)).
+- The twelve [ADR-0095](adr/0095-what-is-allowed-to-be-native.md) daemons are each their own Cargo package, with one heavy crate and the shared holon-daemon-kit, so building or shipping one compiles none of the others ([ADR-0115](adr/0115-the-reconciler-is-a-workspace-of-single-purpose-packages.md)).
 
 **Where it lives** [`reconciler/daemons/kit/`](../reconciler/daemons/kit/) · [`reconciler/daemons/fswatch/`](../reconciler/daemons/fswatch/) · [`reconciler/daemons/browser/`](../reconciler/daemons/browser/) · [`reconciler/daemons/docker/`](../reconciler/daemons/docker/) · [`reconciler/daemons/clipboard/`](../reconciler/daemons/clipboard/) · [`reconciler/daemons/imageopt/`](../reconciler/daemons/imageopt/) · [`reconciler/daemons/lanscan/`](../reconciler/daemons/lanscan/) · [`reconciler/daemons/llmlocal/`](../reconciler/daemons/llmlocal/) · [`reconciler/daemons/mdns/`](../reconciler/daemons/mdns/) · [`reconciler/daemons/cron/`](../reconciler/daemons/cron/) · [`reconciler/daemons/uinotify/`](../reconciler/daemons/uinotify/) · [`reconciler/daemons/ffmpeg/`](../reconciler/daemons/ffmpeg/) · [`reconciler/daemons/wireguard/`](../reconciler/daemons/wireguard/) · [`reconciler/daemons/media/`](../reconciler/daemons/media/) · [`reconciler/daemons/mailrelay/`](../reconciler/daemons/mailrelay/) · [`reconciler/src/bin/checks.rs`](../reconciler/src/bin/checks.rs)
 
@@ -698,7 +698,7 @@ flowchart LR
   n_xt["<b>cargo xtask test</b><br/>compiles every test target<br/>first, then runs them"]:::native
   n_suites["<b>reconciler/tests</b><br/>fleets · ha · leader · scaling<br/>contracts · witsurface · guestio"]:::spec
   n_bench["<b>bench/</b><br/>HOST-PERF · FLEET-BENCH · needle<br/>adversarial · tenancy · versus"]:::spec
-  n_tools["<b>Bench tools</b><br/>comp-bench · comp-matrix<br/>comp-planscale · comp-hopcost · comp-stub"]:::native
+  n_tools["<b>Bench tools</b><br/>comp-bench · holon-matrix<br/>comp-planscale · holon-hopcost · comp-stub"]:::native
   n_e2e["<b>e2e/</b><br/>Playwright and shell:<br/>park.sh · vcs.sh · photoquest.sh"]:::spec
   n_g_git(["<b>Git (GitHub)</b><br/>Actions"]):::ghost
   n_g_run(["<b>Runtime</b><br/>comp-host nodes"]):::ghost

@@ -17,7 +17,7 @@ use clap::Parser;
 use comp_fleet::fleet::{bin_path, Fleet};
 
 #[derive(Parser)]
-#[command(name = "comp-matrix", about = "Cross every dimension, hold the load")]
+#[command(name = "holon-matrix", about = "Cross every dimension, hold the load")]
 struct Args {
     /// App counts to try, e.g. `1,8,32`.
     #[arg(long, default_value = "1,8,32", value_delimiter = ',')]

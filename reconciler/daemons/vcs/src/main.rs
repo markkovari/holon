@@ -767,7 +767,7 @@ fn app(d: Shared, token: Option<String>) -> Router {
     let api = Router::new()
         .route("/v1/{func}", post(call))
         .layer(DefaultBodyLimit::max(MAX_BODY))
-        .layer(axum::middleware::from_fn(comp_daemon_kit::require_token))
+        .layer(axum::middleware::from_fn(holon_daemon_kit::require_token))
         .layer(axum::Extension(Arc::new(token)))
         .with_state(d.clone());
     Router::new().route("/health", get(health)).with_state(d).merge(api)
@@ -794,8 +794,8 @@ fn fault_plan(args: &Args) -> Result<Option<Plan>> {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let plan = fault_plan(&args)?;
-    let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("comp-vcs", &token);
+    let token = holon_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
+    holon_daemon_kit::warn_if_unauthenticated("comp-vcs", &token);
     if let Some(p) = plan {
         eprintln!(
             "comp-vcs: TEST FAULT INJECTION ARMED ({}): this process will abort itself mid-write",

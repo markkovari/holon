@@ -45,7 +45,7 @@ anyhow.workspace = true
 clap.workspace = true
 reqwest.workspace = true
 # Artifacts by digest (oci/): `comp_reconciler::oci` is the crate, re-exported.
-comp-oci.workspace = true
+holon-oci.workspace = true
 
 # comp-ingress: terminates HTTP and spreads it across an app's replicas. A second
 # binary here rather than a sixth crate, because it needs exactly two things this

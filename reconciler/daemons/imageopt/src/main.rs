@@ -131,8 +131,8 @@ async fn optimize(
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("holon-imageopt", &token);
+    let token = holon_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
+    holon_daemon_kit::warn_if_unauthenticated("holon-imageopt", &token);
     if args.allow_path.is_empty() {
         eprintln!(
             "holon-imageopt: no --allow-path given, so every request will be refused. \
@@ -154,7 +154,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/optimize", post(optimize))
         .with_state(state)
-        .layer(axum::middleware::from_fn(comp_daemon_kit::require_token))
+        .layer(axum::middleware::from_fn(holon_daemon_kit::require_token))
         .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     axum::serve(listener, app).await?;

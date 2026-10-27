@@ -1,5 +1,5 @@
 [package]
-name = "comp-daemon-kit"
+name = "holon-daemon-kit"
 description = "What every native daemon behind a capability shares: the shared-secret check on its loopback HTTP (docs/adr/0095, docs/adr/0115)."
 version.workspace = true
 edition.workspace = true
