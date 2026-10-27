@@ -190,14 +190,14 @@ pub(crate) fn render(fixture: &str, subs: &[(&str, &str)]) -> Result<PathBuf> {
 }
 
 pub(crate) fn host_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("COMP_HOST") {
+    if let Ok(p) = std::env::var("HOLON_HOST").or_else(|_| std::env::var("COMP_HOST")) {
         return PathBuf::from(p);
     }
     repo_root().join("target/release/comp-host")
 }
 
 pub(crate) fn plug_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("COMP_PLUG") {
+    if let Ok(p) = std::env::var("HOLON_PLUG").or_else(|_| std::env::var("COMP_PLUG")) {
         return PathBuf::from(p);
     }
     bin_path("comp-plug")

@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 #[derive(Parser)]
-#[command(name = "comp-imageopt", about = "Shrink an image for a component that has no codec.")]
+#[command(name = "holon-imageopt", about = "Shrink an image for a component that has no codec.")]
 struct Args {
     /// Shared secret callers must send as `Authorization: Bearer <token>`; unset means no check.
     #[arg(long)]
@@ -132,15 +132,15 @@ async fn optimize(
 async fn main() -> Result<()> {
     let args = Args::parse();
     let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("comp-imageopt", &token);
+    comp_daemon_kit::warn_if_unauthenticated("holon-imageopt", &token);
     if args.allow_path.is_empty() {
         eprintln!(
-            "comp-imageopt: no --allow-path given, so every request will be refused. \
+            "holon-imageopt: no --allow-path given, so every request will be refused. \
              That is deliberate — a daemon nobody has scoped touches nothing."
         );
     }
     println!(
-        "comp-imageopt: listening on http://{} | {} allowed path(s) | max-width {} | quality {}",
+        "holon-imageopt: listening on http://{} | {} allowed path(s) | max-width {} | quality {}",
         args.addr,
         args.allow_path.len(),
         args.max_width,

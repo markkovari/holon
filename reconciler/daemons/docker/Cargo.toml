@@ -1,9 +1,13 @@
 [package]
-name = "comp-docker"
-description = "The docker socket, for a component that cannot reach it. Fronts components/container-docker (docs/adr/0095)."
+name = "holon-docker"
+description = "The docker socket, for a component that cannot reach it. Fronts components/container-docker (docs/adr/0095, ADR-0118)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+
+[[bin]]
+name = "holon-docker"
+path = "src/main.rs"
 
 [dependencies]
 comp-daemon-kit.workspace = true

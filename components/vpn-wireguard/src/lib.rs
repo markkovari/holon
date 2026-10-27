@@ -1,5 +1,5 @@
 //! `vpn-wireguard` — whether a WireGuard tunnel is up and which peers are connected
-//! `comp-wireguard` over HTTP (ADR-0095).
+//! `holon-wireguard` over HTTP (ADR-0095).
 
 #[allow(warnings)]
 mod bindings;

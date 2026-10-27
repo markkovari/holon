@@ -17,7 +17,7 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.99-orange?logo=rust)](rust-toolchain.toml)
 [![WASI](https://img.shields.io/badge/WASI-0.3%20%2F%20wasip2-blue)](wit/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Components](https://img.shields.io/badge/Components-200%2B-purple)](components/)
 [![Architecture](https://img.shields.io/badge/Docs-ADRs%20(122)-informational)](docs/adr/)
 

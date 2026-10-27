@@ -63,8 +63,8 @@ use store::Store;
 
 #[derive(Parser)]
 #[command(
-    name = "comp-media",
-    about = "Upload, evaluate and render large photos by key (ADR-0098)."
+    name = "holon-media",
+    about = "Upload, evaluate and render large photos by key (ADR-0098, ADR-0118)."
 )]
 struct Args {
     /// Shared secret a caller must send as `Authorization: Bearer <token>`.
@@ -182,7 +182,7 @@ fn secret(direct: Option<String>, file: Option<PathBuf>, name: &str) -> Result<S
 async fn main() -> Result<()> {
     let args = Args::parse();
     let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("comp-media", &token);
+    comp_daemon_kit::warn_if_unauthenticated("holon-media", &token);
 
     let creds = Credentials::new(
         secret(args.s3_access_key, args.s3_access_key_file, "s3-access-key")?,
@@ -192,11 +192,11 @@ async fn main() -> Result<()> {
         secret(args.callback_secret, args.callback_secret_file, "callback-secret")?;
     if args.callback_allow.is_empty() {
         eprintln!(
-            "comp-media: WARNING — no --callback-allow given: EVERY job will be refused. \
+            "holon-media: WARNING — no --callback-allow given: EVERY job will be refused. \
              Pass --callback-allow <host:port> for each app that may receive results."
         );
     } else {
-        eprintln!("comp-media: callbacks allowed to {:?}", args.callback_allow);
+        eprintln!("holon-media: callbacks allowed to {:?}", args.callback_allow);
     }
     let endpoint: reqwest::Url = args.s3_endpoint.parse().context("--s3-endpoint")?;
     let public: reqwest::Url = match &args.s3_public_endpoint {
@@ -281,7 +281,7 @@ async fn main() -> Result<()> {
         work_dir,
     });
     println!(
-        "comp-media: listening on http://{} | store {} (browsers: {}) | queue {} | apple helper {}",
+        "holon-media: listening on http://{} | store {} (browsers: {}) | queue {} | apple helper {}",
         args.addr,
         args.s3_endpoint,
         args.s3_public_endpoint.as_deref().unwrap_or(&args.s3_endpoint),

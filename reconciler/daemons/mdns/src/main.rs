@@ -12,7 +12,7 @@ use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use serde_json::{json, Value};
 
 #[derive(Parser)]
-#[command(name = "comp-mdns", about = "Native daemon for mdns-discovery")]
+#[command(name = "holon-mdns", about = "Native daemon for mdns-discovery")]
 struct Args {
     /// Shared secret callers must send as `Authorization: Bearer <token>`; unset means no check.
     #[arg(long)]
@@ -84,7 +84,7 @@ async fn handle(State(cfg): State<Config>) -> Json<Value> {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("comp-mdns", &token);
+    comp_daemon_kit::warn_if_unauthenticated("holon-mdns", &token);
     let service_types = if args.service_type.is_empty() {
         vec!["_http._tcp.local.".to_string()]
     } else {
@@ -95,7 +95,7 @@ async fn main() -> Result<()> {
         timeout: Duration::from_millis(args.timeout_ms),
     };
     println!(
-        "comp-mdns: listening on http://{} | browsing {:?} | timeout {}ms",
+        "holon-mdns: listening on http://{} | browsing {:?} | timeout {}ms",
         args.addr, service_types, args.timeout_ms
     );
     let app = Router::new()

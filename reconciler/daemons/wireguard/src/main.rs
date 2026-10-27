@@ -11,7 +11,7 @@ use tokio::process::Command;
 
 #[derive(Parser)]
 #[command(
-    name = "comp-wireguard",
+    name = "holon-wireguard",
     about = "Report WireGuard tunnel status, for a component that cannot look."
 )]
 struct Args {
@@ -110,15 +110,15 @@ async fn status(State(d): State<std::sync::Arc<Daemon>>) -> Json<Value> {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("comp-wireguard", &token);
+    comp_daemon_kit::warn_if_unauthenticated("holon-wireguard", &token);
     if args.allow_interface.is_empty() {
         eprintln!(
-            "comp-wireguard: no --allow-interface given, so status will report zero peers. \
+            "holon-wireguard: no --allow-interface given, so status will report zero peers. \
              That is deliberate — an interface nobody has scoped reports nothing."
         );
     }
     println!(
-        "comp-wireguard: listening on http://{} | {} allowed interface(s)",
+        "holon-wireguard: listening on http://{} | {} allowed interface(s)",
         args.addr,
         args.allow_interface.len()
     );

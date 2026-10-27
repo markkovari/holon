@@ -8,7 +8,7 @@ use clap::Parser;
 use serde_json::{json, Value};
 
 #[derive(Parser)]
-#[command(name = "comp-docker", about = "Native daemon for container-docker")]
+#[command(name = "holon-docker", about = "Native daemon for container-docker")]
 struct Args {
     /// Shared secret callers must send as `Authorization: Bearer <token>`; unset means no check.
     #[arg(long)]
@@ -59,8 +59,8 @@ async fn handle() -> Json<Value> {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let token = comp_daemon_kit::resolve_token(args.token.clone(), args.token_file.clone());
-    comp_daemon_kit::warn_if_unauthenticated("comp-docker", &token);
-    println!("comp-docker: listening on http://{}", args.addr);
+    comp_daemon_kit::warn_if_unauthenticated("holon-docker", &token);
+    println!("holon-docker: listening on http://{}", args.addr);
     let app = Router::new()
         .route("/call", post(handle))
         .layer(axum::middleware::from_fn(comp_daemon_kit::require_token))

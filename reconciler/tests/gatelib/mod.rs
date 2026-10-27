@@ -41,7 +41,7 @@ pub fn components_target() -> PathBuf {
 ///
 /// `$COMP_PLUG` is deliberately NOT read: composition is a library call here (ADR-0087).
 pub fn host_bin() -> PathBuf {
-    match std::env::var("COMP_HOST") {
+    match std::env::var("HOLON_HOST").or_else(|_| std::env::var("COMP_HOST")) {
         Ok(p) if !p.trim().is_empty() => PathBuf::from(p),
         _ => repo_root().join("target/release/comp-host"),
     }
@@ -51,7 +51,9 @@ pub fn host_bin() -> PathBuf {
 /// kind; a goal run passes `$COMP_HOST` and CI sets it, and there a missing binary is the harness
 /// being wrong and a skip would report a pass for something nothing executed.
 pub fn host_was_stated() -> bool {
-    std::env::var("COMP_HOST").is_ok_and(|p| !p.trim().is_empty())
+    std::env::var("HOLON_HOST")
+        .or_else(|_| std::env::var("COMP_HOST"))
+        .is_ok_and(|p| !p.trim().is_empty())
 }
 
 /// No host binary: a skip in a cold checkout, a panic when someone stated the path.

@@ -477,7 +477,9 @@ fn main() -> Result<()> {
             dry_run,
             smoke,
         }) => {
-            let bin = std::env::var("COMP_GOALRUN_BIN").unwrap_or_else(|_| "comp-goalrun".into());
+            let bin = std::env::var("HOLON_GOALRUN_BIN")
+                .or_else(|_| std::env::var("COMP_GOALRUN_BIN"))
+                .unwrap_or_else(|_| "comp-goalrun".into());
             let mut cmd = std::process::Command::new(&bin);
             cmd.arg("--checkout")
                 .arg(&checkout)
@@ -500,7 +502,7 @@ fn main() -> Result<()> {
                 anyhow::anyhow!(
                     "could not run `{bin}` ({e}). Build it with `cargo build --release --bin \
                      comp-goalrun` in reconciler/ and put it on PATH, or set \
-                     COMP_GOALRUN_BIN to its path."
+                     HOLON_GOALRUN_BIN (or COMP_GOALRUN_BIN) to its path."
                 )
             })?;
             if !status.success() {

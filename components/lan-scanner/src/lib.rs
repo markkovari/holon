@@ -1,6 +1,6 @@
 //! `lan-scanner` — which hosts on the local network answer, for a component that cannot look
 //!
-//! The scanning happens in `comp-lanscan`, which is native because opening many outbound TCP connections against
+//! The scanning happens in `holon-lanscan` (formerly `comp-lanscan`), which is native because opening many outbound TCP connections against
 //! addresses a caller does not supply is not something a `wasm32-wasip2` guest can do (ADR-0095). This is the
 //! component side: it holds the contract and reaches the daemon over HTTP, as `fs-watcher` reaches `comp-fswatch`.
 //!
@@ -11,7 +11,7 @@
 //!   * the daemon has its own CIDR allow-list; the request names no target, so scan scope is a daemon-side decision.
 //!
 //! Config (wasi:config/store):
-//!   lanscan-url    where `comp-lanscan` is listening, e.g. http://127.0.0.1:8005
+//!   lanscan-url    where `holon-lanscan` is listening, e.g. http://127.0.0.1:8005
 
 #[allow(warnings)]
 mod bindings;

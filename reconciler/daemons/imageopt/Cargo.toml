@@ -1,9 +1,13 @@
 [package]
-name = "comp-imageopt"
-description = "Shrink a picture, for a component that has no codec. Fronts components/image-optimizer (docs/adr/0095)."
+name = "holon-imageopt"
+description = "Shrink a picture, for a component that has no codec. Fronts components/image-optimizer (docs/adr/0095, ADR-0118)."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+
+[[bin]]
+name = "holon-imageopt"
+path = "src/main.rs"
 
 [dependencies]
 comp-daemon-kit.workspace = true
