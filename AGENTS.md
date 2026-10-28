@@ -11,7 +11,7 @@ Its vocabulary: [`CONTEXT.md`](CONTEXT.md). Why things are the way they are: [`d
   (200+ `wasm32-wasip2` components), `gpui-console/` (the native board), `providers/*`,
   `agent-runtime/gateway`, `examples/*`.
 - **Contracts are written first.** WIT for components (`components/*/wit`, `wit/`); for HTTP APIs, a
-  proto and its OpenAPI twin that change together: `api/holon/v1/` (comp-agentd) and
+  proto and its OpenAPI twin that change together: `api/holon/v1/` (holon-agentd) and
   `api/holon/runtime/v1/` (agent-runtime). A new event kind is additive: readers ignore unknown kinds.
 
 ## Build and test
