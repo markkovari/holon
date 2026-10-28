@@ -163,7 +163,9 @@ impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
         let body = resp.body().unwrap();
         ResponseOutparam::set(response_out, Ok(resp));
         let stream = body.write().unwrap();
-        let _ = stream.blocking_write_and_flush(&body_bytes);
+        for chunk in body_bytes.chunks(4096) {
+            let _ = stream.blocking_write_and_flush(chunk);
+        }
         drop(stream);
         let _ = OutgoingBody::finish(body, None);
     }
