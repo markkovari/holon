@@ -12,28 +12,14 @@ use std::path::PathBuf;
 
 use agent_runtime::model::LocalModel;
 use agent_runtime::{server, Config, Runtime};
-use clap::{Parser, Subcommand};
-
-#[derive(Subcommand)]
-enum Command {
-    /// Sign in to Google once, in a browser, so agents can use Google Calendar. The OAuth client
-    /// Google gave must be at `<google-dir>/client.json`; the login is saved beside it.
-    GoogleAuth {
-        /// Where `client.json` is and `token.json` is written.
-        #[arg(long, env = "HOLON_GOOGLE_DIR")]
-        google_dir: Option<PathBuf>,
-    },
-}
+use clap::Parser;
 
 #[derive(Parser)]
 #[command(
     name = "agent-runtime",
-    about = "Run autonomous agents: schedules, events, HTTP.",
-    args_conflicts_with_subcommands = true
+    about = "Run autonomous agents: schedules, events, HTTP."
 )]
 struct Cli {
-    #[command(subcommand)]
-    command: Option<Command>,
     /// Where agents, memory, runs and the admin token live.
     #[arg(long)]
     state_dir: Option<PathBuf>,
@@ -69,10 +55,6 @@ struct Cli {
     /// Recognition language when a caller does not say.
     #[arg(long, default_value = "en-US")]
     speech_locale: String,
-    /// Where the Google Calendar login lives: `client.json` (the OAuth client Google gave) and
-    /// `token.json` (written by `agent-runtime google-auth`).
-    #[arg(long, env = "HOLON_GOOGLE_DIR")]
-    google_dir: Option<PathBuf>,
     /// `comp-agentd`'s base URL, where an agent granted `session_start` opens coding sessions
     /// (docs/adr/0119). Without it that tool answers that sessions are not available.
     #[arg(long, env = "HOLON_AGENTD_URL")]
@@ -90,31 +72,8 @@ struct Cli {
     platform_file: Option<PathBuf>,
 }
 
-/// `agent-runtime google-auth [--google-dir DIR]`: sign in to Google once, in a browser.
-fn google_auth(dir: Option<PathBuf>) -> Result<(), String> {
-    let mut cfg = agent_runtime::google::GoogleConfig::default();
-    if let Some(dir) = dir {
-        cfg.dir = dir;
-    }
-    agent_runtime::google::authorize(&cfg, &|url| {
-        println!("Opening Google to ask for access to your calendars. If nothing opens, go to:\n\n{url}\n");
-        let _ =
-            std::process::Command::new(if cfg!(target_os = "macos") { "open" } else { "xdg-open" })
-                .arg(url)
-                .status();
-    })?;
-    println!(
-        "Signed in. The login is saved in {} (readable only by you).",
-        cfg.dir.join("token.json").display()
-    );
-    Ok(())
-}
-
 fn main() -> Result<(), String> {
     let cli = Cli::parse();
-    if let Some(Command::GoogleAuth { google_dir }) = cli.command {
-        return google_auth(google_dir);
-    }
     let state_dir = cli.state_dir.ok_or("--state-dir is required")?;
     std::fs::create_dir_all(&state_dir).map_err(|e| e.to_string())?;
     let token = server::admin_token_in(&state_dir)?;
@@ -130,9 +89,6 @@ fn main() -> Result<(), String> {
         ffmpeg: cli.ffmpeg,
         default_locale: cli.speech_locale,
     };
-    if let Some(dir) = cli.google_dir {
-        cfg.google.dir = dir;
-    }
     if let Some(url) = cli.agentd_url.filter(|u| !u.is_empty()) {
         let mut agentd = agent_runtime::session::AgentdConfig::new(url);
         agentd.token = match cli.agentd_token_file {

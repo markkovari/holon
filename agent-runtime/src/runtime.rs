@@ -35,7 +35,6 @@ pub struct Config {
     pub embed_url: String,
     /// Started on demand (`lazy.rs`).
     pub embed_service: String,
-    pub google: crate::google::GoogleConfig,
     pub agentd: Option<AgentdConfig>,
     /// Where API keys are kept; without it the runtime has none to manage.
     pub platform: Option<crate::keys::Platform>,
@@ -53,7 +52,6 @@ impl Config {
             speech: Default::default(),
             embed_url: String::new(),
             embed_service: String::new(),
-            google: Default::default(),
             agentd: None,
             platform: None,
         }
@@ -90,7 +88,7 @@ pub struct Runtime {
     cfg: Config,
     speech: crate::speech::Speech,
     embedder: Option<crate::embed::Embedder>,
-    google: crate::google::Google,
+    tool_handlers: std::sync::RwLock<Vec<Arc<dyn crate::agent::ToolHandler>>>,
     jev: Option<crate::jev::JevClient>,
     local: Mutex<LocalModel>,
     started: u64,
@@ -211,7 +209,7 @@ impl Runtime {
             local: Mutex::new(cfg.local.clone()),
             speech: crate::speech::Speech::new(cfg.speech.clone()),
             embedder: crate::embed::Embedder::new(&cfg.embed_url, &cfg.embed_service),
-            google: crate::google::Google::new(cfg.google.clone()),
+            tool_handlers: std::sync::RwLock::new(Vec::new()),
             jev: crate::jev::JevClient::from_env(),
             cfg,
             started: unix_now(),
@@ -248,6 +246,10 @@ impl Runtime {
 
     pub fn kv(&self) -> &Kv {
         &self.kv
+    }
+
+    pub fn register_tool_handler(&self, handler: Arc<dyn crate::agent::ToolHandler>) {
+        self.tool_handlers.write().unwrap().push(handler);
     }
 
     pub fn has_embedder(&self) -> bool {
@@ -1201,8 +1203,29 @@ impl Host for Runtime {
         Runtime::add_to_project(self, project, agent)
     }
 
-    fn google(&self) -> Option<&crate::google::Google> {
-        Some(&self.google)
+    fn execute_custom_tool(
+        &self,
+        name: &str,
+        args: &serde_json::Value,
+        cause: &crate::agent::Cause,
+    ) -> Option<Result<String, String>> {
+        let handlers = self.tool_handlers.read().unwrap();
+        for h in handlers.iter() {
+            if h.can_handle(name) {
+                return Some(h.execute(self, name, args, cause));
+            }
+        }
+        None
+    }
+
+    fn is_custom_tool_sensitive(&self, name: &str) -> Option<bool> {
+        let handlers = self.tool_handlers.read().unwrap();
+        for h in handlers.iter() {
+            if h.can_handle(name) {
+                return Some(h.is_sensitive(name));
+            }
+        }
+        None
     }
 
     fn jev(&self) -> Option<&dyn crate::jev::Jev> {

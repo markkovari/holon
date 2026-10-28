@@ -53,6 +53,21 @@ pub enum TaskState {
     Done { ok: bool, answer: String },
 }
 
+/// Pluggable tool handler for domain capabilities (ADR-0125).
+pub trait ToolHandler: Send + Sync {
+    fn can_handle(&self, name: &str) -> bool;
+    fn execute(
+        &self,
+        host: &dyn Host,
+        name: &str,
+        args: &Value,
+        cause: &Cause,
+    ) -> Result<String, String>;
+    fn is_sensitive(&self, _name: &str) -> bool {
+        false
+    }
+}
+
 /// What the loop needs from whoever runs it. The runtime implements this for
 /// real; tests implement it with fakes.
 pub trait Host: Sync {
@@ -119,8 +134,17 @@ pub trait Host: Sync {
     fn restore_agent(&self, _name: &str) -> Result<String, String> {
         Err("agent management is not available".into())
     }
-    /// The Google Calendar client, when this host has one.
-    fn google(&self) -> Option<&crate::google::Google> {
+    /// Executes a custom or pluggable domain tool (ADR-0125).
+    fn execute_custom_tool(
+        &self,
+        _name: &str,
+        _args: &Value,
+        _cause: &Cause,
+    ) -> Option<Result<String, String>> {
+        None
+    }
+    /// Whether a custom or pluggable tool is sensitive and requires human approval.
+    fn is_custom_tool_sensitive(&self, _name: &str) -> Option<bool> {
         None
     }
     /// Jev, for reading pictures, when this host has a key for it.
@@ -337,54 +361,6 @@ const TOOLS: &[ToolDef] = &[
         sensitive: true,
     },
     ToolDef {
-        name: "food_photo",
-        args: r#"{"file": "<photo name, default: the photo sent with this message>", "user": "mark"}"#,
-        about: "Read a photo of food with Jev, which looks at the picture itself. If the dish is already in the user's pool of known foods it is counted again; if not, its kind and kcal are estimated and it is ADDED to the pool, so the next photo of it is recognised. Either way the meal is logged. Returns what it is, its kcal, whether that is only an estimate, and the last 24 hours. Use this for every food photo instead of describing the photo yourself.",
-        sensitive: false,
-    },
-    ToolDef {
-        name: "food_pool",
-        args: r#"{"user": "mark"}"#,
-        about: "The user's pool of known foods (name, id, kind, kcal, whether the kcal is only an estimate, how often seen) and the kcal eaten in the last 24 hours.",
-        sensitive: false,
-    },
-    ToolDef {
-        name: "food_correct",
-        args: r#"{"name": "f3", "kcal": 640, "new_name": "carbonara", "variety": "pasta"}"#,
-        about: "Replace an estimated food in the pool with what the user says it is: its real `kcal`, a better name, or its kind. `name` is the food's name or id (f3). Use it when the user tells you what a dish is or how much it holds.",
-        sensitive: false,
-    },
-    ToolDef {
-        name: "gcal_calendars",
-        args: "{}",
-        about: "The calendars on Mark's Google account, and which of them may be changed. Use these names for `calendar` in the other gcal_ tools.",
-        sensitive: false,
-    },
-    ToolDef {
-        name: "gcal_list",
-        args: r#"{"from": "2026-10-15", "to": "2026-10-18", "calendar": "Training"}"#,
-        about: "Events on Mark's Google calendars between two dates (to defaults to a week after from), one per line with the id at the end. `calendar` is a name, `all` for every calendar, or left out for his main one. Dates are his local time.",
-        sensitive: false,
-    },
-    ToolDef {
-        name: "gcal_add",
-        args: r#"{"title": "Row", "start": "2026-10-15T06:30", "end": "2026-10-15T07:30", "calendar": "Training", "notes": "UT2", "location": "the lake"}"#,
-        about: "Add an event to a Google calendar. `start` is local time (2026-10-15T06:30), or a date alone for an all-day event whose `end` is its last day. `end` defaults to an hour after `start`. No invitations are sent. The owner approves first.",
-        sensitive: true,
-    },
-    ToolDef {
-        name: "gcal_update",
-        args: r#"{"calendar": "Training", "id": "<id from gcal_list>", "title": "...", "start": "2026-10-16T06:30", "end": "...", "notes": "...", "location": "..."}"#,
-        about: "Change an event by its id, giving only what changes. Moving it (`start`) keeps its length unless `end` is given. It cannot turn a timed event into an all-day one. The owner approves first.",
-        sensitive: true,
-    },
-    ToolDef {
-        name: "gcal_delete",
-        args: r#"{"calendar": "Training", "id": "<id from gcal_list>"}"#,
-        about: "Delete an event by its id. This removes it from Mark's Google calendar. Use it only when he clearly asks, and read the event back to him first. The owner approves first.",
-        sensitive: true,
-    },
-    ToolDef {
         name: "agent_remove_schedule",
         args: r#"{"name": "...", "schedule": "@every 1h", "project": "rowing"}"#,
         about: "Remove a schedule from an agent, and only that: the agent, its run history, memory and its other triggers stay. `schedule` is the cron line to remove; leave it out to remove all of the agent's schedules. `project` narrows it to the schedules that work for that project. The owner approves first.",
@@ -423,10 +399,6 @@ fn required(name: &str) -> &'static [&'static str] {
         | "agent_pause"
         | "agent_remove_schedule"
         | "agent_restore" => &["name"],
-        "food_correct" => &["name"],
-        "gcal_list" => &["from"],
-        "gcal_add" => &["title", "start"],
-        "gcal_update" | "gcal_delete" => &["id"],
         "agent_save" => &["name"],
         "read_file" => &["path"],
         "write_file" => &["path", "content"],
@@ -1071,31 +1043,6 @@ fn exec(
             ))
         }
         "agent_restore" => host.restore_agent(&arg(args, "name")),
-        "food_photo" => {
-            let jev = host.jev().ok_or("Jev is not configured here (no HOLON_JEV_KEY_FILE)")?;
-            let file = match arg(args, "file") {
-                f if f.is_empty() => cause
-                    .attachments
-                    .first()
-                    .cloned()
-                    .ok_or("no photo came with this message; name one with `file`")?,
-                f => f,
-            };
-            let photo = crate::attach::jpeg_of(store, &spec.name, &file, crate::food::QUERY_PX)?;
-            crate::food::identify(host, jev, &spec.name, &arg(args, "user"), &photo, cause)
-        }
-        "food_pool" => crate::food::list(host, &arg(args, "user")),
-        "food_correct" => crate::food::correct(host, &spec.name, &arg(args, "user"), args, cause),
-        "gcal_calendars" | "gcal_list" | "gcal_add" | "gcal_update" | "gcal_delete" => {
-            let g = host.google().ok_or("Google Calendar is not available here")?;
-            match name {
-                "gcal_calendars" => g.calendars(),
-                "gcal_list" => g.list(args),
-                "gcal_add" => g.add(args),
-                "gcal_update" => g.update(args),
-                _ => g.delete(args),
-            }
-        }
         "agent_remove_schedule" => {
             let name = arg(args, "name");
             if name == spec.name {
@@ -1208,7 +1155,12 @@ fn exec(
                     let workspace = store.workspace(&spec.name).ok();
                     crate::connector::run(x, args, workspace.as_deref())
                 }
-                None => Err(format!("no such tool: {other}")),
+                None => {
+                    if let Some(res) = host.execute_custom_tool(other, args, cause) {
+                        return res;
+                    }
+                    Err(format!("no such tool: {other}"))
+                }
             },
         },
     }
@@ -1302,9 +1254,9 @@ pub fn run(
         cause.project.as_ref().map(|p| format!("Project: {p}\n")).unwrap_or_default();
     // Photos that came with the run go to the model with the first message. One that cannot be
     // used is said, so the model tells Mark instead of answering as if it had looked.
-    // An agent with `food_photo` reads photos through Jev, not its own model: the model is told
+    // An agent with `vision_delegate` reads photos through an external tool, not its own model: the model is told
     // the photo is there and what it is called, and nothing is sent to it.
-    let (images, problems, seen) = if spec.has_capability("food_photo") {
+    let (images, problems, seen) = if spec.has_capability("vision_delegate") {
         let ok: Vec<&String> = cause
             .attachments
             .iter()
@@ -1313,7 +1265,7 @@ pub fn run(
         let seen = match ok.len() {
             0 => String::new(),
             _ => format!(
-                "\n(attached: {}. Read {} with food_photo.)",
+                "\n(attached: {}. Read {} with vision_delegate.)",
                 ok.iter().map(|f| format!("photo `{f}`")).collect::<Vec<_>>().join(", "),
                 if ok.len() == 1 { "it" } else { "each one, naming it in `file`," }
             ),
@@ -1429,11 +1381,14 @@ pub fn run(
                 // Malformed: never bother a human to approve a call that cannot run.
                 (e, true, None)
             } else {
-                let sensitive = tool_def(&name).map(|t| t.sensitive).unwrap_or_else(|| {
-                    spec.capabilities
-                        .iter()
-                        .any(|c| c.name == name && c.exec.as_ref().is_some_and(|x| x.sensitive))
-                });
+                let sensitive = tool_def(&name)
+                    .map(|t| t.sensitive)
+                    .or_else(|| host.is_custom_tool_sensitive(&name))
+                    .unwrap_or_else(|| {
+                        spec.capabilities
+                            .iter()
+                            .any(|c| c.name == name && c.exec.as_ref().is_some_and(|x| x.sensitive))
+                    });
                 let needs = sensitive && !spec.auto_approve.contains(&name);
                 host.observe(Event::ToolStarted {
                     agent: spec.name.clone(),
@@ -1814,9 +1769,9 @@ mod tests {
     }
 
     #[test]
-    fn an_agent_with_food_photo_is_told_the_photo_is_there_and_is_sent_no_picture() {
+    fn an_agent_with_vision_delegate_is_told_the_photo_is_there_and_is_sent_no_picture() {
         let mut s = spec();
-        s.capabilities.push(Capability::named("food_photo"));
+        s.capabilities.push(Capability::named("vision_delegate"));
         let h = Fake::new("attach-jev", &["ok"], true);
         let inbox = h.store.workspace("bot").unwrap().join("inbox");
         std::fs::create_dir_all(&inbox).unwrap();
@@ -1824,9 +1779,9 @@ mod tests {
         let cause = Cause { attachments: vec!["1-lunch.png".into()], ..Cause::default() };
         run(&h, &s, "http", "lunch", &cause);
         let first = &h.seen.lock().unwrap()[0][0];
-        assert!(first.images.is_empty(), "Jev reads it, not the model");
+        assert!(first.images.is_empty(), "external tool reads it, not the model");
         assert!(
-            first.content.contains("photo `1-lunch.png`") && first.content.contains("food_photo"),
+            first.content.contains("photo `1-lunch.png`") && first.content.contains("vision_delegate"),
             "{}",
             first.content
         );

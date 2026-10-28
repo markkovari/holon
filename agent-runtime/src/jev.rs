@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 pub const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
 pub const MODEL: &str = "jev-latest";
 
-/// What the food tools need from Jev: one request in, the `answers` map out.
+/// What vision tools need from Jev: one request in, the `answers` map out.
 pub trait Jev: Sync {
     fn ask(&self, request: &Value) -> Result<Value, String>;
 }

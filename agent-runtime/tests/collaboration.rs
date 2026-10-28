@@ -984,53 +984,44 @@ fn granting_a_key_without_a_vault_fails_safely() {
 }
 
 #[test]
-fn an_agent_with_the_google_tools_reads_adds_and_never_deletes_without_approval() {
+fn an_agent_with_custom_pluggable_tools_reads_adds_and_never_deletes_without_approval() {
     use std::sync::Mutex;
+    use agent_runtime::agent::ToolHandler;
     let seen: Arc<Mutex<Vec<String>>> = Arc::default();
     let log = seen.clone();
-    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
-    let base = format!("http://{}", server.server_addr().to_ip().unwrap());
-    std::thread::spawn(move || {
-        for mut req in server.incoming_requests() {
-            let mut body = String::new();
-            std::io::Read::read_to_string(req.as_reader(), &mut body).unwrap();
-            let key = format!("{} {}", req.method(), req.url().split('?').next().unwrap());
-            log.lock().unwrap().push(key.clone());
-            let reply = match key.as_str() {
-                "POST /token" => r#"{"access_token":"at","expires_in":3600}"#.to_string(),
-                "GET /users/me/calendarList" => {
-                    r#"{"items":[{"id":"m@gmail.com","summary":"Training","accessRole":"owner"}]}"#.to_string()
-                }
-                k if k.starts_with("GET /calendars/m%40gmail.com/events/") => {
-                    r#"{"id":"e1","summary":"Row","start":{"dateTime":"2026-10-15T19:00:00+02:00"},"end":{"dateTime":"2026-10-15T20:00:00+02:00"}}"#.to_string()
-                }
-                "GET /calendars/m%40gmail.com/events" => {
-                    r#"{"items":[{"id":"e1","summary":"Row","start":{"dateTime":"2026-10-15T19:00:00+02:00"},"end":{"dateTime":"2026-10-15T20:00:00+02:00"}}]}"#.to_string()
-                }
-                "POST /calendars/m%40gmail.com/events" => {
-                    r#"{"id":"n1","summary":"Stretch","start":{"dateTime":"2026-10-15T21:00:00+02:00"},"end":{"dateTime":"2026-10-15T21:15:00+02:00"}}"#.to_string()
-                }
-                _ => "{}".to_string(),
-            };
-            let _ = req.respond(tiny_http::Response::from_string(reply));
+
+    struct MockCalendarHandler {
+        log: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl ToolHandler for MockCalendarHandler {
+        fn can_handle(&self, name: &str) -> bool {
+            matches!(name, "gcal_list" | "gcal_add" | "gcal_delete")
         }
-    });
-    let creds = dir("google-creds");
-    std::fs::write(
-        creds.join("client.json"),
-        r#"{"installed":{"client_id":"c","client_secret":"s"}}"#,
-    )
-    .unwrap();
-    std::fs::write(creds.join("token.json"), r#"{"refresh_token":"r"}"#).unwrap();
-    let mut cfg = Config::new(dir("google-tools"));
-    cfg.google = agent_runtime::google::GoogleConfig {
-        dir: creds,
-        api_base: base.clone(),
-        token_url: format!("{base}/token"),
-        auth_url: format!("{base}/auth"),
-    };
+        fn is_sensitive(&self, name: &str) -> bool {
+            matches!(name, "gcal_add" | "gcal_delete")
+        }
+        fn execute(
+            &self,
+            _host: &dyn Host,
+            name: &str,
+            _args: &serde_json::Value,
+            _cause: &Cause,
+        ) -> Result<String, String> {
+            self.log.lock().unwrap().push(name.to_string());
+            match name {
+                "gcal_list" => Ok("2026-10-15 19:00–20:00  Row  [Training]  (id e1)".into()),
+                "gcal_add" => Ok("added: 2026-10-15 21:00–21:15  Stretch".into()),
+                "gcal_delete" => Ok("deleted event e1".into()),
+                _ => Err("unknown tool".into()),
+            }
+        }
+    }
+
+    let mut cfg = Config::new(dir("custom-tools"));
     cfg.approval_timeout = Duration::from_millis(200);
     let rt = Runtime::new(cfg).unwrap();
+    rt.register_tool_handler(Arc::new(MockCalendarHandler { log }));
 
     let list = r#"{"tool":"gcal_list","args":{"from":"2026-10-15","calendar":"Training"}}"#;
     let add = r#"{"tool":"gcal_add","args":{"title":"Stretch","start":"2026-10-15T21:00","end":"2026-10-15T21:15","calendar":"Training"}}"#;
@@ -1060,12 +1051,12 @@ fn an_agent_with_the_google_tools_reads_adds_and_never_deletes_without_approval(
     let r = ask();
     let (err, out) = tool(&r, "gcal_add");
     assert!(!err && out.starts_with("added: 2026-10-15 21:00–21:15  Stretch"), "{out}");
-    // the delete is sensitive and was not approved: denied, and Google was never asked to delete
+    // the delete is sensitive and was not approved: denied, and handler was never called to delete
     let r = ask();
     let (err, out) = tool(&r, "gcal_delete");
     assert!(err, "refused: {out}");
     assert!(
-        !seen.lock().unwrap().iter().any(|k| k.starts_with("DELETE")),
+        !seen.lock().unwrap().iter().any(|k| k == "gcal_delete"),
         "nothing was deleted: {:?}",
         seen.lock().unwrap()
     );
