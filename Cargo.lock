@@ -2779,6 +2779,24 @@ name = "holon-fuel"
 version = "0.1.0"
 
 [[package]]
+name = "holon-gcal"
+version = "0.1.0"
+dependencies = [
+ "agent-runtime",
+ "anyhow",
+ "base64 0.22.1",
+ "clap",
+ "holon-daemon-kit",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tiny_http",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "holon-goal"
 version = "0.1.0"
 dependencies = [

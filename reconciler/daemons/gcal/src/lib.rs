@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::clock;
+use agent_runtime::clock;
 
 /// Read and write calendars and events; no mail, no drive.
 pub const SCOPE: &str = "https://www.googleapis.com/auth/calendar";
@@ -627,9 +627,13 @@ pub fn authorize(cfg: &GoogleConfig, show: &dyn Fn(&str)) -> Result<(), String> 
     let refresh = v["refresh_token"]
         .as_str()
         .ok_or("Google sent no refresh token: remove the app's access at myaccount.google.com/permissions and run this again")?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     write_private(
         &cfg.dir.join("token.json"),
-        &json!({"refresh_token": refresh, "scope": v["scope"], "signed_in": crate::runtime::unix_now()}).to_string(),
+        &json!({"refresh_token": refresh, "scope": v["scope"], "signed_in": now}).to_string(),
     )
 }
 
