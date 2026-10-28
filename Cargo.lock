@@ -47,6 +47,7 @@ name = "agent-matrix"
 version = "0.1.0"
 dependencies = [
  "agent-runtime",
+ "agent-wire",
  "clap",
  "pulldown-cmark",
  "reqwest 0.12.28",

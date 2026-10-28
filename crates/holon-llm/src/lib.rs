@@ -1,6 +1,7 @@
 //! No I/O or async: a native daemon (reqwest) and a wasm32-wasip2 component (wasi:http) both build their bytes here.
 
 pub mod anthropic;
+pub mod gemini;
 mod model;
 pub mod openai;
 pub mod sse;
