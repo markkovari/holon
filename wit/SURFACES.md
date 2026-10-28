@@ -14,7 +14,7 @@ plug with a message that names neither the interface nor the reason.
 Adding a *function* to an interface is compatible; adding a case to a
 *variant* or a field to a *record* is not. Both measured, not assumed.
 
-130 interfaces.
+131 interfaces.
 
 ## `actor:entity/handler@0.1.0`
 
@@ -1469,6 +1469,30 @@ Adding a *function* to an interface is compatible; adding a case to a
     select: func(entries: list<entry>) -> result<outcome, select-error>;
 
     land: func(entries: list<entry>, p: landing) -> result<opened, land-error>;
+  }
+```
+
+## `holon:llm-batcher/batch-queue@0.1.0`
+
+```wit
+  interface batch-queue {
+    variant batch-error {
+      queue-empty,
+      not-found,
+      invalid-task(string),
+      backend-unavailable(string),
+    }
+
+    record completed-task {
+      id: string,
+      text: string,
+    }
+
+    enqueue: func(id: string, prompt: string, system: string, model: string) -> result<string, batch-error>;
+
+    drain: func(max-items: u32) -> result<list<completed-task>, batch-error>;
+
+    poll: func(id: string) -> result<option<string>, batch-error>;
   }
 ```
 
