@@ -1,0 +1,38 @@
+// holon:llm-batcher — Batch coalescer and queue drainer for LLMs.
+//
+// Gathers non-realtime prompts, coalesces them into a single high-context prompt
+// (leveraging large context windows like Gemini 1M tokens), and drains during rate-limit valleys.
+package holon:llm-batcher@0.1.0;
+
+interface batch-queue {
+    variant batch-error {
+        queue-empty,
+        not-found,
+        invalid-task(string),
+        backend-unavailable(string),
+    }
+
+    record completed-task {
+        id: string,
+        text: string,
+    }
+
+    /// Enqueue a task to be processed asynchronously during free tier valleys.
+    enqueue: func(id: string, prompt: string, system: string, model: string) -> result<string, batch-error>;
+
+    /// Coalesces up to `max-items` pending tasks, sends 1 single LLM inference call,
+    /// and resolves each task's answer. Returns the completed task results.
+    drain: func(max-items: u32) -> result<list<completed-task>, batch-error>;
+
+    /// Poll for an enqueued task's result.
+    poll: func(id: string) -> result<option<string>, batch-error>;
+}
+
+world llm-batcher {
+    export batch-queue;
+    export wasi:http/incoming-handler@0.2.0;
+
+    import llm:inference/inference@0.1.0;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:clocks/monotonic-clock@0.2.0;
+}

@@ -1,0 +1,14 @@
+// holon:llm-router — Smart cascading LLM router with free-tier pool bubbling and circuit breaking.
+//
+// Exports standard vendor-agnostic `llm:inference/inference`.
+// Implements pool bubbling across Tier 1 free providers (Gemini, Groq, Cerebras, Ollama),
+// with proactive token bucket rate-limiting and graceful fallback to Tier 2/3 paid providers.
+package holon:llm-router@0.1.0;
+
+world llm-router {
+    export llm:inference/inference@0.1.0;
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
+    import wasi:clocks/monotonic-clock@0.2.0;
+    import comp:secrets/reader@0.1.0;
+}
