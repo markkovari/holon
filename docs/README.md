@@ -15,6 +15,7 @@ reasoning rather than their accuracy.
 | **find a component** — its package, deps, size, whether it is reusable | `comp-catalog` (JSON, from the components' sources), or `comp-capgraph --find <text>` |
 | see **what a component really imports**, from the built wasm | `comp-capgraph` (`--format json`, or the default `surql` projection into the `knowledge-graph`) |
 | **run an app** on your own machines | [`SELFHOST.md`](SELFHOST.md) |
+| **deploy to edge & micro-boards** (Raspberry Pi Zero 2 W / Pi 5) | [`EDGE.md`](EDGE.md) |
 | see **an app that works** — one file each | [`apps/`](apps/) |
 | **consume a capability** from your own component | [`capabilities/`](capabilities/) |
 | know **why a design is the way it is** | [`adr/`](adr/) — every decision, with reading paths |

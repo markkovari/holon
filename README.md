@@ -97,6 +97,8 @@ Raspberry Pi Zero 2 W
 * **Memory footprint:** Base OS uses ~140 MB; `holon-host` serving a composed application (`link-shortener`, 908 KB `.wasm`) adds only ~20 MB RSS, leaving >220 MB of available memory.
 * **Crucial flag for 512 MB boards:** Pass `--no-pool` to `holon-host` (uses Wasmtime's on-demand allocator rather than the pooling allocator, avoiding multi-gigabyte virtual address space mmap reservation).
 
+👉 For the full step-by-step flashing, Wi-Fi cloud-init templates, and systemd setup, see [`docs/EDGE.md`](docs/EDGE.md).
+
 ---
 
 ## 🧰 What Native Tools Do You Need?

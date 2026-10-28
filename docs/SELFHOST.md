@@ -375,6 +375,8 @@ Holon's single-binary static architecture (`holon-host`) enables deployment on u
 > [!NOTE]
 > On 512 MB RAM boards like the **Pi Zero 2 W**, always run `holon-host` with `--no-pool`. Wasmtime's default pooling allocator reserves a massive virtual memory address space that fails `mmap` on 512 MB boards without overcommit. `--no-pool` selects the on-demand allocator, keeping the total host footprint under 25 MB RSS.
 
+See [`EDGE.md`](EDGE.md) for the complete edge walkthrough, Wi-Fi cloud-init templates, and systemd service configurations.
+
 The spec:
 
 ```toml
