@@ -150,7 +150,7 @@ pub(crate) fn comp_plug() -> Result<PathBuf> {
     Ok(PathBuf::from("target/release/comp-plug"))
 }
 
-/// Builds comp-host — what every e2e suite spawns, from `target/release`.
+/// Builds holon-host (and ensures comp-host alias exists) — what every e2e suite spawns, from `target/release`.
 pub(crate) fn comp_host() -> Result<()> {
     let mut build_host = Command::new("cargo");
     build_host.args([
@@ -159,9 +159,11 @@ pub(crate) fn comp_host() -> Result<()> {
         "host/Cargo.toml",
         "--release",
         "--bin",
-        "comp-host",
+        "holon-host",
     ]);
-    run_cmd(&mut build_host, "build comp-host")
+    run_cmd(&mut build_host, "build holon-host")?;
+    let _ = std::fs::copy("target/release/holon-host", "target/release/comp-host");
+    Ok(())
 }
 
 pub(crate) fn compose_app(app: Option<&str>, build_ui: bool) -> Result<()> {

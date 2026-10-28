@@ -17,13 +17,13 @@ Its vocabulary: [`CONTEXT.md`](CONTEXT.md). Why things are the way they are: [`d
 ## Build and test
 
 ```bash
-cargo build --release -p comp-host -p comp-reconciler      # always name packages with -p:
-cargo test -p comp-agentd                                  # a bare root build unifies features
+cargo build --release -p holon-host -p holon-reconciler    # always name packages with -p:
+cargo test -p holon-agentd                                 # a bare root build unifies features
                                                            # and drags OpenSSL into everything
 cargo xtask build                    # every component, named and stamped (what CI and comp-plug use)
-components/gates.sh                  # every components/*/gate.sh (needs comp-host, comp-plug, hurl)
+components/gates.sh                  # every components/*/gate.sh (needs holon-host, comp-plug, hurl)
 e2e/run_all.sh [app-domain ...]      # Playwright, offline (mock model, Stripe test key: e2e/e2e.conf)
-cargo test --release -p comp-reconciler --test gate_treasury   # reconciler gate/fleet suites need the
+cargo test --release -p holon-reconciler --test gate_treasury # reconciler gate/fleet suites need the
                                                                # components built and nats-server on PATH
 ```
 

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use comp_lattice::{Artifacts, CommandBus, Inventory};
+use holon_lattice::{Artifacts, CommandBus, Inventory};
 use serde::{Deserialize, Serialize};
 
 use crate::tenant::{instance_id, Limits, StartCommand};

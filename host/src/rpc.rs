@@ -17,7 +17,7 @@ use wrpc_transport_nats::Client as NatsInvoke;
 /// three names, so nothing has to be looked up or agreed at runtime — which is what
 /// lets a caller invoke a component it has never seen on a node it cannot name.
 pub fn prefix(lattice: &str, instance_id: &str) -> String {
-    comp_lattice::wire::rpc_prefix(lattice, instance_id)
+    holon_lattice::wire::rpc_prefix(lattice, instance_id)
 }
 
 /// A client per linked interface — for EVERY link, local target or not.

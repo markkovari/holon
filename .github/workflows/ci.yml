@@ -213,7 +213,9 @@ jobs:
           workspaces: . -> target
 
       - name: Build comp-host and holon
-        run: cargo build --release -p comp-host -p holon --bin comp-host --bin holon
+        run: |
+          cargo build --release -p holon-host -p holon --bin holon-host --bin holon
+          cp target/release/holon-host target/release/comp-host
 
       # Two artifacts, not one: each is a single file in its own directory,
       # matching the `components` job's own wasm-artifact pattern exactly
@@ -479,7 +481,7 @@ jobs:
         env:
           COMP_HOST: ${{ github.workspace }}/target/release/comp-host
         run: >-
-          cargo test --release -p comp-reconciler -p holon-goal
+          cargo test --release -p holon-reconciler -p holon-goal
           --test capsearch --test contracts --test publish --test secrets
           --test capgraph_edges --test capgraph_store --test console_session
           --test compose_race --test witsurface --test hostsurface
@@ -678,7 +680,7 @@ jobs:
         env:
           COMP_HOST: ${{ github.workspace }}/target/release/comp-host
         run: >-
-          cargo nextest run --release --profile ci -p comp-reconciler -p holon-goal -p holon-backup -E "
+          cargo nextest run --release --profile ci -p holon-reconciler -p holon-goal -p holon-backup -E "
           binary(=agent) | binary(=artifacts) | binary(=bigstatement) | binary(=blink) | binary(=capgraph_stress) |
           binary(=claude_shim_live) | binary(=coldstart) | binary(=compose) | binary(=contrast_audit_live) |
           binary(=crossnode) | binary(=driver) | binary(=e2e) | binary(=envbranch) | binary(=environments) |

@@ -55,7 +55,9 @@ pub struct Platform {
 impl Platform {
     pub fn start(port: u16) -> Self {
         let root = repo_root();
-        let host = root.join("target/release/comp-host");
+        let h1 = root.join("target/release/holon-host");
+        let h2 = root.join("target/release/comp-host");
+        let host = if h1.exists() { h1 } else { h2 };
         assert!(host.exists(), "missing {} — cargo build --release in host/", host.display());
         // Derived when the hand-composed artifact is not there, matching `Fleet::start`: a fresh
         // checkout has not run `cargo xtask compose platform`.

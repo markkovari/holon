@@ -11,11 +11,11 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use comp_lattice::nats::NatsLattice;
-use comp_lattice::{Artifacts, CommandBus, Inventory};
-use comp_reconciler::oci;
-use comp_reconciler::plan::{plan, Cfg, Command, Hysteresis, Manifest, NodeInventory, Outcome};
-use comp_reconciler::settings;
+use holon_lattice::nats::NatsLattice;
+use holon_lattice::{Artifacts, CommandBus, Inventory};
+use holon_reconciler::oci;
+use holon_reconciler::plan::{plan, Cfg, Command, Hysteresis, Manifest, NodeInventory, Outcome};
+use holon_reconciler::settings;
 use serde_json::json;
 
 #[derive(Parser, Clone)]
@@ -109,7 +109,7 @@ async fn main() -> Result<()> {
     }
 
     // Resolve every tunable once: flag, then environment, then file, then default.
-    let file = comp_reconciler::settings::File::load(args.config.as_deref())?.reconciler;
+    let file = holon_reconciler::settings::File::load(args.config.as_deref())?.reconciler;
     let interval = settings::pick(args.interval, file.interval, 10);
     let settle_passes = settings::pick(args.settle_passes, file.settle_passes, 2);
     let max_commands = settings::pick(args.max_commands, file.max_commands, 20);
@@ -127,7 +127,7 @@ async fn main() -> Result<()> {
         &args.nats_url,
         &args.lattice,
         Duration::from_secs(30),
-        comp_lattice::wire::LOAD,
+        holon_lattice::wire::LOAD,
     )
     .await
     .map(|l| std::sync::Arc::new(l) as std::sync::Arc<dyn Inventory>)
@@ -183,7 +183,7 @@ async fn main() -> Result<()> {
     } else {
         let id =
             format!("{}-{}", hostname().unwrap_or_else(|| "reconciler".into()), std::process::id());
-        match comp_lattice::lease::Lease::connect(
+        match holon_lattice::lease::Lease::connect(
             &args.nats_url,
             &args.lattice,
             Duration::from_secs(args.lease_ttl.max(interval * 2)),
@@ -212,7 +212,7 @@ async fn main() -> Result<()> {
     // `None` until the first pass, so a process that STARTS as a standby says so: with a plain `false` the
     // first pass compares equal and logs nothing, indistinguishable from a hung process.
     let mut was_leader: Option<bool> = None;
-    let mut shutdown = comp_lattice::lease::ShutdownListener::new();
+    let mut shutdown = holon_lattice::lease::ShutdownListener::new();
 
     loop {
         tokio::select! {
@@ -663,7 +663,7 @@ async fn push_pass(args: &Args, http: &reqwest::Client, store: &dyn Artifacts) -
 
 #[cfg(test)]
 mod tests {
-    use comp_reconciler::plan::{Component, Ingress, Manifest, Placement, Strategy};
+    use holon_reconciler::plan::{Component, Ingress, Manifest, Placement, Strategy};
 
     /// The manifest has to survive the platform → reconciler hop by value; a field silently defaulting
     /// would place an app somewhere nobody asked for.
@@ -679,7 +679,7 @@ mod tests {
                 digest: "sha256:abc".into(),
                 replicas: 2,
                 placement: Placement {
-                    mode: comp_reconciler::plan::Mode::Spread,
+                    mode: holon_reconciler::plan::Mode::Spread,
                     nodes: vec![],
                     constraints: [("region".to_string(), "eu-central".to_string())].into(),
                 },
@@ -714,7 +714,7 @@ mod tests {
 
 /// Observed demand per ingress host. Several ingresses may publish; their samples are SUMMED (two
 /// each seeing 5 in flight means 10).
-async fn read_load(load: &dyn Inventory) -> Option<comp_reconciler::plan::Load> {
+async fn read_load(load: &dyn Inventory) -> Option<holon_reconciler::plan::Load> {
     match load.read_all().await {
         Ok(entries) => Some(fold_load(&entries)),
         // A bucket that cannot be read is the signal being absent, not an idle fleet: an empty map would
@@ -733,8 +733,8 @@ async fn read_load(load: &dyn Inventory) -> Option<comp_reconciler::plan::Load> 
 /// Counting a refusal as one unit of unmet concurrency is deliberately crude: its job is to push
 /// `desired` upward while refusals continue, and `max` is where it stops.
 /// Pure, so the arithmetic can be tested without a bus.
-fn fold_load(entries: &[comp_lattice::Entry]) -> comp_reconciler::plan::Load {
-    let mut out = comp_reconciler::plan::Load::new();
+fn fold_load(entries: &[holon_lattice::Entry]) -> holon_reconciler::plan::Load {
+    let mut out = holon_reconciler::plan::Load::new();
     for e in entries {
         let Ok(v) = serde_json::from_slice::<serde_json::Value>(&e.value) else { continue };
         let Some(host) = v["host"].as_str() else { continue };
@@ -826,7 +826,7 @@ async fn activate(
 
     // One in flight is exactly the signal that would make the next pass place a replica, so `plan`
     // decides (placement rules, stateful-spread refusal) rather than a second scheduler living here.
-    let load = comp_reconciler::plan::Load::from([(host.to_string(), 1u32)]);
+    let load = holon_reconciler::plan::Load::from([(host.to_string(), 1u32)]);
     let outcome = plan(
         &mine,
         &observed,
@@ -857,7 +857,7 @@ async fn activate(
 #[cfg(test)]
 mod load_tests {
     use super::*;
-    use comp_lattice::Entry;
+    use holon_lattice::Entry;
 
     fn entry(json: &str) -> Entry {
         Entry { key: "k".into(), value: json.as_bytes().to_vec() }

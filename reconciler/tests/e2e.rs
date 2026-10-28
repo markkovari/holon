@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use comp_reconciler::spec::AppSpec;
 use holon_fleet::plug;
+use holon_reconciler::spec::AppSpec;
 use serde_json::{json, Value};
 
 const SECRET: &str = "test-secret";
@@ -299,13 +299,13 @@ fn six_manifests_one_fleet() {
     }
     std::thread::sleep(Duration::from_secs(2));
 
-    let mut rec = Command::new(env!("CARGO_BIN_EXE_comp-reconciler"));
+    let mut rec = Command::new(env!("CARGO_BIN_EXE_holon-reconciler"));
     rec.args(["--platform-url", &format!("http://127.0.0.1:{PLATFORM_PORT}")])
         .args(["--secret", SECRET, "--nats-url", &nats_url, "--lattice", LATTICE])
         .args(["--interval", "3"]);
     let _rec = spawn("comp-reconciler", rec);
 
-    let mut ing = Command::new(env!("CARGO_BIN_EXE_comp-ingress"));
+    let mut ing = Command::new(env!("CARGO_BIN_EXE_holon-ingress"));
     ing.args(["--addr", &format!("127.0.0.1:{INGRESS_PORT}")]).args([
         "--nats-url",
         &nats_url,

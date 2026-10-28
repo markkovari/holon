@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use comp_reconciler::plan::{
+use holon_reconciler::plan::{
     plan, Capacity, Cfg, Component, Hysteresis, Ingress, Manifest, NodeInventory, RunningInstance,
     Strategy,
 };

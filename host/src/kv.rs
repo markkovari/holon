@@ -19,7 +19,7 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 
-use comp_lattice::nats::servers;
+use holon_lattice::nats::servers;
 
 use crate::tenant::BucketId;
 

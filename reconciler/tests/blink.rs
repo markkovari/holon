@@ -11,9 +11,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use comp_lattice::nats::NatsLattice;
-use comp_lattice::Inventory;
 use holon_fleet::fleet::Fleet;
+use holon_lattice::nats::NatsLattice;
+use holon_lattice::Inventory;
 
 /// Publish every node's key with an EMPTY instance list, over and over, so the gap is held open as
 /// long as the caller wants. The hosts keep heartbeating real snapshots underneath, so this is a race
@@ -35,7 +35,7 @@ fn hold_inventory_empty(
             while !stop.load(Ordering::Relaxed) {
                 for e in &entries {
                     let Ok(mut v) = serde_json::from_slice::<serde_json::Value>(
-                        &comp_lattice::snapshot::expand(e.value.clone()),
+                        &holon_lattice::snapshot::expand(e.value.clone()),
                     ) else {
                         continue;
                     };

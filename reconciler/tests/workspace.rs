@@ -100,9 +100,8 @@ fn one_copy_of_each_crate_whose_types_cross_packages() {
     );
 }
 
-/// ADR-0118 Layer 0: Nothing new is named `comp-`. Any package added from ADR-0118 on is `holon-`.
-/// This list is frozen and only gets shorter as packages are migrated to `holon-`.
-const FROZEN_COMP_PACKAGES: &[&str] = &["comp-host", "comp-lattice", "comp-reconciler"];
+/// ADR-0118 Layer 0: Nothing in this repository is named `comp-`. Every package is `holon-`.
+const FROZEN_COMP_PACKAGES: &[&str] = &[];
 
 #[test]
 fn no_new_comp_packages_adr_0118() {

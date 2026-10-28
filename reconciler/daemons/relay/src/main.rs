@@ -180,7 +180,7 @@ async fn main() -> Result<()> {
             // A relay is not a reconciler: it must contend for its OWN key, or the two would evict each other.
             let scope = format!("{}-relay", args.lattice);
             Some(
-                comp_lattice::lease::Lease::connect(
+                holon_lattice::lease::Lease::connect(
                     url,
                     &scope,
                     Duration::from_secs(args.lease_ttl),
@@ -203,7 +203,7 @@ async fn main() -> Result<()> {
     let bus = if args.watch_bus {
         let url = args.nats_url.as_deref().unwrap();
         Some(Box::pin(
-            comp_lattice::nats::watch_bucket(url, &args.bus_bucket, "eb.seq.>")
+            holon_lattice::nats::watch_bucket(url, &args.bus_bucket, "eb.seq.>")
                 .await
                 .context("watching the event bus")?,
         ))
@@ -223,7 +223,7 @@ async fn main() -> Result<()> {
     // A sweep that takes longer than the interval must not queue a burst of catch-up sweeps.
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-    let mut shutdown = comp_lattice::lease::ShutdownListener::new();
+    let mut shutdown = holon_lattice::lease::ShutdownListener::new();
     loop {
         // Only the holder acts. Renewal happens here, once per pass, so the TTL must outlive the interval.
         let acting = match lease.as_mut() {
