@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use comp_reconciler::spec::AppSpec;
+use holon_reconciler::spec::AppSpec;
 
 fn every_spec() -> Vec<PathBuf> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();

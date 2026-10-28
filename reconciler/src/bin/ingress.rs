@@ -8,10 +8,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use comp_lattice::nats::NatsLattice;
-use comp_lattice::{CommandBus, Inventory};
-use comp_reconciler::plan::NodeInventory;
-use comp_reconciler::settings;
+use holon_lattice::nats::NatsLattice;
+use holon_lattice::{CommandBus, Inventory};
+use holon_reconciler::plan::NodeInventory;
+use holon_reconciler::settings;
 use http_body_util::BodyExt;
 use hyper::server::conn::http1;
 use hyper_util::rt::TokioIo;
@@ -255,7 +255,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let addr: SocketAddr = args.addr.parse()?;
 
-    let file = comp_reconciler::settings::File::load(args.config.as_deref())?.ingress;
+    let file = holon_reconciler::settings::File::load(args.config.as_deref())?.ingress;
     let backend_timeout = settings::pick(args.backend_timeout, file.backend_timeout, 30);
     let max_inflight = settings::pick(args.max_inflight, file.max_inflight, 64);
     let slow_budget = settings::pick(args.slow_budget, file.slow_budget, 2);
@@ -287,7 +287,7 @@ async fn main() -> Result<()> {
         &args.nats_url,
         &args.lattice,
         Duration::from_secs(30),
-        comp_lattice::wire::LOAD,
+        holon_lattice::wire::LOAD,
     )
     .await
     {
@@ -657,7 +657,7 @@ fn status(code: u16, msg: &str) -> hyper::Response<ProxyBody> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use comp_reconciler::plan::RunningInstance;
+    use holon_reconciler::plan::RunningInstance;
 
     struct AnswersOnce(AtomicUsize);
 
@@ -666,7 +666,7 @@ mod tests {
         async fn serve(
             &self,
             _node: &str,
-        ) -> Result<tokio::sync::mpsc::Receiver<comp_lattice::Command>> {
+        ) -> Result<tokio::sync::mpsc::Receiver<holon_lattice::Command>> {
             anyhow::bail!("not used")
         }
         async fn send(

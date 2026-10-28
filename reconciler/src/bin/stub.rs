@@ -22,7 +22,7 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::Parser;
-use comp_reconciler::spec::AppSpec;
+use holon_reconciler::spec::AppSpec;
 use serde_json::{json, Value};
 
 #[derive(Parser)]

@@ -96,8 +96,8 @@ fn main() -> Result<()> {
 /// trailing newline, so several nodes concatenated into one invalid line and the sampler reported
 /// nothing for exactly the window being measured.
 fn inventory(nats_url: &str, lattice: &str) -> Result<()> {
-    use comp_lattice::nats::NatsLattice;
-    use comp_lattice::Inventory as _;
+    use holon_lattice::nats::NatsLattice;
+    use holon_lattice::Inventory as _;
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         let l = NatsLattice::connect(nats_url, lattice, std::time::Duration::from_secs(15)).await?;
@@ -418,8 +418,8 @@ fn converge(samples: &std::path::Path, events: Option<&std::path::Path>, want: u
 /// machines": giving each org its own box would pass that while turning a multi-tenant platform into
 /// two single-tenant ones with a shared login page (ADR-0034).
 fn tenants(nats_url: &str, lattice: &str) -> Result<()> {
-    use comp_lattice::nats::NatsLattice;
-    use comp_lattice::Inventory as _;
+    use holon_lattice::nats::NatsLattice;
+    use holon_lattice::Inventory as _;
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
         let l = NatsLattice::connect(nats_url, lattice, std::time::Duration::from_secs(15)).await?;
