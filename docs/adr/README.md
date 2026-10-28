@@ -152,6 +152,12 @@ tells you what is true now rather than what was once believed.
 | [0120](0120-the-runtime-speaks-a-contract-too.md) | The runtime speaks a contract too: `api/holon/runtime/v1/runtime.proto` and its REST twin, served under `/v1`; one resumable event envelope with a state snapshot; query strings only for paging, and the webhook shortcuts | **accepted**, and served as REST/JSON + SSE — the bridge and the board use it; gRPC with its first outside client |
 | [0121](0121-a-session-s-edits-are-in-the-code-store.md) | A session's edits are in the code store: each `write_file` ingested into a workspace per session, linked by `file_changed`; rewind reverts them newest first; the engine undoes a stack | **accepted**, and served by `comp-agentd --vcs-url` |
 | [0122](0122-s3-backed-git-via-walgit-for-component-lineage.md) | S3-backed Git via walgit for component lineage and artifact handoff: database-free Git on S3; S3 `BlobStore` for `holon-vcs`; lock-free parallel generation with standard Git export | **accepted**, and proven locally against rustfs |
+| [0123](0123-unified-llm-pipeline-and-routing.md) | Unified LLM pipeline and direct free-tier routing: native Gemini in `holon-llm`, centralized bubbling in `llm-router`, retire loose Node.js shims | **accepted** |
+| [0124](0124-pure-jev-wire-codec.md) | Pure System 1 JEV wire codec in `crates/agent-wire`: typed JEV evaluation without cross-workspace `#[path = ...]` compiler hacks | **accepted** |
+| [0125](0125-decouple-domain-tools-from-agent-runtime.md) | Decouple domain capabilities from agent runtime kernel: extract food and Google Calendar into pluggable components, slim the runtime core | **accepted** |
+| [0126](0126-nats-jetstream-llm-queues.md) | NATS JetStream backed multi-tier LLM queuing and coalescing: durable distributed batching on `malna`'s `LLM_BATCH`, 1M-token prompt coalescing | **accepted** |
+| [0127](0127-multimodal-voice-for-edge-devices.md) | Multimodal voice and speech for edge devices: zero-install speech-to-text and synthesis via Gemini for Linux edge nodes | **accepted** |
+| [0128](0128-component-catalog-pruning.md) | Capability component catalog pruning and consolidation: isolate polyglot test fixtures, prune unreferenced prototypes via `comp-capgraph` | **accepted** |
 
 ## History: superseded, and kept
 
