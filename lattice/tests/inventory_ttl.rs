@@ -2,7 +2,7 @@
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-use comp_lattice::nats::NatsLattice;
+use holon_lattice::nats::NatsLattice;
 
 /// OS-assigned: a guessed port collides under a parallel `cargo test`.
 fn free_port() -> u16 {
@@ -108,10 +108,10 @@ async fn lease_release_allows_immediate_failover_without_waiting_for_ttl() {
     let lattice = "leasetest";
     let ttl = Duration::from_secs(60);
 
-    let mut first = comp_lattice::lease::Lease::connect(&nats.url, lattice, ttl, "first")
+    let mut first = holon_lattice::lease::Lease::connect(&nats.url, lattice, ttl, "first")
         .await
         .expect("first connect");
-    let mut second = comp_lattice::lease::Lease::connect(&nats.url, lattice, ttl, "second")
+    let mut second = holon_lattice::lease::Lease::connect(&nats.url, lattice, ttl, "second")
         .await
         .expect("second connect");
 

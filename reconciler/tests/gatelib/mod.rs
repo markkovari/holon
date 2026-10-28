@@ -41,9 +41,17 @@ pub fn components_target() -> PathBuf {
 ///
 /// `$COMP_PLUG` is deliberately NOT read: composition is a library call here (ADR-0087).
 pub fn host_bin() -> PathBuf {
-    match std::env::var("HOLON_HOST").or_else(|_| std::env::var("COMP_HOST")) {
-        Ok(p) if !p.trim().is_empty() => PathBuf::from(p),
-        _ => repo_root().join("target/release/comp-host"),
+    if let Ok(p) = std::env::var("HOLON_HOST").or_else(|_| std::env::var("COMP_HOST")) {
+        if !p.trim().is_empty() {
+            return PathBuf::from(p);
+        }
+    }
+    let h1 = repo_root().join("target/release/holon-host");
+    let h2 = repo_root().join("target/release/comp-host");
+    if h1.exists() {
+        h1
+    } else {
+        h2
     }
 }
 

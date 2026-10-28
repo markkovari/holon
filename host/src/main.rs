@@ -1201,7 +1201,7 @@ async fn main() -> Result<()> {
                 hostname().unwrap_or_else(|| format!("node-{}", std::process::id()))
             });
             // Shared with the agent so wRPC rides one connection; every server listed, since failover needs one connect.
-            let lattice_servers = comp_lattice::nats::servers(nats_url_for_lattice);
+            let lattice_servers = holon_lattice::nats::servers(nats_url_for_lattice);
             let raw_nats =
                 Arc::new(async_nats::connect(lattice_servers.clone()).await.with_context(
                     || format!("connecting to NATS at {}", lattice_servers.join(", ")),
@@ -1237,7 +1237,7 @@ async fn main() -> Result<()> {
                 }
             );
             let fabric = Arc::new(
-                comp_lattice::nats::NatsLattice::connect(
+                holon_lattice::nats::NatsLattice::connect(
                     nats_url_for_lattice,
                     &args.lattice,
                     std::time::Duration::from_secs(args.heartbeat_secs * 3),

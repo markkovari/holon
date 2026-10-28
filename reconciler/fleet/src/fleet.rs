@@ -802,17 +802,17 @@ impl Fleet {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         rt.block_on(async move {
             let Ok(inv) =
-                comp_lattice::nats::NatsLattice::connect(&url, &lattice, Duration::from_secs(15))
+                holon_lattice::nats::NatsLattice::connect(&url, &lattice, Duration::from_secs(15))
                     .await
             else {
                 return false;
             };
             let deadline = Instant::now() + within;
             while Instant::now() < deadline {
-                if let Ok(entries) = comp_lattice::Inventory::read_all(&inv).await {
+                if let Ok(entries) = holon_lattice::Inventory::read_all(&inv).await {
                     let placed = entries.iter().any(|e| {
                         serde_json::from_slice::<serde_json::Value>(
-                            &comp_lattice::snapshot::expand(e.value.clone()),
+                            &holon_lattice::snapshot::expand(e.value.clone()),
                         )
                         .ok()
                         .and_then(|v| v["instances"].as_array().cloned())

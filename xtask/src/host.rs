@@ -139,7 +139,12 @@ pub(crate) fn host_app(
         format!("Starting {app} on http://{bind_addr} (kv: {kv_mode})...").green().bold()
     );
 
-    let mut host_cmd = Command::new("target/release/comp-host");
+    let host_bin = if Path::new("target/release/holon-host").exists() {
+        "target/release/holon-host"
+    } else {
+        "target/release/comp-host"
+    };
+    let mut host_cmd = Command::new(host_bin);
     host_cmd.args([
         "--app",
         app,

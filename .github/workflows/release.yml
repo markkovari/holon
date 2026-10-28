@@ -60,13 +60,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          bins=(comp-checks comp-plug holon-relay comp-goalrun comp-goald comp-host holon)
+          bins=(comp-checks comp-plug holon-relay comp-goalrun comp-goald holon-host holon)
           # Their packages, named: without `-p` every member's features merge in, OpenSSL among them.
-          args=(-p comp-reconciler -p holon-fleet -p holon-relay -p holon-goal -p comp-host -p holon)
+          args=(-p holon-reconciler -p holon-fleet -p holon-relay -p holon-goal -p holon-host -p holon)
           for bin in "${bins[@]}"; do args+=(--bin "$bin"); done
           cargo build --release "${args[@]}"
           for bin in "${bins[@]}"; do cp "target/release/$bin" dist/; done
           cp dist/holon-relay dist/comp-relay 2>/dev/null || true
+          cp dist/holon-host dist/comp-host 2>/dev/null || true
           strip dist/* 2>/dev/null || true
           ls -l dist
 
