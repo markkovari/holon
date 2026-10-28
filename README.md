@@ -42,6 +42,78 @@ cargo xtask host link-shortener
 curl http://localhost:3942/healthz
 ```
 
+Or install the standalone prebuilt binaries directly to `~/.holon/bin`:
+```bash
+curl -fsSL https://raw.githubusercontent.com/markkovari/holon/main/install.sh | sh
+```
+
+---
+
+## 🧭 Who is Holon For? (Targeted Personas)
+
+Holon is architected to eliminate repetitive infrastructure across different engineering roles:
+
+| Persona | Why You'll Love Holon | Primary Workflow |
+|---|---|---|
+| **🛠️ Component & Backend Developers** | Stop writing bespoke auth, KV, rate-limiters, or session layers. Pick modular components, assemble via WIT contracts with zero glue code, and test them in sub-millisecond isolation. | `cargo xtask compose <app>`<br>`cargo xtask host <app>`<br>`components/*/gate.sh` |
+| **🌐 Platform & Systems Operators** | Deploy dense, high-performance services to bare metal, VPS, or edge without Kubernetes. Single-process tenancy, zero Docker daemon on the runtime path, and declarative NATS lattices. | `holon node render`<br>`holon fleet render`<br>`systemctl start holon-host` |
+| **🤖 AI & Autonomous Agent Engineers** | Run autonomous swarms that write real code against typed boundaries. Every branch runs against a real native test gate; winners land into S3 Git lineage via Walgit without manual PR drag. | `comp-goalrun --checks-url ...`<br>`holon-agentd`<br>`agent-runtime` |
+| **🧩 Polyglot & Frontend Engineers** | Build single-artifact applications where client web SPAs (Svelte, React, Vite) and polyglot backends (Rust, Go, Python, C#) are packaged into a unified `.wasm` binary. | `cargo xtask compose <app>`<br>`tools/build-polyglot.sh`<br>`wac plug` |
+
+---
+
+## 🖥️ Hardware Profiles & Sizing
+
+Holon components compile to standard `wasm32-wasip2`, executing on Wasmtime. Because components share memory address spaces safely without OS process overhead, Holon scales from resource-constrained edge boards to massive compute fleets:
+
+| Profile | Target Hardware | Min / Recommended Specs | Deployment Role & Footprint |
+|---|---|---|---|
+| **💻 Local Workstation** | Apple Silicon (M1/M2/M3/M4), x86_64 Linux, macOS | 4+ cores<br>8 GB – 16 GB RAM<br>10 GB disk | **Development & Testing:** Instant cold starts (&lt;5 ms), local `xtask host` runtime, memory footprint &lt;30 MB per running application. |
+| **⚡ Gate Worker / CI Node** | Dedicated CI Runner, Mac mini, or Bare Metal | 8 – 16+ cores<br>16 GB – 32 GB RAM<br>NVMe SSD (fast I/O) | **Test Gates & Swarms:** Runs `comp-checks` with a shared persistent cache (`warm_caches()` in `~/.cache/comp-goalrun/`). Gates 8–64 concurrent builds in 7–10 s flat. |
+| **☁️ Production Lattice Node** | Cloud VPS (Hetzner, AWS EC2, DigitalOcean), Bare Metal | 2 – 4 vCPUs<br>4 GB – 8 GB RAM<br>20 GB disk | **Multi-Tenant Serving:** Runs `holon-host` joined to a NATS JetStream lattice. Replaces heavy Kubernetes clusters; serves hundreds of isolated tenant instances on a $10/mo node. |
+| **🍓 Edge & Embedded** | Raspberry Pi 5, Rockchip ARM64, Intel NUC / Mini PC | 4 cores (ARM64/x86_64)<br>2 GB – 4 GB RAM<br>16 GB MicroSD / eMMC | **Edge Relays & Sensors:** Runs static musl `holon-host` or `holon-relay` for IoT sweeps, local cron schedules (`sched:timer`), and offline processing. |
+
+---
+
+## 🧰 What Native Tools Do You Need?
+
+Holon components are pure WebAssembly, but the host environment and engineering loop leverage standard native tooling:
+
+### 1. Core Prerequisites (To build and compose)
+* **Rust & Cargo** (pinned in `rust-toolchain.toml`, version 1.98.0+):
+  ```bash
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+  rustup target add wasm32-wasip2
+  ```
+* **WAC (WebAssembly Compositions CLI)**:
+  Used to resolve and compose WIT dependencies into unified application binaries:
+  ```bash
+  cargo install wac-cli
+  ```
+* **Node.js & npm** (v20+):
+  Required for building embedded frontend SPAs (`vite build`) and validating interactive architecture maps:
+  ```bash
+  node --version  # v20.x or v22.x
+  ```
+
+### 2. Standalone Holon Binaries (Install via script)
+Run our automated multi-platform installer to install prebuilt native binaries into `~/.holon/bin`:
+```bash
+# Installs holon CLI, holon-host, comp-plug, comp-checks, and holon-relay
+curl -fsSL https://raw.githubusercontent.com/markkovari/holon/main/install.sh | sh
+```
+* `holon`: The CLI for managing nodes, rendering systemd units, inspecting components, and deploying lattices.
+* `holon-host`: The native Wasmtime-based host serving WASI p2/p3 components over HTTP and NATS.
+* `comp-plug`: The automatic import resolver and linker (wraps `wac`).
+* `comp-checks`: The high-concurrency test gate daemon (materializes trees, executes sandboxed test suites).
+* `holon-relay`: The pull-to-push event relay driving `sched:timer`, `event:bus`, and `cron:expr`.
+
+### 3. Optional Supporting Infrastructure
+* **NATS Server** (`nats-server`): Needed only for Lane 2 (multi-node lattice orchestration) and JetStream RPC.
+* **Walgit / S3 Storage**: Any S3-compatible store (Cloudflare R2, MinIO, AWS S3) for object blobs and frictionless Git commit lineage.
+* **SurrealDB** (`surreal`): Used by the capability graph (`comp-capgraph`) and agent memory.
+* **Hurl** (`hurl`): Used by `components/*/gate.sh` to run declarative HTTP integration tests.
+
 ---
 
 ## 🌟 What is Holon?
