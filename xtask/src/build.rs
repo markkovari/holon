@@ -124,7 +124,7 @@ pub(crate) fn build_components(force: bool) -> Result<()> {
         "components/target/wasm32-wasip1/release",
         "components/target/wasm32-wasip1/debug",
     ];
-    let registered = comp_metadata::component::registered_components(Path::new("."));
+    let registered = holon_metadata::component::registered_components(Path::new("."));
     for dir in stale_dirs {
         let p = Path::new(dir);
         if p.is_dir() {

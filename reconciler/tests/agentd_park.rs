@@ -210,7 +210,7 @@ impl Stack {
         }
         args.extend(extra.iter().map(|x| x.to_string()));
         self.agentd = Proc::start(
-            holon_fleet::fleet::built_bin("comp-agentd"),
+            holon_fleet::fleet::built_bin("holon-agentd"),
             &args,
             self.dir.join(format!("agentd-{n}.log")),
         );

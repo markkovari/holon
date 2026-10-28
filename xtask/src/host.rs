@@ -82,7 +82,7 @@ pub(crate) fn host_app(
     // The same path `compose` writes, so `compose X && host X` finds it.
     let artifact_path = resolve_app(app).artifact;
 
-    let specs = comp_metadata::app::registered_apps(Path::new("."));
+    let specs = holon_metadata::app::registered_apps(Path::new("."));
     let app_spec = specs.iter().find(|s| s.name == app);
     let default_port = app_spec.and_then(|s| s.port).unwrap_or(3055);
     let default_kv =

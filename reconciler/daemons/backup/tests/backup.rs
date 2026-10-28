@@ -67,7 +67,7 @@ impl Nats {
 }
 
 fn backup(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_comp-backup")).args(args).output().unwrap()
+    Command::new(env!("CARGO_BIN_EXE_holon-backup")).args(args).output().unwrap()
 }
 
 fn ok(out: Output) -> String {

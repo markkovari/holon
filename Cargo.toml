@@ -67,7 +67,7 @@ holon-fleet = { path = "reconciler/fleet" }
 holon-fuel = { path = "reconciler/fuel" }
 holon-goal = { path = "reconciler/goal" }
 comp-lattice = { path = "lattice" }
-comp-metadata = { path = "comp-metadata" }
+holon-metadata = { path = "comp-metadata" }
 holon-oci = { path = "reconciler/oci" }
 holon-park = { path = "crates/holon-park", features = ["native"] }
 holon-vcs = { path = "crates/holon-vcs" }

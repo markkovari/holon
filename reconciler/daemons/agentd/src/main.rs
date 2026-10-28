@@ -55,7 +55,7 @@ use session::Registry;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "comp-agentd",
+    name = "holon-agentd",
     about = "Holon as an agent service: sessions, tasks, streamed events, approvals (ADR-0102)."
 )]
 struct Args {

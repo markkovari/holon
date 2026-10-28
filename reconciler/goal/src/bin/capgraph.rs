@@ -26,7 +26,7 @@ struct Args {
     twins: bool,
 }
 
-use comp_metadata::app::App;
+use holon_metadata::app::App;
 
 fn main() -> Result<(), String> {
     let args = Args::parse();
@@ -94,7 +94,7 @@ fn main() -> Result<(), String> {
 
     if let Some(query) = &args.find {
         let mut apps_of: BTreeMap<String, usize> = BTreeMap::new();
-        for app in comp_metadata::app::discover_apps(&root) {
+        for app in holon_metadata::app::discover_apps(&root) {
             for part in catalog.closure(&app.root) {
                 *apps_of.entry(part).or_default() += 1;
             }
@@ -134,7 +134,7 @@ fn main() -> Result<(), String> {
     match args.format.as_str() {
         "json" => println!(
             "{}",
-            json(&catalog, &by_iface, &orphans, &comp_metadata::app::discover_apps(&root))
+            json(&catalog, &by_iface, &orphans, &holon_metadata::app::discover_apps(&root))
         ),
         "surql" => {
             let generation = args.gen.unwrap_or_else(|| {
@@ -143,7 +143,7 @@ fn main() -> Result<(), String> {
                     .map(|d| d.as_secs())
                     .unwrap_or(0)
             });
-            println!("{}", surql(&catalog, &comp_metadata::app::discover_apps(&root), generation));
+            println!("{}", surql(&catalog, &holon_metadata::app::discover_apps(&root), generation));
         }
         other => return Err(format!("unknown format {other:?} — json or surql")),
     }
@@ -410,7 +410,7 @@ mod tests {
             eprintln!("skipped: nothing built — run `cargo xtask build --force`");
             return;
         }
-        let out = surql(&catalog, &comp_metadata::app::discover_apps(&root), 42);
+        let out = surql(&catalog, &holon_metadata::app::discover_apps(&root), 42);
 
         /// `about` is here and `memory` is not: the edge is an index, the lesson what it indexes.
         const DERIVED: &[&str] =
@@ -490,8 +490,8 @@ mod tests {
             eprintln!("skipped: nothing built — run `cargo xtask build --force`");
             return;
         }
-        let one = surql(&catalog, &comp_metadata::app::discover_apps(&root), 1);
-        let two = surql(&catalog, &comp_metadata::app::discover_apps(&root), 2);
+        let one = surql(&catalog, &holon_metadata::app::discover_apps(&root), 1);
+        let two = surql(&catalog, &holon_metadata::app::discover_apps(&root), 2);
 
         let edge_ids = |s: &str| {
             s.lines()

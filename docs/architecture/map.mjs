@@ -53,7 +53,7 @@ export const SYS = [
   purpose:'One app spec rendered for a box, a lattice, wasmCloud 1.x or 2.x. A pull agent keeps boxes current.',
   blurb:'One hand-written apps/<name>.toml is rendered for four lanes: a single box, a lattice, wasmCloud 1.x or wasmCloud 2.x. Moving between them is an edit and a different renderer, never a rewrite. CI publishes composed artifacts by digest; an agent on each box pulls them.',
   entry:'holon node render · fleet render · wadm render, then scp and systemctl; publish-apps.yml on every merge to main',
-  parts:[['spec','apps/*.toml'],['native','holon render'],['native','comp-agent'],['spec','publish-apps.yml']],
+  parts:[['spec','apps/*.toml'],['native','holon render'],['native','holon-agent'],['spec','publish-apps.yml']],
   uses:['oci','git'],
   boundary:['Pull, not push: comp-agent has no inbound port and the box holds no CI credential, so nothing reaches in from outside.',
             'The one mutable pointer is which commit of apps.lock is current, a branch in git whose history is the deploy history. Nothing references a tag (ADR-0006).',
@@ -65,7 +65,7 @@ export const SYS = [
   purpose:'platform-domain decides, comp-reconciler makes the fleet match, comp-ingress is the door.',
   blurb:'platform-domain, itself a wasm app, keeps orgs, the catalogue, deployments and secrets. comp-reconciler diffs desired against observed and sends commands over NATS; comp-ingress routes HTTP by Host header from inventory. Bare metal joined by NATS, with no Kubernetes on the runtime path.',
   entry:'the holon CLI and the Holon console (both over /api), and comp-ingress for end users',
-  parts:[['wasm','platform-domain'],['native','comp-reconciler'],['native','comp-ingress'],['native','comp-relay'],['wasm','console-domain'],['native','comp-backup']],
+  parts:[['wasm','platform-domain'],['native','comp-reconciler'],['native','comp-ingress'],['native','holon-relay'],['wasm','console-domain'],['native','holon-backup']],
   uses:['nats','disk'],
   boundary:['comp-reconciler is the only process that can start code on every node. It holds no business logic, no database and no user concept, so it stays small enough to audit in one sitting.',
             'The ingress needs no platform credential: its routing table comes from inventory, so it keeps routing while the control plane is down.',
@@ -89,7 +89,7 @@ export const SYS = [
   purpose:'What a guest cannot do, done by small native daemons, each with its own allow-list.',
   blurb:'Watching a directory, scanning a LAN, running ffmpeg or a gate: a wasm32-wasip2 component has no watch syscall, no raw socket, no process. Each of these is a small native daemon, one per capability, which the component reaches over loopback HTTP; its address comes from wasi:config.',
   entry:'loopback HTTP from a component through wasi:http/outgoing-handler',
-  parts:[['native','comp-fswatch'],['native','holon-docker'],['native','holon-ffmpeg'],['native','holon-media'],['native','comp-checks'],['spec','+ more']],
+  parts:[['native','holon-fswatch'],['native','holon-docker'],['native','holon-ffmpeg'],['native','holon-media'],['native','comp-checks'],['spec','+ more']],
   uses:['s3','nats'],
   boundary:['Each daemon is its own process with its own allow-list and its own blast radius: no shared daemon, no shared allow-list (ADR-0095).',
             'They bind loopback. comp-checks bounds the command with --allow but not the tree it runs over, so off loopback it refuses to start without a token.',
@@ -101,7 +101,7 @@ export const SYS = [
   purpose:'comp-park and comp-vcs: a ticket per outstanding call, and an agent-native code store.',
   blurb:'Two services on NATS JetStream that other components call over HTTP. comp-park records an outstanding call so no thread has to wait for its answer, and comp-resume delivers what came back. comp-vcs stores code as an oplog of commutative, symbol-level patches.',
   entry:'park-gateway and vcs-gateway, tailnet-only by default; comp-agentd calls comp-park directly',
-  parts:[['native','comp-park'],['native','comp-resume'],['native','comp-vcs'],['wasm','park-store'],['wasm','vcs-store']],
+  parts:[['native','holon-park'],['native','holon-resume'],['native','holon-vcs'],['wasm','park-store'],['wasm','vcs-store']],
   uses:['nats','surreal'],
   boundary:['Both gateways are tailnet-only on purpose: whoever reaches the park gateway can park, wake or cancel any session’s ticket, and whoever reaches vcs can edit every workspace.',
             'The gateways keep nothing; every byte of state is in the daemon (kv = "memory" in the app spec).',
@@ -112,7 +112,7 @@ export const SYS = [
   purpose:'comp-agentd sessions with approvals, and the agent-runtime stack with its Matrix and desktop fronts.',
   blurb:'Two independent ways to run agents; neither calls the other. comp-agentd serves sessions, tasks and one resumable event stream with per-tool approval. agent-runtime runs autonomous agents with memory, schedules and events, fronted by a desktop console and a Matrix bridge.',
   entry:'REST, SSE and gRPC for agentd clients; Element and the GPUI console for agent-runtime',
-  parts:[['native','comp-agentd'],['native','agent-runtime'],['native','agent-matrix'],['native','gpui-console'],['wasm','agent gateway']],
+  parts:[['native','holon-agentd'],['native','agent-runtime'],['native','agent-matrix'],['native','gpui-console'],['wasm','agent gateway']],
   uses:['llm','disk'],
   boundary:['comp-agentd tools are confined to the session’s workspace root; run cannot be confined, which is what approval is for.',
             'agent-runtime refuses a tool an agent was not granted instead of dispatching it, and only the owner’s Matrix messages start a run.',
@@ -169,7 +169,7 @@ export const COR = [
 
  {id:'D1',a:['library','comp-plug · comp-oci'],b:['delivery','publish-apps.yml'],p:'art',over:'CI',contract:'On every merge to main: build the components, derive each app’s composition with comp-plug, push one artifact per app by digest.',adr:'0087 · 0006'},
  {id:'D2',a:['delivery','publish-apps.yml'],b:['oci','registry'],p:'art',over:'OCI',contract:'One composed artifact per app, named by its digest.',adr:'0006'},
- {id:'D5',a:['oci','registry'],b:['delivery','comp-agent'],p:'art',over:'OCI',contract:'The agent pulls by digest, never by tag, and writes down the installed digest.',adr:'0006'},
+ {id:'D5',a:['oci','registry'],b:['delivery','holon-agent'],p:'art',over:'OCI',contract:'The agent pulls by digest, never by tag, and writes down the installed digest.',adr:'0006'},
  {id:'D7',a:['delivery','holon fleet render'],b:['control','reconciler · ingress'],p:'art',over:'file',contract:'One directory per box holding its units and, on the control box, reconciler.env (with PLATFORM_SECRET to fill in).',adr:'0021'},
  {id:'D8',a:['delivery','lanes 1–2'],b:['runtime','comp-host'],p:'call',over:'systemd',contract:'A rendered unit runs comp-host; comp-agent restarts it when apps.lock names a new digest.',adr:''},
 
@@ -180,7 +180,7 @@ export const COR = [
  {id:'C7',a:['control','comp-ingress'],b:['runtime','HTTP listener'],p:'http',over:'HTTP',contract:'Proxies by Host header straight to a node on the tailnet; least outstanding requests, sheds load past max_inflight.',adr:'0029 · 0041'},
  {id:'C8',a:['control','comp-ingress'],b:['control','comp-reconciler'],p:'nats',over:'NATS',contract:'An activate command when a scaled-to-zero app gets its first request; one activation per host at a time. Internal to the control plane.',adr:'0042',internal:true},
  {id:'C9',a:['users','browsers · callers'],b:['control','comp-ingress'],p:'http',over:'HTTPS',contract:'Caddy terminates TLS for apps declared access = "public"; everything else is reachable on the tailnet only.',adr:'0029'},
- {id:'C10',a:['control','comp-relay'],b:['runtime','tenant apps'],p:'http',over:'HTTP',contract:'Pokes an app’s [triggers] pump (/internal/pump) on an interval so pull-based timers, topics and cron fire.',adr:'0096'},
+ {id:'C10',a:['control','holon-relay'],b:['runtime','tenant apps'],p:'http',over:'HTTP',contract:'Pokes an app’s [triggers] pump (/internal/pump) on an interval so pull-based timers, topics and cron fire.',adr:'0096'},
  {id:'C11',a:['runtime','comp:secrets/reader'],b:['control','platform-domain'],p:'http',over:'HTTP',contract:'reveal fetches the plaintext on first use with a single-use token; a captured fetch is spent. The guest never holds a reference.',adr:'0051 · 0071'},
  {id:'C12',a:['loop','comp-goald'],b:['control','platform-domain'],p:'http',over:'HTTP',contract:'The project’s goal queue and events under /api/projects/{p}/… A person still starts every goal.',adr:'0082'},
 
@@ -267,7 +267,7 @@ export const DIA = {
    N('l3',2,1,'ext','Lanes 3 and 4',['wasmCloud 1.x (wadm) or 2.x','(runtime-operator, Kubernetes)']),
    N('publish',0,2,'spec','publish-apps.yml',['on merge to main: compose every','app, publish by digest']),
    N('lock',1,2,'store','apps.lock',['digests, on the deploy branch','the one mutable pointer']),
-   N('agent',2,2,'native','comp-agent',['on the box, on a timer: pull by','digest, install, restart the unit'],{m:1})
+   N('agent',2,2,'native','holon-agent',['on the box, on a timer: pull by','digest, install, restart the unit'],{m:1})
   ],
   groups:[{id:'lanes',t:'Where it runs',ids:['l1','l2','l3']}],
   edges:[
@@ -297,7 +297,7 @@ export const DIA = {
    N('recon',2,1,'native','comp-reconciler',['pure plan() diff, one leader','sole start/stop authority'],{m:1}),
    N('nats',1,2,'store','NATS lattice buckets',['comp-inventory (TTL) · comp-artifacts','comp-load · lease · cmd subjects']),
    N('ingress',2,2,'native','comp-ingress',['Host header → replica','least-outstanding · sheds · activates'],{m:1}),
-   N('relay',2,3,'native','comp-relay',['pokes /internal/pump so pull-','based timers and topics fire'],{m:1})
+   N('relay',2,3,'native','holon-relay',['pokes /internal/pump so pull-','based timers and topics fire'],{m:1})
   ],
   edges:[
    ['cli','platform','HTTP /api','http'],['console','platform','HTTP /api','http'],['recon','platform','poll','http'],
@@ -374,10 +374,10 @@ export const DIA = {
    N('dom',1,0,'wasm','*-domain wrapper',['exports wasi:http: the app\u2019s','entry point for one capability']),
    N('cap',2,0,'wasm','Capability crate',['a WIT contract and nothing else','fs-watcher · lan-scanner · \u2026']),
    N('broker',0,1,'ext','Runtime \u00b7 comp-host',['wasi:http/outgoing-handler dials a loopback address; the address comes from wasi:config/store, set per instance. The guest holds no socket.'],{cs:4,ghost:1,sys:'runtime'}),
-   N('d-files',0,2,'native','Files and desktop',['comp-fswatch · holon-clipboard','holon-uinotify · holon-cron']),
+   N('d-files',0,2,'native','Files and desktop',['holon-fswatch · holon-clipboard','holon-uinotify · holon-cron']),
    N('d-net',1,2,'native','Network',['holon-lanscan · holon-mdns','holon-wireguard']),
    N('d-proc',2,2,'native','Processes and codecs',['holon-docker · holon-ffmpeg','holon-browser · holon-imageopt']),
-   N('d-data',3,2,'native','Models, data, gate',['holon-llmlocal · holon-media','comp-mailrelay · comp-checks']),
+   N('d-data',3,2,'native','Models, data, gate',['holon-llmlocal · holon-media','holon-mailrelay · comp-checks']),
    N('machine',0,3,'ext','The machine',['docker socket · crontab · desktop session · LAN · WireGuard · Chrome · ffmpeg · Ollama \u2014 what the daemon, and only the daemon, may touch.'],{cs:4})
   ],
   groups:[
@@ -405,12 +405,12 @@ export const DIA = {
   nodes:[
    N('pgw',0,0,'wasm','park-gateway',['HTTP routes · tailnet','apps/park.toml']),
    N('pst',1,0,'wasm','park-store',['holon:park@0.4.0','one request per call']),
-   N('ppark',2,0,'native','comp-park',['loopback HTTP /v1/{park,wake,','cancel,pending,…} · holon-park'],{m:1}),
+   N('ppark',2,0,'native','holon-park',['loopback HTTP /v1/{park,wake,','cancel,pending,…} · holon-park'],{m:1}),
    N('ptk',1,1,'store','NATS JetStream',['KV bucket: tickets','PARK_WAKE work-queue stream']),
-   N('pres',2,1,'native','comp-resume',['deliver resolved tickets,','recovery sweep every N s'],{m:1}),
+   N('pres',2,1,'native','holon-resume',['deliver resolved tickets,','recovery sweep every N s'],{m:1}),
    N('vgw',0,2,'wasm','vcs-gateway',['HTTP routes · tailnet','apps/vcs.toml']),
    N('vst',1,2,'wasm','vcs-store',['holon:vcs/code-store + files','one request per call']),
-   N('vvcs',2,2,'native','comp-vcs',['loopback HTTP · holon-vcs','oplog of commutative patches'],{m:1}),
+   N('vvcs',2,2,'native','holon-vcs',['loopback HTTP · holon-vcs','oplog of commutative patches'],{m:1}),
    N('vsur',1,3,'store','SurrealDB',['symbol graph · positions','indexes']),
    N('vlog',2,3,'store','NATS JetStream',['oplog streams'])
   ],

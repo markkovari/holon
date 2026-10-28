@@ -1170,77 +1170,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "comp-agent"
-version = "0.1.0"
-
-[[package]]
-name = "comp-agentd"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "futures",
- "getrandom 0.2.17",
- "hex",
- "holon-daemon-kit",
- "holon-fuel",
- "holon-llm",
- "holon-park",
- "holon-vcs",
- "jiff",
- "prost",
- "prost-types",
- "protox",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tonic",
- "tonic-prost",
- "tonic-prost-build",
- "tonic-web",
-]
-
-[[package]]
-name = "comp-backup"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "base64 0.22.1",
- "chacha20poly1305",
- "clap",
- "flate2",
- "futures",
- "getrandom 0.2.17",
- "hex",
- "holon-fleet",
- "jiff",
- "reqwest 0.12.28",
- "rusty-s3",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "comp-fswatch"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "holon-daemon-kit",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "comp-host"
 version = "0.1.0"
 dependencies = [
@@ -1287,37 +1216,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "comp-mailrelay"
-version = "0.1.0"
-
-[[package]]
-name = "comp-metadata"
-version = "0.1.0"
-dependencies = [
- "serde",
- "toml 0.8.23",
-]
-
-[[package]]
-name = "comp-park"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "hmac 0.12.1",
- "holon-daemon-kit",
- "holon-fleet",
- "holon-park",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha1",
- "tempfile",
- "tokio",
-]
-
-[[package]]
 name = "comp-reconciler"
 version = "0.1.0"
 dependencies = [
@@ -1349,37 +1247,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml 0.8.23",
-]
-
-[[package]]
-name = "comp-relay"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "comp-lattice",
- "futures",
- "reqwest 0.12.28",
- "tokio",
-]
-
-[[package]]
-name = "comp-vcs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "hmac 0.12.1",
- "holon-daemon-kit",
- "holon-fleet",
- "holon-vcs",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha1",
- "tempfile",
- "tokio",
 ]
 
 [[package]]
@@ -2824,6 +2691,64 @@ dependencies = [
 ]
 
 [[package]]
+name = "holon-agent"
+version = "0.1.0"
+
+[[package]]
+name = "holon-agentd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "futures",
+ "getrandom 0.2.17",
+ "hex",
+ "holon-daemon-kit",
+ "holon-fuel",
+ "holon-llm",
+ "holon-park",
+ "holon-vcs",
+ "jiff",
+ "prost",
+ "prost-types",
+ "protox",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+ "tonic-web",
+]
+
+[[package]]
+name = "holon-backup"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-nats",
+ "base64 0.22.1",
+ "chacha20poly1305",
+ "clap",
+ "flate2",
+ "futures",
+ "getrandom 0.2.17",
+ "hex",
+ "holon-fleet",
+ "jiff",
+ "reqwest 0.12.28",
+ "rusty-s3",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "holon-browser"
 version = "0.1.0"
 dependencies = [
@@ -2916,6 +2841,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "holon-fswatch"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "holon-daemon-kit",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "holon-fuel"
 version = "0.1.0"
 
@@ -2926,9 +2864,9 @@ dependencies = [
  "anyhow",
  "async-nats",
  "clap",
- "comp-metadata",
  "holon-fleet",
  "holon-fuel",
+ "holon-metadata",
  "holon-oci",
  "regex",
  "reqwest 0.12.28",
@@ -2994,6 +2932,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "holon-mailrelay"
+version = "0.1.0"
+
+[[package]]
 name = "holon-mdns"
 version = "0.1.0"
 dependencies = [
@@ -3046,6 +2988,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "holon-metadata"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "holon-oci"
 version = "0.1.0"
 dependencies = [
@@ -3068,6 +3018,37 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "holon-park-daemon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "hmac 0.12.1",
+ "holon-daemon-kit",
+ "holon-fleet",
+ "holon-park",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha1",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "holon-relay"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "comp-lattice",
+ "futures",
+ "reqwest 0.12.28",
  "tokio",
 ]
 
@@ -3104,6 +3085,25 @@ dependencies = [
  "surrealdb",
  "syn 3.0.9",
  "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "holon-vcs-daemon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "clap",
+ "hmac 0.12.1",
+ "holon-daemon-kit",
+ "holon-fleet",
+ "holon-vcs",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha1",
+ "tempfile",
  "tokio",
 ]
 
@@ -9069,7 +9069,7 @@ dependencies = [
  "anyhow",
  "clap",
  "colored",
- "comp-metadata",
+ "holon-metadata",
  "serde",
  "serde_json",
  "toml 0.8.23",

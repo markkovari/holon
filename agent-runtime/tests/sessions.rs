@@ -477,17 +477,18 @@ impl Drop for Daemon {
 
 fn daemon_binary() -> std::path::PathBuf {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target");
-    ["debug", "release"]
-        .iter()
-        .map(|p| root.join(p).join("comp-agentd"))
-        .find(|p| p.exists())
-        .unwrap_or_else(|| {
-            panic!(
-                "comp-agentd is not built: run `cargo build -p comp-agentd` \
+    let mut candidates = Vec::new();
+    for p in ["debug", "release"] {
+        candidates.push(root.join(p).join("holon-agentd"));
+        candidates.push(root.join(p).join("comp-agentd"));
+    }
+    candidates.into_iter().find(|p| p.exists()).unwrap_or_else(|| {
+        panic!(
+            "holon-agentd is not built: run `cargo build -p holon-agentd` \
                  (looked in {})",
-                root.display()
-            )
-        })
+            root.display()
+        )
+    })
 }
 
 /// The runtime's contract with the daemon as it really is, not as the stand-in above reads it:

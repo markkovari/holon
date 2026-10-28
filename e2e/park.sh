@@ -49,8 +49,8 @@ say "building park-store + park-gateway (wasm32-wasip2)"
 (cd components && cargo build --release --target wasm32-wasip2 -p park-store -p park-gateway)
 say "building comp-host"
 cargo build --release --manifest-path host/Cargo.toml --bin comp-host
-say "building the e2e test (and comp-park with it)"
-cargo test --release -p comp-park --test e2e_park --no-run
+say "building the e2e test (and holon-park with it)"
+cargo test --release -p holon-park-daemon --test e2e_park --no-run
 
 # ---- private JetStream ----------------------------------------------------------
 
@@ -70,7 +70,7 @@ status=0
 for run in $(seq "$RUNS"); do
   say "run $run/$RUNS: reconciler/daemons/park/tests/e2e_park.rs (NATS $PARK_E2E_NATS_URL)"
   start=$(date +%s)
-  if ! cargo test --release -p comp-park --test e2e_park -- --nocapture "$@"; then
+  if ! cargo test --release -p holon-park-daemon --test e2e_park -- --nocapture "$@"; then
     status=1
     say "run $run failed"
     break
