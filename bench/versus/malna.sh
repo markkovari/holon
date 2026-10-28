@@ -12,9 +12,9 @@
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)/comp"
 SP=${SP:-$(mktemp -d)}
-PI=192.168.1.11
-KEY="$HOME/.ssh/id_ed25519"
-MAC=192.168.1.10
+PI=${PI:-192.168.1.11}
+KEY=${KEY:-"$HOME/.ssh/id_ed25519"}
+MAC=${MAC:-192.168.1.10}
 DURATION=${DURATION:-20s}
 CONNS=${CONNS:-30}
 # Both runtimes run ON the Pi; without it there is nothing to compare.

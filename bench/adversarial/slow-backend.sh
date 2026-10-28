@@ -7,7 +7,7 @@ SP=${SP:-$(mktemp -d)}
 HERE=bench/adversarial
 MAC=${MAC:-192.168.1.10}
 PI=${PI:-192.168.1.11}
-KEY="$HOME/.ssh/id_ed25519"
+KEY=${KEY:-"$HOME/.ssh/id_ed25519"}
 rsh() { ssh -n -i "$KEY" -o IdentitiesOnly=yes -o ConnectTimeout=10 markkovari@$PI "bash -lc '$1'"; }
 PIDS=()
 cleanup() {

@@ -20,7 +20,7 @@ NODES=${NODES:-3}
 PI=${PI:-}
 PI_NODES=${PI_NODES:-2}
 APPS=${APPS:-3}
-KEY="$HOME/.ssh/id_ed25519"
+KEY=${KEY:-"$HOME/.ssh/id_ed25519"}
 # Local by default; only checked when a second machine was actually asked for.
 . bench/preflight.sh
 need_cmd nats-server

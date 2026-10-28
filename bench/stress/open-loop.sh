@@ -22,8 +22,8 @@ SP=${SP:-$(mktemp -d)}
 HERE=bench/adversarial
 MAC=${MAC:-192.168.1.10}
 PI=${PI:-192.168.1.11}
-LOAD_HOST=${LOAD_HOST:-bobocat}
-KEY="$HOME/.ssh/id_ed25519"
+LOAD_HOST=${LOAD_HOST:-runner2}
+KEY=${KEY:-"$HOME/.ssh/id_ed25519"}
 # Three machines here — the fleet spans this box and the Pi, and the load comes off
 # a third. Any of them absent changes what is being measured, so check first.
 . bench/preflight.sh

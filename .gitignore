@@ -48,8 +48,18 @@ components/*-assets/static/
 examples/*/test-results/
 **/playwright-report/
 
-# Local env
+# Local env and host configurations
 .env
+.env.*
+*.local
+*.local.*
+*.local.toml
+*.conf.local
+.comp/*.env
+secrets/
+**/.comp-secrets/
+**/.holon-secrets/
+*.ts.net
 
 # NOTE: wit/ (including wit/deps/ and wkg.lock) IS version-controlled on
 # purpose — the contract and its pinned, vendored WASI dependencies are part of

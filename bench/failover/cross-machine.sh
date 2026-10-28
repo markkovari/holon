@@ -7,7 +7,7 @@ SP=${SP:-$(mktemp -d)}
 HERE=bench/adversarial
 MAC=${MAC:-192.168.1.10}
 PI=${PI:-192.168.1.11}
-KEY="$HOME/.ssh/id_ed25519"
+KEY=${KEY:-"$HOME/.ssh/id_ed25519"}
 # Without the Pi this would report a clean failover of a fleet that never spanned machines.
 . bench/preflight.sh
 need_cmd nats-server ssh nats

@@ -13,7 +13,7 @@
 //! The graph also reflects `comp-capgraph`'s last run, not necessarily this exact tree. `REUSE_ROOT`
 //! still selects which tree's goal spec and written files are read (the stub check below).
 //!
-//!     comp-reuse-ratio --surreal-url http://node.tailnet.ts.net:8000 <goal>...
+//!     comp-reuse-ratio --surreal-url http://127.0.0.1:8000 <goal>...
 
 use clap::Parser;
 use serde_json::Value;
@@ -36,7 +36,7 @@ struct Args {
     /// Goal spec paths, e.g. `.comp/goals/triage-assist.toml.archived`.
     goals: Vec<String>,
     /// The capability graph's SurrealDB endpoint (comp-capgraph, ADR-0091).
-    #[arg(long, default_value = "http://node.tailnet.ts.net:8000")]
+    #[arg(long, default_value = "http://127.0.0.1:8000")]
     surreal_url: String,
     /// Password for that database, as a FILE path — same convention as
     /// `comp-goalrun --surreal-password`. Absent means unauthenticated.
