@@ -62,16 +62,41 @@ Holon is architected to eliminate repetitive infrastructure across different eng
 
 ---
 
-## 🖥️ Hardware Profiles & Sizing
+## 🖥️ Technical Specifications & Hardware Profiles
 
-Holon components compile to standard `wasm32-wasip2`, executing on Wasmtime. Because components share memory address spaces safely without OS process overhead, Holon scales from resource-constrained edge boards to massive compute fleets:
+Holon components compile to standard `wasm32-wasip2`, executing on Wasmtime. Because components share memory address spaces safely without OS process overhead, Holon scales from ultra-compact 15g micro-boards to massive compute fleets:
 
-| Profile | Target Hardware | Min / Recommended Specs | Deployment Role & Footprint |
+| Profile | Target Hardware | Technical Dimensions & Specs | Deployment Role & Footprint |
 |---|---|---|---|
-| **💻 Local Workstation** | Apple Silicon (M1/M2/M3/M4), x86_64 Linux, macOS | 4+ cores<br>8 GB – 16 GB RAM<br>10 GB disk | **Development & Testing:** Instant cold starts (&lt;5 ms), local `xtask host` runtime, memory footprint &lt;30 MB per running application. |
-| **⚡ Gate Worker / CI Node** | Dedicated CI Runner, Mac mini, or Bare Metal | 8 – 16+ cores<br>16 GB – 32 GB RAM<br>NVMe SSD (fast I/O) | **Test Gates & Swarms:** Runs `comp-checks` with a shared persistent cache (`warm_caches()` in `~/.cache/comp-goalrun/`). Gates 8–64 concurrent builds in 7–10 s flat. |
-| **☁️ Production Lattice Node** | Cloud VPS (Hetzner, AWS EC2, DigitalOcean), Bare Metal | 2 – 4 vCPUs<br>4 GB – 8 GB RAM<br>20 GB disk | **Multi-Tenant Serving:** Runs `holon-host` joined to a NATS JetStream lattice. Replaces heavy Kubernetes clusters; serves hundreds of isolated tenant instances on a $10/mo node. |
-| **🍓 Edge & Embedded** | Raspberry Pi 5, Rockchip ARM64, Intel NUC / Mini PC | 4 cores (ARM64/x86_64)<br>2 GB – 4 GB RAM<br>16 GB MicroSD / eMMC | **Edge Relays & Sensors:** Runs static musl `holon-host` or `holon-relay` for IoT sweeps, local cron schedules (`sched:timer`), and offline processing. |
+| **🍓 Ultra-Compact Edge** | Raspberry Pi Zero 2 W | **Broadcom BCM2710A1**, 4× Cortex-A53 (1.0 GHz)<br>**512 MB LPDDR2**, 16 GB MicroSD<br>65 × 30 × 5 mm, 15 g, ~1.2 W power | **Edge Leaf & Relays:** `holon-host` with `--no-pool` consumes **~18–25 MB RSS**, leaving >220 MB RAM free. Cold start &lt;5 ms. Ideal for IoT sensors, offline webhook buffering, and 24/7 pulse generation. |
+| **🥧 High-Performance Edge** | Raspberry Pi 5 / RK3588 | **Broadcom BCM2712**, 4× Cortex-A76 (2.4 GHz)<br>**4 GB – 16 GB LPDDR4X**, NVMe SSD<br>85 × 56 × 17 mm, 46 g, ~5.0 W power | **Edge Lattice Node:** Multi-tenant host, local edge caching, private NATS lattice participant, and local event bus routing. |
+| **💻 Local Workstation** | Apple Silicon (M1–M4), x86_64 Linux, macOS | 4–16+ cores, 8 GB – 64 GB RAM<br>PCIe NVMe SSD, Laptop / Desktop | **Development & Testing:** Instant cold starts (&lt;5 ms), local `xtask host` runtime, memory footprint &lt;30 MB per running application. |
+| **⚡ Gate Worker / CI Node** | Dedicated CI Runner, Mac mini, or Bare Metal | 8 – 16+ cores, 16 GB – 32 GB RAM<br>NVMe SSD (fast I/O), 1U Rack / Mini PC | **Test Gates & Swarms:** Runs `comp-checks` with a shared persistent cache (`warm_caches()` in `~/.cache/comp-goalrun/`). Gates 8–64 concurrent builds in 7–10 s flat. |
+| **☁️ Production Lattice Node** | Cloud VPS (Hetzner, AWS EC2, DigitalOcean), Bare Metal | 2 – 4 vCPUs, 4 GB – 8 GB RAM<br>Standard Cloud / Bare Metal Server | **Multi-Tenant Serving:** Runs `holon-host` joined to a NATS JetStream lattice. Replaces heavy Kubernetes clusters; serves hundreds of isolated tenant instances on a $10/mo node. |
+
+### 📐 Verified Technical Dimensions & Resource Envelope
+
+Real-world verified measurements running on bare physical hardware (Raspberry Pi Zero 2 W):
+
+```text
+Raspberry Pi Zero 2 W (Technical Envelope)
+┌──────────────────────────────────────────────┐ ── 30 mm
+│ [PWR] [USB-DATA]                     [ACT] █ │
+│                                              │
+│       Broadcom BCM2710A1 Quad-Core 64-bit    │
+│            512 MB LPDDR2 (~3.2 GB/s)         │
+│                                              │
+│ [MicroSD]                          [MiniHDMI]│
+└──────────────────────────────────────────────┘ ──
+ ├─────────────────── 65 mm ──────────────────┤   Thickness: 5.2 mm
+ Weight: 15 grams | Power Draw: ~1.2 W active | Host RSS: 18-25 MB
+```
+
+* **CPU & Architecture:** Broadcom BCM2710A1, 4× Cortex-A53 @ 1.0 GHz (ARMv8-A, pure 64-bit `aarch64`).
+* **Memory & Sizing:** 512 MB LPDDR2. Base OS uses ~140 MB; `holon-host` serving a composed application (`link-shortener`, 908 KB `.wasm`) adds only **~18–25 MB RSS**, leaving **>220 MB of available memory** while actively serving HTTP traffic.
+* **Power & Thermal:** 5V over micro-USB, drawing ~0.7 W idle, ~1.2 W – 2.0 W under active HTTP load (pure passive cooling).
+* **Crucial flag for 512 MB boards:** Pass `--no-pool` to `holon-host` (switches to Wasmtime's on-demand allocator rather than the pooling allocator, avoiding multi-gigabyte virtual address space mmap reservations).
+* **Full Technical Specifications:** See [`docs/EDGE.md`](docs/EDGE.md) for complete hardware dimensions (caches, bus speeds, memory limits, and Netplan templates).
 
 ---
 
