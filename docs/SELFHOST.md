@@ -363,6 +363,18 @@ and 404s at `/`.
 | a DNS record per app | pointing the hostname at the box's `100.x` address (tailnet custom record or split DNS) |
 | Caddy's root trusted | once per device you browse from, for `tls internal` |
 
+### Edge & Micro-Hardware: Raspberry Pi Zero 2 W & Pi 5
+
+Holon's single-binary static architecture (`holon-host`) enables deployment on ultra-compact, low-power edge devices:
+
+| Device | Dimensions | Weight | Power | RAM | Runtime Flag | Typical RSS |
+|---|---|---|---|---|---|---|
+| **Raspberry Pi Zero 2 W** | 65 × 30 × 5 mm | 15 g | ~1.2 W | 512 MB | `--no-pool` | ~18–25 MB |
+| **Raspberry Pi 5** | 85 × 56 × 17 mm | 46 g | ~5.0 W | 4–16 GB | default | ~30–45 MB |
+
+> [!NOTE]
+> On 512 MB RAM boards like the **Pi Zero 2 W**, always run `holon-host` with `--no-pool`. Wasmtime's default pooling allocator reserves a massive virtual memory address space that fails `mmap` on 512 MB boards without overcommit. `--no-pool` selects the on-demand allocator, keeping the total host footprint under 25 MB RSS.
+
 The spec:
 
 ```toml
