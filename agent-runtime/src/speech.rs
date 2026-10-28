@@ -30,18 +30,30 @@ const TOOL_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Debug)]
 pub struct SpeechConfig {
-    /// Speech-to-text command; `None` means transcription is unavailable.
+    /// Speech-to-text command; `None` means transcription falls back to Gemini multimodal audio.
     pub stt: Option<PathBuf>,
     /// Text-to-speech override; `None` means the system `say` (macOS).
     pub tts: Option<PathBuf>,
     pub ffmpeg: String,
     /// Recognition language when the caller does not say.
     pub default_locale: String,
+    /// Upstream Gemini API key for cloud multimodal speech fallback on edge devices.
+    pub gemini_api_key: Option<String>,
 }
 
 impl Default for SpeechConfig {
     fn default() -> Self {
-        Self { stt: None, tts: None, ffmpeg: "ffmpeg".into(), default_locale: "en-US".into() }
+        let gemini_api_key = std::env::var("GEMINI_API_KEY")
+            .or_else(|_| std::env::var("HOLON_GEMINI_API_KEY"))
+            .ok()
+            .filter(|k| !k.trim().is_empty());
+        Self {
+            stt: None,
+            tts: None,
+            ffmpeg: "ffmpeg".into(),
+            default_locale: "en-US".into(),
+            gemini_api_key,
+        }
     }
 }
 
@@ -172,7 +184,10 @@ impl Speech {
     }
 
     pub fn can_transcribe(&self) -> bool {
-        self.cfg.stt.is_some() && works(&self.cfg.ffmpeg, "-version")
+        (self.cfg.stt.as_ref().is_some_and(|p| p.exists()) && works(&self.cfg.ffmpeg, "-version"))
+            || self.cfg.gemini_api_key.is_some()
+            || std::env::var("GEMINI_API_KEY").is_ok()
+            || std::env::var("HOLON_GEMINI_API_KEY").is_ok()
     }
 
     pub fn can_speak(&self) -> bool {
@@ -190,8 +205,6 @@ impl Speech {
     /// Audio in any format ffmpeg reads (an Element voice message, a recording) to text.
     /// An empty string means nothing intelligible was said.
     pub fn transcribe(&self, audio: &[u8], locale: Option<&str>) -> Result<String, String> {
-        let stt =
-            self.cfg.stt.as_ref().ok_or("speech-to-text is not configured (see --stt-bin)")?;
         if audio.is_empty() {
             return Err("no audio".into());
         }
@@ -206,19 +219,40 @@ impl Speech {
         if !valid_locale(locale) {
             return Err(format!("`{locale}` is not a language tag like en-US"));
         }
-        let dir = self.scratch("stt")?;
-        let (input, wav) = (dir.path().join("input"), dir.path().join("input.wav"));
-        std::fs::write(&input, audio).map_err(|e| e.to_string())?;
-        let mut ff = Command::new(&self.cfg.ffmpeg);
-        ff.args(["-loglevel", "error", "-y", "-i"])
-            .arg(&input)
-            .args(["-ar", "16000", "-ac", "1"])
-            .arg(&wav);
-        run(ff, None).map_err(|e| format!("could not decode the audio: {e}"))?;
-        let mut cmd = Command::new(stt);
-        cmd.arg(&wav).arg(locale);
-        let (out, _) = run(cmd, None)?;
-        Ok(String::from_utf8_lossy(&out).trim().to_string())
+
+        // 1. If local on-device STT binary is configured and exists on disk, use local engine
+        if let Some(ref stt) = self.cfg.stt {
+            if stt.exists() && works(&self.cfg.ffmpeg, "-version") {
+                let dir = self.scratch("stt")?;
+                let (input, wav) = (dir.path().join("input"), dir.path().join("input.wav"));
+                std::fs::write(&input, audio).map_err(|e| e.to_string())?;
+                let mut ff = Command::new(&self.cfg.ffmpeg);
+                ff.args(["-loglevel", "error", "-y", "-i"])
+                    .arg(&input)
+                    .args(["-ar", "16000", "-ac", "1"])
+                    .arg(&wav);
+                run(ff, None).map_err(|e| format!("could not decode the audio: {e}"))?;
+                let mut cmd = Command::new(stt);
+                cmd.arg(&wav).arg(locale);
+                let (out, _) = run(cmd, None)?;
+                return Ok(String::from_utf8_lossy(&out).trim().to_string());
+            }
+        }
+
+        // 2. Multimodal cloud audio transcription fallback (Linux / Raspberry Pi edge)
+        let key = self
+            .cfg
+            .gemini_api_key
+            .clone()
+            .or_else(|| std::env::var("GEMINI_API_KEY").ok())
+            .or_else(|| std::env::var("HOLON_GEMINI_API_KEY").ok())
+            .filter(|k| !k.trim().is_empty());
+
+        if let Some(api_key) = key {
+            return transcribe_gemini(audio, &api_key, locale);
+        }
+
+        Err("speech-to-text is not configured (see --stt-bin or set GEMINI_API_KEY)".into())
     }
 
     /// Text to a voice message: Opus in Ogg, with its length and waveform.
@@ -274,6 +308,65 @@ impl Speech {
     }
 }
 
+pub fn detect_audio_mime(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(b"RIFF") && bytes.len() >= 12 && &bytes[8..12] == b"WAVE" {
+        "audio/wav"
+    } else if bytes.starts_with(b"OggS") {
+        "audio/ogg"
+    } else if bytes.starts_with(b"ID3")
+        || (bytes.len() >= 2 && bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0)
+    {
+        "audio/mp3"
+    } else if bytes.starts_with(b"fLaC") {
+        "audio/flac"
+    } else {
+        "audio/ogg"
+    }
+}
+
+pub fn transcribe_gemini(audio: &[u8], api_key: &str, locale: &str) -> Result<String, String> {
+    use base64::Engine;
+    let mime = detect_audio_mime(audio);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(audio);
+    let prompt = format!(
+        "Accurately transcribe all spoken speech in this audio recording into plain text (language: {locale}). \
+Output ONLY the exact transcribed words. Do not wrap in markdown or quotes, and do not add any commentary."
+    );
+    let body = serde_json::json!({
+        "contents": [{
+            "parts": [
+                {
+                    "inlineData": {
+                        "mimeType": mime,
+                        "data": b64
+                    }
+                },
+                {
+                    "text": prompt
+                }
+            ]
+        }]
+    });
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    );
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(45))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client.post(&url).json(&body).send().map_err(|e| e.to_string())?;
+    let status = resp.status();
+    let bytes = resp.bytes().map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!(
+            "Gemini speech API returned {status}: {}",
+            String::from_utf8_lossy(&bytes)
+        ));
+    }
+    let reply = holon_llm::gemini::reply(&bytes).map_err(|e| format!("{e:?}"))?;
+    Ok(reply.text.trim().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,12 +414,47 @@ mod tests {
 
     #[test]
     fn unconfigured_engines_say_so_instead_of_failing_strangely() {
-        let s = Speech::new(SpeechConfig::default());
+        let s = Speech::new(SpeechConfig {
+            gemini_api_key: None,
+            ..SpeechConfig::default()
+        });
+        // Clear env fallback for the test assertions if present
+        let had_env = std::env::var("GEMINI_API_KEY").ok();
+        std::env::remove_var("GEMINI_API_KEY");
+        let had_holon_env = std::env::var("HOLON_GEMINI_API_KEY").ok();
+        std::env::remove_var("HOLON_GEMINI_API_KEY");
+
         assert!(!s.can_transcribe());
         assert!(s.transcribe(b"x", None).unwrap_err().contains("not configured"));
         assert_eq!(s.speak("  ", None).unwrap_err(), "nothing to say");
         assert!(s.speak(&"a".repeat(MAX_TEXT + 1), None).unwrap_err().contains("longer than"));
         assert!(s.speak("hi", Some("--help")).unwrap_err().contains("not a voice"));
+
+        if let Some(v) = had_env {
+            std::env::set_var("GEMINI_API_KEY", v);
+        }
+        if let Some(v) = had_holon_env {
+            std::env::set_var("HOLON_GEMINI_API_KEY", v);
+        }
+    }
+
+    #[test]
+    fn detect_audio_mime_types() {
+        let wav = b"RIFF....WAVEfmt ".to_vec();
+        assert_eq!(detect_audio_mime(&wav), "audio/wav");
+        assert_eq!(detect_audio_mime(b"OggS...."), "audio/ogg");
+        assert_eq!(detect_audio_mime(b"ID3...."), "audio/mp3");
+        assert_eq!(detect_audio_mime(b"fLaC...."), "audio/flac");
+        assert_eq!(detect_audio_mime(b"unknown_bytes"), "audio/ogg");
+    }
+
+    #[test]
+    fn gemini_multimodal_speech_enabled_when_key_present() {
+        let s = Speech::new(SpeechConfig {
+            gemini_api_key: Some("test-key".into()),
+            ..SpeechConfig::default()
+        });
+        assert!(s.can_transcribe());
     }
 
     #[test]
