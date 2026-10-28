@@ -1,5 +1,5 @@
 [package]
-name = "comp-mailrelay"
+name = "holon-mailrelay"
 description = "HTTP in, real SMTP out: what lets a wasm component reach MailHog, since the host wires no wasi:sockets and MailHog ingests SMTP only. std only, no dependencies."
 version.workspace = true
 edition.workspace = true

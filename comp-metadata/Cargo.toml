@@ -1,5 +1,5 @@
 [package]
-name = "comp-metadata"
+name = "holon-metadata"
 version = "0.1.0"
 edition = "2021"
 

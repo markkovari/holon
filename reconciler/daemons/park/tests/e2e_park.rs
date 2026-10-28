@@ -72,7 +72,7 @@ impl Stack {
         let log = std::fs::File::create(logs.path().join("park.log")).unwrap();
         let bucket = format!("e2e-park-{tag}");
         let wake_stream = format!("E2E_PARK_WAKE_{}", tag.replace(['-', '.'], "_"));
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_comp-park"));
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_holon-park"));
         cmd.args(["--addr", &format!("127.0.0.1:{port}")])
             .args(["--nats-url", nats])
             .args(["--bucket", &bucket])
@@ -435,7 +435,7 @@ impl Stack {
     /// A real `comp-resume` against this stack's NATS, bucket and stream.
     fn resumer(&self, sink_url: &str) -> Resumer {
         let log = std::fs::File::create(self.logs.path().join("resume.log")).unwrap();
-        let child = Command::new(env!("CARGO_BIN_EXE_comp-resume"))
+        let child = Command::new(env!("CARGO_BIN_EXE_holon-resume"))
             .args(["--sink-url", sink_url])
             .args(["--nats-url", &self.nats])
             .args(["--bucket", &self.bucket])

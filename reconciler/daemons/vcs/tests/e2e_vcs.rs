@@ -180,7 +180,7 @@ impl Stack {
         self.starts += 1;
         let log = std::fs::File::create(self.logs.path().join(format!("vcs-{}.log", self.starts)))
             .unwrap();
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_comp-vcs"));
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_holon-vcs"));
         cmd.args(["--addr", &format!("127.0.0.1:{}", self.port)])
             .args(["--nats-url", &self.svc.nats])
             .args(["--bucket-prefix", &self.prefix])

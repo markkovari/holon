@@ -1,5 +1,5 @@
 [package]
-name = "comp-park"
+name = "holon-park-daemon"
 description = "A durable record of an outstanding call instead of a thread blocked on its answer (docs/adr/0100), and the resumer that delivers what resolved and gives up on what never will (docs/adr/0106): two daemons over the holon-park engine, for components/park-store."
 version.workspace = true
 edition.workspace = true
@@ -8,11 +8,11 @@ publish.workspace = true
 # One package for both because their end-to-end tests start the pair, and CARGO_BIN_EXE_<name>
 # only exists for the binaries of the package a test is in (docs/adr/0115).
 [[bin]]
-name = "comp-park"
+name = "holon-park"
 path = "src/bin/park.rs"
 
 [[bin]]
-name = "comp-resume"
+name = "holon-resume"
 path = "src/bin/resume.rs"
 
 # The engine, over JetStream KV and the PARK_WAKE work-queue stream. No SurrealDB — unlike vcs,

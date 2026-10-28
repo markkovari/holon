@@ -104,7 +104,7 @@ fn run_to_end(mut cmd: Command, secs: u64) -> (Output, bool) {
 }
 
 fn park(url: &str, port: u16, tag: &str) -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_comp-park"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_holon-park"));
     cmd.args(["--addr", &format!("127.0.0.1:{port}")])
         .args(["--nats-url", url])
         .args(["--bucket", &format!("replicas-{tag}")])
@@ -168,7 +168,7 @@ fn comp_park_asks_the_server_for_the_copies_it_was_given() {
 fn comp_resume_asks_the_server_for_the_copies_it_was_given() {
     let server = server_or_skip!("comp_resume_asks_the_server_for_the_copies_it_was_given");
     let tag = tag();
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_comp-resume"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_holon-resume"));
     cmd.args(["--sink-url", "http://127.0.0.1:1/deliver"])
         .args(["--nats-url", &server.url()])
         .args(["--bucket", &format!("replicas-{tag}")])
@@ -197,12 +197,14 @@ fn a_server_that_is_down_is_passed_over_in_a_list() {
 fn a_replica_count_that_cannot_be_is_a_usage_error() {
     // No server needed: these are refused before anything is connected.
     for n in ["0", "6"] {
-        let out =
-            Command::new(env!("CARGO_BIN_EXE_comp-park")).args(["--replicas", n]).output().unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_holon-park"))
+            .args(["--replicas", n])
+            .output()
+            .unwrap();
         assert_eq!(out.status.code(), Some(2), "--replicas {n}: {}", stderr(&out));
         assert!(stderr(&out).contains("1..=5"), "--replicas {n}: {}", stderr(&out));
     }
-    let out = Command::new(env!("CARGO_BIN_EXE_comp-park"))
+    let out = Command::new(env!("CARGO_BIN_EXE_holon-park"))
         .args(["--memory", "--replicas", "3"])
         .output()
         .unwrap();

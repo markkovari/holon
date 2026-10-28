@@ -1,9 +1,13 @@
 [package]
-name = "comp-vcs"
+name = "holon-vcs-daemon"
 description = "The agent-native code store (docs/adr/0099): the holon-vcs engine's NATS and SurrealDB adapters behind loopback HTTP, for components/vcs-store."
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+
+[[bin]]
+name = "holon-vcs"
+path = "src/main.rs"
 
 [dependencies]
 holon-daemon-kit.workspace = true

@@ -37,7 +37,7 @@ path = "src/bin/catalog.rs"
 [dependencies]
 holon-fleet.workspace = true
 holon-fuel.workspace = true
-comp-metadata.workspace = true
+holon-metadata.workspace = true
 holon-oci.workspace = true
 anyhow.workspace = true
 clap.workspace = true

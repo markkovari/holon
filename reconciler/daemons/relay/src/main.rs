@@ -57,7 +57,7 @@ use futures::StreamExt;
 
 #[derive(Parser)]
 #[command(
-    name = "comp-relay",
+    name = "holon-relay",
     about = "Poke an app's pump endpoint on a schedule, so pull-based timers and topics fire."
 )]
 struct Args {

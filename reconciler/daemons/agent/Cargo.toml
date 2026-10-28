@@ -1,5 +1,5 @@
 [package]
-name = "comp-agent"
+name = "holon-agent"
 description = "The pull half of continuous deployment: reads a digest lock and updates the apps this box already runs. No inbound port, and no CI credential on this network (docs/adr/0006, docs/adr/0096). std only, no dependencies."
 version.workspace = true
 edition.workspace = true

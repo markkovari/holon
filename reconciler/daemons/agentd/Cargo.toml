@@ -1,5 +1,5 @@
 [package]
-name = "comp-agentd"
+name = "holon-agentd"
 description = "The agent session daemon (docs/adr/0102): a contract-first agent API over REST and gRPC on one port, whose sessions a restart does not end (docs/adr/0113) and whose approvals can reach beyond one call (docs/adr/0114)."
 version.workspace = true
 edition.workspace = true

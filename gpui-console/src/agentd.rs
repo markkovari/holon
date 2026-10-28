@@ -27,9 +27,13 @@ fn binary() -> Option<PathBuf> {
         return Some(PathBuf::from(p)).filter(|p| p.exists());
     }
     let target = repo_root().join("target");
-    ["release", "debug"]
-        .iter()
-        .map(|p| target.join(p).join("comp-agentd"))
+    let mut candidates = Vec::new();
+    for profile in ["release", "debug"] {
+        candidates.push(target.join(profile).join("holon-agentd"));
+        candidates.push(target.join(profile).join("comp-agentd"));
+    }
+    candidates
+        .into_iter()
         .filter_map(|p| Some((std::fs::metadata(&p).ok()?.modified().ok()?, p)))
         .max()
         .map(|(_, p)| p)
