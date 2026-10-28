@@ -1,5 +1,7 @@
 //! agent-runtime's events and run records as plain data, so the board can be built for wasm.
 
+pub mod jev;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

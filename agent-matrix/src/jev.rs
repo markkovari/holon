@@ -1,12 +1,8 @@
 //! Jev (TypeSafe's System One) routes a message to agents; its key is read per call, never stored or logged.
 
-#[allow(dead_code)]
-#[path = "../../components/typesafe-provider/src/codec.rs"]
-mod codec;
-
 use std::time::Duration;
 
-use codec::{AnswerSpec, QuestionItem, QuestionSpec};
+use agent_wire::jev::{self as codec, AnswerSpec, QuestionItem, QuestionSpec};
 
 const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
 const MODEL: &str = "jev-latest";

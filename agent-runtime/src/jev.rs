@@ -9,6 +9,11 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+pub use agent_wire::jev::{
+    choose_body, evaluate_body, frac_to_milli, gate_body, milli_to_frac, parse_choice,
+    parse_evaluate, parse_gate, parse_score, score_body, AnswerResult, AnswerSpec, ParsedChoice,
+    ParsedScore, QuestionItem, QuestionSpec,
+};
 use serde_json::{json, Value};
 
 pub const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
