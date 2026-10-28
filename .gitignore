@@ -80,6 +80,11 @@ zig-out/
 e2e/.photoquest-samples/
 comp-kv.db*
 **/comp-kv.db*
+holon-kv.db*
+**/holon-kv.db*
+.comp-state
+.holon-state
 test_all_apps.sh
 .comp/.pr-*
+.holon/.pr-*
 **/.pr-*

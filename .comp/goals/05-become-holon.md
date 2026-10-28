@@ -44,6 +44,15 @@ does it — carefully, and in one reviewable pull request.
   by workspace test (`no_new_comp_packages_adr_0118`). First group of leaf daemons
   renamed to `holon-` (`holon-docker`, `holon-ffmpeg`, `holon-imageopt`,
   `holon-llmlocal`, `holon-mdns`), systemd unit renderer updated, and architecture maps aligned.
+- **Slice 4 (done, ADR-0118 Layer 2):** utility, runtime, and fleet daemon packages
+  migrated (`holon-fuel`, `holon-measure`, `holon-oci`, `holon-daemon-kit`,
+  `holon-fleet`, `holon-goal`, `holon-backup`, `holon-fswatch`, `holon-mailrelay`,
+  `holon-metadata`, `holon-relay`, `holon-agent`, `holon-agentd`, `holon-park-daemon`,
+  `holon-vcs-daemon`).
+- **Slice 5 (done, ADR-0118 Layer 3):** core host, lattice, and reconciler packages
+  migrated (`holon-host`, `holon-lattice`, `holon-reconciler`). Workspace package
+  frozen list ratcheted to `&[]` (zero `comp-` crates remaining). Config paths and env
+  vars support `holon.toml` and `HOLON_*` natively with backward-compatible fallbacks.
 
 ## Where the rename stops, on purpose
 
