@@ -30,8 +30,12 @@ fn a_session_is_watched_through_this_crates_http_client() {
         std::fs::create_dir_all(&w).unwrap();
         std::fs::canonicalize(w).unwrap()
     };
-    let bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/debug/comp-agentd");
-    assert!(bin.exists(), "build comp-agentd first");
+    let bin = {
+        let b1 = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/debug/holon-agentd");
+        let b2 = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/debug/comp-agentd");
+        if b1.exists() { b1 } else { b2 }
+    };
+    assert!(bin.exists(), "build holon-agentd first");
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let _d = Daemon(
         std::process::Command::new(bin)

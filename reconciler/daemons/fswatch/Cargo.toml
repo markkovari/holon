@@ -1,5 +1,5 @@
 [package]
-name = "comp-fswatch"
+name = "holon-fswatch"
 description = "What changed in a directory, for a component that cannot look. Fronts components/fs-watcher (docs/adr/0095)."
 version.workspace = true
 edition.workspace = true

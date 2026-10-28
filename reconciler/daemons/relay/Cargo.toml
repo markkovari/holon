@@ -1,5 +1,5 @@
 [package]
-name = "comp-relay"
+name = "holon-relay"
 description = "What turns a pull contract into a trigger: pokes an app's own endpoint on a schedule, so sched:timer, event:bus and cron:expr have something outside the sandbox to ask them (docs/adr/0096)."
 version.workspace = true
 edition.workspace = true

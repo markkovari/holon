@@ -730,9 +730,11 @@ impl Drop for MailRelay {
 
 impl MailRelay {
     pub fn start(smtp: &str) -> Option<Self> {
-        let bin = repo_root().join("target/release/comp-mailrelay");
+        let b1 = repo_root().join("target/release/holon-mailrelay");
+        let b2 = repo_root().join("target/release/comp-mailrelay");
+        let bin = if b1.exists() { b1 } else { b2 };
         if !bin.exists() {
-            eprintln!("SKIPPED: no comp-mailrelay — cargo build --release --bin comp-mailrelay");
+            eprintln!("SKIPPED: no holon-mailrelay — cargo build --release -p holon-mailrelay");
             return None;
         }
         // Ask the OS for a free port: the relay takes an address rather than binding one.

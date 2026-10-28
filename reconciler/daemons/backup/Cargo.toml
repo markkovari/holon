@@ -1,5 +1,5 @@
 [package]
-name = "comp-backup"
+name = "holon-backup"
 description = "Backs up JetStream streams (KV buckets, object stores, queues) and SurrealDB databases to an S3-compatible bucket, gzip'd and sealed, and restores them."
 version.workspace = true
 edition.workspace = true

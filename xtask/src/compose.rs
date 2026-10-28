@@ -24,7 +24,7 @@ pub(crate) fn resolve_app(name: &str) -> ResolvedApp {
     // app's own statement of what it is. `discover_apps` resolves the root from
     // them the same way `holon` does, including the `-domain`-first rule below.
     if let Some(a) =
-        comp_metadata::app::discover_apps(Path::new(".")).into_iter().find(|a| a.name == name)
+        holon_metadata::app::discover_apps(Path::new(".")).into_iter().find(|a| a.name == name)
     {
         return ResolvedApp { root: a.root, artifact: format!("components/target/{}", a.artifact) };
     }
@@ -326,7 +326,7 @@ pub(crate) fn list_apps() -> Result<()> {
     println!("{:<20} {:<8} {:<10} {:<30}", "APP", "PORT", "KV", "DOMAIN");
     println!("{:-<20} {:-<8} {:-<10} {:-<30}", "", "", "", "");
 
-    let apps = comp_metadata::app::registered_apps(Path::new("."));
+    let apps = holon_metadata::app::registered_apps(Path::new("."));
     for a in apps {
         let port_str = a.port.map_or("-".to_string(), |p| p.to_string());
         let kv_str = a.kv_as_string().unwrap_or_else(|| "-".to_string());

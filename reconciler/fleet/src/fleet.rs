@@ -199,10 +199,23 @@ pub fn max_tree_payload() -> usize {
 
 /// Walks from the current executable: `CARGO_BIN_EXE_*` exists only inside an integration test.
 pub fn bin_path(name: &str) -> std::path::PathBuf {
+    let alt = if let Some(stripped) = name.strip_prefix("comp-") {
+        Some(format!("holon-{stripped}"))
+    } else {
+        name.strip_prefix("holon-").map(|stripped| format!("comp-{stripped}"))
+    };
+
     let holon_key = format!("HOLON_{}_BIN", name.replace('-', "_").to_uppercase());
     let comp_key = format!("COMP_{}_BIN", name.replace('-', "_").to_uppercase());
     if let Ok(p) = std::env::var(&holon_key).or_else(|_| std::env::var(&comp_key)) {
         return std::path::PathBuf::from(p);
+    }
+    if let Some(ref alt_name) = alt {
+        let h_alt = format!("HOLON_{}_BIN", alt_name.replace('-', "_").to_uppercase());
+        let c_alt = format!("COMP_{}_BIN", alt_name.replace('-', "_").to_uppercase());
+        if let Ok(p) = std::env::var(&h_alt).or_else(|_| std::env::var(&c_alt)) {
+            return std::path::PathBuf::from(p);
+        }
     }
     if let Ok(exe) = std::env::current_exe() {
         for dir in exe.parent().into_iter().chain(exe.parent().and_then(|p| p.parent())) {
@@ -210,9 +223,24 @@ pub fn bin_path(name: &str) -> std::path::PathBuf {
             if c.exists() {
                 return c;
             }
+            if let Some(ref alt_name) = alt {
+                let c_alt = dir.join(alt_name);
+                if c_alt.exists() {
+                    return c_alt;
+                }
+            }
         }
     }
-    repo_root().join(format!("target/release/{name}"))
+    let p = repo_root().join(format!("target/release/{name}"));
+    if !p.exists() {
+        if let Some(ref alt_name) = alt {
+            let alt_p = repo_root().join(format!("target/release/{alt_name}"));
+            if alt_p.exists() {
+                return alt_p;
+            }
+        }
+    }
+    p
 }
 
 /// Only the owner's tests get `CARGO_BIN_EXE_<name>`; the job builds it first (docs/adr/0115).
