@@ -11,7 +11,7 @@ path = "src/bin/goald.rs"
 
 [[bin]]
 name = "comp-goalrun"
-path = "src/bin/goalrun.rs"
+path = "src/bin/goalrun/main.rs"
 
 [[bin]]
 name = "comp-selfimprove"
