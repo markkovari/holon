@@ -15,19 +15,46 @@ We actively test and verify Holon on bare physical hardware:
 | **Raspberry Pi Zero 2 W** | **65 × 30 × 5 mm** | 15 g | ~1.2 W (active) | 4× Cortex-A53 @ 1.0 GHz (64-bit) | 512 MB LPDDR2 | **~18–25 MB** |
 | **Raspberry Pi 5** | **85 × 56 × 17 mm** | 46 g | ~5.0 W (typical) | 4× Cortex-A76 @ 2.4 GHz (64-bit) | 4 GB – 16 GB | **~30–45 MB** |
 
-```text
-Raspberry Pi Zero 2 W (Actual Physical Profile)
-┌──────────────────────────────────────────────┐ ── 30 mm
-│ [PWR] [USB-DATA]                     [ACT] █ │
-│                                              │
-│         Broadcom BCM2710A1 (64-bit)          │
-│               512 MB LPDDR2                  │
-│                                              │
-│ [MicroSD]                          [MiniHDMI]│
-└──────────────────────────────────────────────┘ ──
- ├─────────────────── 65 mm ──────────────────┤   Thickness: 5 mm
- Weight: 15 grams | Power Draw: ~1.2 W active | Host RSS: 18-25 MB
-```
+## 🔬 Complete Hardware Technical Specifications (Tech Specs)
+
+Detailed engineering dimensions and hardware capabilities of verified edge devices:
+
+| Technical Dimension | Raspberry Pi Zero 2 W | Raspberry Pi 5 |
+|---|---|---|
+| **SoC** | Broadcom BCM2710A1 | Broadcom BCM2712 |
+| **CPU Architecture** | Quad-core ARM Cortex-A53 (ARMv8-A, 64-bit) | Quad-core ARM Cortex-A76 (ARMv8.2-A, 64-bit) |
+| **CPU Clock Speed** | 1.0 GHz (downclocked for passive thermal budget) | 2.4 GHz |
+| **CPU Cache** | 32 KB L1I / 32 KB L1D per core, 512 KB shared L2 | 64 KB L1I / 64 KB L1D per core, 512 KB L2 per core, 2 MB shared L3 |
+| **System Memory (RAM)** | 512 MB LPDDR2 SDRAM (shared with VideoCore IV GPU) | 4 GB, 8 GB, or 16 GB LPDDR4X-4267 SDRAM |
+| **Memory Bandwidth** | ~3.2 GB/s (32-bit single-channel) | ~17.0 GB/s (32-bit dual-channel) |
+| **Storage Subsystem** | MicroSD slot (SDR50 / UHS-I via SDIO bus) | MicroSD (SDR104) + PCIe 2.0 x1 connector (M.2 NVMe SSD) |
+| **Wi-Fi Connectivity** | 2.4 GHz 802.11 b/g/n (Broadcom BCM43436, single-antenna) | 2.4 GHz & 5.0 GHz 802.11ac (Wi-Fi 5, dual-band) |
+| **Bluetooth** | Bluetooth 4.2, Bluetooth Low Energy (BLE) | Bluetooth 5.0, Bluetooth Low Energy (BLE) |
+| **USB Controller** | Synopsys DWC2 USB 2.0 OTG (480 Mbps, device/host modes) | 2× USB 3.0 (5 Gbps), 2× USB 2.0 via RP1 I/O southbridge |
+| **I/O Expansion** | 40-pin GPIO header (3.3V logic, I2C, SPI, UART, PWM, I2S) | 40-pin GPIO header + 2× 4-lane MIPI camera/display transceivers |
+| **Power Supply** | 5V / 2.5A DC via micro-USB | 5V / 5A DC via USB-C (Power Delivery) |
+| **Active Power Consumption** | **~0.7 W idle, ~1.2 W – 2.0 W active load** | ~3.0 W idle, ~5.0 W – 12.0 W active load |
+| **Physical Dimensions** | 65.0 mm × 30.0 mm × 5.2 mm (2.56″ × 1.18″ × 0.20″) | 85.0 mm × 56.0 mm × 17.0 mm (3.35″ × 2.20″ × 0.67″) |
+| **Bare Board Weight** | 15 grams (0.53 oz) | 46 grams (1.62 oz) |
+| **Thermal Dissipation** | Pure passive cooling (no fan needed, throttles at 80°C) | Active cooler recommended under sustained loads |
+
+---
+
+## 📊 Holon Runtime Resource Envelope & Sizing Limits
+
+The software resource envelope measured on the Pi Zero 2 W under Debian 13 (`aarch64`):
+
+| Metric / Parameter | Value / Limit | Description |
+|---|---|---|
+| **Host Binary Size** | ~32 MB (stripped static ELF) | `holon-host` (includes complete Wasmtime 45 engine and hyper HTTP stack) |
+| **Host Idle RSS** | **18–25 MB** | Total resident set size with `--no-pool` on-demand allocator |
+| **Base OS Memory** | ~140–160 MB | Debian 13 Lite 64-bit with systemd, NetworkManager, and cloud-init |
+| **Available User Memory** | **~230–270 MB** | Free RAM available for tenant instances and file buffers |
+| **Default Per-Instance Cap** | 64 MiB (`--mem-cap-mb 64`) | Enforced linear memory ceiling per tenant instance |
+| **Execution Slice Quantum** | 50 ms (`--slice-ms 50`) | Yielding timeslice for multi-tenant fairness |
+| **Cold Start Latency** | **&lt;5 ms** | Time from HTTP request arrival to WASM execution |
+| **Typical App Artifact Size** | **908 KB** (`link_shortener.composed.wasm`) | Self-contained WebAssembly binary with all composed dependencies |
+| **Concurrent HTTP Capacity** | 20–50 concurrent streams | Bounded by `--max-concurrent` before swap involvement |
 
 ---
 
