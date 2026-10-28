@@ -27,7 +27,6 @@ COPY host ./host
 COPY xtask ./xtask
 COPY reconciler ./reconciler
 COPY lattice ./lattice
-COPY comp-metadata ./comp-metadata
 # comp-vcs's and comp-park's engines (ADR-0099, ADR-0100) — path dependencies of their packages.
 COPY crates ./crates
 # comp-agentd's build script compiles api/holon/v1/agent.proto (ADR-0102); no other daemon's build

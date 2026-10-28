@@ -7,9 +7,9 @@ members = [
     "agent-matrix",
     "agent-runtime",
     "cli",
-    "comp-metadata",
     "crates/agent-wire",
     "crates/holon-llm",
+    "crates/holon-metadata",
     "crates/holon-park",
     "crates/holon-vcs",
     "host",
@@ -67,7 +67,7 @@ holon-fleet = { path = "reconciler/fleet" }
 holon-fuel = { path = "reconciler/fuel" }
 holon-goal = { path = "reconciler/goal" }
 holon-lattice = { path = "lattice" }
-holon-metadata = { path = "comp-metadata" }
+holon-metadata = { path = "crates/holon-metadata" }
 holon-oci = { path = "reconciler/oci" }
 holon-park = { path = "crates/holon-park", features = ["native"] }
 holon-vcs = { path = "crates/holon-vcs" }
