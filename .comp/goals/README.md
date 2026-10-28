@@ -26,7 +26,7 @@ line in the "honestly missing" column of one of them.
 | [02](02-drive-the-queue.md) | drive the queue | ✅ built — `comp-goald` |
 | [03](03-diversity-beyond-seed.md) | diversity beyond seed | 🔴 human-led |
 | [04](04-the-base-moved.md) | the base moved | 🟡 needs a gate |
-| [05](05-become-holon.md) | become Holon | 🔴 human-led — the CLI is `holon`; the rest stops at boundaries, on purpose |
+| [05](05-become-holon.md) | become Holon | ✅ done — packages & CLI migrated to `holon-`; boundaries preserved |
 | [06](06-a-two-part-goal.md) | a two-part goal | ✅ done; its gate is now vacuous |
 | [07](07-nothing-criticises-a-gate.md) | nothing criticises a gate | ✅ built — `compose::criticise` |
 | [08](08-a-branch-reads-what-the-swarm-learned.md) | a branch reads what the swarm learned | ✅ done |

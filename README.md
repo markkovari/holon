@@ -72,8 +72,8 @@ them is an edit and a different recipe, never a rewrite.
 
 | lane | what runs it | for |
 |---|---|---|
-| **one box** | `comp-host` + systemd + Caddy | your own machine, no control plane |
-| **a lattice** | `comp-host` per node + reconciler + ingress over NATS | several boxes, where *which* box stops being your decision |
+| **one box** | `holon-host` + systemd + Caddy | your own machine, no control plane |
+| **a lattice** | `holon-host` per node + reconciler + ingress over NATS | several boxes, where *which* box stops being your decision |
 | **wasmCloud 1.x** | wadm, over NATS | somebody else's wasmCloud |
 | **wasmCloud 2.x** | the runtime-operator, over the Kubernetes API | current wasmCloud — no wadm, no OAM |
 
@@ -161,7 +161,7 @@ cargo xtask compose gate                # components -> one .wasm
 ```
 
 HTTP is not the only trigger. `sched:timer`, `event:bus` and `cron:expr` are
-pull-based by design — which keeps them pure WASI and portable — so `comp-relay`
+pull-based by design — which keeps them pure WASI and portable — so `holon-relay`
 drives them in every lane, and an app gains a trigger by declaring `[triggers]`
 rather than by changing its exported WIT.
 
@@ -220,7 +220,7 @@ a real suite gates it (`comp-checks`), and the winner commits directly to S3-bac
 **Walgit** without PR ceremony, or opens a PR when human review is requested (`components/github-forge`).
 It has delivered multi-part decomposed goals as merged changes on this repository
 (dispatch, #220; marketplace, #273; single-part goals #275, #279; dual-mode storage #461; S3 Git lineage #462),
-with `comp-goald` and `comp-agentd` actively driving sessions and queues.
+with `comp-goald` and `holon-agentd` actively driving sessions and queues.
 
 **The safety invariant.** A run is only as good as the checks written for it.
 Every check runs against the untouched base before any inference budget is spent,
@@ -255,7 +255,7 @@ CHECKOUT=~/src/widgets REPO=acme/widgets bash goal-demo.sh real     # goal → P
 | the four lanes, and what each costs | [`docs/SELFHOST.md`](docs/SELFHOST.md) |
 | the app spec — the only file you write | `apps/<name>.toml`, rendered by `holon node render` |
 | the lattice: nodes, a reconciler, an ingress | `fleet.example.toml`, `holon fleet render` |
-| triggers that are not HTTP | [ADR-0096](docs/adr/0096-a-pull-contract-needs-a-relay.md) — `comp-relay`, and why push never replaces the sweep |
+| triggers that are not HTTP | [ADR-0096](docs/adr/0096-a-pull-contract-needs-a-relay.md) — `holon-relay`, and why push never replaces the sweep |
 | what may be native at all | [ADR-0095](docs/adr/0095-what-is-allowed-to-be-native.md) — three questions, and the answer to the third is usually "here is the WIT" |
 | what runs today, measured, and honestly missing | [`docs/CURRENT.md`](docs/CURRENT.md) |
 | what a hardening sweep found, fixed, and left | [`docs/HARDENING.md`](docs/HARDENING.md) — five failures that wore the return type of a success |
@@ -297,7 +297,6 @@ runs on the first two lanes and is refused at render time on the fourth, with th
 reason.
 
 **The loop is active and proven** — see above. It actively delivers decomposed goals as PRs,
-powers coding sessions in `agent-runtime` and `comp-agentd`, and gates changes with real test suites.
+powers coding sessions in `agent-runtime` and `holon-agentd`, and gates changes with real test suites.
 
-The internal name is still `comp` in the code — renaming it to `holon` is itself a
-goal on the worklist ([`.comp/goals/05-become-holon.md`](.comp/goals/05-become-holon.md)).
+All internal workspace packages have migrated to the `holon-` prefix per [ADR-0118](docs/adr/0118-the-comp-prefix-is-retired-one-layer-at-a-time.md) and [05-become-holon.md](.comp/goals/05-become-holon.md), leaving only wire protocols (`comp.v1...`) and content-addressed WIT contracts (`comp:store`) intact for compatibility.
