@@ -79,8 +79,8 @@ struct Args {
     state_dir: Option<PathBuf>,
 
     /// `anthropic` speaks `/v1/messages`; `openai` speaks `/chat/completions`
-    /// (vLLM, llama.cpp, Ollama, mlx_lm); `mock` is scripted and free.
-    #[arg(long, value_parser = ["anthropic", "openai", "mock"], default_value = "anthropic")]
+    /// (vLLM, llama.cpp, Ollama, mlx_lm); `gemini` speaks Google REST; `mock` is scripted and free.
+    #[arg(long, value_parser = ["anthropic", "openai", "gemini", "mock"], default_value = "anthropic")]
     provider: String,
     /// API base. Default: `https://api.anthropic.com` or `https://api.openai.com/v1`.
     #[arg(long, default_value = "")]
@@ -197,7 +197,9 @@ fn provider(args: &Args) -> Result<model::Provider> {
             .with_context(|| format!("reading {}", p.display()))?
             .trim()
             .to_string(),
-        None => String::new(),
+        None => std::env::var("GEMINI_API_KEY")
+            .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
+            .unwrap_or_default(),
     };
     let base = |default: &str| {
         if args.base_url.is_empty() {
@@ -209,8 +211,18 @@ fn provider(args: &Args) -> Result<model::Provider> {
     Ok(match args.provider.as_str() {
         "mock" => model::Provider::Mock,
         "openai" => model::Provider::OpenAi { base: base("https://api.openai.com/v1"), key },
+        "gemini" => {
+            anyhow::ensure!(
+                !key.is_empty(),
+                "--provider gemini needs --api-key-file or GEMINI_API_KEY"
+            );
+            model::Provider::Gemini { base: base(holon_llm::gemini::ENDPOINT), key }
+        }
         _ => {
-            anyhow::ensure!(!key.is_empty(), "--provider anthropic needs --api-key-file");
+            anyhow::ensure!(
+                !key.is_empty(),
+                "--provider anthropic needs --api-key-file or ANTHROPIC_API_KEY"
+            );
             model::Provider::Anthropic { base: base("https://api.anthropic.com"), key }
         }
     })

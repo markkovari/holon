@@ -1173,6 +1173,7 @@ pub fn model_label(m: &crate::spec::ModelSpec) -> String {
         Local => "local/system".to_string(),
         OpenAi { model, .. } => format!("openai/{model}"),
         Anthropic { model, .. } => format!("anthropic/{model}"),
+        Gemini { model, .. } => format!("gemini/{model}"),
         Fallback { models } => models.first().map_or("fallback/none".to_string(), model_label),
         Mock { .. } => "mock/mock".to_string(),
     }
@@ -1781,7 +1782,8 @@ mod tests {
         let first = &h.seen.lock().unwrap()[0][0];
         assert!(first.images.is_empty(), "external tool reads it, not the model");
         assert!(
-            first.content.contains("photo `1-lunch.png`") && first.content.contains("vision_delegate"),
+            first.content.contains("photo `1-lunch.png`")
+                && first.content.contains("vision_delegate"),
             "{}",
             first.content
         );

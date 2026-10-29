@@ -1,7 +1,5 @@
 //! Core processing logic for NATS JetStream LLM batch coalescing and realtime routing.
 
-use std::sync::Arc;
-use std::time::Duration;
 use anyhow::{anyhow, Result};
 use async_nats::jetstream::{self, consumer::PullConsumer};
 use async_nats::Client;
@@ -9,6 +7,8 @@ use futures::StreamExt;
 use holon_llm::coalesce::{self, BatchTask, TaskOutput};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
+use std::time::Duration;
 
 pub const BATCH_STREAM: &str = "LLM_BATCH";
 pub const BATCH_SUBJECT: &str = "holon.llm.batch.>";
@@ -53,16 +53,9 @@ pub struct DlqEntry {
 
 impl BatchWorker {
     pub fn new(nats: Client, js: jetstream::Context, config: WorkerConfig) -> Self {
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(60))
-            .build()
-            .unwrap_or_default();
-        Self {
-            nats,
-            _js: js,
-            http,
-            config,
-        }
+        let http =
+            reqwest::Client::builder().timeout(Duration::from_secs(60)).build().unwrap_or_default();
+        Self { nats, _js: js, http, config }
     }
 
     /// Execute prompt upstream against Gemini REST or OpenAI-compatible endpoint.
@@ -97,7 +90,10 @@ impl BatchWorker {
             let status = resp.status();
             let bytes = resp.bytes().await?;
             if !status.is_success() {
-                return Err(anyhow!("upstream gemini returned status {status}: {}", String::from_utf8_lossy(&bytes)));
+                return Err(anyhow!(
+                    "upstream gemini returned status {status}: {}",
+                    String::from_utf8_lossy(&bytes)
+                ));
             }
             let reply = holon_llm::gemini::reply(&bytes).map_err(|e| anyhow!("{e:?}"))?;
             Ok(reply.text)
@@ -128,7 +124,10 @@ impl BatchWorker {
             let status = resp.status();
             let bytes = resp.bytes().await?;
             if !status.is_success() {
-                return Err(anyhow!("upstream openai returned status {status}: {}", String::from_utf8_lossy(&bytes)));
+                return Err(anyhow!(
+                    "upstream openai returned status {status}: {}",
+                    String::from_utf8_lossy(&bytes)
+                ));
             }
             let reply = holon_llm::openai::parse(&bytes).map_err(|e| anyhow!("{e:?}"))?;
             Ok(reply.text)
@@ -205,12 +204,9 @@ impl BatchWorker {
 
                 let result = this.execute_upstream(&system, &prompt).await;
                 let payload = match result {
-                    Ok(text) => TaskResultPayload {
-                        id: task_id.clone(),
-                        text,
-                        ok: true,
-                        error: None,
-                    },
+                    Ok(text) => {
+                        TaskResultPayload { id: task_id.clone(), text, ok: true, error: None }
+                    }
                     Err(e) => TaskResultPayload {
                         id: task_id.clone(),
                         text: String::new(),

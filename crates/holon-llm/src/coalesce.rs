@@ -39,13 +39,8 @@ Never output markdown code blocks (no ```json or ```). Output pure JSON only."
 
 /// Coalesces multiple batch tasks into a single multi-task payload.
 pub fn build_coalesced_prompt(items: &[BatchTask]) -> String {
-    let inputs: Vec<TaskInput> = items
-        .iter()
-        .map(|item| TaskInput {
-            id: &item.id,
-            task: &item.prompt,
-        })
-        .collect();
+    let inputs: Vec<TaskInput> =
+        items.iter().map(|item| TaskInput { id: &item.id, task: &item.prompt }).collect();
     serde_json::to_string(&inputs).unwrap_or_else(|_| "[]".to_string())
 }
 

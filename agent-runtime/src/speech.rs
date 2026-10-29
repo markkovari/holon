@@ -414,10 +414,7 @@ mod tests {
 
     #[test]
     fn unconfigured_engines_say_so_instead_of_failing_strangely() {
-        let s = Speech::new(SpeechConfig {
-            gemini_api_key: None,
-            ..SpeechConfig::default()
-        });
+        let s = Speech::new(SpeechConfig { gemini_api_key: None, ..SpeechConfig::default() });
         // Clear env fallback for the test assertions if present
         let had_env = std::env::var("GEMINI_API_KEY").ok();
         std::env::remove_var("GEMINI_API_KEY");

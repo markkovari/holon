@@ -1,7 +1,7 @@
 //! Google Calendar CLI and daemon (ADR-0125).
 
-use std::path::PathBuf;
 use clap::Parser;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "holon-gcal", about = "Google Calendar provider and OAuth authorization")]

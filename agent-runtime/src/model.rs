@@ -129,6 +129,14 @@ pub fn complete(
         ModelSpec::Anthropic { model, api_key_env } => {
             anthropic(model, &key(api_key_env)?, system, messages)
         }
+        ModelSpec::Gemini { model, api_key_env, api_key_file } => {
+            let k = if api_key_file.is_empty() {
+                key(api_key_env)?
+            } else {
+                key_from_file(api_key_file)?
+            };
+            gemini(model, &k, system, messages)
+        }
         ModelSpec::Mock { replies } => {
             let mut i = mock_cursor.lock().unwrap();
             let text = replies.get(*i).cloned().ok_or("mock model ran out of replies")?;
@@ -226,6 +234,23 @@ fn anthropic(model: &str, key: &str, system: &str, msgs: &[Msg]) -> Result<Reply
         .json(&anthropic::body(&req));
     let body = send(req)?;
     let r = anthropic::parse(body.as_bytes()).map_err(read_error)?;
+    if r.text.is_empty() {
+        return Err(format!("unexpected model response: {}", clip(&body)));
+    }
+    Ok(Reply {
+        text: r.text,
+        usage: Usage { input: r.usage.total_input(), output: r.usage.output },
+    })
+}
+
+fn gemini(model: &str, key: &str, system: &str, msgs: &[Msg]) -> Result<Reply, String> {
+    let messages = wire(msgs, false);
+    let req =
+        Request { system: Some(system), max_tokens: Some(4096), ..Request::new(model, &messages) };
+    let url = format!("{}/models/{}:generateContent?key={key}", holon_llm::gemini::ENDPOINT, model);
+    let req = http()?.post(url).json(&holon_llm::gemini::body(&req));
+    let body = send(req)?;
+    let r = holon_llm::gemini::reply(body.as_bytes()).map_err(read_error)?;
     if r.text.is_empty() {
         return Err(format!("unexpected model response: {}", clip(&body)));
     }
