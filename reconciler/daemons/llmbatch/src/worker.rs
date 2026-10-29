@@ -6,7 +6,6 @@ use async_nats::Client;
 use futures::StreamExt;
 use holon_llm::coalesce::{self, BatchTask, TaskOutput};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -291,6 +290,7 @@ impl BatchWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     #[test]
     fn task_serialization_round_trip() {
