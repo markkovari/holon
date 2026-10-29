@@ -1,10 +1,10 @@
 //! NATS JetStream backed multi-tier LLM queuing and coalescing daemon (ADR-0126).
 
-use std::sync::Arc;
-use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use async_nats::jetstream;
 use clap::Parser;
+use std::sync::Arc;
+use std::time::Duration;
 
 mod worker;
 use worker::{
@@ -13,7 +13,10 @@ use worker::{
 };
 
 #[derive(Parser)]
-#[command(name = "holon-llmbatch", about = "Coalescing LLM batch drainer and realtime router over NATS JetStream")]
+#[command(
+    name = "holon-llmbatch",
+    about = "Coalescing LLM batch drainer and realtime router over NATS JetStream"
+)]
 struct Args {
     /// NATS server URL.
     #[arg(long, default_value = "nats://127.0.0.1:4222", env = "NATS_URL")]

@@ -110,6 +110,14 @@ pub enum ModelSpec {
         model: String,
         api_key_env: String,
     },
+    Gemini {
+        model: String,
+        #[serde(default)]
+        api_key_env: String,
+        /// Read at each call; wins over `api_key_env`.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        api_key_file: String,
+    },
     /// The first that answers wins; one that errors is skipped for this call only.
     Fallback {
         models: Vec<ModelSpec>,
@@ -125,7 +133,9 @@ impl ModelSpec {
     pub fn label(&self) -> String {
         match self {
             ModelSpec::Local => "local".into(),
-            ModelSpec::OpenAi { model, .. } | ModelSpec::Anthropic { model, .. } => model.clone(),
+            ModelSpec::OpenAi { model, .. }
+            | ModelSpec::Anthropic { model, .. }
+            | ModelSpec::Gemini { model, .. } => model.clone(),
             ModelSpec::Fallback { models } => match models.split_first() {
                 Some((first, [])) => first.label(),
                 Some((first, rest)) => format!("{} (+{} fallback)", first.label(), rest.len()),

@@ -271,7 +271,7 @@ mod tests {
         assert_eq!(spec.daemons[0].addr, None);
         assert!(spec.host_args().is_empty());
         let park = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../apps/park.toml"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/park.toml"),
         )
         .unwrap();
         toml::from_str::<AppSpec>(&park).expect("apps/park.toml parses");

@@ -34,6 +34,7 @@ pub struct Turn {
 pub enum Provider {
     Anthropic { base: String, key: String },
     OpenAi { base: String, key: String },
+    Gemini { base: String, key: String },
     Mock,
 }
 
@@ -73,6 +74,39 @@ impl Provider {
                 let mut acc = openai::Stream::new();
                 stream(req, |data| Ok(acc.feed(data, on_text)?)).await?;
                 Ok(turn_of(acc.finish()?))
+            }
+            Provider::Gemini { base, key } => {
+                let base = if base.is_empty() {
+                    holon_llm::gemini::ENDPOINT
+                } else {
+                    base.trim_end_matches('/')
+                };
+                let url = format!("{base}/models/{model}:generateContent?key={key}");
+                let ms = messages(msgs);
+                let ts = tools();
+                let mut req_payload = request(model, &ms, &ts);
+                req_payload.stream = false;
+                let resp = http
+                    .post(url)
+                    .json(&holon_llm::gemini::body(&req_payload))
+                    .send()
+                    .await
+                    .context("Gemini unreachable")?;
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    bail!(
+                        "Gemini answered {status}: {}",
+                        body.chars().take(500).collect::<String>()
+                    );
+                }
+                let bytes = resp.bytes().await.context("reading Gemini response")?;
+                let reply = holon_llm::gemini::reply(&bytes)
+                    .map_err(|e| anyhow::anyhow!("Gemini error: {e:?}"))?;
+                if !reply.text.is_empty() {
+                    on_text(&reply.text);
+                }
+                Ok(turn_of(reply))
             }
         }
     }

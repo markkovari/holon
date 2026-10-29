@@ -5,16 +5,10 @@ use std::time::{Duration, SystemTime};
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-// `#[path]`: a bare `mod pool` would resolve to `src/bin/pool.rs`, a second binary target.
-#[path = "goalrun/candidate.rs"]
 mod candidate;
-#[path = "goalrun/context.rs"]
 mod context;
-#[path = "goalrun/manifest.rs"]
 mod manifest;
-#[path = "goalrun/pool.rs"]
 mod pool;
-#[path = "goalrun/setup.rs"]
 mod setup;
 
 use candidate::{base_tree, gate_can_judge, head_commit, new_capabilities, smoke, write_candidate};

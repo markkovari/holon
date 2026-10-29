@@ -22,3 +22,6 @@ base64.workspace = true
 tiny_http = "0.12"
 tokio.workspace = true
 url = "2"
+
+[dev-dependencies]
+tempfile.workspace = true

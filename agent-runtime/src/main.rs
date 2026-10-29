@@ -15,10 +15,7 @@ use agent_runtime::{server, Config, Runtime};
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(
-    name = "agent-runtime",
-    about = "Run autonomous agents: schedules, events, HTTP."
-)]
+#[command(name = "agent-runtime", about = "Run autonomous agents: schedules, events, HTTP.")]
 struct Cli {
     /// Where agents, memory, runs and the admin token live.
     #[arg(long)]
@@ -88,6 +85,7 @@ fn main() -> Result<(), String> {
         tts: cli.tts_bin,
         ffmpeg: cli.ffmpeg,
         default_locale: cli.speech_locale,
+        ..Default::default()
     };
     if let Some(url) = cli.agentd_url.filter(|u| !u.is_empty()) {
         let mut agentd = agent_runtime::session::AgentdConfig::new(url);

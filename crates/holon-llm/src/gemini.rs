@@ -1,6 +1,8 @@
 //! The Gemini Generative AI REST API (`POST …/models/{model}:generateContent`).
 //! Supports native multi-part content (text, inline image/audio), system instructions, and tool calling.
 
+pub const ENDPOINT: &str = "https://generativelanguage.googleapis.com/v1beta";
+
 use serde_json::{json, Value};
 
 use crate::model::{
@@ -29,7 +31,7 @@ pub fn body(req: &Request) -> Value {
     if !req.stop.is_empty() {
         gen_cfg["stopSequences"] = json!(req.stop);
     }
-    if gen_cfg.as_object().map_or(false, |m| !m.is_empty()) {
+    if gen_cfg.as_object().is_some_and(|m| !m.is_empty()) {
         v["generationConfig"] = gen_cfg;
     }
 
@@ -127,13 +129,7 @@ pub fn reply(body: &[u8]) -> Result<Reply, ParseError> {
     let model = v["modelVersion"].as_str().unwrap_or_default().to_string();
     let usage = usage(v.get("usageMetadata"));
 
-    Ok(Reply {
-        text,
-        calls,
-        finish,
-        model,
-        usage,
-    })
+    Ok(Reply { text, calls, finish, model, usage })
 }
 
 fn usage(u: Option<&Value>) -> Usage {
@@ -159,10 +155,7 @@ mod tests {
         let req = Request {
             model: "gemini-2.5-flash",
             system: Some("You are a helpful assistant."),
-            messages: &[
-                Message::user("Hello!"),
-                Message::assistant("Hi there!"),
-            ],
+            messages: &[Message::user("Hello!"), Message::assistant("Hi there!")],
             tools: &[],
             max_tokens: Some(512),
             temperature: Some(0.7),
@@ -174,10 +167,7 @@ mod tests {
         };
 
         let b = body(&req);
-        assert_eq!(
-            b["system_instruction"]["parts"][0]["text"],
-            "You are a helpful assistant."
-        );
+        assert_eq!(b["system_instruction"]["parts"][0]["text"], "You are a helpful assistant.");
         assert_eq!(b["contents"].as_array().unwrap().len(), 2);
         assert_eq!(b["contents"][0]["role"], "user");
         assert_eq!(b["contents"][0]["parts"][0]["text"], "Hello!");
@@ -190,10 +180,7 @@ mod tests {
 
     #[test]
     fn body_formats_images_and_tools() {
-        let img = Image {
-            media_type: "image/png".into(),
-            data: vec![1, 2, 3],
-        };
+        let img = Image { media_type: "image/png".into(), data: vec![1, 2, 3] };
         let tool_def = Tool {
             name: "get_weather".into(),
             description: "Fetch weather".into(),
@@ -203,9 +190,10 @@ mod tests {
         let req = Request {
             model: "gemini-2.5-flash",
             system: None,
-            messages: &[
-                Message::new(Role::User, vec![Part::Text("Look:".into()), Part::Image(img)]),
-            ],
+            messages: &[Message::new(
+                Role::User,
+                vec![Part::Text("Look:".into()), Part::Image(img)],
+            )],
             tools: &[tool_def],
             max_tokens: None,
             temperature: None,

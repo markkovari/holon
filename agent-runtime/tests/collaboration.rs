@@ -985,8 +985,8 @@ fn granting_a_key_without_a_vault_fails_safely() {
 
 #[test]
 fn an_agent_with_custom_pluggable_tools_reads_adds_and_never_deletes_without_approval() {
-    use std::sync::Mutex;
     use agent_runtime::agent::ToolHandler;
+    use std::sync::Mutex;
     let seen: Arc<Mutex<Vec<String>>> = Arc::default();
     let log = seen.clone();
 
