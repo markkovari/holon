@@ -35,7 +35,9 @@ fn the_projection_targets_the_database_the_pool_lives_in() {
     // The submodules too, or a refactor that moved no coordinate would go red.
     let goalrun = {
         let mut all = std::fs::read_to_string(root.join("reconciler/goal/src/bin/goalrun.rs"))
-            .or_else(|_| std::fs::read_to_string(root.join("reconciler/goal/src/bin/goalrun/main.rs")))
+            .or_else(|_| {
+                std::fs::read_to_string(root.join("reconciler/goal/src/bin/goalrun/main.rs"))
+            })
             .unwrap();
         if let Ok(dir) = std::fs::read_dir(root.join("reconciler/goal/src/bin/goalrun")) {
             for e in dir.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "rs")) {
