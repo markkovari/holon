@@ -14,9 +14,11 @@ PLUG="${COMP_PLUG:-target/release/comp-plug}"
 
 # Bindings via xtask (p3 crates generate their own), then one plain build: `cargo component build`
 # cannot resolve a p3 world's imports.
-{ cargo xtask bindings && cargo build --release --manifest-path components/Cargo.toml --target-dir components/target --target wasm32-wasip2 -p "$DOMAIN" -p auth-guard -p rate-limiter -p audit-log -p policy-guard -p record-store -p id-generate; } >/tmp/gate-$DOMAIN-build.log 2>&1
-if [ $? -ne 0 ]; then
-  echo "build failed:"; tail -n 60 /tmp/gate-$DOMAIN-build.log; exit 1
+if [ "${GATE_SKIP_BUILD:-0}" != 1 ]; then
+  { cargo xtask bindings && cargo build --release --manifest-path components/Cargo.toml --target-dir components/target --target wasm32-wasip2 -p "$DOMAIN" -p auth-guard -p rate-limiter -p audit-log -p policy-guard -p record-store -p id-generate; } >/tmp/gate-$DOMAIN-build.log 2>&1
+  if [ $? -ne 0 ]; then
+    echo "build failed:"; tail -n 60 /tmp/gate-$DOMAIN-build.log; exit 1
+  fi
 fi
 
 ART=$("$PLUG" "$DOMAIN") || { echo "could not compose $DOMAIN"; exit 1; }

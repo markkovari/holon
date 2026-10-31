@@ -168,7 +168,7 @@ jobs:
   # composition library every suite links, and `comp-mailrelay` has no
   # dependencies (docs/adr/0115) and builds in about a second.
   native-binaries:
-    name: native binaries (comp-host, holon)
+    name: native binaries (comp-host, holon, comp-plug)
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 15
     steps:
@@ -212,17 +212,12 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: . -> target
 
-      - name: Build comp-host and holon
+      - name: Build comp-host, holon and comp-plug
         run: |
-          cargo build --release -p holon-host -p holon --bin holon-host --bin holon
+          cargo build --release -p holon-host -p holon -p holon-fleet --bin holon-host --bin holon --bin comp-plug
           cp target/release/holon-host target/release/comp-host
 
-      # Two artifacts, not one: each is a single file in its own directory,
-      # matching the `components` job's own wasm-artifact pattern exactly
-      # (upload a directory's contents, download into the same directory) —
-      # the shape already proven to round-trip correctly, rather than a new
-      # one (a single multi-file artifact spanning two unrelated directories)
-      # that has not been.
+      # Upload binaries so downstream jobs do not rebuild them
       - name: Keep comp-host
         uses: actions/upload-artifact@v7
         with:
@@ -235,6 +230,13 @@ jobs:
         with:
           name: holon-bin
           path: target/release/holon
+          retention-days: 1
+
+      - name: Keep comp-plug
+        uses: actions/upload-artifact@v7
+        with:
+          name: comp-plug-bin
+          path: target/release/comp-plug
           retention-days: 1
 
   reconciler-artifact-suites:
@@ -307,6 +309,12 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: holon-bin
+          path: ${{ runner.temp }}/fetched/bin
+
+      - name: Fetch comp-plug
+        uses: actions/download-artifact@v8
+        with:
+          name: comp-plug-bin
           path: ${{ runner.temp }}/fetched/bin
 
       # `actions/download-artifact@v8` is documented to preserve Unix file
@@ -443,7 +451,6 @@ jobs:
       # find them by path.
       - name: Build the binaries the gates and suites spawn
         run: |
-          cargo build --release -p holon-fleet --bin comp-plug
           cargo build --release -p holon-mailrelay --bin holon-mailrelay
 
       # Which binaries, established by asking the suites rather than by adding one
@@ -630,6 +637,12 @@ jobs:
           name: holon-bin
           path: ${{ runner.temp }}/fetched/bin
 
+      - name: Fetch comp-plug
+        uses: actions/download-artifact@v8
+        with:
+          name: comp-plug-bin
+          path: ${{ runner.temp }}/fetched/bin
+
       # Fetched aside and renamed into place: on picur every job shares target/, and a download
       # writing over a binary another job is running fails that job with "Text file busy".
       - name: Put the fetched artifacts in place
@@ -647,7 +660,6 @@ jobs:
       # `reconciler-artifact-suites`'s own comment: this step is what builds them.
       - name: Build the binaries the gates and suites spawn
         run: |
-          cargo build --release -p holon-fleet --bin comp-plug
           cargo build --release -p holon-mailrelay --bin holon-mailrelay
 
       # THE FLEET SUITES — 43 of them, and until #289 nothing ran a single one.
@@ -703,7 +715,7 @@ jobs:
   # comp-host path from before the root workspace, a comparison that assumed sorted keys.
   gates:
     name: component gates
-    needs: [native-binaries]
+    needs: [components, native-binaries]
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 30
     steps:
@@ -743,6 +755,16 @@ jobs:
         with:
           name: comp-host-bin
           path: ${{ runner.temp }}/fetched/bin
+      - name: Fetch comp-plug
+        uses: actions/download-artifact@v8
+        with:
+          name: comp-plug-bin
+          path: ${{ runner.temp }}/fetched/bin
+      - name: Fetch the wasm components
+        uses: actions/download-artifact@v8
+        with:
+          name: components-wasm32-wasip2
+          path: ${{ runner.temp }}/fetched/wasm
       # Fetched aside and renamed into place: on picur every job shares target/, and a download
       # writing over a binary another job is running fails that job with "Text file busy".
       - name: Put the fetched artifacts in place
@@ -759,9 +781,9 @@ jobs:
               fi
             done
           fi
-      - name: Build comp-plug
-        run: cargo build --release -p holon-fleet --bin comp-plug
       - name: Every gate
+        env:
+          GATE_SKIP_BUILD: "1"
         run: components/gates.sh
 
   # The ten showcase apps in a browser (e2e/run_all.sh), offline: mock model, Stripe test key.
@@ -781,12 +803,6 @@ jobs:
           mkdir -p /ci-target/root /ci-target/components
           ln -sfn /ci-target/root target
           ln -sfn /ci-target/components components/target
-      - uses: Swatinem/rust-cache@v2
-        if: runner.environment == 'github-hosted'
-        with:
-          add-rust-environment-hash-key: false
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          workspaces: . -> target
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -802,8 +818,11 @@ jobs:
         with:
           name: comp-host-bin
           path: ${{ runner.temp }}/fetched/bin
-      # Fetched aside and renamed into place: on picur every job shares target/, and a download
-      # writing over a binary another job is running fails that job with "Text file busy".
+      - name: Fetch comp-plug
+        uses: actions/download-artifact@v8
+        with:
+          name: comp-plug-bin
+          path: ${{ runner.temp }}/fetched/bin
       - name: Put the fetched artifacts in place
         run: |
           # Copied in under a temporary name, then renamed: a rename is atomic only on one filesystem.
@@ -814,8 +833,6 @@ jobs:
           for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
             [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
           done
-      - name: Build comp-plug
-        run: cargo build --release -p holon-fleet --bin comp-plug
       - name: Install Playwright
         working-directory: e2e
         run: |
