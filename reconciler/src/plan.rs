@@ -11,6 +11,7 @@ pub enum Strategy {
     #[default]
     Fused,
     /// N components, runtime-linked by the host from a link table.
+    #[serde(alias = "split")]
     Linked,
 }
 
@@ -1113,6 +1114,36 @@ mod tests {
         );
         assert_eq!(out.commands.len(), 1);
         assert!(matches!(&out.commands[0], Command::Start { component, .. } if component == "api"));
+    }
+
+    #[test]
+    fn split_strategy_decomposes_components_without_code_changes() {
+        let json = r#"{"strategy":"split"}"#;
+        #[derive(Deserialize)]
+        struct S {
+            strategy: Strategy,
+        }
+        let s: S = serde_json::from_str(json).expect("split deserializes as Strategy");
+        assert_eq!(s.strategy, Strategy::Linked);
+
+        // Switching from fused to split schedules both components with zero code change in the components
+        let m = app(
+            vec![comp("api", "sha256:same_bytecode", 1), comp("store", "sha256:same_bytecode", 1)],
+            vec![Link {
+                plug: "store".into(),
+                socket: "api".into(),
+                iface: "records:store/store@0.1.0".into(),
+            }],
+            s.strategy,
+        );
+        let out = plan(
+            &[m],
+            &[node("box-a", &[], &[])],
+            None,
+            &mut Hysteresis::default(),
+            &Cfg::default(),
+        );
+        assert_eq!(out.commands.len(), 2);
     }
 
     #[test]

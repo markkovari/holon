@@ -11,6 +11,7 @@ mod e2e_cmd;
 mod examples;
 mod host;
 mod stateless_guard;
+mod topology;
 mod util;
 mod wadm_status;
 
@@ -150,6 +151,12 @@ enum Commands {
         /// Specific .wasm file(s) to check. If omitted, checks all in components/target
         files: Vec<PathBuf>,
     },
+
+    /// Validate manifest-driven topology decomposition across applications
+    CheckTopology {
+        /// Optional specific application to check
+        app: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -275,6 +282,10 @@ fn main() -> Result<()> {
             if !ok {
                 std::process::exit(1);
             }
+        }
+
+        Commands::CheckTopology { app } => {
+            topology::check_topology(std::path::Path::new("."), app.as_deref())?;
         }
     }
 

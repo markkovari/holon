@@ -3,6 +3,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
+#[derive(Debug, Deserialize, Clone, Default, PartialEq)]
+pub struct TopologySpec {
+    #[serde(default)]
+    pub strategy: Option<String>,
+    #[serde(default)]
+    pub placement: BTreeMap<String, toml::Value>,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppSpec {
     pub name: String,
@@ -26,6 +34,12 @@ pub struct AppSpec {
     /// `<name>-url`/`<name>-token` (`holon`'s `check()` enforces that).
     #[serde(default)]
     pub config: BTreeMap<String, String>,
+    #[serde(default)]
+    pub components: Vec<String>,
+    #[serde(default)]
+    pub strategy: Option<String>,
+    #[serde(default)]
+    pub topology: Option<TopologySpec>,
 }
 
 /// One native daemon this app needs running alongside it — the subset of
@@ -47,6 +61,26 @@ pub struct Daemon {
 }
 
 impl AppSpec {
+    pub fn strategy(&self) -> &str {
+        if let Some(t) = &self.topology {
+            if let Some(s) = &t.strategy {
+                return s.as_str();
+            }
+        }
+        if let Some(s) = &self.strategy {
+            return s.as_str();
+        }
+        "fused"
+    }
+
+    pub fn is_fused(&self) -> bool {
+        self.strategy() == "fused"
+    }
+
+    pub fn is_split(&self) -> bool {
+        matches!(self.strategy(), "split" | "linked")
+    }
+
     /// The `comp-host` flags that hand this app its `[config]` and let it reach
     /// its daemons: `--config k=v` per key, then `--egress <addr>` per daemon
     /// plus `--allow-private-egress` once — a daemon is on loopback, which the
@@ -275,5 +309,30 @@ mod tests {
         )
         .unwrap();
         toml::from_str::<AppSpec>(&park).expect("apps/park.toml parses");
+    }
+
+    #[test]
+    fn topology_strategy_defaults_to_fused_and_respects_declarations() {
+        let bare: AppSpec = toml::from_str("name = \"default-app\"\n").unwrap();
+        assert_eq!(bare.strategy(), "fused");
+        assert!(bare.is_fused());
+        assert!(!bare.is_split());
+
+        let flat_split: AppSpec = toml::from_str(
+            "name = \"app-split\"\nstrategy = \"split\"\ncomponents = [\"c1\", \"c2\"]\n",
+        )
+        .unwrap();
+        assert_eq!(flat_split.strategy(), "split");
+        assert!(!flat_split.is_fused());
+        assert!(flat_split.is_split());
+        assert_eq!(flat_split.components, vec!["c1", "c2"]);
+
+        let nested_topology: AppSpec = toml::from_str(
+            "name = \"topo-app\"\n[topology]\nstrategy = \"split\"\n[topology.placement]\nworker = { node = \"gpu-1\" }\n",
+        )
+        .unwrap();
+        assert_eq!(nested_topology.strategy(), "split");
+        assert!(nested_topology.is_split());
+        assert!(nested_topology.topology.as_ref().unwrap().placement.contains_key("worker"));
     }
 }

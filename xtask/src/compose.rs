@@ -295,6 +295,22 @@ pub(crate) fn compose_app(app: Option<&str>, build_ui: bool) -> Result<()> {
         Some(name) => {
             println!("{}", format!("Composing {name}...").cyan().bold());
 
+            let registered = holon_metadata::app::registered_apps(Path::new("."));
+            if let Some(spec) = registered.iter().find(|a| a.name == name) {
+                if spec.is_split() {
+                    println!(
+                        "{} App '{}' specifies strategy = 'split' (distributed wRPC mesh).",
+                        "ℹ".cyan(),
+                        name
+                    );
+                    println!(
+                        "  Constituent components remain independently deployable across nodes."
+                    );
+                    crate::topology::check_topology(Path::new("."), Some(name))?;
+                    return Ok(());
+                }
+            }
+
             // `e2e` skips the UI: the tests drive the API, not the SPA.
             let ui_pkg = format!("examples/{name}/ui/package.json");
             if build_ui && Path::new(&ui_pkg).exists() {
@@ -325,15 +341,19 @@ pub(crate) fn compose_app(app: Option<&str>, build_ui: bool) -> Result<()> {
 
 pub(crate) fn list_apps() -> Result<()> {
     println!("{}", "Registered Holon Applications (apps/*.toml):".cyan().bold());
-    println!("{:<20} {:<8} {:<10} {:<30}", "APP", "PORT", "KV", "DOMAIN");
-    println!("{:-<20} {:-<8} {:-<10} {:-<30}", "", "", "", "");
+    println!("{:<20} {:<8} {:<10} {:<10} {:<30}", "APP", "PORT", "KV", "STRATEGY", "DOMAIN");
+    println!("{:-<20} {:-<8} {:-<10} {:-<10} {:-<30}", "", "", "", "", "");
 
     let apps = holon_metadata::app::registered_apps(Path::new("."));
-    for a in apps {
+    for a in &apps {
         let port_str = a.port.map_or("-".to_string(), |p| p.to_string());
         let kv_str = a.kv_as_string().unwrap_or_else(|| "-".to_string());
-        let domain_str = a.domain.unwrap_or_else(|| "-".to_string());
-        println!("{:<20} {:<8} {:<10} {:<30}", a.name, port_str, kv_str, domain_str);
+        let strat_str = a.strategy();
+        let domain_str = a.domain.as_deref().unwrap_or("-");
+        println!(
+            "{:<20} {:<8} {:<10} {:<10} {:<30}",
+            a.name, port_str, kv_str, strat_str, domain_str
+        );
     }
 
     Ok(())
