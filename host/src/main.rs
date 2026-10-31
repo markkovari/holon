@@ -1,6 +1,7 @@
 //! Native wasmtime host for composed components: one `--component`, or every tenant on the node with `--lattice-nats` (ADR-0021, 0023).
 
 mod agent;
+mod idempotency;
 mod kv;
 mod kvcache;
 mod kvprofile;
@@ -1473,6 +1474,14 @@ async fn handle_request(
     platform_url: String,
     req: hyper::Request<hyper::body::Incoming>,
 ) -> Result<hyper::Response<HyperOutgoingBody>> {
+    let default_bucket = instance.scope.bucket("default");
+    let idem_check = idempotency::check(req.method(), req.headers(), default_bucket, &kv).await?;
+    let reservation = match idem_check {
+        idempotency::IdempotencyCheck::Replay(replayed_resp) => return Ok(replayed_resp),
+        idempotency::IdempotencyCheck::Conflict(conflict_resp) => return Ok(conflict_resp),
+        idempotency::IdempotencyCheck::Proceed(res) => res,
+    };
+
     let pre = match instance.pre.as_ref() {
         None => anyhow::bail!(
             "{} serves no HTTP; it is reachable through links only",
@@ -1484,22 +1493,23 @@ async fn handle_request(
                     P3Stores {
                         engine: engine.clone(),
                         scope: instance.scope.clone(),
-                        kv,
+                        kv: kv.clone(),
                         cache_backing: instance.cache_backing.clone(),
                         remotes: instance.remotes.clone(),
-                        platform_url,
+                        platform_url: platform_url.clone(),
                     },
                     wasmtime_wasi_http::handler::ProxyPre::P3(pre.clone()),
                 )
             });
-            return handle_request_p3(handler, req).await;
+            let resp = handle_request_p3(handler, req).await?;
+            return idempotency::complete(reservation, resp).await;
         }
         Some(HttpPre::P2(pre)) => pre,
     };
     let mut store = store_for(
         &engine,
         instance.scope.clone(),
-        kv,
+        kv.clone(),
         instance.cache_backing.clone(),
         instance.remotes.clone(),
         platform_url,
@@ -1515,15 +1525,17 @@ async fn handle_request(
         proxy.wasi_http_incoming_handler().call_handle(&mut store, req, out).await
     });
 
-    match receiver.await {
-        Ok(Ok(resp)) => Ok(resp),
-        Ok(Err(e)) => Err(e.into()),
+    let resp = match receiver.await {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(e)) => return Err(e.into()),
         Err(_) => {
             // the sender was dropped without a response -> the guest trapped.
             let err = task.await.unwrap().unwrap_err();
-            Err(anyhow::anyhow!("guest never produced a response: {err:?}"))
+            return Err(anyhow::anyhow!("guest never produced a response: {err:?}"));
         }
-    }
+    };
+
+    idempotency::complete(reservation, resp).await
 }
 
 /// p3: a request is a task on a live worker instance; the store outlives the response,
