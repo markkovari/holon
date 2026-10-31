@@ -43,7 +43,7 @@ impl Strategy {
     pub fn parse(s: &str) -> Option<Strategy> {
         match s {
             "fused" => Some(Strategy::Fused),
-            "linked" => Some(Strategy::Linked),
+            "linked" | "split" => Some(Strategy::Linked),
             _ => None,
         }
     }
@@ -317,6 +317,14 @@ mod tests {
             root: "api",
             ingress_host: "shop.alice.example.com",
         }
+    }
+
+    #[test]
+    fn strategy_parse_accepts_fused_linked_and_split() {
+        assert_eq!(Strategy::parse("fused"), Some(Strategy::Fused));
+        assert_eq!(Strategy::parse("linked"), Some(Strategy::Linked));
+        assert_eq!(Strategy::parse("split"), Some(Strategy::Linked));
+        assert_eq!(Strategy::parse("other"), None);
     }
 
     #[test]
