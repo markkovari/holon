@@ -10,6 +10,7 @@ mod contract_critic;
 mod e2e_cmd;
 mod examples;
 mod host;
+mod stateless_guard;
 mod util;
 mod wadm_status;
 
@@ -143,6 +144,12 @@ enum Commands {
     /// reason when it failed. Reads a `wadm.api.<lattice>.model.status.<app>`
     /// reply on stdin.
     WadmStatus,
+
+    /// Check WebAssembly components for stateless compliance and static memory isolation
+    CheckStateless {
+        /// Specific .wasm file(s) to check. If omitted, checks all in components/target
+        files: Vec<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -261,6 +268,13 @@ fn main() -> Result<()> {
 
         Commands::WadmStatus => {
             wadm_status()?;
+        }
+
+        Commands::CheckStateless { files } => {
+            let ok = stateless_guard::check_stateless(&files)?;
+            if !ok {
+                std::process::exit(1);
+            }
         }
     }
 
