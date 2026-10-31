@@ -180,6 +180,13 @@ struct Host {
     rpc: rpc::RpcCtx,
 }
 
+impl Host {
+    fn set_scope(&mut self, scope: SharedScope) {
+        self.scope = scope.clone();
+        self.hooks.scope = scope;
+    }
+}
+
 impl wrpc_runtime_wasmtime::WrpcView for Host {
     type Invoke = rpc::Transport;
 
@@ -1474,8 +1481,16 @@ async fn handle_request(
     platform_url: String,
     req: hyper::Request<hyper::body::Incoming>,
 ) -> Result<hyper::Response<HyperOutgoingBody>> {
-    let default_bucket = instance.scope.bucket("default");
-    let idem_check = idempotency::check(req.method(), req.headers(), default_bucket, &kv).await?;
+    // Ambient multi-tenancy: extract tenant from transport headers or JWT
+    let ambient_tenant = tenant::extract_ambient_tenant(req.headers());
+    let active_scope = match ambient_tenant.as_deref() {
+        Some(t) => Arc::new(instance.scope.scoped_for_ambient_tenant(t)),
+        None => instance.scope.clone(),
+    };
+
+    let default_bucket = active_scope.bucket("default").cloned();
+    let idem_check =
+        idempotency::check(req.method(), req.headers(), default_bucket.as_ref(), &kv).await?;
     let reservation = match idem_check {
         idempotency::IdempotencyCheck::Replay(replayed_resp) => return Ok(replayed_resp),
         idempotency::IdempotencyCheck::Conflict(conflict_resp) => return Ok(conflict_resp),
@@ -1501,14 +1516,19 @@ async fn handle_request(
                     wasmtime_wasi_http::handler::ProxyPre::P3(pre.clone()),
                 )
             });
-            let resp = handle_request_p3(handler, req).await?;
+            let mut resp = handle_request_p3(handler, req, active_scope).await?;
+            if let Some(ref t) = ambient_tenant {
+                if let Ok(v) = hyper::header::HeaderValue::from_str(t) {
+                    resp.headers_mut().insert("x-ambient-tenant", v);
+                }
+            }
             return idempotency::complete(reservation, resp).await;
         }
         Some(HttpPre::P2(pre)) => pre,
     };
     let mut store = store_for(
         &engine,
-        instance.scope.clone(),
+        active_scope,
         kv.clone(),
         instance.cache_backing.clone(),
         instance.remotes.clone(),
@@ -1525,7 +1545,7 @@ async fn handle_request(
         proxy.wasi_http_incoming_handler().call_handle(&mut store, req, out).await
     });
 
-    let resp = match receiver.await {
+    let mut resp = match receiver.await {
         Ok(Ok(resp)) => resp,
         Ok(Err(e)) => return Err(e.into()),
         Err(_) => {
@@ -1534,6 +1554,11 @@ async fn handle_request(
             return Err(anyhow::anyhow!("guest never produced a response: {err:?}"));
         }
     };
+    if let Some(ref t) = ambient_tenant {
+        if let Ok(v) = hyper::header::HeaderValue::from_str(t) {
+            resp.headers_mut().insert("x-ambient-tenant", v);
+        }
+    }
 
     idempotency::complete(reservation, resp).await
 }
@@ -1543,6 +1568,7 @@ async fn handle_request(
 async fn handle_request_p3(
     handler: &P3Handler,
     req: hyper::Request<hyper::body::Incoming>,
+    scope: SharedScope,
 ) -> Result<hyper::Response<HyperOutgoingBody>> {
     use http_body_util::BodyExt;
     use wasmtime_wasi_http::handler::Proxy;
@@ -1555,6 +1581,10 @@ async fn handle_request_p3(
         None,
         Box::new(move |acc, proxy| {
             Box::pin(async move {
+                let _: Result<(), wasmtime::Error> = acc.with(|mut s| {
+                    s.data_mut().set_scope(scope);
+                    Ok(())
+                });
                 let Proxy::P3(service) = proxy else { unreachable!("P3 handler") };
                 let run = async {
                     let req = req.map(|b| b.map_err(P3Error::from_hyper_request_error));

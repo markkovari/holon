@@ -145,6 +145,27 @@ pub fn env_for(tenant: &str, app: &str) -> String {
     format!("{}-{tag}", head.trim_end_matches('-'))
 }
 
+/// One application's tenant-scoped identity for sub-tenants / multi-tenant requests.
+pub fn env_for_tenant(tenant: &str, app: &str, ambient_tenant: &str) -> String {
+    const CAP: usize = 53;
+    const SUFFIX: usize = 9;
+
+    let sub = dns_label(ambient_tenant);
+    if sub.is_empty() {
+        return env_for(tenant, app);
+    }
+    let full = format!("app-{}-{}-{}", dns_label(tenant), dns_label(app), sub);
+    if full.len() <= CAP {
+        return full.trim_matches('-').to_string();
+    }
+    let mut h = Sha256::new();
+    h.update(full.as_bytes());
+    let digest = h.finalize();
+    let tag: String = digest.iter().take(4).map(|b| format!("{b:02x}")).collect();
+    let head: String = full.chars().take(CAP - SUFFIX).collect();
+    format!("{}-{tag}", head.trim_end_matches('-'))
+}
+
 /// What one app may dial.
 ///
 /// Two independent checks, on purpose. The allow-list is on **names**, because
@@ -341,6 +362,87 @@ impl Scope {
     pub fn secret_refs(&self) -> impl Iterator<Item = (&str, &SecretRef)> {
         self.secrets.iter().map(|(k, r)| (k.as_str(), r))
     }
+
+    /// Derives an ambient-scoped copy of this `Scope` for a sub-tenant / client organization.
+    ///
+    /// Preserves all permissions, limits, and allow-lists while minting new `BucketId` namespaces
+    /// derived from `(tenant, app, ambient_tenant)`.
+    pub fn scoped_for_ambient_tenant(&self, ambient: &str) -> Scope {
+        let sub = dns_label(ambient);
+        if sub.is_empty() {
+            return self.clone();
+        }
+        let env = env_for_tenant(&self.tenant, &self.app, &sub);
+        let mut buckets = BTreeMap::new();
+        for (guest_name, id) in &self.buckets {
+            let prefix = match id.class() {
+                StoreClass::Kv => "b",
+                StoreClass::Object => "o",
+            };
+            if guest_name == "default" || guest_name == "blobs" {
+                buckets.insert(guest_name.clone(), BucketId(format!("{prefix}-{env}"), id.class()));
+            } else {
+                let scoped_env =
+                    env_for_tenant(&format!("{}-{env}", self.tenant), &self.app, guest_name);
+                buckets.insert(
+                    guest_name.clone(),
+                    BucketId(format!("{prefix}-{scoped_env}"), id.class()),
+                );
+            }
+        }
+        let mut cloned = self.clone();
+        cloned.buckets = buckets;
+        cloned
+    }
+}
+
+/// Extracts the ambient tenant identifier from HTTP request headers.
+///
+/// Priority:
+/// 1. `X-Tenant-ID` or `x-tenant-id`
+/// 2. `X-Tenant` or `x-tenant`
+/// 3. `Tenant` or `tenant`
+/// 4. `X-Organization-ID` / `x-organization-id`
+/// 5. Bearer JWT payload claim (`tenant_id`, `tenant`, `org_id`, `org`)
+pub fn extract_ambient_tenant(headers: &hyper::HeaderMap) -> Option<String> {
+    for name in &["x-tenant-id", "x-tenant", "tenant", "x-organization-id"] {
+        if let Some(val) = headers.get(*name) {
+            if let Ok(s) = val.to_str() {
+                let cleaned = dns_label(s);
+                if !cleaned.is_empty() {
+                    return Some(cleaned);
+                }
+            }
+        }
+    }
+    if let Some(auth) = headers.get(hyper::header::AUTHORIZATION) {
+        if let Ok(s) = auth.to_str() {
+            if let Some(token) = s.strip_prefix("Bearer ").or_else(|| s.strip_prefix("bearer ")) {
+                if let Some(tenant) = extract_jwt_tenant_claim(token.trim()) {
+                    let cleaned = dns_label(&tenant);
+                    if !cleaned.is_empty() {
+                        return Some(cleaned);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_jwt_tenant_claim(token: &str) -> Option<String> {
+    use base64::prelude::*;
+    let mut parts = token.split('.');
+    let _header = parts.next()?;
+    let payload = parts.next()?;
+    let decoded = BASE64_URL_SAFE_NO_PAD.decode(payload.as_bytes()).ok()?;
+    let val: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    for claim in &["tenant_id", "tenant", "org_id", "org"] {
+        if let Some(s) = val.get(*claim).and_then(|v| v.as_str()) {
+            return Some(s.to_string());
+        }
+    }
+    None
 }
 
 /// A start command, as the reconciler emits it.
@@ -658,5 +760,56 @@ mod tests {
         assert_eq!(env_for("Alice Co.", "My Shop!"), "app-alice-co-my-shop");
         let long = env_for(&"t".repeat(80), &"a".repeat(80));
         assert!(long.len() <= 53 && !long.ends_with('-'), "{long}");
+    }
+
+    #[test]
+    fn ambient_tenants_opening_the_same_name_get_different_isolated_stores() {
+        let base = scope("acme", "saas-app");
+        let corp_a = base.scoped_for_ambient_tenant("corp-alpha");
+        let corp_b = base.scoped_for_ambient_tenant("corp-beta");
+
+        let b_root = base.bucket("default").expect("base default");
+        let b_a = corp_a.bucket("default").expect("corp-a default");
+        let b_b = corp_b.bucket("default").expect("corp-b default");
+
+        assert_ne!(b_a, b_b);
+        assert_ne!(b_a, b_root);
+        assert_ne!(b_b, b_root);
+        assert_eq!(b_root.as_str(), "b-app-acme-saas-app");
+        assert_eq!(b_a.as_str(), "b-app-acme-saas-app-corp-alpha");
+        assert_eq!(b_b.as_str(), "b-app-acme-saas-app-corp-beta");
+
+        // Object store also isolates independently
+        let o_root = base.bucket("blobs").expect("base blobs");
+        let o_a = corp_a.bucket("blobs").expect("corp-a blobs");
+        assert_ne!(o_root, o_a);
+        assert_eq!(o_a.as_str(), "o-app-acme-saas-app-corp-alpha");
+    }
+
+    #[test]
+    fn ambient_tenant_header_extraction() {
+        use hyper::header::HeaderValue;
+        use hyper::HeaderMap;
+
+        let mut headers = HeaderMap::new();
+        assert_eq!(extract_ambient_tenant(&headers), None);
+
+        headers.insert("x-tenant-id", HeaderValue::from_static("org_alpha"));
+        assert_eq!(extract_ambient_tenant(&headers), Some("org-alpha".to_string()));
+
+        headers.clear();
+        headers.insert("tenant", HeaderValue::from_static("Tenant 42!"));
+        assert_eq!(extract_ambient_tenant(&headers), Some("tenant-42".to_string()));
+
+        // JWT payload extraction
+        headers.clear();
+        // payload: {"tenant_id":"jwt-tenant-9"}
+        // base64url of {"tenant_id":"jwt-tenant-9"} is eyJ0ZW5hbnRfaWQiOiJqd3QtdGVuYW50LTkifQ
+        let fake_jwt = "eyJhbGciOiJIUzI1NiJ9.eyJ0ZW5hbnRfaWQiOiJqd3QtdGVuYW50LTkifQ.signature";
+        headers.insert(
+            hyper::header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {fake_jwt}")).unwrap(),
+        );
+        assert_eq!(extract_ambient_tenant(&headers), Some("jwt-tenant-9".to_string()));
     }
 }
