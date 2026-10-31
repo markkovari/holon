@@ -9,7 +9,7 @@
  ╚═╝  ╚═╝  ╚═════╝  ╚══════╝  ╚═════╝  ╚═╝  ╚═══╝
 ```
 
-<img src="docs/media/holon-mascot.png" alt="Holo the Mascot" width="260" />
+<img src="docs/media/holon-mascot.png" alt="The Holon: Whole and Part" width="260" />
 
 # Welcome to Holon 👋
 
@@ -21,7 +21,9 @@
 [![Components](https://img.shields.io/badge/Components-200%2B-purple)](components/)
 [![Architecture](https://img.shields.io/badge/Docs-ADRs%20(122)-informational)](docs/adr/)
 
-> **Meet Holo!** In natural ecosystems, life organizes in nested wholes: a **cell** is an autonomous metabolic whole, yet an integral part of an **organism**; an organism is a complete individual, yet an integral part of its **species** and living **ecosystem** (Arthur Koestler's formulation of a *holon*). Just like Holo and its nested companions, every WebAssembly component in this repository is complete behind its typed WIT boundary, and an autonomous building block of the applications you compose from it.
+> **What is a Holon?** Coined by philosopher Arthur Koestler (*The Ghost in the Machine*, 1967), a *holon* is an entity that is simultaneously an autonomous, self-regulating **whole** in relation to its sub-parts, and an interdependent **part** of a larger system (a *holarchy*). In natural ecosystems, a cell is an autonomous whole, yet a part of an organism; an organism is a complete individual, yet a part of its species and ecosystem.
+>
+> In this repository, every WebAssembly component is a holon: self-contained and complete behind its typed WIT boundary, and an autonomous building block of the applications, fleets, and lattices you compose from it.
 
 </div>
 
