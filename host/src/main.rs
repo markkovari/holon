@@ -1178,7 +1178,36 @@ async fn main() -> Result<()> {
                 }
                 .into_scope(&limits),
             );
-            let component = Component::from_file(&engine, &args.component)?;
+            let comp_path = std::path::Path::new(&args.component);
+            let cwasm_path = comp_path.with_extension("cwasm");
+            let t0_load = std::time::Instant::now();
+            let (component, from_cache) =
+                if comp_path.extension().and_then(|e| e.to_str()) == Some("cwasm") {
+                    // SAFETY: `deserialize_file` maps precompiled machine code from the local artifact path.
+                    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+                    let c = unsafe { Component::deserialize_file(&engine, comp_path)? };
+                    (c, true)
+                } else if cwasm_path.exists() {
+                    // SAFETY: `deserialize_file` loads cached AOT machine code previously compiled and serialized by this host.
+                    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+                    match unsafe { Component::deserialize_file(&engine, &cwasm_path) } {
+                        Ok(c) => (c, true),
+                        Err(_) => {
+                            let c = Component::from_file(&engine, comp_path)?;
+                            if let Ok(serialized) = c.serialize() {
+                                let _ = std::fs::write(&cwasm_path, serialized);
+                            }
+                            (c, false)
+                        }
+                    }
+                } else {
+                    let c = Component::from_file(&engine, comp_path)?;
+                    if let Ok(serialized) = c.serialize() {
+                        let _ = std::fs::write(&cwasm_path, serialized);
+                    }
+                    (c, false)
+                };
+            let load_dur = t0_load.elapsed();
             let pre = Some(
                 HttpPre::new(build_linker(&engine)?.instantiate_pre(&component)?)
                     .context("component exports neither wasi:http/incoming-handler nor handler")?,
@@ -1196,7 +1225,13 @@ async fn main() -> Result<()> {
             );
             // Catch-all only in solo mode: on a lattice a fallback would route one tenant's traffic to another.
             crate::sync::writing(&routes).insert(CATCH_ALL.into(), id.clone());
-            println!("comp-host: serving {} on http://{} as {id}", args.component, addr);
+            println!(
+                "comp-host: serving {} on http://{} as {id} (loaded in {:.2} ms, cache = {})",
+                args.component,
+                addr,
+                load_dur.as_secs_f64() * 1000.0,
+                from_cache
+            );
             println!(
                 "comp-host: kv backend = {} | allocator = {}",
                 kv_kind,
