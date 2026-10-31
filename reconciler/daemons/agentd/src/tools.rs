@@ -36,6 +36,19 @@ pub fn specs() -> Vec<(&'static str, &'static str, Value)> {
             json!({"type": "object", "properties": {"path": path}, "required": ["path"]}),
         ),
         (
+            "edit_file",
+            "Replace exact text in a file. `target` must match existing file content exactly and appear once.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "path": path,
+                    "target": {"type": "string", "description": "Exact text to find and replace."},
+                    "replacement": {"type": "string", "description": "New text to insert in place of target."}
+                },
+                "required": ["path", "target", "replacement"]
+            }),
+        ),
+        (
             "write_file",
             "Create or overwrite a text file in the workspace, creating parent directories.",
             json!({"type": "object", "properties": {"path": path, "content": {"type": "string"}},
@@ -54,6 +67,7 @@ pub async fn call(workspace: &Path, name: &str, input: &Value) -> Outcome {
     let r = match name {
         "list_dir" => list_dir(workspace, &arg("path")),
         "read_file" => read_file(workspace, &arg("path")),
+        "edit_file" => edit_file(workspace, &arg("path"), &arg("target"), &arg("replacement")),
         "write_file" => write_file(workspace, &arg("path"), &arg("content")),
         "run" => run(workspace, &arg("command")).await,
         other => Err(format!("no such tool: {other}")),
@@ -135,6 +149,26 @@ fn write_file(ws: &Path, rel: &str, content: &str) -> Result<String, String> {
     Ok(format!("wrote {} bytes to {rel}", content.len()))
 }
 
+fn edit_file(ws: &Path, rel: &str, target: &str, replacement: &str) -> Result<String, String> {
+    if target.is_empty() {
+        return Err(format!("{rel}: target string cannot be empty"));
+    }
+    let path = confine(ws, rel)?;
+    let content = std::fs::read_to_string(&path).map_err(|e| format!("{rel}: {e}"))?;
+    let count = content.matches(target).count();
+    if count == 0 {
+        return Err(format!("{rel}: target string not found"));
+    }
+    if count > 1 {
+        return Err(format!(
+            "{rel}: target string appears {count} times; target must be unique (include surrounding lines for context)"
+        ));
+    }
+    let new_content = content.replacen(target, replacement, 1);
+    std::fs::write(&path, &new_content).map_err(|e| format!("{rel}: {e}"))?;
+    Ok(format!("replaced 1 occurrence in {rel}"))
+}
+
 async fn run(ws: &Path, command: &str) -> Result<String, String> {
     if command.trim().is_empty() {
         return Err("empty command".into());
@@ -196,12 +230,45 @@ mod tests {
     #[tokio::test]
     async fn the_tools_round_trip_a_file() {
         let (_d, ws) = ws();
-        let w = call(&ws, "write_file", &json!({"path": "src/a.txt", "content": "hi"})).await;
+        let w =
+            call(&ws, "write_file", &json!({"path": "src/a.txt", "content": "hi\nworld\n"})).await;
         assert!(!w.is_error, "{}", w.output);
-        assert_eq!(call(&ws, "read_file", &json!({"path": "src/a.txt"})).await.output, "hi");
+        assert_eq!(
+            call(&ws, "read_file", &json!({"path": "src/a.txt"})).await.output,
+            "hi\nworld\n"
+        );
         assert_eq!(call(&ws, "list_dir", &json!({"path": "."})).await.output, "src/");
+
+        let e = call(
+            &ws,
+            "edit_file",
+            &json!({"path": "src/a.txt", "target": "world", "replacement": "there"}),
+        )
+        .await;
+        assert!(!e.is_error, "{}", e.output);
+        assert_eq!(
+            call(&ws, "read_file", &json!({"path": "src/a.txt"})).await.output,
+            "hi\nthere\n"
+        );
+
+        let miss = call(
+            &ws,
+            "edit_file",
+            &json!({"path": "src/a.txt", "target": "not-here", "replacement": "x"}),
+        )
+        .await;
+        assert!(miss.is_error && miss.output.contains("not found"));
+
+        let dup = call(
+            &ws,
+            "edit_file",
+            &json!({"path": "src/a.txt", "target": "\n", "replacement": " "}),
+        )
+        .await;
+        assert!(dup.is_error && dup.output.contains("appears 2 times"));
+
         let r = call(&ws, "run", &json!({"command": "cat src/a.txt; exit 3"})).await;
-        assert!(r.is_error && r.output.contains("exit: 3") && r.output.contains("hi"));
+        assert!(r.is_error && r.output.contains("exit: 3") && r.output.contains("hi\nthere\n"));
         assert!(call(&ws, "nope", &json!({})).await.is_error);
     }
 }

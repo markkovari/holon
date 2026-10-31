@@ -200,7 +200,7 @@ impl Default for SessionPolicy {
 }
 
 /// Must match `reconciler/daemons/agentd/src/tools.rs`.
-pub const SESSION_TOOLS: [&str; 4] = ["list_dir", "read_file", "write_file", "run"];
+pub const SESSION_TOOLS: [&str; 5] = ["list_dir", "read_file", "write_file", "edit_file", "run"];
 
 impl SessionPolicy {
     pub fn is_default(&self) -> bool {

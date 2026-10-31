@@ -187,6 +187,23 @@ impl Runtime {
             .collect()
     }
 
+    pub fn agent_spec(&self, name: &str) -> Result<Value, String> {
+        self.admin(&format!("/v1/agents/{name}"))
+    }
+
+    pub fn update_agent_spec(&self, name: &str, spec: &Value) -> Result<(), String> {
+        self.send(
+            reqwest::Method::PUT,
+            &format!("/v1/agents/{name}"),
+            Some(serde_json::json!({ "spec": spec })),
+        )
+    }
+
+    pub fn agent_diff(&self, name: &str) -> Result<String, String> {
+        let v: Value = self.admin(&format!("/v1/agents/{name}/diff"))?;
+        Ok(v["diff"].as_str().unwrap_or_default().to_string())
+    }
+
     pub fn rank(
         &self,
         message: &str,

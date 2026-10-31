@@ -911,11 +911,40 @@ impl Bridge {
                 });
                 return;
             }
-            Some(RoomKind::Dm(a)) => vec![a],
+            Some(RoomKind::Dm(a)) => {
+                if !heard && !photo && (body.starts_with('/') || body.starts_with('!')) {
+                    if let Some(cmd) = crate::commands::parse(&body) {
+                        let me = self.clone();
+                        let (agent, room, event_id, body_text) =
+                            (a.clone(), room.to_string(), event_id.to_string(), body.clone());
+                        std::thread::spawn(move || {
+                            let reply = me.run_slash_command(&agent, &room, cmd, &body_text);
+                            let ghost = me.cfg.ghost(&agent);
+                            let _ = me.mx.send_markdown(&room, &ghost, &reply, Some(&event_id));
+                        });
+                        return;
+                    }
+                }
+                vec![a]
+            }
             Some(RoomKind::ProjectSpace(_)) => return,
             Some(RoomKind::ProjectGeneral(p))
             | Some(RoomKind::ProjectRoom(p))
             | Some(RoomKind::ProjectFeed(p)) => {
+                if !heard && !photo && (body.starts_with('/') || body.starts_with('!')) {
+                    if let Some(_cmd) = crate::commands::parse(&body) {
+                        let me = self.clone();
+                        let (room, event_id, body_text) =
+                            (room.to_string(), event_id.to_string(), body.clone());
+                        std::thread::spawn(move || {
+                            let bridge = me.bridge_user();
+                            let reply =
+                                me.command(&body_text).unwrap_or_else(|| "unknown command".into());
+                            let _ = me.mx.send_markdown(&room, &bridge, &reply, Some(&event_id));
+                        });
+                        return;
+                    }
+                }
                 let Some(info) =
                     self.rt.projects().ok().and_then(|ps| ps.into_iter().find(|x| x.name == p))
                 else {
@@ -1195,9 +1224,34 @@ impl Bridge {
         }
     }
 
+    pub fn run_slash_command(
+        &self,
+        default_agent: &str,
+        room: &str,
+        cmd: crate::commands::Cmd,
+        body: &str,
+    ) -> String {
+        match cmd {
+            crate::commands::Cmd::Help => crate::commands::HELP.to_string(),
+            crate::commands::Cmd::Model { agent, model } => {
+                let target = agent.as_deref().unwrap_or(default_agent);
+                self.handle_model_cmd(target, model.as_deref())
+            }
+            crate::commands::Cmd::Diff { agent } => {
+                let target = agent.as_deref().unwrap_or(default_agent);
+                self.handle_diff_cmd(target)
+            }
+            crate::commands::Cmd::Steer { agent, message } => {
+                let target = agent.as_deref().unwrap_or(default_agent);
+                self.handle_steer_cmd(target, &message, Some(room))
+            }
+            _ => self.command(body).unwrap_or_else(|| "unknown command".into()),
+        }
+    }
+
     /// The project a room belongs to, when it is one of a project's rooms: what a message
     /// written there is for, and so where a reminder it sets is delivered.
-    fn project_of(&self, room: &str) -> Option<String> {
+    pub(crate) fn project_of(&self, room: &str) -> Option<String> {
         match self.state.kind_of(room) {
             Some(RoomKind::ProjectGeneral(p))
             | Some(RoomKind::ProjectRoom(p))

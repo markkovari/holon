@@ -325,6 +325,12 @@ const TOOLS: &[ToolDef] = &[
         sensitive: false,
     },
     ToolDef {
+        name: "edit_file",
+        args: r#"{"path": "...", "target": "...", "replacement": "..."}"#,
+        about: "Replace exact text in a file in your workspace.",
+        sensitive: true,
+    },
+    ToolDef {
         name: "write_file",
         args: r#"{"path": "...", "content": "..."}"#,
         about: "Write a text file in your workspace.",
@@ -401,6 +407,7 @@ fn required(name: &str) -> &'static [&'static str] {
         | "agent_restore" => &["name"],
         "agent_save" => &["name"],
         "read_file" => &["path"],
+        "edit_file" => &["path", "target", "replacement"],
         "write_file" => &["path", "content"],
         n if n.starts_with("agent:") => &["message"],
         _ => &[],
@@ -1129,6 +1136,24 @@ fn exec(
             let p = confine(&store.workspace(&spec.name)?, &arg(args, "path"))?;
             std::fs::read_to_string(p).map(|s| clip(&s, 16_000)).map_err(|e| e.to_string())
         }
+        "edit_file" => {
+            let p = confine(&store.workspace(&spec.name)?, &arg(args, "path"))?;
+            let target = arg(args, "target");
+            if target.is_empty() {
+                return Err("target string cannot be empty".into());
+            }
+            let content = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
+            let count = content.matches(&target).count();
+            if count == 0 {
+                return Err("target string not found".into());
+            }
+            if count > 1 {
+                return Err(format!("target string appears {count} times; must be unique in file"));
+            }
+            let new_content = content.replacen(&target, &arg(args, "replacement"), 1);
+            std::fs::write(&p, &new_content).map_err(|e| e.to_string())?;
+            Ok("replaced 1 occurrence".into())
+        }
         "write_file" => {
             let p = confine(&store.workspace(&spec.name)?, &arg(args, "path"))?;
             if let Some(parent) = p.parent() {
@@ -1715,6 +1740,23 @@ mod tests {
         run(&h, &s, "http", "go", &Cause::default());
         assert!(h.asked.lock().unwrap().is_empty());
         assert!(h.store.workspace("bot").unwrap().join("a.txt").exists());
+    }
+
+    #[test]
+    fn edit_file_replaces_target_text_in_place() {
+        let mut s = spec();
+        s.capabilities.push(Capability::named("edit_file"));
+        s.auto_approve.push("write_file".into());
+        s.auto_approve.push("edit_file".into());
+        let write_call =
+            r#"{"tool":"write_file","args":{"path":"sub.txt","content":"hello world\n"}}"#;
+        let edit_call = r#"{"tool":"edit_file","args":{"path":"sub.txt","target":"world","replacement":"friend"}}"#;
+        let h = Fake::new("edit", &[write_call, edit_call, "done"], true);
+        run(&h, &s, "http", "go", &Cause::default());
+        assert_eq!(
+            std::fs::read_to_string(h.store.workspace("bot").unwrap().join("sub.txt")).unwrap(),
+            "hello friend\n"
+        );
     }
 
     #[test]
