@@ -9,6 +9,8 @@
 
 #![allow(dead_code)]
 
+pub mod scenario;
+
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -147,6 +149,25 @@ pub fn compose(crate_name: &str) -> Option<PathBuf> {
     }
 }
 
+/// Compose `crate_name` with explicit exporter choices for ambiguous interfaces.
+pub fn compose_with_overrides(crate_name: &str, overrides: &[(&str, &str)]) -> Option<PathBuf> {
+    use holon_fleet::plug::{compose_to, Catalog};
+    let target = components_target();
+    let dirs: Vec<PathBuf> =
+        ["wasm32-wasip2/release", "wasm32-wasip2/debug"].iter().map(|d| target.join(d)).collect();
+    let mut catalog = Catalog::scan(&dirs);
+    if catalog.is_empty() || catalog.bytes(crate_name).is_none() {
+        return None;
+    }
+    for (iface, comp) in overrides {
+        catalog.override_exporter(iface, comp);
+    }
+    match compose_to(crate_name, &catalog, &target) {
+        Ok(path) => Some(path),
+        Err(e) => panic!("[{crate_name}] does not compose with overrides: {e}"),
+    }
+}
+
 /// What a gate needs before it can run, or a reason it cannot. A loud skip rather than a failure.
 pub fn artifacts(app: &str, composed: &str) -> Option<(PathBuf, PathBuf)> {
     let host = host_bin();
@@ -188,6 +209,22 @@ impl Gate {
     /// Compose `crate_name` here and serve it as `app`.
     pub fn compose_and_start(app: &str, crate_name: &str, config: &[&str]) -> Option<Self> {
         let wasm = compose(crate_name)?;
+        let host = host_bin();
+        if !host.exists() {
+            no_host(app, &host);
+            return None;
+        }
+        Some(Self::serve(app, &host, &wasm, config))
+    }
+
+    /// Compose `crate_name` here with exporter overrides and serve it as `app`.
+    pub fn compose_and_start_with_overrides(
+        app: &str,
+        crate_name: &str,
+        config: &[&str],
+        overrides: &[(&str, &str)],
+    ) -> Option<Self> {
+        let wasm = compose_with_overrides(crate_name, overrides)?;
         let host = host_bin();
         if !host.exists() {
             no_host(app, &host);
@@ -405,6 +442,11 @@ impl Gate {
             .unwrap_or("")
             .to_string();
         (status, ct, resp.bytes().map(|b| b.to_vec()).unwrap_or_default())
+    }
+
+    /// Execute a declarative `.hurl` scenario file against this gate.
+    pub fn run_scenario(&self, scenario_rel_path: &str) {
+        scenario::run(self, scenario_rel_path);
     }
 }
 
