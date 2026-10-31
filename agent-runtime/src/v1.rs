@@ -152,6 +152,31 @@ pub fn route(
                 .unwrap_or(20);
             Reply::Json(200, json!({"runs": rt.store().runs(name, limit)}))
         }
+        (Method::Get, ["agents", name, "diff"]) => {
+            let Some(ws) = rt.store().workspace(name).ok() else {
+                return problem(404, format!("no workspace for {name}"));
+            };
+            if !ws.exists() {
+                return Reply::Json(200, json!({"diff": ""}));
+            }
+            let out = std::process::Command::new("git").arg("diff").current_dir(&ws).output();
+            let mut diff = match out {
+                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+                _ => String::new(),
+            };
+            if diff.trim().is_empty() {
+                let st = std::process::Command::new("git")
+                    .args(["status", "--short"])
+                    .current_dir(&ws)
+                    .output();
+                if let Ok(o) = st {
+                    if o.status.success() && !o.stdout.is_empty() {
+                        diff = format!("# Status:\n{}", String::from_utf8_lossy(&o.stdout));
+                    }
+                }
+            }
+            Reply::Json(200, json!({"diff": diff}))
+        }
         (Method::Get, ["events"]) => Reply::Events(
             crate::server::query_param(query, "after_seq")
                 .and_then(|v| v.parse().ok())

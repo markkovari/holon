@@ -129,7 +129,7 @@ chooses everything else.
   person, or its answer and what it cost) and waits up to `wait_secs`, at most 60. `session` may be left
   out when the agent has only one. `session_close` stops it.
 * `budget_usd` is a ceiling the daemon enforces; `auto_approve` is which of the session's tools
-  (`list_dir`, `read_file`, `write_file`, `run`) run without asking, none by default.
+  (`list_dir`, `read_file`, `write_file`, `edit_file`, `run`) run without asking, none by default.
 * A tool call the session is waiting on shows up as an ordinary approval (`session:write_file`,
   the agent that started it, `session <id>` in its chain), so the console, the chat bridge and
   `GET /v1/approvals` show it as they show any. `POST /v1/approvals/<id>` with

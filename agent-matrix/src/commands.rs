@@ -1,6 +1,6 @@
 //! Control-room `!` commands, so clients that cannot create Spaces can still manage projects.
 
-use crate::bridge::Bridge;
+use crate::bridge::{clip, Bridge};
 use crate::runtime::ProjectInfo;
 
 #[derive(Debug, PartialEq)]
@@ -19,6 +19,9 @@ pub enum Cmd {
     ProjectDelete { name: String },
     ProjectArchive { name: String },
     ProjectUnarchive { name: String },
+    Model { agent: Option<String>, model: Option<String> },
+    Diff { agent: Option<String> },
+    Steer { agent: Option<String>, message: String },
     Bad(String),
 }
 
@@ -30,13 +33,61 @@ fn agent_token(t: &str) -> String {
 
 pub fn parse(body: &str) -> Option<Cmd> {
     let body = body.trim();
-    if !body.starts_with('!') {
+    let prefix = if body.starts_with('!') {
+        '!'
+    } else if body.starts_with('/') {
+        '/'
+    } else {
         return None;
-    }
+    };
     let mut words = body[1..].split_whitespace();
     let word = |w: Option<&str>| w.unwrap_or_default().to_string();
     Some(match (words.next(), words.next()) {
         (Some("help"), _) | (Some("?"), _) => Cmd::Help,
+        (Some("model"), first) => {
+            let first_raw = first.unwrap_or_default();
+            let second = words.next().map(str::to_string);
+            if first_raw.starts_with('@') {
+                let agent = agent_token(first_raw);
+                Cmd::Model { agent: Some(agent), model: second }
+            } else {
+                match (first_raw.is_empty(), second) {
+                    (true, _) => Cmd::Model { agent: None, model: None },
+                    (false, Some(m)) => {
+                        Cmd::Model { agent: Some(agent_token(first_raw)), model: Some(m) }
+                    }
+                    (false, None) => Cmd::Model { agent: None, model: Some(first_raw.to_string()) },
+                }
+            }
+        }
+        (Some("diff"), first) => {
+            let agent = first.filter(|s| !s.is_empty()).map(agent_token);
+            Cmd::Diff { agent }
+        }
+        (Some("steer"), first) => {
+            let first_raw = first.unwrap_or_default();
+            if first_raw.starts_with('@') {
+                let agent = agent_token(first_raw);
+                let message = words.collect::<Vec<_>>().join(" ");
+                if message.is_empty() {
+                    Cmd::Bad(format!("usage: {prefix}steer @agent <guidance message>"))
+                } else {
+                    Cmd::Steer { agent: Some(agent), message }
+                }
+            } else {
+                let rest = words.collect::<Vec<_>>().join(" ");
+                let message = if rest.is_empty() {
+                    first_raw.to_string()
+                } else {
+                    format!("{first_raw} {rest}")
+                };
+                if message.is_empty() {
+                    Cmd::Bad(format!("usage: {prefix}steer [agent] <guidance message>"))
+                } else {
+                    Cmd::Steer { agent: None, message }
+                }
+            }
+        }
         (Some("agents"), _) => Cmd::Agents,
         (Some("agent"), Some(sub)) => match sub {
             "trash" => Cmd::AgentTrash,
@@ -104,15 +155,20 @@ pub fn parse(body: &str) -> Option<Cmd> {
                     Cmd::ProjectUnarchive { name }
                 }
             }
-            other => Cmd::Bad(format!("unknown project command `{other}`; try !help")),
+            other => Cmd::Bad(format!("unknown project command `{other}`; try {prefix}help")),
         },
-        (Some(other), _) => Cmd::Bad(format!("unknown command `!{other}`; try !help")),
+        (Some(other), _) => {
+            Cmd::Bad(format!("unknown command `{prefix}{other}`; try {prefix}help"))
+        }
         (None, _) => Cmd::Help,
     })
 }
 
-const HELP: &str = "\
+pub const HELP: &str = "\
 !agents                                  list the agents
+!model [agent] [name]                    view or switch an agent's model
+!diff [agent]                            show workspace diff
+!steer [agent] <guidance>                send steering guidance to an agent
 !agent trash                             deleted agents you can still restore (30 days)
 !agent restore <agent>                   bring a deleted agent back, as it was
 !agent purge <agent>                     remove a deleted agent from the trash for good
@@ -126,7 +182,7 @@ const HELP: &str = "\
 !project archive <name>                  pause its agents and take its rooms out of your list
 !project unarchive <name>                bring it back: agents resumed, rooms invited back
 
-You can also invite an agent's user (@agent-<name>) into a project's room: that adds it.";
+Commands can also be run with a slash (/model, /diff, /steer, /help).";
 
 /// The runtime empties the trash after 30 days.
 fn restorable_days(deleted_at: u64) -> u64 {
@@ -140,11 +196,26 @@ fn restorable_days(deleted_at: u64) -> u64 {
 impl Bridge {
     pub fn command(&self, body: &str) -> Option<String> {
         let Some(cmd) = parse(body) else {
-            return Some("I only understand commands here. Try !help".into());
+            return Some("I only understand commands here. Try !help or /help".into());
         };
         let reply = match cmd {
             Cmd::Help => HELP.to_string(),
             Cmd::Bad(e) => e,
+            Cmd::Model { agent, model } => match agent {
+                Some(a) => self.handle_model_cmd(&a, model.as_deref()),
+                None => match model {
+                    Some(m) => format!("Please specify which agent to update: /model <agent> {m}"),
+                    None => "usage: /model <agent> [new_model]".into(),
+                },
+            },
+            Cmd::Diff { agent } => match agent {
+                Some(a) => self.handle_diff_cmd(&a),
+                None => "usage: /diff <agent>".into(),
+            },
+            Cmd::Steer { agent, message } => match agent {
+                Some(a) => self.handle_steer_cmd(&a, &message, None),
+                None => "usage: /steer <agent> <guidance message>".into(),
+            },
             Cmd::Agents => match self.rt.agents() {
                 Ok(a) if a.is_empty() => "no agents yet".into(),
                 Ok(a) => a.iter().map(|x| format!("{} — {}", x.name, x.description)).collect::<Vec<_>>().join("\n"),
@@ -283,6 +354,79 @@ impl Bridge {
         }
         out
     }
+
+    pub fn handle_model_cmd(&self, agent: &str, new_model: Option<&str>) -> String {
+        let Ok(mut val) = self.rt.agent_spec(agent) else {
+            return format!("could not find agent `{agent}`");
+        };
+        let Some(spec) = val.get_mut("spec") else {
+            return format!("could not read spec for `{agent}`");
+        };
+        match new_model {
+            None => {
+                let label = val["model_label"].as_str().unwrap_or("unknown");
+                format!("Current model for `{agent}`: **{label}**")
+            }
+            Some(model) => {
+                let model_obj = if model.contains("claude") {
+                    serde_json::json!({
+                        "kind": "anthropic",
+                        "model": model,
+                        "api_key_env": "ANTHROPIC_API_KEY"
+                    })
+                } else if model.contains("gemini") {
+                    serde_json::json!({
+                        "kind": "gemini",
+                        "model": model,
+                        "api_key_env": "GEMINI_API_KEY"
+                    })
+                } else if model == "local" {
+                    serde_json::json!({ "kind": "local" })
+                } else {
+                    serde_json::json!({
+                        "kind": "openai",
+                        "model": model,
+                        "base_url": "http://127.0.0.1:8000/v1",
+                        "api_key_env": "OPENAI_API_KEY"
+                    })
+                };
+                spec["model"] = model_obj;
+                if let Some(sessions) = spec.get_mut("sessions") {
+                    sessions["model"] = serde_json::Value::String(model.to_string());
+                }
+                match self.rt.update_agent_spec(agent, spec) {
+                    Ok(()) => format!("Switched `{agent}` model to **{model}**."),
+                    Err(e) => format!("Could not update model for `{agent}`: {e}"),
+                }
+            }
+        }
+    }
+
+    pub fn handle_diff_cmd(&self, agent: &str) -> String {
+        match self.rt.agent_diff(agent) {
+            Ok(diff) if diff.trim().is_empty() => {
+                format!("No uncommitted changes in workspace for `{agent}`.")
+            }
+            Ok(diff) => {
+                format!("### Workspace diff for `{agent}`:\n```diff\n{}\n```", clip(&diff, 8000))
+            }
+            Err(e) => format!("Could not get diff for `{agent}`: {e}"),
+        }
+    }
+
+    pub fn handle_steer_cmd(&self, agent: &str, message: &str, room: Option<&str>) -> String {
+        let prompt = format!("[STEER DIRECTIVE]: {message}");
+        let project = room.and_then(|r| self.project_of(r));
+        let (ok, answer) = self.rt.run(agent, &prompt, "steer", None, project.as_deref(), &[]);
+        if ok {
+            format!(
+                "✅ Steering guidance applied to `{agent}`:\n> {message}\n\n{}",
+                clip(&answer, 1000)
+            )
+        } else {
+            format!("⚠️ Steering directive failed on `{agent}`: {answer}")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -351,6 +495,32 @@ mod tests {
         assert_eq!(
             parse("!project delete rowing"),
             Some(Cmd::ProjectDelete { name: "rowing".into() })
+        );
+        assert_eq!(parse("/help"), Some(Cmd::Help));
+        assert_eq!(parse("/model"), Some(Cmd::Model { agent: None, model: None }));
+        assert_eq!(
+            parse("/model coder"),
+            Some(Cmd::Model { agent: None, model: Some("coder".into()) })
+        );
+        assert_eq!(
+            parse("/model coder claude-3-5-sonnet"),
+            Some(Cmd::Model {
+                agent: Some("coder".into()),
+                model: Some("claude-3-5-sonnet".into())
+            })
+        );
+        assert_eq!(parse("/diff"), Some(Cmd::Diff { agent: None }));
+        assert_eq!(parse("/diff coder"), Some(Cmd::Diff { agent: Some("coder".into()) }));
+        assert_eq!(
+            parse("/steer do not touch Cargo.toml"),
+            Some(Cmd::Steer { agent: None, message: "do not touch Cargo.toml".into() })
+        );
+        assert_eq!(
+            parse("/steer @coder do not touch Cargo.toml"),
+            Some(Cmd::Steer {
+                agent: Some("coder".into()),
+                message: "do not touch Cargo.toml".into()
+            })
         );
     }
 

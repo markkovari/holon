@@ -48,6 +48,9 @@ A room called **holon** is created for you. Say `!help`:
 
 ```
 !agents                                  list the agents
+!model [agent] [name]                    view or switch an agent's model
+!diff [agent]                            show workspace diff
+!steer [agent] <guidance>                send steering guidance to an agent
 !agent trash                             deleted agents you can still restore (30 days)
 !agent restore <agent>                   bring a deleted agent back, as it was
 !agent purge <agent>                     remove a deleted agent from the trash for good

@@ -273,7 +273,7 @@ async fn tools_turn(
         };
         // What the file held before, for the record of the change (ADR-0121).
         let recording = match (&ctx.vcs, call.name.as_str()) {
-            (Some(_), "write_file") => tools::target(&sess.workspace, &call.input)
+            (Some(_), "write_file" | "edit_file") => tools::target(&sess.workspace, &call.input)
                 .map(|(rel, full)| (rel, std::fs::read(full).ok())),
             _ => None,
         };
@@ -290,14 +290,16 @@ async fn tools_turn(
             _ => tools::call(&sess.workspace, &call.name, &call.input).await,
         };
         if let (Some(vcs), Some((path, before)), false) = (&ctx.vcs, recording, out.is_error) {
-            let after =
-                call.input.get("content").and_then(serde_json::Value::as_str).unwrap_or_default();
+            let after = tools::confine(&sess.workspace, &path)
+                .ok()
+                .and_then(|p| std::fs::read(p).ok())
+                .unwrap_or_default();
             let by = holon_vcs::model::Agent {
                 id: format!("agentd:{}/{task}/{}", sess.id, call.id),
                 goal: None,
                 model: Some(sess.model.clone()),
             };
-            match vcs.record(&sess.id, &path, before.as_deref(), after.as_bytes(), by).await {
+            match vcs.record(&sess.id, &path, before.as_deref(), &after, by).await {
                 Ok(ops) => {
                     sess.emit(task, Payload::FileChanged { call_id: call.id.clone(), path, ops })
                 }
