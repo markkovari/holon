@@ -596,7 +596,7 @@ async fn the_openai_dialect_runs_a_tool_turn_over_http() {
     let seen = seen.lock().unwrap();
     assert_eq!(seen.len(), 2);
     assert_eq!(seen[0]["stream"], true);
-    assert_eq!(seen[0]["tools"].as_array().unwrap().len(), 4);
+    assert_eq!(seen[0]["tools"].as_array().unwrap().len(), 5);
     let tool_msg = &seen[1]["messages"].as_array().unwrap().last().unwrap().clone();
     assert_eq!(
         (tool_msg["role"].as_str(), tool_msg["content"].as_str()),
