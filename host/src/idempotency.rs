@@ -139,9 +139,10 @@ pub async fn complete(
     let (parts, body) = resp.into_parts();
     let collected_bytes = body.collect().await?.to_bytes();
 
-    if status.is_server_error() {
-        let _ = res.kv.delete(res.bucket, &res.storage_key);
-    } else {
+    // Only cache successful mutations (2xx).
+    // Client errors (400, 401, 403, 404) and server errors (5xx) mean the operation was
+    // not completed or was rejected before execution, and the client must be allowed to retry.
+    if status.is_success() {
         let mut cached_headers = Vec::new();
         for (name, val) in &parts.headers {
             if let Ok(v) = val.to_str() {
@@ -157,6 +158,8 @@ pub async fn complete(
         if let Ok(bytes) = serde_json::to_vec(&completed) {
             let _ = res.kv.set(res.bucket, &res.storage_key, &bytes);
         }
+    } else {
+        let _ = res.kv.delete(res.bucket, &res.storage_key);
     }
 
     let new_body = Full::new(collected_bytes).map_err(|never| match never {}).boxed_unsync();
@@ -220,6 +223,41 @@ mod tests {
                 assert_eq!(&body[..], b"{\"status\":\"paid\"}");
             }
             _ => panic!("expected replay"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_error_status_not_cached_allows_retry() {
+        let kv: Arc<dyn KvBackend> = Arc::new(MemoryKv::default());
+        let bucket = BucketId::for_test("test-app");
+
+        let method = hyper::Method::POST;
+        let mut headers = hyper::HeaderMap::new();
+        headers.insert("idempotency-key", "test-auth-fail".parse().unwrap());
+
+        // 1. First request fails with 401 Unauthorized
+        let check1 = check(&method, &headers, Some(&bucket), &kv).await.unwrap();
+        let res = match check1 {
+            IdempotencyCheck::Proceed(Some(r)) => r,
+            _ => panic!("expected proceed with reservation"),
+        };
+
+        let err_resp = hyper::Response::builder()
+            .status(401)
+            .body(
+                Full::new(Bytes::from_static(b"unauthorized"))
+                    .map_err(|never| match never {})
+                    .boxed_unsync(),
+            )
+            .unwrap();
+        let out_resp = complete(Some(res), err_resp).await.unwrap();
+        assert_eq!(out_resp.status(), 401);
+
+        // 2. Retry with same key now proceeds instead of being locked to 401
+        let check2 = check(&method, &headers, Some(&bucket), &kv).await.unwrap();
+        match check2 {
+            IdempotencyCheck::Proceed(Some(_)) => {}
+            _ => panic!("expected second attempt to proceed after auth failure"),
         }
     }
 }
