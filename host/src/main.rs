@@ -1184,10 +1184,12 @@ async fn main() -> Result<()> {
             let (component, from_cache) =
                 if comp_path.extension().and_then(|e| e.to_str()) == Some("cwasm") {
                     // SAFETY: `deserialize_file` maps precompiled machine code from the local artifact path.
+                    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
                     let c = unsafe { Component::deserialize_file(&engine, comp_path)? };
                     (c, true)
                 } else if cwasm_path.exists() {
                     // SAFETY: `deserialize_file` loads cached AOT machine code previously compiled and serialized by this host.
+                    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
                     match unsafe { Component::deserialize_file(&engine, &cwasm_path) } {
                         Ok(c) => (c, true),
                         Err(_) => {
