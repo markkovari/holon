@@ -21,7 +21,7 @@ cargo build --release -p holon-host -p holon-reconciler    # always name package
 cargo test -p holon-agentd                                 # a bare root build unifies features
                                                            # and drags OpenSSL into everything
 cargo xtask build                    # every component, named and stamped (what CI and comp-plug use)
-components/gates.sh                  # every components/*/gate.sh (needs holon-host, comp-plug, hurl)
+components/gates.sh                  # native Rust gate suites (gate_scaffolds, gate_bytes_codec)
 e2e/run_all.sh [app-domain ...]      # Playwright, offline (mock model, Stripe test key: e2e/e2e.conf)
 cargo test --release -p holon-reconciler --test gate_treasury # reconciler gate/fleet suites need the
                                                                # components built and nats-server on PATH

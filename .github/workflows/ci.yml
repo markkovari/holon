@@ -741,15 +741,6 @@ jobs:
           workspaces: |
             components -> target
             . -> target
-      - name: Install hurl
-        run: |
-          ver=6.1.1
-          dir="hurl-$ver-$(uname -m)-unknown-linux-gnu"
-          mkdir -p "$HOME/.local/bin"
-          curl -fsSL "https://github.com/Orange-OpenSource/hurl/releases/download/$ver/$dir.tar.gz" \
-            | tar xz -C "$HOME/.local/bin" --strip-components=2 "$dir/bin/hurl"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/bin/hurl" --version
       - name: Fetch comp-host
         uses: actions/download-artifact@v8
         with:
@@ -782,8 +773,6 @@ jobs:
             done
           fi
       - name: Every gate
-        env:
-          GATE_SKIP_BUILD: "1"
         run: components/gates.sh
 
   # The ten showcase apps in a browser (e2e/run_all.sh), offline: mock model, Stripe test key.

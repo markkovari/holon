@@ -119,6 +119,22 @@ impl Catalog {
         self.exporters.get(iface).map(String::as_str)
     }
 
+    /// Explicitly select which component exports an interface when multiple candidates exist.
+    pub fn override_exporter(&mut self, iface: &str, component: &str) {
+        let bare = iface.split('@').next().unwrap_or(iface);
+        self.exporters.insert(iface.to_string(), component.to_string());
+        self.exporters.insert(bare.to_string(), component.to_string());
+        let matching: Vec<String> = self
+            .exporters
+            .keys()
+            .filter(|k| k.split('@').next().unwrap_or(k) == bare)
+            .cloned()
+            .collect();
+        for k in matching {
+            self.exporters.insert(k, component.to_string());
+        }
+    }
+
     /// In name order.
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.surfaces.keys().map(String::as_str)
