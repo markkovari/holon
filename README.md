@@ -9,7 +9,7 @@
  ╚═╝  ╚═╝  ╚═════╝  ╚══════╝  ╚═════╝  ╚═╝  ╚═══╝
 ```
 
-<img src="docs/media/holon-mascot.png" alt="Holo the Mascot" width="220" />
+<img src="docs/media/holon-mascot.png" alt="Holo the Mascot" width="260" />
 
 # Welcome to Holon 👋
 
@@ -21,7 +21,7 @@
 [![Components](https://img.shields.io/badge/Components-200%2B-purple)](components/)
 [![Architecture](https://img.shields.io/badge/Docs-ADRs%20(122)-informational)](docs/adr/)
 
-> **Meet Holo!** A *holon* is an entity that is simultaneously a whole and a part of a larger whole (Arthur Koestler's formulation; *holacracy* descends from it). Just like Holo, every component in this repository is complete behind its typed WIT boundary, and an autonomous building block of the applications you compose from it.
+> **Meet Holo!** In natural ecosystems, life organizes in nested wholes: a **cell** is an autonomous metabolic whole, yet an integral part of an **organism**; an organism is a complete individual, yet an integral part of its **species** and living **ecosystem** (Arthur Koestler's formulation of a *holon*). Just like Holo and its nested companions, every WebAssembly component in this repository is complete behind its typed WIT boundary, and an autonomous building block of the applications you compose from it.
 
 </div>
 
