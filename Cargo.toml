@@ -12,6 +12,7 @@ members = [
     "crates/holon-metadata",
     "crates/holon-park",
     "crates/holon-vcs",
+    "crates/holon-voice",
     "host",
     "lattice",
     "reconciler",
