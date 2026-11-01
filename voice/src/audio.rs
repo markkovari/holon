@@ -126,7 +126,16 @@ pub fn start_mic_capture(
                 }
             }
         }
-        found.ok_or_else(|| format!("audio input device containing '{target}' not found"))?
+        if let Some(dev) = found {
+            dev
+        } else {
+            let default_dev = host.default_input_device().ok_or_else(|| {
+                format!("audio input device '{target}' not found and no default audio input device")
+            })?;
+            let fallback_name = default_dev.name().unwrap_or_else(|_| "Default".into());
+            eprintln!("⚠️  Audio device matching '{target}' not found. Falling back to default: '{fallback_name}'.");
+            default_dev
+        }
     } else {
         host.default_input_device()
             .ok_or_else(|| "no default audio input device found".to_string())?

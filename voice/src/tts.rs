@@ -175,12 +175,10 @@ impl CustomCommandTts {
     pub fn new(bin: impl Into<std::path::PathBuf>, voice: impl Into<String>) -> Self {
         Self { bin: bin.into(), voice: voice.into() }
     }
-}
 
-impl SpeechSynthesizer for CustomCommandTts {
-    fn speak(&self, text: &str) -> Result<Box<dyn ActivePlayback>, String> {
+    fn spawn_cmd(&self, voice: &str, text: &str) -> Result<Box<dyn ActivePlayback>, String> {
         let child = Command::new(&self.bin)
-            .arg(&self.voice)
+            .arg(voice)
             .arg(text)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -189,6 +187,21 @@ impl SpeechSynthesizer for CustomCommandTts {
             .map_err(|e| format!("failed to spawn tts {}: {e}", self.bin.display()))?;
 
         Ok(Box::new(ProcessPlayback::new(child)))
+    }
+}
+
+impl SpeechSynthesizer for CustomCommandTts {
+    fn speak(&self, text: &str) -> Result<Box<dyn ActivePlayback>, String> {
+        self.spawn_cmd(&self.voice, text)
+    }
+
+    fn speak_with_persona(
+        &self,
+        persona: &Persona,
+        text: &str,
+    ) -> Result<Box<dyn ActivePlayback>, String> {
+        let voice = if !persona.voice.is_empty() { &persona.voice } else { &self.voice };
+        self.spawn_cmd(voice, text)
     }
 }
 
@@ -336,6 +349,7 @@ impl ActivePlayback for MockPlayback {
 pub struct MockTts {
     spoken: Arc<Mutex<Vec<String>>>,
     personas: Arc<Mutex<Vec<String>>>,
+    voices: Arc<Mutex<Vec<String>>>,
     last_interrupted: Arc<Mutex<bool>>,
     auto_finish_polls: usize,
 }
@@ -349,6 +363,7 @@ impl MockTts {
         Self {
             spoken: Arc::new(Mutex::new(Vec::new())),
             personas: Arc::new(Mutex::new(Vec::new())),
+            voices: Arc::new(Mutex::new(Vec::new())),
             last_interrupted: Arc::new(Mutex::new(false)),
             auto_finish_polls,
         }
@@ -360,6 +375,10 @@ impl MockTts {
 
     pub fn persona_history(&self) -> Vec<String> {
         self.personas.lock().unwrap().clone()
+    }
+
+    pub fn voice_history(&self) -> Vec<String> {
+        self.voices.lock().unwrap().clone()
     }
 
     pub fn was_last_interrupted(&self) -> bool {
@@ -392,6 +411,7 @@ impl SpeechSynthesizer for MockTts {
         text: &str,
     ) -> Result<Box<dyn ActivePlayback>, String> {
         self.personas.lock().unwrap().push(persona.key.clone());
+        self.voices.lock().unwrap().push(persona.voice.clone());
         self.speak(text)
     }
 }

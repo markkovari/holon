@@ -67,6 +67,48 @@ Rowing Coach Daniel: Good catch Sarah. Snack first, then 30 minutes at a 2:15 sp
 }
 
 #[test]
+fn roundtable_multi_agent_consensus_debate_with_kokoro_voices() {
+    let debate_transcript = r#"
+Rowing Coach Daniel: He did a 10k threshold row yesterday.
+Nutritionist Sarah: Have 40 grams of fast carbs before getting on the erg.
+Lead Engineer Oliver: Battery telemetry on the Concept2 PM5 is at 94 percent.
+"#;
+
+    let stt = Arc::new(MockStt::new(vec!["hey holon review team inputs".into()]));
+    let dispatcher = Arc::new(MockDispatcher::new(vec![debate_transcript.into()]));
+    let tts = Arc::new(MockTts::with_auto_finish(1));
+
+    let mut session = VoiceSession::new(
+        VoiceMode::AlwaysListen,
+        "hey holon",
+        "en-US",
+        VadConfig::default(),
+        stt,
+        Arc::clone(&dispatcher) as _,
+        Arc::clone(&tts) as _,
+    );
+    session.set_personas(PersonaRegistry::kokoro_default());
+
+    let dummy_frame = vec![1200i16; 16000];
+    let res = session.handle_utterance(dummy_frame).unwrap();
+    assert!(res.is_some());
+
+    while session.is_playback_active() {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    let spoken = tts.spoken_history();
+    let personas = tts.persona_history();
+    let voices = tts.voice_history();
+
+    assert_eq!(spoken.len(), 3);
+    assert_eq!(personas[0], "rowing");
+    assert_eq!(personas[1], "nutrition");
+    assert!(personas[2] == "coder" || personas[2] == "dev");
+    assert_eq!(voices, vec!["am_adam", "af_sarah", "am_michael"]);
+}
+
+#[test]
 fn roundtable_continuous_speaking_suppresses_redundant_title() {
     let mut tracker = SpeakerTracker::new(Duration::from_secs(10));
     let daniel = Persona::new("rowing", "Rowing Coach Daniel", "Daniel");

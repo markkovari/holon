@@ -178,6 +178,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli.token_file.and_then(|p| std::fs::read_to_string(p).ok().map(|s| s.trim().to_string()))
     });
     let client = Arc::new(RemoteAgentClient::new(&cli.url, &cli.agent, token));
+    let is_kokoro =
+        cli.tts_bin.as_ref().map(|b| b.to_string_lossy().contains("kokoro")).unwrap_or(false);
     let tts: Arc<dyn holon_voice::tts::SpeechSynthesizer> = if let Some(bin) = cli.tts_bin {
         println!("TTS Engine: Custom binary ({})", bin.display());
         Arc::new(holon_voice::tts::CustomCommandTts::new(bin, &cli.voice))
@@ -188,6 +190,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut session =
         VoiceSession::new(mode, &cli.wake_word, &cli.locale, vad_cfg, stt, client, tts);
     session.set_default_agent(&cli.agent);
+    if is_kokoro {
+        session.set_personas(holon_voice::persona::PersonaRegistry::kokoro_default());
+    }
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();

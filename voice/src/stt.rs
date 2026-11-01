@@ -106,6 +106,16 @@ pub fn extract_wake_phrase(transcript: &str, wake_phrase: &str) -> Option<String
             &["hey", "hall", "on"],
             &["hey", "haulin"],
             &["hey", "howlin"],
+            &["okay", "hold", "on"],
+            &["ok", "hold", "on"],
+            &["okay", "holon"],
+            &["ok", "holon"],
+            &["okay", "holland"],
+            &["ok", "holland"],
+            &["they", "hold", "on"],
+            &["they", "holon"],
+            &["they", "holland"],
+            &["the", "hold", "on"],
         ]
     } else if clean_wake == "holon" {
         &[
@@ -157,6 +167,18 @@ mod tests {
         assert_eq!(
             extract_wake_phrase("Hey, hold on, what is the weather today?", "hey holon"),
             Some("what is the weather today".to_string())
+        );
+
+        // Apple Speech phonetic homophone "Okay, hold on"
+        assert_eq!(
+            extract_wake_phrase("Okay, hold on. Analyze my rowing.", "hey holon"),
+            Some("analyze my rowing".to_string())
+        );
+
+        // Apple Speech phonetic homophone "They hold on"
+        assert_eq!(
+            extract_wake_phrase("They hold on, analyze my rowing.", "hey holon"),
+            Some("analyze my rowing".to_string())
         );
 
         // Wake word missing

@@ -122,9 +122,9 @@ impl IntentRouter {
             "workouts",
         ];
 
-        // Token or phrase matching
+        // Token or phrase matching with word-boundary awareness
         for kw in keywords {
-            if lower.contains(kw) {
+            if contains_keyword(lower, kw) {
                 return true;
             }
         }
@@ -148,7 +148,7 @@ impl IntentRouter {
         ];
 
         for kw in keywords {
-            if lower.contains(kw) {
+            if contains_keyword(lower, kw) {
                 return true;
             }
         }
@@ -170,7 +170,7 @@ impl IntentRouter {
         ];
 
         for kw in keywords {
-            if lower.contains(kw) {
+            if contains_keyword(lower, kw) {
                 return true;
             }
         }
@@ -182,11 +182,21 @@ impl IntentRouter {
             ["pull request", "dependabot", "open prs", "merge pr", "github pr", "review pr"];
 
         for kw in keywords {
-            if lower.contains(kw) {
+            if contains_keyword(lower, kw) {
                 return true;
             }
         }
         false
+    }
+}
+
+/// Matches either a multi-word phrase with substring search or a single-word keyword
+/// on exact alphanumeric word token boundaries (preventing false positives like 'tomorrow' matching 'row').
+fn contains_keyword(text: &str, kw: &str) -> bool {
+    if kw.contains(' ') {
+        text.contains(kw)
+    } else {
+        text.split(|c: char| !c.is_alphanumeric()).any(|token| token == kw)
     }
 }
 
@@ -228,6 +238,9 @@ mod tests {
     fn routes_calendar_and_weather_domains() {
         let router = IntentRouter::default();
         let (agent, _) = router.route("What's on my schedule for today?");
+        assert_eq!(agent, "calendar");
+
+        let (agent, _) = router.route("Check my calendar for tomorrow.");
         assert_eq!(agent, "calendar");
 
         let (agent, _) = router.route("Is it raining outside right now?");
