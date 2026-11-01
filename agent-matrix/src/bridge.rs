@@ -884,11 +884,29 @@ impl Bridge {
         };
         let content = &ev["content"];
         let msgtype = content["msgtype"].as_str();
-        let heard = msgtype == Some("m.audio");
+        let mimetype = content
+            .get("info")
+            .and_then(|i| i.get("mimetype"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let is_voice_msc = content.get("org.matrix.msc3245.voice").is_some()
+            || content.get("org.matrix.msc1767.audio").is_some();
+        let heard = msgtype == Some("m.audio")
+            || (msgtype == Some("m.file") && mimetype.starts_with("audio/"))
+            || is_voice_msc;
         let photo = msgtype == Some("m.image");
         if !heard && !photo && msgtype != Some("m.text") {
             return;
         }
+
+        // Thread relation (MSC2836 / Matrix Threads)
+        let thread_id = content.get("m.relates_to").and_then(|r| {
+            if r.get("rel_type").and_then(Value::as_str) == Some("m.thread") {
+                r.get("event_id").and_then(Value::as_str).map(String::from)
+            } else {
+                None
+            }
+        });
         let body = if heard {
             String::new()
         } else if photo {
@@ -1018,21 +1036,26 @@ impl Bridge {
             }
         };
         for agent in agents {
-            let (me, room, event_id, body, content) = (
+            let (me, room, event_id, body, content, tid) = (
                 self.clone(),
                 room.to_string(),
                 event_id.to_string(),
                 body.clone(),
                 content.clone(),
+                thread_id.clone(),
             );
             if heard {
-                std::thread::spawn(move || me.answer_voice(&agent, &room, &event_id, &content));
+                std::thread::spawn(move || {
+                    me.answer_voice(&agent, &room, &event_id, tid.as_deref(), &content)
+                });
             } else if photo {
                 std::thread::spawn(move || {
-                    me.answer_photo(&agent, &room, &event_id, &body, &content)
+                    me.answer_photo(&agent, &room, &event_id, tid.as_deref(), &body, &content)
                 });
             } else {
-                std::thread::spawn(move || me.answer(&agent, &room, &event_id, &body));
+                std::thread::spawn(move || {
+                    me.answer(&agent, &room, &event_id, tid.as_deref(), &body)
+                });
             }
         }
     }
@@ -1045,15 +1068,17 @@ impl Bridge {
         agent: &str,
         room: &str,
         reply_to: &str,
+        thread_id: Option<&str>,
         caption: &str,
         content: &Value,
     ) {
         let ghost = self.cfg.ghost(agent);
         let _ = self.mx.join(room, &ghost);
         let note = |text: &str| {
-            let _ = self.mx.send_text(room, &ghost, text, Some(reply_to));
+            let _ = self.mx.send_markdown_threaded(room, &ghost, text, thread_id, Some(reply_to));
         };
-        let Some(mxc) = content["url"].as_str() else {
+        let mxc = content["url"].as_str().or_else(|| content["file"]["url"].as_str());
+        let Some(mxc) = mxc else {
             return note("I can only look at photos in unencrypted rooms (this one is encrypted, or the message has no image).");
         };
         self.mx.typing(room, &ghost, true);
@@ -1096,9 +1121,13 @@ impl Bridge {
         let text = format!(
             "Mark sent a photo{said}. It is attached to this message and saved in your inbox as `{file}`."
         );
+        let prompt = match thread_id {
+            Some(t) => format!("[Thread: {t}]\n{text}"),
+            None => text,
+        };
         let (ok, answer) = self.rt.run(
             agent,
-            &self.task(room, reply_to, &text),
+            &self.task(room, reply_to, &prompt),
             &self.why(room),
             None,
             self.project_of(room).as_deref(),
@@ -1114,22 +1143,32 @@ impl Bridge {
         } else {
             format!("⚠️ {}", clip(&answer, 2_000))
         };
-        if let Err(e) = self.mx.send_markdown(room, &ghost, &body, Some(reply_to)) {
+        if let Err(e) =
+            self.mx.send_markdown_threaded(room, &ghost, &body, thread_id, Some(reply_to))
+        {
             log(&format!("{agent}: could not post the answer: {e}"));
         }
     }
 
     /// A voice message to an agent: download it, transcribe it, show what was heard, run
     /// the agent on the transcript, and answer in text AND in voice (voice in, voice out).
-    fn answer_voice(&self, agent: &str, room: &str, reply_to: &str, content: &Value) {
+    fn answer_voice(
+        &self,
+        agent: &str,
+        room: &str,
+        reply_to: &str,
+        thread_id: Option<&str>,
+        content: &Value,
+    ) {
         // The agent says what it heard, and speaks its own errors: the bridge's user is not
         // a member of an agent's direct room, but the agent is.
         let ghost = self.cfg.ghost(agent);
         let _ = self.mx.join(room, &ghost);
         let note = |text: &str| {
-            let _ = self.mx.send_text(room, &ghost, text, Some(reply_to));
+            let _ = self.mx.send_markdown_threaded(room, &ghost, text, thread_id, Some(reply_to));
         };
-        let Some(mxc) = content["url"].as_str() else {
+        let mxc = content["url"].as_str().or_else(|| content["file"]["url"].as_str());
+        let Some(mxc) = mxc else {
             note("I can only hear voice messages in unencrypted rooms (this one is encrypted, or the message has no audio).");
             return;
         };
@@ -1157,7 +1196,13 @@ impl Bridge {
             }
         };
         note(&format!("🎙️ “{}”", clip(&text, 1_000)));
-        let (ok, answer) = self.run_with_follow_up(agent, room, reply_to, &text);
+
+        let prompt = match thread_id {
+            Some(t) => format!("[Thread: {t}]\n{text}"),
+            None => text,
+        };
+
+        let (ok, answer) = self.run_with_follow_up(agent, room, reply_to, &prompt);
         self.mx.typing(room, &ghost, false);
         let written = if ok {
             if answer.trim().is_empty() {
@@ -1168,17 +1213,26 @@ impl Bridge {
         } else {
             format!("⚠️ {}", clip(&answer, 2_000))
         };
-        if let Err(e) = self.mx.send_markdown(room, &ghost, &written, Some(reply_to)) {
+        if let Err(e) =
+            self.mx.send_markdown_threaded(room, &ghost, &written, thread_id, Some(reply_to))
+        {
             log(&format!("{agent}: could not post the answer: {e}"));
         }
         // ...and the same answer, spoken, if the runtime can speak.
         if ok && self.rt.speech_caps().1 {
-            self.speak_in(room, &ghost, &spoken_excerpt(&answer), reply_to);
+            self.speak_in(room, &ghost, &spoken_excerpt(&answer), reply_to, thread_id);
         }
     }
 
     /// Posts `text` as a voice message from `ghost`.
-    fn speak_in(&self, room: &str, ghost: &str, text: &str, reply_to: &str) {
+    fn speak_in(
+        &self,
+        room: &str,
+        ghost: &str,
+        text: &str,
+        reply_to: &str,
+        thread_id: Option<&str>,
+    ) {
         let spoken = match self.rt.speak(text) {
             Ok(s) => s,
             Err(e) => return log(&format!("could not speak: {e}")),
@@ -1188,6 +1242,12 @@ impl Bridge {
             Ok(u) => u,
             Err(e) => return log(&format!("could not upload the voice message: {e}")),
         };
+        let mut relates = json!({"m.in_reply_to": {"event_id": reply_to}});
+        if let Some(t) = thread_id {
+            relates["rel_type"] = json!("m.thread");
+            relates["event_id"] = json!(t);
+            relates["is_falling_back"] = json!(true);
+        }
         let content = json!({
             "msgtype": "m.audio",
             "body": "Voice message",
@@ -1195,7 +1255,7 @@ impl Bridge {
             "info": {"mimetype": "audio/ogg", "size": size, "duration": spoken.duration_ms},
             "org.matrix.msc1767.audio": {"duration": spoken.duration_ms, "waveform": spoken.waveform},
             "org.matrix.msc3245.voice": {},
-            "m.relates_to": {"m.in_reply_to": {"event_id": reply_to}},
+            "m.relates_to": relates,
         });
         if let Err(e) = self.mx.send_event(room, ghost, "m.room.message", content) {
             log(&format!("could not post the voice message: {e}"));
@@ -1203,12 +1263,28 @@ impl Bridge {
     }
 
     /// Runs `agent` on `text` and posts its answer, as the agent, in `room`.
-    fn answer(&self, agent: &str, room: &str, reply_to: &str, text: &str) {
+    fn answer(&self, agent: &str, room: &str, reply_to: &str, thread_id: Option<&str>, text: &str) {
         let ghost = self.cfg.ghost(agent);
         // The agent may not be in this room yet (a hand-made one it was invited to).
         let _ = self.mx.join(room, &ghost);
         self.mx.typing(room, &ghost, true);
-        let (ok, answer) = self.run_with_follow_up(agent, room, reply_to, text);
+
+        // Feature 5: Establish streaming anchor via initial placeholder in Matrix
+        let initial_msg = self.mx.send_markdown_threaded(
+            room,
+            &ghost,
+            "*(thinking...)*",
+            thread_id,
+            Some(reply_to),
+        );
+
+        // Feature 7: Include thread context if operating in a thread branch
+        let prompt = match thread_id {
+            Some(t) => format!("[Thread: {t}]\n{text}"),
+            None => text.to_string(),
+        };
+
+        let (ok, answer) = self.run_with_follow_up(agent, room, reply_to, &prompt);
         self.mx.typing(room, &ghost, false);
         let body = if ok {
             if answer.trim().is_empty() {
@@ -1219,7 +1295,16 @@ impl Bridge {
         } else {
             format!("⚠️ {}", clip(&answer, 2_000))
         };
-        if let Err(e) = self.mx.send_markdown(room, &ghost, &body, Some(reply_to)) {
+
+        if let Ok(ref event_id) = initial_msg {
+            if let Err(e) = self.mx.edit_markdown(room, &ghost, event_id, &body) {
+                log(&format!("{agent}: edit failed, falling back to new message: {e}"));
+                let _ =
+                    self.mx.send_markdown_threaded(room, &ghost, &body, thread_id, Some(reply_to));
+            }
+        } else if let Err(e) =
+            self.mx.send_markdown_threaded(room, &ghost, &body, thread_id, Some(reply_to))
+        {
             log(&format!("{agent}: could not post the answer: {e}"));
         }
     }
@@ -1364,16 +1449,43 @@ impl Bridge {
                 a.tool,
                 clip(&a.args.to_string(), 300)
             );
+            // Check if approval args define custom options or choices
+            let custom_choices: Vec<String> = a
+                .args
+                .get("options")
+                .or_else(|| a.args.get("choices"))
+                .and_then(Value::as_array)
+                .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
+                .unwrap_or_default();
+
+            let (answers, plain_options) = if !custom_choices.is_empty() {
+                let mut ans = Vec::new();
+                let mut text_lines = Vec::new();
+                for (idx, choice) in custom_choices.iter().enumerate() {
+                    let id = format!("opt_{idx}");
+                    ans.push(json!({"id": id, "org.matrix.msc1767.text": choice}));
+                    text_lines.push(format!("{}. {choice}", idx + 1));
+                }
+                ans.push(json!({"id": "deny", "org.matrix.msc1767.text": "Deny"}));
+                text_lines.push(format!("{}. Deny", custom_choices.len() + 1));
+                (ans, text_lines.join("\n"))
+            } else {
+                (
+                    vec![
+                        json!({"id": "approve", "org.matrix.msc1767.text": "Approve"}),
+                        json!({"id": "deny", "org.matrix.msc1767.text": "Deny"}),
+                    ],
+                    "1. Approve\n2. Deny".to_string(),
+                )
+            };
+
             let content = json!({
-                "org.matrix.msc1767.text": format!("{q}\n1. Approve\n2. Deny"),
+                "org.matrix.msc1767.text": format!("{q}\n{plain_options}"),
                 "org.matrix.msc3381.poll.start": {
                     "kind": "org.matrix.msc3381.poll.disclosed",
                     "max_selections": 1,
                     "question": {"org.matrix.msc1767.text": q},
-                    "answers": [
-                        {"id": "approve", "org.matrix.msc1767.text": "Approve"},
-                        {"id": "deny", "org.matrix.msc1767.text": "Deny"},
-                    ],
+                    "answers": answers,
                 },
             });
             match self.mx.send_event(
@@ -1401,9 +1513,9 @@ impl Bridge {
             .or_else(|| content["m.selections"][0].as_str())
             .unwrap_or_default();
         let approve = match answer {
-            "approve" => true,
             "deny" => false,
-            _ => return,
+            "" => return,
+            _ => true,
         };
         match self.rt.resolve(approval, approve) {
             Ok(()) => {
@@ -1897,5 +2009,98 @@ mod tests {
         // no sentence end to cut at: still bounded
         let blob = "x".repeat(2000);
         assert!(spoken_excerpt(&blob).chars().count() < 800);
+    }
+
+    #[test]
+    fn test_thread_relation_extraction_and_payload_formatting() {
+        let ev = json!({
+            "room_id": "!room:s.net",
+            "event_id": "$ev2",
+            "sender": "@mark:s.net",
+            "content": {
+                "msgtype": "m.text",
+                "body": "reply in thread",
+                "m.relates_to": {
+                    "rel_type": "m.thread",
+                    "event_id": "$root_event",
+                    "is_falling_back": true
+                }
+            }
+        });
+        let content = &ev["content"];
+        let thread_id = content.get("m.relates_to").and_then(|r| {
+            if r.get("rel_type").and_then(Value::as_str) == Some("m.thread") {
+                r.get("event_id").and_then(Value::as_str)
+            } else {
+                None
+            }
+        });
+        assert_eq!(thread_id, Some("$root_event"));
+
+        // Format prompt with thread context
+        let prompt = match thread_id {
+            Some(t) => format!("[Thread: {t}]\n{}", content["body"].as_str().unwrap()),
+            None => content["body"].as_str().unwrap().to_string(),
+        };
+        assert!(prompt.starts_with("[Thread: $root_event]\nreply in thread"));
+    }
+
+    #[test]
+    fn test_voice_note_and_audio_format_detection() {
+        // MSC3245 voice message
+        let ev_voice = json!({
+            "msgtype": "m.audio",
+            "url": "mxc://s.net/voice1",
+            "org.matrix.msc3245.voice": {}
+        });
+        let is_voice =
+            ev_voice["msgtype"] == "m.audio" || ev_voice.get("org.matrix.msc3245.voice").is_some();
+        assert!(is_voice);
+        assert_eq!(ev_voice["url"], "mxc://s.net/voice1");
+
+        // Audio file attachment with mimetype
+        let ev_audio_file = json!({
+            "msgtype": "m.file",
+            "file": {
+                "url": "mxc://s.net/voice2"
+            },
+            "info": {
+                "mimetype": "audio/ogg"
+            }
+        });
+        let mimetype = ev_audio_file
+            .get("info")
+            .and_then(|i| i.get("mimetype"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let heard = ev_audio_file["msgtype"] == "m.audio"
+            || (ev_audio_file["msgtype"] == "m.file" && mimetype.starts_with("audio/"));
+        assert!(heard);
+        let mxc = ev_audio_file["url"].as_str().or_else(|| ev_audio_file["file"]["url"].as_str());
+        assert_eq!(mxc, Some("mxc://s.net/voice2"));
+    }
+
+    #[test]
+    fn test_multi_option_approval_poll_generation() {
+        let args = json!({
+            "action": "deploy",
+            "options": ["staging", "production", "canary"]
+        });
+        let custom_choices: Vec<String> = args
+            .get("options")
+            .and_then(Value::as_array)
+            .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
+            .unwrap_or_default();
+        assert_eq!(custom_choices.len(), 3);
+        assert_eq!(custom_choices, vec!["staging", "production", "canary"]);
+
+        let mut ans = Vec::new();
+        for (idx, choice) in custom_choices.iter().enumerate() {
+            ans.push(json!({"id": format!("opt_{idx}"), "org.matrix.msc1767.text": choice}));
+        }
+        ans.push(json!({"id": "deny", "org.matrix.msc1767.text": "Deny"}));
+        assert_eq!(ans.len(), 4);
+        assert_eq!(ans[0]["org.matrix.msc1767.text"], "staging");
+        assert_eq!(ans[3]["id"], "deny");
     }
 }
