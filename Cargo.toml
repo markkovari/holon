@@ -21,6 +21,7 @@ members = [
     "reconciler/goal",
     "reconciler/measure",
     "reconciler/oci",
+    "voice",
     "xtask",
 ]
 exclude = ["agent-runtime/gateway", "bench", "components", "examples", "gpui-console", "providers", "tools"]
