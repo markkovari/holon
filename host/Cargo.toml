@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 # PINNED TO 45 BY wrpc-runtime-wasmtime, not by choice.
 # wrpc 0.31 builds against 45 and two wasmtimes mean incompatible types; bump all four together with wrpc.
-wasmtime = { version = "45", features = ["component-model", "async"] }
+wasmtime = { version = "48", features = ["component-model", "async"] }
 # `p3` is opt-in on 45 and implements the `0.3.0-rc-2026-03-15` WIT, so p3 guests build against that rc.
 wasmtime-wasi = { version = "45", features = ["p3"] }
 wasmtime-wasi-http = { version = "45", features = ["p3", "component-model-async"] }
