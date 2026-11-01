@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::audio::write_wav;
 use crate::client::AgentDispatcher;
 use crate::persona::{parse_dialogue_turns, PersonaRegistry, SpeakerTracker};
+use crate::router::IntentRouter;
 use crate::stt::{extract_wake_phrase, SpeechRecognizer};
 use crate::tts::{ActivePlayback, ChainedPlayback, PlaybackAction, SpeechSynthesizer};
 use crate::vad::{VadConfig, VadEvent, VoiceActivityDetector};
@@ -35,6 +36,7 @@ pub struct VoiceSession {
     personas: PersonaRegistry,
     speaker_tracker: SpeakerTracker,
     default_agent: String,
+    router: IntentRouter,
 }
 
 impl VoiceSession {
@@ -66,11 +68,14 @@ impl VoiceSession {
             personas: PersonaRegistry::default(),
             speaker_tracker: SpeakerTracker::default(),
             default_agent: "bot".to_string(),
+            router: IntentRouter::default(),
         }
     }
 
     pub fn set_default_agent(&mut self, agent: impl Into<String>) {
-        self.default_agent = agent.into();
+        let a = agent.into();
+        self.router = IntentRouter::new(&a);
+        self.default_agent = a;
     }
 
     pub fn set_personas(&mut self, personas: PersonaRegistry) {
@@ -225,11 +230,17 @@ impl VoiceSession {
             return Ok(None);
         }
 
+        // Classify intent and route prompt
+        let (target_agent, prompt_to_send) = self.router.route(&query);
+        eprintln!(
+            "🧭 [Intent Router]: Target agent '{target_agent}' for prompt: \"{prompt_to_send}\""
+        );
+
         // Dispatch question to remote Holon agent
-        let answer = self.dispatcher.dispatch_run(&query)?;
+        let answer = self.dispatcher.dispatch_run_for_agent(&target_agent, prompt_to_send)?;
 
         if !answer.trim().is_empty() {
-            let turns = parse_dialogue_turns(&answer, &self.default_agent);
+            let turns = parse_dialogue_turns(&answer, &target_agent);
             let mut actions = std::collections::VecDeque::new();
 
             for turn in turns {

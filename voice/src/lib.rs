@@ -3,6 +3,7 @@
 pub mod audio;
 pub mod client;
 pub mod persona;
+pub mod router;
 pub mod session;
 pub mod stt;
 pub mod tts;

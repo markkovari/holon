@@ -187,6 +187,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut session =
         VoiceSession::new(mode, &cli.wake_word, &cli.locale, vad_cfg, stt, client, tts);
+    session.set_default_agent(&cli.agent);
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
