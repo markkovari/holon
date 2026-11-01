@@ -371,6 +371,64 @@ impl Store {
         Ok(dir)
     }
 
+    /// Isolated ephemeral workspace branch cloned from the current workspace.
+    pub fn workspace_branch(&self, name: &str, branch: &str) -> Result<PathBuf, String> {
+        validate_name(name)?;
+        validate_branch_name(branch)?;
+        let base = self.workspace(name)?;
+        let branch_dir = base.join("_branches").join(branch);
+        if !branch_dir.exists() {
+            fs::create_dir_all(&branch_dir).map_err(|e| e.to_string())?;
+            copy_dir_all(&base, &branch_dir, &["_branches", "inbox"])?;
+        }
+        Ok(branch_dir)
+    }
+
+    /// Commit changes from an ephemeral branch back into the main workspace.
+    pub fn workspace_commit(&self, name: &str, branch: &str) -> Result<usize, String> {
+        validate_name(name)?;
+        validate_branch_name(branch)?;
+        let base = self.workspace(name)?;
+        let branch_dir = base.join("_branches").join(branch);
+        if !branch_dir.exists() {
+            return Err(format!("no branch `{branch}` found"));
+        }
+        let count = copy_dir_all(&branch_dir, &base, &["_branches", "inbox"])?;
+        let _ = fs::remove_dir_all(&branch_dir);
+        Ok(count)
+    }
+
+    /// Discard and delete an ephemeral branch workspace without merging.
+    pub fn workspace_discard(&self, name: &str, branch: &str) -> Result<(), String> {
+        validate_name(name)?;
+        validate_branch_name(branch)?;
+        let base = self.workspace(name)?;
+        let branch_dir = base.join("_branches").join(branch);
+        if branch_dir.exists() {
+            fs::remove_dir_all(&branch_dir).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// List active ephemeral branches for an agent's workspace.
+    pub fn workspace_list_branches(&self, name: &str) -> Result<Vec<String>, String> {
+        validate_name(name)?;
+        let base = self.workspace(name)?;
+        let branches_dir = base.join("_branches");
+        if !branches_dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut list = Vec::new();
+        for entry in fs::read_dir(&branches_dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            if entry.file_type().map_err(|e| e.to_string())?.is_dir() {
+                list.push(entry.file_name().to_string_lossy().into_owned());
+            }
+        }
+        list.sort();
+        Ok(list)
+    }
+
     pub fn save_inbox(&self, name: &str, filename: &str, bytes: &[u8]) -> Result<String, String> {
         const EXTS: [&str; 6] = ["jpg", "jpeg", "png", "webp", "gif", "heic"];
         const MAX: usize = 20 << 20;
@@ -530,6 +588,41 @@ fn read_lines<T: for<'a> Deserialize<'a>>(path: &Path) -> Vec<T> {
         .lines()
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect()
+}
+
+fn validate_branch_name(branch: &str) -> Result<(), String> {
+    if branch.is_empty() {
+        return Err("branch name cannot be empty".into());
+    }
+    if !branch.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(format!(
+            "`{branch}`: branch name must contain only alphanumeric characters, dashes, or underscores"
+        ));
+    }
+    Ok(())
+}
+
+fn copy_dir_all(src: &Path, dst: &Path, skip_names: &[&str]) -> Result<usize, String> {
+    fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+    let mut count = 0;
+    for entry in fs::read_dir(src).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let file_type = entry.file_type().map_err(|e| e.to_string())?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if skip_names.contains(&name_str.as_ref()) {
+            continue;
+        }
+        let src_path = entry.path();
+        let dst_path = dst.join(&name);
+        if file_type.is_dir() {
+            count += copy_dir_all(&src_path, &dst_path, skip_names)?;
+        } else if file_type.is_file() {
+            fs::copy(&src_path, &dst_path).map_err(|e| e.to_string())?;
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 /// Relative, no `..`, and still under `root` after resolving symlinks in the part that exists.
