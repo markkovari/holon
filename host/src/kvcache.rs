@@ -27,25 +27,39 @@ use crate::tenant::BucketId;
 /// full price for every one of them.
 type Entry = (Instant, Option<Vec<u8>>);
 
+struct CacheState {
+    entries: HashMap<String, Entry>,
+    order: std::collections::VecDeque<String>,
+}
+
 pub struct CacheKv {
     inner: Arc<dyn KvBackend>,
     ttl: Duration,
-    entries: Mutex<HashMap<String, Entry>>,
+    max_entries: usize,
+    state: Mutex<CacheState>,
     hits: Mutex<(u64, u64)>,
 }
 
-/// ponytail: one flat map behind one mutex, cleared wholesale when it grows past
-/// this. ADR-0062 measured a working set of 1 951 keys for a whole app, so the cap
-/// is ~50 apps' worth and a clear should be rare. An LRU when a real deployment
-/// says otherwise — and it will say so through this counter, not through a guess.
+/// Bounded FIFO eviction avoids cache stampedes: when capacity is reached, the
+/// oldest entry is evicted to make room rather than clearing the entire map wholesale
+/// and creating a thundering herd against the underlying backend. ADR-0062 measured
+/// a working set of 1 951 keys for a whole app, so the cap is ~50 apps' worth.
 const MAX_ENTRIES: usize = 100_000;
 
 impl CacheKv {
     pub fn wrap(inner: Arc<dyn KvBackend>, ttl_ms: u64) -> Arc<Self> {
+        Self::with_capacity(inner, ttl_ms, MAX_ENTRIES)
+    }
+
+    pub fn with_capacity(inner: Arc<dyn KvBackend>, ttl_ms: u64, max_entries: usize) -> Arc<Self> {
         Arc::new(Self {
             inner,
             ttl: Duration::from_millis(ttl_ms),
-            entries: Mutex::new(HashMap::new()),
+            max_entries,
+            state: Mutex::new(CacheState {
+                entries: HashMap::new(),
+                order: std::collections::VecDeque::new(),
+            }),
             hits: Mutex::new((0, 0)),
         })
     }
@@ -56,22 +70,29 @@ impl CacheKv {
             "comp-host --kv-cache-ms {}: {h} hits, {m} misses ({:.1}% served), {} entries held",
             self.ttl.as_millis(),
             100.0 * h as f64 / (h + m).max(1) as f64,
-            crate::sync::held(&self.entries).len()
+            crate::sync::held(&self.state).entries.len()
         )
     }
 
     fn fresh(&self, id: &str) -> Option<Option<Vec<u8>>> {
-        let entries = crate::sync::held(&self.entries);
-        let (at, v) = entries.get(id)?;
+        let state = crate::sync::held(&self.state);
+        let (at, v) = state.entries.get(id)?;
         (at.elapsed() < self.ttl).then(|| v.clone())
     }
 
     fn store(&self, id: String, v: Option<Vec<u8>>) {
-        let mut entries = crate::sync::held(&self.entries);
-        if entries.len() >= MAX_ENTRIES {
-            entries.clear();
+        let mut state = crate::sync::held(&self.state);
+        if !state.entries.contains_key(&id) {
+            while state.entries.len() >= self.max_entries {
+                if let Some(old_id) = state.order.pop_front() {
+                    state.entries.remove(&old_id);
+                } else {
+                    break;
+                }
+            }
+            state.order.push_back(id.clone());
         }
-        entries.insert(id, (Instant::now(), v));
+        state.entries.insert(id, (Instant::now(), v));
     }
 
     /// A write makes this node's copy wrong, so it goes. Immediately, and before
@@ -79,7 +100,7 @@ impl CacheKv {
     /// servable would break read-your-own-writes on the node that did the writing,
     /// which is the one guarantee this design does keep.
     fn drop_key(&self, id: &str) {
-        crate::sync::held(&self.entries).remove(id);
+        crate::sync::held(&self.state).entries.remove(id);
     }
 }
 
@@ -238,5 +259,50 @@ mod tests {
         assert_eq!(c.get(&b, "gone").unwrap(), None, "a cached miss is an answer, and it holds");
         c.set(&b, "gone", b"mine").unwrap();
         assert_eq!(c.get(&b, "gone").unwrap().as_deref(), Some(&b"mine"[..]));
+    }
+
+    #[test]
+    fn cache_eviction_evicts_oldest_without_clearing_hot_keys() {
+        let inner = Arc::new(MemoryKv::default());
+        let c = CacheKv::with_capacity(inner.clone(), 60_000, 3);
+        let b = BucketId::for_test("b");
+
+        // Seed 3 keys directly in inner store
+        inner.set(&b, "k1", b"v1").unwrap();
+        inner.set(&b, "k2", b"v2").unwrap();
+        inner.set(&b, "k3", b"v3").unwrap();
+        inner.set(&b, "k4", b"v4").unwrap();
+
+        // Populate cache for k1, k2, k3
+        assert_eq!(c.get(&b, "k1").unwrap().as_deref(), Some(&b"v1"[..]));
+        assert_eq!(c.get(&b, "k2").unwrap().as_deref(), Some(&b"v2"[..]));
+        assert_eq!(c.get(&b, "k3").unwrap().as_deref(), Some(&b"v3"[..]));
+
+        // Mutate inner directly behind the cache's back
+        inner.set(&b, "k1", b"v1_mutated").unwrap();
+        inner.set(&b, "k2", b"v2_mutated").unwrap();
+        inner.set(&b, "k3", b"v3_mutated").unwrap();
+
+        // Accessing k4 pushes cache beyond capacity (cap 3) -> should evict k1 (oldest)
+        assert_eq!(c.get(&b, "k4").unwrap().as_deref(), Some(&b"v4"[..]));
+
+        // k2 and k3 MUST STILL BE HOT in cache (returning original v2 and v3, not mutated)
+        assert_eq!(
+            c.get(&b, "k2").unwrap().as_deref(),
+            Some(&b"v2"[..]),
+            "k2 must remain in cache without getting wiped"
+        );
+        assert_eq!(
+            c.get(&b, "k3").unwrap().as_deref(),
+            Some(&b"v3"[..]),
+            "k3 must remain in cache without getting wiped"
+        );
+
+        // k1 was evicted when k4 was stored, so reading k1 hits inner and gets the mutated value
+        assert_eq!(
+            c.get(&b, "k1").unwrap().as_deref(),
+            Some(&b"v1_mutated"[..]),
+            "k1 should have been evicted and re-fetched"
+        );
     }
 }
