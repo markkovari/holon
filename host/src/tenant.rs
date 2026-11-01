@@ -325,6 +325,7 @@ pub struct Scope {
     pub links: BTreeMap<String, InstanceId>,
     pub mem_cap: usize,
     pub slice_ms: u64,
+    pub request_timeout_ms: u64,
 }
 
 impl Scope {
@@ -485,6 +486,7 @@ fn one() -> u32 {
 pub struct Limits {
     pub mem_cap: usize,
     pub slice_ms: u64,
+    pub request_timeout_ms: u64,
     pub allow_private_egress: bool,
     pub denied_addrs: Vec<SocketAddr>,
 }
@@ -518,6 +520,7 @@ impl StartCommand {
             links: self.links,
             mem_cap: limits.mem_cap,
             slice_ms: limits.slice_ms,
+            request_timeout_ms: limits.request_timeout_ms,
             tenant: self.tenant,
             app: self.app,
             component: self.component,
@@ -554,6 +557,7 @@ mod tests {
         Limits {
             mem_cap: 64 << 20,
             slice_ms: 50,
+            request_timeout_ms: 30_000,
             allow_private_egress: false,
             denied_addrs: vec![],
         }
@@ -811,5 +815,28 @@ mod tests {
             HeaderValue::from_str(&format!("Bearer {fake_jwt}")).unwrap(),
         );
         assert_eq!(extract_ambient_tenant(&headers), Some("jwt-tenant-9".to_string()));
+    }
+
+    #[test]
+    fn scope_inherits_request_timeout_from_limits() {
+        let mut custom_limits = limits();
+        custom_limits.request_timeout_ms = 12_500;
+        let s = StartCommand {
+            secrets: Default::default(),
+            fetch_token: String::new(),
+            tenant: "tenant-timeout".into(),
+            app: "app-timeout".into(),
+            component: "comp-timeout".into(),
+            digest: "sha256:a".into(),
+            count: 1,
+            config: BTreeMap::new(),
+            links: BTreeMap::new(),
+            host_needs: vec![],
+            egress: vec![],
+            ingress_host: None,
+        }
+        .into_scope(&custom_limits);
+
+        assert_eq!(s.request_timeout_ms, 12_500);
     }
 }

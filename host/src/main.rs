@@ -26,6 +26,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
+use http_body_util::BodyExt;
 use hyper::server::conn::http1;
 use hyper_util::rt::TokioIo;
 use wasmtime::component::{Component, HasSelf, Linker, Resource, ResourceTable};
@@ -121,9 +122,9 @@ impl wasmtime_wasi_http::handler::HandlerState for P3Stores {
             write_profile: Box::new(|_| {}),
         })
     }
-    // ponytail: no per-request wall-clock timeout, as on p2; add one if a hung guest shows up.
+    // Per-request wall-clock timeout from the component's scope.
     fn request_timeout(&self) -> std::time::Duration {
-        std::time::Duration::MAX
+        std::time::Duration::from_millis(self.scope.request_timeout_ms)
     }
     // `wasmtime serve`'s p3 defaults.
     fn idle_instance_timeout(&self) -> std::time::Duration {
@@ -902,6 +903,9 @@ struct Args {
     /// Fairness, not a request timeout.
     #[arg(long, default_value = "50")]
     slice_ms: u64,
+    /// Per-request wall-clock timeout in seconds.
+    #[arg(long, default_value = "30")]
+    request_timeout_secs: u64,
 
     /// Join a lattice at this NATS URL and take instances from start commands instead of `--component`.
     #[arg(long)]
@@ -1128,6 +1132,7 @@ async fn main() -> Result<()> {
     let limits = Limits {
         mem_cap: args.mem_cap_mb << 20,
         slice_ms: args.slice_ms,
+        request_timeout_ms: args.request_timeout_secs.saturating_mul(1000),
         allow_private_egress: args.allow_private_egress,
         // Never this host's own listener; the socket, not the IP, so colocated services stay reachable.
         denied_addrs: vec![addr],
@@ -1538,6 +1543,7 @@ async fn handle_request(
             instance.scope.id()
         ),
         Some(HttpPre::P3(pre, handler)) => {
+            let timeout = std::time::Duration::from_millis(active_scope.request_timeout_ms);
             let handler = handler.get_or_init(|| {
                 wasmtime_wasi_http::handler::ProxyHandler::new(
                     P3Stores {
@@ -1551,7 +1557,7 @@ async fn handle_request(
                     wasmtime_wasi_http::handler::ProxyPre::P3(pre.clone()),
                 )
             });
-            let mut resp = handle_request_p3(handler, req, active_scope).await?;
+            let mut resp = handle_request_p3(handler, req, active_scope, timeout).await?;
             if let Some(ref t) = ambient_tenant {
                 if let Ok(v) = hyper::header::HeaderValue::from_str(t) {
                     resp.headers_mut().insert("x-ambient-tenant", v);
@@ -1561,6 +1567,7 @@ async fn handle_request(
         }
         Some(HttpPre::P2(pre)) => pre,
     };
+    let timeout = std::time::Duration::from_millis(active_scope.request_timeout_ms);
     let mut store = store_for(
         &engine,
         active_scope,
@@ -1580,13 +1587,26 @@ async fn handle_request(
         proxy.wasi_http_incoming_handler().call_handle(&mut store, req, out).await
     });
 
-    let mut resp = match receiver.await {
-        Ok(Ok(resp)) => resp,
-        Ok(Err(e)) => return Err(e.into()),
-        Err(_) => {
+    let mut resp = match tokio::time::timeout(timeout, receiver).await {
+        Ok(Ok(Ok(resp))) => resp,
+        Ok(Ok(Err(e))) => return Err(e.into()),
+        Ok(Err(_)) => {
             // the sender was dropped without a response -> the guest trapped.
             let err = task.await.unwrap().unwrap_err();
             return Err(anyhow::anyhow!("guest never produced a response: {err:?}"));
+        }
+        Err(_) => {
+            let mut resp = hyper::Response::new(
+                http_body_util::Full::new(bytes::Bytes::from_static(b"gateway timeout\n"))
+                    .map_err(|never| match never {})
+                    .boxed_unsync(),
+            );
+            *resp.status_mut() = hyper::StatusCode::GATEWAY_TIMEOUT;
+            resp.headers_mut().insert(
+                hyper::header::CONTENT_TYPE,
+                hyper::header::HeaderValue::from_static("text/plain"),
+            );
+            resp
         }
     };
     if let Some(ref t) = ambient_tenant {
@@ -1604,6 +1624,7 @@ async fn handle_request_p3(
     handler: &P3Handler,
     req: hyper::Request<hyper::body::Incoming>,
     scope: SharedScope,
+    timeout: std::time::Duration,
 ) -> Result<hyper::Response<HyperOutgoingBody>> {
     use http_body_util::BodyExt;
     use wasmtime_wasi_http::handler::Proxy;
@@ -1646,8 +1667,8 @@ async fn handle_request_p3(
             })
         }),
     );
-    match rx.await {
-        Ok(res) => Ok(res.map(|b| {
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(res)) => Ok(res.map(|b| {
             b.map_err(|e| {
                 wasmtime_wasi_http::p2::bindings::http::types::ErrorCode::InternalError(Some(
                     format!("{e:?}"),
@@ -1655,7 +1676,22 @@ async fn handle_request_p3(
             })
             .boxed_unsync()
         })),
-        Err(_) => Err(anyhow::anyhow!("guest never produced a response: {:?}", err_rx.await.ok())),
+        Ok(Err(_)) => {
+            Err(anyhow::anyhow!("guest never produced a response: {:?}", err_rx.await.ok()))
+        }
+        Err(_) => {
+            let mut resp = hyper::Response::new(
+                http_body_util::Full::new(bytes::Bytes::from_static(b"gateway timeout\n"))
+                    .map_err(|never| match never {})
+                    .boxed_unsync(),
+            );
+            *resp.status_mut() = hyper::StatusCode::GATEWAY_TIMEOUT;
+            resp.headers_mut().insert(
+                hyper::header::CONTENT_TYPE,
+                hyper::header::HeaderValue::from_static("text/plain"),
+            );
+            Ok(resp)
+        }
     }
 }
 
