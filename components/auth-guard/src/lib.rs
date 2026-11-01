@@ -198,7 +198,8 @@ fn resolve_principal_doc(token: &str) -> Result<(Principal, store::RbacDoc), Aut
         // Roles are re-resolved per check, so a grant after login takes effect at once.
         let doc = match store::rbac_load(&p.tenant) {
             Ok(doc) => {
-                p.roles = doc.roles_of(&p.subject);
+                p.roles = store::rbac_roles_for(&p.tenant, &p.subject)
+                    .unwrap_or_else(|_| doc.roles_of(&p.subject));
                 doc
             }
             // kv hiccup: role grants deny against the empty doc; scope grants still work.
@@ -209,7 +210,8 @@ fn resolve_principal_doc(token: &str) -> Result<(Principal, store::RbacDoc), Aut
     let claims = jwt_verify::verify(token)?;
     let tenant = claims_tenant(&claims);
     let doc = store::rbac_load(&tenant).unwrap_or_default();
-    let roles = doc.roles_of(&claims.sub);
+    let roles = store::rbac_roles_for(&tenant, &claims.sub)
+        .unwrap_or_else(|_| doc.roles_of(&claims.sub));
     Ok((
         Principal {
             subject: claims.sub,

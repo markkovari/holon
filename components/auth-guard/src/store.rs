@@ -171,8 +171,11 @@ pub fn session_lookup(session_id: &str) -> Result<Principal, AuthError> {
     Ok(dto.into())
 }
 
-// All of a tenant's RBAC is one kv value, so authorize is one round trip, not 2+N.
-// ponytail: split per subject if a tenant's subject count makes the value heavy.
+// Per-subject indexing (`rbac:{tenant}:sub:{subject}`) splits user role assignments out
+// of the monolithic tenant document (`rbac:{tenant}`). This eliminates write amplification
+// and cross-subject serialization contention, allowing thousands of subjects per tenant
+// to be updated independently without lock or CAS conflicts, while falling back to the
+// tenant doc for backward compatibility.
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct RbacDoc {
@@ -190,6 +193,22 @@ fn rbac_key(tenant: &str) -> String {
     format!("rbac:{tenant}")
 }
 
+fn rbac_subject_key(tenant: &str, subject: &str) -> String {
+    format!("rbac:{tenant}:sub:{subject}")
+}
+
+fn rbac_subject_load(tenant: &str, subject: &str) -> Result<Option<Vec<String>>, AuthError> {
+    match kv::get(&rbac_subject_key(tenant, subject))? {
+        Some(body) => serde_json::from_str(&body).map_err(json_err).map(Some),
+        None => Ok(None),
+    }
+}
+
+fn rbac_subject_store(tenant: &str, subject: &str, roles: &[String]) -> Result<(), AuthError> {
+    let body = serde_json::to_string(roles).map_err(json_err)?;
+    kv::set(&rbac_subject_key(tenant, subject), &body)
+}
+
 pub fn rbac_load(tenant: &str) -> Result<RbacDoc, AuthError> {
     match kv::get(&rbac_key(tenant))? {
         Some(body) => serde_json::from_str(&body).map_err(json_err),
@@ -203,6 +222,9 @@ fn rbac_store(tenant: &str, doc: &RbacDoc) -> Result<(), AuthError> {
 }
 
 pub fn rbac_roles_for(tenant: &str, subject: &str) -> Result<Vec<String>, AuthError> {
+    if let Some(roles) = rbac_subject_load(tenant, subject)? {
+        return Ok(roles);
+    }
     Ok(rbac_load(tenant)?.roles_of(subject))
 }
 
@@ -235,24 +257,20 @@ pub fn rbac_set_role_permissions(
 }
 
 pub fn rbac_assign_role(tenant: &str, subject: &str, role: &str) -> Result<(), AuthError> {
-    let mut doc = rbac_load(tenant)?;
-    let roles = doc.subjects.entry(subject.to_string()).or_default();
+    let mut roles = rbac_roles_for(tenant, subject)?;
     if !roles.iter().any(|r| r == role) {
         roles.push(role.to_string());
-        rbac_store(tenant, &doc)?;
+        rbac_subject_store(tenant, subject, &roles)?;
     }
     Ok(())
 }
 
 pub fn rbac_revoke_role(tenant: &str, subject: &str, role: &str) -> Result<(), AuthError> {
-    let mut doc = rbac_load(tenant)?;
-    let Some(roles) = doc.subjects.get_mut(subject) else {
-        return Ok(());
-    };
+    let mut roles = rbac_roles_for(tenant, subject)?;
     let before = roles.len();
     roles.retain(|r| r != role);
     if roles.len() != before {
-        rbac_store(tenant, &doc)?;
+        rbac_subject_store(tenant, subject, &roles)?;
     }
     Ok(())
 }
@@ -316,5 +334,14 @@ mod tests {
     #[test]
     fn wildcard_does_not_widen_the_other_field() {
         assert!(!perm_matches(&perm("*", "read"), &perm("orders", "write")));
+    }
+
+    #[test]
+    fn rbac_doc_roles_of_and_subject_keys() {
+        let mut doc = RbacDoc::default();
+        doc.subjects.insert("alice".into(), vec!["admin".into(), "user".into()]);
+        assert_eq!(doc.roles_of("alice"), vec!["admin".to_string(), "user".to_string()]);
+        assert_eq!(doc.roles_of("bob"), Vec::<String>::new());
+        assert_eq!(rbac_subject_key("t1", "alice"), "rbac:t1:sub:alice");
     }
 }
