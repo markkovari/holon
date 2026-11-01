@@ -6,13 +6,13 @@
 //! object `{"tool": "...", "args": {...}}` to act, or with plain text to
 //! finish. Everything is bounded: steps, tokens per run, tokens per day.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
 use crate::kv::{Entry, Put};
 use crate::model::{Msg, Reply, Usage};
-use crate::spec::{glob_match, validate_topic, AgentSpec, Trigger};
+use crate::spec::{glob_match, validate_topic, AgentSpec, Capability, Trigger};
 use crate::store::{confine, RunRecord, Status, Step, Store};
 use crate::trace::{new_span_id, new_trace_id};
 
@@ -44,6 +44,10 @@ pub struct Cause {
     /// asked for inside it, a message in its room. The agent must be a member to be woken
     /// for it, and a reminder it sets keeps it.
     pub project: Option<String>,
+    /// Ephemeral taskforce identifier when operating as part of a task force sub-assembly.
+    pub taskforce: Option<String>,
+    /// Attenuated / delegated capabilities granted dynamically by the caller for this turn.
+    pub delegated_capabilities: Vec<Capability>,
 }
 
 /// A spawned task's state, as `task_result` reports it.
@@ -262,14 +266,32 @@ const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "spawn_task",
-        args: r#"{"agent": "...", "message": "..."}"#,
-        about: "Start another agent on a task without waiting. Returns a task id.",
+        args: r#"{"agent": "...", "message": "...", "delegated_capabilities": ["..."]}"#,
+        about: "Start another agent on a task without waiting. Returns a task id. Optional `delegated_capabilities` passes escrowed capabilities.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "spawn_task_force",
+        args: r#"{"taskforce": "...", "objective": "...", "agents": ["..."]}"#,
+        about: "Assemble an ephemeral task force of specialist agents sharing an isolated namespace (`taskforce.<name>`). Returns task force status and child task IDs.",
         sensitive: false,
     },
     ToolDef {
         name: "task_result",
         args: r#"{"id": "..."}"#,
         about: "Check on a task you started: running, or its answer.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "await_all",
+        args: r#"{"tasks": ["task-1", "task-2"], "timeout_secs": 20}"#,
+        about: "Wait for multiple asynchronous tasks to finish at a barrier. Returns their completed answers.",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "store_crdt",
+        args: r#"{"ns": "<store>", "key": "...", "op": "add|remove|increment|read", "item": "...", "delta": 1}"#,
+        about: "Perform a conflict-free CRDT update (add/remove for set, increment for counter, read) on a shared blackboard key.",
         sensitive: false,
     },
     ToolDef {
@@ -395,7 +417,10 @@ fn required(name: &str) -> &'static [&'static str] {
         "store_list" => &["ns"],
         "schedule_self" => &["prompt"],
         "spawn_task" => &["agent", "message"],
+        "spawn_task_force" => &["taskforce", "objective"],
         "task_result" => &["id"],
+        "await_all" => &["tasks"],
+        "store_crdt" => &["ns", "key", "op"],
         "session_start" => &["task"],
         "transcribe" => &["path"],
         "speak" => &["text"],
@@ -426,6 +451,9 @@ fn primary(name: &str) -> Option<&'static str> {
         "store_get" | "store_list" => Some("ns"),
         "schedule_self" => Some("prompt"),
         "task_result" => Some("id"),
+        "await_all" => Some("tasks"),
+        "spawn_task_force" => Some("objective"),
+        "store_crdt" => Some("key"),
         "session_start" => Some("task"),
         "session_result" | "session_close" => Some("session"),
         "agent_show"
@@ -765,12 +793,17 @@ fn arg(args: &Value, k: &str) -> String {
 }
 
 /// Resolves a namespace the model named: `private` is this agent's own and is
-/// always allowed; anything else must be granted in the spec's `store`.
-fn resolve_ns(spec: &AgentSpec, ns: &str, write: bool) -> Result<String, String> {
+/// always allowed; anything else must be granted in the spec's `store` or active taskforce.
+fn resolve_ns(spec: &AgentSpec, ns: &str, write: bool, cause: &Cause) -> Result<String, String> {
     if ns == "private" {
         return Ok(format!("private-{}", spec.name));
     }
     validate_topic(ns)?;
+    if let Some(ref tf) = cause.taskforce {
+        if ns == format!("taskforce.{tf}") {
+            return Ok(ns.to_string());
+        }
+    }
     let allowed = if write {
         spec.store.write.iter().any(|n| n == ns)
     } else {
@@ -790,6 +823,102 @@ fn resolve_ns(spec: &AgentSpec, ns: &str, write: bool) -> Result<String, String>
             if write { "write" } else { "read" },
             may.iter().map(|n| format!(", {n}")).collect::<String>()
         ))
+    }
+}
+
+fn format_crdt_read(key: &str, raw: &str) -> String {
+    if let Ok(val) = serde_json::from_str::<Value>(raw) {
+        if val.get("type").and_then(Value::as_str) == Some("set") {
+            if let Some(items) = val.get("items").and_then(Value::as_array) {
+                let list: Vec<String> =
+                    items.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+                return format!("{key}: set of {} items: [{}]", list.len(), list.join(", "));
+            }
+        } else if val.get("type").and_then(Value::as_str) == Some("counter") {
+            if let Some(c) = val.get("count").and_then(Value::as_i64) {
+                return format!("{key}: count is {c}");
+            }
+        }
+    }
+    format!("{key}: {raw}")
+}
+
+fn apply_crdt_op(
+    existing: Option<&str>,
+    op: &str,
+    item: Option<&str>,
+    delta: i64,
+) -> Result<(String, String), String> {
+    match op {
+        "add" => {
+            let item = item.ok_or_else(|| "`item` is required for CRDT add".to_string())?;
+            let mut set: std::collections::BTreeSet<String> = existing
+                .and_then(|s| serde_json::from_str::<Value>(s).ok())
+                .and_then(|v| {
+                    if v.get("type").and_then(Value::as_str) == Some("set") {
+                        v.get("items").and_then(Value::as_array).map(|arr| {
+                            arr.iter().filter_map(|x| x.as_str().map(String::from)).collect()
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
+            set.insert(item.to_string());
+            let items_vec: Vec<String> = set.into_iter().collect();
+            let json = serde_json::json!({
+                "type": "set",
+                "items": items_vec,
+            });
+            let summary = format!("item `{item}` added to set ({} items total)", items_vec.len());
+            Ok((json.to_string(), summary))
+        }
+        "remove" => {
+            let item = item.ok_or_else(|| "`item` is required for CRDT remove".to_string())?;
+            let mut set: std::collections::BTreeSet<String> = existing
+                .and_then(|s| serde_json::from_str::<Value>(s).ok())
+                .and_then(|v| {
+                    if v.get("type").and_then(Value::as_str) == Some("set") {
+                        v.get("items").and_then(Value::as_array).map(|arr| {
+                            arr.iter().filter_map(|x| x.as_str().map(String::from)).collect()
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
+            set.remove(item);
+            let items_vec: Vec<String> = set.into_iter().collect();
+            let json = serde_json::json!({
+                "type": "set",
+                "items": items_vec,
+            });
+            let summary =
+                format!("item `{item}` removed from set ({} items total)", items_vec.len());
+            Ok((json.to_string(), summary))
+        }
+        "increment" => {
+            let current = existing
+                .and_then(|s| serde_json::from_str::<Value>(s).ok())
+                .and_then(|v| {
+                    if v.get("type").and_then(Value::as_str) == Some("counter") {
+                        v.get("count").and_then(Value::as_i64)
+                    } else {
+                        v.as_i64()
+                    }
+                })
+                .unwrap_or(0);
+            let new_count = current.saturating_add(delta);
+            let json = serde_json::json!({
+                "type": "counter",
+                "count": new_count,
+            });
+            let summary = format!("count changed by {delta} to {new_count}");
+            Ok((json.to_string(), summary))
+        }
+        other => {
+            Err(format!("unknown crdt op `{other}`; expected add, remove, increment, or read"))
+        }
     }
 }
 
@@ -917,7 +1046,7 @@ fn exec(
             Ok(format!("emitted {topic}; {woken} agent(s) will be woken"))
         }
         "store_get" => {
-            let ns = resolve_ns(spec, &arg(args, "ns"), false)?;
+            let ns = resolve_ns(spec, &arg(args, "ns"), false, cause)?;
             let key = arg(args, "key");
             Ok(match host.kv_get(&ns, &key)? {
                 Some(e) => entry_text(&key, &e),
@@ -925,7 +1054,7 @@ fn exec(
             })
         }
         "store_list" => {
-            let ns = resolve_ns(spec, &arg(args, "ns"), false)?;
+            let ns = resolve_ns(spec, &arg(args, "ns"), false, cause)?;
             let rows = host.kv_list(&ns, &arg(args, "prefix"))?;
             Ok(if rows.is_empty() {
                 "no keys".into()
@@ -934,7 +1063,7 @@ fn exec(
             })
         }
         "store_put" => {
-            let ns = resolve_ns(spec, &arg(args, "ns"), true)?;
+            let ns = resolve_ns(spec, &arg(args, "ns"), true, cause)?;
             let if_version = args.get("if_version").and_then(Value::as_u64);
             let put = host.kv_put(
                 &spec.name,
@@ -950,6 +1079,53 @@ fn exec(
                 format!("unchanged; changed: false, version: {}", put.version)
             })
         }
+        "store_crdt" => {
+            let op = arg(args, "op");
+            let write = op != "read";
+            let ns = resolve_ns(spec, &arg(args, "ns"), write, cause)?;
+            let key = arg(args, "key");
+            let item = args.get("item").and_then(Value::as_str);
+            let delta = args.get("delta").and_then(Value::as_i64).unwrap_or(1);
+
+            if (op == "add" || op == "remove") && item.is_none() {
+                return Err("`item` is required for CRDT add and remove operations".into());
+            }
+
+            if op == "read" {
+                let entry = host.kv_get(&ns, &key)?;
+                return Ok(match entry {
+                    Some(e) => format_crdt_read(&key, &e.value),
+                    None => format!("{key} is not set"),
+                });
+            }
+
+            let mut attempts = 0;
+            loop {
+                attempts += 1;
+                let entry = host.kv_get(&ns, &key)?;
+                let existing = entry.as_ref().map(|e| e.value.as_str());
+                let if_version = entry.as_ref().map(|e| e.version);
+                let (new_val, summary) = apply_crdt_op(existing, &op, item, delta)?;
+                match host.kv_put(&spec.name, &ns, &key, &new_val, if_version, cause) {
+                    Ok(put) => {
+                        return Ok(format!(
+                            "crdt {op} applied to {ns}:{key} (v{}): {summary}",
+                            put.version
+                        ));
+                    }
+                    Err(e)
+                        if attempts < 5
+                            && (e.contains("version")
+                                || e.contains("conflict")
+                                || e.contains("CAS")) =>
+                    {
+                        std::thread::sleep(Duration::from_millis(10 * attempts));
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
         "schedule_self" => {
             let secs = args.get("in_secs").and_then(Value::as_u64).unwrap_or(60);
             host.schedule_self(&spec.name, secs, &arg(args, "prompt"), cause)?;
@@ -962,8 +1138,63 @@ fn exec(
                     "you may only start agents you have `agent:<name>` for; not `{target}`"
                 ));
             }
-            let id = host.spawn_task(&spec.name, &target, &arg(args, "message"), cause)?;
-            Ok(format!("task {id} started; check it later with task_result"))
+            let mut child_cause = Cause { hops: cause.hops + 1, ..cause.clone() };
+            if let Some(caps) = args.get("delegated_capabilities").and_then(Value::as_array) {
+                for c in caps {
+                    if let Some(cap_name) = c.as_str() {
+                        if !spec.has_capability(cap_name) {
+                            return Err(format!(
+                                "cannot delegate `{cap_name}`: caller does not hold this capability"
+                            ));
+                        }
+                        child_cause.delegated_capabilities.push(Capability::named(cap_name));
+                    }
+                }
+            }
+            let id = host.spawn_task(&spec.name, &target, &arg(args, "message"), &child_cause)?;
+            Ok(format!("task {id} started; check it later with task_result or await_all"))
+        }
+        "spawn_task_force" => {
+            let tf_name = arg(args, "taskforce");
+            validate_topic(&tf_name)?;
+            let objective = arg(args, "objective");
+            let agents: Vec<String> = match args.get("agents") {
+                Some(Value::Array(arr)) => {
+                    arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+                }
+                Some(Value::String(s)) => {
+                    s.split([',', ' ']).filter(|x| !x.is_empty()).map(String::from).collect()
+                }
+                _ => return Err("`agents` must be an array of agent names".into()),
+            };
+            if agents.is_empty() {
+                return Err("`agents` cannot be empty".into());
+            }
+            for a in &agents {
+                if !spec.has_capability(&format!("agent:{a}")) {
+                    return Err(format!(
+                        "you may only include agents you have `agent:<name>` for; not `{a}`"
+                    ));
+                }
+            }
+            let budget = args.get("budget").and_then(Value::as_u64);
+            let mut spawned = Vec::new();
+            for a in &agents {
+                let child_cause = Cause {
+                    hops: cause.hops + 1,
+                    taskforce: Some(tf_name.clone()),
+                    budget,
+                    ..cause.clone()
+                };
+                let msg = format!("[Task Force: {tf_name}]\nObjective: {objective}\nShared store: taskforce.{tf_name}");
+                let tid = host.spawn_task(&spec.name, a, &msg, &child_cause)?;
+                spawned.push(tid);
+            }
+            Ok(format!(
+                "task force {tf_name} assembled with {} agents: task IDs [{}] sharing store `taskforce.{tf_name}`",
+                agents.len(),
+                spawned.join(", ")
+            ))
         }
         "task_result" => Ok(match host.task_result(&arg(args, "id")) {
             None => return Err("no such task".into()),
@@ -971,6 +1202,62 @@ fn exec(
             Some(TaskState::Done { ok: true, answer }) => format!("done: {answer}"),
             Some(TaskState::Done { ok: false, answer }) => format!("failed: {answer}"),
         }),
+        "await_all" => {
+            let task_ids: Vec<String> = match args.get("tasks") {
+                Some(Value::Array(arr)) => {
+                    arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+                }
+                Some(Value::String(s)) => {
+                    s.split([',', ' ']).filter(|x| !x.is_empty()).map(String::from).collect()
+                }
+                _ => return Err("`tasks` must be an array of task ids".into()),
+            };
+            if task_ids.is_empty() {
+                return Err("`tasks` array cannot be empty".into());
+            }
+            let timeout = Duration::from_secs(
+                args.get("timeout_secs").and_then(Value::as_u64).unwrap_or(20).min(60),
+            );
+            let start = Instant::now();
+            let mut results: std::collections::BTreeMap<String, String> =
+                std::collections::BTreeMap::new();
+            loop {
+                for id in &task_ids {
+                    if results.contains_key(id) {
+                        continue;
+                    }
+                    if let Some(state) = host.task_result(id) {
+                        match state {
+                            TaskState::Done { ok: true, answer } => {
+                                results.insert(id.clone(), format!("done: {answer}"));
+                            }
+                            TaskState::Done { ok: false, answer } => {
+                                results.insert(id.clone(), format!("failed: {answer}"));
+                            }
+                            TaskState::Running => {}
+                        }
+                    } else {
+                        results.insert(id.clone(), "not found".into());
+                    }
+                }
+                if results.len() == task_ids.len() || start.elapsed() >= timeout {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let mut out = Vec::new();
+            for id in &task_ids {
+                let status =
+                    results.get(id).map(|s| s.as_str()).unwrap_or("timed out (still running)");
+                out.push(format!("- {id}: {status}"));
+            }
+            Ok(format!(
+                "await_all finished ({}/{} complete):\n{}",
+                results.len(),
+                task_ids.len(),
+                out.join("\n")
+            ))
+        }
         "session_start" => {
             let id = host.session_start(
                 spec,
@@ -1165,8 +1452,21 @@ fn exec(
         }
         other => match other.strip_prefix("agent:") {
             Some(target) => {
+                let mut child_cause = Cause { hops: cause.hops + 1, ..cause.clone() };
+                if let Some(caps) = args.get("delegated_capabilities").and_then(Value::as_array) {
+                    for c in caps {
+                        if let Some(cap_name) = c.as_str() {
+                            if !spec.has_capability(cap_name) {
+                                return Err(format!(
+                                    "cannot delegate `{cap_name}`: caller does not hold this capability"
+                                ));
+                            }
+                            child_cause.delegated_capabilities.push(Capability::named(cap_name));
+                        }
+                    }
+                }
                 let (answer, spent) =
-                    host.call_agent(&spec.name, target, &arg(args, "message"), cause)?;
+                    host.call_agent(&spec.name, target, &arg(args, "message"), &child_cause)?;
                 *child_tokens += spent;
                 Ok(answer)
             }
@@ -1437,6 +1737,7 @@ pub fn run(
                         ),
                         project: cause.project.clone(),
                         attachments: Vec::new(),
+                        ..cause.clone()
                     };
                     match exec(host, spec, &run_id, &name, &args, &me, &mut child_tokens) {
                         Ok(r) => (r, false, needs.then_some(true)),
