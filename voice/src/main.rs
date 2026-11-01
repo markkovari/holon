@@ -88,7 +88,7 @@ fn resolve_stt_bin(configured: Option<PathBuf>) -> Result<PathBuf, String> {
     if swift_src.exists() {
         let out_dir = std::env::var_os("HOME")
             .map(|h| PathBuf::from(h).join(".cache/holon"))
-            .unwrap_or_else(std::env::temp_dir);
+            .unwrap_or_else(|| PathBuf::from("."));
         let _ = std::fs::create_dir_all(&out_dir);
         let out_bin = out_dir.join("holon-stt");
 

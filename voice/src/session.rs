@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::audio::write_wav;
@@ -32,7 +31,6 @@ pub struct VoiceSession {
     state: SessionState,
     wake_word_active: bool,
     active_playback: Option<Box<dyn ActivePlayback>>,
-    temp_dir: PathBuf,
 }
 
 impl VoiceSession {
@@ -61,7 +59,6 @@ impl VoiceSession {
             state: initial_state,
             wake_word_active: false,
             active_playback: None,
-            temp_dir: std::env::temp_dir(),
         }
     }
 
@@ -130,12 +127,17 @@ impl VoiceSession {
 
         self.state = SessionState::Processing;
 
-        // Persist audio to temporary WAV for local STT recognizer
-        let wav_path = self.temp_dir.join(format!("holon-voice-{}.wav", std::process::id()));
-        write_wav(&samples, 16000, &wav_path)?;
+        // Persist audio to secure temporary WAV for local STT recognizer
+        let temp_wav = tempfile::Builder::new()
+            .prefix("holon-voice-")
+            .suffix(".wav")
+            .tempfile()
+            .map_err(|e| format!("failed to create temporary audio file: {e}"))?;
+        let wav_path = temp_wav.path();
+        write_wav(&samples, 16000, wav_path)?;
 
-        let transcript = self.stt.transcribe(&wav_path, &self.locale)?;
-        let _ = std::fs::remove_file(&wav_path);
+        let transcript = self.stt.transcribe(wav_path, &self.locale)?;
+        let _ = temp_wav.close();
 
         let query = if self.mode == VoiceMode::AlwaysListen {
             if !self.wake_word_active {

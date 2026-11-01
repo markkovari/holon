@@ -2,8 +2,16 @@ use std::path::Path;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
+#[cfg(target_os = "macos")]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+#[cfg(target_os = "macos")]
 use cpal::{SampleFormat, Stream};
+
+#[cfg(target_os = "macos")]
+pub struct AudioStream(#[allow(dead_code)] Stream);
+
+#[cfg(not(target_os = "macos"))]
+pub struct AudioStream;
 
 /// Calculates RMS energy of 16-bit PCM samples normalized to 0.0..1.0.
 pub fn rms_energy(samples: &[i16]) -> f32 {
@@ -99,7 +107,11 @@ impl AudioCollector {
 }
 
 /// Starts capturing microphone input and delivers 16kHz mono PCM frames.
-pub fn start_mic_capture(target_sample_rate: u32, tx: Sender<Vec<i16>>) -> Result<Stream, String> {
+#[cfg(target_os = "macos")]
+pub fn start_mic_capture(
+    target_sample_rate: u32,
+    tx: Sender<Vec<i16>>,
+) -> Result<AudioStream, String> {
     let host = cpal::default_host();
     let device = host
         .default_input_device()
@@ -157,7 +169,15 @@ pub fn start_mic_capture(target_sample_rate: u32, tx: Sender<Vec<i16>>) -> Resul
     };
 
     stream.play().map_err(|e| format!("failed to start audio stream: {e}"))?;
-    Ok(stream)
+    Ok(AudioStream(stream))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn start_mic_capture(
+    _target_sample_rate: u32,
+    _tx: Sender<Vec<i16>>,
+) -> Result<AudioStream, String> {
+    Err("microphone capture is supported on macOS CoreAudio".to_string())
 }
 
 #[cfg(test)]
