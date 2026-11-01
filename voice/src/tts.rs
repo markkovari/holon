@@ -1,6 +1,8 @@
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
+use crate::persona::Persona;
+
 pub trait ActivePlayback: Send {
     fn is_active(&mut self) -> bool;
     fn wait(&mut self) -> Result<(), String>;
@@ -9,6 +11,14 @@ pub trait ActivePlayback: Send {
 
 pub trait SpeechSynthesizer: Send + Sync {
     fn speak(&self, text: &str) -> Result<Box<dyn ActivePlayback>, String>;
+
+    fn speak_with_persona(
+        &self,
+        _persona: &Persona,
+        text: &str,
+    ) -> Result<Box<dyn ActivePlayback>, String> {
+        self.speak(text)
+    }
 }
 
 pub struct ProcessPlayback {
@@ -18,6 +28,63 @@ pub struct ProcessPlayback {
 impl ProcessPlayback {
     pub fn new(child: Child) -> Self {
         Self { child: Some(child) }
+    }
+}
+
+pub type PlaybackAction = Box<dyn FnMut() -> Result<Box<dyn ActivePlayback>, String> + Send>;
+
+pub struct ChainedPlayback {
+    current: Option<Box<dyn ActivePlayback>>,
+    queue: std::collections::VecDeque<PlaybackAction>,
+}
+
+impl ChainedPlayback {
+    pub fn new(mut queue: std::collections::VecDeque<PlaybackAction>) -> Result<Self, String> {
+        let current = if let Some(mut first) = queue.pop_front() { Some(first()?) } else { None };
+        Ok(Self { current, queue })
+    }
+}
+
+impl ActivePlayback for ChainedPlayback {
+    fn is_active(&mut self) -> bool {
+        loop {
+            if let Some(current) = self.current.as_mut() {
+                if current.is_active() {
+                    return true;
+                }
+            }
+            if let Some(mut next_fn) = self.queue.pop_front() {
+                match next_fn() {
+                    Ok(next_playback) => {
+                        self.current = Some(next_playback);
+                    }
+                    Err(_) => {
+                        self.current = None;
+                        return false;
+                    }
+                }
+            } else {
+                self.current = None;
+                return false;
+            }
+        }
+    }
+
+    fn wait(&mut self) -> Result<(), String> {
+        while self.is_active() {
+            if let Some(current) = self.current.as_mut() {
+                current.wait()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Result<(), String> {
+        self.queue.clear();
+        if let Some(mut current) = self.current.take() {
+            current.stop()?;
+        }
+        Ok(())
     }
 }
 
@@ -64,21 +131,38 @@ impl MacSayTts {
     pub fn new(voice: impl Into<String>) -> Self {
         Self { voice: voice.into() }
     }
+
+    fn spawn_say(
+        &self,
+        voice: &str,
+        rate: Option<u32>,
+        text: &str,
+    ) -> Result<Box<dyn ActivePlayback>, String> {
+        let mut cmd = Command::new("/usr/bin/say");
+        cmd.arg("-v").arg(voice);
+        if let Some(r) = rate {
+            cmd.arg("-r").arg(r.to_string());
+        }
+        cmd.arg(text);
+        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+
+        let child = cmd.spawn().map_err(|e| format!("failed to spawn say: {e}"))?;
+        Ok(Box::new(ProcessPlayback::new(child)))
+    }
 }
 
 impl SpeechSynthesizer for MacSayTts {
     fn speak(&self, text: &str) -> Result<Box<dyn ActivePlayback>, String> {
-        let child = Command::new("/usr/bin/say")
-            .arg("-v")
-            .arg(&self.voice)
-            .arg(text)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| format!("failed to spawn say: {e}"))?;
+        self.spawn_say(&self.voice, None, text)
+    }
 
-        Ok(Box::new(ProcessPlayback::new(child)))
+    fn speak_with_persona(
+        &self,
+        persona: &Persona,
+        text: &str,
+    ) -> Result<Box<dyn ActivePlayback>, String> {
+        let voice = if !persona.voice.is_empty() { &persona.voice } else { &self.voice };
+        self.spawn_say(voice, persona.rate, text)
     }
 }
 
@@ -217,11 +301,24 @@ fn is_emoji_or_symbol(c: char) -> bool {
 pub struct MockPlayback {
     active: Arc<Mutex<bool>>,
     interrupted: Arc<Mutex<bool>>,
+    auto_finish_count: Arc<Mutex<usize>>,
 }
 
 impl ActivePlayback for MockPlayback {
     fn is_active(&mut self) -> bool {
-        *self.active.lock().unwrap()
+        let mut active = self.active.lock().unwrap();
+        if !*active {
+            return false;
+        }
+        let mut remaining = self.auto_finish_count.lock().unwrap();
+        if *remaining > 0 {
+            *remaining -= 1;
+            if *remaining == 0 {
+                *active = false;
+                return false;
+            }
+        }
+        *active
     }
 
     fn wait(&mut self) -> Result<(), String> {
@@ -238,19 +335,31 @@ impl ActivePlayback for MockPlayback {
 
 pub struct MockTts {
     spoken: Arc<Mutex<Vec<String>>>,
+    personas: Arc<Mutex<Vec<String>>>,
     last_interrupted: Arc<Mutex<bool>>,
+    auto_finish_polls: usize,
 }
 
 impl MockTts {
     pub fn new() -> Self {
+        Self::with_auto_finish(0)
+    }
+
+    pub fn with_auto_finish(auto_finish_polls: usize) -> Self {
         Self {
             spoken: Arc::new(Mutex::new(Vec::new())),
+            personas: Arc::new(Mutex::new(Vec::new())),
             last_interrupted: Arc::new(Mutex::new(false)),
+            auto_finish_polls,
         }
     }
 
     pub fn spoken_history(&self) -> Vec<String> {
         self.spoken.lock().unwrap().clone()
+    }
+
+    pub fn persona_history(&self) -> Vec<String> {
+        self.personas.lock().unwrap().clone()
     }
 
     pub fn was_last_interrupted(&self) -> bool {
@@ -269,7 +378,21 @@ impl SpeechSynthesizer for MockTts {
         self.spoken.lock().unwrap().push(text.to_string());
         *self.last_interrupted.lock().unwrap() = false;
         let active = Arc::new(Mutex::new(true));
-        Ok(Box::new(MockPlayback { active, interrupted: Arc::clone(&self.last_interrupted) }))
+        let auto_finish_count = Arc::new(Mutex::new(self.auto_finish_polls));
+        Ok(Box::new(MockPlayback {
+            active,
+            interrupted: Arc::clone(&self.last_interrupted),
+            auto_finish_count,
+        }))
+    }
+
+    fn speak_with_persona(
+        &self,
+        persona: &Persona,
+        text: &str,
+    ) -> Result<Box<dyn ActivePlayback>, String> {
+        self.personas.lock().unwrap().push(persona.key.clone());
+        self.speak(text)
     }
 }
 

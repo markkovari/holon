@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use crate::audio::write_wav;
 use crate::client::AgentDispatcher;
+use crate::persona::{parse_dialogue_turns, PersonaRegistry, SpeakerTracker};
 use crate::stt::{extract_wake_phrase, SpeechRecognizer};
-use crate::tts::{ActivePlayback, SpeechSynthesizer};
+use crate::tts::{ActivePlayback, ChainedPlayback, PlaybackAction, SpeechSynthesizer};
 use crate::vad::{VadConfig, VadEvent, VoiceActivityDetector};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +32,9 @@ pub struct VoiceSession {
     state: SessionState,
     wake_word_active: bool,
     active_playback: Option<Box<dyn ActivePlayback>>,
+    personas: PersonaRegistry,
+    speaker_tracker: SpeakerTracker,
+    default_agent: String,
 }
 
 impl VoiceSession {
@@ -59,7 +63,26 @@ impl VoiceSession {
             state: initial_state,
             wake_word_active: false,
             active_playback: None,
+            personas: PersonaRegistry::default(),
+            speaker_tracker: SpeakerTracker::default(),
+            default_agent: "bot".to_string(),
         }
+    }
+
+    pub fn set_default_agent(&mut self, agent: impl Into<String>) {
+        self.default_agent = agent.into();
+    }
+
+    pub fn set_personas(&mut self, personas: PersonaRegistry) {
+        self.personas = personas;
+    }
+
+    pub fn personas(&self) -> &PersonaRegistry {
+        &self.personas
+    }
+
+    pub fn speaker_tracker_mut(&mut self) -> &mut SpeakerTracker {
+        &mut self.speaker_tracker
     }
 
     pub fn state(&self) -> SessionState {
@@ -94,6 +117,7 @@ impl VoiceSession {
         self.vad.set_playback_active(false);
         self.wake_word_active = true;
         self.state = SessionState::Listening;
+        self.speaker_tracker.reset();
         Ok(())
     }
 
@@ -205,11 +229,34 @@ impl VoiceSession {
         let answer = self.dispatcher.dispatch_run(&query)?;
 
         if !answer.trim().is_empty() {
-            let spoken_text = crate::tts::sanitize_for_speech(&answer);
-            let playback = self.tts.speak(&spoken_text)?;
-            self.active_playback = Some(playback);
-            self.vad.set_playback_active(true);
-            self.state = SessionState::Speaking;
+            let turns = parse_dialogue_turns(&answer, &self.default_agent);
+            let mut actions = std::collections::VecDeque::new();
+
+            for turn in turns {
+                let persona = self.personas.resolve(&turn.speaker).clone();
+                let sanitized = crate::tts::sanitize_for_speech(&turn.text);
+                let (spoken_text, _is_new) =
+                    self.speaker_tracker.format_speech(&persona, &sanitized);
+                if spoken_text.trim().is_empty() {
+                    continue;
+                }
+
+                let tts = Arc::clone(&self.tts);
+                actions.push_back(Box::new(move || tts.speak_with_persona(&persona, &spoken_text))
+                    as PlaybackAction);
+            }
+
+            if !actions.is_empty() {
+                let playback = ChainedPlayback::new(actions)?;
+                self.active_playback = Some(Box::new(playback));
+                self.vad.set_playback_active(true);
+                self.state = SessionState::Speaking;
+            } else {
+                self.state = match self.mode {
+                    VoiceMode::PushToTalk => SessionState::Listening,
+                    VoiceMode::AlwaysListen => SessionState::WaitingWakeWord,
+                };
+            }
         } else {
             self.state = match self.mode {
                 VoiceMode::PushToTalk => SessionState::Listening,
