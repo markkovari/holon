@@ -139,11 +139,16 @@ impl VoiceSession {
         let transcript = self.stt.transcribe(wav_path, &self.locale)?;
         let _ = temp_wav.close();
 
+        if !transcript.trim().is_empty() {
+            eprintln!("🎤 [Speech Recognizer Heard]: \"{transcript}\"");
+        }
+
         let query = if self.mode == VoiceMode::AlwaysListen {
             if !self.wake_word_active {
                 match extract_wake_phrase(&transcript, &self.wake_phrase) {
                     Some(rest) => {
                         self.wake_word_active = true;
+                        eprintln!("⚡ [Wake Word Matched!]: Processing prompt...");
                         if rest.trim().is_empty() {
                             self.state = SessionState::Listening;
                             return Ok(Some(format!(
@@ -155,6 +160,10 @@ impl VoiceSession {
                     }
                     None => {
                         self.state = SessionState::WaitingWakeWord;
+                        eprintln!(
+                            "⏳ [Wake Word Missing]: Heard \"{transcript}\" (waiting for '{}')",
+                            self.wake_phrase
+                        );
                         return Ok(None);
                     }
                 }

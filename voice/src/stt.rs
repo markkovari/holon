@@ -69,7 +69,7 @@ fn clean_token(s: &str) -> String {
         .to_lowercase()
 }
 
-/// Detects if the transcript begins with or contains the wake phrase.
+/// Detects if the transcript begins with or contains the wake phrase or known phonetic variants.
 /// Returns Some(rest_of_query) if wake word is found, or None.
 pub fn extract_wake_phrase(transcript: &str, wake_phrase: &str) -> Option<String> {
     let clean_transcript = clean_token(transcript);
@@ -82,14 +82,37 @@ pub fn extract_wake_phrase(transcript: &str, wake_phrase: &str) -> Option<String
         return Some(transcript.trim().to_string());
     }
 
+    // Direct exact match
     if let Some(pos) =
         parts.windows(wake_parts.len()).position(|window| window == wake_parts.as_slice())
     {
         let rest_words: Vec<&str> = parts[pos + wake_parts.len()..].to_vec();
-        Some(rest_words.join(" "))
-    } else {
-        None
+        return Some(rest_words.join(" "));
     }
+
+    // Phonetic tolerance for "holon": Apple Speech on macOS often recognizes "holon"
+    // as "hold on", "holden", "colon", "whole on", "holan", etc.
+    if clean_wake == "hey holon" || clean_wake == "holon" {
+        let variants: &[&[&str]] = &[
+            &["hey", "hold", "on"],
+            &["hey", "holden"],
+            &["hey", "colon"],
+            &["hey", "whole", "on"],
+            &["hey", "holan"],
+            &["hey", "hall", "on"],
+            &["hold", "on"],
+            &["holon"],
+            &["holden"],
+        ];
+        for variant in variants {
+            if let Some(pos) = parts.windows(variant.len()).position(|window| window == *variant) {
+                let rest_words: Vec<&str> = parts[pos + variant.len()..].to_vec();
+                return Some(rest_words.join(" "));
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -110,6 +133,12 @@ mod tests {
         assert_eq!(
             extract_wake_phrase("umm hey holon deploy the cluster now", "hey holon"),
             Some("deploy the cluster now".to_string())
+        );
+
+        // Apple Speech phonetic homophone "Hey, hold on"
+        assert_eq!(
+            extract_wake_phrase("Hey, hold on, what is the weather today?", "hey holon"),
+            Some("what is the weather today".to_string())
         );
 
         // Wake word missing

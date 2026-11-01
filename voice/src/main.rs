@@ -4,10 +4,10 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::channel;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
-use holon_voice::audio::start_mic_capture;
+use holon_voice::audio::{rms_energy, start_mic_capture};
 use holon_voice::client::RemoteAgentClient;
 use holon_voice::session::{VoiceMode, VoiceSession};
 use holon_voice::stt::CommandStt;
@@ -49,13 +49,17 @@ struct Cli {
     #[arg(long)]
     stt_bin: Option<PathBuf>,
 
-    /// Audio energy detection threshold for VAD (0.01 - 0.10)
-    #[arg(long, default_value_t = 0.035)]
+    /// Audio energy detection threshold for VAD (0.005 - 0.050)
+    #[arg(long, default_value_t = 0.018)]
     energy_threshold: f32,
 
     /// Silence duration in milliseconds to end utterance
     #[arg(long, default_value_t = 1000)]
     silence_ms: u64,
+
+    /// Enable live audio level meter output in console
+    #[arg(long, default_value_t = false)]
+    meter: bool,
 }
 
 fn resolve_stt_bin(configured: Option<PathBuf>) -> Result<PathBuf, String> {
@@ -66,16 +70,17 @@ fn resolve_stt_bin(configured: Option<PathBuf>) -> Result<PathBuf, String> {
         return Err(format!("specified stt binary not found: {}", p.display()));
     }
 
-    // Check common search paths
-    let candidates =
-        [PathBuf::from("./holon-stt"), PathBuf::from("agent-runtime/speech/holon-stt")];
+    let candidates = [
+        PathBuf::from("/Users/markkovari/.holon-agents/holon-stt"),
+        PathBuf::from("./holon-stt"),
+        PathBuf::from("agent-runtime/speech/holon-stt"),
+    ];
     for c in &candidates {
         if c.exists() {
             return Ok(c.clone());
         }
     }
 
-    // Try ~/.cache/holon/holon-stt
     if let Some(home) = std::env::var_os("HOME") {
         let cached = PathBuf::from(home).join(".cache/holon/holon-stt");
         if cached.exists() {
@@ -83,7 +88,6 @@ fn resolve_stt_bin(configured: Option<PathBuf>) -> Result<PathBuf, String> {
         }
     }
 
-    // Attempt compiling from agent-runtime/speech/holon-stt.swift if available
     let swift_src = Path::new("agent-runtime/speech/holon-stt.swift");
     if swift_src.exists() {
         let out_dir = std::env::var_os("HOME")
@@ -123,7 +127,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Connecting to remote Holon runtime: {} (agent: {})", cli.url, cli.agent);
 
     let stt_bin = match resolve_stt_bin(cli.stt_bin) {
-        Ok(b) => b,
+        Ok(b) => {
+            println!("STT Engine: Apple Neural Engine ({})", b.display());
+            b
+        }
         Err(e) => {
             eprintln!("Warning: STT binary resolution: {e}");
             eprintln!("Running with fallback stt placeholder for setup verification.");
@@ -166,9 +173,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map_err(|e| format!("failed to start microphone capture: {e}"))?;
 
         let mut frame_buf = Vec::new();
+        let mut last_meter = Instant::now();
+        let mut max_energy: f32 = 0.0;
+        let mut voice_active = false;
+
         while running.load(Ordering::SeqCst) {
             match rx.recv_timeout(Duration::from_millis(50)) {
                 Ok(samples) => {
+                    let energy = rms_energy(&samples);
+                    if energy > max_energy {
+                        max_energy = energy;
+                    }
+
+                    if energy >= cli.energy_threshold {
+                        if !voice_active {
+                            voice_active = true;
+                            eprintln!("🎙️  [VAD: User voice detected (energy: {:.3})]...", energy);
+                        }
+                    } else if voice_active && energy < cli.energy_threshold / 2.0 {
+                        voice_active = false;
+                    }
+
+                    if cli.meter && last_meter.elapsed() >= Duration::from_secs(2) {
+                        eprintln!(
+                            "📊 [Mic Meter]: peak RMS={:.4} (threshold={:.3})",
+                            max_energy, cli.energy_threshold
+                        );
+                        max_energy = 0.0;
+                        last_meter = Instant::now();
+                    }
+
                     frame_buf.extend_from_slice(&samples);
                     while frame_buf.len() >= 320 {
                         let frame: Vec<i16> = frame_buf.drain(..320).collect();
