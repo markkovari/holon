@@ -82,6 +82,32 @@ impl SpeechSynthesizer for MacSayTts {
     }
 }
 
+pub struct CustomCommandTts {
+    bin: std::path::PathBuf,
+    voice: String,
+}
+
+impl CustomCommandTts {
+    pub fn new(bin: impl Into<std::path::PathBuf>, voice: impl Into<String>) -> Self {
+        Self { bin: bin.into(), voice: voice.into() }
+    }
+}
+
+impl SpeechSynthesizer for CustomCommandTts {
+    fn speak(&self, text: &str) -> Result<Box<dyn ActivePlayback>, String> {
+        let child = Command::new(&self.bin)
+            .arg(&self.voice)
+            .arg(text)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("failed to spawn tts {}: {e}", self.bin.display()))?;
+
+        Ok(Box::new(ProcessPlayback::new(child)))
+    }
+}
+
 pub struct MockPlayback {
     active: Arc<Mutex<bool>>,
     interrupted: Arc<Mutex<bool>>,

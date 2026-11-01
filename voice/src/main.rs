@@ -29,6 +29,10 @@ struct Cli {
     #[arg(short, long, env = "HOLON_TOKEN")]
     token: Option<String>,
 
+    /// Path to file containing bearer auth token
+    #[arg(long)]
+    token_file: Option<PathBuf>,
+
     /// Always-listen mode with wake-word detection (continuous duplex)
     #[arg(long, default_value_t = false)]
     always_listen: bool,
@@ -48,6 +52,10 @@ struct Cli {
     /// Path to compiled speech-to-text binary (holon-stt)
     #[arg(long)]
     stt_bin: Option<PathBuf>,
+
+    /// Path to custom text-to-speech binary (<bin> <voice> <text>)
+    #[arg(long)]
+    tts_bin: Option<PathBuf>,
 
     /// Audio energy detection threshold for VAD (0.005 - 0.050)
     #[arg(long, default_value_t = 0.018)]
@@ -166,8 +174,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mode = if cli.always_listen { VoiceMode::AlwaysListen } else { VoiceMode::PushToTalk };
 
     let stt = Arc::new(CommandStt::new(stt_bin));
-    let client = Arc::new(RemoteAgentClient::new(&cli.url, &cli.agent, cli.token));
-    let tts = Arc::new(MacSayTts::new(&cli.voice));
+    let token = cli.token.or_else(|| {
+        cli.token_file.and_then(|p| std::fs::read_to_string(p).ok().map(|s| s.trim().to_string()))
+    });
+    let client = Arc::new(RemoteAgentClient::new(&cli.url, &cli.agent, token));
+    let tts: Arc<dyn holon_voice::tts::SpeechSynthesizer> = if let Some(bin) = cli.tts_bin {
+        println!("TTS Engine: Custom binary ({})", bin.display());
+        Arc::new(holon_voice::tts::CustomCommandTts::new(bin, &cli.voice))
+    } else {
+        Arc::new(MacSayTts::new(&cli.voice))
+    };
 
     let mut session =
         VoiceSession::new(mode, &cli.wake_word, &cli.locale, vad_cfg, stt, client, tts);
