@@ -91,16 +91,22 @@ pub fn extract_wake_phrase(transcript: &str, wake_phrase: &str) -> Option<String
     }
 
     // Phonetic tolerance for "holon": Apple Speech on macOS often recognizes "holon"
-    // as "hold on", "holden", "colon", "whole on", "holan", etc.
+    // as "hold on", "holland", "a holland", "holum", "j holum", "holden", "colon", "whole on", "holan", etc.
     if clean_wake == "hey holon" || clean_wake == "holon" {
         let variants: &[&[&str]] = &[
             &["hey", "hold", "on"],
+            &["hey", "holland"],
+            &["hey", "holum"],
             &["hey", "holden"],
             &["hey", "colon"],
             &["hey", "whole", "on"],
             &["hey", "holan"],
             &["hey", "hall", "on"],
+            &["a", "holland"],
+            &["j", "holum"],
             &["hold", "on"],
+            &["holland"],
+            &["holum"],
             &["holon"],
             &["holden"],
         ];

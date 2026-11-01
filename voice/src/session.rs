@@ -169,7 +169,7 @@ impl VoiceSession {
                 }
             } else if let Some(rest) = extract_wake_phrase(&transcript, &self.wake_phrase) {
                 if rest.trim().is_empty() {
-                    return Ok(None);
+                    return Ok(Some("Still listening for your question...".to_string()));
                 }
                 rest
             } else {
