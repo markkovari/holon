@@ -110,20 +110,41 @@ impl AudioCollector {
 #[cfg(target_os = "macos")]
 pub fn start_mic_capture(
     target_sample_rate: u32,
+    device_name: Option<&str>,
     tx: Sender<Vec<i16>>,
 ) -> Result<AudioStream, String> {
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| "no default audio input device found".to_string())?;
+    let device = if let Some(target) = device_name {
+        let mut found = None;
+        if let Ok(devices) = host.input_devices() {
+            for d in devices {
+                if let Ok(name) = d.name() {
+                    if name.to_lowercase().contains(&target.to_lowercase()) {
+                        found = Some(d);
+                        break;
+                    }
+                }
+            }
+        }
+        found.ok_or_else(|| format!("audio input device containing '{target}' not found"))?
+    } else {
+        host.default_input_device()
+            .ok_or_else(|| "no default audio input device found".to_string())?
+    };
 
+    let dev_name = device.name().unwrap_or_else(|_| "Unknown Device".to_string());
     let default_config = device
         .default_input_config()
-        .map_err(|e| format!("failed to get default input config: {e}"))?;
+        .map_err(|e| format!("failed to get default input config for '{dev_name}': {e}"))?;
 
     let channels = default_config.channels() as usize;
     let sample_rate = default_config.sample_rate().0;
     let format = default_config.sample_format();
+
+    eprintln!(
+        "🎤 Active Audio Device: '{}' ({} channels @ {} Hz, format: {:?})",
+        dev_name, channels, sample_rate, format
+    );
 
     let err_fn = |err| eprintln!("audio input error: {err}");
 
@@ -136,7 +157,16 @@ pub fn start_mic_capture(
                     move |data: &[f32], _| {
                         let mono: Vec<i16> = data
                             .chunks(channels)
-                            .map(|c| (c[0].clamp(-1.0, 1.0) * 32767.0) as i16)
+                            .map(|c| {
+                                let best = c.iter().copied().fold(0.0f32, |best, s| {
+                                    if s.abs() > best.abs() {
+                                        s
+                                    } else {
+                                        best
+                                    }
+                                });
+                                (best.clamp(-1.0, 1.0) * 32767.0) as i16
+                            })
                             .collect();
                         let resampled = resample_linear(&mono, sample_rate, target_sample_rate);
                         if !resampled.is_empty() {
@@ -154,7 +184,18 @@ pub fn start_mic_capture(
                 .build_input_stream(
                     &default_config.into(),
                     move |data: &[i16], _| {
-                        let mono: Vec<i16> = data.chunks(channels).map(|c| c[0]).collect();
+                        let mono: Vec<i16> = data
+                            .chunks(channels)
+                            .map(|c| {
+                                c.iter().copied().fold(0i16, |best, s| {
+                                    if (s as i32).abs() > (best as i32).abs() {
+                                        s
+                                    } else {
+                                        best
+                                    }
+                                })
+                            })
+                            .collect();
                         let resampled = resample_linear(&mono, sample_rate, target_sample_rate);
                         if !resampled.is_empty() {
                             let _ = tx.send(resampled);
@@ -175,6 +216,7 @@ pub fn start_mic_capture(
 #[cfg(not(target_os = "macos"))]
 pub fn start_mic_capture(
     _target_sample_rate: u32,
+    _device_name: Option<&str>,
     _tx: Sender<Vec<i16>>,
 ) -> Result<AudioStream, String> {
     Err("microphone capture is supported on macOS CoreAudio".to_string())

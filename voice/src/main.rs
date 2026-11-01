@@ -57,6 +57,10 @@ struct Cli {
     #[arg(long, default_value_t = 1000)]
     silence_ms: u64,
 
+    /// Specific audio input device name substring (e.g. 'Scarlett', 'iPhone')
+    #[arg(long)]
+    device: Option<String>,
+
     /// Enable live audio level meter output in console
     #[arg(long, default_value_t = false)]
     meter: bool,
@@ -169,7 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cli.wake_word
         );
         let (tx, rx) = channel::<Vec<i16>>();
-        let _stream = start_mic_capture(16000, tx)
+        let _stream = start_mic_capture(16000, cli.device.as_deref(), tx)
             .map_err(|e| format!("failed to start microphone capture: {e}"))?;
 
         let mut frame_buf = Vec::new();
@@ -231,7 +235,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             println!("* Recording... Press [ENTER] to stop *");
             let (tx, rx) = channel::<Vec<i16>>();
-            let _stream = start_mic_capture(16000, tx)
+            let _stream = start_mic_capture(16000, cli.device.as_deref(), tx)
                 .map_err(|e| format!("failed to start microphone capture: {e}"))?;
 
             let mut recorded = Vec::new();
