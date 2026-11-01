@@ -572,6 +572,22 @@ impl Runtime {
         let directory: Vec<(String, String)> =
             self.store.list().into_iter().map(|a| (a.name, a.description)).collect();
         let mut spec = crate::projects::effective(&spec, &self.store.list_projects(), &directory);
+        if let Some(ref tf) = cause.taskforce {
+            let tf_ns = format!("taskforce.{tf}");
+            if !spec.store.write.contains(&tf_ns) {
+                spec.store.write.push(tf_ns);
+            }
+            for tool in ["store_get", "store_put", "store_list", "store_crdt"] {
+                if !spec.has_capability(tool) {
+                    spec.capabilities.push(crate::spec::Capability::named(tool));
+                }
+            }
+        }
+        for cap in &cause.delegated_capabilities {
+            if !spec.has_capability(&cap.name) {
+                spec.capabilities.push(cap.clone());
+            }
+        }
         let dir = self.store.connectors_dir();
         for c in spec.capabilities.iter_mut().filter(|c| c.exec.is_none()) {
             if let Some(d) = crate::connector::load(&dir, &c.name) {
@@ -752,6 +768,7 @@ impl Runtime {
             budget: env.draft.budget,
             project: None,
             attachments: Vec::new(),
+            ..Default::default()
         };
         let _ = self.run_agent(agent, &label, &env.draft.payload, &cause, topic, true);
     }

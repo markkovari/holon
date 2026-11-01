@@ -1111,3 +1111,178 @@ fn an_approval_id_from_before_a_restart_never_names_a_call_after_it() {
     let after = asked(&Runtime::new(cfg()).unwrap());
     assert!(after > before, "{after} after {before}");
 }
+
+#[test]
+fn test_await_all_waits_for_concurrent_tasks_at_barrier() {
+    let rt = runtime("await-all");
+    let mut boss = agent(
+        "boss",
+        &[
+            r#"{"tool":"spawn_task","args":{"agent":"worker1","message":"w1"}}"#,
+            r#"{"tool":"spawn_task","args":{"agent":"worker2","message":"w2"}}"#,
+            r#"{"tool":"await_all","args":{"tasks":["task-1","task-2"],"timeout_secs":5}}"#,
+            "all done",
+        ],
+    );
+    boss.capabilities.push(Capability::named("spawn_task"));
+    boss.capabilities.push(Capability::named("await_all"));
+    boss.capabilities.push(Capability::named("agent:worker1"));
+    boss.capabilities.push(Capability::named("agent:worker2"));
+    rt.create_agent(boss).unwrap();
+    rt.create_agent(agent("worker1", &["worker1 finished"])).unwrap();
+    rt.create_agent(agent("worker2", &["worker2 finished"])).unwrap();
+
+    let r = rt.run_agent("boss", "http", "go", &Cause::default(), "", true).unwrap();
+    assert_eq!(r.status, Status::Ok);
+    let await_step = r
+        .steps
+        .iter()
+        .find_map(|s| match s {
+            Step::Tool { name, result, .. } if name == "await_all" => Some(result),
+            _ => None,
+        })
+        .expect("await_all tool call");
+    assert!(await_step.contains("worker1 finished"));
+    assert!(await_step.contains("worker2 finished"));
+}
+
+#[test]
+fn test_store_crdt_set_and_counter_concurrent_updates() {
+    let rt = runtime("crdt");
+    let mut a = agent(
+        "crdt-agent",
+        &[
+            r#"{"tool":"store_crdt","args":{"ns":"private","key":"tags","op":"add","item":"rust"}}"#,
+            r#"{"tool":"store_crdt","args":{"ns":"private","key":"tags","op":"add","item":"wasm"}}"#,
+            r#"{"tool":"store_crdt","args":{"ns":"private","key":"tags","op":"read"}}"#,
+            r#"{"tool":"store_crdt","args":{"ns":"private","key":"score","op":"increment","delta":5}}"#,
+            r#"{"tool":"store_crdt","args":{"ns":"private","key":"score","op":"increment","delta":-2}}"#,
+            r#"{"tool":"store_crdt","args":{"ns":"private","key":"score","op":"read"}}"#,
+            "crdt done",
+        ],
+    );
+    a.capabilities.push(Capability::named("store_crdt"));
+    rt.create_agent(a).unwrap();
+
+    let r = rt.run_agent("crdt-agent", "http", "go", &Cause::default(), "", true).unwrap();
+    assert_eq!(r.status, Status::Ok);
+
+    let tools: Vec<&str> = r
+        .steps
+        .iter()
+        .filter_map(|s| match s {
+            Step::Tool { name, result, .. } if name == "store_crdt" => Some(result.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(tools.len(), 6);
+    assert!(tools[2].contains("rust") && tools[2].contains("wasm"));
+    assert!(tools[5].contains("count is 3"));
+}
+
+#[test]
+fn test_delegated_capabilities_escrow_tokens() {
+    let rt = runtime("escrow");
+    // delegator has "remember" and delegates it to a plain worker who doesn't have it in its spec
+    let mut delegator = agent(
+        "delegator",
+        &[
+            r#"{"tool":"spawn_task","args":{"agent":"plain-worker","message":"save fact","delegated_capabilities":["remember"]}}"#,
+            "delegated",
+        ],
+    );
+    delegator.capabilities.push(Capability::named("spawn_task"));
+    delegator.capabilities.push(Capability::named("agent:plain-worker"));
+    rt.create_agent(delegator).unwrap();
+
+    let mut worker = agent(
+        "plain-worker",
+        &[r#"{"tool":"remember","args":{"text":"delegated fact"}}"#, "saved ok"],
+    );
+    // worker explicitly does NOT have Capability::named("remember") in its spec!
+    worker.capabilities.retain(|c| c.name != "remember");
+    rt.create_agent(worker).unwrap();
+
+    let r = rt.run_agent("delegator", "http", "go", &Cause::default(), "", true).unwrap();
+    assert_eq!(r.status, Status::Ok);
+
+    // Wait for plain-worker task to complete
+    let tid = r
+        .steps
+        .iter()
+        .find_map(|s| match s {
+            Step::Tool { name, result, .. } if name == "spawn_task" => {
+                result.split_whitespace().nth(1).map(String::from)
+            }
+            _ => None,
+        })
+        .expect("task id");
+
+    let done = wait_for("worker to finish", || match rt.task_result(&tid) {
+        Some(TaskState::Done { ok, answer }) => Some((ok, answer)),
+        _ => None,
+    });
+    assert_eq!(done, (true, "saved ok".to_string()));
+
+    // Test unauthorized delegation rejection: delegator tries to delegate http_get which it lacks
+    let mut sneaky = agent(
+        "sneaky",
+        &[
+            r#"{"tool":"spawn_task","args":{"agent":"plain-worker","message":"steal","delegated_capabilities":["http_get"]}}"#,
+            "done",
+        ],
+    );
+    sneaky.capabilities.push(Capability::named("spawn_task"));
+    sneaky.capabilities.push(Capability::named("agent:plain-worker"));
+    rt.create_agent(sneaky).unwrap();
+
+    let r_sneaky = rt.run_agent("sneaky", "http", "go", &Cause::default(), "", true).unwrap();
+    assert!(r_sneaky.steps.iter().any(|s| matches!(s, Step::Tool { error: true, result, .. } if result.contains("caller does not hold this capability"))));
+}
+
+#[test]
+fn test_spawn_task_force_assembles_ephemeral_subassembly() {
+    let rt = runtime("taskforce");
+    let mut lead = agent(
+        "lead-sec",
+        &[
+            r#"{"tool":"spawn_task_force","args":{"taskforce":"incident-response","objective":"analyze threat","agents":["sec-alpha","sec-beta"]}}"#,
+            "taskforce running",
+        ],
+    );
+    lead.capabilities.push(Capability::named("spawn_task_force"));
+    lead.capabilities.push(Capability::named("agent:sec-alpha"));
+    lead.capabilities.push(Capability::named("agent:sec-beta"));
+    rt.create_agent(lead).unwrap();
+
+    let sec1 = agent(
+        "sec-alpha",
+        &[
+            r#"{"tool":"store_put","args":{"ns":"taskforce.incident-response","key":"finding1","value":"cve-found"}}"#,
+            "finding recorded",
+        ],
+    );
+    let sec2 = agent(
+        "sec-beta",
+        &[
+            r#"{"tool":"store_get","args":{"ns":"taskforce.incident-response","key":"finding1"}}"#,
+            "read finding",
+        ],
+    );
+    rt.create_agent(sec1).unwrap();
+    rt.create_agent(sec2).unwrap();
+
+    let r = rt.run_agent("lead-sec", "http", "go", &Cause::default(), "", true).unwrap();
+    assert_eq!(r.status, Status::Ok);
+    let tf_step = r
+        .steps
+        .iter()
+        .find_map(|s| match s {
+            Step::Tool { name, result, .. } if name == "spawn_task_force" => Some(result),
+            _ => None,
+        })
+        .expect("task force step");
+    assert!(tf_step.contains("incident-response"));
+    assert!(tf_step.contains("taskforce.incident-response"));
+}
