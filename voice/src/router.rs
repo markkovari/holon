@@ -55,6 +55,8 @@ impl IntentRouter {
             ("tell coach", "coach"),
             ("coach:", "coach"),
             ("ask rower", "rower"),
+            ("ask her over", "rower"), // Apple STT phonetic homophone for 'ask rower'
+            ("ask roller", "rower"),
             ("rower:", "rower"),
             ("ask rowing", "coach"),
             ("rowing:", "coach"),
@@ -108,6 +110,10 @@ impl IntentRouter {
             "metres",
             "watts",
             "lactic acid",
+            "metric",
+            "metrics",
+            "workout",
+            "workouts",
         ];
 
         // Token or phrase matching
@@ -205,6 +211,11 @@ mod tests {
         let (agent, cleaned) = router.route("calendar: what do I have at 3pm?");
         assert_eq!(agent, "calendar");
         assert_eq!(cleaned, "what do I have at 3pm?");
+
+        // Apple STT phonetic homophone for 'ask rower'
+        let (agent, cleaned) = router.route("ask her over about my metrics");
+        assert_eq!(agent, "rower");
+        assert_eq!(cleaned, "about my metrics");
     }
 
     #[test]
