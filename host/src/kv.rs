@@ -649,16 +649,77 @@ impl KvBackend for NatsKv {
 // fleet you maintain alone than a cleaner dependency tree.
 
 pub struct SqliteKv {
-    // rusqlite's Connection is Send but not Sync, and the trait needs both, so one
-    // connection behind a mutex.
-    //
-    // ponytail: serializes every kv call. SQLite serializes writes anyway, and the
-    // per-request handler is brief; if reads ever dominate, the upgrade is a small
-    // read pool (WAL already allows concurrent readers).
-    conn: Mutex<rusqlite::Connection>,
+    path: String,
+    // rusqlite's Connection is Send but not Sync, and the trait needs both. Writes are
+    // serialized through a single writer connection (which SQLite does anyway), while
+    // reads are served from a pool of independent connections taking advantage of
+    // SQLite's WAL mode to allow concurrent non-blocking reads during active writes.
+    writer: Mutex<rusqlite::Connection>,
+    readers: Mutex<Vec<rusqlite::Connection>>,
+}
+
+struct PooledReader<'a> {
+    conn: Option<rusqlite::Connection>,
+    readers: &'a Mutex<Vec<rusqlite::Connection>>,
+}
+
+impl<'a> std::ops::Deref for PooledReader<'a> {
+    type Target = rusqlite::Connection;
+    fn deref(&self) -> &Self::Target {
+        self.conn.as_ref().unwrap()
+    }
+}
+
+impl<'a> Drop for PooledReader<'a> {
+    fn drop(&mut self) {
+        if let Some(conn) = self.conn.take() {
+            let mut pool = crate::sync::held(self.readers);
+            if pool.len() < 64 {
+                pool.push(conn);
+            }
+        }
+    }
+}
+
+enum SqliteReader<'a> {
+    Writer(std::sync::MutexGuard<'a, rusqlite::Connection>),
+    Pooled(PooledReader<'a>),
+}
+
+impl<'a> std::ops::Deref for SqliteReader<'a> {
+    type Target = rusqlite::Connection;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Writer(w) => w,
+            Self::Pooled(p) => p,
+        }
+    }
 }
 
 impl SqliteKv {
+    fn open_reader(path: &str) -> Result<rusqlite::Connection> {
+        let conn = rusqlite::Connection::open(path)
+            .with_context(|| format!("opening sqlite reader at {path}"))?;
+        conn.busy_timeout(std::time::Duration::from_secs(5)).context("busy_timeout")?;
+        conn.pragma_update(None, "query_only", "ON").context("query_only")?;
+        Ok(conn)
+    }
+
+    fn reader(&self) -> Result<SqliteReader<'_>> {
+        if self.path == ":memory:" || self.path.is_empty() {
+            return Ok(SqliteReader::Writer(crate::sync::held(&self.writer)));
+        }
+        let conn = {
+            let mut pool = crate::sync::held(&self.readers);
+            pool.pop()
+        };
+        let conn = match conn {
+            Some(c) => c,
+            None => Self::open_reader(&self.path)?,
+        };
+        Ok(SqliteReader::Pooled(PooledReader { conn: Some(conn), readers: &self.readers }))
+    }
+
     pub fn open(path: &str) -> Result<Self> {
         if let Some(dir) = std::path::Path::new(path).parent() {
             if !dir.as_os_str().is_empty() {
@@ -689,7 +750,16 @@ impl SqliteKv {
         // `IF NOT EXISTS` in SQLite, so the error on a second run is the check —
         // and it is the only thing that can fail here for a benign reason.
         let _ = conn.execute("ALTER TABLE kv ADD COLUMN rev INTEGER NOT NULL DEFAULT 0", []);
-        Ok(Self { conn: Mutex::new(conn) })
+
+        let readers = match path {
+            ":memory:" | "" => Vec::new(),
+            _ => match Self::open_reader(path) {
+                Ok(r) => vec![r],
+                Err(_) => Vec::new(),
+            },
+        };
+
+        Ok(Self { path: path.to_string(), writer: Mutex::new(conn), readers: Mutex::new(readers) })
     }
 
     /// Where a systemd unit's data belongs, with no configuration.
@@ -719,7 +789,7 @@ impl KvBackend for SqliteKv {
 
     fn get(&self, bucket: &BucketId, key: &str) -> Result<Option<Vec<u8>>> {
         let bucket = bucket.as_str();
-        let conn = crate::sync::held(&self.conn);
+        let conn = self.reader()?;
         let mut q = conn.prepare_cached("SELECT value FROM kv WHERE bucket = ?1 AND key = ?2")?;
         let mut rows = q.query(rusqlite::params![bucket, key])?;
         match rows.next()? {
@@ -730,7 +800,7 @@ impl KvBackend for SqliteKv {
 
     fn set(&self, bucket: &BucketId, key: &str, value: &[u8]) -> Result<()> {
         let bucket = bucket.as_str();
-        let conn = crate::sync::held(&self.conn);
+        let conn = crate::sync::held(&self.writer);
         // The revision moves for a plain `set` too, or a guarded write could land
         // on top of one and never know.
         conn.prepare_cached(
@@ -743,7 +813,7 @@ impl KvBackend for SqliteKv {
 
     fn delete(&self, bucket: &BucketId, key: &str) -> Result<()> {
         let bucket = bucket.as_str();
-        let conn = crate::sync::held(&self.conn);
+        let conn = crate::sync::held(&self.writer);
         conn.prepare_cached("DELETE FROM kv WHERE bucket = ?1 AND key = ?2")?
             .execute(rusqlite::params![bucket, key])?;
         Ok(())
@@ -751,14 +821,14 @@ impl KvBackend for SqliteKv {
 
     fn exists(&self, bucket: &BucketId, key: &str) -> Result<bool> {
         let bucket = bucket.as_str();
-        let conn = crate::sync::held(&self.conn);
+        let conn = self.reader()?;
         let mut q = conn.prepare_cached("SELECT 1 FROM kv WHERE bucket = ?1 AND key = ?2")?;
         Ok(q.exists(rusqlite::params![bucket, key])?)
     }
 
     fn list_keys(&self, bucket: &BucketId) -> Result<Vec<String>> {
         let bucket = bucket.as_str();
-        let conn = crate::sync::held(&self.conn);
+        let conn = self.reader()?;
         let mut q = conn.prepare_cached("SELECT key FROM kv WHERE bucket = ?1 ORDER BY key")?;
         let rows = q.query_map(rusqlite::params![bucket], |r| r.get::<_, String>(0))?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -773,7 +843,7 @@ impl KvBackend for SqliteKv {
     /// backend does (ADR-0008).
     fn increment(&self, bucket: &BucketId, key: &str, delta: u64) -> Result<u64> {
         let bucket = bucket.as_str();
-        let mut conn = crate::sync::held(&self.conn);
+        let mut conn = crate::sync::held(&self.writer);
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let current: Option<Vec<u8>> = tx
             .prepare_cached("SELECT value FROM kv WHERE bucket = ?1 AND key = ?2")?
@@ -797,7 +867,7 @@ impl KvBackend for SqliteKv {
 
     fn get_revision(&self, bucket: &BucketId, key: &str) -> Result<Option<Versioned>> {
         let bucket = bucket.as_str();
-        let conn = crate::sync::held(&self.conn);
+        let conn = self.reader()?;
         let mut q =
             conn.prepare_cached("SELECT rev, value FROM kv WHERE bucket = ?1 AND key = ?2")?;
         let mut rows = q.query(rusqlite::params![bucket, key])?;
@@ -819,7 +889,7 @@ impl KvBackend for SqliteKv {
         expected: u64,
     ) -> Result<Cas> {
         let bucket = bucket.as_str();
-        let mut conn = crate::sync::held(&self.conn);
+        let mut conn = crate::sync::held(&self.writer);
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let current: u64 = tx
             .prepare_cached("SELECT rev FROM kv WHERE bucket = ?1 AND key = ?2")?
@@ -1584,6 +1654,66 @@ mod tests {
             kv.get(&bkt("c"), "concurrent").unwrap().as_deref(),
             Some(&b"400"[..]),
             "an increment was lost — the transaction is not doing its job"
+        );
+    }
+
+    #[test]
+    fn concurrent_readers_and_writers_do_not_block_or_corrupt_each_other() {
+        let s = Scratch::new("concurrent_rw");
+        let kv = std::sync::Arc::new(SqliteKv::open(&s.0).unwrap());
+
+        // Prepopulate keys
+        for i in 0..10 {
+            kv.set(&bkt("b"), &format!("k{i}"), format!("val{i}").as_bytes()).unwrap();
+        }
+
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        // Spawn 4 readers continuously querying keys
+        let readers: Vec<_> = (0..4)
+            .map(|_| {
+                let kv = kv.clone();
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    let mut reads = 0;
+                    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        for i in 0..10 {
+                            let val = kv.get(&bkt("b"), &format!("k{i}")).unwrap();
+                            assert!(val.is_some());
+                            assert!(kv.exists(&bkt("b"), &format!("k{i}")).unwrap());
+                            reads += 1;
+                        }
+                    }
+                    reads
+                })
+            })
+            .collect();
+
+        // Spawn 2 writers modifying keys and performing increments
+        let writers: Vec<_> = (0..2)
+            .map(|w| {
+                let kv = kv.clone();
+                std::thread::spawn(move || {
+                    for step in 0..50 {
+                        let k = format!("k{}", step % 10);
+                        kv.set(&bkt("b"), &k, format!("w{w}_{step}").as_bytes()).unwrap();
+                        kv.increment(&bkt("b"), "w_counter", 1).unwrap();
+                    }
+                })
+            })
+            .collect();
+
+        for w in writers {
+            w.join().unwrap();
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+
+        let total_reads: usize = readers.into_iter().map(|r| r.join().unwrap()).sum();
+        assert!(total_reads > 0);
+        assert_eq!(
+            kv.get(&bkt("b"), "w_counter").unwrap().as_deref(),
+            Some(&b"100"[..]),
+            "all writer increments should be accounted for"
         );
     }
 
