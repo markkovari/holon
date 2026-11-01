@@ -70,6 +70,10 @@ pub trait ToolHandler: Send + Sync {
     fn is_sensitive(&self, _name: &str) -> bool {
         false
     }
+    /// Describe available tools and dynamic WIT component capabilities.
+    fn describe_tools(&self) -> Vec<DynamicToolDef> {
+        Vec::new()
+    }
 }
 
 /// What the loop needs from whoever runs it. The runtime implements this for
@@ -151,6 +155,14 @@ pub trait Host: Sync {
     fn is_custom_tool_sensitive(&self, _name: &str) -> Option<bool> {
         None
     }
+    /// Check rate limit quota for agent tool invocation.
+    fn check_rate_limit(&self, _agent: &str, _tool: &str) -> Result<(), String> {
+        Ok(())
+    }
+    /// Discover dynamic custom tools (e.g. from registered components or catalog).
+    fn discover_custom_tools(&self) -> Vec<DynamicToolDef> {
+        Vec::new()
+    }
     /// Jev, for reading pictures, when this host has a key for it.
     fn jev(&self) -> Option<&dyn crate::jev::Jev> {
         None
@@ -202,96 +214,195 @@ pub const MAX_HOPS: u32 = 6;
 /// usually describing a plan; a cap keeps a runaway reply from fanning out.
 const MAX_CALLS_PER_TURN: usize = 4;
 
-struct ToolDef {
-    name: &'static str,
-    args: &'static str,
-    about: &'static str,
-    sensitive: bool,
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct DynamicToolDef {
+    pub name: String,
+    pub args: String,
+    pub about: String,
+    pub category: String,
+    pub sensitive: bool,
 }
 
-const TOOLS: &[ToolDef] = &[
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ToolGroup {
+    Fs,
+    Net,
+    Exec,
+    Agent,
+    Store,
+    Admin,
+    Other,
+}
+
+impl ToolGroup {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ToolGroup::Fs => "fs",
+            ToolGroup::Net => "net",
+            ToolGroup::Exec => "exec",
+            ToolGroup::Agent => "agent",
+            ToolGroup::Store => "store",
+            ToolGroup::Admin => "admin",
+            ToolGroup::Other => "other",
+        }
+    }
+}
+
+pub fn tool_group_for(tool_name: &str) -> ToolGroup {
+    match tool_name {
+        "read_file" | "write_file" | "edit_file" | "list_dir" | "workspace_branch"
+        | "workspace_commit" | "workspace_discard" => ToolGroup::Fs,
+        "http_get" => ToolGroup::Net,
+        "exec_sandboxed" | "session_start" => ToolGroup::Exec,
+        "spawn_task" | "spawn_task_force" | "task_result" | "await_all" => ToolGroup::Agent,
+        n if n.starts_with("agent:") => ToolGroup::Agent,
+        "store_get" | "store_put" | "store_list" | "store_crdt" => ToolGroup::Store,
+        "agent_save"
+        | "agent_delete"
+        | "agent_restore"
+        | "agent_pause"
+        | "agent_remove_schedule" => ToolGroup::Admin,
+        _ => ToolGroup::Other,
+    }
+}
+
+/// Token bucket algorithm for tool-group rate limiting (ADR-0070).
+#[derive(Clone, Debug)]
+pub struct TokenBucket {
+    pub capacity: f64,
+    pub tokens: f64,
+    pub refill_per_sec: f64,
+    pub last_updated_ms: u64,
+}
+
+impl TokenBucket {
+    pub fn new(capacity: f64, refill_per_sec: f64, now_ms: u64) -> Self {
+        Self { capacity, tokens: capacity, refill_per_sec, last_updated_ms: now_ms }
+    }
+
+    pub fn try_consume(&mut self, now_ms: u64) -> Result<(), u64> {
+        let elapsed_ms = now_ms.saturating_sub(self.last_updated_ms);
+        let refill = (elapsed_ms as f64 / 1000.0) * self.refill_per_sec;
+        self.tokens = (self.tokens + refill).min(self.capacity);
+        self.last_updated_ms = now_ms;
+
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            Ok(())
+        } else {
+            let deficit = 1.0 - self.tokens;
+            let wait_secs = deficit / self.refill_per_sec;
+            let wait_ms = (wait_secs * 1000.0).ceil() as u64;
+            Err(wait_ms.max(10))
+        }
+    }
+}
+
+pub struct ToolDef {
+    pub name: &'static str,
+    pub args: &'static str,
+    pub about: &'static str,
+    pub category: &'static str,
+    pub sensitive: bool,
+}
+
+pub const TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "remember",
         args: r#"{"text": "..."}"#,
         about: "Save a fact for your future runs.",
+        category: "memory",
         sensitive: false,
     },
     ToolDef {
         name: "recall",
         args: r#"{"query": "..."}"#,
         about: "Search what you saved earlier.",
+        category: "memory",
         sensitive: false,
     },
     ToolDef {
         name: "now",
         args: "{}",
         about: "The current date and time: today's local date with its weekday, tomorrow, and the next days, plus UTC and unix time. Use it for any relative date (today, tomorrow, next Friday) instead of working it out yourself.",
+        category: "clock",
         sensitive: false,
     },
     ToolDef {
         name: "list_agents",
         args: "{}",
         about: "The other agents you could delegate to.",
+        category: "agent",
         sensitive: false,
     },
     ToolDef {
         name: "emit_event",
         args: r#"{"topic": "...", "payload": "..."}"#,
         about: "Publish an event that wakes any agent subscribed to the topic.",
+        category: "events",
         sensitive: false,
     },
     ToolDef {
         name: "store_get",
         args: r#"{"ns": "<store>", "key": "..."}"#,
         about: "Read a key from a store: `private` (only yours) or a shared store you were given.",
+        category: "store",
         sensitive: false,
     },
     ToolDef {
         name: "store_put",
         args: r#"{"ns": "<store>", "key": "...", "value": "..."}"#,
         about: "Write a key. Returns whether it CHANGED; agents watching the namespace wake only on a change. Add \"if_version\": N for a safe update.",
+        category: "store",
         sensitive: false,
     },
     ToolDef {
         name: "store_list",
         args: r#"{"ns": "<store>", "prefix": ""}"#,
         about: "List keys (and values) under a prefix.",
+        category: "store",
         sensitive: false,
     },
     ToolDef {
         name: "schedule_self",
         args: r#"{"in_secs": 300, "prompt": "..."}"#,
         about: "Wake yourself once, later, with this prompt.",
+        category: "schedule",
         sensitive: false,
     },
     ToolDef {
         name: "spawn_task",
         args: r#"{"agent": "...", "message": "...", "delegated_capabilities": ["..."]}"#,
         about: "Start another agent on a task without waiting. Returns a task id. Optional `delegated_capabilities` passes escrowed capabilities.",
+        category: "agent",
         sensitive: false,
     },
     ToolDef {
         name: "spawn_task_force",
         args: r#"{"taskforce": "...", "objective": "...", "agents": ["..."]}"#,
         about: "Assemble an ephemeral task force of specialist agents sharing an isolated namespace (`taskforce.<name>`). Returns task force status and child task IDs.",
+        category: "agent",
         sensitive: false,
     },
     ToolDef {
         name: "task_result",
         args: r#"{"id": "..."}"#,
         about: "Check on a task you started: running, or its answer.",
+        category: "agent",
         sensitive: false,
     },
     ToolDef {
         name: "await_all",
         args: r#"{"tasks": ["task-1", "task-2"], "timeout_secs": 20}"#,
         about: "Wait for multiple asynchronous tasks to finish at a barrier. Returns their completed answers.",
+        category: "agent",
         sensitive: false,
     },
     ToolDef {
         name: "store_crdt",
         args: r#"{"ns": "<store>", "key": "...", "op": "add|remove|increment|read", "item": "...", "delta": 1}"#,
         about: "Perform a conflict-free CRDT update (add/remove for set, increment for counter, read) on a shared blackboard key.",
+        category: "store",
         sensitive: false,
     },
     ToolDef {
@@ -300,6 +411,7 @@ const TOOLS: &[ToolDef] = &[
         about: "Start a coding session: an agent that reads, writes and runs commands in a \
                 workspace, each step approved by a person. Returns a session id at once; \
                 collect the answer with session_result.",
+        category: "session",
         sensitive: false,
     },
     ToolDef {
@@ -308,96 +420,147 @@ const TOOLS: &[ToolDef] = &[
         about: "Check on a coding session you started: still running, waiting for a person, or \
                 its answer and what it cost. Waits up to wait_secs (at most 60) for it to end. \
                 `session` may be left out when you have only one.",
+        category: "session",
         sensitive: false,
     },
     ToolDef {
         name: "session_close",
         args: r#"{"session": "..."}"#,
         about: "Stop a coding session you started, and whatever it is doing.",
+        category: "session",
         sensitive: false,
     },
     ToolDef {
         name: "transcribe",
         args: r#"{"path": "recording.ogg", "lang": "en-US"}"#,
         about: "Turn an audio file in your workspace into text (speech recognition).",
+        category: "speech",
         sensitive: false,
     },
     ToolDef {
         name: "speak",
         args: r#"{"text": "...", "voice": "Samantha", "path": "speech/reply.ogg"}"#,
         about: "Turn text into a spoken voice message saved in your workspace.",
+        category: "speech",
         sensitive: false,
     },
     ToolDef {
         name: "http_get",
         args: r#"{"url": "..."}"#,
         about: "Fetch a URL (only hosts you were allowed).",
+        category: "net",
         sensitive: false,
     },
     ToolDef {
         name: "list_dir",
         args: r#"{"path": "."}"#,
         about: "List files in your workspace.",
+        category: "fs",
         sensitive: false,
     },
     ToolDef {
         name: "read_file",
         args: r#"{"path": "..."}"#,
         about: "Read a text file from your workspace.",
+        category: "fs",
         sensitive: false,
     },
     ToolDef {
         name: "edit_file",
         args: r#"{"path": "...", "target": "...", "replacement": "..."}"#,
         about: "Replace exact text in a file in your workspace.",
+        category: "fs",
         sensitive: true,
     },
     ToolDef {
         name: "write_file",
         args: r#"{"path": "...", "content": "..."}"#,
         about: "Write a text file in your workspace.",
+        category: "fs",
+        sensitive: true,
+    },
+    ToolDef {
+        name: "workspace_branch",
+        args: r#"{"branch": "experiment-1", "action": "create|list"}"#,
+        about: "Branch your workspace into an isolated ephemeral sandbox copy. `action: create` branches workspace; `action: list` shows existing branches.",
+        category: "workspace",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "workspace_commit",
+        args: r#"{"branch": "experiment-1"}"#,
+        about: "Merge changes from an ephemeral branch back into your main workspace and close the branch.",
+        category: "workspace",
+        sensitive: true,
+    },
+    ToolDef {
+        name: "workspace_discard",
+        args: r#"{"branch": "experiment-1"}"#,
+        about: "Discard and remove an ephemeral workspace branch without applying changes.",
+        category: "workspace",
+        sensitive: true,
+    },
+    ToolDef {
+        name: "tools_discover",
+        args: r#"{"category": "fs|net|exec|agent|store|workspace|all", "prefix": "..."}"#,
+        about: "Discover available tools and dynamic WASM capabilities: name, args schema, description, category, and sensitivity.",
+        category: "catalog",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "exec_sandboxed",
+        args: r#"{"cmd": "echo hello", "args": ["hello"], "timeout_ms": 5000, "max_output_bytes": 16384, "branch": "..."}"#,
+        about: "Execute a command in an isolated, sandboxed inspection container bounded by CPU timeout and memory/output limits inside your workspace or branch.",
+        category: "exec",
         sensitive: true,
     },
     ToolDef {
         name: "agents_list",
         args: "{}",
         about: "List every agent: name, what it is for, and its capabilities.",
+        category: "admin",
         sensitive: false,
     },
     ToolDef {
         name: "agent_show",
         args: r#"{"name": "..."}"#,
         about: "Show one agent's full spec.",
+        category: "admin",
         sensitive: false,
     },
     ToolDef {
         name: "agent_save",
         args: r#"{"name": "...", "description": "what it is for, as instructions to it", "capabilities": ["http_get"], "schedule": "@every 1h", "prompt": "what to do when the schedule fires", "project": "rowing", "notify": true, "model": "qwen"}"#,
         about: "Create an agent, or change the fields you give of an existing one; fields you leave out stay as they are. Giving `schedule` REPLACES all of that agent's triggers with that one schedule. `project` adds the agent to that existing project (which GRANTS it the project's shared store and topics) and makes the schedule work for it: the result is posted in that project's room, not the agent's own. `notify: true` asks a chat bridge to post each scheduled result to the owner. The owner approves first.",
+        category: "admin",
         sensitive: true,
     },
     ToolDef {
         name: "agent_delete",
         args: r#"{"name": "..."}"#,
         about: "Delete a whole agent: its settings, schedules, run history, memory and workspace move to the trash and can be brought back with agent_restore for 30 days, after which they are gone. Use it only when the owner clearly asks to delete the agent itself. To stop just a schedule use agent_remove_schedule; to stop an agent for now use agent_pause. The owner approves first.",
+        category: "admin",
         sensitive: true,
     },
     ToolDef {
         name: "agent_restore",
         args: r#"{"name": "..."}"#,
         about: "Bring a deleted agent back from the trash, exactly as it was: settings, schedules, run history, memory, workspace and the projects it was in. It starts running on its schedules again. Works for 30 days after the deletion. The owner approves first.",
+        category: "admin",
         sensitive: true,
     },
     ToolDef {
         name: "agent_remove_schedule",
         args: r#"{"name": "...", "schedule": "@every 1h", "project": "rowing"}"#,
         about: "Remove a schedule from an agent, and only that: the agent, its run history, memory and its other triggers stay. `schedule` is the cron line to remove; leave it out to remove all of the agent's schedules. `project` narrows it to the schedules that work for that project. The owner approves first.",
+        category: "admin",
         sensitive: true,
     },
     ToolDef {
         name: "agent_pause",
         args: r#"{"name": "...", "paused": true}"#,
         about: "Pause (true) or resume (false) an agent: while paused none of its triggers fire, and nothing is deleted. Use this to stop an agent for now.",
+        category: "admin",
         sensitive: false,
     },
 ];
@@ -431,6 +594,8 @@ fn required(name: &str) -> &'static [&'static str] {
         | "agent_remove_schedule"
         | "agent_restore" => &["name"],
         "agent_save" => &["name"],
+        "workspace_commit" | "workspace_discard" => &["branch"],
+        "exec_sandboxed" => &["cmd"],
         "read_file" => &["path"],
         "edit_file" => &["path", "target", "replacement"],
         "write_file" => &["path", "content"],
@@ -456,6 +621,9 @@ fn primary(name: &str) -> Option<&'static str> {
         "store_crdt" => Some("key"),
         "session_start" => Some("task"),
         "session_result" | "session_close" => Some("session"),
+        "workspace_branch" | "workspace_commit" | "workspace_discard" => Some("branch"),
+        "exec_sandboxed" => Some("cmd"),
+        "tools_discover" => Some("category"),
         "agent_show"
         | "agent_delete"
         | "agent_pause"
@@ -983,6 +1151,132 @@ fn http_get(
     Ok(format!("HTTP {status}\n{}", clip(&body, 8_000)))
 }
 
+fn resolve_workspace_dir(
+    store: &Store,
+    agent: &str,
+    args: &Value,
+) -> Result<std::path::PathBuf, String> {
+    if let Some(branch) = args.get("branch").and_then(Value::as_str) {
+        if !branch.is_empty() {
+            return store.workspace_branch(agent, branch);
+        }
+    }
+    store.workspace(agent)
+}
+
+fn truncate_output(bytes: &[u8], max_bytes: usize) -> (String, bool) {
+    if bytes.len() <= max_bytes {
+        (String::from_utf8_lossy(bytes).into_owned(), false)
+    } else {
+        let mut s = String::from_utf8_lossy(&bytes[..max_bytes]).into_owned();
+        s.push_str("\n[... output truncated ...]");
+        (s, true)
+    }
+}
+
+fn run_sandboxed_exec(
+    root: &std::path::Path,
+    cmd_str: &str,
+    args: &[String],
+    stdin_data: Option<&str>,
+    timeout: Duration,
+    max_output_bytes: usize,
+) -> Result<Value, String> {
+    let mut command = if args.is_empty()
+        && (cmd_str.contains(' ')
+            || cmd_str.contains('|')
+            || cmd_str.contains(';')
+            || cmd_str.contains('&'))
+    {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c").arg(cmd_str);
+        c
+    } else {
+        let mut c = std::process::Command::new(cmd_str);
+        c.args(args);
+        c
+    };
+
+    command.env_clear();
+    for (k, v) in std::env::vars() {
+        if matches!(k.as_str(), "PATH" | "LANG" | "LC_ALL" | "TERM" | "USER" | "HOME") {
+            command.env(&k, &v);
+        }
+    }
+    command.env("TMPDIR", root);
+    command.current_dir(root);
+    command.stdin(std::process::Stdio::piped());
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+
+    let start = Instant::now();
+    let mut child = command.spawn().map_err(|e| format!("failed to spawn `{cmd_str}`: {e}"))?;
+
+    if let Some(data) = stdin_data {
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            let _ = stdin.write_all(data.as_bytes());
+        }
+    } else {
+        drop(child.stdin.take());
+    }
+
+    let mut timed_out = false;
+    let poll_interval = Duration::from_millis(15);
+    let mut exit_status = None;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                exit_status = Some(status);
+                break;
+            }
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    timed_out = true;
+                    break;
+                }
+                std::thread::sleep(poll_interval);
+            }
+            Err(e) => {
+                let _ = child.kill();
+                return Err(format!("error waiting for `{cmd_str}`: {e}"));
+            }
+        }
+    }
+
+    let duration_ms = start.elapsed().as_millis() as u64;
+
+    let mut stdout_buf = Vec::new();
+    if let Some(mut out) = child.stdout.take() {
+        use std::io::Read;
+        let _ = out.read_to_end(&mut stdout_buf);
+    }
+    let mut stderr_buf = Vec::new();
+    if let Some(mut err) = child.stderr.take() {
+        use std::io::Read;
+        let _ = err.read_to_end(&mut stderr_buf);
+    }
+
+    let (stdout_str, stdout_truncated) = truncate_output(&stdout_buf, max_output_bytes);
+    let (stderr_str, stderr_truncated) = truncate_output(&stderr_buf, max_output_bytes);
+
+    let exit_code = exit_status.and_then(|s| s.code()).unwrap_or(if timed_out { -1 } else { 0 });
+
+    Ok(serde_json::json!({
+        "cmd": cmd_str,
+        "exit_code": exit_code,
+        "stdout": stdout_str,
+        "stdout_truncated": stdout_truncated,
+        "stderr": stderr_str,
+        "stderr_truncated": stderr_truncated,
+        "timed_out": timed_out,
+        "duration_ms": duration_ms,
+    }))
+}
+
 /// Runs one tool. `Err` is returned to the model as the tool's result, so it
 /// can adapt, exactly like a denial is. `cause` is THIS run, so anything it
 /// wakes records it as the parent. `child_tokens` accumulates what delegated
@@ -1408,7 +1702,7 @@ fn exec(
         }
         "http_get" => http_get(spec, &arg(args, "url"), crate::keys::Vault::configured().as_ref()),
         "list_dir" => {
-            let root = store.workspace(&spec.name)?;
+            let root = resolve_workspace_dir(store, &spec.name, args)?;
             let rel = arg(args, "path");
             let dir = if matches!(rel.as_str(), "" | ".") { root } else { confine(&root, &rel)? };
             let mut names: Vec<String> = std::fs::read_dir(&dir)
@@ -1420,11 +1714,13 @@ fn exec(
             Ok(names.join("\n"))
         }
         "read_file" => {
-            let p = confine(&store.workspace(&spec.name)?, &arg(args, "path"))?;
+            let root = resolve_workspace_dir(store, &spec.name, args)?;
+            let p = confine(&root, &arg(args, "path"))?;
             std::fs::read_to_string(p).map(|s| clip(&s, 16_000)).map_err(|e| e.to_string())
         }
         "edit_file" => {
-            let p = confine(&store.workspace(&spec.name)?, &arg(args, "path"))?;
+            let root = resolve_workspace_dir(store, &spec.name, args)?;
+            let p = confine(&root, &arg(args, "path"))?;
             let target = arg(args, "target");
             if target.is_empty() {
                 return Err("target string cannot be empty".into());
@@ -1442,13 +1738,90 @@ fn exec(
             Ok("replaced 1 occurrence".into())
         }
         "write_file" => {
-            let p = confine(&store.workspace(&spec.name)?, &arg(args, "path"))?;
+            let root = resolve_workspace_dir(store, &spec.name, args)?;
+            let p = confine(&root, &arg(args, "path"))?;
             if let Some(parent) = p.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
             let content = arg(args, "content");
             std::fs::write(&p, &content).map_err(|e| e.to_string())?;
             Ok(format!("wrote {} bytes", content.len()))
+        }
+        "workspace_branch" => {
+            let branch = arg(args, "branch");
+            let action = arg(args, "action");
+            if action == "list" || (action.is_empty() && branch.is_empty()) {
+                let branches = store.workspace_list_branches(&spec.name)?;
+                return Ok(if branches.is_empty() {
+                    "no active workspace branches".into()
+                } else {
+                    branches.join("\n")
+                });
+            }
+            if branch.is_empty() {
+                return Err("`branch` name is required to create a branch".into());
+            }
+            store.workspace_branch(&spec.name, &branch)?;
+            Ok(format!("created workspace branch `{branch}`"))
+        }
+        "workspace_commit" => {
+            let branch = arg(args, "branch");
+            let committed = store.workspace_commit(&spec.name, &branch)?;
+            Ok(format!("committed {committed} file(s) from branch `{branch}` into main workspace"))
+        }
+        "workspace_discard" => {
+            let branch = arg(args, "branch");
+            store.workspace_discard(&spec.name, &branch)?;
+            Ok(format!("discarded workspace branch `{branch}`"))
+        }
+        "tools_discover" => {
+            let cat = arg(args, "category").to_lowercase();
+            let prefix = arg(args, "prefix").to_lowercase();
+            let mut list: Vec<DynamicToolDef> = TOOLS
+                .iter()
+                .map(|t| DynamicToolDef {
+                    name: t.name.to_string(),
+                    args: t.args.to_string(),
+                    about: t.about.to_string(),
+                    category: t.category.to_string(),
+                    sensitive: t.sensitive,
+                })
+                .collect();
+            list.extend(host.discover_custom_tools());
+            let filtered: Vec<_> = list
+                .into_iter()
+                .filter(|t| {
+                    (cat.is_empty() || cat == "all" || t.category.to_lowercase() == cat)
+                        && (prefix.is_empty() || t.name.to_lowercase().starts_with(&prefix))
+                })
+                .collect();
+            serde_json::to_string_pretty(&filtered).map_err(|e| e.to_string())
+        }
+        "exec_sandboxed" => {
+            let root = resolve_workspace_dir(store, &spec.name, args)?;
+            let cmd_str = arg(args, "cmd");
+            let cmd_args: Vec<String> = args
+                .get("args")
+                .and_then(Value::as_array)
+                .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
+                .unwrap_or_default();
+            let timeout_ms =
+                args.get("timeout_ms").and_then(Value::as_u64).unwrap_or(5000).clamp(50, 30_000);
+            let max_output_bytes = args
+                .get("max_output_bytes")
+                .and_then(Value::as_u64)
+                .unwrap_or(16384)
+                .clamp(16, 65536) as usize;
+            let stdin_data = args.get("stdin").and_then(Value::as_str);
+            let res = run_sandboxed_exec(
+                &root,
+                &cmd_str,
+                &cmd_args,
+                stdin_data,
+                Duration::from_millis(timeout_ms),
+                max_output_bytes,
+            )?;
+            serde_json::to_string_pretty(&res).map_err(|e| e.to_string())
         }
         other => match other.strip_prefix("agent:") {
             Some(target) => {
@@ -1705,6 +2078,8 @@ pub fn run(
                 check_args(&name, &args).and_then(|_| check_connector(spec, &name, &args))
             {
                 // Malformed: never bother a human to approve a call that cannot run.
+                (e, true, None)
+            } else if let Err(e) = host.check_rate_limit(&spec.name, &name) {
                 (e, true, None)
             } else {
                 let sensitive = tool_def(&name)

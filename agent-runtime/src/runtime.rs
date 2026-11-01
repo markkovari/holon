@@ -112,6 +112,9 @@ pub struct Runtime {
     rate: Mutex<HashMap<String, VecDeque<u64>>>,
     /// agent -> (consecutive failures, circuit open until)
     breaker: Mutex<HashMap<String, (u32, u64)>>,
+    tool_rate_limiters:
+        Mutex<HashMap<(String, crate::agent::ToolGroup), crate::agent::TokenBucket>>,
+    custom_tool_limits: Mutex<HashMap<(String, crate::agent::ToolGroup), (f64, f64)>>,
 }
 
 pub fn unix_now() -> u64 {
@@ -233,6 +236,8 @@ impl Runtime {
             draining: Mutex::new(HashSet::new()),
             rate: Mutex::new(HashMap::new()),
             breaker: Mutex::new(HashMap::new()),
+            tool_rate_limiters: Mutex::new(HashMap::new()),
+            custom_tool_limits: Mutex::new(HashMap::new()),
         });
         for spec in rt.store.list() {
             rt.ensure_offsets(&spec);
@@ -250,6 +255,20 @@ impl Runtime {
 
     pub fn register_tool_handler(&self, handler: Arc<dyn crate::agent::ToolHandler>) {
         self.tool_handlers.write().unwrap().push(handler);
+    }
+
+    /// Configure explicit token-bucket rate limits for an agent's tool group.
+    pub fn set_tool_rate_limit(
+        &self,
+        agent: &str,
+        group: crate::agent::ToolGroup,
+        capacity: f64,
+        refill_per_sec: f64,
+    ) {
+        self.custom_tool_limits
+            .lock()
+            .unwrap()
+            .insert((agent.to_string(), group), (capacity, refill_per_sec));
     }
 
     pub fn has_embedder(&self) -> bool {
@@ -1243,6 +1262,45 @@ impl Host for Runtime {
             }
         }
         None
+    }
+
+    fn check_rate_limit(&self, agent: &str, tool: &str) -> Result<(), String> {
+        let group = crate::agent::tool_group_for(tool);
+        if group == crate::agent::ToolGroup::Other {
+            return Ok(());
+        }
+        let custom =
+            self.custom_tool_limits.lock().unwrap().get(&(agent.to_string(), group)).cloned();
+        let (capacity, refill_per_sec) = custom.unwrap_or(match group {
+            crate::agent::ToolGroup::Exec => (10.0, 0.5),
+            crate::agent::ToolGroup::Net => (20.0, 2.0),
+            crate::agent::ToolGroup::Agent => (20.0, 2.0),
+            crate::agent::ToolGroup::Fs => (100.0, 20.0),
+            crate::agent::ToolGroup::Store => (120.0, 20.0),
+            crate::agent::ToolGroup::Admin => (10.0, 0.5),
+            crate::agent::ToolGroup::Other => (f64::MAX, f64::MAX),
+        });
+
+        let now_ms = unix_now_ms();
+        let key = (agent.to_string(), group);
+        let mut map = self.tool_rate_limiters.lock().unwrap();
+        let bucket = map
+            .entry(key)
+            .or_insert_with(|| crate::agent::TokenBucket::new(capacity, refill_per_sec, now_ms));
+
+        match bucket.try_consume(now_ms) {
+            Ok(()) => Ok(()),
+            Err(retry_ms) => Err(format!(
+                "rate limit exceeded for tool group `{}`: retry after {}ms",
+                group.as_str(),
+                retry_ms
+            )),
+        }
+    }
+
+    fn discover_custom_tools(&self) -> Vec<crate::agent::DynamicToolDef> {
+        let handlers = self.tool_handlers.read().unwrap();
+        handlers.iter().flat_map(|h| h.describe_tools()).collect()
     }
 
     fn jev(&self) -> Option<&dyn crate::jev::Jev> {
