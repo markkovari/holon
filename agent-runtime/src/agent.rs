@@ -322,6 +322,20 @@ pub const TOOLS: &[ToolDef] = &[
         sensitive: false,
     },
     ToolDef {
+        name: "distill_lesson",
+        args: r#"{"rule": "...", "lesson": "...", "context": "...", "scope": "private|project|org"}"#,
+        about: "Distill and persist an enduring rule or lesson learned from your execution into memory for prioritized recall in future runs.",
+        category: "memory",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "compact_context",
+        args: r#"{"summary": "..."}"#,
+        about: "Compact earlier turn history into a concise state summary to save context window tokens while retaining key findings.",
+        category: "memory",
+        sensitive: false,
+    },
+    ToolDef {
         name: "now",
         args: "{}",
         about: "The current date and time: today's local date with its weekday, tomorrow, and the next days, plus UTC and unix time. Use it for any relative date (today, tomorrow, next Friday) instead of working it out yourself.",
@@ -596,6 +610,7 @@ fn required(name: &str) -> &'static [&'static str] {
         "agent_save" => &["name"],
         "workspace_commit" | "workspace_discard" => &["branch"],
         "exec_sandboxed" => &["cmd"],
+        "compact_context" => &["summary"],
         "read_file" => &["path"],
         "edit_file" => &["path", "target", "replacement"],
         "write_file" => &["path", "content"],
@@ -624,6 +639,8 @@ fn primary(name: &str) -> Option<&'static str> {
         "workspace_branch" | "workspace_commit" | "workspace_discard" => Some("branch"),
         "exec_sandboxed" => Some("cmd"),
         "tools_discover" => Some("category"),
+        "compact_context" => Some("summary"),
+        "distill_lesson" => Some("rule"),
         "agent_show"
         | "agent_delete"
         | "agent_pause"
@@ -1297,23 +1314,89 @@ fn exec(
             if t.is_empty() {
                 return Err("`text` is empty".into());
             }
-            store.remember(&spec.name, &t, host.now())?;
+            let kind = args.get("kind").and_then(Value::as_str);
+            let scope = args.get("scope").and_then(Value::as_str);
+            store.remember_tagged(&spec.name, &t, kind, scope, host.now())?;
             Ok("saved".into())
         }
         "recall" => {
             let query = arg(args, "query");
-            let semantic = (!query.is_empty())
+            let scope = args.get("scope").and_then(Value::as_str);
+            let kind = args.get("kind").and_then(Value::as_str);
+            let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(5) as usize;
+            let mut projects: Vec<String> = spec.projects.iter().map(|p| p.name.clone()).collect();
+            if let Some(ref p) = cause.project {
+                if !projects.contains(p) {
+                    projects.push(p.clone());
+                }
+            }
+            if let Some(target_p) = scope.and_then(|s| s.strip_prefix("project:")) {
+                if !projects.contains(&target_p.to_string()) {
+                    projects.push(target_p.to_string());
+                }
+            }
+            let query_vec = (!query.is_empty())
                 .then(|| host.embed(std::slice::from_ref(&query), "query"))
                 .flatten()
-                .and_then(|mut v| v.pop())
-                .map(|qv| store.recall_semantic(&spec.name, &qv, 5, &|t| host.embed(t, "document")))
-                .filter(|h| !h.is_empty());
-            let hits = semantic.unwrap_or_else(|| store.recall(&spec.name, &query, 5));
+                .and_then(|mut v| v.pop());
+            let hits = store.recall_hybrid(
+                &spec.name,
+                &projects,
+                crate::store::RecallQuery {
+                    query: &query,
+                    query_vec: query_vec.as_deref(),
+                    scope,
+                    kind,
+                    k: limit,
+                },
+                &|t| host.embed(t, "document"),
+            );
             Ok(if hits.is_empty() {
                 "nothing matched".into()
             } else {
-                hits.iter().map(|m| format!("- {}", m.text)).collect::<Vec<_>>().join("\n")
+                hits.iter()
+                    .map(|m| {
+                        let tag = match (&m.kind, &m.scope) {
+                            (Some(k), Some(s)) => format!(" [{k} | {s}]"),
+                            (Some(k), None) => format!(" [{k}]"),
+                            (None, Some(s)) => format!(" [{s}]"),
+                            (None, None) => String::new(),
+                        };
+                        format!("- {}{tag}", m.text)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
             })
+        }
+        "distill_lesson" => {
+            let rule = arg(args, "rule");
+            let lesson = arg(args, "lesson");
+            let context = arg(args, "context");
+            let scope = args.get("scope").and_then(Value::as_str);
+            let text = if !rule.is_empty() {
+                if !context.is_empty() {
+                    format!("RULE: {rule} (Context: {context})")
+                } else {
+                    format!("RULE: {rule}")
+                }
+            } else if !lesson.is_empty() {
+                if !context.is_empty() {
+                    format!("LESSON: {lesson} (Context: {context})")
+                } else {
+                    format!("LESSON: {lesson}")
+                }
+            } else {
+                return Err("`rule` or `lesson` text is required for distill_lesson".into());
+            };
+            store.remember_tagged(&spec.name, &text, Some("rule"), scope, host.now())?;
+            Ok(format!("distilled and saved: {text}"))
+        }
+        "compact_context" => {
+            let summary = arg(args, "summary");
+            if summary.is_empty() {
+                return Err("`summary` is required to compact context".into());
+            }
+            Ok(format!("context compacted: {summary}"))
         }
         "now" => Ok(crate::clock::now(host.now())),
         "list_agents" => Ok(store
@@ -2158,6 +2241,22 @@ pub fn run(
             "\nThat is the real result. Continue the task using ONLY it; if it does not contain what you need, say so instead of guessing."
         };
         msgs.push(Msg::user(format!("{}{advice}", results.join("\n\n"))));
+
+        if called_ok.remove("compact_context") {
+            let summary_text = results
+                .iter()
+                .find(|r| r.contains("context compacted: "))
+                .and_then(|r| r.split("context compacted: ").nth(1))
+                .unwrap_or_default();
+            if !summary_text.is_empty() {
+                let initial = msgs.remove(0);
+                msgs.clear();
+                msgs.push(initial);
+                msgs.push(Msg::user(format!(
+                    "[State Summary after Compaction]:\n{summary_text}\nContinue from this state."
+                )));
+            }
+        }
 
         let spent = usage.input + usage.output + child_tokens;
         if spent > max_tokens {

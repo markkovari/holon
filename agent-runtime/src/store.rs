@@ -12,10 +12,14 @@ use crate::spec::{validate_name, AgentSpec};
 
 pub use agent_wire::{RunRecord, Status, Step};
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct MemoryItem {
     pub at: u64,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
 }
 
 pub type Vectors = Vec<Vec<f32>>;
@@ -160,6 +164,15 @@ fn tokens(s: &str) -> Vec<String> {
         .filter(|w| w.len() > 2)
         .map(|w| w.to_lowercase())
         .collect()
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RecallQuery<'a> {
+    pub query: &'a str,
+    pub query_vec: Option<&'a [f32]>,
+    pub scope: Option<&'a str>,
+    pub kind: Option<&'a str>,
+    pub k: usize,
 }
 
 impl Store {
@@ -458,14 +471,92 @@ impl Store {
     }
 
     pub fn remember(&self, agent: &str, text: &str, now: u64) -> Result<(), String> {
+        self.remember_tagged(agent, text, None, None, now)
+    }
+
+    /// Persist a memory with explicit tags for kind (e.g. rule, lesson) and federation scope.
+    pub fn remember_tagged(
+        &self,
+        agent: &str,
+        text: &str,
+        kind: Option<&str>,
+        scope: Option<&str>,
+        now: u64,
+    ) -> Result<(), String> {
+        validate_name(agent)?;
+        let path = match scope {
+            Some(s) if s.starts_with("project:") => {
+                let proj = s.strip_prefix("project:").unwrap();
+                validate_name(proj)?;
+                let dir = self.dir.join("projects").join(proj);
+                fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                dir.join("memory.jsonl")
+            }
+            Some("org") => {
+                let dir = self.dir.join("memory");
+                fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                dir.join("org_shared.jsonl")
+            }
+            _ => self.path("memory", agent, "jsonl")?,
+        };
         append(
-            &self.path("memory", agent, "jsonl")?,
-            &MemoryItem { at: now, text: text.to_string() },
+            &path,
+            &MemoryItem {
+                at: now,
+                text: text.to_string(),
+                kind: kind.map(String::from),
+                scope: scope.map(String::from),
+            },
         )
     }
 
     pub fn memories(&self, agent: &str) -> Vec<MemoryItem> {
         read_lines(&self.path("memory", agent, "jsonl").unwrap_or_default())
+    }
+
+    /// Retrieve memories federated across private, project-shared, and org-shared scopes.
+    pub fn memories_federated(
+        &self,
+        agent: &str,
+        projects: &[String],
+        scope: Option<&str>,
+        kind: Option<&str>,
+    ) -> Vec<MemoryItem> {
+        let mut all = Vec::new();
+        let want_private = scope.is_none() || scope == Some("all") || scope == Some("private");
+        let want_org = scope.is_none() || scope == Some("all") || scope == Some("org");
+        let want_project = scope.is_none()
+            || scope == Some("all")
+            || scope.is_some_and(|s| s.starts_with("project"));
+
+        if want_private {
+            all.extend(self.memories(agent));
+        }
+
+        if want_project {
+            for p in projects {
+                if let Some(target_p) = scope.and_then(|s| s.strip_prefix("project:")) {
+                    if p != target_p {
+                        continue;
+                    }
+                }
+                let path = self.dir.join("projects").join(p).join("memory.jsonl");
+                all.extend(read_lines::<MemoryItem>(&path));
+            }
+        }
+
+        if want_org {
+            let path = self.dir.join("memory").join("org_shared.jsonl");
+            all.extend(read_lines::<MemoryItem>(&path));
+        }
+
+        if let Some(k) = kind {
+            if k != "all" && !k.is_empty() {
+                all.retain(|m| m.kind.as_deref().unwrap_or("fact") == k);
+            }
+        }
+
+        all
     }
 
     /// Lexical on purpose: cheap, explainable, and a model can rephrase and ask again.
@@ -537,6 +628,120 @@ impl Store {
             scored.into_iter().filter(|s| s.0 >= best - RECALL_SPREAD).collect();
         kept.sort_by(|a, b| b.0.total_cmp(&a.0).then(b.1.at.cmp(&a.1.at)));
         kept.into_iter().take(k).map(|s| s.1.clone()).collect()
+    }
+
+    /// Hybrid dense/sparse recall using Reciprocal Rank Fusion (RRF) with rule weighting.
+    pub fn recall_hybrid(
+        &self,
+        agent: &str,
+        projects: &[String],
+        req: RecallQuery<'_>,
+        embed_docs: &dyn Fn(&[String]) -> Option<Vectors>,
+    ) -> Vec<MemoryItem> {
+        let candidates = self.memories_federated(agent, projects, req.scope, req.kind);
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+
+        let q = tokens(req.query);
+        if q.is_empty() && req.query_vec.is_none() {
+            return candidates.into_iter().rev().take(req.k).collect();
+        }
+
+        // 1. Sparse keyword / BM25 token matching
+        let mut sparse_scores: Vec<(usize, usize)> = candidates
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let t = tokens(&m.text);
+                let score = q.iter().filter(|w| t.contains(w)).count();
+                (i, score)
+            })
+            .collect();
+        sparse_scores.sort_by_key(|a| std::cmp::Reverse(a.1));
+
+        let mut sparse_rank = HashMap::new();
+        for (rank, &(idx, score)) in sparse_scores.iter().enumerate() {
+            if score > 0 {
+                sparse_rank.insert(idx, rank + 1);
+            }
+        }
+
+        // 2. Dense semantic ranking (if query_vec is available)
+        let mut dense_rank = HashMap::new();
+        if let Some(qv) = req.query_vec {
+            let (Ok(mem), Ok(side)) =
+                (self.path("memory", agent, "jsonl"), self.path("memory", agent, "vecs.jsonl"))
+            else {
+                return self.recall(agent, req.query, req.k);
+            };
+            let q = unit(qv.to_vec());
+            let mut all = self.indexes.lock().unwrap();
+            let ix = all.entry(agent.to_string()).or_default();
+            ix.sync(&mem, &side);
+            ix.resolve();
+
+            let missing: Vec<String> = candidates
+                .iter()
+                .filter(|m| !ix.row_of.contains_key(&m.text))
+                .map(|m| m.text.clone())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            drop(all);
+
+            let fresh = if missing.is_empty() { None } else { embed_docs(&missing) };
+            let mut all = self.indexes.lock().unwrap();
+            let ix = all.entry(agent.to_string()).or_default();
+            if let Some(vecs) = fresh {
+                for (text, vec) in missing.into_iter().zip(vecs) {
+                    let _ = append(&side, &MemoryVec { text: text.clone(), vec: vec.clone() });
+                    ix.add_vec(text, vec);
+                }
+            }
+            ix.resolve();
+
+            let mut dense_scores: Vec<(usize, f32)> = candidates
+                .iter()
+                .enumerate()
+                .filter_map(|(i, m)| ix.row_of.get(&m.text).map(|&r| (i, dot(&q, &ix.rows[r]))))
+                .collect();
+            dense_scores.sort_by(|a, b| b.1.total_cmp(&a.1));
+            for (rank, &(idx, _)) in dense_scores.iter().enumerate() {
+                dense_rank.insert(idx, rank + 1);
+            }
+        }
+
+        // 3. Reciprocal Rank Fusion (RRF) with rule weighting
+        const RRF_K: f64 = 60.0;
+        let mut rrf_scores: Vec<(usize, f64)> = candidates
+            .iter()
+            .enumerate()
+            .filter_map(|(i, m)| {
+                let s_rank = sparse_rank.get(&i);
+                let d_rank = dense_rank.get(&i);
+                if s_rank.is_none() && d_rank.is_none() {
+                    return None;
+                }
+                let mut score = 0.0;
+                if let Some(&r) = s_rank {
+                    score += 1.0 / (RRF_K + r as f64);
+                }
+                if let Some(&r) = d_rank {
+                    score += 1.0 / (RRF_K + r as f64);
+                }
+                if matches!(m.kind.as_deref(), Some("rule") | Some("lesson")) {
+                    score *= 1.25;
+                }
+                Some((i, score))
+            })
+            .collect();
+
+        rrf_scores.sort_by(|a, b| {
+            b.1.total_cmp(&a.1).then_with(|| candidates[b.0].at.cmp(&candidates[a.0].at))
+        });
+
+        rrf_scores.into_iter().take(req.k).map(|(i, _)| candidates[i].clone()).collect()
     }
 
     pub fn record_run(&self, r: &RunRecord) -> Result<(), String> {
