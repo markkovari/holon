@@ -42,30 +42,36 @@ pub struct VoiceActivityDetector {
     config: VadConfig,
     in_speech: bool,
     accumulated_samples: Vec<i16>,
+    barge_in_samples: Vec<i16>,
     speech_frames_count: usize,
     trailing_silence_frames: usize,
     barge_in_streak: usize,
     playback_active: bool,
     playback_start: Option<Instant>,
+    noise_floor: f32,
 }
 
 impl VoiceActivityDetector {
     pub fn new(config: VadConfig) -> Self {
+        let initial_floor = config.energy_threshold / 2.0;
         Self {
             config,
             in_speech: false,
             accumulated_samples: Vec::new(),
+            barge_in_samples: Vec::new(),
             speech_frames_count: 0,
             trailing_silence_frames: 0,
             barge_in_streak: 0,
             playback_active: false,
             playback_start: None,
+            noise_floor: initial_floor,
         }
     }
 
     pub fn set_playback_active(&mut self, active: bool) {
         self.playback_active = active;
         self.barge_in_streak = 0;
+        self.barge_in_samples.clear();
         self.playback_start = if active { Some(Instant::now()) } else { None };
     }
 
@@ -73,9 +79,14 @@ impl VoiceActivityDetector {
         self.playback_active
     }
 
+    pub fn noise_floor(&self) -> f32 {
+        self.noise_floor
+    }
+
     pub fn reset(&mut self) {
         self.in_speech = false;
         self.accumulated_samples.clear();
+        self.barge_in_samples.clear();
         self.speech_frames_count = 0;
         self.trailing_silence_frames = 0;
         self.barge_in_streak = 0;
@@ -102,6 +113,7 @@ impl VoiceActivityDetector {
 
             if past_guard && energy >= self.config.barge_in_energy_threshold {
                 self.barge_in_streak += 1;
+                self.barge_in_samples.extend_from_slice(frame);
                 if self.barge_in_streak >= self.config.barge_in_consecutive_frames {
                     self.playback_active = false;
                     self.barge_in_streak = 0;
@@ -109,14 +121,19 @@ impl VoiceActivityDetector {
                     self.in_speech = true;
                     self.speech_frames_count = self.config.barge_in_consecutive_frames;
                     self.trailing_silence_frames = 0;
-                    self.accumulated_samples.clear();
-                    self.accumulated_samples.extend_from_slice(frame);
+                    self.accumulated_samples = std::mem::take(&mut self.barge_in_samples);
                     return VadEvent::BargeIn;
                 }
             } else {
                 self.barge_in_streak = 0;
+                self.barge_in_samples.clear();
             }
             return VadEvent::Silence;
+        }
+
+        if !self.in_speech && !is_voice {
+            // Adaptively track background ambient noise floor during idle silence
+            self.noise_floor = 0.95 * self.noise_floor + 0.05 * energy;
         }
 
         if is_voice {

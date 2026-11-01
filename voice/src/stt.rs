@@ -91,9 +91,11 @@ pub fn extract_wake_phrase(transcript: &str, wake_phrase: &str) -> Option<String
     }
 
     // Phonetic tolerance for "holon": Apple Speech on macOS often recognizes "holon"
-    // as "hold on", "holland", "a holland", "holum", "j holum", "holden", "colon", "whole on", "holan", etc.
-    if clean_wake == "hey holon" || clean_wake == "holon" {
-        let variants: &[&[&str]] = &[
+    // as "hold on", "holland", "holum", "holden", "colon", "whole on", "holan", etc.
+    // If the wake phrase includes a prefix like "hey", phonetic variants must also require the prefix
+    // to prevent false positives on ordinary words like "hold on" or "holland".
+    let variants: &[&[&str]] = if clean_wake == "hey holon" {
+        &[
             &["hey", "hold", "on"],
             &["hey", "holland"],
             &["hey", "holum"],
@@ -102,19 +104,29 @@ pub fn extract_wake_phrase(transcript: &str, wake_phrase: &str) -> Option<String
             &["hey", "whole", "on"],
             &["hey", "holan"],
             &["hey", "hall", "on"],
-            &["a", "holland"],
-            &["j", "holum"],
-            &["hold", "on"],
+            &["hey", "haulin"],
+            &["hey", "howlin"],
+        ]
+    } else if clean_wake == "holon" {
+        &[
+            &["holon"],
             &["holland"],
             &["holum"],
-            &["holon"],
             &["holden"],
-        ];
-        for variant in variants {
-            if let Some(pos) = parts.windows(variant.len()).position(|window| window == *variant) {
-                let rest_words: Vec<&str> = parts[pos + variant.len()..].to_vec();
-                return Some(rest_words.join(" "));
-            }
+            &["colon"],
+            &["whole", "on"],
+            &["holan"],
+            &["hall", "on"],
+            &["hold", "on"],
+        ]
+    } else {
+        &[]
+    };
+
+    for variant in variants {
+        if let Some(pos) = parts.windows(variant.len()).position(|window| window == *variant) {
+            let rest_words: Vec<&str> = parts[pos + variant.len()..].to_vec();
+            return Some(rest_words.join(" "));
         }
     }
 

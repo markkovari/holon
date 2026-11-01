@@ -127,6 +127,20 @@ impl VoiceSession {
 
         self.state = SessionState::Processing;
 
+        match self.process_utterance(samples) {
+            Ok(result) => Ok(result),
+            Err(err) => {
+                // Ensure session state recovers immediately upon error rather than staying bricked in Processing
+                self.state = match self.mode {
+                    VoiceMode::PushToTalk => SessionState::Listening,
+                    VoiceMode::AlwaysListen => SessionState::WaitingWakeWord,
+                };
+                Err(err)
+            }
+        }
+    }
+
+    fn process_utterance(&mut self, samples: Vec<i16>) -> Result<Option<String>, String> {
         // Persist audio to secure temporary WAV for local STT recognizer
         let temp_wav = tempfile::Builder::new()
             .prefix("holon-voice-")
@@ -191,7 +205,8 @@ impl VoiceSession {
         let answer = self.dispatcher.dispatch_run(&query)?;
 
         if !answer.trim().is_empty() {
-            let playback = self.tts.speak(&answer)?;
+            let spoken_text = crate::tts::sanitize_for_speech(&answer);
+            let playback = self.tts.speak(&spoken_text)?;
             self.active_playback = Some(playback);
             self.vad.set_playback_active(true);
             self.state = SessionState::Speaking;
