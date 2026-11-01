@@ -257,6 +257,8 @@ mod tests {
         let vad_cfg = VadConfig {
             barge_in_consecutive_frames: 2,
             energy_threshold: 0.05,
+            barge_in_energy_threshold: 0.08,
+            barge_in_guard_ms: 0,
             ..Default::default()
         };
 

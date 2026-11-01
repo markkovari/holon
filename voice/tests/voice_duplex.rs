@@ -49,6 +49,8 @@ fn always_listen_duplex_with_barge_in() {
     let vad_cfg = VadConfig {
         frame_size: 320,
         energy_threshold: 0.04,
+        barge_in_energy_threshold: 0.08,
+        barge_in_guard_ms: 0,
         barge_in_consecutive_frames: 2,
         ..Default::default()
     };

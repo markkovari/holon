@@ -61,6 +61,14 @@ struct Cli {
     #[arg(long)]
     device: Option<String>,
 
+    /// Barge-in energy threshold while assistant is speaking (prevents speaker self-interruption)
+    #[arg(long, default_value_t = 0.080)]
+    barge_in_threshold: f32,
+
+    /// Disable barge-in interruption completely during speech playback
+    #[arg(long, default_value_t = false)]
+    no_barge_in: bool,
+
     /// Enable live audio level meter output in console
     #[arg(long, default_value_t = false)]
     meter: bool,
@@ -142,13 +150,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    let barge_thresh = if cli.no_barge_in { 999.0 } else { cli.barge_in_threshold };
+
     let vad_cfg = VadConfig {
         sample_rate: 16000,
         frame_size: 320,
         energy_threshold: cli.energy_threshold,
+        barge_in_energy_threshold: barge_thresh,
+        barge_in_guard_ms: 800,
         silence_timeout_ms: cli.silence_ms,
         min_speech_duration_ms: 200,
-        barge_in_consecutive_frames: 6,
+        barge_in_consecutive_frames: 8,
     };
 
     let mode = if cli.always_listen { VoiceMode::AlwaysListen } else { VoiceMode::PushToTalk };

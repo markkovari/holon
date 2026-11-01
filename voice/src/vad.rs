@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use crate::audio::rms_energy;
 
 #[derive(Debug, Clone)]
@@ -5,6 +7,8 @@ pub struct VadConfig {
     pub sample_rate: u32,
     pub frame_size: usize,
     pub energy_threshold: f32,
+    pub barge_in_energy_threshold: f32,
+    pub barge_in_guard_ms: u64,
     pub silence_timeout_ms: u64,
     pub min_speech_duration_ms: u64,
     pub barge_in_consecutive_frames: usize,
@@ -15,10 +19,12 @@ impl Default for VadConfig {
         Self {
             sample_rate: 16000,
             frame_size: 320, // 20ms at 16kHz
-            energy_threshold: 0.035,
+            energy_threshold: 0.018,
+            barge_in_energy_threshold: 0.080,
+            barge_in_guard_ms: 800,
             silence_timeout_ms: 1000,
             min_speech_duration_ms: 200,
-            barge_in_consecutive_frames: 6, // 120ms
+            barge_in_consecutive_frames: 8, // 160ms
         }
     }
 }
@@ -40,6 +46,7 @@ pub struct VoiceActivityDetector {
     trailing_silence_frames: usize,
     barge_in_streak: usize,
     playback_active: bool,
+    playback_start: Option<Instant>,
 }
 
 impl VoiceActivityDetector {
@@ -52,12 +59,14 @@ impl VoiceActivityDetector {
             trailing_silence_frames: 0,
             barge_in_streak: 0,
             playback_active: false,
+            playback_start: None,
         }
     }
 
     pub fn set_playback_active(&mut self, active: bool) {
         self.playback_active = active;
         self.barge_in_streak = 0;
+        self.playback_start = if active { Some(Instant::now()) } else { None };
     }
 
     pub fn is_playback_active(&self) -> bool {
@@ -70,6 +79,7 @@ impl VoiceActivityDetector {
         self.speech_frames_count = 0;
         self.trailing_silence_frames = 0;
         self.barge_in_streak = 0;
+        self.playback_start = None;
     }
 
     pub fn process_frame(&mut self, frame: &[i16]) -> VadEvent {
@@ -82,11 +92,20 @@ impl VoiceActivityDetector {
             ((self.config.min_speech_duration_ms as f64) / ms_per_frame).ceil() as usize;
 
         if self.playback_active {
-            if is_voice {
+            // Guard initial playback against speaker acoustic feedback
+            let past_guard = self
+                .playback_start
+                .map(|t| {
+                    t.elapsed() >= std::time::Duration::from_millis(self.config.barge_in_guard_ms)
+                })
+                .unwrap_or(true);
+
+            if past_guard && energy >= self.config.barge_in_energy_threshold {
                 self.barge_in_streak += 1;
                 if self.barge_in_streak >= self.config.barge_in_consecutive_frames {
                     self.playback_active = false;
                     self.barge_in_streak = 0;
+                    self.playback_start = None;
                     self.in_speech = true;
                     self.speech_frames_count = self.config.barge_in_consecutive_frames;
                     self.trailing_silence_frames = 0;
@@ -149,6 +168,7 @@ mod tests {
             silence_timeout_ms: 100,    // 5 frames of 20ms
             min_speech_duration_ms: 60, // 3 frames of 20ms
             barge_in_consecutive_frames: 3,
+            ..Default::default()
         };
         let mut vad = VoiceActivityDetector::new(config);
 
@@ -183,6 +203,8 @@ mod tests {
             sample_rate: 16000,
             frame_size: 320,
             energy_threshold: 0.05,
+            barge_in_energy_threshold: 0.08,
+            barge_in_guard_ms: 0,
             silence_timeout_ms: 100,
             min_speech_duration_ms: 60,
             barge_in_consecutive_frames: 3,
