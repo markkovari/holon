@@ -37,7 +37,6 @@ impl Default for PersonaRegistry {
         reg.register(Persona::new("rowing", "Rowing Coach Daniel", "Daniel"));
         reg.register(Persona::new("coach", "Coach Daniel", "Daniel"));
         reg.register(Persona::new("nutrition", "Nutritionist Sarah", "Samantha"));
-        reg.register(Persona::new("nutritionist", "Nutritionist Sarah", "Samantha"));
         reg.register(Persona::new("coder", "Lead Engineer Oliver", "Oliver"));
         reg.register(Persona::new("dev", "Lead Engineer Oliver", "Oliver"));
         reg.register(Persona::new("bot", "", "Alex"));

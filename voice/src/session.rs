@@ -37,6 +37,8 @@ pub struct VoiceSession {
     speaker_tracker: SpeakerTracker,
     default_agent: String,
     router: IntentRouter,
+    follow_up_until: Option<std::time::Instant>,
+    follow_up_duration: std::time::Duration,
 }
 
 impl VoiceSession {
@@ -69,6 +71,8 @@ impl VoiceSession {
             speaker_tracker: SpeakerTracker::default(),
             default_agent: "bot".to_string(),
             router: IntentRouter::default(),
+            follow_up_until: None,
+            follow_up_duration: std::time::Duration::from_secs(25),
         }
     }
 
@@ -100,12 +104,13 @@ impl VoiceSession {
             if !active {
                 self.active_playback = None;
                 self.vad.set_playback_active(false);
-                self.wake_word_active = false;
-                if self.state == SessionState::Speaking {
-                    self.state = match self.mode {
-                        VoiceMode::PushToTalk => SessionState::Listening,
-                        VoiceMode::AlwaysListen => SessionState::WaitingWakeWord,
-                    };
+                if self.mode == VoiceMode::AlwaysListen {
+                    self.follow_up_until =
+                        Some(std::time::Instant::now() + self.follow_up_duration);
+                    self.wake_word_active = true;
+                    self.state = SessionState::Listening;
+                } else if self.state == SessionState::Speaking {
+                    self.state = SessionState::Listening;
                 }
             }
             active
@@ -129,6 +134,18 @@ impl VoiceSession {
     /// Feeds an audio frame into the session and processes transitions.
     pub fn feed_frame(&mut self, frame: &[i16]) -> Result<Option<String>, String> {
         let _ = self.is_playback_active();
+
+        if let Some(until) = self.follow_up_until {
+            if std::time::Instant::now() > until {
+                self.follow_up_until = None;
+                self.wake_word_active = false;
+                if self.mode == VoiceMode::AlwaysListen && self.state == SessionState::Listening {
+                    self.state = SessionState::WaitingWakeWord;
+                    eprintln!("💤 [Follow-up window closed]: Waiting for wake phrase");
+                }
+            }
+        }
+
         let event = self.vad.process_frame(frame);
 
         match event {
@@ -188,27 +205,30 @@ impl VoiceSession {
 
         let query = if self.mode == VoiceMode::AlwaysListen {
             if !self.wake_word_active {
-                match extract_wake_phrase(&transcript, &self.wake_phrase) {
-                    Some(rest) => {
-                        self.wake_word_active = true;
-                        eprintln!("⚡ [Wake Word Matched!]: Processing prompt...");
-                        if rest.trim().is_empty() {
-                            self.state = SessionState::Listening;
-                            return Ok(Some(format!(
-                                "Heard wake phrase '{}', listening...",
-                                self.wake_phrase
-                            )));
-                        }
-                        rest
-                    }
-                    None => {
-                        self.state = SessionState::WaitingWakeWord;
-                        eprintln!(
-                            "⏳ [Wake Word Missing]: Heard \"{transcript}\" (waiting for '{}')",
+                if let Some(rest) = extract_wake_phrase(&transcript, &self.wake_phrase) {
+                    self.wake_word_active = true;
+                    eprintln!("⚡ [Wake Word Matched!]: Processing prompt...");
+                    if rest.trim().is_empty() {
+                        self.state = SessionState::Listening;
+                        return Ok(Some(format!(
+                            "Heard wake phrase '{}', listening...",
                             self.wake_phrase
-                        );
-                        return Ok(None);
+                        )));
                     }
+                    rest
+                } else if let Some((agent, rest)) =
+                    IntentRouter::extract_explicit_prefix(&transcript)
+                {
+                    self.wake_word_active = true;
+                    eprintln!("⚡ [Addressed Agent '{agent}']: Processing prompt directly...");
+                    rest.to_string()
+                } else {
+                    self.state = SessionState::WaitingWakeWord;
+                    eprintln!(
+                        "⏳ [Wake Word Missing]: Heard \"{transcript}\" (waiting for '{}' or addressed agent)",
+                        self.wake_phrase
+                    );
+                    return Ok(None);
                 }
             } else if let Some(rest) = extract_wake_phrase(&transcript, &self.wake_phrase) {
                 if rest.trim().is_empty() {

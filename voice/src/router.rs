@@ -21,7 +21,7 @@ impl IntentRouter {
         let lower = trimmed.to_lowercase();
 
         // 1. Check for explicit prefix addressing
-        if let Some((agent, rest)) = Self::extract_explicit_prefix(trimmed, &lower) {
+        if let Some((agent, rest)) = Self::extract_explicit_prefix(trimmed) {
             return (agent, rest);
         }
 
@@ -49,23 +49,29 @@ impl IntentRouter {
         (self.default_agent.clone(), trimmed)
     }
 
-    fn extract_explicit_prefix<'a>(original: &'a str, lower: &str) -> Option<(String, &'a str)> {
+    pub fn extract_explicit_prefix(original: &str) -> Option<(String, &str)> {
+        let lower = original.trim().to_lowercase();
         let prefixes = [
             ("ask coach", "coach"),
             ("tell coach", "coach"),
             ("coach:", "coach"),
+            ("coach,", "coach"),
             ("ask rower", "rower"),
             ("ask her over", "rower"), // Apple STT phonetic homophone for 'ask rower'
             ("ask roller", "rower"),
             ("rower:", "rower"),
+            ("rower,", "rower"),
             ("ask rowing", "coach"),
             ("rowing:", "coach"),
             ("ask calendar", "calendar"),
             ("calendar:", "calendar"),
+            ("calendar,", "calendar"),
             ("ask weather", "weather"),
             ("weather:", "weather"),
+            ("weather,", "weather"),
             ("ask bot", "bot"),
             ("bot:", "bot"),
+            ("bot,", "bot"),
         ];
 
         for (prefix, agent) in prefixes {
