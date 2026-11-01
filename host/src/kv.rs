@@ -399,51 +399,53 @@ impl NatsKv {
         out
     }
 
-    fn store_for(&self, bucket: &str) -> Result<JsStore> {
+    async fn store_for_async(&self, bucket: &str) -> Result<JsStore> {
         if let Some(s) = crate::sync::reading(&self.stores).get(bucket) {
             return Ok(s.clone());
         }
         let name = Self::bucket_name(bucket);
-        let store = self.block(async {
-            match self.js.get_key_value(&name).await {
-                Ok(s) => Ok(s),
-                Err(_) => {
-                    // Applies to buckets created FROM NOW ON. An existing bucket
-                    // keeps whatever it was made with — `nats stream update` or a
-                    // restore with `REPLICAS=` changes those.
-                    let want = if self.replicas == 0 { DEFAULT_REPLICAS } else { self.replicas };
-                    let cfg = |n| async_nats::jetstream::kv::Config {
-                        bucket: name.clone(),
-                        history: 1,
-                        num_replicas: n,
-                        ..Default::default()
-                    };
-                    match self.js.create_key_value(cfg(want)).await {
-                        Ok(s) => Ok(s),
-                        // Asking for more copies than the cluster can hold is what a
-                        // single-server NATS says; refusing to start would break every
-                        // single-node deployment. Only the AUTOMATIC choice falls back;
-                        // an operator who typed a number gets the error.
-                        Err(e) if self.replicas == 0 && want > 1 => {
-                            eprintln!(
-                                "comp-host: WARNING this NATS cannot hold {want} copies of \
-                                 {name} ({e}), falling back to ONE. That is a single disk \
-                                 holding this data: `nats stream backup KV_<bucket>` is the floor, and a NATS \
-                                 cluster of 3 with --kv-replicas 3 is the fix."
-                            );
-                            self.js.create_key_value(cfg(1)).await.map_err(anyhow::Error::from)
-                        }
-                        Err(e) => Err(anyhow::Error::from(e)),
+        let store = match self.js.get_key_value(&name).await {
+            Ok(s) => s,
+            Err(_) => {
+                let want = if self.replicas == 0 { DEFAULT_REPLICAS } else { self.replicas };
+                let cfg = async_nats::jetstream::kv::Config {
+                    bucket: name.clone(),
+                    history: 1,
+                    num_replicas: want,
+                    ..Default::default()
+                };
+                match self.js.create_key_value(cfg).await {
+                    Ok(s) => s,
+                    Err(e) if self.replicas == 0 && want > 1 => {
+                        eprintln!(
+                            "comp-host: WARNING this NATS cannot hold {want} copies of \
+                             {name} ({e}), falling back to ONE. That is a single disk \
+                             holding this data: `nats stream backup KV_<bucket>` is the floor, and a NATS \
+                             cluster of 3 with --kv-replicas 3 is the fix."
+                        );
+                        let fallback_cfg = async_nats::jetstream::kv::Config {
+                            bucket: name.clone(),
+                            history: 1,
+                            num_replicas: 1,
+                            ..Default::default()
+                        };
+                        self.js.create_key_value(fallback_cfg).await.map_err(anyhow::Error::from)?
                     }
+                    Err(e) => return Err(anyhow::Error::from(e)),
                 }
             }
-        })?;
+        };
         crate::sync::writing(&self.stores).insert(bucket.to_string(), store.clone());
         Ok(store)
     }
 
     fn block<F: std::future::Future>(&self, fut: F) -> F::Output {
-        tokio::task::block_in_place(|| self.handle.block_on(fut))
+        match tokio::runtime::Handle::try_current() {
+            Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(|| self.handle.block_on(fut))
+            }
+            _ => self.handle.block_on(fut),
+        }
     }
 }
 
@@ -454,23 +456,32 @@ impl KvBackend for NatsKv {
     }
 
     fn get(&self, bucket: &BucketId, key: &str) -> Result<Option<Vec<u8>>> {
-        let s = self.store_for(bucket.as_str())?;
+        let b = bucket.to_string();
         let k = Self::safe_key(key);
-        Ok(self.block(async move { s.get(&k).await })?.map(|b| b.to_vec()))
+        self.block(async move {
+            let s = self.store_for_async(&b).await?;
+            Ok::<_, anyhow::Error>(s.get(&k).await?.map(|b| b.to_vec()))
+        })
     }
 
     fn set(&self, bucket: &BucketId, key: &str, value: &[u8]) -> Result<()> {
-        let s = self.store_for(bucket.as_str())?;
+        let b = bucket.to_string();
         let (k, v) = (Self::safe_key(key), value.to_vec());
-        self.block(async move { s.put(&k, v.into()).await }).context("nats kv put")?;
-        Ok(())
+        self.block(async move {
+            let s = self.store_for_async(&b).await?;
+            s.put(&k, v.into()).await.context("nats kv put")?;
+            Ok::<(), anyhow::Error>(())
+        })
     }
 
     fn delete(&self, bucket: &BucketId, key: &str) -> Result<()> {
-        let s = self.store_for(bucket.as_str())?;
+        let b = bucket.to_string();
         let k = Self::safe_key(key);
-        self.block(async move { s.delete(&k).await }).context("nats kv delete")?;
-        Ok(())
+        self.block(async move {
+            let s = self.store_for_async(&b).await?;
+            s.delete(&k).await.context("nats kv delete")?;
+            Ok::<(), anyhow::Error>(())
+        })
     }
 
     fn exists(&self, bucket: &BucketId, key: &str) -> Result<bool> {
@@ -479,16 +490,18 @@ impl KvBackend for NatsKv {
 
     fn list_keys(&self, bucket: &BucketId) -> Result<Vec<String>> {
         use futures::StreamExt;
-        let s = self.store_for(bucket.as_str())?;
+        let b = bucket.to_string();
         // The listing's failure is REPORTED, not turned into an empty list: a bucket
         // that cannot be listed must not read as a bucket with nothing in it.
         let keys = self.block(async move {
+            let s = self.store_for_async(&b).await?;
             let mut out = Vec::new();
-            match s.keys().await {
+            match s.keys().await.map_err(anyhow::Error::from) {
                 Ok(mut stream) => {
                     while let Some(k) = stream.next().await {
                         if let Ok(k) = k {
-                            // Returned exactly as stored, NOT decoded. `safe_key` leaves
+                            // A previous commit (8319f09) ran this through
+                            // `unescape_key` here. Don't: `safe_key` leaves
                             // `_` literal and also uses it to introduce an escape, so
                             // the encoding is not reversible: decoding turned
                             // `rec_orgs_01KZS…` into `rec_orgs\x01KZS…` (ADR-0068).
@@ -504,7 +517,7 @@ impl KvBackend for NatsKv {
                 }
                 Err(e) => return Err(e),
             }
-            Ok(out)
+            Ok::<_, anyhow::Error>(out)
         });
         keys.context("nats kv list-keys")
     }
@@ -520,9 +533,10 @@ impl KvBackend for NatsKv {
     /// `wasi:keyvalue` still exposes no CAS to the GUEST, so a guest doing
     /// read-then-write across two calls is racy whatever this does (ADR-0008).
     fn increment(&self, bucket: &BucketId, key: &str, delta: u64) -> Result<u64> {
-        let s = self.store_for(bucket.as_str())?;
+        let b = bucket.to_string();
         let k = Self::safe_key(key);
         self.block(async move {
+            let s = self.store_for_async(&b).await?;
             for attempt in 0..32u32 {
                 // Exponential backoff, as wasmCloud's NATS KV provider does: an
                 // immediate retry loop turns contention on one key into a thundering
@@ -557,9 +571,12 @@ impl KvBackend for NatsKv {
     }
 
     fn get_revision(&self, bucket: &BucketId, key: &str) -> Result<Option<Versioned>> {
-        let s = self.store_for(bucket.as_str())?;
+        let b = bucket.to_string();
         let k = Self::safe_key(key);
-        let entry = self.block(async move { s.entry(&k).await }).context("nats kv entry")?;
+        let entry = self.block(async move {
+            let s = self.store_for_async(&b).await?;
+            s.entry(&k).await.context("nats kv entry")
+        })?;
         // An empty value is a tombstone, matching what `increment` above has always
         // assumed. Nothing here stores an empty value on purpose — record-store
         // writes JSON — and treating one as present would hand a caller a revision
@@ -578,10 +595,11 @@ impl KvBackend for NatsKv {
         value: &[u8],
         expected: u64,
     ) -> Result<Cas> {
-        let s = self.store_for(bucket.as_str())?;
+        let b = bucket.to_string();
         let k = Self::safe_key(key);
         let v: bytes::Bytes = value.to_vec().into();
         self.block(async move {
+            let s = self.store_for_async(&b).await?;
             let entry = s.entry(&k).await.context("nats kv entry")?;
             // What the CALLER should have seen: 0 for absent or tombstoned, the
             // sequence otherwise. The tombstone's own revision is kept separately
@@ -1366,6 +1384,19 @@ mod tests {
             NatsKv::safe_key(escaped),
             "if these ever differ the encoding became reversible and list_keys can decode again"
         );
+    }
+
+    #[test]
+    fn nats_block_handles_direct_and_multithread_runtimes_without_panic() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let handle = rt.handle().clone();
+        let res = match tokio::runtime::Handle::try_current() {
+            Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(|| handle.block_on(async { 42 }))
+            }
+            _ => handle.block_on(async { 42 }),
+        };
+        assert_eq!(res, 42);
     }
 
     /// Backends are handed a host-built id, never a guest string — that is the
