@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::spec::{validate_name, AgentSpec};
 
-pub use agent_wire::{RunRecord, Status, Step};
+pub use agent_wire::{CostLedgerEntry, RunRecord, SpecPatchProposal, Status, Step};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct MemoryItem {
@@ -178,7 +178,7 @@ pub struct RecallQuery<'a> {
 impl Store {
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self, String> {
         let dir = dir.into();
-        for sub in ["agents", "memory", "runs", "workspaces", "projects"] {
+        for sub in ["agents", "memory", "runs", "workspaces", "projects", "costs", "spec_patches"] {
             fs::create_dir_all(dir.join(sub)).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
         Ok(Self { dir, indexes: Arc::default() })
@@ -774,9 +774,126 @@ impl Store {
             .map(|r| r.tokens_in + r.tokens_out)
             .sum()
     }
+
+    pub fn record_cost(&self, entry: &CostLedgerEntry) -> Result<(), String> {
+        append(&self.path("costs", &entry.agent, "jsonl")?, entry)
+    }
+
+    pub fn cost_ledger(&self, agent: &str, since: u64) -> Vec<CostLedgerEntry> {
+        let since_ms = if since < 10_000_000_000 { since * 1000 } else { since };
+        if agent == "*" || agent.is_empty() {
+            let mut all = Vec::new();
+            if let Ok(entries) = fs::read_dir(self.dir.join("costs")) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
+                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                            all.extend(self.cost_ledger(stem, since));
+                        }
+                    }
+                }
+            }
+            all.sort_by_key(|e| e.timestamp_ms);
+            return all;
+        }
+        let Ok(p) = self.path("costs", agent, "jsonl") else {
+            return Vec::new();
+        };
+        let mut entries: Vec<CostLedgerEntry> = read_lines(&p);
+        entries.retain(|e| e.timestamp_ms >= since_ms);
+        entries
+    }
+
+    pub fn cost_ledger_for_tenant(&self, tenant: &str, since: u64) -> Vec<CostLedgerEntry> {
+        let mut all = self.cost_ledger("*", since);
+        all.retain(|e| e.tenant == tenant);
+        all
+    }
+
+    pub fn record_spec_patch(&self, proposal: &SpecPatchProposal) -> Result<(), String> {
+        append(&self.path("spec_patches", &proposal.agent, "jsonl")?, proposal)
+    }
+
+    pub fn spec_patches(&self, agent: &str) -> Vec<SpecPatchProposal> {
+        if agent == "*" || agent.is_empty() {
+            let mut all = Vec::new();
+            if let Ok(entries) = fs::read_dir(self.dir.join("spec_patches")) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
+                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                            all.extend(self.spec_patches(stem));
+                        }
+                    }
+                }
+            }
+            all.sort_by_key(|p| p.timestamp_ms);
+            return all;
+        }
+        read_lines(&self.path("spec_patches", agent, "jsonl").unwrap_or_default())
+    }
+
+    pub fn apply_spec_patch(&self, agent: &str, proposal_id: &str) -> Result<AgentSpec, String> {
+        let patches = self.spec_patches(agent);
+        let patch_idx = patches
+            .iter()
+            .position(|p| p.proposal_id == proposal_id)
+            .ok_or_else(|| format!("proposal `{proposal_id}` not found for agent `{agent}`"))?;
+        let proposal = &patches[patch_idx];
+        let mut spec = self.get(agent).ok_or_else(|| format!("agent `{agent}` not found"))?;
+
+        let v: serde_json::Value = serde_json::from_str(&proposal.patch)
+            .map_err(|e| format!("invalid patch payload: {e}"))?;
+        if let Some(desc) = v.get("description").and_then(|d| d.as_str()) {
+            spec.description = desc.to_string();
+        }
+        if let Some(prompt) = v.get("prompt").and_then(|p| p.as_str()) {
+            spec.description = prompt.to_string();
+        }
+        if let Some(model_alias) = v.get("model").and_then(|m| m.as_str()) {
+            if let Some(m) = self.model_alias(model_alias) {
+                if let Ok(spec_model) = serde_json::from_value::<crate::spec::ModelSpec>(m) {
+                    spec.model = spec_model;
+                }
+            } else if let Ok(spec_model) =
+                serde_json::from_str::<crate::spec::ModelSpec>(&format!("\"{model_alias}\""))
+            {
+                spec.model = spec_model;
+            }
+        }
+        if let Some(caps) = v.get("add_capabilities").and_then(|c| c.as_array()) {
+            for cap_val in caps {
+                if let Some(cap_name) = cap_val.as_str() {
+                    if !spec.has_capability(cap_name) {
+                        spec.capabilities.push(crate::spec::Capability::named(cap_name));
+                    }
+                }
+            }
+        }
+        if let Some(sched) = v.get("schedule").and_then(|s| s.as_str()) {
+            let prompt = v.get("schedule_prompt").and_then(|p| p.as_str()).unwrap_or_default();
+            spec.triggers.push(crate::spec::Trigger::Schedule {
+                cron: sched.to_string(),
+                prompt: prompt.to_string(),
+                notify: false,
+                project: None,
+            });
+        }
+        self.put(&spec)?;
+
+        // Update proposal status to approved
+        let mut updated = proposal.clone();
+        updated.status = "approved".to_string();
+        let _ = append(&self.path("spec_patches", agent, "jsonl")?, &updated);
+
+        Ok(spec)
+    }
 }
 
 fn append<T: Serialize>(path: &Path, item: &T) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
     let mut line = serde_json::to_string(item).map_err(|e| e.to_string())?;
     line.push('\n');
     OpenOptions::new()

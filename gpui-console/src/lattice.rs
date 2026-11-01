@@ -330,6 +330,7 @@ impl Lattice {
                 }
                 self.approvals.retain(|p| p.id != id);
             }
+            _ => {}
         }
         cx.notify();
     }
@@ -1284,6 +1285,8 @@ mod tests {
                 chain: vec![],
                 project: String::new(),
                 attachments: vec![],
+                cost_micros: 0,
+                tenant: String::new(),
             };
         let runs = vec![
             run("origin", "s1", None, &[("emit_event", "tool-a")]),

@@ -533,9 +533,42 @@ impl Runtime {
             e.0 += 1;
             if e.0 >= self.cfg.breaker_threshold {
                 e.1 = unix_now() + self.cfg.breaker_cooldown.as_secs();
+                let threshold = self.cfg.breaker_threshold;
+                let cooldown = self.cfg.breaker_cooldown.as_secs();
                 e.0 = 0;
+                self.emit_watchdog_alarm(
+                    agent,
+                    None,
+                    "circuit_breaker_opened",
+                    &format!("circuit opened after {threshold} consecutive failures; cooldown {cooldown}s"),
+                    "critical",
+                );
             }
         }
+    }
+
+    pub fn emit_watchdog_alarm(
+        &self,
+        agent: &str,
+        run_id: Option<&str>,
+        alarm: &str,
+        details: &str,
+        severity: &str,
+    ) {
+        let ev = Event::WatchdogAlarm {
+            agent: agent.to_string(),
+            run_id: run_id.map(str::to_string),
+            alarm: alarm.to_string(),
+            details: details.to_string(),
+            severity: severity.to_string(),
+        };
+        self.observe(ev);
+        let draft = crate::bus::Draft {
+            from: agent.to_string(),
+            payload: format!("{agent}:{alarm}:{details}"),
+            ..Default::default()
+        };
+        let _ = self.bus.publish("agent.health.alarm", draft);
     }
 
     /// A refused wake-up still leaves a record: silence would look like the agent ignoring it.
@@ -568,6 +601,8 @@ impl Runtime {
             chain: cause.chain.clone(),
             project: cause.project.clone().unwrap_or_default(),
             attachments: cause.attachments.clone(),
+            cost_micros: 0,
+            tenant: cause.tenant.clone().unwrap_or_default(),
         };
         let _ = self.store.record_run(&rec);
         self.observe(Event::RunFinished(Box::new(rec)));
@@ -853,7 +888,74 @@ impl Runtime {
                 let _ = rt.run_agent(&t.agent, "timer", &t.prompt, &cause, "", true);
             });
         }
+        fired += self.check_heartbeat_diagnostics(now).len();
         fired
+    }
+
+    /// Run proactive diagnostic watchdog checks for open circuit breakers, near-budget conditions,
+    /// and unhealthy failure rates.
+    pub fn check_heartbeat_diagnostics(&self, now: u64) -> Vec<Event> {
+        let mut alarms = Vec::new();
+        {
+            let b = self.breaker.lock().unwrap();
+            for (agent, (failures, until)) in b.iter() {
+                if *until > now {
+                    let ev = Event::WatchdogAlarm {
+                        agent: agent.clone(),
+                        run_id: None,
+                        alarm: "circuit_breaker_active".into(),
+                        details: format!(
+                            "agent {agent} has circuit open until {until} (now {now})"
+                        ),
+                        severity: "critical".into(),
+                    };
+                    alarms.push(ev);
+                } else if *failures > 0 {
+                    let ev = Event::WatchdogAlarm {
+                        agent: agent.clone(),
+                        run_id: None,
+                        alarm: "unhealthy_failure_rate".into(),
+                        details: format!("agent {agent} has {failures} consecutive failures"),
+                        severity: "warning".into(),
+                    };
+                    alarms.push(ev);
+                }
+            }
+        }
+        for spec in self.store.list() {
+            if spec.daily_token_budget > 0 {
+                let used = self.store.tokens_since(&spec.name, now.saturating_sub(86_400));
+                if used >= spec.daily_token_budget {
+                    alarms.push(Event::WatchdogAlarm {
+                        agent: spec.name.clone(),
+                        run_id: None,
+                        alarm: "daily_budget_exhausted".into(),
+                        details: format!("{used}/{} tokens", spec.daily_token_budget),
+                        severity: "critical".into(),
+                    });
+                } else if used >= (spec.daily_token_budget * 8) / 10 {
+                    alarms.push(Event::WatchdogAlarm {
+                        agent: spec.name.clone(),
+                        run_id: None,
+                        alarm: "near_budget_threshold".into(),
+                        details: format!("{used}/{} tokens (>= 80%)", spec.daily_token_budget),
+                        severity: "warning".into(),
+                    });
+                }
+            }
+        }
+        for alarm in &alarms {
+            self.observe(alarm.clone());
+            if let Event::WatchdogAlarm { agent, alarm, details, .. } = alarm {
+                let draft = crate::bus::Draft {
+                    from: agent.clone(),
+                    payload: format!("{agent}:{alarm}:{details}"),
+                    ..Default::default()
+                };
+                let _ = self.bus.publish("agent.health.alarm", draft);
+            }
+        }
+        alarms
     }
 
     fn platform(&self) -> Result<&crate::keys::Platform, String> {

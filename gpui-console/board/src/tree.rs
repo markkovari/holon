@@ -528,6 +528,7 @@ impl AgentTree {
                 }
             }
             Event::Session(view) => self.apply_session(view, now),
+            _ => {}
         }
         self.revision += 1;
     }

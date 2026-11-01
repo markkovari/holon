@@ -100,6 +100,12 @@ pub struct RunRecord {
     /// Photos that came with it, by file name in the agent's inbox.
     #[serde(default)]
     pub attachments: Vec<String>,
+    /// What this run cost in USD micro-cents (1 USD = 1,000,000 micros).
+    #[serde(default)]
+    pub cost_micros: u64,
+    /// Tenant identity for multi-tenant metering and attribution.
+    #[serde(default)]
+    pub tenant: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -235,4 +241,45 @@ pub enum Event {
     },
     /// A coding session an agent started changed: the whole of it, to be replaced by id.
     Session(Box<SessionView>),
+    /// Model usage cost recorded for audit ledger and tenant accounting.
+    CostRecorded(Box<CostLedgerEntry>),
+    /// Diagnostic alarm emitted by the runtime watchdog.
+    WatchdogAlarm {
+        agent: String,
+        #[serde(default)]
+        run_id: Option<String>,
+        alarm: String,
+        details: String,
+        severity: String,
+    },
+    /// A vetted agent specification patch proposed for review.
+    SpecPatchProposed(Box<SpecPatchProposal>),
+}
+
+/// Ledger record of agent token consumption and financial spend.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct CostLedgerEntry {
+    pub id: String,
+    pub agent: String,
+    #[serde(default)]
+    pub tenant: String,
+    #[serde(default)]
+    pub project: String,
+    pub model: String,
+    pub tokens_in: u64,
+    pub tokens_out: u64,
+    pub cost_micros: u64,
+    pub timestamp_ms: u64,
+}
+
+/// Proposed change to an agent's specification awaiting review or auto-application.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SpecPatchProposal {
+    pub proposal_id: String,
+    pub agent: String,
+    pub proposer: String,
+    pub patch: String,
+    pub reason: String,
+    pub status: String,
+    pub timestamp_ms: u64,
 }

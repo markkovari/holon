@@ -48,6 +48,8 @@ pub struct Cause {
     pub taskforce: Option<String>,
     /// Attenuated / delegated capabilities granted dynamically by the caller for this turn.
     pub delegated_capabilities: Vec<Capability>,
+    /// Optional tenant attribution for multi-tenant accounting.
+    pub tenant: Option<String>,
 }
 
 /// A spawned task's state, as `task_result` reports it.
@@ -205,7 +207,7 @@ pub trait Host: Sync {
     fn observe(&self, event: Event);
 }
 
-pub use agent_wire::Event;
+pub use agent_wire::{CostLedgerEntry, Event, SpecPatchProposal};
 
 /// Longest wake-up chain. Past this, the next hop is dropped and logged.
 pub const MAX_HOPS: u32 = 6;
@@ -256,12 +258,14 @@ pub fn tool_group_for(tool_name: &str) -> ToolGroup {
         "exec_sandboxed" | "session_start" => ToolGroup::Exec,
         "spawn_task" | "spawn_task_force" | "task_result" | "await_all" => ToolGroup::Agent,
         n if n.starts_with("agent:") => ToolGroup::Agent,
-        "store_get" | "store_put" | "store_list" | "store_crdt" => ToolGroup::Store,
+        "store_get" | "store_put" | "store_list" | "store_crdt" | "cost_ledger" => ToolGroup::Store,
         "agent_save"
         | "agent_delete"
         | "agent_restore"
         | "agent_pause"
-        | "agent_remove_schedule" => ToolGroup::Admin,
+        | "agent_remove_schedule"
+        | "agent_propose_spec_patch"
+        | "agent_apply_spec_patch" => ToolGroup::Admin,
         _ => ToolGroup::Other,
     }
 }
@@ -577,6 +581,27 @@ pub const TOOLS: &[ToolDef] = &[
         category: "admin",
         sensitive: false,
     },
+    ToolDef {
+        name: "agent_propose_spec_patch",
+        args: r#"{"target_agent": "...", "patch": "{\"description\": \"...\", \"prompt\": \"...\", \"add_capabilities\": [\"http_get\"]}", "reason": "why this update is needed"}"#,
+        about: "Propose a vetted patch to improve an agent's specification. The patch proposal is recorded in the governance ledger for peer review or approval.",
+        category: "admin",
+        sensitive: false,
+    },
+    ToolDef {
+        name: "agent_apply_spec_patch",
+        args: r#"{"target_agent": "...", "proposal_id": "patch-..."}"#,
+        about: "Apply a reviewable spec patch proposal to the target agent.",
+        category: "admin",
+        sensitive: true,
+    },
+    ToolDef {
+        name: "cost_ledger",
+        args: r#"{"agent": "...", "since_hours": 24}"#,
+        about: "Query token consumption and financial spend ledger for an agent, tenant, or fleet.",
+        category: "store",
+        sensitive: false,
+    },
 ];
 
 fn tool_def(name: &str) -> Option<&'static ToolDef> {
@@ -608,6 +633,8 @@ fn required(name: &str) -> &'static [&'static str] {
         | "agent_remove_schedule"
         | "agent_restore" => &["name"],
         "agent_save" => &["name"],
+        "agent_propose_spec_patch" => &["target_agent", "patch", "reason"],
+        "agent_apply_spec_patch" => &["target_agent", "proposal_id"],
         "workspace_commit" | "workspace_discard" => &["branch"],
         "exec_sandboxed" => &["cmd"],
         "compact_context" => &["summary"],
@@ -641,6 +668,7 @@ fn primary(name: &str) -> Option<&'static str> {
         "tools_discover" => Some("category"),
         "compact_context" => Some("summary"),
         "distill_lesson" => Some("rule"),
+        "cost_ledger" => Some("agent"),
         "agent_show"
         | "agent_delete"
         | "agent_pause"
@@ -1763,6 +1791,70 @@ fn exec(
             host.pause_agent(&arg(args, "name"), paused)?;
             Ok(if paused { "paused".into() } else { "resumed".into() })
         }
+        "agent_propose_spec_patch" => {
+            if !spec.has_capability("agent_curator")
+                && !spec.has_capability("propose_spec_patch")
+                && !spec.has_capability("agent_save")
+            {
+                return Err("agent_propose_spec_patch requires capability agent_curator or propose_spec_patch".into());
+            }
+            let target_agent = arg(args, "target_agent");
+            if target_agent.is_empty() {
+                return Err("missing target_agent".into());
+            }
+            if store.get(&target_agent).is_none() {
+                return Err(format!("no agent named {target_agent}"));
+            }
+            let patch = arg(args, "patch");
+            if serde_json::from_str::<Value>(&patch).is_err() {
+                return Err("patch must be valid JSON object string".into());
+            }
+            let reason = arg(args, "reason");
+            let proposal_id = format!("patch-{}-{}-{}", target_agent, host.now_ms(), spec.name);
+            let proposal = SpecPatchProposal {
+                proposal_id: proposal_id.clone(),
+                agent: target_agent.clone(),
+                proposer: spec.name.clone(),
+                patch,
+                reason: reason.clone(),
+                status: "pending_review".into(),
+                timestamp_ms: host.now_ms(),
+            };
+            store.record_spec_patch(&proposal)?;
+            host.observe(Event::SpecPatchProposed(Box::new(proposal)));
+            Ok(format!("proposed spec patch {proposal_id} for agent {target_agent}: {reason}"))
+        }
+        "agent_apply_spec_patch" => {
+            if !spec.has_capability("agent_curator") && !spec.has_capability("agent_save") {
+                return Err(
+                    "agent_apply_spec_patch requires capability agent_curator or agent_save".into(),
+                );
+            }
+            let target_agent = arg(args, "target_agent");
+            let proposal_id = arg(args, "proposal_id");
+            let updated = store.apply_spec_patch(&target_agent, &proposal_id)?;
+            host.save_agent(updated)?;
+            Ok(format!("applied spec patch {proposal_id} to agent {target_agent}"))
+        }
+        "cost_ledger" => {
+            let target = arg(args, "agent");
+            let target = if target.is_empty() { "*" } else { &target };
+            let hours: u64 = arg(args, "since_hours").parse().unwrap_or(24);
+            let since = host.now().saturating_sub(hours * 3600);
+            let entries = store.cost_ledger(target, since);
+            let total_tokens: u64 = entries.iter().map(|e| e.tokens_in + e.tokens_out).sum();
+            let total_cost_micros: u64 = entries.iter().map(|e| e.cost_micros).sum();
+            let summary = json!({
+                "query_agent": target,
+                "since_hours": hours,
+                "entry_count": entries.len(),
+                "total_tokens": total_tokens,
+                "total_cost_micros": total_cost_micros,
+                "total_cost_usd": (total_cost_micros as f64) / 1_000_000.0,
+                "entries": entries,
+            });
+            serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())
+        }
         "transcribe" => {
             let p = confine(&store.workspace(&spec.name)?, &arg(args, "path"))?;
             let bytes = std::fs::read(&p).map_err(|e| format!("{}: {e}", arg(args, "path")))?;
@@ -2011,6 +2103,8 @@ pub fn run(
         chain: cause.chain.clone(),
         project: cause.project.clone().unwrap_or_default(),
         attachments: cause.attachments.clone(),
+        cost_micros: 0,
+        tenant: cause.tenant.clone().unwrap_or_default(),
     };
     let mut child_tokens = 0u64;
     let push = |rec: &mut RunRecord, step: Step| {
@@ -2027,7 +2121,25 @@ pub fn run(
         if used >= spec.daily_token_budget {
             rec.status = Status::OverBudget;
             rec.answer = format!("daily token budget spent ({used}/{})", spec.daily_token_budget);
+            host.observe(Event::WatchdogAlarm {
+                agent: spec.name.clone(),
+                run_id: Some(rec.id.clone()),
+                alarm: "daily_token_budget_exceeded".into(),
+                details: format!("spent {used} of daily budget {}", spec.daily_token_budget),
+                severity: "critical".into(),
+            });
             return finish(host, rec);
+        } else if used >= (spec.daily_token_budget * 8) / 10 {
+            host.observe(Event::WatchdogAlarm {
+                agent: spec.name.clone(),
+                run_id: Some(rec.id.clone()),
+                alarm: "near_budget_threshold".into(),
+                details: format!(
+                    "spent {used} of daily budget {} (>= 80%)",
+                    spec.daily_token_budget
+                ),
+                severity: "warning".into(),
+            });
         }
     }
 
@@ -2073,6 +2185,8 @@ pub fn run(
     let mut last_text = String::new();
     let mut called_ok: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut nudges = 0;
+    let mut last_call_sig: Option<(String, String)> = None;
+    let mut identical_call_count: usize = 0;
 
     for turn in 0..=spec.max_steps {
         // The final turn forbids tools, so a run always ends in an answer.
@@ -2151,6 +2265,22 @@ pub fn run(
         let (mut said, mut results, mut any_error) = (Vec::new(), Vec::new(), false);
         for (name, args) in calls {
             let args = normalize_args(&name, args);
+            let sig = (name.clone(), args.to_string());
+            if last_call_sig.as_ref() == Some(&sig) {
+                identical_call_count += 1;
+                if identical_call_count >= 3 {
+                    host.observe(Event::WatchdogAlarm {
+                        agent: spec.name.clone(),
+                        run_id: Some(rec.id.clone()),
+                        alarm: "stuck_execution_loop".into(),
+                        details: format!("tool {name} invoked {identical_call_count} times with identical arguments"),
+                        severity: "warning".into(),
+                    });
+                }
+            } else {
+                last_call_sig = Some(sig);
+                identical_call_count = 1;
+            }
             // The tool call is a span of its own, and the parent of anything
             // it wakes — which is how a trace shows WHICH call caused a run.
             let tool_span = new_span_id();
@@ -2274,9 +2404,51 @@ pub fn run(
 
 static RUN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Compute cost in USD micro-cents based on model rates per 1k input/output tokens.
+pub fn compute_cost_micros(model: &str, tokens_in: u64, tokens_out: u64) -> u64 {
+    if model.starts_with("local/") || model.starts_with("mock") || model.is_empty() {
+        return 0;
+    }
+    let (rate_in_per_1k, rate_out_per_1k) = if model.contains("deepseek-flash") {
+        (70, 140)
+    } else if model.contains("deepseek") {
+        (140, 280)
+    } else if model.contains("haiku") {
+        (250, 1250)
+    } else if model.contains("sonnet") {
+        (3000, 15000)
+    } else if model.contains("opus") {
+        (15000, 75000)
+    } else if model.contains("gpt-4o-mini") {
+        (150, 600)
+    } else if model.contains("gpt-4") {
+        (2500, 10000)
+    } else {
+        (1000, 3000)
+    };
+
+    let in_cost = (tokens_in.saturating_mul(rate_in_per_1k)).div_ceil(1000);
+    let out_cost = (tokens_out.saturating_mul(rate_out_per_1k)).div_ceil(1000);
+    in_cost.saturating_add(out_cost)
+}
+
 fn finish(host: &dyn Host, mut rec: RunRecord) -> RunRecord {
     rec.finished = host.now();
     rec.finished_ms = host.now_ms();
+    rec.cost_micros = compute_cost_micros(&rec.model, rec.tokens_in, rec.tokens_out);
+    let entry = CostLedgerEntry {
+        id: rec.id.clone(),
+        agent: rec.agent.clone(),
+        tenant: rec.tenant.clone(),
+        project: rec.project.clone(),
+        model: rec.model.clone(),
+        tokens_in: rec.tokens_in,
+        tokens_out: rec.tokens_out,
+        cost_micros: rec.cost_micros,
+        timestamp_ms: rec.finished_ms,
+    };
+    let _ = host.store().record_cost(&entry);
+    host.observe(Event::CostRecorded(Box::new(entry)));
     let _ = host.store().record_run(&rec);
     host.observe(Event::RunFinished(Box::new(rec.clone())));
     rec
