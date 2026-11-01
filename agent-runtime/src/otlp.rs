@@ -78,16 +78,41 @@ fn spans_for(r: &RunRecord) -> Vec<Value> {
             s("holon.run.status", format!("{:?}", r.status).to_lowercase()),
             i("holon.hops", u64::from(r.hops)),
             s("holon.chain", r.chain.join(" > ")),
+            s("w3c.traceparent", format!("00-{}-{}-01", r.trace_id, r.span_id)),
         ],
         "status": status(ok, &r.answer),
     });
+    let run_attrs = run["attributes"].as_array_mut().unwrap();
+    if !r.tenant.is_empty() {
+        run_attrs.push(s("holon.tenant", r.tenant.clone()));
+    }
+    if !r.project.is_empty() {
+        run_attrs.push(s("holon.project", r.project.clone()));
+    }
+    if r.cost_micros > 0 {
+        run_attrs.push(i("gen_ai.usage.cost_micros", r.cost_micros));
+    }
     if !r.model.is_empty() {
-        run["attributes"].as_array_mut().unwrap().push(s("gen_ai.request.model", r.model.clone()));
+        run_attrs.push(s("gen_ai.request.model", r.model.clone()));
     }
     let mut out = vec![run];
     for step in &r.steps {
         match step {
             Step::Model { span_id, t0, t1, tokens_in, tokens_out, .. } if !span_id.is_empty() => {
+                let mut attrs = vec![
+                    s("gen_ai.operation.name", "chat"),
+                    s("gen_ai.system", provider(&r.model)),
+                    s("gen_ai.request.model", r.model.clone()),
+                    i("gen_ai.usage.input_tokens", *tokens_in),
+                    i("gen_ai.usage.output_tokens", *tokens_out),
+                    s("holon.step.status", "ok"),
+                ];
+                if !r.tenant.is_empty() {
+                    attrs.push(s("holon.tenant", r.tenant.clone()));
+                }
+                if !r.project.is_empty() {
+                    attrs.push(s("holon.project", r.project.clone()));
+                }
                 out.push(json!({
                     "traceId": r.trace_id,
                     "spanId": span_id,
@@ -96,13 +121,7 @@ fn spans_for(r: &RunRecord) -> Vec<Value> {
                     "kind": CLIENT,
                     "startTimeUnixNano": nanos(*t0),
                     "endTimeUnixNano": nanos((*t1).max(*t0)),
-                    "attributes": [
-                        s("gen_ai.operation.name", "chat"),
-                        s("gen_ai.system", provider(&r.model)),
-                        s("gen_ai.request.model", r.model.clone()),
-                        i("gen_ai.usage.input_tokens", *tokens_in),
-                        i("gen_ai.usage.output_tokens", *tokens_out),
-                    ],
+                    "attributes": attrs,
                     "status": {"code": 1},
                 }));
             }
@@ -112,7 +131,14 @@ fn spans_for(r: &RunRecord) -> Vec<Value> {
                 let mut attrs = vec![
                     s("gen_ai.operation.name", "execute_tool"),
                     s("gen_ai.tool.name", name.clone()),
+                    s("holon.step.status", if *error { "error" } else { "ok" }),
                 ];
+                if !r.tenant.is_empty() {
+                    attrs.push(s("holon.tenant", r.tenant.clone()));
+                }
+                if !r.project.is_empty() {
+                    attrs.push(s("holon.project", r.project.clone()));
+                }
                 if let Some(a) = approved {
                     attrs.push(s("holon.tool.approved", a.to_string()));
                 }
@@ -222,8 +248,10 @@ mod tests {
             parent_span_id: Some(new_span_id()),
             hops: 1,
             chain: vec!["coach|store.rowing".into()],
-            project: String::new(),
+            project: "research".into(),
             attachments: Vec::new(),
+            cost_micros: 250,
+            tenant: "acme-corp".into(),
         }
     }
 
@@ -263,10 +291,16 @@ mod tests {
         };
         assert_eq!(attr(&spans[0], "gen_ai.operation.name").as_deref(), Some("invoke_agent"));
         assert_eq!(attr(&spans[0], "gen_ai.agent.name").as_deref(), Some("logwatch"));
+        assert_eq!(attr(&spans[0], "holon.tenant").as_deref(), Some("acme-corp"));
+        assert_eq!(attr(&spans[0], "holon.project").as_deref(), Some("research"));
+        assert_eq!(attr(&spans[0], "gen_ai.usage.cost_micros").as_deref(), Some("250"));
+        assert!(attr(&spans[0], "w3c.traceparent").unwrap().starts_with("00-"));
         assert_eq!(attr(&spans[1], "gen_ai.operation.name").as_deref(), Some("chat"));
         assert_eq!(attr(&spans[1], "gen_ai.system").as_deref(), Some("anthropic"));
         assert_eq!(attr(&spans[1], "gen_ai.usage.input_tokens").as_deref(), Some("100"));
+        assert_eq!(attr(&spans[1], "holon.step.status").as_deref(), Some("ok"));
         assert_eq!(attr(&spans[2], "gen_ai.tool.name").as_deref(), Some("store_put"));
+        assert_eq!(attr(&spans[2], "holon.step.status").as_deref(), Some("ok"));
         assert_eq!(spans[0]["status"]["code"], 1);
         assert_eq!(
             doc["resourceSpans"][0]["resource"]["attributes"][0]["value"]["stringValue"],
