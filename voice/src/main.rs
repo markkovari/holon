@@ -6,9 +6,10 @@ use std::sync::mpsc::channel;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use holon_voice::audio::{rms_energy, start_mic_capture};
 use holon_voice::client::RemoteAgentClient;
+use holon_voice::control::{run_control_server, ControlState};
 use holon_voice::session::{VoiceMode, VoiceSession};
 use holon_voice::stt::CommandStt;
 use holon_voice::tts::MacSayTts;
@@ -17,6 +18,17 @@ use holon_voice::vad::VadConfig;
 #[derive(Parser, Debug)]
 #[command(name = "holon-voice", about = "Native conversational voice companion for Holon on macOS")]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    /// Control server port for tray/CLI toggle (default: 18018)
+    #[arg(long, default_value_t = 18018, env = "HOLON_VOICE_CONTROL_PORT")]
+    control_port: u16,
+
+    /// Start daemon in paused/muted mode (microphone released until toggled from tray or CLI)
+    #[arg(long, default_value_t = false)]
+    paused: bool,
+
     /// Holon runtime base URL (e.g. Raspberry Pi 5 / Zero or localhost)
     #[arg(short, long, default_value = "http://127.0.0.1:18017", env = "HOLON_URL")]
     url: String,
@@ -82,6 +94,23 @@ struct Cli {
     meter: bool,
 }
 
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Toggle microphone listening state (on <-> off)
+    Toggle,
+    /// Pause microphone capture (release hardware)
+    Pause,
+    /// Resume microphone capture
+    Resume,
+    /// Get current voice companion status
+    Status,
+    /// Switch active default agent
+    Agent {
+        /// Target agent name (e.g. coach, bot, calendar, weather)
+        name: String,
+    },
+}
+
 fn resolve_stt_bin(configured: Option<PathBuf>) -> Result<PathBuf, String> {
     if let Some(p) = configured {
         if p.exists() {
@@ -143,6 +172,35 @@ fn resolve_stt_bin(configured: Option<PathBuf>) -> Result<PathBuf, String> {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
+    // Handle CLI subcommands if specified
+    if let Some(cmd) = cli.command {
+        let base = format!("http://127.0.0.1:{}", cli.control_port);
+        let client = reqwest::Client::new();
+        match cmd {
+            Commands::Toggle => {
+                let resp = client.post(format!("{base}/toggle")).send().await?;
+                println!("{}", resp.text().await?);
+            }
+            Commands::Pause => {
+                let resp = client.post(format!("{base}/pause")).send().await?;
+                println!("{}", resp.text().await?);
+            }
+            Commands::Resume => {
+                let resp = client.post(format!("{base}/resume")).send().await?;
+                println!("{}", resp.text().await?);
+            }
+            Commands::Status => {
+                let resp = client.get(format!("{base}/status")).send().await?;
+                println!("{}", resp.text().await?);
+            }
+            Commands::Agent { name } => {
+                let resp = client.post(format!("{base}/agent?name={name}")).send().await?;
+                println!("{}", resp.text().await?);
+            }
+        }
+        return Ok(());
+    }
+
     println!("Holon Native Voice Companion v{}", holon_voice::version());
     println!("Connecting to remote Holon runtime: {} (agent: {})", cli.url, cli.agent);
 
@@ -201,58 +259,121 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         r.store(false, Ordering::SeqCst);
     });
 
+    let initial_listening = cli.always_listen && !cli.paused;
+    let control_state = Arc::new(ControlState::new(
+        initial_listening,
+        &cli.agent,
+        cli.device.clone().unwrap_or_else(|| "Default".to_string()),
+    ));
+
+    let ctrl_clone = Arc::clone(&control_state);
+    let ctrl_port = cli.control_port;
+    tokio::spawn(async move {
+        if let Err(e) = run_control_server(ctrl_port, ctrl_clone).await {
+            eprintln!("Control server error: {e}");
+        }
+    });
+
     if cli.always_listen {
         println!(
             "Mode: Always-Listen (say '{}' to talk, speak while playing to barge in)",
             cli.wake_word
         );
-        let (tx, rx) = channel::<Vec<i16>>();
-        let _stream = start_mic_capture(16000, cli.device.as_deref(), tx)
-            .map_err(|e| format!("failed to start microphone capture: {e}"))?;
+        if cli.paused {
+            println!("🔇 Starting in PAUSED mode (mic released). Toggle via tray or `holon-voice toggle`.");
+        }
 
+        let mut mic_stream: Option<holon_voice::audio::AudioStream> = None;
+        let mut rx_channel: Option<std::sync::mpsc::Receiver<Vec<i16>>> = None;
         let mut frame_buf = Vec::new();
         let mut last_meter = Instant::now();
         let mut max_energy: f32 = 0.0;
         let mut voice_active = false;
+        let mut current_agent = cli.agent.clone();
 
         while running.load(Ordering::SeqCst) {
-            match rx.recv_timeout(Duration::from_millis(50)) {
-                Ok(samples) => {
-                    let energy = rms_energy(&samples);
-                    if energy > max_energy {
-                        max_energy = energy;
-                    }
+            // Check dynamic agent switch from tray
+            let desired_agent = control_state.agent.read().await.clone();
+            if desired_agent != current_agent {
+                session.set_default_agent(&desired_agent);
+                current_agent = desired_agent;
+            }
 
-                    if energy >= cli.energy_threshold {
-                        if !voice_active {
-                            voice_active = true;
-                            eprintln!("🎙️  [VAD: User voice detected (energy: {:.3})]...", energy);
-                        }
-                    } else if voice_active && energy < cli.energy_threshold / 2.0 {
-                        voice_active = false;
-                    }
+            let should_listen = control_state.listening.load(Ordering::SeqCst);
 
-                    if cli.meter && last_meter.elapsed() >= Duration::from_secs(2) {
-                        eprintln!(
-                            "📊 [Mic Meter]: peak RMS={:.4} (threshold={:.3})",
-                            max_energy, cli.energy_threshold
-                        );
-                        max_energy = 0.0;
-                        last_meter = Instant::now();
+            if should_listen && mic_stream.is_none() {
+                let (tx, rx) = channel::<Vec<i16>>();
+                match start_mic_capture(16000, cli.device.as_deref(), tx) {
+                    Ok(stream) => {
+                        mic_stream = Some(stream);
+                        rx_channel = Some(rx);
+                        frame_buf.clear();
+                        eprintln!("🎙️  [Mic Activated]: Hardware stream started");
                     }
-
-                    frame_buf.extend_from_slice(&samples);
-                    while frame_buf.len() >= 320 {
-                        let frame: Vec<i16> = frame_buf.drain(..320).collect();
-                        if let Ok(Some(msg)) = session.feed_frame(&frame) {
-                            println!("{msg}");
-                        }
+                    Err(e) => {
+                        eprintln!("⚠️  Failed to start microphone: {e}");
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        continue;
                     }
                 }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                    let _ = session.is_playback_active();
+            } else if !should_listen && mic_stream.is_some() {
+                mic_stream = None;
+                rx_channel = None;
+                frame_buf.clear();
+                eprintln!("🔇 [Mic Released]: Hardware capture stopped (orange indicator off)");
+            }
+
+            if let Some(ref rx) = rx_channel {
+                match rx.recv_timeout(Duration::from_millis(50)) {
+                    Ok(samples) => {
+                        let energy = rms_energy(&samples);
+                        if energy > max_energy {
+                            max_energy = energy;
+                        }
+
+                        if energy >= cli.energy_threshold {
+                            if !voice_active {
+                                voice_active = true;
+                                eprintln!(
+                                    "🎙️  [VAD: User voice detected (energy: {:.3})]...",
+                                    energy
+                                );
+                            }
+                        } else if voice_active && energy < cli.energy_threshold / 2.0 {
+                            voice_active = false;
+                        }
+
+                        if cli.meter && last_meter.elapsed() >= Duration::from_secs(2) {
+                            eprintln!(
+                                "📊 [Mic Meter]: peak RMS={:.4} (threshold={:.3})",
+                                max_energy, cli.energy_threshold
+                            );
+                            max_energy = 0.0;
+                            last_meter = Instant::now();
+                        }
+
+                        frame_buf.extend_from_slice(&samples);
+                        while frame_buf.len() >= 320 {
+                            let frame: Vec<i16> = frame_buf.drain(..320).collect();
+                            if let Ok(Some(msg)) = session.feed_frame(&frame) {
+                                println!("{msg}");
+                                if let Some((u, a)) = msg.split_once("\nAgent: ") {
+                                    let query = u.trim_start_matches("You: ");
+                                    control_state.update_turn(query, a).await;
+                                }
+                            }
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        let _ = session.is_playback_active();
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        mic_stream = None;
+                        rx_channel = None;
+                    }
                 }
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            } else {
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
     } else {

@@ -2,6 +2,7 @@
 
 pub mod audio;
 pub mod client;
+pub mod control;
 pub mod persona;
 pub mod router;
 pub mod session;

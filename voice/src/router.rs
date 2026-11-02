@@ -70,15 +70,29 @@ impl IntentRouter {
         // 1. Check with greetings: e.g. "Hey, coach, how was my rowing?" or "Ask coach what my pace was"
         for greeting in greetings {
             if let Some(after_greeting) = lower.strip_prefix(greeting) {
-                let rest_lower = after_greeting.trim_start_matches(|c: char| c == ',' || c == ':' || c.is_whitespace());
+                let rest_lower = after_greeting
+                    .trim_start_matches(|c: char| c == ',' || c == ':' || c.is_whitespace());
                 for (name, target) in agents {
                     if let Some(after_agent) = rest_lower.strip_prefix(name) {
                         let is_delim = after_agent.is_empty()
-                            || after_agent.starts_with(|c: char| c == ',' || c == ':' || c.is_whitespace() || c == '?' || c == '!' || c == '.');
+                            || after_agent.starts_with(|c: char| {
+                                c == ','
+                                    || c == ':'
+                                    || c.is_whitespace()
+                                    || c == '?'
+                                    || c == '!'
+                                    || c == '.'
+                            });
                         if is_delim {
                             let consumed_len = (trimmed.len() - rest_lower.len()) + name.len();
-                            let rest = trimmed[consumed_len..]
-                                .trim_start_matches(|c: char| c == ':' || c == ',' || c == '?' || c == '!' || c == '.' || c.is_whitespace());
+                            let rest = trimmed[consumed_len..].trim_start_matches(|c: char| {
+                                c == ':'
+                                    || c == ','
+                                    || c == '?'
+                                    || c == '!'
+                                    || c == '.'
+                                    || c.is_whitespace()
+                            });
                             if !rest.is_empty() {
                                 return Some((target.to_string(), rest));
                             }
@@ -91,7 +105,8 @@ impl IntentRouter {
         // 2. Direct addressing: e.g. "Coach, how was my rowing?" or "Coach: ..."
         for (name, target) in agents {
             if let Some(after_agent) = lower.strip_prefix(name) {
-                let is_delim = after_agent.starts_with(|c: char| c == ',' || c == ':' || c.is_whitespace());
+                let is_delim =
+                    after_agent.starts_with(|c: char| c == ',' || c == ':' || c.is_whitespace());
                 if is_delim {
                     let rest = trimmed[name.len()..]
                         .trim_start_matches(|c: char| c == ':' || c == ',' || c.is_whitespace());
