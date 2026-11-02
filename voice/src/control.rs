@@ -12,6 +12,7 @@ pub struct VoiceControlStatus {
     pub device: String,
     pub last_heard: String,
     pub last_reply: String,
+    pub active_agent: Option<String>,
 }
 
 pub struct ControlState {
@@ -21,6 +22,7 @@ pub struct ControlState {
     pub device: String,
     pub last_heard: RwLock<String>,
     pub last_reply: RwLock<String>,
+    pub active_agent: RwLock<Option<String>>,
 }
 
 impl ControlState {
@@ -40,6 +42,7 @@ impl ControlState {
             device: device.into(),
             last_heard: RwLock::new(String::new()),
             last_reply: RwLock::new(String::new()),
+            active_agent: RwLock::new(None),
         }
     }
 
@@ -51,6 +54,7 @@ impl ControlState {
             device: self.device.clone(),
             last_heard: self.last_heard.read().await.clone(),
             last_reply: self.last_reply.read().await.clone(),
+            active_agent: self.active_agent.read().await.clone(),
         }
     }
 
@@ -60,6 +64,10 @@ impl ControlState {
         self.listening.store(next, Ordering::SeqCst);
         let mut label = self.state_label.write().await;
         *label = if next { "WaitingWakeWord".to_string() } else { "Paused".to_string() };
+        if !next {
+            let mut a = self.active_agent.write().await;
+            *a = None;
+        }
         next
     }
 
@@ -67,11 +75,26 @@ impl ControlState {
         self.listening.store(val, Ordering::SeqCst);
         let mut label = self.state_label.write().await;
         *label = if val { "WaitingWakeWord".to_string() } else { "Paused".to_string() };
+        if !val {
+            let mut a = self.active_agent.write().await;
+            *a = None;
+        }
     }
 
     pub async fn set_agent(&self, new_agent: &str) {
         let mut a = self.agent.write().await;
         *a = new_agent.to_string();
+    }
+
+    pub async fn set_state_and_active_agent(&self, state_str: &str, active_agent: Option<&str>) {
+        {
+            let mut s = self.state_label.write().await;
+            *s = state_str.to_string();
+        }
+        {
+            let mut a = self.active_agent.write().await;
+            *a = active_agent.map(|s| s.to_string());
+        }
     }
 
     pub async fn update_turn(&self, heard: &str, reply: &str) {
@@ -140,7 +163,6 @@ pub async fn run_control_server(
                 eprintln!("🎛️  [Control]: Microphone resumed");
                 ("200 OK", json)
             } else if path.starts_with("/agent") {
-                // e.g. /agent?name=coach or POST /agent with body
                 let name =
                     if let Some(idx) = path.find("name=") { &path[idx + 5..] } else { "coach" };
                 let clean_name = name.split('&').next().unwrap_or("coach");

@@ -39,6 +39,7 @@ pub struct VoiceSession {
     router: IntentRouter,
     follow_up_until: Option<std::time::Instant>,
     follow_up_duration: std::time::Duration,
+    state_listener: Option<Arc<dyn Fn(SessionState, Option<&str>) + Send + Sync>>,
 }
 
 impl VoiceSession {
@@ -73,6 +74,21 @@ impl VoiceSession {
             router: IntentRouter::default(),
             follow_up_until: None,
             follow_up_duration: std::time::Duration::from_secs(25),
+            state_listener: None,
+        }
+    }
+
+    pub fn set_state_listener(
+        &mut self,
+        listener: impl Fn(SessionState, Option<&str>) + Send + Sync + 'static,
+    ) {
+        self.state_listener = Some(Arc::new(listener));
+    }
+
+    pub fn change_state(&mut self, state: SessionState, agent: Option<&str>) {
+        self.state = state;
+        if let Some(ref l) = self.state_listener {
+            l(state, agent);
         }
     }
 
@@ -108,9 +124,9 @@ impl VoiceSession {
                     self.follow_up_until =
                         Some(std::time::Instant::now() + self.follow_up_duration);
                     self.wake_word_active = true;
-                    self.state = SessionState::Listening;
+                    self.change_state(SessionState::Listening, None);
                 } else if self.state == SessionState::Speaking {
-                    self.state = SessionState::Listening;
+                    self.change_state(SessionState::Listening, None);
                 }
             }
             active
@@ -126,7 +142,7 @@ impl VoiceSession {
         }
         self.vad.set_playback_active(false);
         self.wake_word_active = true;
-        self.state = SessionState::Listening;
+        self.change_state(SessionState::Listening, None);
         self.speaker_tracker.reset();
         Ok(())
     }
@@ -140,7 +156,7 @@ impl VoiceSession {
                 self.follow_up_until = None;
                 self.wake_word_active = false;
                 if self.mode == VoiceMode::AlwaysListen && self.state == SessionState::Listening {
-                    self.state = SessionState::WaitingWakeWord;
+                    self.change_state(SessionState::WaitingWakeWord, None);
                     eprintln!("💤 [Follow-up window closed]: Waiting for wake phrase");
                 }
             }
@@ -155,7 +171,7 @@ impl VoiceSession {
             }
             VadEvent::SpeechStart => {
                 if self.state == SessionState::WaitingWakeWord {
-                    self.state = SessionState::Listening;
+                    self.change_state(SessionState::Listening, None);
                 }
                 Ok(None)
             }
@@ -171,16 +187,16 @@ impl VoiceSession {
             return Ok(None);
         }
 
-        self.state = SessionState::Processing;
+        self.change_state(SessionState::Processing, None);
 
         match self.process_utterance(samples) {
             Ok(result) => Ok(result),
             Err(err) => {
-                // Ensure session state recovers immediately upon error rather than staying bricked in Processing
-                self.state = match self.mode {
+                let fallback = match self.mode {
                     VoiceMode::PushToTalk => SessionState::Listening,
                     VoiceMode::AlwaysListen => SessionState::WaitingWakeWord,
                 };
+                self.change_state(fallback, None);
                 Err(err)
             }
         }
@@ -243,10 +259,11 @@ impl VoiceSession {
         };
 
         if query.trim().is_empty() {
-            self.state = match self.mode {
+            let fallback = match self.mode {
                 VoiceMode::PushToTalk => SessionState::Listening,
                 VoiceMode::AlwaysListen => SessionState::WaitingWakeWord,
             };
+            self.change_state(fallback, None);
             return Ok(None);
         }
 
@@ -255,6 +272,7 @@ impl VoiceSession {
         eprintln!(
             "🧭 [Intent Router]: Target agent '{target_agent}' for prompt: \"{prompt_to_send}\""
         );
+        self.change_state(SessionState::Processing, Some(&target_agent));
 
         // Dispatch question to remote Holon agent
         let answer = self.dispatcher.dispatch_run_for_agent(&target_agent, prompt_to_send)?;
@@ -281,18 +299,20 @@ impl VoiceSession {
                 let playback = ChainedPlayback::new(actions)?;
                 self.active_playback = Some(Box::new(playback));
                 self.vad.set_playback_active(true);
-                self.state = SessionState::Speaking;
+                self.change_state(SessionState::Speaking, Some(&target_agent));
             } else {
-                self.state = match self.mode {
+                let fallback = match self.mode {
                     VoiceMode::PushToTalk => SessionState::Listening,
                     VoiceMode::AlwaysListen => SessionState::WaitingWakeWord,
                 };
+                self.change_state(fallback, None);
             }
         } else {
-            self.state = match self.mode {
+            let fallback = match self.mode {
                 VoiceMode::PushToTalk => SessionState::Listening,
                 VoiceMode::AlwaysListen => SessionState::WaitingWakeWord,
             };
+            self.change_state(fallback, None);
         }
 
         Ok(Some(format!("You: {query}\nAgent: {answer}")))

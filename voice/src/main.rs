@@ -266,6 +266,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli.device.clone().unwrap_or_else(|| "Default".to_string()),
     ));
 
+    let ctrl_for_listener = Arc::clone(&control_state);
+    let rt_handle = tokio::runtime::Handle::current();
+    session.set_state_listener(move |state, agent| {
+        let cs = Arc::clone(&ctrl_for_listener);
+        let state_str = match state {
+            holon_voice::session::SessionState::WaitingWakeWord => "WaitingWakeWord",
+            holon_voice::session::SessionState::Listening => "Listening",
+            holon_voice::session::SessionState::Processing => "Processing",
+            holon_voice::session::SessionState::Speaking => "Speaking",
+        };
+        let agent_opt = agent.map(|s| s.to_string());
+        rt_handle.spawn(async move {
+            cs.set_state_and_active_agent(state_str, agent_opt.as_deref()).await;
+        });
+    });
+
     let ctrl_clone = Arc::clone(&control_state);
     let ctrl_port = cli.control_port;
     tokio::spawn(async move {
@@ -338,6 +354,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     "🎙️  [VAD: User voice detected (energy: {:.3})]...",
                                     energy
                                 );
+                                let cs = Arc::clone(&control_state);
+                                tokio::spawn(async move {
+                                    cs.set_state_and_active_agent("HearingSpeech", None).await;
+                                });
                             }
                         } else if voice_active && energy < cli.energy_threshold / 2.0 {
                             voice_active = false;
