@@ -50,36 +50,54 @@ impl IntentRouter {
     }
 
     pub fn extract_explicit_prefix(original: &str) -> Option<(String, &str)> {
-        let lower = original.trim().to_lowercase();
-        let prefixes = [
-            ("ask coach", "coach"),
-            ("tell coach", "coach"),
-            ("coach:", "coach"),
-            ("coach,", "coach"),
-            ("ask rower", "rower"),
-            ("ask her over", "rower"), // Apple STT phonetic homophone for 'ask rower'
-            ("ask roller", "rower"),
-            ("rower:", "rower"),
-            ("rower,", "rower"),
-            ("ask rowing", "coach"),
-            ("rowing:", "coach"),
-            ("ask calendar", "calendar"),
-            ("calendar:", "calendar"),
-            ("calendar,", "calendar"),
-            ("ask weather", "weather"),
-            ("weather:", "weather"),
-            ("weather,", "weather"),
-            ("ask bot", "bot"),
-            ("bot:", "bot"),
-            ("bot,", "bot"),
+        let trimmed = original.trim();
+        let lower = trimmed.to_lowercase();
+
+        let greetings = ["hey", "hi", "hello", "okay", "ok", "ask", "tell"];
+        let agents = [
+            ("coach", "coach"),
+            ("rower", "rower"),
+            ("her over", "rower"),
+            ("roller", "rower"),
+            ("rowing", "coach"),
+            ("calendar", "calendar"),
+            ("weather", "weather"),
+            ("bot", "bot"),
+            ("dev", "pr-bot"),
+            ("pr-bot", "pr-bot"),
         ];
 
-        for (prefix, agent) in prefixes {
-            if lower.starts_with(prefix) {
-                let rest = original[prefix.len()..]
-                    .trim_start_matches(|c: char| c == ':' || c == ',' || c.is_whitespace());
-                if !rest.is_empty() {
-                    return Some((agent.to_string(), rest));
+        // 1. Check with greetings: e.g. "Hey, coach, how was my rowing?" or "Ask coach what my pace was"
+        for greeting in greetings {
+            if let Some(after_greeting) = lower.strip_prefix(greeting) {
+                let rest_lower = after_greeting.trim_start_matches(|c: char| c == ',' || c == ':' || c.is_whitespace());
+                for (name, target) in agents {
+                    if let Some(after_agent) = rest_lower.strip_prefix(name) {
+                        let is_delim = after_agent.is_empty()
+                            || after_agent.starts_with(|c: char| c == ',' || c == ':' || c.is_whitespace() || c == '?' || c == '!' || c == '.');
+                        if is_delim {
+                            let consumed_len = (trimmed.len() - rest_lower.len()) + name.len();
+                            let rest = trimmed[consumed_len..]
+                                .trim_start_matches(|c: char| c == ':' || c == ',' || c == '?' || c == '!' || c == '.' || c.is_whitespace());
+                            if !rest.is_empty() {
+                                return Some((target.to_string(), rest));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Direct addressing: e.g. "Coach, how was my rowing?" or "Coach: ..."
+        for (name, target) in agents {
+            if let Some(after_agent) = lower.strip_prefix(name) {
+                let is_delim = after_agent.starts_with(|c: char| c == ',' || c == ':' || c.is_whitespace());
+                if is_delim {
+                    let rest = trimmed[name.len()..]
+                        .trim_start_matches(|c: char| c == ':' || c == ',' || c.is_whitespace());
+                    if !rest.is_empty() {
+                        return Some((target.to_string(), rest));
+                    }
                 }
             }
         }
@@ -227,6 +245,15 @@ mod tests {
         let (agent, cleaned) = router.route("calendar: what do I have at 3pm?");
         assert_eq!(agent, "calendar");
         assert_eq!(cleaned, "what do I have at 3pm?");
+
+        // Natural spoken greetings with commas (as transcribed by Apple Neural STT)
+        let (agent, cleaned) = router.route("Hey, coach, how was my rowing?");
+        assert_eq!(agent, "coach");
+        assert_eq!(cleaned, "how was my rowing?");
+
+        let (agent, cleaned) = router.route("Coach, analyze my rowing");
+        assert_eq!(agent, "coach");
+        assert_eq!(cleaned, "analyze my rowing");
 
         // Apple STT phonetic homophone for 'ask rower'
         let (agent, cleaned) = router.route("ask her over about my metrics");
