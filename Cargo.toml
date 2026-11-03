@@ -8,6 +8,7 @@ members = [
     "agent-runtime",
     "cli",
     "crates/agent-wire",
+    "crates/holon-cdp",
     "crates/holon-fuel",
     "crates/holon-llm",
     "crates/holon-metadata",
@@ -68,6 +69,7 @@ surrealdb = { version = "3.3", default-features = false, features = ["protocol-w
 wasmparser = "0.247"
 agent-runtime = { path = "agent-runtime" }
 agent-wire = { path = "crates/agent-wire" }
+holon-cdp = { path = "crates/holon-cdp" }
 holon-daemon-kit = { path = "reconciler/daemons/kit" }
 holon-fleet = { path = "reconciler/fleet" }
 holon-fuel = { path = "crates/holon-fuel" }

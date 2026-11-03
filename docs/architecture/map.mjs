@@ -138,7 +138,7 @@ export const SYS = [
   uses:['git'],
   boundary:['Suites that need NATS, SurrealDB, Docker or a model are kept out of CI and run locally; CI compiles and lints them.',
             'CI builds and tests; it does not deploy or publish. Publishing lives in its own workflows with their own triggers.'],
-  code:['reconciler/tests/','reconciler/fleet/','e2e/','bench/','xtask/','reconciler/src/bin/{bench,planscale,stub}.rs','reconciler/measure/','.github/workflows/ci.yml']}
+  code:['reconciler/tests/','reconciler/fleet/','crates/holon-cdp/','e2e/','bench/','xtask/','reconciler/src/bin/{bench,planscale,stub}.rs','reconciler/measure/','.github/workflows/ci.yml']}
 ];
 
 export const OV_POS = {library:[0,0],delivery:[1,0],loop:[2,0],control:[0,1],runtime:[1,1],daemons:[2,1],agents:[0,2],durable:[1,2],proof:[2,2]};
