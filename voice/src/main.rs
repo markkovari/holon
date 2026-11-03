@@ -333,64 +333,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             } else if !should_listen && mic_stream.is_some() {
-                mic_stream = None;
+                if let Some(mut stream) = mic_stream.take() {
+                    stream.stop();
+                }
                 rx_channel = None;
                 frame_buf.clear();
+                voice_active = false;
+                let _ = session.interrupt_playback();
                 eprintln!("🔇 [Mic Released]: Hardware capture stopped (orange indicator off)");
             }
 
-            if let Some(ref rx) = rx_channel {
-                match rx.recv_timeout(Duration::from_millis(50)) {
-                    Ok(samples) => {
-                        let energy = rms_energy(&samples);
-                        if energy > max_energy {
-                            max_energy = energy;
-                        }
-
-                        if energy >= cli.energy_threshold {
-                            if !voice_active {
-                                voice_active = true;
-                                eprintln!(
-                                    "🎙️  [VAD: User voice detected (energy: {:.3})]...",
-                                    energy
-                                );
-                                let cs = Arc::clone(&control_state);
-                                tokio::spawn(async move {
-                                    cs.set_state_and_active_agent("HearingSpeech", None).await;
-                                });
+            if should_listen {
+                if let Some(ref rx) = rx_channel {
+                    match rx.recv_timeout(Duration::from_millis(50)) {
+                        Ok(samples) => {
+                            let energy = rms_energy(&samples);
+                            if energy > max_energy {
+                                max_energy = energy;
                             }
-                        } else if voice_active && energy < cli.energy_threshold / 2.0 {
-                            voice_active = false;
-                        }
 
-                        if cli.meter && last_meter.elapsed() >= Duration::from_secs(2) {
-                            eprintln!(
-                                "📊 [Mic Meter]: peak RMS={:.4} (threshold={:.3})",
-                                max_energy, cli.energy_threshold
-                            );
-                            max_energy = 0.0;
-                            last_meter = Instant::now();
-                        }
+                            if energy >= cli.energy_threshold {
+                                if !voice_active {
+                                    voice_active = true;
+                                    eprintln!(
+                                        "🎙️  [VAD: User voice detected (energy: {:.3})]...",
+                                        energy
+                                    );
+                                    let cs = Arc::clone(&control_state);
+                                    tokio::spawn(async move {
+                                        cs.set_state_and_active_agent("HearingSpeech", None).await;
+                                    });
+                                }
+                            } else if voice_active && energy < cli.energy_threshold / 2.0 {
+                                voice_active = false;
+                            }
 
-                        frame_buf.extend_from_slice(&samples);
-                        while frame_buf.len() >= 320 {
-                            let frame: Vec<i16> = frame_buf.drain(..320).collect();
-                            if let Ok(Some(msg)) = session.feed_frame(&frame) {
-                                println!("{msg}");
-                                if let Some((u, a)) = msg.split_once("\nAgent: ") {
-                                    let query = u.trim_start_matches("You: ");
-                                    control_state.update_turn(query, a).await;
+                            if cli.meter && last_meter.elapsed() >= Duration::from_secs(2) {
+                                eprintln!(
+                                    "📊 [Mic Meter]: peak RMS={:.4} (threshold={:.3})",
+                                    max_energy, cli.energy_threshold
+                                );
+                                max_energy = 0.0;
+                                last_meter = Instant::now();
+                            }
+
+                            frame_buf.extend_from_slice(&samples);
+                            while frame_buf.len() >= 320 {
+                                let frame: Vec<i16> = frame_buf.drain(..320).collect();
+                                if let Ok(Some(msg)) = session.feed_frame(&frame) {
+                                    println!("{msg}");
+                                    if let Some((u, a)) = msg.split_once("\nAgent: ") {
+                                        let query = u.trim_start_matches("You: ");
+                                        control_state.update_turn(query, a).await;
+                                    }
                                 }
                             }
                         }
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            let _ = session.is_playback_active();
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            if let Some(mut stream) = mic_stream.take() {
+                                stream.stop();
+                            }
+                            rx_channel = None;
+                        }
                     }
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                        let _ = session.is_playback_active();
-                    }
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                        mic_stream = None;
-                        rx_channel = None;
-                    }
+                } else {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
                 }
             } else {
                 tokio::time::sleep(Duration::from_millis(100)).await;

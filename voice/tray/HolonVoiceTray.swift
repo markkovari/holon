@@ -247,6 +247,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func toggleListening() {
+        isListening = !isListening
+        currentState = isListening ? "WaitingWakeWord" : "Paused"
+        activeAgent = nil
+        updateStatusDisplay()
+        buildMenu()
         postEndpoint("toggle")
     }
 

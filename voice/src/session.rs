@@ -22,6 +22,8 @@ pub enum SessionState {
     Speaking,
 }
 
+pub type StateListener = Arc<dyn Fn(SessionState, Option<&str>) + Send + Sync>;
+
 pub struct VoiceSession {
     mode: VoiceMode,
     wake_phrase: String,
@@ -39,7 +41,7 @@ pub struct VoiceSession {
     router: IntentRouter,
     follow_up_until: Option<std::time::Instant>,
     follow_up_duration: std::time::Duration,
-    state_listener: Option<Arc<dyn Fn(SessionState, Option<&str>) + Send + Sync>>,
+    state_listener: Option<StateListener>,
 }
 
 impl VoiceSession {

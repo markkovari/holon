@@ -8,10 +8,38 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream};
 
 #[cfg(target_os = "macos")]
-pub struct AudioStream(#[allow(dead_code)] Stream);
+pub struct AudioStream {
+    stream: Option<Stream>,
+}
+
+#[cfg(target_os = "macos")]
+impl AudioStream {
+    pub fn new(stream: Stream) -> Self {
+        Self { stream: Some(stream) }
+    }
+
+    pub fn stop(&mut self) {
+        if let Some(stream) = self.stream.take() {
+            let _ = stream.pause();
+            drop(stream);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for AudioStream {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
 
 #[cfg(not(target_os = "macos"))]
 pub struct AudioStream;
+
+#[cfg(not(target_os = "macos"))]
+impl AudioStream {
+    pub fn stop(&mut self) {}
+}
 
 /// Calculates RMS energy of 16-bit PCM samples normalized to 0.0..1.0.
 pub fn rms_energy(samples: &[i16]) -> f32 {
@@ -114,31 +142,43 @@ pub fn start_mic_capture(
     tx: Sender<Vec<i16>>,
 ) -> Result<AudioStream, String> {
     let host = cpal::default_host();
+    let default_dev = host.default_input_device();
     let device = if let Some(target) = device_name {
-        let mut found = None;
-        if let Ok(devices) = host.input_devices() {
-            for d in devices {
-                if let Ok(name) = d.name() {
-                    if name.to_lowercase().contains(&target.to_lowercase()) {
-                        found = Some(d);
-                        break;
+        let target_lower = target.to_lowercase();
+        let is_target_default = default_dev
+            .as_ref()
+            .and_then(|d| d.name().ok())
+            .map(|n| n.to_lowercase().contains(&target_lower))
+            .unwrap_or(false);
+
+        if is_target_default {
+            default_dev.unwrap()
+        } else {
+            let mut found = None;
+            if let Ok(devices) = host.input_devices() {
+                for d in devices {
+                    if let Ok(name) = d.name() {
+                        if name.to_lowercase().contains(&target_lower) {
+                            found = Some(d);
+                            break;
+                        }
                     }
                 }
             }
-        }
-        if let Some(dev) = found {
-            dev
-        } else {
-            let default_dev = host.default_input_device().ok_or_else(|| {
-                format!("audio input device '{target}' not found and no default audio input device")
-            })?;
-            let fallback_name = default_dev.name().unwrap_or_else(|_| "Default".into());
-            eprintln!("⚠️  Audio device matching '{target}' not found. Falling back to default: '{fallback_name}'.");
-            default_dev
+            if let Some(dev) = found {
+                dev
+            } else if let Some(def) = default_dev {
+                let fallback_name = def.name().unwrap_or_else(|_| "Default".into());
+                eprintln!(
+                    "⚠️  Audio device matching '{target}' not found. Falling back to default: '{fallback_name}'."
+                );
+                def
+            } else {
+                return Err(format!("no audio input device found matching '{target}'"));
+            }
         }
     } else {
-        host.default_input_device()
-            .ok_or_else(|| "no default audio input device found".to_string())?
+        default_dev.ok_or_else(|| "no default audio input device found".to_string())?
     };
 
     let dev_name = device.name().unwrap_or_else(|_| "Unknown Device".to_string());
@@ -219,7 +259,7 @@ pub fn start_mic_capture(
     };
 
     stream.play().map_err(|e| format!("failed to start audio stream: {e}"))?;
-    Ok(AudioStream(stream))
+    Ok(AudioStream::new(stream))
 }
 
 #[cfg(not(target_os = "macos"))]
