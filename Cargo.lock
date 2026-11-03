@@ -2843,13 +2843,12 @@ dependencies = [
  "getrandom 0.2.17",
  "holon-lattice",
  "holon-oci",
+ "holon-plug",
  "reqwest 0.12.28",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
  "tokio",
- "wac-graph",
- "wasmparser 0.247.0",
 ]
 
 [[package]]
@@ -3131,6 +3130,15 @@ dependencies = [
  "sha1",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "holon-plug"
+version = "0.1.0"
+dependencies = [
+ "sha2 0.10.9",
+ "wac-graph",
+ "wasmparser 0.247.0",
 ]
 
 [[package]]

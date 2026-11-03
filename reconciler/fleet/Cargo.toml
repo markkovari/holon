@@ -18,6 +18,7 @@ path = "src/bin/oci.rs"
 [dependencies]
 holon-lattice.workspace = true
 holon-oci.workspace = true
+holon-plug.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 getrandom.workspace = true
@@ -27,7 +28,3 @@ serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
-# wasmparser is pinned to the one wac-graph carries (0.10 reads with 0.247): two component-model
-# readers in one graph is a type error waiting to happen; tests/workspace.rs fails when it is two.
-wac-graph = "0.10"
-wasmparser.workspace = true
