@@ -119,11 +119,8 @@ fn resolve_stt_bin(configured: Option<PathBuf>) -> Result<PathBuf, String> {
         return Err(format!("specified stt binary not found: {}", p.display()));
     }
 
-    let candidates = [
-        PathBuf::from("/Users/markkovari/.holon-agents/holon-stt"),
-        PathBuf::from("./holon-stt"),
-        PathBuf::from("agent-runtime/speech/holon-stt"),
-    ];
+    let candidates =
+        [PathBuf::from("./holon-stt"), PathBuf::from("agent-runtime/speech/holon-stt")];
     for c in &candidates {
         if c.exists() {
             return Ok(c.clone());
@@ -131,6 +128,10 @@ fn resolve_stt_bin(configured: Option<PathBuf>) -> Result<PathBuf, String> {
     }
 
     if let Some(home) = std::env::var_os("HOME") {
+        let agent_stt = PathBuf::from(&home).join(".holon-agents/holon-stt");
+        if agent_stt.exists() {
+            return Ok(agent_stt);
+        }
         let cached = PathBuf::from(home).join(".cache/holon/holon-stt");
         if cached.exists() {
             return Ok(cached);
