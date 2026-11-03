@@ -3,6 +3,11 @@ use std::time::Duration;
 
 pub trait AgentDispatcher: Send + Sync {
     fn dispatch_run(&self, prompt: &str) -> Result<String, String>;
+
+    fn dispatch_run_for_agent(&self, agent: &str, prompt: &str) -> Result<String, String> {
+        let _ = agent;
+        self.dispatch_run(prompt)
+    }
 }
 
 pub struct RemoteAgentClient {
@@ -30,11 +35,9 @@ impl RemoteAgentClient {
             client,
         }
     }
-}
 
-impl AgentDispatcher for RemoteAgentClient {
-    fn dispatch_run(&self, prompt: &str) -> Result<String, String> {
-        let endpoint = format!("{}/v1/agents/{}/runs", self.base_url, self.agent);
+    pub fn dispatch_to(&self, agent: &str, prompt: &str) -> Result<String, String> {
+        let endpoint = format!("{}/v1/agents/{}/runs", self.base_url, agent);
         let payload = serde_json::json!({
             "input": prompt,
             "why": "voice",
@@ -70,9 +73,20 @@ impl AgentDispatcher for RemoteAgentClient {
     }
 }
 
+impl AgentDispatcher for RemoteAgentClient {
+    fn dispatch_run(&self, prompt: &str) -> Result<String, String> {
+        self.dispatch_to(&self.agent, prompt)
+    }
+
+    fn dispatch_run_for_agent(&self, agent: &str, prompt: &str) -> Result<String, String> {
+        self.dispatch_to(agent, prompt)
+    }
+}
+
 pub struct MockDispatcher {
     responses: Arc<Mutex<Vec<String>>>,
     dispatched_prompts: Arc<Mutex<Vec<String>>>,
+    dispatched_agents: Arc<Mutex<Vec<String>>>,
 }
 
 impl MockDispatcher {
@@ -80,16 +94,26 @@ impl MockDispatcher {
         Self {
             responses: Arc::new(Mutex::new(responses)),
             dispatched_prompts: Arc::new(Mutex::new(Vec::new())),
+            dispatched_agents: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
     pub fn dispatched(&self) -> Vec<String> {
         self.dispatched_prompts.lock().unwrap().clone()
     }
+
+    pub fn dispatched_agents(&self) -> Vec<String> {
+        self.dispatched_agents.lock().unwrap().clone()
+    }
 }
 
 impl AgentDispatcher for MockDispatcher {
     fn dispatch_run(&self, prompt: &str) -> Result<String, String> {
+        self.dispatch_run_for_agent("bot", prompt)
+    }
+
+    fn dispatch_run_for_agent(&self, agent: &str, prompt: &str) -> Result<String, String> {
+        self.dispatched_agents.lock().unwrap().push(agent.to_string());
         self.dispatched_prompts.lock().unwrap().push(prompt.to_string());
         let mut list = self.responses.lock().unwrap();
         if list.is_empty() {

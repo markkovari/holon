@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::audio::write_wav;
 use crate::client::AgentDispatcher;
 use crate::persona::{parse_dialogue_turns, PersonaRegistry, SpeakerTracker};
+use crate::router::IntentRouter;
 use crate::stt::{extract_wake_phrase, SpeechRecognizer};
 use crate::tts::{ActivePlayback, ChainedPlayback, PlaybackAction, SpeechSynthesizer};
 use crate::vad::{VadConfig, VadEvent, VoiceActivityDetector};
@@ -21,6 +22,8 @@ pub enum SessionState {
     Speaking,
 }
 
+pub type StateListener = Arc<dyn Fn(SessionState, Option<&str>) + Send + Sync>;
+
 pub struct VoiceSession {
     mode: VoiceMode,
     wake_phrase: String,
@@ -35,6 +38,10 @@ pub struct VoiceSession {
     personas: PersonaRegistry,
     speaker_tracker: SpeakerTracker,
     default_agent: String,
+    router: IntentRouter,
+    follow_up_until: Option<std::time::Instant>,
+    follow_up_duration: std::time::Duration,
+    state_listener: Option<StateListener>,
 }
 
 impl VoiceSession {
@@ -66,11 +73,31 @@ impl VoiceSession {
             personas: PersonaRegistry::default(),
             speaker_tracker: SpeakerTracker::default(),
             default_agent: "bot".to_string(),
+            router: IntentRouter::default(),
+            follow_up_until: None,
+            follow_up_duration: std::time::Duration::from_secs(25),
+            state_listener: None,
+        }
+    }
+
+    pub fn set_state_listener(
+        &mut self,
+        listener: impl Fn(SessionState, Option<&str>) + Send + Sync + 'static,
+    ) {
+        self.state_listener = Some(Arc::new(listener));
+    }
+
+    pub fn change_state(&mut self, state: SessionState, agent: Option<&str>) {
+        self.state = state;
+        if let Some(ref l) = self.state_listener {
+            l(state, agent);
         }
     }
 
     pub fn set_default_agent(&mut self, agent: impl Into<String>) {
-        self.default_agent = agent.into();
+        let a = agent.into();
+        self.router = IntentRouter::new(&a);
+        self.default_agent = a;
     }
 
     pub fn set_personas(&mut self, personas: PersonaRegistry) {
@@ -95,12 +122,13 @@ impl VoiceSession {
             if !active {
                 self.active_playback = None;
                 self.vad.set_playback_active(false);
-                self.wake_word_active = false;
-                if self.state == SessionState::Speaking {
-                    self.state = match self.mode {
-                        VoiceMode::PushToTalk => SessionState::Listening,
-                        VoiceMode::AlwaysListen => SessionState::WaitingWakeWord,
-                    };
+                if self.mode == VoiceMode::AlwaysListen {
+                    self.follow_up_until =
+                        Some(std::time::Instant::now() + self.follow_up_duration);
+                    self.wake_word_active = true;
+                    self.change_state(SessionState::Listening, None);
+                } else if self.state == SessionState::Speaking {
+                    self.change_state(SessionState::Listening, None);
                 }
             }
             active
@@ -116,7 +144,7 @@ impl VoiceSession {
         }
         self.vad.set_playback_active(false);
         self.wake_word_active = true;
-        self.state = SessionState::Listening;
+        self.change_state(SessionState::Listening, None);
         self.speaker_tracker.reset();
         Ok(())
     }
@@ -124,6 +152,18 @@ impl VoiceSession {
     /// Feeds an audio frame into the session and processes transitions.
     pub fn feed_frame(&mut self, frame: &[i16]) -> Result<Option<String>, String> {
         let _ = self.is_playback_active();
+
+        if let Some(until) = self.follow_up_until {
+            if std::time::Instant::now() > until {
+                self.follow_up_until = None;
+                self.wake_word_active = false;
+                if self.mode == VoiceMode::AlwaysListen && self.state == SessionState::Listening {
+                    self.change_state(SessionState::WaitingWakeWord, None);
+                    eprintln!("💤 [Follow-up window closed]: Waiting for wake phrase");
+                }
+            }
+        }
+
         let event = self.vad.process_frame(frame);
 
         match event {
@@ -133,7 +173,7 @@ impl VoiceSession {
             }
             VadEvent::SpeechStart => {
                 if self.state == SessionState::WaitingWakeWord {
-                    self.state = SessionState::Listening;
+                    self.change_state(SessionState::Listening, None);
                 }
                 Ok(None)
             }
@@ -149,16 +189,16 @@ impl VoiceSession {
             return Ok(None);
         }
 
-        self.state = SessionState::Processing;
+        self.change_state(SessionState::Processing, None);
 
         match self.process_utterance(samples) {
             Ok(result) => Ok(result),
             Err(err) => {
-                // Ensure session state recovers immediately upon error rather than staying bricked in Processing
-                self.state = match self.mode {
+                let fallback = match self.mode {
                     VoiceMode::PushToTalk => SessionState::Listening,
                     VoiceMode::AlwaysListen => SessionState::WaitingWakeWord,
                 };
+                self.change_state(fallback, None);
                 Err(err)
             }
         }
@@ -183,27 +223,30 @@ impl VoiceSession {
 
         let query = if self.mode == VoiceMode::AlwaysListen {
             if !self.wake_word_active {
-                match extract_wake_phrase(&transcript, &self.wake_phrase) {
-                    Some(rest) => {
-                        self.wake_word_active = true;
-                        eprintln!("⚡ [Wake Word Matched!]: Processing prompt...");
-                        if rest.trim().is_empty() {
-                            self.state = SessionState::Listening;
-                            return Ok(Some(format!(
-                                "Heard wake phrase '{}', listening...",
-                                self.wake_phrase
-                            )));
-                        }
-                        rest
-                    }
-                    None => {
-                        self.state = SessionState::WaitingWakeWord;
-                        eprintln!(
-                            "⏳ [Wake Word Missing]: Heard \"{transcript}\" (waiting for '{}')",
+                if let Some(rest) = extract_wake_phrase(&transcript, &self.wake_phrase) {
+                    self.wake_word_active = true;
+                    eprintln!("⚡ [Wake Word Matched!]: Processing prompt...");
+                    if rest.trim().is_empty() {
+                        self.state = SessionState::Listening;
+                        return Ok(Some(format!(
+                            "Heard wake phrase '{}', listening...",
                             self.wake_phrase
-                        );
-                        return Ok(None);
+                        )));
                     }
+                    rest
+                } else if let Some((agent, rest)) =
+                    IntentRouter::extract_explicit_prefix(&transcript)
+                {
+                    self.wake_word_active = true;
+                    eprintln!("⚡ [Addressed Agent '{agent}']: Processing prompt directly...");
+                    rest.to_string()
+                } else {
+                    self.state = SessionState::WaitingWakeWord;
+                    eprintln!(
+                        "⏳ [Wake Word Missing]: Heard \"{transcript}\" (waiting for '{}' or addressed agent)",
+                        self.wake_phrase
+                    );
+                    return Ok(None);
                 }
             } else if let Some(rest) = extract_wake_phrase(&transcript, &self.wake_phrase) {
                 if rest.trim().is_empty() {
@@ -218,18 +261,26 @@ impl VoiceSession {
         };
 
         if query.trim().is_empty() {
-            self.state = match self.mode {
+            let fallback = match self.mode {
                 VoiceMode::PushToTalk => SessionState::Listening,
                 VoiceMode::AlwaysListen => SessionState::WaitingWakeWord,
             };
+            self.change_state(fallback, None);
             return Ok(None);
         }
 
+        // Classify intent and route prompt
+        let (target_agent, prompt_to_send) = self.router.route(&query);
+        eprintln!(
+            "🧭 [Intent Router]: Target agent '{target_agent}' for prompt: \"{prompt_to_send}\""
+        );
+        self.change_state(SessionState::Processing, Some(&target_agent));
+
         // Dispatch question to remote Holon agent
-        let answer = self.dispatcher.dispatch_run(&query)?;
+        let answer = self.dispatcher.dispatch_run_for_agent(&target_agent, prompt_to_send)?;
 
         if !answer.trim().is_empty() {
-            let turns = parse_dialogue_turns(&answer, &self.default_agent);
+            let turns = parse_dialogue_turns(&answer, &target_agent);
             let mut actions = std::collections::VecDeque::new();
 
             for turn in turns {
@@ -250,18 +301,20 @@ impl VoiceSession {
                 let playback = ChainedPlayback::new(actions)?;
                 self.active_playback = Some(Box::new(playback));
                 self.vad.set_playback_active(true);
-                self.state = SessionState::Speaking;
+                self.change_state(SessionState::Speaking, Some(&target_agent));
             } else {
-                self.state = match self.mode {
+                let fallback = match self.mode {
                     VoiceMode::PushToTalk => SessionState::Listening,
                     VoiceMode::AlwaysListen => SessionState::WaitingWakeWord,
                 };
+                self.change_state(fallback, None);
             }
         } else {
-            self.state = match self.mode {
+            let fallback = match self.mode {
                 VoiceMode::PushToTalk => SessionState::Listening,
                 VoiceMode::AlwaysListen => SessionState::WaitingWakeWord,
             };
+            self.change_state(fallback, None);
         }
 
         Ok(Some(format!("You: {query}\nAgent: {answer}")))

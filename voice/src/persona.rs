@@ -37,7 +37,6 @@ impl Default for PersonaRegistry {
         reg.register(Persona::new("rowing", "Rowing Coach Daniel", "Daniel"));
         reg.register(Persona::new("coach", "Coach Daniel", "Daniel"));
         reg.register(Persona::new("nutrition", "Nutritionist Sarah", "Samantha"));
-        reg.register(Persona::new("nutritionist", "Nutritionist Sarah", "Samantha"));
         reg.register(Persona::new("coder", "Lead Engineer Oliver", "Oliver"));
         reg.register(Persona::new("dev", "Lead Engineer Oliver", "Oliver"));
         reg.register(Persona::new("bot", "", "Alex"));
@@ -47,6 +46,25 @@ impl Default for PersonaRegistry {
 }
 
 impl PersonaRegistry {
+    /// Creates a preset registry configured with natural Kokoro-82M neural voices:
+    /// - Rowing / Coach Daniel: `am_adam`
+    /// - Nutritionist Sarah: `af_sarah`
+    /// - Lead Engineer Oliver: `am_michael`
+    /// - Bot / Fallback: `af_heart`
+    pub fn kokoro_default() -> Self {
+        let mut reg =
+            Self { personas: HashMap::new(), default_persona: Persona::new("bot", "", "af_heart") };
+
+        reg.register(Persona::new("rowing", "Rowing Coach Daniel", "am_adam"));
+        reg.register(Persona::new("coach", "Coach Daniel", "am_adam"));
+        reg.register(Persona::new("nutrition", "Nutritionist Sarah", "af_sarah"));
+        reg.register(Persona::new("coder", "Lead Engineer Oliver", "am_michael"));
+        reg.register(Persona::new("dev", "Lead Engineer Oliver", "am_michael"));
+        reg.register(Persona::new("bot", "", "af_heart"));
+
+        reg
+    }
+
     pub fn register(&mut self, persona: Persona) {
         self.personas.insert(persona.key.to_lowercase(), persona);
     }
@@ -143,6 +161,18 @@ impl SpeakerTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kokoro_default_registry_maps_neural_voices() {
+        let reg = PersonaRegistry::kokoro_default();
+        assert_eq!(reg.resolve("coach").voice, "am_adam");
+        assert_eq!(reg.resolve("rowing").voice, "am_adam");
+        assert_eq!(reg.resolve("nutrition").voice, "af_sarah");
+        assert_eq!(reg.resolve("coder").voice, "am_michael");
+        assert_eq!(reg.resolve("dev").voice, "am_michael");
+        assert_eq!(reg.resolve("bot").voice, "af_heart");
+        assert_eq!(reg.resolve("unknown").voice, "af_heart");
+    }
 
     #[test]
     fn speaker_tracker_prepends_title_on_first_speak_and_switches() {

@@ -13,7 +13,7 @@ hound = "3.5"
 reqwest = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["net"] }
 tempfile.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

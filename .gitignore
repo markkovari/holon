@@ -98,3 +98,5 @@ test_all_apps.sh
 .comp/.pr-*
 .holon/.pr-*
 **/.pr-*
+voice/tray/HolonVoiceTray
+voice/tray/HolonVoiceTray
