@@ -30,4 +30,4 @@ tokio.workspace = true
 # wasmparser is pinned to the one wac-graph carries (0.10 reads with 0.247): two component-model
 # readers in one graph is a type error waiting to happen; tests/workspace.rs fails when it is two.
 wac-graph = "0.10"
-wasmparser = "0.247"
+wasmparser.workspace = true

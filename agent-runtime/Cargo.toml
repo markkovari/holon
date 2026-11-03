@@ -1,8 +1,8 @@
 [package]
 name = "agent-runtime"
-version = "0.1.0"
-edition = "2021"
-publish = false
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
 description = "The autonomous half of a Holon agent: a tool-using loop over a model, per-agent memory, schedule/event/HTTP triggers, approvals and a run log. Native on purpose (ADR-0095): a wasm component has no background, so nothing in a guest can fire a cron trigger or hold an approval open."
 
 # Native, so kept out of the wasm32 components/ workspace.
@@ -16,16 +16,16 @@ name = "agent-runtime"
 path = "src/main.rs"
 
 [dependencies]
-reqwest = { version = "0.12", features = ["blocking", "json"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-clap = { version = "4", features = ["derive", "env"] }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
 tiny_http = "0.12"
-sha2 = "0.10"
-base64 = "0.22"
-holon-llm = { path = "../crates/holon-llm" }
-agent-wire = { path = "../crates/agent-wire" }
-tempfile = "3"
+sha2.workspace = true
+base64.workspace = true
+holon-llm.workspace = true
+agent-wire.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 # tests/contract.rs: the runtime contract (api/holon/runtime/v1, ADR-0120) compiles.
