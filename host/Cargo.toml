@@ -1,9 +1,9 @@
 [package]
 name = "holon-host"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
-publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
 description = "Native Rust host for ANY composed wasm component: serves its wasi:http/incoming-handler over wasmtime and satisfies its wasi:keyvalue / wasi:config / wasi:blobstore imports host-side. No Kubernetes, no NATS required."
 
 # Native binary, deliberately outside the components/ (wasm32) workspace.
@@ -19,34 +19,34 @@ wasmtime = { version = "45", features = ["component-model", "async"] }
 # `p3` is opt-in on 45 and implements the `0.3.0-rc-2026-03-15` WIT, so p3 guests build against that rc.
 wasmtime-wasi = { version = "45", features = ["p3"] }
 wasmtime-wasi-http = { version = "45", features = ["p3", "component-model-async"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "signal"] }
+tokio = { workspace = true, features = ["net"] }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 # rustls: a node needs no system OpenSSL.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { workspace = true }
 # For SurrealKv: values are arbitrary bytes, SurrealQL string literals are not.
-base64 = "0.22"
+base64.workspace = true
 # Sync client for KvBackend: `reqwest::blocking` panics inside a running tokio runtime.
 ureq = { version = "2", features = ["json", "tls"] }
 http-body-util = "0.1"
-bytes = "1"
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }
+bytes.workspace = true
+anyhow.workspace = true
+clap.workspace = true
 # rustls + webpki roots: dial managed `rediss://` endpoints from a minimal container.
 redis = { version = "1.5", features = ["tls-rustls", "tls-rustls-webpki-roots"] }
-holon-lattice = { path = "../lattice" }
+holon-lattice.workspace = true
 # Direct only for `--kv nats`, a store and not the transport (ADR-0027).
-async-nats = "0.49"
-futures = "0.3"
+async-nats.workspace = true
+futures.workspace = true
 # `bundled`: no system libsqlite3, which keeps the static musl cross-build working.
 rusqlite.workspace = true
 # Digests are verified before compiling: the object store is not a trust boundary.
-sha2 = "0.10"
+sha2.workspace = true
 # Sans-IO S3 signing, so the sync `ureq` client sends from inside a KvBackend.
-rusty-s3 = "0.10"
+rusty-s3.workspace = true
 url = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde.workspace = true
+serde_json.workspace = true
 # Component-model value encoding with dynamic invocation, for binding unsatisfied imports at start.
 wrpc-runtime-wasmtime = "0.31"
 wrpc-transport-nats = "0.31"

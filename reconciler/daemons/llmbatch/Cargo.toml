@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 holon-daemon-kit.workspace = true
-holon-llm = { path = "../../../crates/holon-llm" }
+holon-llm.workspace = true
 anyhow.workspace = true
 async-nats.workspace = true
 clap.workspace = true
