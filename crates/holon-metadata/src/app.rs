@@ -26,6 +26,9 @@ pub struct AppSpec {
     pub kv: Option<toml::Value>,
     #[serde(default)]
     pub root: Option<String>,
+    /// `sched:timer`, `event:bus` and `cron:expr` are pull: without a relay, timers never fire.
+    #[serde(default)]
+    pub triggers: Option<Triggers>,
     /// The ADR-0095 native daemons this app's component dials over loopback.
     #[serde(default, rename = "daemon")]
     pub daemons: Vec<Daemon>,
@@ -42,22 +45,44 @@ pub struct AppSpec {
     pub topology: Option<TopologySpec>,
 }
 
-/// One native daemon this app needs running alongside it — the subset of
-/// `cli::Daemon`'s fields xtask needs to spawn one for local dev.
+/// Only what a deployment decides; daemon defaults live in the daemon's package (ADR-0115).
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Daemon {
+    /// `comp-<name>` is the binary; `check()` makes `addr` agree with `[config]`'s `<name>-url`.
     pub name: String,
-    /// None for a worker (comp-resume): nothing dials it.
+    /// Absent makes it a worker that listens on nothing (`comp-resume`, ADR-0106): no `--addr`,
+    /// no `<name>-url`, no token, no egress from the app.
     #[serde(default)]
     pub addr: Option<String>,
+    /// Named, not inferred: only the caller knows which allow-list flag its daemon takes.
     #[serde(default)]
     pub allow_flag: Option<String>,
     #[serde(default)]
     pub allow: Vec<String>,
+    /// Passed verbatim, already `--flag value` shaped.
     #[serde(default)]
     pub extra_args: Vec<String>,
+    /// Loopback alone is not a boundary; must agree with `[config]`'s `<name>-token`.
     #[serde(default)]
     pub token: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct Triggers {
+    #[serde(default = "default_pump")]
+    pub pump: String,
+    /// Short enough that a missed push is a delay, not a stall.
+    #[serde(default = "default_sweep")]
+    pub interval: u64,
+}
+
+fn default_pump() -> String {
+    "/internal/pump".into()
+}
+fn default_sweep() -> u64 {
+    10
 }
 
 impl AppSpec {

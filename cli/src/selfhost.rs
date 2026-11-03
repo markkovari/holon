@@ -53,28 +53,7 @@ pub struct Spec {
     pub daemons: Vec<Daemon>,
 }
 
-/// Only what a deployment decides; daemon defaults live in the daemon's package (ADR-0115).
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Daemon {
-    /// `comp-<name>` is the binary; `check()` makes `addr` agree with `[config]`'s `<name>-url`.
-    pub name: String,
-    /// Absent makes it a worker that listens on nothing (`comp-resume`, ADR-0106): no `--addr`,
-    /// no `<name>-url`, no token, no egress from the app.
-    #[serde(default)]
-    pub addr: Option<String>,
-    /// Named, not inferred: only the caller knows which allow-list flag its daemon takes.
-    #[serde(default)]
-    pub allow_flag: Option<String>,
-    #[serde(default)]
-    pub allow: Vec<String>,
-    /// Passed verbatim, already `--flag value` shaped.
-    #[serde(default)]
-    pub extra_args: Vec<String>,
-    /// Loopback alone is not a boundary; must agree with `[config]`'s `<name>-token`.
-    #[serde(default)]
-    pub token: Option<String>,
-}
+pub use holon_metadata::app::{Daemon, Triggers};
 
 /// `-daemon` suffix when named like its app, or it would overwrite the app's `comp-<app>.service`.
 pub fn daemon_unit_name(spec: &Spec, d: &Daemon) -> String {
@@ -92,23 +71,6 @@ pub fn unit_names(spec: &Spec) -> Vec<String> {
     }
     v.extend(spec.daemons.iter().map(|d| daemon_unit_name(spec, d)));
     v
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Triggers {
-    #[serde(default = "default_pump")]
-    pub pump: String,
-    /// Short enough that a missed push is a delay, not a stall.
-    #[serde(default = "default_sweep")]
-    pub interval: u64,
-}
-
-fn default_pump() -> String {
-    "/internal/pump".into()
-}
-fn default_sweep() -> u64 {
-    10
 }
 
 fn default_kv() -> String {

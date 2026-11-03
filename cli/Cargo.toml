@@ -13,6 +13,7 @@ name = "holon"
 path = "src/main.rs"
 
 [dependencies]
+holon-metadata.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
