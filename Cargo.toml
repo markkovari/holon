@@ -8,8 +8,10 @@ members = [
     "agent-runtime",
     "cli",
     "crates/agent-wire",
+    "crates/holon-fuel",
     "crates/holon-llm",
     "crates/holon-metadata",
+    "crates/holon-oci",
     "crates/holon-park",
     "crates/holon-plug",
     "crates/holon-vcs",
@@ -18,10 +20,8 @@ members = [
     "reconciler",
     "reconciler/daemons/*",
     "reconciler/fleet",
-    "reconciler/fuel",
     "reconciler/goal",
     "reconciler/measure",
-    "reconciler/oci",
     "voice",
     "xtask",
 ]
@@ -70,12 +70,12 @@ agent-runtime = { path = "agent-runtime" }
 agent-wire = { path = "crates/agent-wire" }
 holon-daemon-kit = { path = "reconciler/daemons/kit" }
 holon-fleet = { path = "reconciler/fleet" }
-holon-fuel = { path = "reconciler/fuel" }
+holon-fuel = { path = "crates/holon-fuel" }
 holon-goal = { path = "reconciler/goal" }
 holon-lattice = { path = "lattice" }
 holon-llm = { path = "crates/holon-llm" }
 holon-metadata = { path = "crates/holon-metadata" }
-holon-oci = { path = "reconciler/oci" }
+holon-oci = { path = "crates/holon-oci" }
 holon-park = { path = "crates/holon-park", features = ["native"] }
 holon-plug = { path = "crates/holon-plug" }
 holon-vcs = { path = "crates/holon-vcs" }
