@@ -365,7 +365,10 @@ pub fn default_dirs(repo_root: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fleet::repo_root;
+
+    fn repo_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
 
     fn catalog() -> Catalog {
         Catalog::scan(&default_dirs(&repo_root()))
