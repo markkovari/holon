@@ -2694,6 +2694,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "holon-metadata",
  "rpassword",
  "serde",
  "serde_json",
