@@ -160,7 +160,7 @@ flowchart LR
 - A component’s real imports are in its binary, so the capability graph is derived from the artifacts rather than kept in a list ([ADR-0097](adr/0097-a-derived-file-is-a-liability.md)).
 - Adding a function to a WIT interface is compatible; adding a variant case or a record field is not, and witsurface.rs fails when a shape moves without its version.
 
-**Where it lives** [`wit/`](../wit/) · [`components/`](../components/) · [`xtask/`](../xtask/) · [`crates/holon-plug/`](../crates/holon-plug/) · [`reconciler/oci/`](../reconciler/oci/) · [`reconciler/fleet/src/bin/plug.rs`](../reconciler/fleet/src/bin/plug.rs) · [`reconciler/fleet/src/bin/oci.rs`](../reconciler/fleet/src/bin/oci.rs) · [`reconciler/goal/src/bin/capgraph.rs`](../reconciler/goal/src/bin/capgraph.rs) · [`reconciler/goal/src/bin/catalog.rs`](../reconciler/goal/src/bin/catalog.rs)
+**Where it lives** [`wit/`](../wit/) · [`components/`](../components/) · [`xtask/`](../xtask/) · [`crates/holon-plug/`](../crates/holon-plug/) · [`crates/holon-oci/`](../crates/holon-oci/) · [`reconciler/fleet/src/bin/plug.rs`](../reconciler/fleet/src/bin/plug.rs) · [`reconciler/fleet/src/bin/oci.rs`](../reconciler/fleet/src/bin/oci.rs) · [`reconciler/goal/src/bin/capgraph.rs`](../reconciler/goal/src/bin/capgraph.rs) · [`reconciler/goal/src/bin/catalog.rs`](../reconciler/goal/src/bin/catalog.rs)
 
 ### Delivery
 
@@ -600,7 +600,7 @@ flowchart LR
 - agent-runtime refuses a tool an agent was not granted instead of dispatching it, and only the owner’s Matrix messages start a run.
 - agent-runtime is the first client of comp-agentd: an agent granted session_start opens a coding session, the runtime watches it and shows its approvals as its own ([ADR-0119](adr/0119-an-agent-can-start-a-coding-session.md)); the contract came first, for bots, backends and scripts outside it ([ADR-0102](adr/0102-an-agent-session-is-a-contract-first.md)). Whether agent-runtime should also run its own tasks on the daemon is proposed in [ADR-0117](adr/0117-an-autonomous-run-is-a-task-in-a-session.md).
 
-**Where it lives** [`reconciler/daemons/agentd/`](../reconciler/daemons/agentd/) · [`crates/holon-llm/`](../crates/holon-llm/) · [`reconciler/fuel/`](../reconciler/fuel/) · [`api/holon/v1/agent.proto`](../api/holon/v1/agent.proto) · [`api/openapi.yaml`](../api/openapi.yaml) · [`agent-runtime/`](../agent-runtime/) · [`agent-matrix/`](../agent-matrix/) · [`gpui-console/`](../gpui-console/)
+**Where it lives** [`reconciler/daemons/agentd/`](../reconciler/daemons/agentd/) · [`crates/holon-llm/`](../crates/holon-llm/) · [`crates/holon-fuel/`](../crates/holon-fuel/) · [`api/holon/v1/agent.proto`](../api/holon/v1/agent.proto) · [`api/openapi.yaml`](../api/openapi.yaml) · [`agent-runtime/`](../agent-runtime/) · [`agent-matrix/`](../agent-matrix/) · [`gpui-console/`](../gpui-console/)
 
 ### Engineering loop
 

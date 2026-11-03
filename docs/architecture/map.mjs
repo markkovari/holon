@@ -47,7 +47,7 @@ export const SYS = [
   boundary:['Nothing here serves traffic: this is what is built and checked, then handed on as a digest.',
             'A component’s real imports are in its binary, so the capability graph is derived from the artifacts rather than kept in a list (ADR-0097).',
             'Adding a function to a WIT interface is compatible; adding a variant case or a record field is not, and witsurface.rs fails when a shape moves without its version.'],
-  code:['wit/','components/','xtask/','crates/holon-plug/','reconciler/oci/','reconciler/fleet/src/bin/{plug,oci}.rs','reconciler/goal/src/bin/{capgraph,catalog}.rs']},
+  code:['wit/','components/','xtask/','crates/holon-plug/','crates/holon-oci/','reconciler/fleet/src/bin/{plug,oci}.rs','reconciler/goal/src/bin/{capgraph,catalog}.rs']},
 
  {id:'delivery', name:'Delivery', short:'one spec, four lanes',
   purpose:'One app spec rendered for a box, a lattice, wasmCloud 1.x or 2.x. A pull agent keeps boxes current.',
@@ -117,7 +117,7 @@ export const SYS = [
   boundary:['comp-agentd tools are confined to the session’s workspace root; run cannot be confined, which is what approval is for.',
             'agent-runtime refuses a tool an agent was not granted instead of dispatching it, and only the owner’s Matrix messages start a run.',
             'agent-runtime is the first client of comp-agentd: an agent granted session_start opens a coding session, the runtime watches it and shows its approvals as its own (ADR-0119); the contract came first, for bots, backends and scripts outside it (ADR-0102). Whether agent-runtime should also run its own tasks on the daemon is proposed in ADR-0117.'],
-  code:['reconciler/daemons/agentd/','crates/holon-llm/','reconciler/fuel/','api/holon/v1/agent.proto','api/openapi.yaml','agent-runtime/','agent-matrix/','gpui-console/']},
+  code:['reconciler/daemons/agentd/','crates/holon-llm/','crates/holon-fuel/','api/holon/v1/agent.proto','api/openapi.yaml','agent-runtime/','agent-matrix/','gpui-console/']},
 
  {id:'loop', name:'Engineering loop', short:'goal to pull request',
   purpose:'Parallel AI branches, a real test gate, and a selector that opens the winner as a pull request.',

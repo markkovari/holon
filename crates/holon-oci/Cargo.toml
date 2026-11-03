@@ -3,6 +3,7 @@ name = "holon-oci"
 description = "Artifacts by digest: the pull and the push of a wasm component as an OCI artifact over plain HTTP, and the content addressing around them (docs/adr/0006, docs/adr/0024). No registry crate: four calls on the reqwest client."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish.workspace = true
 
 # A library so the reconciler and the loop's tools share it without depending on each other (docs/adr/0115).
