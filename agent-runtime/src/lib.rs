@@ -2,7 +2,7 @@ pub mod admin;
 pub mod agent;
 pub mod attach;
 pub mod bus;
-pub mod clock;
+pub use agent_wire::clock;
 pub mod connector;
 pub mod cron;
 pub mod embed;

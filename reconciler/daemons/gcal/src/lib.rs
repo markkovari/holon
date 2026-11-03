@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use agent_runtime::clock;
+use agent_wire::clock;
 
 /// Read and write calendars and events; no mail, no drive.
 pub const SCOPE: &str = "https://www.googleapis.com/auth/calendar";

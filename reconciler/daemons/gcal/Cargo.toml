@@ -10,7 +10,7 @@ name = "holon-gcal"
 path = "src/main.rs"
 
 [dependencies]
-agent-runtime = { path = "../../../agent-runtime" }
+agent-wire = { path = "../../../crates/agent-wire" }
 holon-daemon-kit.workspace = true
 anyhow.workspace = true
 clap.workspace = true
