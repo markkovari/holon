@@ -603,6 +603,7 @@ impl Runtime {
             attachments: cause.attachments.clone(),
             cost_micros: 0,
             tenant: cause.tenant.clone().unwrap_or_default(),
+            delegations: Vec::new(),
         };
         let _ = self.store.record_run(&rec);
         self.observe(Event::RunFinished(Box::new(rec)));

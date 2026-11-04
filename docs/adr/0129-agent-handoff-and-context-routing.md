@@ -41,6 +41,10 @@
    - Legacy invocations `agent:<target> {"message": "..."}` continue to work unmodified.
    - When callers provide `task`, `intent`, or `context`, `agent:<target>` automatically packs and executes the request as an enveloped handoff.
    - A dedicated `agent_handoff` tool is also available when granted.
+7. **Two-Tier Delegation Provenance & Activity Reporting**:
+   - Sub-delegations during a run are automatically captured into `DelegationRecord` entries inside `HandoffResponse.delegations` and `RunRecord.delegations`.
+   - Machine-readable provenance enables client UIs (GPUI console, web SPA) to render interactive DAGs and breadcrumbs.
+   - For user-facing turns, the runtime automatically formats a clean, collapsible GitHub-flavored markdown trace (`<details><summary>🤖 Activity (N delegations)</summary>...`) appended to the response, giving full visibility into sub-agent contributions without cluttering the primary answer.
 
 ## What it does not do
 

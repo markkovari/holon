@@ -404,6 +404,16 @@ message HandoffRequest {
   string parent_span_id = 10;
 }
 
+message DelegationRecord {
+  string target = 1;
+  HandoffIntent intent = 2;
+  string task = 3;
+  HandoffStatus status = 4;
+  string summary = 5;
+  repeated string store_keys_written = 6;
+  repeated string workspace_files_written = 7;
+}
+
 message HandoffResponse {
   string id = 1;
   string from = 2;
@@ -414,4 +424,5 @@ message HandoffResponse {
   google.protobuf.Struct output = 7;
   uint64 tokens_spent = 8;
   string error = 9;
+  repeated DelegationRecord delegations = 10;
 }

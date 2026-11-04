@@ -274,6 +274,9 @@ pub struct HandoffResponse {
     /// Optional error details if status is `Error` or `Declined`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Sub-delegations performed during this run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub delegations: Vec<DelegationRecord>,
 }
 
 impl HandoffResponse {
@@ -293,6 +296,7 @@ impl HandoffResponse {
             output: None,
             tokens_spent: 0,
             error: None,
+            delegations: Vec::new(),
         }
     }
 
@@ -313,6 +317,7 @@ impl HandoffResponse {
             output: None,
             tokens_spent: 0,
             error: Some(e),
+            delegations: Vec::new(),
         }
     }
 
@@ -333,8 +338,124 @@ impl HandoffResponse {
             output: None,
             tokens_spent: 0,
             error: Some(r),
+            delegations: Vec::new(),
         }
     }
+
+    /// Renders delegations as a collapsible GitHub-flavored markdown block, if any.
+    pub fn delegations_markdown(&self) -> Option<String> {
+        if self.delegations.is_empty() {
+            None
+        } else {
+            Some(format_delegations_markdown(&self.delegations))
+        }
+    }
+}
+
+/// Record of a delegation from this agent to another agent during a run.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct DelegationRecord {
+    /// The target agent that was invoked.
+    pub target: String,
+    /// Intent of the delegation.
+    #[serde(default)]
+    pub intent: HandoffIntent,
+    /// The task instruction or query passed to the target.
+    pub task: String,
+    /// Outcome status of the delegation.
+    #[serde(default)]
+    pub status: HandoffStatus,
+    /// Concise summary or answer returned by the target agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// Blackboard storage keys written by the target agent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub store_keys_written: Vec<String>,
+    /// Workspace files written or edited by the target agent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspace_files_written: Vec<String>,
+}
+
+impl DelegationRecord {
+    pub fn new(
+        target: impl Into<String>,
+        intent: HandoffIntent,
+        task: impl Into<String>,
+        status: HandoffStatus,
+    ) -> Self {
+        Self {
+            target: target.into(),
+            intent,
+            task: task.into(),
+            status,
+            summary: None,
+            store_keys_written: Vec::new(),
+            workspace_files_written: Vec::new(),
+        }
+    }
+
+    pub fn with_summary(mut self, summary: impl Into<String>) -> Self {
+        self.summary = Some(summary.into());
+        self
+    }
+}
+
+/// Renders a slice of delegation records as a collapsible GitHub-flavored markdown block.
+pub fn format_delegations_markdown(delegations: &[DelegationRecord]) -> String {
+    if delegations.is_empty() {
+        return String::new();
+    }
+    let count = delegations.len();
+    let label =
+        if count == 1 { "1 delegation".to_string() } else { format!("{count} delegations") };
+    let mut unique_agents = Vec::new();
+    for d in delegations {
+        if !unique_agents.contains(&d.target) {
+            unique_agents.push(d.target.clone());
+        }
+    }
+    let targets_str = unique_agents.join(", ");
+
+    let mut md = String::new();
+    md.push_str(&format!(
+        "<details>\n<summary>🤖 <b>Activity ({label}: {targets_str})</b></summary>\n\n"
+    ));
+    for d in delegations {
+        let status_icon = match d.status {
+            HandoffStatus::Success => "✓",
+            HandoffStatus::Declined => "⚠",
+            HandoffStatus::Partial => "⚡",
+            HandoffStatus::Error => "✗",
+        };
+        md.push_str(&format!(
+            "- {status_icon} **`{}`** (*{}*): {}\n",
+            d.target,
+            d.intent.as_str(),
+            d.task.trim()
+        ));
+        if let Some(ref sum) = d.summary {
+            let first_line = sum.lines().next().unwrap_or("").trim();
+            if !first_line.is_empty() && first_line != d.task.trim() {
+                let clipped = if first_line.chars().count() <= 120 {
+                    first_line.to_string()
+                } else {
+                    format!("{}…", first_line.chars().take(120).collect::<String>())
+                };
+                md.push_str(&format!("  ↳ {clipped}\n"));
+            }
+        }
+        if !d.store_keys_written.is_empty() {
+            md.push_str(&format!("  ↳ Stored keys: {}\n", d.store_keys_written.join(", ")));
+        }
+        if !d.workspace_files_written.is_empty() {
+            md.push_str(&format!(
+                "  ↳ Workspace files: {}\n",
+                d.workspace_files_written.join(", ")
+            ));
+        }
+    }
+    md.push_str("\n</details>");
+    md
 }
 
 #[cfg(test)]
@@ -387,5 +508,38 @@ mod tests {
         assert_eq!(de.context_produced.store_keys_written, vec!["project.alpha/summary"]);
         assert_eq!(de.context_produced.workspace_files_written, vec!["reports/q3_analyzed.md"]);
         assert!(de.error.is_none());
+    }
+
+    #[test]
+    fn test_delegation_record_and_markdown() {
+        let mut d1 = DelegationRecord::new(
+            "data-extractor",
+            HandoffIntent::Query,
+            "Extract raw billing records",
+            HandoffStatus::Success,
+        )
+        .with_summary("Extracted 42 records from q3.csv");
+        d1.workspace_files_written.push("reports/q3.csv".into());
+
+        let d2 = DelegationRecord::new(
+            "auditor",
+            HandoffIntent::Review,
+            "Verify compliance with ASC 606",
+            HandoffStatus::Success,
+        )
+        .with_summary("All checks passed; 0 violations");
+
+        let delegations = vec![d1, d2];
+        let md = format_delegations_markdown(&delegations);
+        assert!(md.contains("<details>"));
+        assert!(md.contains(
+            "<summary>🤖 <b>Activity (2 delegations: data-extractor, auditor)</b></summary>"
+        ));
+        assert!(md.contains("- ✓ **`data-extractor`** (*query*): Extract raw billing records"));
+        assert!(md.contains("↳ Extracted 42 records from q3.csv"));
+        assert!(md.contains("↳ Workspace files: reports/q3.csv"));
+        assert!(md.contains("- ✓ **`auditor`** (*review*): Verify compliance with ASC 606"));
+        assert!(md.contains("↳ All checks passed; 0 violations"));
+        assert!(md.ends_with("</details>"));
     }
 }

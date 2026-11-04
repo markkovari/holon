@@ -17,6 +17,7 @@ fn the_runtime_contract_compiles_and_names_its_rpcs() {
     let msg_names: Vec<&str> = file.message_type.iter().map(|m| m.name()).collect();
     assert!(msg_names.contains(&"HandoffRequest"));
     assert!(msg_names.contains(&"HandoffResponse"));
+    assert!(msg_names.contains(&"DelegationRecord"));
     // One envelope kind per agent_wire::Event variant.
     let event = file.message_type.iter().find(|m| m.name() == "RuntimeEvent").unwrap();
     let kinds: Vec<&str> =

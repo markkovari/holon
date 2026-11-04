@@ -118,6 +118,23 @@ fn direct_agent_call_with_pass_by_reference_context_pointers() {
     } else {
         panic!("expected Step::Tool");
     }
+
+    // Verify manager's run record captured delegation provenance and formatted markdown trace
+    assert_eq!(mgr_run.delegations.len(), 1);
+    let d = &mgr_run.delegations[0];
+    assert_eq!(d.target, "analyst");
+    assert_eq!(d.intent, agent_wire::HandoffIntent::Execute);
+    assert_eq!(d.task, "Process raw metrics into final summary");
+    assert_eq!(d.status, HandoffStatus::Success);
+    assert!(d.store_keys_written.contains(&"project.alpha/summary".to_string()));
+    assert!(d.workspace_files_written.contains(&"analysis/report.md".to_string()));
+
+    // Programmatic runs (trigger: "http") keep clean model answer while delegations_markdown() is available
+    assert_eq!(mgr_run.answer, "Manager saw analyst finish.");
+    let md = mgr_run.delegations_markdown().expect("must format delegations markdown");
+    assert!(md.contains("<details>"));
+    assert!(md.contains("<summary>🤖 <b>Activity (1 delegation: analyst)</b></summary>"));
+    assert!(md.contains("- ✓ **`analyst`** (*execute*): Process raw metrics into final summary"));
 }
 
 #[test]
@@ -271,4 +288,71 @@ fn http_v1_handoff_route_handling() {
         }
         other => panic!("expected Reply::Json, got {:?}", other),
     }
+}
+
+#[test]
+fn delegation_activity_trace_multi_agent_pipeline() {
+    let rt = runtime("multi-agent-trace");
+
+    // Agent 1: researcher
+    let researcher = agent("researcher", &["Found 3 pricing models for enterprise customers."]);
+    rt.create_agent(researcher).unwrap();
+
+    // Agent 2: reviewer
+    let reviewer = agent("reviewer", &["Compliance review passed with 0 warnings."]);
+    rt.create_agent(reviewer).unwrap();
+
+    // Agent 3: lead orchestrator calling both
+    let call_researcher = json!({
+        "tool": "agent:researcher",
+        "args": {
+            "task": "Find market pricing",
+            "intent": "query"
+        }
+    })
+    .to_string();
+
+    let call_reviewer = json!({
+        "tool": "agent_handoff",
+        "args": {
+            "target": "reviewer",
+            "intent": "review",
+            "task": "Review pricing compliance"
+        }
+    })
+    .to_string();
+
+    let mut lead = agent(
+        "lead",
+        &[&call_researcher, &call_reviewer, "Synthesized final go-to-market plan for Q4."],
+    );
+    lead.capabilities.push(Capability::named("agent:researcher"));
+    lead.capabilities.push(Capability::named("agent:reviewer"));
+    rt.create_agent(lead).unwrap();
+
+    // 1. Direct run (e.g. from human user) -> should append markdown <details> block
+    let user_run =
+        rt.run_agent("lead", "message", "Prepare Q4 plan", &Cause::default(), "", true).unwrap();
+
+    assert_eq!(user_run.delegations.len(), 2);
+    assert_eq!(user_run.delegations[0].target, "researcher");
+    assert_eq!(user_run.delegations[0].intent, agent_wire::HandoffIntent::Query);
+    assert_eq!(user_run.delegations[0].task, "Find market pricing");
+    assert_eq!(user_run.delegations[0].status, HandoffStatus::Success);
+    assert!(user_run.delegations[0].summary.as_ref().unwrap().contains("Found 3 pricing models"));
+
+    assert_eq!(user_run.delegations[1].target, "reviewer");
+    assert_eq!(user_run.delegations[1].intent, agent_wire::HandoffIntent::Review);
+    assert_eq!(user_run.delegations[1].task, "Review pricing compliance");
+    assert_eq!(user_run.delegations[1].status, HandoffStatus::Success);
+    assert!(user_run.delegations[1].summary.as_ref().unwrap().contains("Compliance review passed"));
+
+    // User-facing answer has core synthesis + collapsible activity trace
+    assert!(user_run.answer.contains("Synthesized final go-to-market plan for Q4."));
+    assert!(user_run.answer.contains("<details>"));
+    assert!(user_run
+        .answer
+        .contains("<summary>🤖 <b>Activity (2 delegations: researcher, reviewer)</b></summary>"));
+    assert!(user_run.answer.contains("- ✓ **`researcher`** (*query*): Find market pricing"));
+    assert!(user_run.answer.contains("- ✓ **`reviewer`** (*review*): Review pricing compliance"));
 }
