@@ -396,6 +396,13 @@ pub const TOOLS: &[ToolDef] = &[
         sensitive: false,
     },
     ToolDef {
+        name: "agent_handoff",
+        args: r#"{"target": "...", "task": "...", "intent": "delegate|query|review|execute", "context": {"store_refs": [...], "workspace_refs": [...]}}"#,
+        about: "Delegate a task to another agent with structured request envelope and pass-by-reference context pointers (ADR-0129).",
+        category: "agent",
+        sensitive: false,
+    },
+    ToolDef {
         name: "spawn_task_force",
         args: r#"{"taskforce": "...", "objective": "...", "agents": ["..."]}"#,
         about: "Assemble an ephemeral task force of specialist agents sharing an isolated namespace (`taskforce.<name>`). Returns task force status and child task IDs.",
@@ -641,7 +648,8 @@ fn required(name: &str) -> &'static [&'static str] {
         "read_file" => &["path"],
         "edit_file" => &["path", "target", "replacement"],
         "write_file" => &["path", "content"],
-        n if n.starts_with("agent:") => &["message"],
+        "agent_handoff" => &[],
+        n if n.starts_with("agent:") => &[],
         _ => &[],
     }
 }
@@ -677,6 +685,7 @@ fn primary(name: &str) -> Option<&'static str> {
         | "agent_restore" => Some("name"),
         "transcribe" => Some("path"),
         "speak" => Some("text"),
+        "agent_handoff" => Some("task"),
         n if n.starts_with("agent:") => Some("message"),
         _ => None,
     }
@@ -717,6 +726,29 @@ fn check_connector(spec: &AgentSpec, name: &str, args: &Value) -> Result<(), Str
 }
 
 fn check_args(name: &str, args: &Value) -> Result<(), String> {
+    if name.starts_with("agent:") {
+        if !arg(args, "message").is_empty() || !arg(args, "task").is_empty() {
+            return Ok(());
+        }
+        return Err(format!(
+            "missing message or task. Call it as {{\"tool\": \"{name}\", \"args\": {{\"task\": \"...\"}}}}"
+        ));
+    }
+    if name == "agent_handoff" {
+        if arg(args, "target").is_empty() {
+            return Err("missing target. Call it as {\"tool\": \"agent_handoff\", \"args\": {\"target\": \"...\", \"task\": \"...\"}}".into());
+        }
+        if arg(args, "task").is_empty() && arg(args, "message").is_empty() {
+            return Err("missing task. Call it as {\"tool\": \"agent_handoff\", \"args\": {\"target\": \"...\", \"task\": \"...\"}}".into());
+        }
+        return Ok(());
+    }
+    if name == "spawn_task"
+        && !arg(args, "agent").is_empty()
+        && (!arg(args, "message").is_empty() || !arg(args, "task").is_empty())
+    {
+        return Ok(());
+    }
     let missing: Vec<&str> =
         required(name).iter().copied().filter(|k| arg(args, k).is_empty()).collect();
     if missing.is_empty() {
@@ -763,7 +795,9 @@ fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
             } else {
                 &c.description
             };
-            tools.push_str(&format!("- agent:{other} {{\"message\": \"...\"}} — {about}{wit}\n"));
+            tools.push_str(&format!(
+                "- agent:{other} {{\"task\": \"...\", \"intent\": \"delegate|query|review|execute\", \"context\": {{\"store_refs\": [...], \"workspace_refs\": [...]}}}} (or simple {{\"message\": \"...\"}}) — {about}{wit}\n"
+            ));
         } else {
             abilities.push_str(&format!("- {}: {}{wit}\n", c.name, c.description));
         }
@@ -1322,6 +1356,40 @@ fn run_sandboxed_exec(
     }))
 }
 
+fn build_handoff_request(
+    caller: &str,
+    target: &str,
+    args: &Value,
+    cause: &Cause,
+) -> agent_wire::HandoffRequest {
+    let task = if !arg(args, "task").is_empty() { arg(args, "task") } else { arg(args, "message") };
+    let intent = match args.get("intent").and_then(Value::as_str) {
+        Some("query") => agent_wire::HandoffIntent::Query,
+        Some("review") => agent_wire::HandoffIntent::Review,
+        Some("execute") => agent_wire::HandoffIntent::Execute,
+        Some("handoff") => agent_wire::HandoffIntent::Handoff,
+        _ => agent_wire::HandoffIntent::Delegate,
+    };
+    let context: agent_wire::ContextRefs = args
+        .get("context")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    let parameters = args.get("parameters").cloned();
+    let max_tokens = args.get("max_tokens").and_then(Value::as_u64);
+    agent_wire::HandoffRequest {
+        id: format!("req-{}", new_span_id()),
+        caller: caller.to_string(),
+        target: target.to_string(),
+        intent,
+        task,
+        context,
+        parameters,
+        max_tokens,
+        trace_id: if cause.trace_id.is_empty() { None } else { Some(cause.trace_id.clone()) },
+        parent_span_id: cause.parent_span_id.clone(),
+    }
+}
+
 /// Runs one tool. `Err` is returned to the model as the tool's result, so it
 /// can adapt, exactly like a denial is. `cause` is THIS run, so anything it
 /// wakes records it as the parent. `child_tokens` accumulates what delegated
@@ -1556,8 +1624,45 @@ fn exec(
                     }
                 }
             }
-            let id = host.spawn_task(&spec.name, &target, &arg(args, "message"), &child_cause)?;
+            let is_enveloped = args.get("context").is_some()
+                || args.get("intent").is_some()
+                || !arg(args, "task").is_empty();
+            let payload = if is_enveloped {
+                let req = build_handoff_request(&spec.name, &target, args, &child_cause);
+                serde_json::to_string(&req).map_err(|e| e.to_string())?
+            } else {
+                arg(args, "message")
+            };
+            let id = host.spawn_task(&spec.name, &target, &payload, &child_cause)?;
             Ok(format!("task {id} started; check it later with task_result or await_all"))
+        }
+        "agent_handoff" => {
+            let target = arg(args, "target");
+            if !spec.has_capability(&format!("agent:{target}"))
+                && !spec.has_capability("agent_handoff")
+            {
+                return Err(format!(
+                    "you may only hand off to agents you have `agent:<name>` for; not `{target}`"
+                ));
+            }
+            let mut child_cause = Cause { hops: cause.hops + 1, ..cause.clone() };
+            if let Some(caps) = args.get("delegated_capabilities").and_then(Value::as_array) {
+                for c in caps {
+                    if let Some(cap_name) = c.as_str() {
+                        if !spec.has_capability(cap_name) {
+                            return Err(format!(
+                                "cannot delegate `{cap_name}`: caller does not hold this capability"
+                            ));
+                        }
+                        child_cause.delegated_capabilities.push(Capability::named(cap_name));
+                    }
+                }
+            }
+            let req = build_handoff_request(&spec.name, &target, args, &child_cause);
+            let payload = serde_json::to_string(&req).map_err(|e| e.to_string())?;
+            let (answer, spent) = host.call_agent(&spec.name, &target, &payload, &child_cause)?;
+            *child_tokens += spent;
+            Ok(answer)
         }
         "spawn_task_force" => {
             let tf_name = arg(args, "taskforce");
@@ -2013,8 +2118,17 @@ fn exec(
                         }
                     }
                 }
+                let is_enveloped = args.get("context").is_some()
+                    || args.get("intent").is_some()
+                    || !arg(args, "task").is_empty();
+                let payload = if is_enveloped {
+                    let req = build_handoff_request(&spec.name, target, args, &child_cause);
+                    serde_json::to_string(&req).map_err(|e| e.to_string())?
+                } else {
+                    arg(args, "message")
+                };
                 let (answer, spent) =
-                    host.call_agent(&spec.name, target, &arg(args, "message"), &child_cause)?;
+                    host.call_agent(&spec.name, target, &payload, &child_cause)?;
                 *child_tokens += spent;
                 Ok(answer)
             }
@@ -2116,11 +2230,25 @@ pub fn run(
         rec.steps.push(step);
     };
 
+    let handoff_req: Option<agent_wire::HandoffRequest> =
+        if input.trim_start().starts_with('{') { serde_json::from_str(input).ok() } else { None };
+
     if spec.daily_token_budget > 0 {
         let used = host.store().tokens_since(&spec.name, started.saturating_sub(86_400));
         if used >= spec.daily_token_budget {
             rec.status = Status::OverBudget;
             rec.answer = format!("daily token budget spent ({used}/{})", spec.daily_token_budget);
+            if let Some(req) = &handoff_req {
+                let res = agent_wire::HandoffResponse::declined(
+                    &req.id,
+                    &spec.name,
+                    &req.caller,
+                    &rec.answer,
+                );
+                if let Ok(json_str) = serde_json::to_string_pretty(&res) {
+                    rec.answer = json_str;
+                }
+            }
             host.observe(Event::WatchdogAlarm {
                 agent: spec.name.clone(),
                 run_id: Some(rec.id.clone()),
@@ -2178,8 +2306,13 @@ pub fn run(
         (images, problems, seen)
     };
     let unread: String = problems.iter().map(|p| format!("\n(attachment: {p})")).collect();
+    let prompt_body = if let Some(req) = &handoff_req {
+        req.to_ambient_prompt()
+    } else {
+        format!("Task: {input}")
+    };
     let mut msgs =
-        vec![Msg::user(format!("Trigger: {trigger}\n{project_line}Task: {input}{seen}{unread}"))
+        vec![Msg::user(format!("Trigger: {trigger}\n{project_line}{prompt_body}{seen}{unread}"))
             .with_images(images)];
     let mut usage = Usage::default();
     let mut last_text = String::new();
@@ -2285,7 +2418,10 @@ pub fn run(
             // it wakes — which is how a trace shows WHICH call caused a run.
             let tool_span = new_span_id();
             let t0 = host.now_ms();
-            let (result, error, approved) = if !spec.has_capability(&name) {
+            let (result, error, approved) = if !spec.has_capability(&name)
+                && !(name == "agent_handoff"
+                    && spec.capabilities.iter().any(|c| c.name.starts_with("agent:")))
+            {
                 (format!("`{name}` is not one of your capabilities"), true, None)
             } else if let Err(e) =
                 check_args(&name, &args).and_then(|_| check_connector(spec, &name, &args))
@@ -2398,6 +2534,50 @@ pub fn run(
     }
     if rec.answer.is_empty() && rec.status == Status::Ok {
         rec.answer = last_text;
+    }
+    if let Some(req) = &handoff_req {
+        let mut store_keys_written = Vec::new();
+        let mut workspace_files_written = Vec::new();
+        for step in &rec.steps {
+            if let Step::Tool { name, args, error: false, .. } = step {
+                if name == "store_put" {
+                    let ns = args.get("ns").and_then(Value::as_str).unwrap_or_default();
+                    let key = args.get("key").and_then(Value::as_str).unwrap_or_default();
+                    let full = if ns.is_empty() { key.to_string() } else { format!("{ns}/{key}") };
+                    if !store_keys_written.contains(&full) {
+                        store_keys_written.push(full);
+                    }
+                } else if name == "write_file" || name == "edit_file" {
+                    if let Some(path) = args.get("path").and_then(Value::as_str) {
+                        if !workspace_files_written.iter().any(|p| p == path) {
+                            workspace_files_written.push(path.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        let res = agent_wire::HandoffResponse {
+            id: req.id.clone(),
+            from: spec.name.clone(),
+            to: req.caller.clone(),
+            status: match rec.status {
+                Status::Ok => agent_wire::HandoffStatus::Success,
+                Status::OverBudget | Status::Dropped => agent_wire::HandoffStatus::Declined,
+                Status::Failed => agent_wire::HandoffStatus::Error,
+            },
+            summary: rec.answer.clone(),
+            context_produced: agent_wire::ContextProduced {
+                store_keys_written,
+                workspace_files_written,
+                artifacts_produced: Vec::new(),
+            },
+            output: None,
+            tokens_spent: rec.tokens_in + rec.tokens_out,
+            error: if rec.status != Status::Ok { Some(rec.answer.clone()) } else { None },
+        };
+        if let Ok(json_str) = serde_json::to_string_pretty(&res) {
+            rec.answer = json_str;
+        }
     }
     finish(host, rec)
 }

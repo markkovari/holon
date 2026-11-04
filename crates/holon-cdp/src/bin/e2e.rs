@@ -355,6 +355,7 @@ fn spec_real_estate_escrow(page: &mut Page, base_url: &str, gif: &mut Option<Gif
     page.click("button:has-text(\"Register\")")?;
     page.wait_for_hidden("#authOverlay")?;
     page.wait_for_text("#userName", "usr_")?;
+    page.wait_for_text("#txGrid", "No escrow transactions found.")?;
     snap(page, gif);
 
     page.click("#createTxBtn")?;

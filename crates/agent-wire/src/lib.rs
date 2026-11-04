@@ -1,7 +1,12 @@
 //! agent-runtime's events and run records as plain data, so the board can be built for wasm.
 
 pub mod clock;
+pub mod handoff;
 pub mod jev;
+
+pub use handoff::{
+    ContextProduced, ContextRefs, HandoffIntent, HandoffRequest, HandoffResponse, HandoffStatus,
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

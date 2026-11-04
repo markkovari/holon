@@ -113,6 +113,30 @@ paths:
                 properties:
                   runs: { type: array, items: { $ref: "#/components/schemas/Run" } }
 
+  /v1/agents/{name}/handoff:
+    parameters: [{ $ref: "#/components/parameters/Name" }]
+    post:
+      operationId: handoffAgent
+      security: []
+      summary: >
+        Delegate a task via structured request envelope and pass-by-reference context pointers (ADR-0129).
+        Returns a structured HandoffResponse.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HandoffRequest" }
+      responses:
+        "200":
+          description: Handoff result envelope.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HandoffResponse" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "423": { $ref: "#/components/responses/Problem" }
+        "429": { $ref: "#/components/responses/Problem" }
+
   /v1/topics/{topic}/events:
     parameters:
       - { name: topic, in: path, required: true, schema: { type: string } }
@@ -423,3 +447,48 @@ components:
         title: { type: string }
         status: { type: integer }
         detail: { type: string }
+
+    ContextRefs:
+      type: object
+      properties:
+        store_refs: { type: array, items: { type: string } }
+        workspace_refs: { type: array, items: { type: string } }
+        memory_refs: { type: array, items: { type: string } }
+        run_refs: { type: array, items: { type: string } }
+        artifacts: { type: array, items: { type: string } }
+
+    ContextProduced:
+      type: object
+      properties:
+        store_keys_written: { type: array, items: { type: string } }
+        workspace_files_written: { type: array, items: { type: string } }
+        artifacts_produced: { type: array, items: { type: string } }
+
+    HandoffRequest:
+      type: object
+      required: [task]
+      properties:
+        id: { type: string }
+        caller: { type: string }
+        target: { type: string }
+        intent: { type: string, enum: [delegate, query, review, execute, handoff], default: delegate }
+        task: { type: string }
+        context: { $ref: "#/components/schemas/ContextRefs" }
+        parameters: { type: object }
+        max_tokens: { type: integer }
+        trace_id: { type: string }
+        parent_span_id: { type: string }
+
+    HandoffResponse:
+      type: object
+      required: [status, summary]
+      properties:
+        id: { type: string }
+        from: { type: string }
+        to: { type: string }
+        status: { type: string, enum: [success, declined, partial, error] }
+        summary: { type: string }
+        context_produced: { $ref: "#/components/schemas/ContextProduced" }
+        output: { type: object }
+        tokens_spent: { type: integer }
+        error: { type: string }

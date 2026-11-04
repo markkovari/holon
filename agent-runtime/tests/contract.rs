@@ -9,9 +9,14 @@ fn the_runtime_contract_compiles_and_names_its_rpcs() {
     let service = &file.service[0];
     assert_eq!(service.name(), "AgentRuntimeService");
     let rpcs: Vec<&str> = service.method.iter().map(|m| m.name()).collect();
-    for want in ["StartRun", "ListRuns", "StreamEvents", "GetState", "SubmitApproval", "PutKey"] {
+    for want in
+        ["StartRun", "ListRuns", "Handoff", "StreamEvents", "GetState", "SubmitApproval", "PutKey"]
+    {
         assert!(rpcs.contains(&want), "no {want} in {rpcs:?}");
     }
+    let msg_names: Vec<&str> = file.message_type.iter().map(|m| m.name()).collect();
+    assert!(msg_names.contains(&"HandoffRequest"));
+    assert!(msg_names.contains(&"HandoffResponse"));
     // One envelope kind per agent_wire::Event variant.
     let event = file.message_type.iter().find(|m| m.name() == "RuntimeEvent").unwrap();
     let kinds: Vec<&str> =
