@@ -375,6 +375,7 @@ fn spec_smart_home(page: &mut Page, base_url: &str, gif: &mut Option<Gif>) -> Re
     page.click("#login-admin")?;
     page.wait_for_text(".toast >> :last", "Authenticated as usr_")?;
     page.wait_for_visible("#dashboard-section")?;
+    page.wait_for_text("#devices-grid", "No devices found.")?;
 
     page.fill("#new-device-name", "Living Room Light")?;
     page.click("#create-device-form button[type=\"submit\"]")?;
