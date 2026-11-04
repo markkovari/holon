@@ -2775,6 +2775,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "holon-cdp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64 0.22.1",
+ "clap",
+ "gif",
+ "holon-plug",
+ "image",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tungstenite 0.29.0",
+]
+
+[[package]]
 name = "holon-clipboard"
 version = "0.1.0"
 dependencies = [

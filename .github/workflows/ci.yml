@@ -212,9 +212,9 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: . -> target
 
-      - name: Build comp-host, holon and comp-plug
+      - name: Build comp-host, holon, comp-plug and holon-e2e
         run: |
-          cargo build --release -p holon-host -p holon -p holon-fleet --bin holon-host --bin holon --bin comp-plug
+          cargo build --release -p holon-host -p holon -p holon-fleet -p holon-cdp --bin holon-host --bin holon --bin comp-plug --bin holon-e2e
           cp target/release/holon-host target/release/comp-host
 
       # Upload binaries so downstream jobs do not rebuild them
@@ -237,6 +237,13 @@ jobs:
         with:
           name: comp-plug-bin
           path: target/release/comp-plug
+          retention-days: 1
+
+      - name: Keep holon-e2e
+        uses: actions/upload-artifact@v7
+        with:
+          name: holon-e2e-bin
+          path: target/release/holon-e2e
           retention-days: 1
 
   reconciler-artifact-suites:
@@ -792,11 +799,6 @@ jobs:
           mkdir -p /ci-target/root /ci-target/components
           ln -sfn /ci-target/root target
           ln -sfn /ci-target/components components/target
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: e2e/package-lock.json
       - name: Fetch the wasm components
         uses: actions/download-artifact@v8
         with:
@@ -812,6 +814,11 @@ jobs:
         with:
           name: comp-plug-bin
           path: ${{ runner.temp }}/fetched/bin
+      - name: Fetch holon-e2e
+        uses: actions/download-artifact@v8
+        with:
+          name: holon-e2e-bin
+          path: ${{ runner.temp }}/fetched/bin
       - name: Put the fetched artifacts in place
         run: |
           # Copied in under a temporary name, then renamed: a rename is atomic only on one filesystem.
@@ -822,11 +829,17 @@ jobs:
           for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
             [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
           done
-      - name: Install Playwright
-        working-directory: e2e
+      - name: Install Lightpanda
         run: |
-          npm ci
-          npx playwright install --with-deps chromium
+          if [ ! -x /usr/local/bin/lightpanda ]; then
+            case "$(uname -m)" in
+              aarch64|arm64) ARCH="aarch64-linux" ;;
+              *) ARCH="x86_64-linux" ;;
+            esac
+            curl -fsSL "https://github.com/lightpanda-io/browser/releases/download/1.0.2/lightpanda-${ARCH}" -o "$RUNNER_TEMP/lightpanda"
+            chmod +x "$RUNNER_TEMP/lightpanda"
+            sudo mv "$RUNNER_TEMP/lightpanda" /usr/local/bin/lightpanda || cp "$RUNNER_TEMP/lightpanda" target/release/lightpanda
+          fi
       - name: Every app
         env:
           E2E_SKIP_BUILD: "1"

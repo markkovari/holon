@@ -1,0 +1,27 @@
+[package]
+name = "holon-cdp"
+description = "Two-tier Chrome DevTools Protocol (CDP) driver and delta-GIF recorder: drives Lightpanda for fast functional E2E suites and Chromium for visual showcase GIFs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "holon-e2e"
+path = "src/bin/e2e.rs"
+
+[dependencies]
+anyhow.workspace = true
+base64 = { workspace = true, features = ["std"] }
+clap.workspace = true
+gif = "0.14"
+holon-plug.workspace = true
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tungstenite = "0.29"
+
+[dev-dependencies]
+axum.workspace = true
+tokio.workspace = true
