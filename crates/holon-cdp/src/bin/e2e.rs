@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use holon_cdp::{free_port, BrowserServer, EngineKind, Gif, Page};
+use holon_cdp::{free_port, http_get_ok, BrowserServer, EngineKind, Gif, Page};
 
 const DEFAULT_APPS: &[&str] = &[
     "book-lending-domain",
@@ -94,11 +94,9 @@ impl HostedApp {
             .with_context(|| format!("spawn comp-host for {app}"))?;
 
         let url = format!("http://127.0.0.1:{port}");
-        let client =
-            reqwest::blocking::Client::builder().timeout(Duration::from_millis(400)).build()?;
         let deadline = Instant::now() + Duration::from_secs(15);
         while Instant::now() < deadline {
-            if client.get(&url).send().is_ok() {
+            if http_get_ok(port, "/", Duration::from_millis(400)) {
                 return Ok(Self { url, child, run_dir });
             }
             std::thread::sleep(Duration::from_millis(40));
@@ -150,11 +148,14 @@ fn spec_book_lending(page: &mut Page, base_url: &str, gif: &mut Option<Gif>) -> 
     snap(page, gif);
     page.click("#login-alice")?;
     page.wait_for_text(".toast >> :last", "Authenticated as alice")?;
+    page.wait_for_hidden("#auth-overlay")?;
     snap(page, gif);
 
     page.click("#logout-btn")?;
+    page.wait_for_visible("#auth-overlay")?;
     page.click("#login-lib")?;
     page.wait_for_text(".toast >> :last", "Authenticated as lib")?;
+    page.wait_for_hidden("#auth-overlay")?;
 
     page.fill("#book-title", "The Left Hand of Darkness")?;
     page.click("button:has-text(\"Add to Catalog\")")?;
@@ -165,7 +166,10 @@ fn spec_book_lending(page: &mut Page, base_url: &str, gif: &mut Option<Gif>) -> 
     snap(page, gif);
 
     page.click("#logout-btn")?;
+    page.wait_for_visible("#auth-overlay")?;
     page.click("#login-alice")?;
+    page.wait_for_text(".toast >> :last", "Authenticated as alice")?;
+    page.wait_for_hidden("#auth-overlay")?;
     page.wait_for_count(".book-card", 1)?;
     page.click(".book-card >> :first >> .borrow-btn")?;
     page.wait_for_text(".toast >> :last", "Book borrowed!")?;
@@ -173,7 +177,10 @@ fn spec_book_lending(page: &mut Page, base_url: &str, gif: &mut Option<Gif>) -> 
     snap(page, gif);
 
     page.click("#logout-btn")?;
+    page.wait_for_visible("#auth-overlay")?;
     page.click("#login-bob")?;
+    page.wait_for_text(".toast >> :last", "Authenticated as bob")?;
+    page.wait_for_hidden("#auth-overlay")?;
     page.wait_for_hidden(".borrow-btn")?;
     page.wait_for_visible(".return-btn")?;
     page.click(".return-btn")?;
@@ -181,19 +188,28 @@ fn spec_book_lending(page: &mut Page, base_url: &str, gif: &mut Option<Gif>) -> 
     snap(page, gif);
 
     page.click("#logout-btn")?;
+    page.wait_for_visible("#auth-overlay")?;
     page.click("#login-alice")?;
+    page.wait_for_text(".toast >> :last", "Authenticated as alice")?;
+    page.wait_for_hidden("#auth-overlay")?;
     page.click(".return-btn")?;
     page.wait_for_text(".toast >> :last", "Book returned successfully!")?;
     page.wait_for_visible(".status-available")?;
     page.wait_for_visible(".borrow-btn")?;
 
     page.click("#logout-btn")?;
+    page.wait_for_visible("#auth-overlay")?;
     page.click("#login-bob")?;
+    page.wait_for_text(".toast >> :last", "Authenticated as bob")?;
+    page.wait_for_hidden("#auth-overlay")?;
     page.click(".borrow-btn")?;
     page.wait_for_text(".toast >> :last", "Book borrowed!")?;
 
     page.click("#logout-btn")?;
+    page.wait_for_visible("#auth-overlay")?;
     page.click("#login-lib")?;
+    page.wait_for_text(".toast >> :last", "Authenticated as lib")?;
+    page.wait_for_hidden("#auth-overlay")?;
     page.click(".return-btn")?;
     page.wait_for_text(".toast >> :last", "Book returned successfully!")?;
     page.wait_for_visible(".status-available")?;
@@ -427,6 +443,7 @@ fn spec_ticket_triage(page: &mut Page, base_url: &str, gif: &mut Option<Gif>) ->
     snap(page, gif);
     page.click("#login-agent-billing")?;
     page.wait_for_text(".toast >> :last", "Authenticated as agent-b")?;
+    page.wait_for_hidden("#auth-overlay")?;
 
     page.fill("#ticket-subject", "double charge")?;
     page.fill("#ticket-body", "charged twice for the same order")?;
@@ -442,7 +459,10 @@ fn spec_ticket_triage(page: &mut Page, base_url: &str, gif: &mut Option<Gif>) ->
     snap(page, gif);
 
     page.click("#logout-btn")?;
+    page.wait_for_visible("#auth-overlay")?;
     page.click("#login-agent-search")?;
+    page.wait_for_text(".toast >> :last", "Authenticated as agent-s")?;
+    page.wait_for_hidden("#auth-overlay")?;
     page.fill("#search-query", "charge")?;
     page.select_option("#search-queue", "billing")?;
     page.click("button:has-text(\"Search\")")?;
@@ -453,7 +473,10 @@ fn spec_ticket_triage(page: &mut Page, base_url: &str, gif: &mut Option<Gif>) ->
     snap(page, gif);
 
     page.click("#logout-btn")?;
+    page.wait_for_visible("#auth-overlay")?;
     page.click("#login-agent-billing")?;
+    page.wait_for_text(".toast >> :last", "Authenticated as agent-b")?;
+    page.wait_for_hidden("#auth-overlay")?;
     page.fill("#search-query", "charge")?;
     page.select_option("#search-queue", "billing")?;
     page.click("button:has-text(\"Search\")")?;
@@ -470,6 +493,7 @@ fn spec_volunteer_shift(page: &mut Page, base_url: &str, gif: &mut Option<Gif>) 
     snap(page, gif);
     page.click("#login-coord")?;
     page.wait_for_text(".toast >> :last", "Authenticated as coordinator")?;
+    page.wait_for_hidden("#auth-overlay")?;
 
     page.fill("#shift-title", "Beach Cleanup")?;
     page.fill("#shift-slots", "2")?;
@@ -480,8 +504,10 @@ fn spec_volunteer_shift(page: &mut Page, base_url: &str, gif: &mut Option<Gif>) 
     snap(page, gif);
 
     page.click("#logout-btn")?;
+    page.wait_for_visible("#auth-overlay")?;
     page.click("#login-vol-a")?;
     page.wait_for_text(".toast >> :last", "Authenticated as volunteer")?;
+    page.wait_for_hidden("#auth-overlay")?;
     page.wait_for_visible(".shift-card >> :first >> .signup-btn")?;
     page.click(".shift-card >> :first >> .signup-btn")?;
     page.wait_for_text(".toast >> :last", "Signed up successfully!")?;
@@ -491,7 +517,10 @@ fn spec_volunteer_shift(page: &mut Page, base_url: &str, gif: &mut Option<Gif>) 
     snap(page, gif);
 
     page.click("#logout-btn")?;
+    page.wait_for_visible("#auth-overlay")?;
     page.click("#login-vol-b")?;
+    page.wait_for_text(".toast >> :last", "Authenticated as volunteer")?;
+    page.wait_for_hidden("#auth-overlay")?;
     page.wait_for_visible(".shift-card >> :first >> .signup-btn")?;
     page.click(".shift-card >> :first >> .signup-btn")?;
     page.wait_for_text(".toast >> :last", "Signed up successfully!")?;
@@ -501,6 +530,7 @@ fn spec_volunteer_shift(page: &mut Page, base_url: &str, gif: &mut Option<Gif>) 
     page.wait_for_text(".toast >> :last", "Signup cancelled!")?;
     page.wait_for_text(".shift-card >> :first >> .shift-slots", "Slots: 1 / 2")?;
     page.click("#logout-btn")?;
+    page.wait_for_visible("#auth-overlay")?;
     snap(page, gif);
     Ok(())
 }

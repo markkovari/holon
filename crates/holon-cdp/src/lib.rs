@@ -8,6 +8,7 @@
 
 pub mod film;
 
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -146,14 +147,84 @@ pub fn free_port() -> Result<u16> {
     Ok(listener.local_addr()?.port())
 }
 
+pub fn http_get(port: u16, path: &str, timeout: Duration) -> Result<String> {
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .with_context(|| format!("connect 127.0.0.1:{port}"))?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+    let req = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    stream.write_all(req.as_bytes())?;
+
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 1024];
+    let mut content_len: Option<usize> = None;
+    let mut header_end: Option<usize> = None;
+
+    loop {
+        let n = match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                break;
+            }
+            Err(e) => return Err(e.into()),
+        };
+        buf.extend_from_slice(&chunk[..n]);
+
+        if header_end.is_none() {
+            if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                header_end = Some(pos + 4);
+                let header_str = String::from_utf8_lossy(&buf[..pos]);
+                for line in header_str.lines() {
+                    let lower = line.to_ascii_lowercase();
+                    if let Some(val) = lower.strip_prefix("content-length:") {
+                        if let Ok(cl) = val.trim().parse::<usize>() {
+                            content_len = Some(cl);
+                        }
+                    }
+                }
+            }
+        }
+
+        if let (Some(hend), Some(clen)) = (header_end, content_len) {
+            if buf.len() >= hend + clen {
+                return Ok(String::from_utf8_lossy(&buf[hend..hend + clen]).to_string());
+            }
+        }
+    }
+
+    if let Some(hend) = header_end {
+        Ok(String::from_utf8_lossy(&buf[hend..]).to_string())
+    } else {
+        Ok(String::from_utf8_lossy(&buf).to_string())
+    }
+}
+
+pub fn http_get_ok(port: u16, path: &str, timeout: Duration) -> bool {
+    let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
+    let req = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    if stream.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut buf = [0u8; 12];
+    if stream.read_exact(&mut buf).is_err() {
+        return false;
+    }
+    buf.starts_with(b"HTTP/1.")
+}
+
 fn wait_for_cdp_ws_url(port: u16, timeout: Duration) -> Result<String> {
-    let url = format!("http://127.0.0.1:{port}/json/version");
-    let client =
-        reqwest::blocking::Client::builder().timeout(Duration::from_millis(500)).build()?;
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if let Ok(resp) = client.get(&url).send() {
-            if let Ok(v) = resp.json::<Value>() {
+        if let Ok(body) = http_get(port, "/json/version", Duration::from_millis(500)) {
+            if let Ok(v) = serde_json::from_str::<Value>(&body) {
                 if let Some(ws) = v.get("webSocketDebuggerUrl").and_then(Value::as_str) {
                     return Ok(ws.to_string());
                 }
