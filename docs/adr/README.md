@@ -158,6 +158,7 @@ tells you what is true now rather than what was once believed.
 | [0126](0126-nats-jetstream-llm-queues.md) | NATS JetStream backed multi-tier LLM queuing and coalescing: durable distributed batching on `malna`'s `LLM_BATCH`, 1M-token prompt coalescing | **accepted** |
 | [0127](0127-multimodal-voice-for-edge-devices.md) | Multimodal voice and speech for edge devices: zero-install speech-to-text and synthesis via Gemini for Linux edge nodes | **accepted** |
 | [0128](0128-component-catalog-pruning.md) | Capability component catalog pruning and consolidation: isolate polyglot test fixtures, prune unreferenced prototypes via `comp-capgraph` | **accepted** |
+| [0129](0129-agent-handoff-and-context-routing.md) | Agent handoff and context routing protocol: request/response message envelopes and pass-by-reference context pointers | **accepted** |
 
 ## History: superseded, and kept
 

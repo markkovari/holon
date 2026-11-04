@@ -615,7 +615,7 @@ mod tests {
                 ops.push((m.to_uppercase(), path.clone()));
             }
         }
-        assert_eq!(ops.len(), 22, "the operations read from openapi.yaml");
+        assert_eq!(ops.len(), 23, "the operations read from openapi.yaml");
         let c = reqwest::blocking::Client::new();
         for (method, path) in &ops {
             let url = path

@@ -31,6 +31,9 @@ service AgentRuntimeService {
   rpc StartRun(StartRunRequest) returns (Run);
   // GET /v1/agents/{agent}/runs?limit=: newest first.
   rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
+  // POST /v1/agents/{agent}/handoff: invokes agent with structured request envelope
+  // and pass-by-reference context pointers; returns structured response envelope (ADR-0129).
+  rpc Handoff(HandoffRequest) returns (HandoffResponse);
 
   // POST /v1/topics/{topic}/events: wakes the agents that listen on the topic.
   rpc PublishEvent(PublishEventRequest) returns (PublishEventResponse);
@@ -353,4 +356,62 @@ message SetKeyGrantRequest {
   string key = 1;
   string agent = 2;
   bool granted = 3;
+}
+
+// ---- Agent Handoff & Routing Protocol (ADR-0129) ----
+
+enum HandoffIntent {
+  HANDOFF_INTENT_UNSPECIFIED = 0;
+  HANDOFF_INTENT_DELEGATE = 1;
+  HANDOFF_INTENT_QUERY = 2;
+  HANDOFF_INTENT_REVIEW = 3;
+  HANDOFF_INTENT_EXECUTE = 4;
+  HANDOFF_INTENT_HANDOFF = 5;
+}
+
+enum HandoffStatus {
+  HANDOFF_STATUS_UNSPECIFIED = 0;
+  HANDOFF_STATUS_SUCCESS = 1;
+  HANDOFF_STATUS_DECLINED = 2;
+  HANDOFF_STATUS_PARTIAL = 3;
+  HANDOFF_STATUS_ERROR = 4;
+}
+
+message ContextRefs {
+  repeated string store_refs = 1;
+  repeated string workspace_refs = 2;
+  repeated string memory_refs = 3;
+  repeated string run_refs = 4;
+  repeated string artifacts = 5;
+}
+
+message ContextProduced {
+  repeated string store_keys_written = 1;
+  repeated string workspace_files_written = 2;
+  repeated string artifacts_produced = 3;
+}
+
+message HandoffRequest {
+  string id = 1;
+  string caller = 2;
+  string target = 3;
+  HandoffIntent intent = 4;
+  string task = 5;
+  ContextRefs context = 6;
+  google.protobuf.Struct parameters = 7;
+  uint64 max_tokens = 8;
+  string trace_id = 9;
+  string parent_span_id = 10;
+}
+
+message HandoffResponse {
+  string id = 1;
+  string from = 2;
+  string to = 3;
+  HandoffStatus status = 4;
+  string summary = 5;
+  ContextProduced context_produced = 6;
+  google.protobuf.Struct output = 7;
+  uint64 tokens_spent = 8;
+  string error = 9;
 }

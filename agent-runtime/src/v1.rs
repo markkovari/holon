@@ -9,6 +9,7 @@ use crate::runtime::Runtime;
 use crate::spec::AgentSpec;
 use crate::trace::Traceparent;
 
+#[derive(Debug)]
 pub enum Reply {
     Json(u16, Value),
     Problem(u16, String),
@@ -76,6 +77,7 @@ pub fn route(
     match (method, segs) {
         // The open tier, as the old trigger routes were: anything that may poke an agent may call these.
         (Method::Post, ["agents", name, "runs"]) => return start_run(rt, name, body, trace),
+        (Method::Post, ["agents", name, "handoff"]) => return handoff(rt, name, body, trace),
         (Method::Post, ["topics", topic, "events"]) => {
             let v = match body_json(body) {
                 Ok(v) => v,
@@ -310,6 +312,43 @@ fn start_run(rt: &Arc<Runtime>, name: &str, body: &str, trace: Option<Traceparen
     }
     match crate::server::start_run(rt, name, &input, &why, project, attachments, trace) {
         Ok(r) => Reply::Json(200, json!(r)),
+        Err((status, e)) => problem(status, e),
+    }
+}
+
+fn handoff(rt: &Arc<Runtime>, name: &str, body: &str, trace: Option<Traceparent>) -> Reply {
+    let mut req: agent_wire::HandoffRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(e) => return problem(400, format!("malformed handoff request: {e}")),
+    };
+    if req.target.is_empty() {
+        req.target = name.to_string();
+    }
+    if req.id.is_empty() {
+        req.id = format!("req-{}", crate::trace::new_span_id());
+    }
+    let req_body = match serde_json::to_string(&req) {
+        Ok(s) => s,
+        Err(e) => return problem(500, e.to_string()),
+    };
+    let why = format!("handoff:{}", req.caller);
+    match crate::server::start_run(rt, name, &req_body, &why, None, Vec::new(), trace) {
+        Ok(r) => {
+            if let Ok(v) = serde_json::from_str::<Value>(&r.answer) {
+                Reply::Json(200, v)
+            } else {
+                Reply::Json(
+                    200,
+                    json!({
+                        "id": req.id,
+                        "from": name,
+                        "to": req.caller,
+                        "status": "success",
+                        "summary": r.answer,
+                    }),
+                )
+            }
+        }
         Err((status, e)) => problem(status, e),
     }
 }
