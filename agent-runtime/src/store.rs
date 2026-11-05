@@ -203,20 +203,20 @@ impl Store {
                 "models": [
                     {
                         "kind": "openai",
-                        "base_url": "https://api.groq.com/openai",
-                        "model": "llama-3.3-70b-versatile",
+                        "base_url": "https://api.groq.com/openai/v1",
+                        "model": "openai/gpt-oss-120b",
                         "api_key_env": "GROQ_API_KEY"
                     },
                     {
-                        "kind": "openai",
-                        "base_url": "https://api.cerebras.ai",
-                        "model": "llama3.1-8b",
-                        "api_key_env": "CEREBRAS_API_KEY"
+                        "kind": "gemini",
+                        "model": "gemini-2.5-flash-lite",
+                        "api_key_env": "GEMINI_API_KEY"
                     },
                     {
-                        "kind": "gemini",
-                        "model": "gemini-2.5-flash",
-                        "api_key_env": "GEMINI_API_KEY"
+                        "kind": "openai",
+                        "base_url": "https://api.groq.com/openai/v1",
+                        "model": "qwen/qwen3.8-27b",
+                        "api_key_env": "GROQ_API_KEY"
                     },
                     {
                         "kind": "openai",
@@ -1149,9 +1149,9 @@ mod tests {
             assert_eq!(spec["kind"], "fallback");
             let models = spec["models"].as_array().expect("array of models");
             assert_eq!(models.len(), 4);
-            assert_eq!(models[0]["model"], "llama-3.3-70b-versatile");
-            assert_eq!(models[1]["model"], "llama3.1-8b");
-            assert_eq!(models[2]["model"], "gemini-2.5-flash");
+            assert_eq!(models[0]["model"], "openai/gpt-oss-120b");
+            assert_eq!(models[1]["model"], "gemini-2.5-flash-lite");
+            assert_eq!(models[2]["model"], "qwen/qwen3.8-27b");
             assert_eq!(models[3]["model"], "qwen2.5-coder");
         }
     }
