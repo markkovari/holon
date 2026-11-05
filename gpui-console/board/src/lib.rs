@@ -1,5 +1,9 @@
 //! The agent board (ADR-0119).
 
+#[cfg(target_os = "macos")]
+#[macro_use]
+extern crate objc;
+
 pub mod agents;
 pub mod canvas;
 #[cfg(target_os = "macos")]

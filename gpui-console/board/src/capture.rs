@@ -32,9 +32,11 @@ fn keys() -> (CFStringRef, CFStringRef, CFStringRef) {
 
 fn own_window() -> Option<u32> {
     let pid = std::process::id() as i64;
-    let (owner_key, layer_key, number_key) = keys();
+    let (owner_key, _layer_key, number_key) = keys();
     let info = copy_window_info(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)?;
-    let mut any = None;
+    let mut best_id = None;
+    let mut max_pixels = 0;
+    let null = CGRect::new(&CGPoint::new(f64::INFINITY, f64::INFINITY), &CGSize::new(0.0, 0.0));
     for i in 0..info.len() {
         let dict = entry(*info.get(i)?);
         let number = |k: CFStringRef| {
@@ -43,13 +45,21 @@ fn own_window() -> Option<u32> {
         if number(owner_key) != Some(pid) {
             continue;
         }
-        let id = number(number_key).map(|n| n as u32);
-        if number(layer_key) == Some(0) {
-            return id;
+        let Some(id) = number(number_key).map(|n| n as u32) else { continue };
+        if let Some(img) = create_image(
+            null,
+            kCGWindowListOptionIncludingWindow,
+            id,
+            kCGWindowImageBoundsIgnoreFraming,
+        ) {
+            let px = img.width() * img.height();
+            if px > max_pixels {
+                max_pixels = px;
+                best_id = Some(id);
+            }
         }
-        any = any.or(id);
     }
-    any
+    best_id
 }
 
 pub fn own_window_rgba() -> Result<(Vec<u8>, usize, usize), String> {
@@ -86,4 +96,32 @@ pub fn own_window_png(path: &str) -> Result<(u32, u32), String> {
     enc.set_depth(png::BitDepth::Eight);
     enc.write_header().and_then(|mut wr| wr.write_image_data(&rgba)).map_err(|e| e.to_string())?;
     Ok((w as u32, h as u32))
+}
+
+#[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)]
+pub fn flush_window() {
+    // SAFETY: Interacting with AppKit UI elements on the main thread to flush layer presentation.
+    unsafe {
+        use cocoa::base::{id, nil};
+        use objc::{msg_send, sel};
+        let app: id = cocoa::appkit::NSApplication::sharedApplication(nil);
+        let _: () = msg_send![app, activateIgnoringOtherApps: true];
+        let windows: id = msg_send![app, windows];
+        let count: usize = msg_send![windows, count];
+        for i in 0..count {
+            let win: id = msg_send![windows, objectAtIndex: i];
+            let _: () = msg_send![win, orderFrontRegardless];
+            let content_view: id = msg_send![win, contentView];
+            let subviews: id = msg_send![content_view, subviews];
+            let sub_count: usize = msg_send![subviews, count];
+            for j in 0..sub_count {
+                let sub: id = msg_send![subviews, objectAtIndex: j];
+                let _: () = msg_send![sub, setNeedsDisplay: true];
+                let _: () = msg_send![sub, displayIfNeeded];
+            }
+            let _: () = msg_send![content_view, setNeedsDisplay: true];
+            let _: () = msg_send![content_view, displayIfNeeded];
+        }
+    }
 }

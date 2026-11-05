@@ -104,38 +104,92 @@ fn run(
             cx.spawn(async move |cx| {
                 let clock = cx.background_executor().clone();
                 let wait = |ms| clock.timer(Duration::from_millis(ms));
-                wait(1200).await;
-                // 1. Initial view: Agents tab with lead selected, batch queue banner open
-                // 2. Toggle batch queue banner closed then open
-                window.update(cx, |board, _, cx| board.toggle_queue(cx)).ok();
-                wait(1200).await;
-                window.update(cx, |board, _, cx| board.toggle_queue(cx)).ok();
-                wait(1200).await;
+                eprintln!("[tour] starting tour...");
+                wait(400).await;
+                let _ = window.update(cx, |board, window, cx| {
+                    board.set_tab(Tab::Agents, window, cx);
+                    board.show(Tab::Agents, "lead", cx);
+                    #[cfg(target_os = "macos")]
+                    agent_board::capture::flush_window();
+                });
+                wait(600).await;
+                // 1. Open Batch Queue Inspector
+                let _ = window.update(cx, |board, _, cx| {
+                    board.toggle_queue(cx);
+                    #[cfg(target_os = "macos")]
+                    agent_board::capture::flush_window();
+                });
+                eprintln!("[tour] toggle queue open");
+                wait(2200).await;
+                // 2. Close Batch Queue Inspector
+                let _ = window.update(cx, |board, _, cx| {
+                    board.toggle_queue(cx);
+                    #[cfg(target_os = "macos")]
+                    agent_board::capture::flush_window();
+                });
+                eprintln!("[tour] toggle queue closed");
+                wait(700).await;
                 // 3. Expand model reasoning & tool trace
-                window.update(cx, |board, _, cx| board.expand_first_exchange(cx)).ok();
-                wait(1400).await;
+                let _ = window.update(cx, |board, _, cx| {
+                    board.expand_first_exchange(cx);
+                    #[cfg(target_os = "macos")]
+                    agent_board::capture::flush_window();
+                });
+                eprintln!("[tour] expand trace");
+                wait(1600).await;
                 // 4. Toggle memories in sidebar
-                window.update(cx, |board, _, cx| board.toggle_memories(cx)).ok();
+                let _ = window.update(cx, |board, _, cx| {
+                    board.toggle_memories(cx);
+                    #[cfg(target_os = "macos")]
+                    agent_board::capture::flush_window();
+                });
+                eprintln!("[tour] toggle memories collapse");
+                wait(600).await;
+                let _ = window.update(cx, |board, _, cx| {
+                    board.toggle_memories(cx);
+                    #[cfg(target_os = "macos")]
+                    agent_board::capture::flush_window();
+                });
+                eprintln!("[tour] toggle memories expand");
+                wait(800).await;
+                // 5. Voice mic: active listening state
+                let _ = window.update(cx, |board, _, cx| {
+                    board.toggle_mic(cx);
+                    #[cfg(target_os = "macos")]
+                    agent_board::capture::flush_window();
+                });
+                eprintln!("[tour] voice mic listening");
                 wait(1100).await;
-                window.update(cx, |board, _, cx| board.toggle_memories(cx)).ok();
-                wait(1200).await;
-                // 5. Click voice mic: active recording state
-                window.update(cx, |board, _, cx| board.toggle_mic(cx)).ok();
-                wait(1400).await;
-                // 6. Mic stops & voice prompt streams into say field at human speed
-                window.update(cx, |board, _, cx| board.toggle_mic(cx)).ok();
-                let prompt = "Check the free-tier batch queue and update the memory.";
-                let say = window.update(cx, |board, _, _| board.say_field());
+                // 6. Voice mic turns off & transcribed text streams into input bar
+                let prompt = "How did the enqueued batch requests work out?";
+                let say = window.update(cx, |board, _, cx| {
+                    board.toggle_mic(cx);
+                    let say = board.say_field();
+                    say.update(cx, |f, cx| f.clear(cx));
+                    #[cfg(target_os = "macos")]
+                    agent_board::capture::flush_window();
+                    say
+                });
+                eprintln!("[tour] voice mic off, typing prompt");
                 if let Ok(say) = say {
                     for c in prompt.chars() {
                         say.update(cx, |f, cx| f.push_str(&c.to_string(), cx));
+                        let _ = window.update(cx, |_, _, _| {
+                            #[cfg(target_os = "macos")]
+                            agent_board::capture::flush_window();
+                        });
                         wait(35).await;
                     }
                 }
-                wait(600).await;
-                // 7. Submit question
-                window.update(cx, |board, _, cx| board.say_to(prompt.to_string(), cx)).ok();
-                wait(2000).await;
+                wait(400).await;
+                // 7. Submit prompt -> response bubble appears and finishes
+                let _ = window.update(cx, |board, _, cx| {
+                    board.say_to(prompt.to_string(), cx);
+                    #[cfg(target_os = "macos")]
+                    agent_board::capture::flush_window();
+                });
+                eprintln!("[tour] prompt submitted, awaiting response");
+                wait(2400).await;
             })
             .detach();
         }
@@ -263,10 +317,11 @@ mod native {
 
     pub fn main() {
         let a = Args::parse();
+        let is_tour = a.tour;
         let o = Opts {
             light: a.mode == "light",
-            tab: a.tab.as_deref().and_then(tab_named),
-            select: a.select.clone(),
+            tab: if is_tour { Some(Tab::Agents) } else { a.tab.as_deref().and_then(tab_named) },
+            select: if is_tour { Some("lead".into()) } else { a.select.clone() },
             open: a.open,
             form: a.form,
             goal: a.goal.clone(),
@@ -291,7 +346,6 @@ mod native {
             gpui_platform::application(),
             o,
             move |w| WindowOptions {
-                // macOS stops drawing a covered window, so photographs are taken from a pop-up
                 kind: if photographing { WindowKind::PopUp } else { WindowKind::Normal },
                 titlebar: Some(TitlebarOptions {
                     title: Some("Agents".into()),
@@ -300,12 +354,12 @@ mod native {
                 }),
                 ..w
             },
-            move |_window, mode, cx| photograph(a, mode, cx),
+            move |window, mode, cx| photograph(a, window, mode, cx),
         );
     }
 
     #[allow(unused_variables)]
-    fn photograph(a: Args, mode: Mode, cx: &mut App) {
+    fn photograph(a: Args, window: WindowHandle<Board>, mode: Mode, cx: &mut App) {
         #[cfg(target_os = "macos")]
         if let (Some((start, count, step)), gif, dir) = (a.film, a.gif.clone(), a.shoot.clone()) {
             if let Some(d) = dir.as_ref() {
@@ -316,6 +370,9 @@ mod native {
                 let mut film: Option<agent_board::film::Gif> = None;
                 for i in 0..count {
                     let at = std::time::Instant::now();
+                    let _ = window.update(cx, |_, _, _| {
+                        agent_board::capture::flush_window();
+                    });
                     if let Some(d) = dir.as_ref() {
                         let path = format!("{d}/film-{i:03}.png");
                         if let Err(e) = agent_board::capture::own_window_png(&path) {
@@ -358,6 +415,9 @@ mod native {
                         .timer(Duration::from_secs_f32((t - last).max(0.0)))
                         .await;
                     last = t;
+                    let _ = window.update(cx, |_, _, _| {
+                        agent_board::capture::flush_window();
+                    });
                     let path = format!(
                         "{dir}/board-{}-{:04.1}.png",
                         if mode == Mode::Dark { "dark" } else { "light" },

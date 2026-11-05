@@ -432,36 +432,23 @@ fn given(
     agent: &'static str,
     run: &'static str,
     goal: &'static str,
-    session: Option<&'static str>,
+    _session: Option<&'static str>,
 ) -> Vec<Beat> {
-    let mut v = vec![
-        started(0, agent, run, None, OPUS, goal),
-        thought(700, agent, run, 1_800, 160),
-        tool(1_300, agent, run, "c-goal-read", "read_file", json!({"path": "README.md"})),
-    ];
-    if let Some(s) = session {
-        let at = |at, phase, cost, tools, activity, result, begun| {
-            self::session(
-                at, s, run, SONNET, goal, phase, cost, tools, activity, None, result, begun,
-            )
-        };
-        v.extend([
-            tool(1_900, agent, run, "c-goal-start", "session_start", json!({"task": goal})),
-            at(2_200, Phase::Running, 3_000, &["read_file"], "read_file src/lib.rs", None, 0),
-            at(
-                5_000,
-                Phase::Running,
-                26_000,
-                &["read_file", "write_file"],
-                "write_file src/lib.rs",
-                None,
-                2_800,
-            ),
-            at(8_000, Phase::Done, 58_000, &SHORT, "", Some("Done, and the tests pass."), 5_800),
-        ]);
-    }
-    v.push(finished(9_000, agent, run, OPUS, "ok", "Done.", 4_200, 600));
-    v
+    vec![
+        started(0, agent, run, None, "gemini-2.5-flash-lite", goal),
+        thought(400, agent, run, 184, 30),
+        tool(700, agent, run, "c-batch-eval", "llm_batch_coalesce", json!({"tasks": 3, "cost": "$0.00"})),
+        finished(
+            1_200,
+            agent,
+            run,
+            "gemini-2.5-flash-lite",
+            "ok",
+            "All 3 tasks coalesced in 200ms ($0.00 cost). Verified cluster queue and updated memory facts.",
+            184,
+            72,
+        ),
+    ]
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -579,6 +566,7 @@ pub struct DemoActions {
     goals: Cell<u32>,
     keys: RefCell<Vec<String>>,
     grants: RefCell<Vec<(String, String)>>,
+    created_at: std::time::Instant,
 }
 
 impl Actions for DemoActions {
@@ -701,7 +689,8 @@ impl Actions for DemoActions {
     }
 
     fn memories(&self, agent: &str, _cx: &App) -> Vec<super::agents::MemoryItem> {
-        vec![
+        let sec = self.created_at.elapsed().as_secs();
+        let mut list = vec![
             super::agents::MemoryItem {
                 at: now_ms().saturating_sub(120_000),
                 text: format!(
@@ -721,24 +710,71 @@ impl Actions for DemoActions {
                 text: "Cluster secrets live in SECRETS KV bucket on malna-nats leader.".into(),
                 kind: Some("infrastructure".into()),
             },
-        ]
+        ];
+        if sec >= 5 {
+            list.insert(
+                0,
+                super::agents::MemoryItem {
+                    at: now_ms().saturating_sub(10_000),
+                    text: "Coalesced batch task-2 synthesized facts into shared knowledge base."
+                        .into(),
+                    kind: Some("remember".into()),
+                },
+            );
+        }
+        if sec >= 9 {
+            list.insert(
+                0,
+                super::agents::MemoryItem {
+                    at: now_ms(),
+                    text: "Lead agent verified $0.00 free tier batch execution across 4 requests."
+                        .into(),
+                    kind: Some("recall".into()),
+                },
+            );
+        }
+        list
     }
 
     fn batch_queue(&self, _cx: &App) -> Vec<super::agents::BatchQueueItem> {
-        vec![
+        let sec = self.created_at.elapsed().as_secs();
+        let (s1, r1, s2, r2) = if sec < 3 {
+            ("queued", None, "in_flight", None)
+        } else if sec < 6 {
+            (
+                "in_flight",
+                None,
+                "completed",
+                Some(
+                    "Synthesized memory updates: recorded agent preferences in SECRETS KV.".into(),
+                ),
+            )
+        } else {
+            (
+                "completed",
+                Some(
+                    "Handoff summary verified: 4 agents active, 0 failures, all coalesced.".into(),
+                ),
+                "completed",
+                Some(
+                    "Synthesized memory updates: recorded agent preferences in SECRETS KV.".into(),
+                ),
+            )
+        };
+        let mut items = vec![
             super::agents::BatchQueueItem {
                 id: "batch-task-1".into(),
                 prompt: "Summarize recent agent handoff activity".into(),
-                status: "queued".into(),
-                response: None,
+                status: s1.into(),
+                response: r1,
                 timestamp_ms: now_ms().saturating_sub(1_200),
                 model: "gemini-2.5-flash-lite".into(),
             },
             super::agents::BatchQueueItem {
                 id: "batch-task-2".into(),
                 prompt: "Synthesize memory updates for lead agent".into(),
-                status: "in_flight".into(),
-                response: None,
+                status: s2.into(),
+                response: r2,
                 timestamp_ms: now_ms().saturating_sub(400),
                 model: "gemini-2.5-flash-lite".into(),
             },
@@ -750,7 +786,29 @@ impl Actions for DemoActions {
                 timestamp_ms: now_ms().saturating_sub(15_000),
                 model: "openai/gpt-oss-120b".into(),
             },
-        ]
+        ];
+        if sec >= 7 {
+            let (s3, r3): (&str, Option<String>) = if sec < 9 {
+                ("in_flight", None)
+            } else {
+                (
+                    "completed",
+                    Some("Processed in 3s window ($0.00). Coalesced with Groq & Gemini.".into()),
+                )
+            };
+            items.insert(
+                0,
+                super::agents::BatchQueueItem {
+                    id: "batch-task-3".into(),
+                    prompt: "Check free-tier batch queue and update memory.".into(),
+                    status: s3.into(),
+                    response: r3,
+                    timestamp_ms: now_ms().saturating_sub(sec * 1000 - 7000),
+                    model: "gemini-2.5-flash-lite".into(),
+                },
+            );
+        }
+        items
     }
 
     fn transcribe(&self, _audio: &[u8], _cx: &mut App) -> Result<String, String> {
@@ -808,6 +866,7 @@ pub fn play(tree: Entity<AgentTree>, auto: Option<Duration>, cx: &mut App) -> Rc
         goals: Cell::new(0),
         keys: RefCell::new(vec!["github".into(), "openai".into()]),
         grants: RefCell::new(vec![("github".into(), "researcher".into())]),
+        created_at: std::time::Instant::now(),
     });
     let me = actions.clone();
     cx.spawn(async move |cx| {

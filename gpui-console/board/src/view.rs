@@ -365,10 +365,11 @@ impl Board {
             cx.new(|cx| KeysView::new(actions, theme, cx))
         };
         let say = cx.new(|cx| TextField::compact("Say something…", theme, cx));
+        cx.observe(&say, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&say, |this, _, ev: &FieldEvent, cx| match ev {
             FieldEvent::Submit(text) => this.say_to(text.clone(), cx),
             FieldEvent::Cancel => this.say.update(cx, |f, cx| f.clear(cx)),
-            FieldEvent::Changed(_) => {}
+            FieldEvent::Changed(_) => this.say.update(cx, |_, cx| cx.notify()),
         })
         .detach();
         let search = cx.new(|cx| TextField::compact("Search", theme, cx));
@@ -553,10 +554,12 @@ impl Board {
     pub fn expand_first_exchange(&mut self, cx: &mut Context<Self>) {
         if let Some(agent) = self.agent.as_ref() {
             let talk = agents::conversation(self.tree.read(cx), agent, 5);
-            if let Some(first) = talk.first() {
-                self.expanded.insert(first.run.clone());
-                cx.notify();
+            for e in &talk {
+                if !e.tools.is_empty() {
+                    self.expanded.insert(e.run.clone());
+                }
             }
+            cx.notify();
         }
     }
 
