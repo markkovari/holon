@@ -252,6 +252,7 @@ mod tests {
             attachments: Vec::new(),
             cost_micros: 250,
             tenant: "acme-corp".into(),
+            delegations: Vec::new(),
         }
     }
 

@@ -5,7 +5,8 @@ pub mod handoff;
 pub mod jev;
 
 pub use handoff::{
-    ContextProduced, ContextRefs, HandoffIntent, HandoffRequest, HandoffResponse, HandoffStatus,
+    format_delegations_markdown, ContextProduced, ContextRefs, DelegationRecord, HandoffIntent,
+    HandoffRequest, HandoffResponse, HandoffStatus,
 };
 
 use serde::{Deserialize, Serialize};
@@ -112,6 +113,20 @@ pub struct RunRecord {
     /// Tenant identity for multi-tenant metering and attribution.
     #[serde(default)]
     pub tenant: String,
+    /// Sub-delegations performed during this run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub delegations: Vec<DelegationRecord>,
+}
+
+impl RunRecord {
+    /// Renders delegations as a collapsible GitHub-flavored markdown block, if any.
+    pub fn delegations_markdown(&self) -> Option<String> {
+        if self.delegations.is_empty() {
+            None
+        } else {
+            Some(format_delegations_markdown(&self.delegations))
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

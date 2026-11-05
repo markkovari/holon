@@ -479,6 +479,18 @@ components:
         trace_id: { type: string }
         parent_span_id: { type: string }
 
+    DelegationRecord:
+      type: object
+      required: [target, task]
+      properties:
+        target: { type: string }
+        intent: { type: string, enum: [delegate, query, review, execute, handoff], default: delegate }
+        task: { type: string }
+        status: { type: string, enum: [success, declined, partial, error], default: success }
+        summary: { type: string }
+        store_keys_written: { type: array, items: { type: string } }
+        workspace_files_written: { type: array, items: { type: string } }
+
     HandoffResponse:
       type: object
       required: [status, summary]
@@ -492,3 +504,6 @@ components:
         output: { type: object }
         tokens_spent: { type: integer }
         error: { type: string }
+        delegations:
+          type: array
+          items: { $ref: "#/components/schemas/DelegationRecord" }

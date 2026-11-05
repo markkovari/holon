@@ -49,6 +49,7 @@ impl View {
                 attachments: Vec::new(),
                 cost_micros: 0,
                 tenant: String::new(),
+                delegations: Vec::new(),
             }),
             Event::RunFinished(r) => self.running.retain(|x| x.id != r.id),
             Event::ApprovalRequested { id, agent, tool, args, chain } => {

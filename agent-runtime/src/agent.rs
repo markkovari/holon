@@ -815,6 +815,12 @@ fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
     } else {
         s.push_str("Reply in plain text.\n\n");
     }
+    if spec.capabilities.iter().any(|c| c.name.starts_with("agent:") || c.name == "agent_handoff") {
+        s.push_str(
+            "When delegating to other agents, synthesize their responses into your final answer. \
+             The runtime automatically records an activity trace of your delegations.\n\n",
+        );
+    }
     if !abilities.is_empty() {
         s.push_str("Other things you can do yourself (no tool needed):\n");
         s.push_str(&abilities);
@@ -2219,6 +2225,7 @@ pub fn run(
         attachments: cause.attachments.clone(),
         cost_micros: 0,
         tenant: cause.tenant.clone().unwrap_or_default(),
+        delegations: Vec::new(),
     };
     let mut child_tokens = 0u64;
     let push = |rec: &mut RunRecord, step: Step| {
@@ -2535,6 +2542,67 @@ pub fn run(
     if rec.answer.is_empty() && rec.status == Status::Ok {
         rec.answer = last_text;
     }
+
+    let mut delegations = Vec::new();
+    for step in &rec.steps {
+        if let Step::Tool { name, args, result, error, .. } = step {
+            let is_delegation = name == "agent_handoff" || name.starts_with("agent:");
+            if !is_delegation {
+                continue;
+            }
+            let target = if name == "agent_handoff" {
+                args.get("target").and_then(Value::as_str).unwrap_or_default()
+            } else {
+                name.strip_prefix("agent:").unwrap_or_default()
+            };
+            if target.is_empty() {
+                continue;
+            }
+            let intent = match args.get("intent").and_then(Value::as_str) {
+                Some("query") => agent_wire::HandoffIntent::Query,
+                Some("review") => agent_wire::HandoffIntent::Review,
+                Some("execute") => agent_wire::HandoffIntent::Execute,
+                Some("handoff") => agent_wire::HandoffIntent::Handoff,
+                _ => agent_wire::HandoffIntent::Delegate,
+            };
+            let task = args
+                .get("task")
+                .or_else(|| args.get("message"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+
+            let (status, summary, store_keys_written, workspace_files_written) = if *error {
+                (agent_wire::HandoffStatus::Error, Some(clip(result, 200)), Vec::new(), Vec::new())
+            } else if let Ok(resp) = serde_json::from_str::<agent_wire::HandoffResponse>(result) {
+                (
+                    resp.status,
+                    if resp.summary.is_empty() { None } else { Some(resp.summary) },
+                    resp.context_produced.store_keys_written,
+                    resp.context_produced.workspace_files_written,
+                )
+            } else {
+                (
+                    agent_wire::HandoffStatus::Success,
+                    if result.is_empty() { None } else { Some(clip(result, 200)) },
+                    Vec::new(),
+                    Vec::new(),
+                )
+            };
+
+            delegations.push(agent_wire::DelegationRecord {
+                target: target.to_string(),
+                intent,
+                task,
+                status,
+                summary,
+                store_keys_written,
+                workspace_files_written,
+            });
+        }
+    }
+    rec.delegations = delegations.clone();
+
     if let Some(req) = &handoff_req {
         let mut store_keys_written = Vec::new();
         let mut workspace_files_written = Vec::new();
@@ -2574,9 +2642,25 @@ pub fn run(
             output: None,
             tokens_spent: rec.tokens_in + rec.tokens_out,
             error: if rec.status != Status::Ok { Some(rec.answer.clone()) } else { None },
+            delegations,
         };
         if let Ok(json_str) = serde_json::to_string_pretty(&res) {
             rec.answer = json_str;
+        }
+    } else if (trigger == "message"
+        || trigger == "ui"
+        || trigger.starts_with("chat")
+        || trigger.starts_with("user"))
+        && rec.status == Status::Ok
+        && !rec.delegations.is_empty()
+        && !rec.answer.contains("<details>")
+    {
+        let md = agent_wire::format_delegations_markdown(&rec.delegations);
+        if !md.is_empty() {
+            if !rec.answer.is_empty() {
+                rec.answer.push_str("\n\n");
+            }
+            rec.answer.push_str(&md);
         }
     }
     finish(host, rec)

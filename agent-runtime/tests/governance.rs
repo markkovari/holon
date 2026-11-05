@@ -240,6 +240,7 @@ fn test_watchdog_alarms_and_proactive_diagnostics() {
         attachments: vec![],
         cost_micros: 0,
         tenant: "".into(),
+        delegations: vec![],
     };
     rt.store().record_run(&rec).unwrap();
 
