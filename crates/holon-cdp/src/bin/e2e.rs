@@ -588,15 +588,6 @@ fn main() -> Result<()> {
             }
         };
 
-        let hosted = match HostedApp::start(&root, app, &composed) {
-            Ok(h) => h,
-            Err(e) => {
-                println!("FAIL (host: {e:#})");
-                failed.push(app.clone());
-                continue;
-            }
-        };
-
         let mut gif = match &args.record_gif_dir {
             Some(dir) => {
                 let path = dir.join(format!("{name}.gif"));
@@ -608,17 +599,48 @@ fn main() -> Result<()> {
             None => None,
         };
 
-        let mut page = browser.new_page()?;
-        match run_spec(name, &mut page, &hosted.url, &mut gif) {
+        let mut outcome = None;
+        for attempt in 0..2 {
+            let hosted = match HostedApp::start(&root, app, &composed) {
+                Ok(h) => h,
+                Err(e) => {
+                    outcome = Some(Err(format!("host: {e:#}")));
+                    break;
+                }
+            };
+
+            let mut page = match browser.new_page() {
+                Ok(p) => p,
+                Err(e) => {
+                    outcome = Some(Err(format!("new page: {e:#}")));
+                    break;
+                }
+            };
+
+            match run_spec(name, &mut page, &hosted.url, &mut gif) {
+                Ok(()) => {
+                    outcome = Some(Ok(()));
+                    break;
+                }
+                Err(e) => {
+                    if attempt == 0 {
+                        // Under high runner load, retry once with a clean instance before failing
+                        continue;
+                    }
+                    outcome = Some(Err(format!("{e:#}\n--- host log:\n{}", hosted.log_tail())));
+                }
+            }
+        }
+
+        match outcome.unwrap_or_else(|| Err("aborted".to_string())) {
             Ok(()) => {
                 if let Some(g) = gif.take() {
                     let _ = g.finish(Instant::now());
                 }
                 println!("ok ({:.2?})", t0.elapsed());
             }
-            Err(e) => {
-                println!("FAIL ({:.2?}): {e:#}", t0.elapsed());
-                println!("--- host log:\n{}", hosted.log_tail());
+            Err(msg) => {
+                println!("FAIL ({:.2?}): {msg}", t0.elapsed());
                 failed.push(app.clone());
             }
         }

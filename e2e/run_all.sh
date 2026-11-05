@@ -13,7 +13,7 @@ cd "$ROOT" || exit 1
 
 if [ "${E2E_SKIP_BUILD:-}" != 1 ]; then
   cargo build --release -p holon-host -p holon-cdp --bin holon-host --bin holon-e2e
-  cp -f target/release/holon-host target/release/comp-host
+  cp target/release/holon-host target/release/.comp-host.$$ && mv -f target/release/.comp-host.$$ target/release/comp-host
   cargo xtask build
 elif [ ! -x "$ROOT/target/release/holon-e2e" ]; then
   cargo build --release -p holon-cdp --bin holon-e2e
