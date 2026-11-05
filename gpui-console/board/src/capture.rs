@@ -102,6 +102,7 @@ pub fn own_window_png(path: &str) -> Result<(u32, u32), String> {
 #[allow(unexpected_cfgs)]
 pub fn flush_window() {
     // SAFETY: Interacting with AppKit UI elements on the main thread to flush layer presentation.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
     unsafe {
         use cocoa::base::{id, nil};
         use objc::{msg_send, sel};
