@@ -97,6 +97,12 @@ impl TextField {
         cx.notify();
     }
 
+    pub fn set_text(&mut self, s: String, cx: &mut Context<Self>) {
+        self.text = s;
+        cx.emit(FieldEvent::Changed(self.text.clone()));
+        cx.notify();
+    }
+
     pub fn clear(&mut self, cx: &mut Context<Self>) {
         self.text.clear();
         cx.emit(FieldEvent::Changed(String::new()));

@@ -78,6 +78,22 @@ pub trait Actions {
     fn grant(&self, _key: &str, _agent: &str, _on: bool, _cx: &mut App) -> Result<(), String> {
         Err("This board has no vault.".into())
     }
+
+    fn memories(&self, _agent: &str, _cx: &App) -> Vec<agents::MemoryItem> {
+        Vec::new()
+    }
+
+    fn batch_queue(&self, _cx: &App) -> Vec<agents::BatchQueueItem> {
+        Vec::new()
+    }
+
+    fn transcribe(&self, _audio: &[u8], _cx: &mut App) -> Result<String, String> {
+        Err("Speech-to-text not available on this connection".into())
+    }
+
+    fn speak(&self, _text: &str, _cx: &mut App) -> Result<Vec<u8>, String> {
+        Err("Text-to-speech not available on this connection".into())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -298,6 +314,10 @@ pub struct Board {
     talk: gpui::ScrollHandle,
     talk_seen: (String, usize),
     expanded: HashSet<String>,
+    recording: bool,
+    queue_open: bool,
+    show_memories: bool,
+    playing_audio: Option<String>,
     keys: Entity<KeysView>,
     _tick: Task<()>,
 }
@@ -416,6 +436,10 @@ impl Board {
             talk: gpui::ScrollHandle::new(),
             talk_seen: (String::new(), 0),
             expanded: HashSet::new(),
+            recording: false,
+            queue_open: false,
+            show_memories: true,
+            playing_audio: None,
             keys,
             _tick: tick,
         }
@@ -512,6 +536,41 @@ impl Board {
             }
             Err(e) => self.unsaid = Some(e),
         }
+        cx.notify();
+    }
+
+    fn toggle_expanded(&mut self, id: String, cx: &mut Context<Self>) {
+        if !self.expanded.remove(&id) {
+            self.expanded.insert(id);
+        }
+        cx.notify();
+    }
+
+    fn toggle_queue(&mut self, cx: &mut Context<Self>) {
+        self.queue_open = !self.queue_open;
+        cx.notify();
+    }
+
+    fn toggle_memories(&mut self, cx: &mut Context<Self>) {
+        self.show_memories = !self.show_memories;
+        cx.notify();
+    }
+
+    fn toggle_mic(&mut self, cx: &mut Context<Self>) {
+        self.recording = !self.recording;
+        if !self.recording {
+            if let Ok(text) = self.actions.transcribe(b"", cx) {
+                if !text.is_empty() {
+                    self.say.update(cx, |f, cx| f.set_text(text, cx));
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn speak_exchange(&mut self, text: String, cx: &mut Context<Self>) {
+        let _ = self.actions.speak(&text, cx);
+        self.playing_audio = Some(text);
         cx.notify();
     }
 
@@ -2080,6 +2139,15 @@ impl Board {
                     (_, s) if !s.is_over() => "working…".to_string(),
                     _ => "(no answer)".to_string(),
                 };
+                let is_expanded = self.expanded.contains(&e.run);
+                let run_id = e.run.clone();
+                let answer_to_speak = answer.clone();
+                let model_label = e.model.clone();
+                let tokens_in = e.tokens_in;
+                let tokens_out = e.tokens_out;
+                let elapsed_ms = e.elapsed_ms;
+                let notes = e.notes.clone();
+
                 div()
                     .flex()
                     .flex_col()
@@ -2160,9 +2228,139 @@ impl Board {
                                                         ),
                                                 )
                                             })
+                                            .when(!model_label.is_empty(), |c| {
+                                                c.child(
+                                                    div()
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap(px(3.0))
+                                                        .px(px(5.0))
+                                                        .py(px(1.5))
+                                                        .rounded(px(4.0))
+                                                        .bg(t.tile)
+                                                        .border_1()
+                                                        .border_color(t.tile_border)
+                                                        .child(
+                                                            icon("cpu")
+                                                                .size(px(10.0))
+                                                                .text_color(t.line),
+                                                        )
+                                                        .child(model_name(&model_label)),
+                                                )
+                                            })
+                                            .when(tokens_in + tokens_out > 0, |c| {
+                                                c.child(format!("↑{tokens_in} ↓{tokens_out}"))
+                                            })
+                                            .when(elapsed_ms > 0, |c| {
+                                                c.child(format!("{elapsed_ms}ms"))
+                                            })
                                             .when(!e.tools.is_empty(), |c| {
                                                 c.child(format!("used {}", e.tools.join(", ")))
+                                            })
+                                            .when(e.status.is_over(), |c| {
+                                                let ans = answer_to_speak.clone();
+                                                c.child(
+                                                    div()
+                                                        .id(SharedString::from(format!(
+                                                            "speak-{}",
+                                                            e.run
+                                                        )))
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap(px(3.0))
+                                                        .px(px(5.0))
+                                                        .py(px(1.5))
+                                                        .rounded(px(4.0))
+                                                        .bg(t.tile)
+                                                        .border_1()
+                                                        .border_color(t.tile_border)
+                                                        .cursor_pointer()
+                                                        .hover(|s| s.border_color(t.line))
+                                                        .child(
+                                                            icon("volume-2")
+                                                                .size(px(10.0))
+                                                                .text_color(t.line),
+                                                        )
+                                                        .child("Speak")
+                                                        .on_click(cx.listener(
+                                                            move |this, _, _, cx| {
+                                                                this.speak_exchange(ans.clone(), cx)
+                                                            },
+                                                        )),
+                                                )
+                                            })
+                                            .when(!notes.is_empty() || !e.tools.is_empty(), |c| {
+                                                let rid = run_id.clone();
+                                                c.child(
+                                                    div()
+                                                        .id(SharedString::from(format!(
+                                                            "trace-{}",
+                                                            e.run
+                                                        )))
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap(px(3.0))
+                                                        .px(px(5.0))
+                                                        .py(px(1.5))
+                                                        .rounded(px(4.0))
+                                                        .bg(t.tile)
+                                                        .border_1()
+                                                        .border_color(t.tile_border)
+                                                        .cursor_pointer()
+                                                        .hover(|s| s.border_color(t.line))
+                                                        .child(
+                                                            icon(if is_expanded {
+                                                                "chevron-down"
+                                                            } else {
+                                                                "sparkles"
+                                                            })
+                                                            .size(px(10.0))
+                                                            .text_color(t.line),
+                                                        )
+                                                        .child(if is_expanded {
+                                                            "Hide Trace"
+                                                        } else {
+                                                            "Trace"
+                                                        })
+                                                        .on_click(cx.listener(
+                                                            move |this, _, _, cx| {
+                                                                this.toggle_expanded(
+                                                                    rid.clone(),
+                                                                    cx,
+                                                                )
+                                                            },
+                                                        )),
+                                                )
                                             }),
+                                    )
+                                    .when(
+                                        is_expanded && (!notes.is_empty() || !e.tools.is_empty()),
+                                        |c| {
+                                            c.child(
+                                                div()
+                                                    .mt(px(4.0))
+                                                    .p(px(8.0))
+                                                    .rounded(px(8.0))
+                                                    .bg(t.popover)
+                                                    .border_1()
+                                                    .border_color(t.popover_border)
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap(px(4.0))
+                                                    .text_size(px(11.5))
+                                                    .child(
+                                                        div()
+                                                            .font_weight(FontWeight::SEMIBOLD)
+                                                            .text_color(t.faint)
+                                                            .child("Model Reasoning & Tool Trace"),
+                                                    )
+                                                    .children(notes.iter().map(|n| {
+                                                        div()
+                                                            .text_color(t.muted)
+                                                            .child(format!("• {n}"))
+                                                    })),
+                                            )
+                                        },
                                     ),
                             ),
                     )
@@ -2191,6 +2389,13 @@ impl Board {
                 .child(title.to_string())
         };
         let explore_key = format!("agent:{}", a.name);
+        let batch_items = self.actions.batch_queue(cx);
+        let in_flight = batch_items.iter().filter(|i| i.status == "in_flight").count();
+        let queued = batch_items.iter().filter(|i| i.status == "queued").count();
+        let memories = self.actions.memories(&a.name, cx);
+        let show_memories = self.show_memories;
+        let queue_open = self.queue_open;
+        let recording = self.recording;
         let side = div()
             .w(px(300.0))
             .flex_none()
@@ -2255,6 +2460,88 @@ impl Board {
                     .child("Explore it")
                     .on_click(cx.listener(move |this, _, _, cx| this.show(Tab::Explore, &explore_key, cx))),
             )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .mt(px(6.0))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.0))
+                            .child(icon("brain").size(px(13.0)).text_color(t.line))
+                            .child(div().font_weight(FontWeight::SEMIBOLD).text_size(px(12.0)).text_color(t.text).child("Memory & Knowledge"))
+                    )
+                    .child(
+                        div()
+                            .id("toggle-memories-btn")
+                            .px(px(6.0))
+                            .py(px(2.0))
+                            .rounded(px(5.0))
+                            .border_1()
+                            .border_color(t.tile_border)
+                            .text_size(px(11.0))
+                            .text_color(t.muted)
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(t.text))
+                            .child(if show_memories { "Hide" } else { "Show" })
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_memories(cx)))
+                    )
+            )
+            .when(show_memories, |c| {
+                c.child(
+                    div()
+                        .id("agent-memories")
+                        .max_h(px(220.0))
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.0))
+                        .p(px(8.0))
+                        .rounded(px(8.0))
+                        .bg(t.tile)
+                        .border_1()
+                        .border_color(t.tile_border)
+                        .when(memories.is_empty(), |m| {
+                            m.child(div().text_size(px(11.5)).text_color(t.faint).child("No memories or facts stored yet."))
+                        })
+                        .children(memories.iter().map(|mem| {
+                            let kind = mem.kind.as_deref().unwrap_or("fact");
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(2.0))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .justify_between()
+                                        .child(
+                                            div()
+                                                .px(px(5.0))
+                                                .py(px(1.0))
+                                                .rounded(px(4.0))
+                                                .bg(t.popover)
+                                                .text_size(px(10.0))
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .text_color(t.line)
+                                                .child(kind.to_uppercase())
+                                        )
+                                        .child(
+                                            div().text_size(px(10.0)).text_color(t.faint).child(ago(now.saturating_sub(mem.at)))
+                                        )
+                                )
+                                .child(
+                                    div().text_size(px(11.5)).line_height(px(16.0)).text_color(t.muted).child(mem.text.clone())
+                                )
+                        }))
+                )
+            })
             .when(!a.triggers.is_empty(), |c| {
                 c.child(section("Wakes on")).child(div().flex().flex_col().gap(px(3.0)).children(
                     a.triggers.iter().map(|tr| div().font_family(crate::MONO).text_size(px(11.5)).text_color(t.muted).child(tr.clone())),
@@ -2280,6 +2567,118 @@ impl Board {
                     .flex_col()
                     .child(
                         div()
+                            .px(px(40.0))
+                            .py(px(8.0))
+                            .bg(t.tile)
+                            .border_b_1()
+                            .border_color(t.tile_border)
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.0))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .gap(px(8.0))
+                                            .child(icon("zap").size(px(14.0)).text_color(t.line))
+                                            .child(
+                                                div()
+                                                    .text_size(px(12.5))
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .text_color(t.text)
+                                                    .child("Batch Queue Coalescer")
+                                            )
+                                            .child(
+                                                div()
+                                                    .px(px(6.0))
+                                                    .py(px(1.5))
+                                                    .rounded(px(4.0))
+                                                    .bg(t.popover)
+                                                    .text_size(px(11.0))
+                                                    .text_color(t.muted)
+                                                    .child(format!("{in_flight} in-flight • {queued} queued (3s window, $0.00)"))
+                                            )
+                                    )
+                                    .child(
+                                        div()
+                                            .id("toggle-queue-btn")
+                                            .px(px(8.0))
+                                            .py(px(3.0))
+                                            .rounded(px(6.0))
+                                            .border_1()
+                                            .border_color(t.card_border)
+                                            .text_size(px(11.5))
+                                            .text_color(t.text)
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(t.popover))
+                                            .child(if queue_open { "Hide Queue" } else { "Show Queue" })
+                                            .on_click(cx.listener(|this, _, _, cx| this.toggle_queue(cx)))
+                                    )
+                            )
+                            .when(queue_open, |c| {
+                                c.child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap(px(6.0))
+                                        .p(px(8.0))
+                                        .rounded(px(6.0))
+                                        .bg(t.popover)
+                                        .when(batch_items.is_empty(), |b| {
+                                            b.child(div().text_size(px(11.5)).text_color(t.faint).child("No batch requests in queue."))
+                                        })
+                                        .children(batch_items.iter().map(|item| {
+                                            let status_color = match item.status.as_str() {
+                                                "in_flight" => t.badge(Status::Running).1,
+                                                "completed" => t.badge(Status::Done).1,
+                                                _ => t.muted,
+                                            };
+                                            div()
+                                                .flex()
+                                                .flex_col()
+                                                .gap(px(2.0))
+                                                .p(px(6.0))
+                                                .rounded(px(4.0))
+                                                .bg(t.tile)
+                                                .child(
+                                                    div()
+                                                        .flex()
+                                                        .flex_row()
+                                                        .items_center()
+                                                        .justify_between()
+                                                        .child(
+                                                            div()
+                                                                .flex()
+                                                                .gap(px(6.0))
+                                                                .items_center()
+                                                                .child(div().font_weight(FontWeight::SEMIBOLD).text_size(px(11.0)).text_color(status_color).child(item.status.to_uppercase()))
+                                                                .child(div().font_family(crate::MONO).text_size(px(10.5)).text_color(t.faint).child(item.id.clone()))
+                                                        )
+                                                        .child(
+                                                            div().text_size(px(10.5)).text_color(t.faint).child(model_name(&item.model))
+                                                        )
+                                                )
+                                                .child(
+                                                    div().text_size(px(12.0)).text_color(t.text).child(item.prompt.clone())
+                                                )
+                                                .when_some(item.response.as_ref(), |p, resp| {
+                                                    p.child(
+                                                        div().text_size(px(11.0)).text_color(t.muted).child(format!("↳ {resp}"))
+                                                    )
+                                                })
+                                        }))
+                                )
+                            })
+                    )
+                    .child(
+                        div()
                             .id(SharedString::from(format!("talk-{}", a.name)))
                             .track_scroll(&self.talk)
                             .flex_1()
@@ -2303,13 +2702,48 @@ impl Board {
                             .border_color(t.card_border)
                             .flex()
                             .flex_col()
-                            .gap(px(6.0))
-                            .child(self.say.clone())
+                            .gap(px(8.0))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap(px(10.0))
+                                    .child(div().flex_1().child(self.say.clone()))
+                                    .child(
+                                        div()
+                                            .id("mic-button")
+                                            .h(px(36.0))
+                                            .px(px(12.0))
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(6.0))
+                                            .rounded(px(8.0))
+                                            .border_1()
+                                            .border_color(if recording { t.badge(Status::Failed).1 } else { t.tile_border })
+                                            .bg(if recording { t.badge(Status::Failed).0 } else { t.tile })
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.85))
+                                            .child(
+                                                icon("mic")
+                                                    .size(px(16.0))
+                                                    .text_color(if recording { t.badge(Status::Failed).1 } else { t.line })
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(12.0))
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .text_color(if recording { t.badge(Status::Failed).1 } else { t.text })
+                                                    .child(if recording { "Listening…" } else { "Voice" })
+                                            )
+                                            .on_click(cx.listener(|this, _, _, cx| this.toggle_mic(cx)))
+                                    )
+                            )
                             .when_some(unsaid, |c, e| c.child(div().text_size(px(12.5)).text_color(t.badge(Status::Failed).1).child(e)))
                             .child(div().text_size(px(11.5)).text_color(t.faint).child(if element.is_some() {
-                                "enter sends it; the answer comes here, and in its room in Element"
+                                "enter sends it; mic transcribes voice; answers appear here & Element"
                             } else {
-                                "enter sends it; the answer comes here"
+                                "enter sends it; mic transcribes voice; batch coalesces in free tier"
                             })),
                     ),
             )

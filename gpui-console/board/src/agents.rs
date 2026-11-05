@@ -14,6 +14,26 @@ pub struct AgentInfo {
     pub api_keys: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MemoryItem {
+    pub at: u64,
+    pub text: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BatchQueueItem {
+    pub id: String,
+    pub prompt: String,
+    pub status: String,
+    #[serde(default)]
+    pub response: Option<String>,
+    pub timestamp_ms: u64,
+    #[serde(default)]
+    pub model: String,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Exchange {
     pub run: String,
@@ -22,9 +42,15 @@ pub struct Exchange {
     pub status: Status,
     pub tools: Vec<String>,
     pub started_ms: u64,
+    pub elapsed_ms: u64,
+    pub model: String,
+    pub tokens_in: u64,
+    pub tokens_out: u64,
+    pub notes: Vec<String>,
 }
 
 pub fn conversation(tree: &AgentTree, agent: &str, limit: usize) -> Vec<Exchange> {
+    let now = super::view::now_ms();
     let mut runs: Vec<Exchange> = tree
         .all()
         .filter(|n| n.kind == Kind::Run && n.name == agent)
@@ -35,6 +61,11 @@ pub fn conversation(tree: &AgentTree, agent: &str, limit: usize) -> Vec<Exchange
             status: n.status,
             tools: n.tools.clone(),
             started_ms: n.started_ms,
+            elapsed_ms: n.elapsed_ms(now),
+            model: n.model.clone(),
+            tokens_in: n.tokens_in,
+            tokens_out: n.tokens_out,
+            notes: n.notes.clone(),
         })
         .collect();
     runs.sort_by_key(|e| e.started_ms);

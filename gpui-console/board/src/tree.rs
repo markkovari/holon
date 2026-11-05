@@ -61,8 +61,8 @@ pub struct Node {
     /// When the board first saw it: what the enter animation is timed from.
     pub born_ms: u64,
     pub notes: Vec<String>,
-    tokens_in: u64,
-    tokens_out: u64,
+    pub tokens_in: u64,
+    pub tokens_out: u64,
 }
 
 impl Node {

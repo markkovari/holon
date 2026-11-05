@@ -215,6 +215,29 @@ pub fn route(
             }
         }
         (Method::Get, ["projects"]) => Reply::Json(200, json!({"projects": projects()})),
+        (Method::Get, ["batch", "queue"]) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            Reply::Json(
+                200,
+                json!({
+                    "stream": "LLM_BATCH",
+                    "coalesce_window_ms": 3000,
+                    "items": [
+                        {
+                            "id": "batch-worker-live",
+                            "prompt": "Free tier batch coalescing worker on JetStream LLM_BATCH",
+                            "status": "in_flight",
+                            "response": null,
+                            "timestamp_ms": now.saturating_sub(450),
+                            "model": "gemini-2.5-flash-lite"
+                        }
+                    ]
+                }),
+            )
+        }
         (Method::Put, ["projects", name]) => {
             let v = match body_json(body) {
                 Ok(v) => v,
