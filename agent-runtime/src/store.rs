@@ -189,9 +189,45 @@ impl Store {
     }
 
     pub fn model_alias(&self, name: &str) -> Option<serde_json::Value> {
-        let all: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(self.dir.join("models.json")).ok()?).ok()?;
-        all.get(name).cloned()
+        let all: Option<serde_json::Value> = fs::read_to_string(self.dir.join("models.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok());
+        if let Some(ref map) = all {
+            if let Some(val) = map.get(name).cloned() {
+                return Some(val);
+            }
+        }
+        if name == "free" || name == "free-pool" || name == "free-tier" {
+            return Some(serde_json::json!({
+                "kind": "fallback",
+                "models": [
+                    {
+                        "kind": "openai",
+                        "base_url": "https://api.groq.com/openai",
+                        "model": "llama-3.3-70b-versatile",
+                        "api_key_env": "GROQ_API_KEY"
+                    },
+                    {
+                        "kind": "openai",
+                        "base_url": "https://api.cerebras.ai",
+                        "model": "llama3.1-8b",
+                        "api_key_env": "CEREBRAS_API_KEY"
+                    },
+                    {
+                        "kind": "gemini",
+                        "model": "gemini-2.5-flash",
+                        "api_key_env": "GEMINI_API_KEY"
+                    },
+                    {
+                        "kind": "openai",
+                        "base_url": "http://127.0.0.1:11434",
+                        "model": "qwen2.5-coder",
+                        "api_key_env": ""
+                    }
+                ]
+            }));
+        }
+        None
     }
 
     fn path(&self, sub: &str, name: &str, ext: &str) -> Result<PathBuf, String> {
@@ -1101,6 +1137,22 @@ mod tests {
         {
             std::os::unix::fs::symlink("/", d.join("link")).unwrap();
             assert!(confine(&d, "link/etc/passwd").is_err());
+        }
+    }
+
+    #[test]
+    fn model_alias_resolves_free_tier_fallback_pool() {
+        let d = tmp("free-tier");
+        let s = Store::open(&d).unwrap();
+        for alias in ["free", "free-pool", "free-tier"] {
+            let spec = s.model_alias(alias).expect("alias should resolve");
+            assert_eq!(spec["kind"], "fallback");
+            let models = spec["models"].as_array().expect("array of models");
+            assert_eq!(models.len(), 4);
+            assert_eq!(models[0]["model"], "llama-3.3-70b-versatile");
+            assert_eq!(models[1]["model"], "llama3.1-8b");
+            assert_eq!(models[2]["model"], "gemini-2.5-flash");
+            assert_eq!(models[3]["model"], "qwen2.5-coder");
         }
     }
 }

@@ -42,6 +42,10 @@ struct Args {
     #[arg(long, default_value = "gemini-2.5-flash", env = "LLM_MODEL")]
     model: String,
 
+    /// NATS KV bucket to read secrets from.
+    #[arg(long, default_value = "SECRETS", env = "SECRETS_BUCKET")]
+    secrets_bucket: String,
+
     /// Maximum batch size of coalesced tasks.
     #[arg(long, default_value = "50")]
     batch_size: usize,
@@ -117,16 +121,30 @@ async fn main() -> Result<()> {
         .await
         .map_err(|e| anyhow!("consumer {CONSUMER_NAME}: {e}"))?;
 
+    // 4. Ensure or connect to SECRETS KV bucket for distributed key resolution
+    let kv = {
+        let wanted = async_nats::jetstream::kv::Config {
+            bucket: args.secrets_bucket.clone(),
+            history: 5,
+            ..Default::default()
+        };
+        match js.create_key_value(wanted).await {
+            Ok(k) => Some(k),
+            Err(_) => js.get_key_value(&args.secrets_bucket).await.ok(),
+        }
+    };
+
     let config = WorkerConfig {
         nats_url: args.nats_url,
         upstream_url: args.upstream_url,
         api_key,
+        secrets_bucket: args.secrets_bucket,
         model: args.model,
         max_batch_size: args.batch_size,
         batch_window: Duration::from_millis(args.batch_window_ms),
     };
 
-    let worker = Arc::new(BatchWorker::new(nats, js, config));
+    let worker = Arc::new(BatchWorker::new(nats, js, config, kv));
 
     eprintln!("holon-llmbatch: workers initialized, listening on batch and realtime subjects");
 

@@ -153,7 +153,46 @@ fn key(env: &str) -> Result<String, String> {
     if env.is_empty() {
         return Ok(String::new());
     }
-    std::env::var(env).map_err(|_| format!("environment variable {env} is not set"))
+    if let Ok(v) = std::env::var(env) {
+        let trimmed = v.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    // Check ~/.comp-secrets/<name> or ~/.comp-secrets/<short_name>.key
+    if let Ok(home) = std::env::var("HOME") {
+        let secret_dir = std::path::Path::new(&home).join(".comp-secrets");
+        let name_kebab = env.to_lowercase().replace('_', "-");
+        let short_name = name_kebab.strip_suffix("-api-key").unwrap_or(&name_kebab);
+        for candidate in [
+            secret_dir.join(env),
+            secret_dir.join(&name_kebab),
+            secret_dir.join(short_name),
+            secret_dir.join(format!("{short_name}.key")),
+            secret_dir.join(format!("{name_kebab}.key")),
+        ] {
+            if let Ok(content) = std::fs::read_to_string(&candidate) {
+                let trimmed = content.trim().to_string();
+                if !trimmed.is_empty() {
+                    return Ok(trimmed);
+                }
+            }
+        }
+    }
+    // Check platform vault if configured
+    if let Some(vault) = crate::keys::Vault::configured() {
+        let name_kebab = env.to_lowercase().replace('_', "-");
+        let short_name = name_kebab.strip_suffix("-api-key").unwrap_or(&name_kebab);
+        if let Ok(k) = vault.load(short_name).or_else(|_| vault.load(&name_kebab)) {
+            if !k.key.is_empty() {
+                return Ok(k.key);
+            }
+        }
+    }
+    let name_kebab = env.to_lowercase().replace('_', "-");
+    Err(format!(
+        "API key for {env} not found: set {env} in environment, save to ~/.comp-secrets/{name_kebab}.key, or put into NATS (nats kv put SECRETS {name_kebab} <key>)"
+    ))
 }
 
 /// A key read from a file at the moment it is needed (never kept, never logged).

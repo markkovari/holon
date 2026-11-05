@@ -21,6 +21,9 @@
    - Only 1 RPM is consumed from the free pool to execute dozens or hundreds of tasks.
 3. **Decoupled completion delivery**:
    - Completed task results are published back to unique return subjects (`holon.llm.reply.<task_id>`) or stored in JetStream key-value buckets, allowing callers to disconnect and retrieve results later.
+4. **Distributed Secret Resolution via NATS JetStream KV (`SECRETS` bucket)**:
+   - To support distributed multi-node operation without manual local environment synchronization, `holon-llmbatch` and `agent-runtime` resolve provider API keys (`gemini-api-key`, `groq-api-key`, `cerebras-api-key`) directly from the NATS JetStream KV `SECRETS` bucket.
+   - Operators store keys cluster-wide once (`nats kv put SECRETS gemini-api-key <key>`); daemons hot-reload on rotation without restart.
 
 ## What it does not do
 

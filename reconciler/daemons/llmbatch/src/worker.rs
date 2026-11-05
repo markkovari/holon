@@ -22,6 +22,7 @@ pub struct WorkerConfig {
     pub nats_url: String,
     pub upstream_url: String,
     pub api_key: Option<String>,
+    pub secrets_bucket: String,
     pub model: String,
     pub max_batch_size: usize,
     pub batch_window: Duration,
@@ -29,9 +30,11 @@ pub struct WorkerConfig {
 
 pub struct BatchWorker {
     pub nats: Client,
-    pub _js: jetstream::Context,
+    #[allow(dead_code)]
+    pub js: jetstream::Context,
     pub http: reqwest::Client,
     pub config: WorkerConfig,
+    pub kv: Option<async_nats::jetstream::kv::Store>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,16 +54,103 @@ pub struct DlqEntry {
 }
 
 impl BatchWorker {
-    pub fn new(nats: Client, js: jetstream::Context, config: WorkerConfig) -> Self {
+    pub fn new(
+        nats: Client,
+        js: jetstream::Context,
+        config: WorkerConfig,
+        kv: Option<async_nats::jetstream::kv::Store>,
+    ) -> Self {
         let http =
             reqwest::Client::builder().timeout(Duration::from_secs(60)).build().unwrap_or_default();
-        Self { nats, _js: js, http, config }
+        Self { nats, js, http, config, kv }
+    }
+
+    /// Dynamically resolves the API key in priority order:
+    /// 1. Directly configured key in WorkerConfig
+    /// 2. Environment variables (e.g. GEMINI_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY, OPENAI_API_KEY)
+    /// 3. NATS JetStream KV bucket (`SECRETS` or configured bucket)
+    /// 4. Local ~/.comp-secrets/<provider>.key file
+    pub async fn resolve_api_key(&self, provider: &str) -> Option<String> {
+        if let Some(ref k) = self.config.api_key {
+            let trimmed = k.trim().to_string();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
+            }
+        }
+
+        let env_candidates: &[&str] = match provider {
+            "gemini" => &["GEMINI_API_KEY", "HOLON_GEMINI_API_KEY"],
+            "groq" => &["GROQ_API_KEY", "HOLON_GROQ_API_KEY"],
+            "cerebras" => &["CEREBRAS_API_KEY", "HOLON_CEREBRAS_API_KEY"],
+            _ => &["OPENAI_API_KEY", "LLM_API_KEY"],
+        };
+
+        for env_var in env_candidates {
+            if let Ok(val) = std::env::var(env_var) {
+                let trimmed = val.trim().to_string();
+                if !trimmed.is_empty() {
+                    return Some(trimmed);
+                }
+            }
+        }
+
+        // Check NATS JetStream KV store if available
+        if let Some(ref kv) = self.kv {
+            let kv_candidates: &[&str] = match provider {
+                "gemini" => &["gemini-api-key", "gemini_api_key", "GEMINI_API_KEY", "gemini.key"],
+                "groq" => &["groq-api-key", "groq_api_key", "GROQ_API_KEY", "groq.key"],
+                "cerebras" => {
+                    &["cerebras-api-key", "cerebras_api_key", "CEREBRAS_API_KEY", "cerebras.key"]
+                }
+                _ => &["openai-api-key", "openai_api_key", "OPENAI_API_KEY", "openai.key"],
+            };
+
+            for key in kv_candidates {
+                if let Ok(Some(bytes)) = kv.get(*key).await {
+                    let val = String::from_utf8_lossy(&bytes).trim().to_string();
+                    if !val.is_empty() {
+                        return Some(val);
+                    }
+                }
+            }
+        }
+
+        // Check local ~/.comp-secrets/<provider>.key
+        if let Ok(home) = std::env::var("HOME") {
+            let p = std::path::Path::new(&home).join(".comp-secrets");
+            for file_name in [
+                format!("{provider}.key"),
+                format!("{provider}-api-key"),
+                format!("{provider}.secret"),
+            ] {
+                if let Ok(content) = std::fs::read_to_string(p.join(file_name)) {
+                    let trimmed = content.trim().to_string();
+                    if !trimmed.is_empty() {
+                        return Some(trimmed);
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// Execute prompt upstream against Gemini REST or OpenAI-compatible endpoint.
     pub async fn execute_upstream(&self, system: &str, user_prompt: &str) -> Result<String> {
         let is_gemini = self.config.upstream_url.contains("googleapis.com")
-            || self.config.upstream_url.ends_with(":generateContent");
+            || self.config.upstream_url.ends_with(":generateContent")
+            || self.config.model.starts_with("gemini");
+        let provider_tag = if is_gemini {
+            "gemini"
+        } else if self.config.upstream_url.contains("groq.com") {
+            "groq"
+        } else if self.config.upstream_url.contains("cerebras.ai") {
+            "cerebras"
+        } else {
+            "openai"
+        };
+
+        let resolved_key = self.resolve_api_key(provider_tag).await;
 
         if is_gemini {
             let req = holon_llm::Request {
@@ -81,7 +171,7 @@ impl BatchWorker {
             };
             let body = holon_llm::gemini::body(&req);
             let mut url = self.config.upstream_url.clone();
-            if let Some(ref key) = self.config.api_key {
+            if let Some(ref key) = resolved_key {
                 let sep = if url.contains('?') { "&" } else { "?" };
                 url = format!("{url}{sep}key={key}");
             }
@@ -116,7 +206,7 @@ impl BatchWorker {
             };
             let body = holon_llm::openai::body(&req);
             let mut rb = self.http.post(&self.config.upstream_url).json(&body);
-            if let Some(ref key) = self.config.api_key {
+            if let Some(ref key) = resolved_key {
                 rb = rb.header("Authorization", format!("Bearer {key}"));
             }
             let resp = rb.send().await?;
