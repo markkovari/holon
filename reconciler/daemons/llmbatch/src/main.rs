@@ -25,7 +25,7 @@ struct Args {
     /// Upstream model API URL (Gemini REST generateContent or OpenAI-compatible chat/completions).
     #[arg(
         long,
-        default_value = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        default_value = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
         env = "LLM_UPSTREAM_URL"
     )]
     upstream_url: String,
@@ -39,7 +39,7 @@ struct Args {
     api_key_file: Option<std::path::PathBuf>,
 
     /// Target model identifier.
-    #[arg(long, default_value = "gemini-2.5-flash", env = "LLM_MODEL")]
+    #[arg(long, default_value = "gemini-2.5-flash-lite", env = "LLM_MODEL")]
     model: String,
 
     /// NATS KV bucket to read secrets from.

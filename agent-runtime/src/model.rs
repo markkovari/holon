@@ -189,6 +189,24 @@ fn key(env: &str) -> Result<String, String> {
             }
         }
     }
+    // Check NATS JetStream KV via nats CLI if installed and reachable
+    let name_kebab = env.to_lowercase().replace('_', "-");
+    let short_name = name_kebab.strip_suffix("-api-key").unwrap_or(&name_kebab);
+    for bin in ["nats", "/usr/local/bin/nats", "/opt/homebrew/bin/nats"] {
+        for candidate in [name_kebab.as_str(), short_name, env] {
+            if let Ok(out) = std::process::Command::new(bin)
+                .args(["kv", "get", "SECRETS", candidate, "--raw"])
+                .output()
+            {
+                if out.status.success() {
+                    let trimmed = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if !trimmed.is_empty() {
+                        return Ok(trimmed);
+                    }
+                }
+            }
+        }
+    }
     let name_kebab = env.to_lowercase().replace('_', "-");
     Err(format!(
         "API key for {env} not found: set {env} in environment, save to ~/.comp-secrets/{name_kebab}.key, or put into NATS (nats kv put SECRETS {name_kebab} <key>)"
