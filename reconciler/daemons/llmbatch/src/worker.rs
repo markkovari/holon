@@ -228,10 +228,16 @@ impl BatchWorker {
         if tasks.is_empty() {
             return Ok(Vec::new());
         }
+        eprintln!(
+            "holon-llmbatch: coalescing {} tasks into 1 upstream request (window: {:?})",
+            tasks.len(),
+            self.config.batch_window
+        );
         let coalesced = coalesce::build_coalesced_prompt(&tasks);
         let sys = coalesce::system_prompt();
         let raw_resp = self.execute_upstream(sys, &coalesced).await?;
         let parsed = coalesce::parse_coalesced_response(&raw_resp).map_err(|e| anyhow!("{e}"))?;
+        eprintln!("holon-llmbatch: successfully unpacked {} task results", parsed.len());
         Ok(parsed)
     }
 
