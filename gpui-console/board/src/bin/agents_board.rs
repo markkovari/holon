@@ -23,6 +23,7 @@ struct Opts {
     auto: Option<Duration>,
     size: (f32, f32),
     matrix: Option<String>,
+    tour: bool,
     /// The runtime to show (its URL and admin token); without it, the scripted demo.
     runtime: Option<(String, String)>,
 }
@@ -98,6 +99,45 @@ fn run(
             window
                 .update(cx, |board, window, cx| board.open_form(window, cx))
                 .expect("open the form");
+        }
+        if o.tour {
+            cx.spawn(async move |cx| {
+                let clock = cx.background_executor().clone();
+                let wait = |ms| clock.timer(Duration::from_millis(ms));
+                wait(1200).await;
+                // 1. Initial view: Agents tab with lead selected, batch queue banner open
+                // 2. Toggle batch queue banner closed then open
+                window.update(cx, |board, _, cx| board.toggle_queue(cx)).ok();
+                wait(1200).await;
+                window.update(cx, |board, _, cx| board.toggle_queue(cx)).ok();
+                wait(1200).await;
+                // 3. Expand model reasoning & tool trace
+                window.update(cx, |board, _, cx| board.expand_first_exchange(cx)).ok();
+                wait(1400).await;
+                // 4. Toggle memories in sidebar
+                window.update(cx, |board, _, cx| board.toggle_memories(cx)).ok();
+                wait(1100).await;
+                window.update(cx, |board, _, cx| board.toggle_memories(cx)).ok();
+                wait(1200).await;
+                // 5. Click voice mic: active recording state
+                window.update(cx, |board, _, cx| board.toggle_mic(cx)).ok();
+                wait(1400).await;
+                // 6. Mic stops & voice prompt streams into say field at human speed
+                window.update(cx, |board, _, cx| board.toggle_mic(cx)).ok();
+                let prompt = "Check the free-tier batch queue and update the memory.";
+                let say = window.update(cx, |board, _, _| board.say_field());
+                if let Ok(say) = say {
+                    for c in prompt.chars() {
+                        say.update(cx, |f, cx| f.push_str(&c.to_string(), cx));
+                        wait(35).await;
+                    }
+                }
+                wait(600).await;
+                // 7. Submit question
+                window.update(cx, |board, _, cx| board.say_to(prompt.to_string(), cx)).ok();
+                wait(2000).await;
+            })
+            .detach();
         }
         if let Some(goal) = o.goal.clone() {
             cx.spawn(async move |cx| {
@@ -175,6 +215,8 @@ mod native {
         open: bool,
         #[arg(long)]
         form: bool,
+        #[arg(long)]
+        tour: bool,
         #[arg(long, value_name = "GOAL")]
         goal: Option<String>,
         #[arg(long, value_parser = ["sessions", "agents", "explore", "map", "keys"])]
@@ -231,8 +273,10 @@ mod native {
             auto: a
                 .auto
                 .map(Duration::from_secs_f32)
-                .or((a.shoot.is_some() || a.gif.is_some()).then(|| Duration::from_secs(6))),
+                .or((a.shoot.is_some() || a.gif.is_some() || a.tour)
+                    .then(|| Duration::from_secs(14))),
             size: a.size,
+            tour: a.tour,
             matrix: a.matrix.clone(),
             runtime: a.runtime.clone().map(|url| {
                 let home = std::env::var("HOME").unwrap_or_default();
@@ -263,45 +307,42 @@ mod native {
     #[allow(unused_variables)]
     fn photograph(a: Args, mode: Mode, cx: &mut App) {
         #[cfg(target_os = "macos")]
-        if let (Some(gif), Some((start, count, step))) = (a.gif.clone(), a.film) {
+        if let (Some((start, count, step)), gif, dir) = (a.film, a.gif.clone(), a.shoot.clone()) {
+            if let Some(d) = dir.as_ref() {
+                std::fs::create_dir_all(d).ok();
+            }
             cx.spawn(async move |cx| {
                 cx.background_executor().timer(Duration::from_secs_f32(start)).await;
                 let mut film: Option<agent_board::film::Gif> = None;
-                for _ in 0..count {
+                for i in 0..count {
                     let at = std::time::Instant::now();
-                    let made = agent_board::capture::own_window_rgba().and_then(|(rgba, w, h)| {
-                        let (rgba, w, h) = agent_board::film::half(&rgba, w, h);
-                        if film.is_none() {
-                            film = Some(agent_board::film::Gif::create(&gif, w, h)?);
+                    if let Some(d) = dir.as_ref() {
+                        let path = format!("{d}/film-{i:03}.png");
+                        if let Err(e) = agent_board::capture::own_window_png(&path) {
+                            eprintln!("shot {path} failed: {e}");
                         }
-                        film.as_mut().map_or(Ok(()), |f| f.push(rgba, at))
-                    });
-                    if let Err(e) = made {
-                        eprintln!("film {gif}: {e}");
-                        std::process::exit(1);
+                    }
+                    if let Some(g) = gif.as_ref() {
+                        let made =
+                            agent_board::capture::own_window_rgba().and_then(|(rgba, w, h)| {
+                                let (rgba, w, h) = agent_board::film::half(&rgba, w, h);
+                                if film.is_none() {
+                                    film = Some(agent_board::film::Gif::create(g, w, h)?);
+                                }
+                                film.as_mut().map_or(Ok(()), |f| f.push(rgba, at))
+                            });
+                        if let Err(e) = made {
+                            eprintln!("film {g}: {e}");
+                            std::process::exit(1);
+                        }
                     }
                     cx.background_executor().timer(Duration::from_millis(step)).await;
                 }
                 if let Some(f) = film {
                     if let Err(e) = f.finish(std::time::Instant::now()) {
-                        eprintln!("film {gif}: {e}");
+                        eprintln!("film finish: {e}");
                         std::process::exit(1);
                     }
-                }
-                eprintln!("film: {gif}, {count} frames from {start}s every {step}ms");
-                std::process::exit(0);
-            })
-            .detach();
-        } else if let (Some(dir), Some((start, count, step))) = (a.shoot.clone(), a.film) {
-            std::fs::create_dir_all(&dir).ok();
-            cx.spawn(async move |cx| {
-                cx.background_executor().timer(Duration::from_secs_f32(start)).await;
-                for i in 0..count {
-                    let path = format!("{dir}/film-{i:02}.png");
-                    if let Err(e) = agent_board::capture::own_window_png(&path) {
-                        eprintln!("shot {path} failed: {e}");
-                    }
-                    cx.background_executor().timer(Duration::from_millis(step)).await;
                 }
                 eprintln!("film: {count} frames from {start}s every {step}ms");
                 std::process::exit(0);

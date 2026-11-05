@@ -526,7 +526,11 @@ impl Board {
         self
     }
 
-    fn say_to(&mut self, text: String, cx: &mut Context<Self>) {
+    pub fn say_field(&self) -> Entity<TextField> {
+        self.say.clone()
+    }
+
+    pub fn say_to(&mut self, text: String, cx: &mut Context<Self>) {
         let Some(agent) = self.agent.clone() else { return };
         let actions = self.actions.clone();
         match actions.start(&agent, &text, cx) {
@@ -539,24 +543,34 @@ impl Board {
         cx.notify();
     }
 
-    fn toggle_expanded(&mut self, id: String, cx: &mut Context<Self>) {
+    pub fn toggle_expanded(&mut self, id: String, cx: &mut Context<Self>) {
         if !self.expanded.remove(&id) {
             self.expanded.insert(id);
         }
         cx.notify();
     }
 
-    fn toggle_queue(&mut self, cx: &mut Context<Self>) {
+    pub fn expand_first_exchange(&mut self, cx: &mut Context<Self>) {
+        if let Some(agent) = self.agent.as_ref() {
+            let talk = agents::conversation(self.tree.read(cx), agent, 5);
+            if let Some(first) = talk.first() {
+                self.expanded.insert(first.run.clone());
+                cx.notify();
+            }
+        }
+    }
+
+    pub fn toggle_queue(&mut self, cx: &mut Context<Self>) {
         self.queue_open = !self.queue_open;
         cx.notify();
     }
 
-    fn toggle_memories(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle_memories(&mut self, cx: &mut Context<Self>) {
         self.show_memories = !self.show_memories;
         cx.notify();
     }
 
-    fn toggle_mic(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle_mic(&mut self, cx: &mut Context<Self>) {
         self.recording = !self.recording;
         if !self.recording {
             if let Ok(text) = self.actions.transcribe(b"", cx) {
