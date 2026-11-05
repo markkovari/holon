@@ -29,12 +29,11 @@ permissions:
   contents: read
 
 
-# Runs on picur share one target/ volume across runner containers.
-# Queue workflow runs so only one workflow executes at a time,
-# avoiding mid-job cancellations and concurrent compiler/target collisions.
+# A second push to the same branch makes the first one's answer irrelevant, and
+# a 200-crate wasm build is not cheap enough to run for an answer nobody wants.
 concurrency:
-  group: ci-runner
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
