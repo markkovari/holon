@@ -19,10 +19,10 @@ use agent_runtime::runtime::Pending;
 use agent_runtime::spec::{validate_name, Capability};
 use agent_runtime::store::{MemoryItem, RunRecord, Status, Step};
 use agent_runtime::{server, AgentSpec, Config, ModelSpec, Runtime, Trigger};
-use holon_fleet::fleet::{repo_root, Fleet};
 use futures::channel::mpsc;
 use futures::StreamExt;
 use gpui::{AppContext as _, Context, Entity, Subscription};
+use holon_fleet::fleet::{repo_root, Fleet};
 use serde_json::{json, Value};
 
 use crate::agentd::{self, AgentdProc};
@@ -1287,6 +1287,7 @@ mod tests {
                 attachments: vec![],
                 cost_micros: 0,
                 tenant: String::new(),
+                delegations: vec![],
             };
         let runs = vec![
             run("origin", "s1", None, &[("emit_event", "tool-a")]),

@@ -700,6 +700,67 @@ impl Actions for DemoActions {
         Ok(())
     }
 
+    fn memories(&self, agent: &str, _cx: &App) -> Vec<super::agents::MemoryItem> {
+        vec![
+            super::agents::MemoryItem {
+                at: now_ms().saturating_sub(120_000),
+                text: format!(
+                    "{agent} prefers zero-credit-card free tier pooling (Groq + Gemini)."
+                ),
+                kind: Some("preference".into()),
+            },
+            super::agents::MemoryItem {
+                at: now_ms().saturating_sub(600_000),
+                text:
+                    "Distributed JetStream queue LLM_BATCH coalesces up to 50 tasks in 2s windows."
+                        .into(),
+                kind: Some("system".into()),
+            },
+            super::agents::MemoryItem {
+                at: now_ms().saturating_sub(1_800_000),
+                text: "Cluster secrets live in SECRETS KV bucket on malna-nats leader.".into(),
+                kind: Some("infrastructure".into()),
+            },
+        ]
+    }
+
+    fn batch_queue(&self, _cx: &App) -> Vec<super::agents::BatchQueueItem> {
+        vec![
+            super::agents::BatchQueueItem {
+                id: "batch-task-1".into(),
+                prompt: "Summarize recent agent handoff activity".into(),
+                status: "queued".into(),
+                response: None,
+                timestamp_ms: now_ms().saturating_sub(1_200),
+                model: "gemini-2.5-flash-lite".into(),
+            },
+            super::agents::BatchQueueItem {
+                id: "batch-task-2".into(),
+                prompt: "Synthesize memory updates for lead agent".into(),
+                status: "in_flight".into(),
+                response: None,
+                timestamp_ms: now_ms().saturating_sub(400),
+                model: "gemini-2.5-flash-lite".into(),
+            },
+            super::agents::BatchQueueItem {
+                id: "batch-task-0".into(),
+                prompt: "Check cluster queue health and latency".into(),
+                status: "completed".into(),
+                response: Some("Queue healthy, 3 tasks coalesced in 200ms".into()),
+                timestamp_ms: now_ms().saturating_sub(15_000),
+                model: "openai/gpt-oss-120b".into(),
+            },
+        ]
+    }
+
+    fn transcribe(&self, _audio: &[u8], _cx: &mut App) -> Result<String, String> {
+        Ok("What is the status of the current batched tasks?".into())
+    }
+
+    fn speak(&self, _text: &str, _cx: &mut App) -> Result<Vec<u8>, String> {
+        Ok(vec![])
+    }
+
     fn start(&self, agent: &str, goal: &str, cx: &mut App) -> Result<(), String> {
         let n = self.goals.get() + 1;
         self.goals.set(n);

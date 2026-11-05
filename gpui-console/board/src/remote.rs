@@ -267,6 +267,65 @@ impl Actions for Remote {
         let m = if on { reqwest::Method::PUT } else { reqwest::Method::DELETE };
         self.call(m, &format!("/v1/keys/{key}/agents/{agent}"), None).map(|_| ())
     }
+
+    fn memories(&self, agent: &str, _cx: &App) -> Vec<super::agents::MemoryItem> {
+        let v = self.get(&format!("/agents/{agent}/memory")).unwrap_or_default();
+        v.as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|m| {
+                Some(super::agents::MemoryItem {
+                    at: m["at"].as_u64().unwrap_or(0),
+                    text: m["text"].as_str()?.to_string(),
+                    kind: m["kind"].as_str().map(String::from),
+                })
+            })
+            .collect()
+    }
+
+    fn batch_queue(&self, _cx: &App) -> Vec<super::agents::BatchQueueItem> {
+        let v = self.get("/v1/batch/queue").unwrap_or_default();
+        v["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                Some(super::agents::BatchQueueItem {
+                    id: item["id"].as_str()?.to_string(),
+                    prompt: item["prompt"].as_str().unwrap_or_default().to_string(),
+                    status: item["status"].as_str().unwrap_or("queued").to_string(),
+                    response: item["response"].as_str().map(String::from),
+                    timestamp_ms: item["timestamp_ms"].as_u64().unwrap_or(0),
+                    model: item["model"].as_str().unwrap_or_default().to_string(),
+                })
+            })
+            .collect()
+    }
+
+    fn transcribe(&self, audio: &[u8], _cx: &mut App) -> Result<String, String> {
+        let req = http(Some(Duration::from_secs(15)))
+            .post(format!("{}/speech/transcribe", self.url))
+            .bearer_auth(&self.token)
+            .body(audio.to_vec());
+        let resp = req.send().map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            return Err(resp.text().unwrap_or_default());
+        }
+        let v: Value = serde_json::from_str(&resp.text().unwrap_or_default()).unwrap_or_default();
+        Ok(v["text"].as_str().unwrap_or_default().to_string())
+    }
+
+    fn speak(&self, text: &str, _cx: &mut App) -> Result<Vec<u8>, String> {
+        let req = http(Some(Duration::from_secs(15)))
+            .post(format!("{}/speech/speak", self.url))
+            .bearer_auth(&self.token)
+            .body(text.to_string());
+        let resp = req.send().map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            return Err(resp.text().unwrap_or_default());
+        }
+        resp.bytes().map(|b| b.to_vec()).map_err(|e| e.to_string())
+    }
 }
 
 #[cfg(test)]

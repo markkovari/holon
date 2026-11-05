@@ -20,6 +20,7 @@ holon-fuel = { path = "../../crates/holon-fuel" }
 gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", default-features = false, features = ["runtime_shaders", "font-kit"] }
 anyhow = "1"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 web-time = "1"
 gif = "0.14"
