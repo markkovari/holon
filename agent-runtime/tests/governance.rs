@@ -410,3 +410,18 @@ fn test_exec_sandboxed_safe_read_only_skips_approval() {
     assert!(!is_safe_read_only_command("git push origin main"));
     assert!(!is_safe_read_only_command("rm -rf target/"));
 }
+
+#[test]
+fn test_locate_target_fuzzy_whitespace_matching() {
+    use agent_runtime::agent::locate_target;
+
+    let content = "fn test() {\n    let val = 42;\n    println!(\"{}\", val);\n}\n";
+
+    // Trailing whitespace mismatch tolerated
+    let (s, e) = locate_target(content, "    let val = 42;  ").unwrap();
+    assert_eq!(&content[s..e], "    let val = 42;");
+
+    // Indentation mismatch tolerated
+    let (s, e) = locate_target(content, "let val = 42;\nprintln!(\"{}\", val);").unwrap();
+    assert_eq!(&content[s..e], "    let val = 42;\n    println!(\"{}\", val);");
+}

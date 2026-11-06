@@ -51,6 +51,10 @@ pub struct AgentChoice {
 pub trait Actions {
     fn answer(&self, id: u64, approve: bool, scope: Scope, cx: &mut App);
 
+    fn rewind(&self, _session_id: &str, _cx: &mut App) -> Result<(), String> {
+        Ok(())
+    }
+
     fn agents(&self, _cx: &App) -> Vec<AgentChoice> {
         Vec::new()
     }
@@ -905,6 +909,28 @@ impl Board {
             .child(div().text_size(px(13.0)).text_color(t.faint).child("·"))
             .child(div().text_size(px(13.0)).text_color(t.muted).child(elapsed))
             .child(div().flex_1())
+            .when(n.kind == Kind::Session, |row| {
+                let session_id = id.clone();
+                let actions = self.actions.clone();
+                row.child(
+                    div()
+                        .id(SharedString::from(format!("rewind-{session_id}")))
+                        .cursor_pointer()
+                        .px(px(6.0))
+                        .py(px(2.0))
+                        .rounded(px(4.0))
+                        .bg(t.tile)
+                        .border_1()
+                        .border_color(t.tile_border)
+                        .text_size(px(11.0))
+                        .text_color(t.muted)
+                        .hover(|h| h.text_color(t.text))
+                        .child("Rollback")
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            let _ = actions.rewind(&session_id, cx);
+                        })),
+                )
+            })
             .when(has_kids, |row| {
                 let id = id.clone();
                 let open = !b.collapsed;

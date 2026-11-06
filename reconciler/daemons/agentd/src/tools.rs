@@ -153,8 +153,23 @@ pub async fn call(workspace: &Path, name: &str, input: &Value) -> Outcome {
         other => Err(format!("no such tool: {other}")),
     };
     match r {
-        Ok(output) => Outcome { output: cap(output), is_error: false },
+        Ok(output) => Outcome { output: cap(compact_successful_output(output)), is_error: false },
         Err(output) => Outcome { output: cap(output), is_error: true },
+    }
+}
+
+pub fn compact_successful_output(s: String) -> String {
+    if s.len() <= 2048 {
+        return s;
+    }
+    let lines: Vec<&str> = s.lines().collect();
+    if lines.len() > 30 {
+        let head = lines[..10].join("\n");
+        let tail = lines[lines.len() - 15..].join("\n");
+        let omitted = lines.len() - 25;
+        format!("{head}\n\n[... {omitted} lines of output omitted for brevity ...]\n\n{tail}")
+    } else {
+        s
     }
 }
 
@@ -229,22 +244,102 @@ fn write_file(ws: &Path, rel: &str, content: &str) -> Result<String, String> {
     Ok(format!("wrote {} bytes to {rel}", content.len()))
 }
 
+/// Locates `target` in `content`, using exact matching first and gracefully falling back to
+/// whitespace/indentation-normalized line matching to eliminate common model editing failures.
+pub fn locate_target(content: &str, target: &str) -> Result<(usize, usize), String> {
+    if target.is_empty() {
+        return Err("target string cannot be empty".into());
+    }
+
+    // 1. Fast path: exact match
+    let exact_matches: Vec<_> = content.match_indices(target).collect();
+    if exact_matches.len() == 1 {
+        let (start, _) = exact_matches[0];
+        return Ok((start, start + target.len()));
+    }
+    if exact_matches.len() > 1 {
+        return Err(format!(
+            "target string appears {} times; target must be unique (include surrounding lines for context)",
+            exact_matches.len()
+        ));
+    }
+
+    // 2. Trailing whitespace normalized line matching
+    let target_lines: Vec<&str> = target.lines().map(str::trim_end).collect();
+    if target_lines.is_empty() {
+        return Err("target string not found".into());
+    }
+
+    let mut line_spans: Vec<(usize, usize, &str)> = Vec::new();
+    let mut offset = 0;
+    for line in content.split('\n') {
+        let end = offset + line.len();
+        line_spans.push((offset, end, line.trim_end()));
+        offset = end + 1;
+    }
+
+    let mut matches = Vec::new();
+    let n = target_lines.len();
+    if line_spans.len() >= n {
+        for i in 0..=(line_spans.len() - n) {
+            let window_matches = (0..n).all(|j| line_spans[i + j].2 == target_lines[j]);
+            if window_matches {
+                let start_byte = line_spans[i].0;
+                let end_byte = line_spans[i + n - 1].1;
+                matches.push((start_byte, end_byte));
+            }
+        }
+    }
+
+    if matches.len() == 1 {
+        return Ok(matches[0]);
+    }
+    if matches.len() > 1 {
+        return Err(format!(
+            "target string appears {} times with whitespace normalization; must be unique",
+            matches.len()
+        ));
+    }
+
+    // 3. Trimmed (indentation-tolerant) matching
+    let target_trimmed: Vec<&str> =
+        target.lines().map(str::trim).filter(|s| !s.is_empty()).collect();
+    if !target_trimmed.is_empty() && line_spans.len() >= target_trimmed.len() {
+        let mut trimmed_matches = Vec::new();
+        let m = target_trimmed.len();
+        for i in 0..=(line_spans.len() - m) {
+            let window_matches = (0..m).all(|j| line_spans[i + j].2.trim() == target_trimmed[j]);
+            if window_matches {
+                let start_byte = line_spans[i].0;
+                let end_byte = line_spans[i + m - 1].1;
+                trimmed_matches.push((start_byte, end_byte));
+            }
+        }
+        if trimmed_matches.len() == 1 {
+            return Ok(trimmed_matches[0]);
+        }
+        if trimmed_matches.len() > 1 {
+            return Err(format!(
+                "target string appears {} times with indentation normalization; must be unique",
+                trimmed_matches.len()
+            ));
+        }
+    }
+
+    Err("target string not found".into())
+}
+
 fn edit_file(ws: &Path, rel: &str, target: &str, replacement: &str) -> Result<String, String> {
     if target.is_empty() {
         return Err(format!("{rel}: target string cannot be empty"));
     }
     let path = confine(ws, rel)?;
     let content = std::fs::read_to_string(&path).map_err(|e| format!("{rel}: {e}"))?;
-    let count = content.matches(target).count();
-    if count == 0 {
-        return Err(format!("{rel}: target string not found"));
-    }
-    if count > 1 {
-        return Err(format!(
-            "{rel}: target string appears {count} times; target must be unique (include surrounding lines for context)"
-        ));
-    }
-    let new_content = content.replacen(target, replacement, 1);
+    let (start, end) = locate_target(&content, target).map_err(|e| format!("{rel}: {e}"))?;
+    let mut new_content = String::with_capacity(content.len() - (end - start) + replacement.len());
+    new_content.push_str(&content[..start]);
+    new_content.push_str(replacement);
+    new_content.push_str(&content[end..]);
     std::fs::write(&path, &new_content).map_err(|e| format!("{rel}: {e}"))?;
     Ok(format!("replaced 1 occurrence in {rel}"))
 }
@@ -375,5 +470,37 @@ mod tests {
         assert_eq!(classify_command("rm -rf target/"), CommandTier::SensitiveOrExternal);
         assert_eq!(classify_command("git push origin main"), CommandTier::SensitiveOrExternal);
         assert_eq!(classify_command(""), CommandTier::SensitiveOrExternal);
+    }
+
+    #[test]
+    fn locate_target_matches_exact_and_tolerates_trailing_whitespace_and_indentation() {
+        let content = "fn main() {\n    let a = 1;\n    let b = 2;\n}\n";
+
+        // Target with extra trailing spaces that don't exist in file
+        let (s, e) = locate_target(content, "    let a = 1;   ").unwrap();
+        assert_eq!(&content[s..e], "    let a = 1;");
+
+        // Indentation discrepancy in multi-line target
+        let (s, e) = locate_target(content, "let a = 1;\nlet b = 2;").unwrap();
+        assert_eq!(&content[s..e], "    let a = 1;\n    let b = 2;");
+
+        // Unique error on duplicates
+        let dup = "x = 1;\nx = 1;\n";
+        assert!(locate_target(dup, "x = 1;").unwrap_err().contains("appears 2 times"));
+
+        // Not found
+        assert!(locate_target(content, "non_existent").unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn compact_successful_output_trims_large_passing_logs() {
+        let mut long_log = String::new();
+        for i in 0..100 {
+            long_log.push_str(&format!("test row {i} passed successfully in 0.01s\n"));
+        }
+        let compacted = compact_successful_output(long_log);
+        assert!(compacted.contains("omitted for brevity"));
+        assert!(compacted.contains("test row 0 passed"));
+        assert!(compacted.contains("test row 99 passed"));
     }
 }
