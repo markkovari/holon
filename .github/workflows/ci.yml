@@ -215,7 +215,8 @@ jobs:
       - name: Build comp-host, holon, comp-plug and holon-e2e
         run: |
           cargo build --release -p holon-host -p holon -p holon-fleet -p holon-cdp --bin holon-host --bin holon --bin comp-plug --bin holon-e2e
-          cp target/release/holon-host target/release/comp-host
+          # Atomic rename to avoid "Text file busy" on shared runner target/ volume
+          cp target/release/holon-host target/release/.comp-host.$$ && mv -f target/release/.comp-host.$$ target/release/comp-host
 
       # Upload binaries so downstream jobs do not rebuild them
       - name: Keep comp-host
@@ -838,7 +839,7 @@ jobs:
             esac
             curl -fsSL "https://github.com/lightpanda-io/browser/releases/download/1.0.2/lightpanda-${ARCH}" -o "$RUNNER_TEMP/lightpanda"
             chmod +x "$RUNNER_TEMP/lightpanda"
-            sudo mv "$RUNNER_TEMP/lightpanda" /usr/local/bin/lightpanda || cp "$RUNNER_TEMP/lightpanda" target/release/lightpanda
+            sudo mv "$RUNNER_TEMP/lightpanda" /usr/local/bin/lightpanda || (cp "$RUNNER_TEMP/lightpanda" target/release/.lightpanda.$$ && mv -f target/release/.lightpanda.$$ target/release/lightpanda)
           fi
       - name: Every app
         env:

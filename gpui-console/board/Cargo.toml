@@ -38,6 +38,8 @@ web-sys = { version = "0.3", features = ["Window", "Location", "Request", "Reque
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.24"
 core-foundation = "0.10"
+cocoa = "0.26"
+objc = "0.2"
 png = "0.17"
 
 [dev-dependencies]

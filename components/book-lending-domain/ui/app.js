@@ -161,15 +161,15 @@ createBookForm.addEventListener('submit', async (e) => {
         if (!res.ok) throw new Error('Failed to create book');
         
         const data = await res.json();
-        showToast('Book added successfully!');
-        createBookForm.reset();
         
         // Add to local state for mock display
         const localBooks = JSON.parse(localStorage.getItem('books') || '[]');
         localBooks.push({ id: data.id, title, call_number: data.call_number || 'BK-123', status: 'available', loan_id: null });
         localStorage.setItem('books', JSON.stringify(localBooks));
         
-        loadBooks();
+        await loadBooks();
+        showToast('Book added successfully!');
+        createBookForm.reset();
     } catch (err) {
         showToast(err.message);
     }
