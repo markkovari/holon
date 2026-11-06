@@ -16,6 +16,7 @@ path = "src/bin/agents_board.rs"
 [dependencies]
 agent-wire = { path = "../../crates/agent-wire" }
 holon-fuel = { path = "../../crates/holon-fuel" }
+holon-skills = { path = "../../crates/holon-skills" }
 # exact: snapshots break weekly; font-kit or macOS draws no text
 gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", default-features = false, features = ["runtime_shaders", "font-kit"] }

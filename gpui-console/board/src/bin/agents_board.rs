@@ -24,6 +24,7 @@ struct Opts {
     size: (f32, f32),
     matrix: Option<String>,
     tour: bool,
+    tour_skills: bool,
     /// The runtime to show (its URL and admin token); without it, the scripted demo.
     runtime: Option<(String, String)>,
 }
@@ -193,6 +194,92 @@ fn run(
             })
             .detach();
         }
+        if o.tour_skills {
+            cx.spawn(async move |cx| {
+                let clock = cx.background_executor().clone();
+                let wait = |ms| clock.timer(Duration::from_millis(ms));
+                eprintln!("[skills-tour] starting skills workflow tour...");
+                wait(400).await;
+
+                // 1. Open Explore Tab on WIT Contract-First Scaffolder
+                let _ = window.update(cx, |board, window, cx| {
+                    board.set_tab(Tab::Explore, window, cx);
+                    board.show(Tab::Explore, "skill:wit:contract_first_scaffold", cx);
+                    #[cfg(target_os = "macos")]
+                    agent_board::capture::flush_window();
+                });
+                eprintln!("[skills-tour] focus skill:wit:contract_first_scaffold");
+                wait(2200).await;
+
+                // 2. Click sub-skill bindings:generate_xtask
+                let _ = window.update(cx, |board, _, cx| {
+                    board.show(Tab::Explore, "skill:bindings:generate_xtask", cx);
+                    #[cfg(target_os = "macos")]
+                    agent_board::capture::flush_window();
+                });
+                eprintln!("[skills-tour] focus sub-skill bindings:generate_xtask");
+                wait(1600).await;
+
+                // 3. Switch to Autonomous Bug Repro & Repair DAG
+                let _ = window.update(cx, |board, _, cx| {
+                    board.show(Tab::Explore, "skill:bug:autonomous_repro_and_repair", cx);
+                    #[cfg(target_os = "macos")]
+                    agent_board::capture::flush_window();
+                });
+                eprintln!("[skills-tour] focus skill:bug:autonomous_repro_and_repair");
+                wait(2000).await;
+
+                // 4. Switch to Skill Curator & Hygiene DAG
+                let _ = window.update(cx, |board, _, cx| {
+                    board.show(Tab::Explore, "skill:curate_registry", cx);
+                    #[cfg(target_os = "macos")]
+                    agent_board::capture::flush_window();
+                });
+                eprintln!("[skills-tour] focus skill:curate_registry");
+                wait(2000).await;
+
+                // 5. Switch to Agents tab with lead agent
+                let _ = window.update(cx, |board, window, cx| {
+                    board.set_tab(Tab::Agents, window, cx);
+                    board.show(Tab::Agents, "lead", cx);
+                    #[cfg(target_os = "macos")]
+                    agent_board::capture::flush_window();
+                });
+                eprintln!("[skills-tour] switch to Agents tab");
+                wait(1000).await;
+
+                // 6. Type workflow prompt for skill execution
+                let prompt = "Execute skill wit:contract_first_scaffold for component kv-store";
+                let say = window.update(cx, |board, _, cx| {
+                    let say = board.say_field();
+                    say.update(cx, |f, cx| f.clear(cx));
+                    #[cfg(target_os = "macos")]
+                    agent_board::capture::flush_window();
+                    say
+                });
+                if let Ok(say) = say {
+                    for c in prompt.chars() {
+                        say.update(cx, |f, cx| f.push_str(&c.to_string(), cx));
+                        let _ = window.update(cx, |_, _, _| {
+                            #[cfg(target_os = "macos")]
+                            agent_board::capture::flush_window();
+                        });
+                        wait(28).await;
+                    }
+                }
+                wait(400).await;
+
+                // 7. Submit prompt -> live execution response
+                let _ = window.update(cx, |board, _, cx| {
+                    board.say_to(prompt.to_string(), cx);
+                    #[cfg(target_os = "macos")]
+                    agent_board::capture::flush_window();
+                });
+                eprintln!("[skills-tour] submitted workflow call, waiting for completion");
+                wait(2600).await;
+            })
+            .detach();
+        }
         if let Some(goal) = o.goal.clone() {
             cx.spawn(async move |cx| {
                 let clock = cx.background_executor().clone();
@@ -271,6 +358,8 @@ mod native {
         form: bool,
         #[arg(long)]
         tour: bool,
+        #[arg(long)]
+        tour_skills: bool,
         #[arg(long, value_name = "GOAL")]
         goal: Option<String>,
         #[arg(long, value_parser = ["sessions", "agents", "explore", "map", "keys"])]
@@ -318,20 +407,34 @@ mod native {
     pub fn main() {
         let a = Args::parse();
         let is_tour = a.tour;
+        let is_skills_tour = a.tour_skills;
         let o = Opts {
             light: a.mode == "light",
-            tab: if is_tour { Some(Tab::Agents) } else { a.tab.as_deref().and_then(tab_named) },
-            select: if is_tour { Some("lead".into()) } else { a.select.clone() },
+            tab: if is_tour {
+                Some(Tab::Agents)
+            } else if is_skills_tour {
+                Some(Tab::Explore)
+            } else {
+                a.tab.as_deref().and_then(tab_named)
+            },
+            select: if is_tour {
+                Some("lead".into())
+            } else if is_skills_tour {
+                Some("skill:wit:contract_first_scaffold".into())
+            } else {
+                a.select.clone()
+            },
             open: a.open,
             form: a.form,
             goal: a.goal.clone(),
             auto: a
                 .auto
                 .map(Duration::from_secs_f32)
-                .or((a.shoot.is_some() || a.gif.is_some() || a.tour)
+                .or((a.shoot.is_some() || a.gif.is_some() || a.tour || a.tour_skills)
                     .then(|| Duration::from_secs(14))),
             size: a.size,
             tour: a.tour,
+            tour_skills: a.tour_skills,
             matrix: a.matrix.clone(),
             runtime: a.runtime.clone().map(|url| {
                 let home = std::env::var("HOME").unwrap_or_default();

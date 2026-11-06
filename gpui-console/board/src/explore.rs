@@ -46,6 +46,7 @@ pub fn tint(t: &Theme, kind: Kind) -> gpui::Rgba {
         Kind::Attempt => t.badge(Status::Done).1,
         Kind::Missed | Kind::Lesson => t.badge(Status::Failed).1,
         Kind::Part => t.muted,
+        Kind::Skill => gpui::rgb(0x00d2ff),
     }
 }
 
@@ -60,6 +61,7 @@ pub fn kind_name(k: Kind) -> &'static str {
         Kind::Lesson => "lesson",
         Kind::Session => "session",
         Kind::Agent => "agent",
+        Kind::Skill => "graph skill",
     }
 }
 
@@ -364,7 +366,68 @@ impl ExploreView {
                 "Talk to it",
                 ExploreEvent::Agent(key.strip_prefix("agent:").unwrap_or(key).to_string()),
             )),
+            Kind::Skill => Some((
+                "Talk to lead agent",
+                ExploreEvent::Agent("lead".to_string()),
+            )),
             _ => None,
+        };
+        let plan_box = if kind == Kind::Skill {
+            let skill_id = key.strip_prefix("skill:").unwrap_or(key);
+            let g = holon_skills::SkillGraph::default_skills();
+            if let Ok(plan) = g.plan(skill_id) {
+                let steps_count = plan.steps.len();
+                let ifaces_count = plan.required_interfaces.len();
+                Some(
+                    div()
+                        .mt(px(4.0))
+                        .p(px(10.0))
+                        .rounded(px(10.0))
+                        .bg(t.tile)
+                        .border_1()
+                        .border_color(t.tile_border)
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.0))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(t.text)
+                                        .child("Topological Plan"),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(10.5))
+                                        .text_color(gpui::rgb(0x00d2ff))
+                                        .child(format!("{steps_count} steps · {ifaces_count} caps")),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .font_family(crate::MONO)
+                                .text_size(px(10.5))
+                                .text_color(t.muted)
+                                .line_clamp(3)
+                                .child(
+                                    plan.steps
+                                        .iter()
+                                        .map(|s| s.name.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(" ➔ "),
+                                ),
+                        ),
+                )
+            } else {
+                None
+            }
+        } else {
+            None
         };
         let card = div()
             .w(px(340.0))
@@ -406,6 +469,7 @@ impl ExploreView {
                 )
             })
             .child(proofs)
+            .children(plan_box)
             .children(action.map(|(what, ev)| {
                 let ev = RefCell::new(Some(ev));
                 div()

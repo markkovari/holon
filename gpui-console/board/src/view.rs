@@ -1882,6 +1882,12 @@ impl Board {
                 .collect();
             groups.push((format!("Found · {}", found.len()), found));
         } else {
+            let skills: Vec<_> = g
+                .nodes
+                .values()
+                .filter(|n| n.kind == maps::Kind::Skill && !n.label.starts_with("alias:"))
+                .map(|n| (n.key.clone(), n.label.clone(), n.sub.clone(), n.kind))
+                .collect();
             let sessions: Vec<_> =
                 rows.iter().filter_map(|r| entry(&format!("session:{}", r.root))).collect();
             let runs: Vec<_> = self.knowledge.frames.iter().filter_map(|f| entry(&f.key)).collect();
@@ -1893,7 +1899,7 @@ impl Board {
                 .take(8)
                 .map(|n| (n.key.clone(), n.label.clone(), format!("used by {}", n.weight), n.kind))
                 .collect();
-            for (h, v) in [("Sessions", sessions), ("Goal runs", runs), ("Most used", used)] {
+            for (h, v) in [("Skills", skills), ("Sessions", sessions), ("Goal runs", runs), ("Most used", used)] {
                 if !v.is_empty() {
                     groups.push((h.to_string(), v));
                 }
@@ -3018,7 +3024,10 @@ impl Render for Board {
                     })
                     .collect()
             };
-            let g = Graph::build(&comps, &self.knowledge, &sessions, &self.roster);
+            let mut skill_graph = holon_skills::SkillGraph::default_skills();
+            let _ = skill_graph.load_dir(std::path::Path::new(".comp/skills"));
+            let g = Graph::build(&comps, &self.knowledge, &sessions, &self.roster)
+                .with_skills(&skill_graph, &self.roster);
             self.explore.update(cx, |e, cx| e.set_graph(g, cx));
             self.graph_at = at;
         }
