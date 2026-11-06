@@ -212,3 +212,62 @@ fn test_free_tier_batch_queue_model_spec_completion() {
     assert!(reply.text.contains("free-tier"));
     assert_eq!(spec.label(), "batch:gemini-2.5-flash-lite");
 }
+
+#[test]
+fn test_skill_curator_agent_audits_registry_and_proposes_refactor_pr() {
+    let rt = runtime("curator");
+
+    let mut a = agent_with_replies(
+        "curator-agent",
+        &[
+            r#"{"tool": "skill_audit", "args": {}}"#,
+            r#"{"tool": "propose_pr", "args": {"branch": "refactor/dedup-skills", "title": "refactor(skills): deduplicate registry and alias legacy workflows", "body": "Periodic curator audit detected near-duplicate workflows; consolidated definitions."}}"#,
+            "Curator audit completed and PR opened.",
+        ],
+    );
+    a.capabilities.push(Capability::named("skill_audit"));
+    a.capabilities.push(Capability::named("propose_pr"));
+    a.auto_approve.push("skill_audit".into());
+    a.auto_approve.push("propose_pr".into());
+    a.skills.push("skill:curate_registry".into());
+    rt.create_agent(a).unwrap();
+
+    let rec = rt
+        .run_agent(
+            "curator-agent",
+            "cron",
+            "run periodic hygiene review",
+            &Cause::default(),
+            "",
+            true,
+        )
+        .unwrap();
+
+    let audit_step = rec
+        .steps
+        .iter()
+        .find_map(|s| match s {
+            Step::Tool { name, result, error, .. } if name == "skill_audit" => {
+                Some((result.clone(), *error))
+            }
+            _ => None,
+        })
+        .expect("skill_audit tool step found");
+
+    assert!(!audit_step.1);
+    assert!(audit_step.0.contains("total_skills"));
+
+    let pr_step = rec
+        .steps
+        .iter()
+        .find_map(|s| match s {
+            Step::Tool { name, result, error, .. } if name == "propose_pr" => {
+                Some((result.clone(), *error))
+            }
+            _ => None,
+        })
+        .expect("propose_pr tool step found");
+
+    assert!(!pr_step.1);
+    assert!(pr_step.0.contains("refactor/dedup-skills"));
+}

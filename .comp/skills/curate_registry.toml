@@ -1,0 +1,10 @@
+id = "skill:curate_registry"
+name = "Periodic Skill Registry Hygiene & Deduplication"
+intent = "Audit skill graph for near-duplicate skills, bloated DAGs needing decomposition, and submit refactoring PRs"
+preconditions = ["skill_registry_loaded", "git_workspace_clean"]
+postconditions = ["overlaps_resolved", "pr_proposed_if_needed"]
+tags = ["curator", "governance", "refactor", "skills", "batch"]
+aliases = ["skill:audit_hygiene", "skill:dedup_and_split"]
+requires = ["skill:audit", "wasi:filesystem", "skill:graph", "agent:propose_pr"]
+composes = ["skill:audit_step", "skill:plan_curation_refactor", "skill:propose_curation_pr"]
+carries = []
