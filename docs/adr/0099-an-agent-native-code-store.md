@@ -18,6 +18,10 @@ over the engine, behind the `vcs-store` component, with `vcs-gateway` putting it
 on HTTP for agents (`apps/vcs.toml`), end to end against real NATS and
 SurrealDB, crashes included — under *The service*.
 
+Since [ADR-0134](0134-the-code-store-is-a-component.md) the engine runs in `vcs-store`, on its app's
+keyvalue (the graph as records with index lists), and `comp-vcs` and the NATS and SurrealDB
+adapters are deleted; *The service* below describes what it replaced.
+
 ## Why not git
 
 Autonomous agents working in parallel on one repository fail on git in three ways

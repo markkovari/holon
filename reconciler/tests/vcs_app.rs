@@ -1,25 +1,17 @@
-//! The code store end to end (ADR-0099): every request goes
+//! The code store end to end (ADR-0099, ADR-0134): every request goes
 //!
-//!   this test -> comp-host (vcs-gateway + vcs-store) -> comp-vcs -> NATS JetStream + SurrealDB
+//!   this test -> comp-host (vcs-gateway + vcs-store, the engine in-process) -> its keyvalue
 //!
-//! over real HTTP, through the component model, against a real NATS and SurrealDB, never the library.
-//! `bash e2e/vcs.sh` brings those up, builds what is needed, runs this file and tears down.
+//! over real HTTP, through the component model, never the library; `materialize` writes under the
+//! host's `--dir`. Needs `holon-host` built (`cargo build --release -p holon-host`); without it
+//! every test prints `SKIPPED` and returns. Each test owns its host and its sqlite file.
 //!
-//! Without `VCS_E2E_NATS_URL` and `VCS_E2E_SURREAL_URL` every test prints `SKIPPED` and returns (CI
-//! compiles with `--no-run`, since a skip that returns `ok` is a green tick for a test that did not
-//! run). With them set, a missing `comp-host` or unbuilt component is a failure.
-//!
-//! Each test owns its buckets, SurrealDB database, `comp-vcs` port and `comp-host`, so they run in
-//! parallel and a restart's startup repair only sees its own workspaces.
 //! The scenarios:
 //!   A  two agents, two functions of one file, at once: both land, one
 //!      `commuted` naming the other, the export has both
 //!   B  two agents, one function: one lands, one conflict with both sides;
 //!      export and materialize refused; resolve; the materialized directory's
 //!      `git write-tree` is the snapshot's `git-tree`
-//!   C  a crash at each step of the write order (a real `abort()` of comp-vcs),
-//!      then a normal restart: verify clean, the op landed exactly when its
-//!      commit point had happened, a retry lands it exactly once
 //!   D  `commuted` with `read-at` is exact; without it, it over-reports
 //!   E  eight renames to one name at once: one wins, seven `name-taken`
 //!   F  record-store's real sources ingested, exported and materialized byte for
@@ -27,21 +19,21 @@
 //!      edited copies: different functions, the same function, two inserts at
 //!      one spot
 //!   G  a function moved by ingest, and back: exact both ways
-//!   H  a crashed writer's intent blocks export until the lease passes
+//!
+//! A crash at each step of the write order is the engine's to recover from, and its suite crashes
+//! every step over these same keyvalue stores (`crates/holon-vcs/tests/kv.rs`).
 
-// The gate harness the root's suites share, included rather than copied (docs/adr/0115).
-#[path = "../../../tests/gatelib/mod.rs"]
 mod gatelib;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::Barrier;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use holon_vcs::model::{
-    Agent, CommitResult, Conflict, ConsistencyReport, Content, OpEntry, OpKind, PatchOutcome,
-    PatchRequest, Snapshot, SymbolId, SymbolKind, SymbolQuery, SymbolView, Transformation,
+    Agent, CommitResult, Conflict, ConsistencyReport, Content, PatchOutcome, PatchRequest,
+    Snapshot, SymbolId, SymbolKind, SymbolQuery, SymbolView, Transformation,
 };
 use holon_vcs::wire;
 use serde::de::DeserializeOwned;
@@ -49,39 +41,8 @@ use serde_json::{json, Value};
 
 const COMPONENT: &str = "shop";
 
-struct Services {
-    nats: String,
-    surreal: String,
-    user: String,
-    pass: String,
-}
-
-fn services(test: &str) -> Option<Services> {
-    let get = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
-    match (get("VCS_E2E_NATS_URL"), get("VCS_E2E_SURREAL_URL")) {
-        (Some(nats), Some(surreal)) => Some(Services {
-            nats,
-            surreal,
-            user: get("VCS_E2E_SURREAL_USER").unwrap_or_else(|| "root".into()),
-            pass: get("VCS_E2E_SURREAL_PASS").unwrap_or_else(|| "root".into()),
-        }),
-        _ => {
-            eprintln!(
-                "SKIPPED e2e_vcs::{test}: set VCS_E2E_NATS_URL and VCS_E2E_SURREAL_URL \
-                 (bash e2e/vcs.sh does) — this needs a real NATS JetStream and SurrealDB, \
-                 and it did NOT run"
-            );
-            None
-        }
-    }
-}
-
 fn nanos() -> u128 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-}
-
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
 
 /// A refusal, as the gateway sent it.
@@ -99,157 +60,31 @@ impl Refusal {
 
 struct Stack {
     name: String,
-    svc: Services,
-    port: u16,
-    prefix: String,
-    db: String,
-    /// `--allow-path` for materialize.
-    allow: tempfile::TempDir,
-    logs: tempfile::TempDir,
-    vcs: Option<Child>,
-    starts: u32,
-    http: reqwest::blocking::Client,
-    gate: Option<gatelib::Gate>,
-}
-
-impl Drop for Stack {
-    fn drop(&mut self) {
-        if let Some(mut c) = self.vcs.take() {
-            let _ = c.kill();
-            let _ = c.wait();
-        }
-        if std::thread::panicking() {
-            for i in 1..=self.starts {
-                let p = self.logs.path().join(format!("vcs-{i}.log"));
-                let text = std::fs::read_to_string(&p).unwrap_or_default();
-                let tail: Vec<&str> = text.lines().rev().take(25).collect();
-                eprintln!(
-                    "--- [{}] comp-vcs start #{i} ({}), last lines ---\n{}",
-                    self.name,
-                    p.display(),
-                    tail.into_iter().rev().collect::<Vec<_>>().join("\n")
-                );
-            }
-        }
-    }
+    /// The host's `--dir`, where materialize may write; the sqlite file is beside it.
+    dir: tempfile::TempDir,
+    gate: gatelib::Gate,
 }
 
 impl Stack {
     fn up(test: &str) -> Option<Stack> {
-        let svc = services(test)?;
-        let tag = format!("{test}-{}-{}", std::process::id(), nanos() % 1_000_000_000);
-        let port = free_port();
-        let mut s = Stack {
-            name: test.to_string(),
-            svc,
-            port,
-            prefix: format!("e2e-{tag}"),
-            db: format!("e2e_{}", tag.replace('-', "_")),
-            allow: tempfile::tempdir().unwrap(),
-            logs: tempfile::tempdir().unwrap(),
-            vcs: None,
-            starts: 0,
-            http: reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(600))
-                .build()
-                .unwrap(),
-            gate: None,
-        };
-        s.start_vcs(&[]);
-        let url = format!("vcs-url=http://127.0.0.1:{port}");
-        let egress = format!("127.0.0.1:{port}");
-        let gate =
-            gatelib::Gate::compose_and_start_with_egress("vcs", "vcs-gateway", &[&url], &[&egress]);
-        match gate {
-            Some(g) => s.gate = Some(g),
-            None => panic!(
-                "[{test}] VCS_E2E_* is set, so this run was asked for — but comp-host or the \
-                 vcs-gateway/vcs-store components are not built (bash e2e/vcs.sh builds them)"
-            ),
-        }
-        Some(s)
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("out")).unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let db = root.join("vcs.db").to_str().unwrap().to_string();
+        let out = root.join("out").to_str().unwrap().to_string();
+        let extra = ["--kv", "sqlite", "--sqlite-path", &db, "--dir", &out, "--mem-cap-mb", "256"];
+        let gate = gatelib::Gate::compose_and_start_with_host_args(
+            "vcs",
+            "vcs-gateway",
+            &[],
+            &[],
+            &extra,
+        )?;
+        Some(Stack { name: test.to_string(), dir, gate })
     }
 
     fn allow_root(&self) -> PathBuf {
-        self.allow.path().canonicalize().unwrap()
-    }
-
-    /// Start comp-vcs on this stack's port, and wait for `/health`.
-    fn start_vcs(&mut self, extra: &[&str]) {
-        assert!(self.vcs.is_none(), "comp-vcs is already running");
-        self.starts += 1;
-        let log = std::fs::File::create(self.logs.path().join(format!("vcs-{}.log", self.starts)))
-            .unwrap();
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_holon-vcs"));
-        cmd.args(["--addr", &format!("127.0.0.1:{}", self.port)])
-            .args(["--nats-url", &self.svc.nats])
-            .args(["--bucket-prefix", &self.prefix])
-            .args(["--surreal-url", &self.svc.surreal])
-            .args(["--surreal-ns", "holon_vcs_e2e", "--surreal-db", &self.db])
-            .args(["--surreal-user", &self.svc.user, "--surreal-pass", &self.svc.pass])
-            .arg("--allow-path")
-            .arg(self.allow_root())
-            .args(extra)
-            .stdout(log.try_clone().unwrap())
-            .stderr(log);
-        let mut child = cmd.spawn().expect("spawn comp-vcs");
-        let t0 = Instant::now();
-        loop {
-            if let Ok(r) = self.http.get(format!("http://127.0.0.1:{}/health", self.port)).send() {
-                let v: Value = r.json().unwrap_or(Value::Null);
-                if v["ok"] == true {
-                    break;
-                }
-            }
-            if let Ok(Some(st)) = child.try_wait() {
-                self.vcs = None;
-                panic!("[{}] comp-vcs exited during startup: {st}", self.name);
-            }
-            assert!(
-                t0.elapsed() < Duration::from_secs(60),
-                "[{}] comp-vcs never became healthy",
-                self.name
-            );
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        self.vcs = Some(child);
-    }
-
-    fn stop_vcs(&mut self) {
-        if let Some(mut c) = self.vcs.take() {
-            let _ = c.kill();
-            let _ = c.wait();
-        }
-    }
-
-    fn restart_vcs(&mut self, extra: &[&str]) {
-        self.stop_vcs();
-        self.start_vcs(extra);
-    }
-
-    /// Wait for a crash-armed comp-vcs to have aborted itself.
-    fn wait_crashed(&mut self) -> ExitStatus {
-        let mut c = self.vcs.take().expect("a running comp-vcs");
-        let t0 = Instant::now();
-        loop {
-            if let Some(st) = c.try_wait().unwrap() {
-                return st;
-            }
-            if t0.elapsed() > Duration::from_secs(30) {
-                let _ = c.kill();
-                panic!("[{}] comp-vcs was armed to crash and is still running", self.name);
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-
-    fn vcs_health(&self) -> Value {
-        self.http
-            .get(format!("http://127.0.0.1:{}/health", self.port))
-            .send()
-            .unwrap()
-            .json()
-            .unwrap()
+        self.dir.path().canonicalize().unwrap().join("out")
     }
 
     fn ws(&self, tag: &str) -> String {
@@ -258,8 +93,7 @@ impl Stack {
 
     /// One route of the gateway.
     fn raw(&self, func: &str, body: &Value) -> Result<Value, Refusal> {
-        let (status, text) =
-            self.gate.as_ref().unwrap().post(&wire::route(func), None, body.clone());
+        let (status, text) = self.gate.post(&wire::route(func), None, body.clone());
         if status == 200 {
             return Ok(serde_json::from_str(&text).unwrap_or_else(|e| {
                 panic!("{func}: 200 with a body that is not JSON ({e}): {text}")
@@ -307,13 +141,6 @@ impl Stack {
         v.into_iter().next().unwrap()
     }
 
-    fn content(&self, ws: &str, id: &SymbolId) -> String {
-        match self.view(ws, id).content {
-            Content::Inline(s) => s,
-            Content::Blob(h) => String::from_utf8(self.blob(&h)).unwrap(),
-        }
-    }
-
     fn blob(&self, h: &str) -> Vec<u8> {
         let b: wire::Bytes = self.ok("read-blob", json!({ "blob": h }));
         b.0
@@ -342,10 +169,6 @@ impl Stack {
 
     fn conflicts(&self, ws: &str) -> Vec<Conflict> {
         self.ok("list-conflicts", json!({ "workspace": ws, "state": "open" }))
-    }
-
-    fn oplog(&self, ws: &str) -> Vec<OpEntry> {
-        self.ok("oplog", json!({ "workspace": ws, "limit": 10_000 }))
     }
 
     fn materialize(&self, ws: &str, dest: &Path) -> Result<wire::Materialized, Refusal> {
@@ -494,7 +317,7 @@ fn at_once<T: Send>(n: usize, f: impl Fn(usize) -> T + Sync) -> Vec<T> {
 }
 
 fn timed(test: &str, t0: Instant) {
-    eprintln!("e2e_vcs::{test}: {:.2}s", t0.elapsed().as_secs_f64());
+    eprintln!("vcs_app::{test}: {:.2}s", t0.elapsed().as_secs_f64());
 }
 
 const ORDERS: &str = "src/orders.rs";
@@ -656,145 +479,6 @@ fn b_same_function_conflicts_export_waits_for_the_resolution() {
     assert!(!outside.path().join("x").exists());
     assert_clean(&s.verify(&ws));
     timed("b", t0);
-}
-
-/// What the crashed op does.
-#[derive(Clone, Copy, Debug)]
-enum Op {
-    Replace,
-    Create,
-    Rename,
-}
-
-#[test]
-fn c_crash_at_every_write_step_then_restart_repairs() {
-    let t0 = Instant::now();
-    let Some(mut s) = Stack::up("c") else { return };
-    // (flag, step, op, whether the op had landed: its commit point — the tip
-    // CAS — had happened)
-    let cases: &[(&str, &str, Op, bool)] = &[
-        ("--crash-after-step", "blob", Op::Replace, false),
-        ("--crash-after-step", "intent", Op::Replace, false),
-        ("--crash-after-step", "graph", Op::Replace, false),
-        ("--crash-before-step", "tip", Op::Replace, false),
-        ("--crash-after-step", "tip", Op::Replace, true),
-        ("--crash-after-step", "finish", Op::Replace, true),
-        ("--crash-after-step", "commit", Op::Replace, true),
-        ("--crash-after-step", "claim", Op::Create, false),
-        ("--crash-after-step", "tip", Op::Create, true),
-        ("--crash-before-step", "release", Op::Rename, true),
-    ];
-    let lease = ["--lease-secs", "1"];
-    for &(flag, step, op, want_landed) in cases {
-        let case = format!("{flag} {step} ({op:?})");
-        let ws = s.ws(&format!("c-{step}"));
-        s.restart_vcs(&lease);
-        let f = sym("src/lib.rs", "f");
-        let g = sym("src/lib.rs", "g");
-        let h = sym("src/lib.rs", "h");
-        let pf = s
-            .apply(&req(
-                &ws,
-                &f,
-                None,
-                Transformation::Create(inline("fn f() {}\n")),
-                "setup",
-                None,
-            ))
-            .unwrap();
-        let pg = s
-            .apply(&req(
-                &ws,
-                &g,
-                None,
-                Transformation::Create(inline("fn g() {}\n")),
-                "setup",
-                None,
-            ))
-            .unwrap();
-        let setup_ops = s.oplog(&ws).len();
-        let the_op = match op {
-            Op::Replace => req(
-                &ws,
-                &f,
-                Some(&pf.patch),
-                Transformation::Replace(inline("fn f() { 1 }\n")),
-                "x",
-                None,
-            ),
-            Op::Create => req(
-                &ws,
-                &sym("src/lib.rs", "k"),
-                None,
-                Transformation::Create(inline("fn k() {}\n")),
-                "x",
-                None,
-            ),
-            Op::Rename => {
-                req(&ws, &g, Some(&pg.patch), Transformation::Rename("h".into()), "x", None)
-            }
-        };
-        let has_landed = |s: &Stack| match op {
-            Op::Replace => s.content(&ws, &f) == "fn f() { 1 }\n",
-            Op::Create => !s.query(&ws, &sym("src/lib.rs", "k")).is_empty(),
-            Op::Rename => !s.query(&ws, &h).is_empty(),
-        };
-
-        s.restart_vcs(&[lease[0], lease[1], flag, step, "--i-know-this-is-a-test"]);
-        assert_eq!(
-            s.vcs_health()["fault-injection"].as_str().map(|p| p
-                .split(':')
-                .nth(1)
-                .unwrap()
-                .to_string()),
-            Some(step.to_string())
-        );
-        let crashed_at = Instant::now();
-        let r = s.apply(&the_op).expect_err(&format!("{case}: the daemon died mid-request"));
-        assert!(r.is("storage-error") && r.status == 503, "{case}: {r:?}");
-        let st = s.wait_crashed();
-        {
-            use std::os::unix::process::ExitStatusExt;
-            assert_eq!(st.signal(), Some(6), "{case}: comp-vcs aborted (SIGABRT), got {st}");
-        }
-        // Past the lease, so startup repair may fence what never landed.
-        std::thread::sleep(Duration::from_millis(1200).saturating_sub(crashed_at.elapsed()));
-        s.start_vcs(&lease);
-
-        let startup = s.vcs_health()["startup-repair"].clone();
-        let mine =
-            startup.as_array().unwrap().iter().find(|e| e["workspace"] == json!(ws)).cloned();
-        assert_clean(&s.verify(&ws));
-        assert_eq!(has_landed(&s), want_landed, "{case}: landed? startup repair said {mine:?}");
-        if step != "blob" {
-            let mine = mine
-                .unwrap_or_else(|| panic!("{case}: startup repair did not see {ws}: {startup}"));
-            let key = if want_landed { "rolled-forward" } else { "aborted" };
-            // After the commit write the op was already committed: nothing to roll forward.
-            if step != "commit" {
-                assert_eq!(mine[key].as_array().map(|a| a.len()), Some(1), "{case}: {mine}");
-            }
-        }
-
-        // The retry lands it exactly once.
-        let again = s.apply(&the_op).unwrap_or_else(|e| panic!("{case}: retry refused: {e:?}"));
-        // (Not landed: `applied` or `commuted` — the op carries no read-at, so
-        // g's creation, after f's, counts as commuted past.)
-        if want_landed {
-            assert_eq!(again.outcome, PatchOutcome::Duplicate, "{case}: {again:?}");
-        } else {
-            assert!(landed(&again), "{case}: {again:?}");
-        }
-        assert!(has_landed(&s), "{case}: the retry landed it");
-        let log = s.oplog(&ws);
-        let applies = log.iter().filter(|e| e.kind == OpKind::Apply(again.patch.clone())).count();
-        assert_eq!(applies, 1, "{case}: exactly one committed op carries the patch: {log:?}");
-        assert_eq!(log.len(), setup_ops + 1, "{case}: one op beyond the setup");
-        s.export(&ws).unwrap_or_else(|e| panic!("{case}: export after repair: {e:?}"));
-        assert_clean(&s.verify(&ws));
-        eprintln!("e2e_vcs::c {case}: landed={want_landed} ok");
-    }
-    timed("c", t0);
 }
 
 #[test]
@@ -986,7 +670,7 @@ fn f_real_files_ingest_export_materialize_and_race() {
     assert_eq!(git_tree_of(&dest), git_tree);
     assert_eq!(m.bytes as usize, files.iter().map(|f| f.1.len()).sum::<usize>());
     eprintln!(
-        "e2e_vcs::f: {} files, {} bytes, {symbols} symbols, git tree {git_tree}",
+        "vcs_app::f: {} files, {} bytes, {symbols} symbols, git tree {git_tree}",
         files.len(),
         m.bytes
     );
@@ -1108,67 +792,4 @@ fn g_a_function_moved_by_ingest_exports_exactly_and_back() {
     assert_eq!(s.file(&ws, IDLIST), original);
     assert_clean(&s.verify(&ws));
     timed("g", t0);
-}
-
-#[test]
-fn h_a_crashed_writers_intent_blocks_export_until_the_lease_passes() {
-    let t0 = Instant::now();
-    let Some(mut s) = Stack::up("h") else { return };
-    const LEASE: Duration = Duration::from_secs(4);
-    let lease = ["--lease-secs", "4"];
-    let ws = s.ws("h");
-    s.restart_vcs(&lease);
-    let f = sym("src/lib.rs", "f");
-    let pf = s
-        .apply(&req(&ws, &f, None, Transformation::Create(inline("fn f() {}\n")), "setup", None))
-        .unwrap();
-    let edit =
-        req(&ws, &f, Some(&pf.patch), Transformation::Replace(inline("fn f() { 1 }\n")), "x", None);
-
-    s.restart_vcs(&[lease[0], lease[1], "--crash-before-step", "tip", "--i-know-this-is-a-test"]);
-    let crashed = Instant::now();
-    assert!(s.apply(&edit).unwrap_err().is("storage-error"));
-    s.wait_crashed();
-    s.start_vcs(&lease);
-
-    // Inside the lease: in flight, not an inconsistency, and it holds export.
-    let v = s.verify(&ws);
-    assert!(v.issues.is_empty(), "{:?}", v.issues);
-    assert_eq!(v.in_flight.len(), 1, "the crashed op is presumed in flight: {v:?}");
-    let refused = s.export(&ws).expect_err("export waits for the op in flight");
-    let refused_at = crashed.elapsed();
-    assert!(refused.is("concurrent-modification") && refused.status == 409, "{refused:?}");
-    assert!(refused_at < LEASE, "refused inside the lease ({refused_at:?})");
-
-    // Past it: the next reader fences the op, and export goes through.
-    let snap = loop {
-        match s.export(&ws) {
-            Ok(snap) => break snap,
-            Err(r) if r.is("concurrent-modification") => {
-                assert!(
-                    crashed.elapsed() < LEASE + Duration::from_secs(10),
-                    "still refused long after the lease"
-                );
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            Err(r) => panic!("{r:?}"),
-        }
-    };
-    let cleared_at = crashed.elapsed();
-    assert!(
-        cleared_at >= LEASE - Duration::from_millis(500),
-        "cleared at {cleared_at:?}, before the lease"
-    );
-    assert_eq!(
-        String::from_utf8(s.files(&snap)["src/lib.rs"].clone()).unwrap(),
-        "fn f() {}\n",
-        "the crashed edit never landed"
-    );
-    assert_clean(&s.verify(&ws));
-    let again = s.apply(&edit).unwrap();
-    assert_eq!(again.outcome, PatchOutcome::Applied);
-    eprintln!(
-        "e2e_vcs::h: refused at {refused_at:.2?}, cleared at {cleared_at:.2?} (lease {LEASE:?})"
-    );
-    timed("h", t0);
 }

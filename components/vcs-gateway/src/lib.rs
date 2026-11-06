@@ -232,7 +232,7 @@ mod tests {
         assert_eq!(v["detail"]["kind"], "function");
         let (s, v) = refusal(t::VcsError::UnresolvedConflict(vec!["x".into()]));
         assert_eq!((s, v["detail"].clone()), (409, json!(["x"])));
-        let (s, v) = refusal(t::VcsError::StorageError("comp-vcs at …: http".into()));
+        let (s, v) = refusal(t::VcsError::StorageError("graph/w/sym/… lost 256 races".into()));
         assert_eq!((s, v["error"].as_str()), (503, Some("storage-error")));
     }
 }

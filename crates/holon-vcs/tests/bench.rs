@@ -1,23 +1,19 @@
-//! Graph lookup latency on SurrealDB with a realistically large workspace.
-//! Env-gated twice — it needs a server AND takes a while:
-//!
-//!   HOLON_VCS_BENCH=1 HOLON_VCS_SURREAL_URL=127.0.0.1:8000 \
-//!   cargo test --manifest-path crates/Cargo.toml --features holon-vcs/native \
-//!     --release --test bench -- --nocapture
+//! Graph latency with a realistically large workspace, on the keyvalue graph a component keeps
+//! (ADR-0134): `cargo test --release -p holon-vcs --test bench -- --nocapture` prints the table.
 //!
 //! Inserts 5 000 symbols and 20 000 patches (each with a `depends_on` edge) and
-//! 1 000 conflicts into one workspace of a fresh database, timing the writes as
+//! 1 000 conflicts into one workspace of a fresh store, timing the writes as
 //! the tables grow, then times every lookup the engine makes. Asserts each
-//! stays bounded: an unindexed lookup is a table scan, and grows with the data.
-#![cfg(feature = "native")]
+//! stays bounded: a lookup with no index reads every record, and grows with the data.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use holon_vcs::graph::{Change, ConflictRecord, Graph, PatchRecord, PatchStatus, SideRecord};
+use holon_vcs::kvgraph::KvGraph;
+use holon_vcs::mem::MemKv;
 use holon_vcs::model::{Agent, ConflictState, SymbolId, SymbolKind};
 use holon_vcs::store::sha256_hex;
-use holon_vcs::surreal::{SurrealConfig, SurrealGraph};
 
 const SYMBOLS: usize = 5_000;
 const PATCHES_PER_SYMBOL: usize = 4;
@@ -117,18 +113,7 @@ async fn time<F: std::future::Future>(stats: &mut Stats, f: F) -> F::Output {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn graph_lookups_stay_bounded() {
-    let (Ok(_), Ok(url)) =
-        (std::env::var("HOLON_VCS_BENCH"), std::env::var("HOLON_VCS_SURREAL_URL"))
-    else {
-        eprintln!("SKIPPED bench: set HOLON_VCS_BENCH=1 and HOLON_VCS_SURREAL_URL to run it");
-        return;
-    };
-    let nanos =
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-    let mut cfg = SurrealConfig::new(&url);
-    cfg.namespace = "holon_vcs_bench".into();
-    cfg.database = format!("bench_{}_{nanos}", std::process::id());
-    let g = Arc::new(SurrealGraph::connect(&cfg).await.expect("surreal"));
+    let g = Arc::new(KvGraph::new(Arc::new(MemKv::new())));
     let ws = "bench";
 
     eprintln!(

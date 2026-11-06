@@ -496,7 +496,7 @@ jobs:
           --test gate_triage_assist --test gate_invoice --test gate_support_desk --test gate_docsearch
           --test gate_events_closed --test gate_courier --test gate_stepup --test gate_reminders
           --test gate_answer --test gate_copilot --test gate_verdict --test gate_reply --test gate_assist
-          --test gate_relay --test gate_notify --test gate_dispatch --test park_app
+          --test gate_relay --test gate_notify --test gate_dispatch --test park_app --test vcs_app
 
   reconciler-fleet-suites:
     name: reconciler suites (fleet)
@@ -932,15 +932,12 @@ jobs:
           # installs nats-server.
           - workspace: lattice
             test-args: --lib
-          # `crates` (ADR-0099): `holon-vcs`, the agent-native code store. The
-          # default build is the pure engine over in-memory backends, and that is
-          # all `cargo test` here runs — every scenario (the two-agent commute, the
-          # conflict and its resolution, the eight-agent race, revert, the git tree
-          # id checked against `git write-tree`, CAS retries through a racing
-          # store) against `mem`. `tests/live.rs` is behind `--features native`
-          # and is not named here: it wants a real NATS and SurrealDB, and a skip
-          # that returns `ok` is a green tick for a test that did not run. The
-          # native adapters are still COMPILED and linted below, so they cannot rot.
+          # `crates` (ADR-0099): `holon-vcs`, the agent-native code store. Every scenario
+          # (the two-agent commute, the conflict and its resolution, the eight-agent race,
+          # revert, crashes at every write step, the git tree id checked against `git
+          # write-tree`) runs twice: over `mem`, and over the keyvalue stores the
+          # `vcs-store` component keeps (ADR-0134). `native` is the S3 blob store alone,
+          # compiled and linted below.
           - workspace: crates
             test-args: ""
     steps:
@@ -976,17 +973,6 @@ jobs:
         # `--lib --bins` keeps CI to what it can honestly run; the rest stay a
         # local and deliberate act.
         run: cargo test --release ${{ steps.pkgs.outputs.args }} ${{ matrix.test-args }}
-
-      # `e2e_vcs` (ADR-0099) drives the code store through the real stack —
-      # comp-host, comp-vcs, NATS JetStream and SurrealDB — and `e2e/vcs.sh` is
-      # what brings that stack up, locally. Without it every test prints SKIPPED
-      # and returns `ok`, and a skip that returns `ok` is a green tick for a test
-      # that did not run, so it is COMPILED here and not run: the suite and the
-      # wire types it shares with comp-vcs cannot rot, and nothing claims it passed.
-      - name: Compile the code store's e2e suite (run locally by e2e/vcs.sh)
-        if: matrix.workspace == 'reconciler'
-        working-directory: reconciler
-        run: cargo test --release -p holon-vcs-daemon --test e2e_vcs --no-run
 
       # The engine is built for BOTH targets — inside a component it is
       # wasm32-wasip2 with no runtime and no sockets (ADR-0095) — so the core

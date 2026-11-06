@@ -24,7 +24,7 @@ struct Opts {
     park: Option<String>,
     /// Tools every session created here may call without asking (ADR-0114).
     auto_approve: Vec<String>,
-    /// A `comp-vcs` to record edits in (ADR-0121).
+    /// A vcs app to record edits in (ADR-0121).
     vcs: Option<String>,
 }
 
@@ -3270,60 +3270,23 @@ fn what_a_restart_remembers_of_a_log_is_only_what_a_person_approved_for_the_sess
     assert!(remembered(vec![decided("c9", "approve", Some("session"))]).is_empty());
 }
 
-/// A `comp-vcs` over the in-memory engine, for the tests of a daemon that records edits: the real
-/// engine, so a revert it would refuse is refused here too.
+/// The vcs app's routes over the in-memory engine, for the tests of a daemon that records edits:
+/// the real engine and dispatch, so a revert it would refuse is refused here too.
 async fn fake_vcs() -> String {
     use axum::response::IntoResponse;
-    use holon_vcs::store::BlobStore;
-    use holon_vcs::wire;
     let e = Arc::new(holon_vcs::mem_engine());
     let app = axum::Router::new().route(
         "/v1/{func}",
         axum::routing::post(
             move |axum::extract::Path(func): axum::extract::Path<String>,
-                  body: axum::Json<Value>| {
+                  body: axum::body::Bytes| {
                 let e = e.clone();
                 async move {
-                    let b = body.0;
-                    let r = match func.as_str() {
-                        "ingest-file" => {
-                            let r: wire::IngestFile = serde_json::from_value(b).unwrap();
-                            holon_vcs::extract::ingest_file(
-                                &*e,
-                                &r.workspace,
-                                &r.component,
-                                &r.file.path,
-                                &r.file.content.0,
-                                &r.by,
-                                r.read_at,
-                            )
-                            .await
-                            .map(|rep| json!(wire::IngestReport::from(rep)))
-                        }
-                        "revert-op" => {
-                            let r: wire::RevertOp = serde_json::from_value(b).unwrap();
-                            e.revert_op(&r.workspace, r.op, r.by).await.map(|o| json!(o))
-                        }
-                        "snapshot-export" => {
-                            let r: wire::Export = serde_json::from_value(b).unwrap();
-                            e.snapshot_export(&r.workspace, &r.component).await.map(|s| json!(s))
-                        }
-                        "read-blob" => {
-                            let r: wire::ReadBlob = serde_json::from_value(b).unwrap();
-                            e.blobs().get(&r.blob).await.map(|b| json!(wire::Bytes(b.unwrap())))
-                        }
-                        other => panic!("comp-agentd called {other}"),
-                    };
-                    match r {
-                        Ok(v) => (axum::http::StatusCode::OK, axum::Json(v)).into_response(),
-                        Err(err) => {
-                            let body = wire::ErrorBody::from(&err);
-                            let status =
-                                axum::http::StatusCode::from_u16(wire::status_of(&body.error))
-                                    .unwrap();
-                            (status, axum::Json(body)).into_response()
-                        }
-                    }
+                    let (status, v) = holon_vcs::serve::dispatch(&e, &func, &body)
+                        .await
+                        .unwrap_or_else(|| panic!("comp-agentd called {func}"));
+                    let status = axum::http::StatusCode::from_u16(status).unwrap();
+                    (status, axum::Json(v)).into_response()
                 }
             },
         ),

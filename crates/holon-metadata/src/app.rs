@@ -36,6 +36,13 @@ pub struct AppSpec {
     /// that holon does not run. Each joins the host's egress allow-list.
     #[serde(default)]
     pub egress: Vec<String>,
+    /// Directories the component reads and writes, at the same path inside the guest (ADR-0134):
+    /// the host's `--dir`. Only an app alone on its host has them.
+    #[serde(default)]
+    pub dirs: Vec<String>,
+    /// The guest's memory ceiling in MiB, when the host's default (64) is too small for its work.
+    #[serde(default)]
+    pub mem_cap_mb: Option<usize>,
     /// The app's `wasi:config` — the same table `holon node render` writes to
     /// the `--config-file` its unit loads. Includes each daemon's
     /// `<name>-url`/`<name>-token` (`holon`'s `check()` enforces that).
@@ -141,6 +148,14 @@ impl AppSpec {
         }
         if self.daemons.iter().any(|d| d.addr.is_some()) || self.egress.iter().any(|a| private(a)) {
             args.push("--allow-private-egress".to_string());
+        }
+        for d in &self.dirs {
+            args.push("--dir".to_string());
+            args.push(d.clone());
+        }
+        if let Some(m) = self.mem_cap_mb {
+            args.push("--mem-cap-mb".to_string());
+            args.push(m.to_string());
         }
         args
     }
@@ -350,6 +365,9 @@ mod tests {
         let public: AppSpec =
             toml::from_str("name = \"b\"\negress = [\"api.example.com:443\"]\n").unwrap();
         assert_eq!(public.host_args().join(" "), "--egress api.example.com:443");
+        let dirs: AppSpec =
+            toml::from_str("name = \"c\"\ndirs = [\"/srv/out\"]\nmem_cap_mb = 256\n").unwrap();
+        assert_eq!(dirs.host_args().join(" "), "--dir /srv/out --mem-cap-mb 256");
         assert!(private("[::1]:11434") && private("10.0.0.5:80") && !private("8.8.8.8:53"));
     }
 

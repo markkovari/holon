@@ -132,13 +132,13 @@ struct Args {
     #[arg(long, requires = "park_url")]
     park_token_file: Option<PathBuf>,
 
-    /// `comp-vcs`'s base URL (ADR-0121). With it, each `write_file` is recorded in the code store,
+    /// The vcs app's base URL (ADR-0121, ADR-0134). With it, each `write_file` is recorded in the code store,
     /// a workspace per session, and announced as `file_changed`; `POST
     /// /v1/sessions/{id}/rewind` puts the files back as they were at an event. Unset: nothing is
     /// recorded, and a session cannot be rewound.
     #[arg(long, env = "VCS_URL")]
     vcs_url: Option<String>,
-    /// Shared secret `comp-vcs` requires, sent as `Authorization: Bearer <token>`.
+    /// Sent as `Authorization: Bearer <token>`, for a vcs app behind a proxy that checks one.
     #[arg(long, requires = "vcs_url")]
     vcs_token: Option<String>,
     /// Same, read from a file. Wins over `--vcs-token`.

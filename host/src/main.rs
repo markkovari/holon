@@ -33,7 +33,7 @@ use hyper::server::conn::http1;
 use hyper_util::rt::TokioIo;
 use wasmtime::component::{Component, HasSelf, Linker, Resource, ResourceTable};
 use wasmtime::{Config, Engine, Store};
-use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p2::bindings::ProxyPre;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
@@ -915,6 +915,10 @@ struct Args {
     pump: Option<String>,
     #[arg(long, default_value = "10")]
     pump_every: u64,
+    /// A directory the app may read and write, repeatable, seen by the guest at the same path
+    /// (ADR-0134): what `vcs-store`'s `materialize` writes under. Solo only.
+    #[arg(long = "dir")]
+    dir: Vec<std::path::PathBuf>,
     /// `<subject>=<path>`, repeatable: the host holds the NATS subscription (at `--nats-url`) and
     /// POSTs each message to the path, a request's reply being the response (ADR-0131). Solo only.
     #[arg(long)]
@@ -1037,6 +1041,18 @@ async fn main() -> Result<()> {
 
     let sqlite_path = args.sqlite_path.clone().unwrap_or_else(kv::SqliteKv::default_path);
     let lattice_mode = args.lattice_nats.is_some();
+    if !args.dir.is_empty() {
+        if args.lattice_nats.is_some() {
+            anyhow::bail!("--dir is for one app on one host: a shared host never opens a directory to a tenant");
+        }
+        for d in &args.dir {
+            if !d.is_absolute() || !d.is_dir() {
+                anyhow::bail!("--dir {} must be an existing absolute directory", d.display());
+            }
+            println!("comp-host: the app may write under {}", d.display());
+        }
+        let _ = DIRS.set(args.dir.clone());
+    }
     let kv_kind = args.kv.clone().unwrap_or_else(|| {
         if lattice_mode {
             kv::DEFAULT_SHARED.into()
@@ -1508,10 +1524,18 @@ fn content_type(p: &std::path::Path) -> &'static str {
 
 /// A guest's WASI: stderr, and the network as its egress allows (ADR-0133): a TCP connect only to
 /// an address the allow-list names and the address check passes; no bind, no UDP.
+static DIRS: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync::OnceLock::new();
+
 fn wasi_ctx(scope: &SharedScope) -> WasiCtx {
     let policy = scope.egress.clone();
     let mut b = WasiCtxBuilder::new();
     b.inherit_stderr().allow_tcp(true).allow_udp(false).allow_ip_name_lookup(true);
+    for d in DIRS.get().into_iter().flatten() {
+        let at = d.to_string_lossy();
+        if let Err(e) = b.preopened_dir(d, &at, DirPerms::all(), FilePerms::all()) {
+            eprintln!("comp-host: cannot open {at} to the app: {e}");
+        }
+    }
     b.socket_addr_check(move |addr, used| {
         let policy = policy.clone();
         Box::pin(async move {

@@ -56,6 +56,15 @@ pub struct Spec {
     #[serde(default)]
     pub egress: Vec<String>,
 
+    /// Directories the app writes (`AppSpec::dirs`, ADR-0134), each under `/var/lib/`: the unit
+    /// makes them state directories, the one place a dynamic user can write.
+    #[serde(default)]
+    pub dirs: Vec<String>,
+
+    /// `AppSpec::mem_cap_mb`: the guest's memory ceiling in MiB.
+    #[serde(default)]
+    pub mem_cap_mb: Option<usize>,
+
     /// `<subject>=<path>`: messages the host delivers to the app (ADR-0131), from the NATS at
     /// `kv_url` when `kv = "nats"`, else at `nats_url`.
     #[serde(default)]
@@ -205,6 +214,17 @@ pub fn check(spec: &Spec) -> Result<()> {
             _ => bail!("subscribe needs nats_url (a NATS URL), or kv = \"nats\""),
         }
     }
+    for d in &spec.dirs {
+        let rel = d.strip_prefix("/var/lib/").unwrap_or_default();
+        let clean = rel.split('/').all(|s| {
+            !s.is_empty()
+                && s != ".."
+                && s.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+        });
+        if rel.is_empty() || !clean {
+            bail!("dirs {d:?} must be a plain path under /var/lib/");
+        }
+    }
     for e in &spec.egress {
         // Interpolated into `ExecStart=` too; an authority has no use for anything else.
         if e.is_empty() || !e.chars().all(|c| c.is_ascii_alphanumeric() || ".-:[]".contains(c)) {
@@ -337,6 +357,12 @@ pub fn render_unit(spec: &Spec, layout: &Layout) -> String {
     for s in &spec.subscribe {
         args.push_str(&format!(" --subscribe {s}"));
     }
+    for d in &spec.dirs {
+        args.push_str(&format!(" --dir {d}"));
+    }
+    if let Some(m) = spec.mem_cap_mb {
+        args.push_str(&format!(" --mem-cap-mb {m}"));
+    }
     if let (false, true, Some(u)) = (spec.subscribe.is_empty(), spec.kv != "nats", &spec.nats_url) {
         args.push_str(&format!(" --nats-url {u}"));
     }
@@ -361,7 +387,13 @@ pub fn render_unit(spec: &Spec, layout: &Layout) -> String {
     s.push_str(&format!("ExecStart={} {}\n", layout.bin.display(), args));
     s.push_str("Restart=always\nRestartSec=2\n");
     s.push_str("DynamicUser=yes\n");
-    s.push_str(&format!("StateDirectory=comp/{app}\n"));
+    let state: String = spec
+        .dirs
+        .iter()
+        .filter_map(|d| d.strip_prefix("/var/lib/"))
+        .map(|d| format!(" {d}"))
+        .collect();
+    s.push_str(&format!("StateDirectory=comp/{app}{state}\n"));
     s.push_str("NoNewPrivileges=yes\n");
     s.push_str("PrivateTmp=yes\n");
     s.push_str("PrivateDevices=yes\n");
@@ -954,6 +986,20 @@ routes = "upstream=http://127.0.0.1:9000"
         let bad: Spec =
             toml::from_str(&format!("{MINIMAL}egress = [\"a:1 --egress *\"]\n")).unwrap();
         assert!(check(&bad).unwrap_err().to_string().contains("must be a host:port"));
+    }
+
+    #[test]
+    fn an_apps_dirs_are_its_state_directories_and_its_hosts_dirs() {
+        let s = spec(&format!("{MINIMAL}dirs = [\"/var/lib/vcs/checkouts\"]\n"));
+        let u = render_unit(&s, &Layout::default());
+        assert!(u.contains(" --dir /var/lib/vcs/checkouts"), "{u}");
+        let m = spec(&format!("{MINIMAL}mem_cap_mb = 256\n"));
+        assert!(render_unit(&m, &Layout::default()).contains(" --mem-cap-mb 256"));
+        assert!(u.contains("StateDirectory=comp/") && u.contains(" vcs/checkouts\n"), "{u}");
+        for bad in ["/etc/x", "/var/lib/../etc", "/var/lib/a b", "/var/lib/", "/var/lib/a%n"] {
+            let s: Spec = toml::from_str(&format!("{MINIMAL}dirs = [\"{bad}\"]\n")).unwrap();
+            assert!(check(&s).is_err(), "{bad}");
+        }
     }
 
     #[test]

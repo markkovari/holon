@@ -5,20 +5,9 @@ domain = "vcs.example.com"
 artifact = "components/target/vcs_gateway.composed.wasm"
 root = "vcs-gateway"
 port = 3942
-# All state lives in comp-vcs.
-kv = "memory"
-
-[config]
-vcs-url = "http://127.0.0.1:8014"
-
-# No `token`: demo only; a real deployment sets it and the matching `vcs-token` in [config].
-# SurrealDB's :8000 clashes with comp-fswatch in fs-watcher.toml; they cannot share a box as written.
-[[daemon]]
-name = "vcs"
-addr = "127.0.0.1:8014"
-allow_flag = "allow-path"
-allow = ["/var/lib/vcs/checkouts"]
-extra_args = [
-    "--nats-url nats://127.0.0.1:4222",
-    "--surreal-url 127.0.0.1:8000 --surreal-ns holon --surreal-db vcs",
-]
+# The code store is this app's own records, moved by compare-and-set (ADR-0134), so the store must
+# be durable; on a NATS cluster use kv = "nats" with every server in kv_url and --kv-replicas 3.
+kv = "sqlite"
+# Where `materialize` may write a checkout: the host opens it to the app at the same path.
+dirs = ["/var/lib/vcs/checkouts"]
+mem_cap_mb = 256

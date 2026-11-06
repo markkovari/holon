@@ -1,21 +1,21 @@
-//! `vcs-store` — `holon:vcs/code-store` and `holon:vcs/files` for components,
-//! anything but a named daemon refusal is `storage-error`, which the contract lets callers retry.
+//! `vcs-store` — `holon:vcs/code-store` and `holon:vcs/files` with the engine in-process (ADR-0134):
+//! the code store is this app's keyvalue, moved by compare-and-set. Each call goes through the same
+//! JSON wire the daemon served, so a refusal reaches the caller as the same `vcs-error` case.
 
 #[allow(warnings)]
 mod bindings;
+mod kvstore;
 mod witconv;
+
+use std::path::Path;
 
 use bindings::exports::holon::vcs::code_store::Guest as CodeStore;
 use bindings::exports::holon::vcs::files::Guest as Files;
-use bindings::wasi::config::store as config;
-use bindings::wasi::http::outgoing_handler;
-use bindings::wasi::http::types::{
-    Fields, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme,
-};
-use bindings::wasi::io::streams::StreamError;
 
+use holon_vcs::error::VcsError;
 use holon_vcs::model as m;
-use holon_vcs::wire;
+use holon_vcs::serve::{self, Answer};
+use holon_vcs::{git, wire};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use witconv::{ToModel, ToWit};
@@ -29,112 +29,96 @@ use wit::t;
 
 struct Component;
 
-/// An `ingest-tree` of a whole component, or waiting out a crashed writer's lease, is slow.
-const TIMEOUT_NS: u64 = 300_000_000_000;
-
 fn storage(msg: impl Into<String>) -> t::VcsError {
     t::VcsError::StorageError(msg.into())
 }
 
-fn daemon_url() -> Result<String, t::VcsError> {
-    match config::get("vcs-url") {
-        Ok(Some(u)) if !u.is_empty() => Ok(u),
-        _ => Err(storage("vcs-url is not set — this component has no comp-vcs to ask")),
-    }
+fn post(func: &str, body: &[u8]) -> (u16, Vec<u8>) {
+    let (status, v) = match kvstore::block_on(serve::dispatch(&kvstore::engine(), func, body)) {
+        Some(a) => a,
+        None => match serve::parse::<wire::Materialize>(body) {
+            Ok(r) => materialize(r),
+            Err(a) => a,
+        },
+    };
+    (status, serde_json::to_vec(&v).unwrap_or_default())
 }
 
-fn parse_url(url: &str) -> Result<(Scheme, String, String), t::VcsError> {
-    let (scheme, rest) = if let Some(r) = url.strip_prefix("https://") {
-        (Scheme::Https, r)
-    } else if let Some(r) = url.strip_prefix("http://") {
-        (Scheme::Http, r)
-    } else {
-        return Err(storage(format!("vcs-url must be http(s), got {url:?}")));
-    };
-    let (authority, path) = match rest.find('/') {
-        Some(i) => (rest[..i].to_string(), rest[i..].trim_end_matches('/').to_string()),
-        None => (rest.to_string(), String::new()),
-    };
-    Ok((scheme, authority, path))
+fn ok<T: Serialize>(v: &T) -> Answer {
+    (200, serde_json::to_value(v).unwrap_or_default())
 }
 
-fn post(func: &str, body: &[u8]) -> Result<(u16, Vec<u8>), t::VcsError> {
-    let url = daemon_url()?;
-    let (scheme, authority, base) = parse_url(&url)?;
-    let net = |m: &str| storage(format!("comp-vcs at {url}: {m}"));
-
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    if let Ok(Some(token)) = config::get("vcs-token") {
-        if !token.is_empty() {
-            let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
+/// The host's `--dir` is the allow-list: outside it the guest sees no parent, so it is refused.
+/// shortcut: WASI has no chmod, so an executable entry is written 0644; the snapshot (and its
+/// git tree) still says executable. Set the bit from the host if a checkout must run its scripts.
+fn materialize(r: wire::Materialize) -> Answer {
+    let dest = Path::new(&r.dest);
+    let parent_ok = dest.is_absolute()
+        && dest.file_name().is_some()
+        && dest.parent().is_some_and(|p| p.is_dir());
+    if !parent_ok {
+        let body = wire::ErrorBody::new("not-permitted", r.dest.clone());
+        return (403, serde_json::to_value(&body).unwrap_or_default());
+    }
+    if dest.exists() {
+        let empty = std::fs::read_dir(dest).map(|mut d| d.next().is_none()).unwrap_or(false);
+        if !dest.is_dir() || !empty {
+            let msg = format!("{} exists and is not an empty directory", r.dest);
+            return serve::refusal(&VcsError::Invalid(msg));
         }
     }
-    let req = OutgoingRequest::new(headers);
-    req.set_method(&Method::Post).map_err(|_| net("set method"))?;
-    req.set_scheme(Some(&scheme)).map_err(|_| net("set scheme"))?;
-    req.set_authority(Some(&authority)).map_err(|_| net("set authority"))?;
-    req.set_path_with_query(Some(&format!("{base}{}", wire::route(func))))
-        .map_err(|_| net("set path"))?;
-
-    let out = req.body().map_err(|_| net("body"))?;
-    {
-        let stream = out.write().map_err(|_| net("write"))?;
-        // Chunked: `blocking-write-and-flush` traps above 4096 bytes.
-        for chunk in body.chunks(4096) {
-            stream
-                .blocking_write_and_flush(chunk)
-                .map_err(|e| net(&format!("body write: {e:?}")))?;
-        }
+    let e = kvstore::engine();
+    let snap = match kvstore::block_on(e.snapshot_export(&r.workspace, &r.component)) {
+        Ok(s) => s,
+        Err(e) => return serve::refusal(&e),
+    };
+    let io =
+        |e: std::io::Error| serve::refusal(&VcsError::Storage(format!("writing {}: {e}", r.dest)));
+    if let Err(e) = std::fs::create_dir_all(dest) {
+        return io(e);
     }
-    OutgoingBody::finish(out, None).map_err(|_| net("finish"))?;
-
-    let opts = RequestOptions::new();
-    let _ = opts.set_connect_timeout(Some(TIMEOUT_NS));
-    let _ = opts.set_first_byte_timeout(Some(TIMEOUT_NS));
-    let _ = opts.set_between_bytes_timeout(Some(TIMEOUT_NS));
-
-    let fut =
-        outgoing_handler::handle(req, Some(opts)).map_err(|e| net(&format!("handle: {e:?}")))?;
-    fut.subscribe().block();
-    let resp = fut
-        .get()
-        .ok_or_else(|| net("no response"))?
-        .map_err(|_| net("response taken"))?
-        .map_err(|e| net(&format!("http: {e:?}")))?;
-    let status = resp.status();
-
-    let body = resp.consume().map_err(|_| net("consume"))?;
-    let stream = body.stream().map_err(|_| net("stream"))?;
-    let mut buf = Vec::new();
-    loop {
-        match stream.blocking_read(64 * 1024) {
-            Ok(c) if c.is_empty() => break,
-            Ok(c) => buf.extend_from_slice(&c),
-            // Anything else would present a truncated answer as a whole one.
-            Err(StreamError::Closed) => break,
-            Err(e) => return Err(net(&format!("read: {e:?}"))),
+    let (mut files, mut bytes) = (0u32, 0u64);
+    for entry in &snap.entries {
+        if let Err(e) = git::validate_path(&entry.path) {
+            return serve::refusal(&e);
         }
+        let content =
+            match kvstore::block_on(holon_vcs::store::BlobStore::get(e.blobs(), &entry.blob)) {
+                Ok(Some(b)) => b,
+                Ok(None) => {
+                    return serve::refusal(&VcsError::Storage(format!(
+                        "blob {} is missing",
+                        entry.blob
+                    )))
+                }
+                Err(e) => return serve::refusal(&e),
+            };
+        let path = dest.join(&entry.path);
+        if let Some(p) = path.parent() {
+            if let Err(e) = std::fs::create_dir_all(p) {
+                return io(e);
+            }
+        }
+        if let Err(e) = std::fs::write(&path, &content) {
+            return io(e);
+        }
+        files += 1;
+        bytes += content.len() as u64;
     }
-    Ok((status, buf))
+    ok(&wire::Materialized { dir: r.dest.clone(), snapshot: snap, files, bytes })
 }
 
 fn decode<T: DeserializeOwned>(status: u16, body: &[u8]) -> Result<T, t::VcsError> {
     if status == 200 {
         return serde_json::from_slice(body).map_err(|e| {
-            storage(format!("comp-vcs answered 200 with a body this cannot read: {e}"))
+            storage(format!("the engine answered 200 with a body this cannot read: {e}"))
         });
-    }
-    if status == 401 {
-        return Err(storage(
-            "comp-vcs refused the credentials (401): vcs-token must equal its --token",
-        ));
     }
     match serde_json::from_slice::<wire::ErrorBody>(body) {
         Ok(e) => Err(e.into_error().to_wit()),
         Err(_) => {
             let text = String::from_utf8_lossy(&body[..body.len().min(200)]).into_owned();
-            Err(storage(format!("comp-vcs answered HTTP {status}: {text}")))
+            Err(storage(format!("the engine answered {status}: {text}")))
         }
     }
 }
@@ -144,7 +128,7 @@ fn call<Q: Serialize, R: DeserializeOwned + ToWit>(
     req: &Q,
 ) -> Result<R::Out, t::VcsError> {
     let body = serde_json::to_vec(req).map_err(|e| t::VcsError::Invalid(e.to_string()))?;
-    let (status, raw) = post(func, &body)?;
+    let (status, raw) = post(func, &body);
     decode::<R>(status, &raw).map(ToWit::to_wit)
 }
 
@@ -257,7 +241,7 @@ impl Files for Component {
     fn read_blob(blob: String) -> Result<Vec<u8>, t::VcsError> {
         let body = serde_json::to_vec(&wire::ReadBlob { blob })
             .map_err(|e| t::VcsError::Invalid(e.to_string()))?;
-        let (status, raw) = post("read-blob", &body)?;
+        let (status, raw) = post("read-blob", &body);
         decode::<wire::Bytes>(status, &raw).map(|b| b.0)
     }
 }
@@ -277,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn daemon_refusals_map_back_to_their_vcs_error_case() {
+    fn engine_refusals_map_back_to_their_vcs_error_case() {
         let cas = m::CasFailure {
             pointer: "ws/w/sym/k".into(),
             expected: None,
@@ -312,12 +296,9 @@ mod tests {
     }
 
     #[test]
-    fn what_is_not_the_daemons_json_is_a_storage_error() {
+    fn what_is_not_the_engine_s_json_is_a_storage_error() {
         assert!(
             matches!(decode::<u64>(502, b"<html>bad gateway</html>"), Err(t::VcsError::StorageError(s)) if s.contains("502"))
-        );
-        assert!(
-            matches!(decode::<u64>(401, b""), Err(t::VcsError::StorageError(s)) if s.contains("vcs-token"))
         );
         assert!(matches!(decode::<u64>(200, b"not json"), Err(t::VcsError::StorageError(_))));
         let not_permitted =
@@ -362,11 +343,14 @@ mod tests {
     }
 
     #[test]
-    fn a_url_with_a_base_path_keeps_it() {
-        let (_, auth, base) = parse_url("http://127.0.0.1:8014/").unwrap();
-        assert_eq!((auth.as_str(), base.as_str()), ("127.0.0.1:8014", ""));
-        let (_, _, base) = parse_url("https://vcs.internal/api").unwrap();
-        assert_eq!(base, "/api");
-        assert!(parse_url("nats://x").is_err());
+    fn materialize_outside_the_host_s_dirs_is_not_permitted() {
+        for dest in ["/no/such/parent/x", "relative/x", "/"] {
+            let r = wire::Materialize {
+                workspace: "w".into(),
+                component: "c".into(),
+                dest: dest.into(),
+            };
+            assert_eq!(materialize(r).0, 403, "{dest}");
+        }
     }
 }

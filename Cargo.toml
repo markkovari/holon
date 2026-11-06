@@ -65,7 +65,6 @@ proc-macro2 = { version = "1.0.91", default-features = false, features = ["span-
 quote = { version = "1", default-features = false }
 syn = { version = "3", default-features = false, features = ["full", "parsing", "printing"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
-surrealdb = { version = "3.3", default-features = false, features = ["protocol-ws", "rustls"] }
 # wasmparser is pinned to the one wac-graph carries (0.10 reads with 0.247).
 wasmparser = "0.247"
 agent-runtime = { path = "agent-runtime" }

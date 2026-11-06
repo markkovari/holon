@@ -1,4 +1,4 @@
-//! The JSON `comp-vcs` speaks over HTTP, and `vcs-store`/`vcs-gateway` speak to it (ADR-0099, *The service*).
+//! The JSON of `POST /v1/<wit function>`: what `vcs-gateway` serves, `holon_vcs::serve` answers and `comp-agentd` sends (ADR-0099, ADR-0134).
 
 use serde::{Deserialize, Serialize};
 
@@ -277,7 +277,7 @@ impl ErrorBody {
             _ => None,
         };
         typed.unwrap_or_else(|| {
-            VcsError::Storage(format!("comp-vcs answered {}: {}", self.error, self.message))
+            VcsError::Storage(format!("the code store answered {}: {}", self.error, self.message))
         })
     }
 }
