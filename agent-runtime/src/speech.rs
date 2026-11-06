@@ -347,14 +347,18 @@ Output ONLY the exact transcribed words. Do not wrap in markdown or quotes, and 
             ]
         }]
     });
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
-    );
+    let url =
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(45))
         .build()
         .map_err(|e| e.to_string())?;
-    let resp = client.post(&url).json(&body).send().map_err(|e| e.to_string())?;
+    let resp = client
+        .post(url)
+        .header("x-goog-api-key", api_key)
+        .json(&body)
+        .send()
+        .map_err(|e| e.without_url().to_string())?;
     let status = resp.status();
     let bytes = resp.bytes().map_err(|e| e.to_string())?;
     if !status.is_success() {

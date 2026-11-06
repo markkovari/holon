@@ -100,3 +100,7 @@ test_all_apps.sh
 **/.pr-*
 voice/tray/HolonVoiceTray
 voice/tray/HolonVoiceTray
+
+# MoonBit build output (tools/build-polyglot.sh mbt).
+components/*-mbt/_build/
+components/*-mbt/.mooncakes/

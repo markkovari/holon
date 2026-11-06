@@ -188,6 +188,11 @@ impl Store {
         self.dir.join("connectors")
     }
 
+    /// Where `tool_build` compiles (one directory per tool, rewritten by each build).
+    pub fn forge_dir(&self) -> PathBuf {
+        self.dir.join("forge")
+    }
+
     pub fn model_alias(&self, name: &str) -> Option<serde_json::Value> {
         let all: Option<serde_json::Value> = fs::read_to_string(self.dir.join("models.json"))
             .ok()

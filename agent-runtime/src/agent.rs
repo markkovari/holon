@@ -165,6 +165,10 @@ pub trait Host: Sync {
     fn discover_custom_tools(&self) -> Vec<DynamicToolDef> {
         Vec::new()
     }
+    /// `tool_build`: compiles, starts and grants `agent` a new tool (`crate::forge`).
+    fn build_tool(&self, _agent: &str, _args: &Value) -> Result<String, String> {
+        Err("building tools is not available here".into())
+    }
     /// Jev, for reading pictures, when this host has a key for it.
     fn jev(&self) -> Option<&dyn crate::jev::Jev> {
         None
@@ -526,6 +530,13 @@ pub const TOOLS: &[ToolDef] = &[
         sensitive: true,
     },
     ToolDef {
+        name: "tool_build",
+        args: r#"{"name": "word_count", "description": "what it does, for whoever calls it", "args": "{\"text\": \"...\"}", "required": ["text"], "source": "pub fn call(args : Json) -> Result[Json, String] { ... }"}"#,
+        about: "Make a tool you lack, in MoonBit: it is compiled, started and yours from your next step (call it by `name`). `source` is the whole file and defines `pub fn call(args : Json) -> Result[Json, String]`. A complete one that compiles:\n\npub fn call(args : Json) -> Result[Json, String] {\n  guard args is { \"text\": String(text), \"limit\": Number(limit, ..), .. } else {\n    return Err(\"text and limit are required\")\n  }\n  let mut vowels = 0\n  for c in text {\n    if \"aeiou\".contains_char(c) {\n      vowels = vowels + 1\n    }\n  }\n  let head = @text.take_chars(text, limit.to_int())\n  Ok({ \"vowels\": Json::number(vowels.to_double()), \"head\": Json::string(head) })\n}\n\nA JSON number arrives as `Number(x, ..)`, a Double (`x.to_int()`). Answer with `Json::number(n.to_double())`, `Json::string(s)`, `Json::boolean(b)`, `Json::array([...])`; an Int has no `to_json`. Helper functions go above `call` as `fn name(a : Int) -> Int { ... }`; `let` is immutable, `let mut` is not; loops are `for i in 0..<n { ... }` and `while cond { ... }`; `s.at(i)` is a UTF-16 unit (UInt16, `.to_int()`), `s.length()` counts those. Text: `@text.take_chars(s, n)` cuts between characters, `@text.utf8(s)` gives UTF-8 bytes (never `to_bytes()`). A compile error comes back as this tool's error: fix the source and call it again.",
+        category: "agent",
+        sensitive: true,
+    },
+    ToolDef {
         name: "tools_discover",
         args: r#"{"category": "fs|net|exec|agent|store|workspace|all", "prefix": "..."}"#,
         about: "Discover available tools and dynamic WASM capabilities: name, args schema, description, category, and sensitivity.",
@@ -777,7 +788,7 @@ pub fn locate_target(content: &str, target: &str) -> Result<(usize, usize), Stri
     Err("target string not found".into())
 }
 
-fn tool_def(name: &str) -> Option<&'static ToolDef> {
+pub(crate) fn tool_def(name: &str) -> Option<&'static ToolDef> {
     TOOLS.iter().find(|t| t.name == name)
 }
 
@@ -800,6 +811,7 @@ fn required(name: &str) -> &'static [&'static str] {
         "transcribe" => &["path"],
         "speak" => &["text"],
         "http_get" => &["url"],
+        "tool_build" => &["name", "description", "source"],
         "agent_show"
         | "agent_delete"
         | "agent_pause"
@@ -2346,6 +2358,7 @@ fn exec(
 
             Ok(serde_json::to_string_pretty(&rec).unwrap_or_default())
         }
+        "tool_build" => host.build_tool(&spec.name, args),
         "tools_discover" => {
             let cat = arg(args, "category").to_lowercase();
             let prefix = arg(args, "prefix").to_lowercase();
@@ -2615,7 +2628,12 @@ pub fn run(
     let mut last_call_sig: Option<(String, String)> = None;
     let mut identical_call_count: usize = 0;
 
+    // A tool built this run (`tool_build`) is callable from the next step, not only the next run.
+    let mut grown = spec.clone();
+    let mut built: Vec<Capability> = Vec::new();
     for turn in 0..=spec.max_steps {
+        grown.capabilities.append(&mut built);
+        let spec = &grown;
         // The final turn forbids tools, so a run always ends in an answer.
         let last_turn = turn == spec.max_steps;
         if last_turn {
@@ -2787,6 +2805,17 @@ pub fn run(
             any_error |= error;
             if !error {
                 called_ok.insert(name.clone());
+            }
+            if name == "tool_build" && !error {
+                let tool = arg(&args, "name");
+                if let Some(d) = crate::connector::load(&host.store().connectors_dir(), &tool) {
+                    built.push(Capability {
+                        name: tool,
+                        description: d.description,
+                        exec: Some(d.exec),
+                        ..Default::default()
+                    });
+                }
             }
             said.push(json!({ "tool": name, "args": args }).to_string());
             results.push(format!(
@@ -3067,6 +3096,17 @@ pub mod testkit {
         }
         fn store(&self) -> &Store {
             &self.store
+        }
+        /// Builds nothing: a `cat` connector stands in, and source "broken" fails to compile.
+        fn build_tool(&self, _agent: &str, args: &Value) -> Result<String, String> {
+            if arg(args, "source") == "broken" {
+                return Err("tool.mbt does not compile".into());
+            }
+            let dir = self.store.connectors_dir();
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join(format!("{}.json", arg(args, "name")));
+            std::fs::write(path, r#"{"description":"built","command":["cat"]}"#).unwrap();
+            Ok("built".into())
         }
         fn model(&self, _: &AgentSpec, _: &str, msgs: &[Msg]) -> Result<Reply, String> {
             if msgs.iter().map(|m| m.content.len()).sum::<usize>() > *self.max_chars.lock().unwrap()
@@ -3745,6 +3785,8 @@ mod tests {
             description: "Echo the args".into(),
             exec: Some(crate::connector::Exec {
                 command: vec!["cat".into()],
+                url: None,
+                wrpc: None,
                 args: r#"{"what": "..."}"#.into(),
                 required: vec!["what".into()],
                 sensitive: true,
@@ -3771,6 +3813,50 @@ mod tests {
         assert!(
             matches!(&r.steps[1], Step::Tool { error: true, result, .. } if result.contains("missing what"))
         );
+    }
+
+    #[test]
+    fn a_tool_built_in_a_run_is_callable_from_its_next_step() {
+        let mut s = spec();
+        s.capabilities.push(Capability::named("tool_build"));
+        s.auto_approve.push("tool_build".into());
+        let build = |name: &str, source: &str| {
+            json!({"tool": "tool_build", "args": {"name": name, "description": "d", "source": source}})
+                .to_string()
+        };
+        let (broken, good) = (build("never", "broken"), build("echo2", "fine"));
+        let h = Fake::new(
+            "forge-grow",
+            &[
+                &broken,
+                r#"{"tool":"never","args":{}}"#,
+                &good,
+                r#"{"tool":"echo2","args":{"x":"é🦀"}}"#,
+                "done",
+            ],
+            true,
+        );
+        let r = run(&h, &s, "http", "go", &Cause::default());
+        let tools: Vec<(&str, &str, bool)> = r
+            .steps
+            .iter()
+            .filter_map(|st| match st {
+                Step::Tool { name, result, error, .. } => {
+                    Some((name.as_str(), result.as_str(), *error))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            tools,
+            [
+                ("tool_build", "tool.mbt does not compile", true),
+                ("never", "`never` is not one of your capabilities", true),
+                ("tool_build", "built", false),
+                ("echo2", r#"{"x":"é🦀"}"#, false),
+            ]
+        );
+        assert_eq!(r.answer, "done");
     }
 
     #[test]

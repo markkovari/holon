@@ -6,6 +6,7 @@ use clap::Parser;
 use std::sync::Arc;
 use std::time::Duration;
 
+mod providers;
 mod worker;
 use worker::{
     BatchWorker, WorkerConfig, BATCH_STREAM, BATCH_SUBJECT, CONSUMER_NAME, REALTIME_STREAM,
@@ -22,13 +23,15 @@ struct Args {
     #[arg(long, default_value = "nats://127.0.0.1:4222", env = "NATS_URL")]
     nats_url: String,
 
-    /// Upstream model API URL (Gemini REST generateContent or OpenAI-compatible chat/completions).
-    #[arg(
-        long,
-        default_value = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent",
-        env = "LLM_UPSTREAM_URL"
-    )]
-    upstream_url: String,
+    /// One upstream instead of the free providers (Gemini `...:generateContent` or OpenAI-compatible
+    /// `.../chat/completions`), with `--model`.
+    #[arg(long, env = "LLM_UPSTREAM_URL")]
+    upstream_url: Option<String>,
+
+    /// The free providers to fail over between, in order (`providers.json`'s shape); the built-in
+    /// list when unset.
+    #[arg(long, env = "LLM_PROVIDERS")]
+    providers: Option<std::path::PathBuf>,
 
     /// Upstream API key (Gemini API key or OpenAI Bearer token).
     #[arg(long, env = "GEMINI_API_KEY")]
@@ -72,9 +75,12 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let api_key = resolve_key(args.api_key, args.api_key_file);
 
+    let upstreams =
+        upstreams(args.upstream_url.as_deref(), &args.model, args.providers.as_deref())?;
     eprintln!(
-        "holon-llmbatch: connecting to NATS at {} | upstream: {} | model: {}",
-        args.nats_url, args.upstream_url, args.model
+        "holon-llmbatch: connecting to NATS at {} | providers, in order: {}",
+        args.nats_url,
+        upstreams.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
     );
 
     let nats = async_nats::connect(&args.nats_url)
@@ -136,7 +142,7 @@ async fn main() -> Result<()> {
 
     let config = WorkerConfig {
         nats_url: args.nats_url,
-        upstream_url: args.upstream_url,
+        upstream_url: args.upstream_url.unwrap_or_default(),
         api_key,
         secrets_bucket: args.secrets_bucket,
         model: args.model,
@@ -144,7 +150,7 @@ async fn main() -> Result<()> {
         batch_window: Duration::from_millis(args.batch_window_ms),
     };
 
-    let worker = Arc::new(BatchWorker::new(nats, js, config, kv));
+    let worker = Arc::new(BatchWorker::new(nats, js, config, kv, upstreams));
 
     eprintln!("holon-llmbatch: workers initialized, listening on batch and realtime subjects");
 
@@ -173,4 +179,39 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// One `--upstream-url` (and `--model`), a `--providers` file, or the built-in free providers.
+fn upstreams(
+    url: Option<&str>,
+    model: &str,
+    file: Option<&std::path::Path>,
+) -> Result<Vec<providers::Provider>> {
+    use providers::{Kind, Provider};
+    if let Some(url) = url {
+        let gemini = url.contains("googleapis.com") || url.ends_with(":generateContent");
+        let name = ["groq", "cerebras", "openrouter", "mistral"]
+            .into_iter()
+            .find(|n| url.contains(n))
+            .unwrap_or(if gemini { "gemini" } else { "openai" });
+        let base = if gemini {
+            url.split("/models/").next()
+        } else {
+            url.strip_suffix("/chat/completions")
+        };
+        return Ok(vec![Provider {
+            name: name.into(),
+            kind: if gemini { Kind::Gemini } else { Kind::Openai },
+            base: base.unwrap_or(url).into(),
+            models: vec![model.into()],
+            rpm: 0,
+            rpd: 0,
+            reset_utc_hour: 0,
+        }]);
+    }
+    match file {
+        Some(f) => serde_json::from_str(&std::fs::read_to_string(f)?)
+            .with_context(|| format!("reading providers from {}", f.display())),
+        None => Ok(providers::defaults()),
+    }
 }

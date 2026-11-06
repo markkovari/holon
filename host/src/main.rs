@@ -1192,7 +1192,7 @@ async fn main() -> Result<()> {
                     // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
                     let c = unsafe { Component::deserialize_file(&engine, comp_path)? };
                     (c, true)
-                } else if cwasm_path.exists() {
+                } else if cache_is_fresh(&cwasm_path, comp_path) {
                     // SAFETY: `deserialize_file` loads cached AOT machine code previously compiled and serialized by this host.
                     // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
                     match unsafe { Component::deserialize_file(&engine, &cwasm_path) } {
@@ -1715,5 +1715,37 @@ impl<B: hyper::body::Body + Unpin> hyper::body::Body for DropSignal<B> {
     }
     fn size_hint(&self) -> hyper::body::SizeHint {
         self.body.size_hint()
+    }
+}
+
+/// A `.cwasm` beside `--component` holds only while it is newer than the component, which a
+/// rebuild to the same path overwrites (lattice starts key theirs by digest instead).
+fn cache_is_fresh(cwasm: &std::path::Path, wasm: &std::path::Path) -> bool {
+    let modified = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    matches!((modified(cwasm), modified(wasm)), (Some(c), Some(w)) if c >= w)
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::cache_is_fresh;
+    use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn a_component_rebuilt_after_its_cwasm_is_compiled_again() {
+        let d = std::env::temp_dir().join(format!("cwasm-fresh-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let (wasm, cwasm) = (d.join("t.wasm"), d.join("t.cwasm"));
+        let at = |p: &std::path::Path, secs: u64| {
+            std::fs::write(p, b"x").unwrap();
+            let f = std::fs::File::options().write(true).open(p).unwrap();
+            f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(secs)).unwrap();
+        };
+        assert!(!cache_is_fresh(&cwasm, &wasm), "no cwasm yet");
+        at(&wasm, 100);
+        at(&cwasm, 200);
+        assert!(cache_is_fresh(&cwasm, &wasm));
+        at(&wasm, 300);
+        assert!(!cache_is_fresh(&cwasm, &wasm), "the rebuilt component is newer");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

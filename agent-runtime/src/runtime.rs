@@ -1406,6 +1406,22 @@ impl Host for Runtime {
         handlers.iter().flat_map(|h| h.describe_tools()).collect()
     }
 
+    fn build_tool(&self, agent: &str, args: &serde_json::Value) -> Result<String, String> {
+        let said = crate::forge::build(
+            &self.store.forge_dir(),
+            &self.store.connectors_dir(),
+            agent,
+            args,
+        )?;
+        let name = args.get("name").and_then(serde_json::Value::as_str).unwrap_or_default();
+        let mut spec = self.store.get(agent).ok_or_else(|| format!("no agent named {agent}"))?;
+        if !spec.has_capability(name) {
+            spec.capabilities.push(crate::spec::Capability::named(name));
+            self.store.put(&spec)?;
+        }
+        Ok(said)
+    }
+
     fn jev(&self) -> Option<&dyn crate::jev::Jev> {
         self.jev.as_ref().map(|j| j as &dyn crate::jev::Jev)
     }

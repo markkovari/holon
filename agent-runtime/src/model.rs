@@ -307,8 +307,9 @@ fn gemini(model: &str, key: &str, system: &str, msgs: &[Msg]) -> Result<Reply, S
     let messages = wire(msgs, false);
     let req =
         Request { system: Some(system), max_tokens: Some(4096), ..Request::new(model, &messages) };
-    let url = format!("{}/models/{}:generateContent?key={key}", holon_llm::gemini::ENDPOINT, model);
-    let req = http()?.post(url).json(&holon_llm::gemini::body(&req));
+    // The key in a header: a failed request's error names its URL.
+    let url = format!("{}/models/{}:generateContent", holon_llm::gemini::ENDPOINT, model);
+    let req = http()?.post(url).header("x-goog-api-key", key).json(&holon_llm::gemini::body(&req));
     let body = send(req)?;
     let r = holon_llm::gemini::reply(body.as_bytes()).map_err(read_error)?;
     if r.text.is_empty() {
@@ -318,6 +319,17 @@ fn gemini(model: &str, key: &str, system: &str, msgs: &[Msg]) -> Result<Reply, S
         text: r.text,
         usage: Usage { input: r.usage.total_input(), output: r.usage.output },
     })
+}
+
+/// The queue takes one prompt, so a conversation goes as a transcript: an agent's later turns
+/// need its earlier tool calls and their results.
+fn transcript(msgs: &[Msg]) -> String {
+    let mut prompt = String::new();
+    for m in msgs {
+        let who = if m.role == "assistant" { "Assistant" } else { "User" };
+        prompt.push_str(&format!("### {who}\n{}\n\n", m.content));
+    }
+    prompt + "### Assistant\n"
 }
 
 fn batch_queue_complete(
@@ -333,47 +345,58 @@ fn batch_queue_complete(
             .map(|d| d.as_millis())
             .unwrap_or(0)
     );
-    let last_user_prompt =
-        msgs.iter().rev().find(|m| m.role == "user").map(|m| m.content.as_str()).unwrap_or("");
-    let batch_task = holon_llm::coalesce::BatchTask {
-        id: task_id,
-        task_type: Some("code_generation".into()),
-        prompt: last_user_prompt.to_string(),
-        system_prompt: Some(system.to_string()),
-        max_tokens: Some(4096),
-        reply_subject: None,
-    };
-
-    if queue_url.starts_with("http") && !queue_url.contains(":4222") {
-        if let Ok(client) = http() {
-            let req =
-                client.post(format!("{}/batch", queue_url.trim_end_matches('/'))).json(&batch_task);
-            if let Ok(body) = send(req) {
-                if let Ok(resp) = serde_json::from_str::<serde_json::Value>(&body) {
-                    if let Some(text) = resp.get("text").and_then(|t| t.as_str()) {
-                        return Ok(Reply {
-                            text: text.to_string(),
-                            usage: Usage { input: 10, output: 50 },
-                        });
-                    }
-                }
-            }
+    // `http://` in older specs: the queue was always NATS (holon-llmbatch, ADR-0126).
+    let nats_url = format!("nats://{}", queue_url.rsplit("://").next().unwrap_or(queue_url));
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let payload = rt.block_on(async {
+        use futures::StreamExt as _;
+        let nats = async_nats::connect(&nats_url)
+            .await
+            .map_err(|e| format!("the free queue at {nats_url}: {e}"))?;
+        // Not a request/reply: llmbatch's LLM_REALTIME stream also captures the subject, and its
+        // storage ack would be the first (and only read) reply. The answer comes to our inbox.
+        let inbox = nats.new_inbox();
+        let mut answers = nats.subscribe(inbox.clone()).await.map_err(|e| e.to_string())?;
+        let task = holon_llm::coalesce::BatchTask {
+            id: task_id,
+            task_type: Some("agent_turn".into()),
+            prompt: transcript(msgs),
+            system_prompt: Some(system.to_string()),
+            max_tokens: Some(4096),
+            reply_subject: Some(inbox),
+        };
+        let body = serde_json::to_vec(&task).map_err(|e| e.to_string())?;
+        nats.publish("holon.llm.realtime.agent", body.into()).await.map_err(|e| e.to_string())?;
+        nats.flush().await.map_err(|e| e.to_string())?;
+        match tokio::time::timeout(std::time::Duration::from_secs(180), answers.next()).await {
+            Ok(Some(m)) => Ok(m.payload),
+            _ => Err(format!(
+                "the free queue at {nats_url} did not answer within 180s; is holon-llmbatch running?"
+            )),
         }
+    })?;
+    #[derive(serde::Deserialize)]
+    struct Out {
+        text: String,
+        ok: bool,
+        error: Option<String>,
     }
-
-    if let Ok(k) = key("GEMINI_API_KEY") {
-        return gemini(model, &k, system, msgs);
+    let out: Out = serde_json::from_slice(&payload)
+        .map_err(|e| format!("the free queue answered something unreadable: {e}"))?;
+    if !out.ok {
+        return Err(format!("the free queue's {model}: {}", out.error.unwrap_or_default()));
     }
-
-    let summary = format!(
-        "/* Free-tier batch generated candidate for {model} */\n// Code generated via free-tier coalescing queue ($0.00 cost)"
-    );
-    Ok(Reply { text: summary, usage: Usage { input: 0, output: 0 } })
+    let words = |s: &str| s.split_whitespace().count() as u64;
+    let input = words(system) + msgs.iter().map(|m| words(&m.content)).sum::<u64>();
+    Ok(Reply { usage: Usage { input, output: words(&out.text) }, text: out.text })
 }
 
 /// The body of a successful response; a failed request or a non-2xx status is the error.
 fn send(req: reqwest::blocking::RequestBuilder) -> Result<String, String> {
-    let r = req.send().map_err(|e| format!("model request failed: {e}"))?;
+    let r = req.send().map_err(|e| format!("model request failed: {}", e.without_url()))?;
     let status = r.status();
     let body = r.text().map_err(|e| e.to_string())?;
     if !status.is_success() {
@@ -538,6 +561,15 @@ mod vision_tests {
 #[cfg(test)]
 mod fallback_tests {
     use super::*;
+
+    #[test]
+    fn the_free_queue_sees_the_whole_conversation() {
+        let msgs = [Msg::user("goal"), Msg::assistant(r#"{"tool":"t"}"#), Msg::user("result")];
+        assert_eq!(
+            transcript(&msgs),
+            "### User\ngoal\n\n### Assistant\n{\"tool\":\"t\"}\n\n### User\nresult\n\n### Assistant\n"
+        );
+    }
 
     fn mock(replies: &[&str]) -> ModelSpec {
         ModelSpec::Mock { replies: replies.iter().map(|r| r.to_string()).collect() }
