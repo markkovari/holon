@@ -2504,6 +2504,32 @@
     "unimplemented": false
   },
   {
+    "name": "llm-queue",
+    "package": "holon:llm-queue@0.1.0",
+    "description": "`llm-queue` — the free LLM queue (ADR-0126): a task in, the first free provider's answer out",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "comp:secrets/reader",
+      "wasi:config/store",
+      "wasi:http/outgoing-handler",
+      "wasi:keyvalue/store"
+    ],
+    "config_keys": [
+      {
+        "name": "llm-providers",
+        "description": "the provider list as JSON, in `providers.json`'s shape; the built-in one when unset"
+      },
+      {
+        "name": "retry-after",
+        "description": ""
+      }
+    ],
+    "reusable_as_is": false,
+    "unimplemented": false
+  },
+  {
     "name": "lms-domain",
     "package": "lms:app@0.1.0",
     "description": "`lms-domain` — a learning-management service (docs/apps/LMS.md) as ONE composed wasm",

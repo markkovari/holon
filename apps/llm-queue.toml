@@ -1,0 +1,18 @@
+name = "llm-queue"
+domain = "llm-queue.internal"
+artifact = "components/target/wasm32-wasip2/release/llm_queue.wasm"
+
+kv = "sqlite"
+
+# The free LLM queue (ADR-0126): the host answers `holon.llm.ask` requests with it (ADR-0131).
+# Run it beside the NATS the agents use (malna). Each provider's key is its `<provider>-api-key`
+# secret, or a line in the box's config file; a provider without one is skipped.
+subscribe = ["holon.llm.ask=/ask"]
+nats_url = "nats://127.0.0.1:4222"
+egress = [
+  "api.groq.com:443",
+  "api.cerebras.ai:443",
+  "generativelanguage.googleapis.com:443",
+  "openrouter.ai:443",
+  "api.mistral.ai:443",
+]

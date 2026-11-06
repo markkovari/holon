@@ -345,37 +345,35 @@ fn batch_queue_complete(
             .map(|d| d.as_millis())
             .unwrap_or(0)
     );
-    // `http://` in older specs: the queue was always NATS (holon-llmbatch, ADR-0126).
+    // `http://` in older specs: the queue was always NATS (ADR-0126).
     let nats_url = format!("nats://{}", queue_url.rsplit("://").next().unwrap_or(queue_url));
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| e.to_string())?;
     let payload = rt.block_on(async {
-        use futures::StreamExt as _;
         let nats = async_nats::connect(&nats_url)
             .await
             .map_err(|e| format!("the free queue at {nats_url}: {e}"))?;
-        // Not a request/reply: llmbatch's LLM_REALTIME stream also captures the subject, and its
-        // storage ack would be the first (and only read) reply. The answer comes to our inbox.
-        let inbox = nats.new_inbox();
-        let mut answers = nats.subscribe(inbox.clone()).await.map_err(|e| e.to_string())?;
         let task = holon_llm::coalesce::BatchTask {
             id: task_id,
             task_type: Some("agent_turn".into()),
             prompt: transcript(msgs),
             system_prompt: Some(system.to_string()),
             max_tokens: Some(4096),
-            reply_subject: Some(inbox),
+            reply_subject: None,
         };
         let body = serde_json::to_vec(&task).map_err(|e| e.to_string())?;
-        nats.publish("holon.llm.realtime.agent", body.into()).await.map_err(|e| e.to_string())?;
-        nats.flush().await.map_err(|e| e.to_string())?;
-        match tokio::time::timeout(std::time::Duration::from_secs(180), answers.next()).await {
-            Ok(Some(m)) => Ok(m.payload),
-            _ => Err(format!(
-                "the free queue at {nats_url} did not answer within 180s; is holon-llmbatch running?"
-            )),
+        // `holon.llm.ask` is the `llm-queue` component's, delivered by its host (ADR-0131); no
+        // JetStream stream captures it, so the reply is the answer.
+        let req = nats.request("holon.llm.ask", body.into());
+        match tokio::time::timeout(std::time::Duration::from_secs(180), req).await {
+            Err(_) => Err(format!("the free queue at {nats_url} did not answer within 180s")),
+            Ok(Err(e)) => Err(format!("the free queue (llm-queue) at {nats_url}: {e}")),
+            Ok(Ok(m)) => match m.headers.as_ref().and_then(|h| h.get("Holon-Error")) {
+                Some(why) => Err(format!("the free queue's host: {why}")),
+                None => Ok(m.payload),
+            },
         }
     })?;
     #[derive(serde::Deserialize)]

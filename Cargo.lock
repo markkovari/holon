@@ -65,7 +65,6 @@ dependencies = [
  "async-nats",
  "base64 0.22.1",
  "clap",
- "futures",
  "holon-lattice",
  "holon-llm",
  "holon-skills",
@@ -2984,22 +2983,6 @@ dependencies = [
  "base64 0.22.1",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "holon-llmbatch"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "clap",
- "futures",
- "holon-daemon-kit",
- "holon-llm",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]

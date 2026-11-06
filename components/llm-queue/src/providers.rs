@@ -197,6 +197,45 @@ impl Health {
     }
 }
 
+/// `Health` as kept between requests: a component instance lives for one.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+pub struct Stored {
+    until_ms: Option<u64>,
+    why: String,
+    minute_ms: Vec<u64>,
+    day: (u64, u32),
+}
+
+fn ms(t: SystemTime) -> u64 {
+    t.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+}
+
+fn time(ms: u64) -> SystemTime {
+    UNIX_EPOCH + Duration::from_millis(ms)
+}
+
+impl From<&Health> for Stored {
+    fn from(h: &Health) -> Self {
+        Stored {
+            until_ms: h.until.map(ms),
+            why: h.why.clone(),
+            minute_ms: h.minute.iter().copied().map(ms).collect(),
+            day: h.day,
+        }
+    }
+}
+
+impl From<Stored> for Health {
+    fn from(s: Stored) -> Self {
+        Health {
+            until: s.until_ms.map(time),
+            why: s.why,
+            minute: s.minute_ms.into_iter().map(time).collect(),
+            day: s.day,
+        }
+    }
+}
+
 fn day_of(now: SystemTime, hour: u64) -> u64 {
     now.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs().saturating_sub(hour * 3600) / 86400
 }
@@ -292,6 +331,17 @@ mod tests {
         // Day 0's third request: blocked until the 08:00 UTC reset.
         let (back, why) = h.blocked(&p, at(200)).unwrap();
         assert_eq!((back, why.as_str()), (at(28800), "at its 3 requests a day"));
+    }
+
+    #[test]
+    fn health_survives_being_stored() {
+        let p = provider(2, 3);
+        let mut h = Health::default();
+        h.spent(&p, at(100));
+        h.spent(&p, at(110));
+        let json = serde_json::to_string(&Stored::from(&h)).unwrap();
+        let mut back: Health = serde_json::from_str::<Stored>(&json).unwrap().into();
+        assert_eq!(back.blocked(&p, at(120)).map(|b| b.0), Some(at(160)));
     }
 
     #[test]
