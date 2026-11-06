@@ -263,7 +263,10 @@ jobs:
           git clean -ffdx -e target
           mkdir -p /ci-target/root /ci-target/components
           ln -sfn /ci-target/root target
-          ln -sfn /ci-target/components components/target
+          # Its own: two PRs at once would each put their fetched wasm in a shared tree, and compose
+          # the other's. It only reads what it fetched, so nothing here is worth keeping warm.
+          mkdir -p "$RUNNER_TEMP/components-target"
+          ln -sfn "$RUNNER_TEMP/components-target" components/target
 
       # `witsurface` asks whether a shape changed WITHOUT its version, and answers
       # it by comparing against the base branch — the shape that shipped, which a
@@ -524,7 +527,10 @@ jobs:
           git clean -ffdx -e target
           mkdir -p /ci-target/root /ci-target/components
           ln -sfn /ci-target/root target
-          ln -sfn /ci-target/components components/target
+          # Its own: two PRs at once would each put their fetched wasm in a shared tree, and compose
+          # the other's. It only reads what it fetched, so nothing here is worth keeping warm.
+          mkdir -p "$RUNNER_TEMP/components-target"
+          ln -sfn "$RUNNER_TEMP/components-target" components/target
 
       # Two of these 41 suites don't just READ the wasm artifact downloaded
       # below — they compile a component fresh, at test-time, on whatever
@@ -736,7 +742,10 @@ jobs:
           git clean -ffdx -e target
           mkdir -p /ci-target/root /ci-target/components
           ln -sfn /ci-target/root target
-          ln -sfn /ci-target/components components/target
+          # Its own: two PRs at once would each put their fetched wasm in a shared tree, and compose
+          # the other's. It only reads what it fetched, so nothing here is worth keeping warm.
+          mkdir -p "$RUNNER_TEMP/components-target"
+          ln -sfn "$RUNNER_TEMP/components-target" components/target
       - run: rustup target add wasm32-wasip2
       - uses: taiki-e/install-action@v2
         with:
@@ -799,7 +808,10 @@ jobs:
           git clean -ffdx -e target
           mkdir -p /ci-target/root /ci-target/components
           ln -sfn /ci-target/root target
-          ln -sfn /ci-target/components components/target
+          # Its own: two PRs at once would each put their fetched wasm in a shared tree, and compose
+          # the other's. It only reads what it fetched, so nothing here is worth keeping warm.
+          mkdir -p "$RUNNER_TEMP/components-target"
+          ln -sfn "$RUNNER_TEMP/components-target" components/target
       - name: Fetch the wasm components
         uses: actions/download-artifact@v8
         with:
