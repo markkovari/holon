@@ -673,8 +673,7 @@ fn base32_decode(s: &str) -> Vec<u8> {
 ///
 /// MailHog cannot be installed on the CI runner (archived, predates modules), so the notification
 /// fan-out had no coverage. SMTP is small enough to receive directly: greet, accept the envelope,
-/// read until a lone dot, keep the message. The chain is component -> `mail:gateway-url` ->
-/// `comp-mailrelay` -> this.
+/// read until a lone dot, keep the message. The chain is component -> `mail:smtp` -> this.
 pub struct MailSink {
     port: u16,
     messages: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
@@ -780,50 +779,6 @@ impl MailSink {
             .filter(|m| m.contains(needle))
             .cloned()
             .collect()
-    }
-}
-
-/// `comp-mailrelay`, the HTTP-to-SMTP bridge the component actually posts to.
-///
-/// Returns the URL to give `mail:gateway-url`, and a guard that stops it.
-pub struct MailRelay {
-    child: Child,
-    port: u16,
-}
-
-impl Drop for MailRelay {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-impl MailRelay {
-    pub fn start(smtp: &str) -> Option<Self> {
-        let b1 = repo_root().join("target/release/holon-mailrelay");
-        let b2 = repo_root().join("target/release/comp-mailrelay");
-        let bin = if b1.exists() { b1 } else { b2 };
-        if !bin.exists() {
-            eprintln!("SKIPPED: no holon-mailrelay — cargo build --release -p holon-mailrelay");
-            return None;
-        }
-        // Ask the OS for a free port: the relay takes an address rather than binding one.
-        let port = std::net::TcpListener::bind("127.0.0.1:0").ok()?.local_addr().ok()?.port();
-        let child = Command::new(&bin)
-            .arg(format!("127.0.0.1:{port}"))
-            .arg(smtp)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-        std::thread::sleep(Duration::from_millis(200));
-        Some(Self { child, port })
-    }
-    pub fn url(&self) -> String {
-        format!("http://127.0.0.1:{}/", self.port)
-    }
-    pub fn egress(&self) -> String {
-        format!("127.0.0.1:{}", self.port)
     }
 }
 

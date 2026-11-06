@@ -1,5 +1,8 @@
-//! `mail-http` — one email, POSTed to whatever gateway config names.
+//! `mail-http` — one email, POSTed to whatever gateway config names (`mail:gateway-url`, Resend's
+//! shape), or spoken as SMTP to `mail:smtp` (a `host:port` on the app's egress, ADR-0133).
 //! The API key is a secret by reference (ADR-0051), never config.
+
+mod smtp;
 
 #[allow(warnings)]
 mod bindings;
@@ -56,6 +59,12 @@ fn message_id(body: &[u8], status: u16) -> String {
 
 impl Guest for Component {
     fn send(msg: Email) -> Result<String, SendError> {
+        if let Some(addr) = cfg("mail:smtp") {
+            let from = cfg("mail:from").ok_or_else(|| {
+                SendError::NotConfigured("no mail:from — SMTP needs a sender".into())
+            })?;
+            return smtp::send(&addr, &from, &msg.to, &msg.subject, &msg.body);
+        }
         let url = cfg("mail:gateway-url").ok_or_else(|| {
             SendError::NotConfigured("no mail:gateway-url — nothing to send through".into())
         })?;

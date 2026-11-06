@@ -213,6 +213,36 @@ impl EgressPolicy {
                 .unwrap_or(false)
     }
 
+    /// A raw TCP connect (`wasi:sockets`, ADR-0133) to `addr`: the address check, and an allow-list
+    /// entry naming it. An entry names `addr` when its port is `addr`'s and its host is
+    /// `addr`'s IP or resolves to it, so a name on the list reaches what it points at and nothing
+    /// else on its own.
+    pub async fn socket_allowed(&self, addr: SocketAddr) -> bool {
+        if !self.permits_addr(addr) {
+            return false;
+        }
+        if self.unrestricted {
+            return true;
+        }
+        // Only `host:port` forms: the bare host `expand_egress` adds beside each is HTTP's, where
+        // the port is the scheme's; a socket could reach any port with it.
+        for entry in &self.allowed {
+            let Some((host, port)) = entry.rsplit_once(':') else { continue };
+            if entry.contains("://") || port.parse::<u16>().ok() != Some(addr.port()) {
+                continue;
+            }
+            let host = host.trim_matches(['[', ']']);
+            if host.parse::<IpAddr>().is_ok_and(|ip| ip == addr.ip()) {
+                return true;
+            }
+            let resolved = tokio::net::lookup_host((host, addr.port())).await;
+            if resolved.is_ok_and(|mut it| it.any(|a| a.ip() == addr.ip())) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Addresses no tenant may reach, whatever the allow-list says.
     ///
     /// Deliberately not overridable per app: the allow-list is the tenant-facing
@@ -838,5 +868,30 @@ mod tests {
         .into_scope(&custom_limits);
 
         assert_eq!(s.request_timeout_ms, 12_500);
+    }
+}
+
+#[cfg(test)]
+mod socket_tests {
+    use super::EgressPolicy;
+
+    fn policy(allow: &[&str], private: bool) -> EgressPolicy {
+        let allow: Vec<String> = allow.iter().map(|s| s.to_string()).collect();
+        EgressPolicy::new(&allow, private, &["127.0.0.1:4222".parse().unwrap()])
+    }
+
+    #[tokio::test]
+    async fn a_socket_reaches_what_the_allow_list_names_and_nothing_else() {
+        let smtp = "127.0.0.1:1025".parse().unwrap();
+        assert!(policy(&["127.0.0.1:1025"], true).socket_allowed(smtp).await);
+        assert!(policy(&["localhost:1025"], true).socket_allowed(smtp).await, "a name, resolved");
+        assert!(!policy(&["127.0.0.1:1026"], true).socket_allowed(smtp).await, "another port");
+        assert!(!policy(&[], true).socket_allowed(smtp).await, "nothing declared");
+        assert!(
+            !policy(&["127.0.0.1:1025"], false).socket_allowed(smtp).await,
+            "private, not allowed"
+        );
+        let nats = "127.0.0.1:4222".parse().unwrap();
+        assert!(!policy(&["*"], true).socket_allowed(nats).await, "the node's own NATS");
     }
 }

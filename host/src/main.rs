@@ -1506,6 +1506,22 @@ fn content_type(p: &std::path::Path) -> &'static str {
     }
 }
 
+/// A guest's WASI: stderr, and the network as its egress allows (ADR-0133): a TCP connect only to
+/// an address the allow-list names and the address check passes; no bind, no UDP.
+fn wasi_ctx(scope: &SharedScope) -> WasiCtx {
+    let policy = scope.egress.clone();
+    let mut b = WasiCtxBuilder::new();
+    b.inherit_stderr().allow_tcp(true).allow_udp(false).allow_ip_name_lookup(true);
+    b.socket_addr_check(move |addr, used| {
+        let policy = policy.clone();
+        Box::pin(async move {
+            matches!(used, wasmtime_wasi::sockets::SocketAddrUse::TcpConnect)
+                && policy.socket_allowed(addr).await
+        })
+    });
+    b.build()
+}
+
 /// Shared by the HTTP and wRPC paths so the tenant boundary, caps and allow-list cannot diverge (ADR-0023).
 pub(crate) fn store_for(
     engine: &Engine,
@@ -1519,7 +1535,7 @@ pub(crate) fn store_for(
     let (mem_cap, slice_ms) = (scope.mem_cap, scope.slice_ms);
     let host = Host {
         table: ResourceTable::new(),
-        wasi: WasiCtxBuilder::new().inherit_stderr().build(),
+        wasi: wasi_ctx(&scope),
         http: WasiHttpCtx::new(),
         hooks: Egress { scope: scope.clone() },
         kv,
