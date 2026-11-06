@@ -40,10 +40,10 @@ struct Component;
 /// Read and write calendars and events; no mail, no drive.
 const SCOPE: &str = "https://www.googleapis.com/auth/calendar";
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
-const MAX_BODY: usize = 1024 * 1024;
+const MAX_BODY_BYTES: usize = 1024 * 1024;
 
 guestio::guest_write_all!();
-guestio::guest_read_body_text!(MAX_BODY);
+guestio::guest_read_body_text!(MAX_BODY_BYTES);
 
 fn cfg(key: &str, default: &str) -> String {
     config::get(key).ok().flatten().filter(|s| !s.is_empty()).unwrap_or_else(|| default.into())
@@ -155,7 +155,12 @@ fn fetch(
     loop {
         match stream.blocking_read(64 * 1024) {
             Ok(c) if c.is_empty() => break,
-            Ok(c) => buf.extend_from_slice(&c),
+            Ok(c) => {
+                buf.extend_from_slice(&c);
+                if buf.len() > MAX_BODY_BYTES {
+                    return Err(net(format!("Google answered more than {MAX_BODY_BYTES} bytes")));
+                }
+            }
             Err(bindings::wasi::io::streams::StreamError::Closed) => break,
             // A failed read is not the end: a truncated reply would parse into a wrong whole one.
             Err(e) => return Err(net(format!("reading: {e:?}"))),
