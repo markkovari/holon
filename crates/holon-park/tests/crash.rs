@@ -12,9 +12,9 @@
 //! Once the fuse is dead every read and write fails, like a process that is gone. The "restart"
 //! is an engine with no fuse over the same storage.
 //!
-//! The matrix runs twice: over `MemParkStore`, always, and over a real NATS JetStream KV when
-//! `HOLON_PARK_NATS_URL` is set (`--features native`), where the adapter's own read-modify-write
-//! paths — the session list, the correlation claim, the key scan — are what is crashed.
+//! The matrix runs twice: over `MemParkStore`, and over `KvParkStore`, the store `park-store`
+//! runs, where its own read-modify-write paths — the session list, the correlation claim, the key
+//! scan — are what is crashed.
 //!
 //! What must hold after any crash, once the caller has retried and a repair pass has run:
 //!
@@ -993,44 +993,17 @@ async fn crash_at_every_write_of_every_operation() {
     the_whole_matrix(Arc::new(Mem), "memory").await;
 }
 
-/// The same matrix over a real JetStream KV: what the adapter does between the fuse's writes (the
-/// session list's read-modify-CAS, the correlation claim's create-conflict, the key scan) is real.
-#[cfg(feature = "native")]
-mod live {
-    use super::*;
-    use holon_park::nats::NatsParkStore;
+/// The store `park-store` runs, over the same compare-and-set contract in memory.
+struct Kv;
 
-    struct Nats {
-        js: async_nats::jetstream::Context,
-        tag: String,
-        n: AtomicU32,
+impl Backend for Kv {
+    type Store = holon_park::kvstore::KvParkStore<holon_park::kvstore::MemKv>;
+    async fn fresh(&self) -> Self::Store {
+        holon_park::kvstore::KvParkStore(holon_park::kvstore::MemKv::new())
     }
+}
 
-    impl Backend for Nats {
-        type Store = NatsParkStore;
-        async fn fresh(&self) -> NatsParkStore {
-            let n = self.n.fetch_add(1, Ordering::SeqCst);
-            NatsParkStore::open(&self.js, &format!("holon-park-crash-{}-{n}", self.tag))
-                .await
-                .expect("a fresh bucket")
-        }
-    }
-
-    #[tokio::test]
-    async fn crash_at_every_write_of_every_operation_over_real_nats() {
-        let Ok(url) = std::env::var("HOLON_PARK_NATS_URL") else {
-            eprintln!(
-                "SKIPPED crash_at_every_write_of_every_operation_over_real_nats: set \
-                 HOLON_PARK_NATS_URL to run it against a real NATS JetStream"
-            );
-            return;
-        };
-        let js = async_nats::jetstream::new(async_nats::connect(&url).await.expect("connect"));
-        let tag = format!(
-            "{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        );
-        the_whole_matrix(Arc::new(Nats { js, tag, n: AtomicU32::new(0) }), "nats").await;
-    }
+#[tokio::test]
+async fn crash_at_every_write_of_every_operation_over_the_component_s_keyvalue() {
+    the_whole_matrix(Arc::new(Kv), "kv").await;
 }

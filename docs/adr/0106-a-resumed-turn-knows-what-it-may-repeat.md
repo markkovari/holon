@@ -196,7 +196,7 @@ holds the tickets, and there are three different ways to lose it:
 
 | NATS is lost by | what is lost | how it is known |
 |---|---|---|
-| the **process** dying (`kill -9`, OOM, a crash) | **nothing acknowledged** | measured: [`tests/restart.rs`](../../crates/holon-park/tests/restart.rs) parks, wakes, interrupts, cancels and takes thirty tickets across three sessions, SIGKILLs a real `nats-server` the moment the last write is acknowledged, restarts it on the same directory, and finds every ticket in the state it was acknowledged in, each reachable by session and by correlation, and exactly the announcements nobody had taken still queued on `PARK_WAKE`, once each |
+| the **process** dying (`kill -9`, OOM, a crash) | **nothing acknowledged** | measured: [`tests/restart.rs`](https://github.com/markkovari/holon/blob/a640b21baa424f383c7ae761a40965c9a621c88e/crates/holon-park/tests/restart.rs) parks, wakes, interrupts, cancels and takes thirty tickets across three sessions, SIGKILLs a real `nats-server` the moment the last write is acknowledged, restarts it on the same directory, and finds every ticket in the state it was acknowledged in, each reachable by session and by correlation, and exactly the announcements nobody had taken still queued on `PARK_WAKE`, once each |
 | the **host** losing power, or the OS crashing | writes acknowledged since the last `fsync`: up to `sync_interval` of them | **documented, not measured**: JetStream "does not immediately `fsync` data to disk"; the default `sync_interval` is 2 minutes and "the data will be `fsync`-ed no later than this interval" ([nats.docs #896](https://github.com/nats-io/nats.docs/pull/896/files), [`sync_interval`](https://docs.nats.io/reference/config/jetstream/sync_interval)). `sync_interval: always` makes "an explicit sync … occur on every write", which "will degrade the max throughput due to the additional I/O calls". `infra/compose.yaml` sets neither, so the default applies |
 | the **disk** | everything, if it is the only copy | read off a live server by the same test: the ticket bucket and `PARK_WAKE` are both on file storage, by default in **one copy**. `--replicas` on `comp-park` and `comp-resume` keeps more on a cluster, and with the node holding a one-copy bucket killed every ticket is out of reach until it is back: [ADR-0111](0111-park-keeps-as-many-copies-as-it-is-told.md) measures a node killed, and does not measure a disk lost and replaced |
 
@@ -265,7 +265,7 @@ the table above row by row, with time injected; the grace boundary; a pass run
 twice at one instant acting once; eight racing passes granting each of twenty
 tickets exactly once; a store that refuses writes standing in for a resumer that
 died after the sink accepted — redelivered with the same key, never lost. Against
-real JetStream ([`tests/live.rs`](../../crates/holon-park/tests/live.rs)): the
+real JetStream ([`tests/live.rs`](https://github.com/markkovari/holon/blob/a640b21baa424f383c7ae761a40965c9a621c88e/crates/holon-park/tests/live.rs)): the
 same, plus a resumer's runtime dropped mid-delivery and replaced, an answer whose
 announcement was never published found by the sweep, and a message in the
 pre-0106 format. End to end

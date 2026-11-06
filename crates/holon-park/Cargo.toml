@@ -6,17 +6,8 @@ license.workspace = true
 publish.workspace = true
 description = "A durable record of an outstanding call, instead of a thread blocked on its answer (ADR-0100)."
 
-# Two layers, one crate — the same split as `holon-vcs` and for the same
-# reason (its Cargo.toml's own comment):
-#
-#   default     the engine and the wire format, over the `ParkStore` trait. No
-#               I/O, no async runtime: compiles for wasm32-wasip2 too.
-#   native      the adapter behind that trait — JetStream KV for ticket
-#               records and the `PARK_WAKE` work-queue stream. A socket and a
-#               runtime, so native only (ADR-0095).
-[features]
-default = []
-native = ["dep:tokio", "dep:async-nats", "dep:futures"]
+# No I/O and no async runtime: the engine and the wire over the `ParkStore` trait, which
+# `components/park-store` gives the app's keyvalue (ADR-0132). Builds for wasm32-wasip2 too.
 
 [dependencies]
 serde.workspace = true
@@ -24,10 +15,6 @@ serde_json.workspace = true
 sha2.workspace = true
 hex.workspace = true
 thiserror.workspace = true
-
-tokio = { workspace = true, optional = true }
-async-nats = { workspace = true, optional = true }
-futures = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

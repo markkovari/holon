@@ -163,7 +163,7 @@ cancel cascading children-first and a resolved group still cancellable; eight ch
 at once resolving the group exactly once, twenty rounds; twelve racing for three places taking
 exactly three; delivery as one `joined` event and a child message being stale; the sweep
 announcing the group and never the child that tipped it; repair listing a child a crash left out.
-Over real JetStream ([`tests/live.rs`](../../crates/holon-park/tests/live.rs)): a fan-out
+Over real JetStream ([`tests/live.rs`](https://github.com/markkovari/holon/blob/a640b21baa424f383c7ae761a40965c9a621c88e/crates/holon-park/tests/live.rs)): a fan-out
 resolved once and delivered as one event in parking order, 24 racers for 5 places, fail-fast.
 Through the real components, daemon and resumer
 ([`reconciler/tests/e2e_park.rs`](../../reconciler/tests/park_app.rs), `bash e2e/park.sh`): a

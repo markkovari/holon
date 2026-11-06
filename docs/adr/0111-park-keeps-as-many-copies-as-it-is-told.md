@@ -4,7 +4,7 @@
 deployment's to say, and the flag that says it must not be able to say it falsely.*
 
 **Status: accepted, and built.** `--replicas` on `comp-park` and `comp-resume`;
-`connect_with_replicas` in [`crates/holon-park/src/nats.rs`](../../crates/holon-park/src/nats.rs).
+`connect_with_replicas` in [`crates/holon-park/src/nats.rs`](https://github.com/markkovari/holon/blob/a640b21baa424f383c7ae761a40965c9a621c88e/crates/holon-park/src/nats.rs).
 Closes the third row of [ADR-0106](0106-a-resumed-turn-knows-what-it-may-repeat.md)'s *What survives
 `kill -9` of NATS itself, and what does not*, which said that `comp-park` had no flag for a
 clustered deployment and that one would need it. No change to `holon:park`.
@@ -81,7 +81,7 @@ says `replicas > 1 not supported in non-clustered mode`, after naming the bucket
 
 ## What it was measured to do
 
-[`crates/holon-park/tests/cluster.rs`](../../crates/holon-park/tests/cluster.rs) starts a real
+[`crates/holon-park/tests/cluster.rs`](https://github.com/markkovari/holon/blob/a640b21baa424f383c7ae761a40965c9a621c88e/crates/holon-park/tests/cluster.rs) starts a real
 three-node JetStream cluster and kills nodes with SIGKILL while tickets are written:
 
 - Asked for three, the server has **three copies of both, on file storage**, caught up.
@@ -127,7 +127,7 @@ a resumer *started* in that window can fail to start and is left to whatever sup
 already running holds its consumer.
 
 **The flag reaches the server**, which the library test cannot see: a daemon that parsed
-`--replicas 3` and dropped it would start without a word. [`reconciler/tests/park_replicas.rs`](../../crates/holon-park/tests/cluster.rs)
+`--replicas 3` and dropped it would start without a word. [`reconciler/tests/park_replicas.rs`](https://github.com/markkovari/holon/blob/a640b21baa424f383c7ae761a40965c9a621c88e/crates/holon-park/tests/cluster.rs)
 asks one server that cannot keep three copies and requires both daemons to be refused with its
 reason, and the same daemon without the flag to start. It also covers a dead server first in the
 list, and the usage errors.

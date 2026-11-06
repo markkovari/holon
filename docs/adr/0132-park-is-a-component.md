@@ -35,6 +35,11 @@ component:
   itself. A resolution waits at most one pump plus `park-redeliver-secs` (default 1).
 - **`reconciler/daemons/park` is deleted**, with `comp-park` and `comp-resume`. Replication is the
   host's keyvalue's (`--kv nats --kv-replicas 3`, ADR-0111), not a flag of its own.
+- **Then the adapters went too.** `holon-park`'s JetStream store (`nats.rs`), `resume::run` (the
+  `PARK_WAKE` consumer) and the suites that needed a NATS for them are deleted, with the crate's
+  `native` feature. `park-store`'s store moved into the crate as `kvstore::KvParkStore` over a
+  three-call `Kv` (get, compare-and-set, keys); the component only binds it to `comp:store/cas`,
+  so the crash matrix (`tests/crash.rs`) runs over exactly what the component runs, in CI.
 
 ## Consequences
 
