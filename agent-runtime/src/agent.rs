@@ -617,6 +617,13 @@ pub const TOOLS: &[ToolDef] = &[
         sensitive: false,
     },
     ToolDef {
+        name: "skill_activate",
+        args: r#"{"skill_id": "wit:contract_first_scaffold"}"#,
+        about: "Activate a graph-native skill into execution context, validating prerequisites and generating its sub-skill plan.",
+        category: "skills",
+        sensitive: false,
+    },
+    ToolDef {
         name: "propose_pr",
         args: r#"{"branch": "feat/my-change", "title": "...", "body": "...", "base": "main", "message": "...", "changes": [{"path": "...", "content": "..."}]}"#,
         about: "Propose a Pull Request to git forge with file changes and record PR provenance in the knowledge graph. If `changes` is omitted, commits workspace modifications.",
@@ -657,6 +664,7 @@ fn required(name: &str) -> &'static [&'static str] {
         "agent_propose_spec_patch" => &["target_agent", "patch", "reason"],
         "agent_apply_spec_patch" => &["target_agent", "proposal_id"],
         "workspace_commit" | "workspace_discard" => &["branch"],
+        "skill_activate" => &["skill_id"],
         "propose_pr" => &["branch", "title"],
         "exec_sandboxed" => &["cmd"],
         "compact_context" => &["summary"],
@@ -688,6 +696,7 @@ fn primary(name: &str) -> Option<&'static str> {
         "session_result" | "session_close" => Some("session"),
         "workspace_branch" | "workspace_commit" | "workspace_discard" => Some("branch"),
         "skill_query" => Some("query"),
+        "skill_activate" => Some("skill_id"),
         "propose_pr" => Some("branch"),
         "exec_sandboxed" => Some("cmd"),
         "tools_discover" => Some("category"),
@@ -786,7 +795,7 @@ fn clip(s: &str, n: usize) -> String {
     }
 }
 
-fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
+pub fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
     let mut s = format!("You are {}. {}\n\n", spec.name, spec.description);
     s.push_str(
         "You are asleep unless something wakes you; the `Trigger:` line of the task says what \
@@ -886,6 +895,31 @@ fn system_prompt(host: &dyn Host, spec: &AgentSpec) -> String {
              tool yourself and use its answer. Never ask the person which member to use or who \
              they are.\n\n",
         );
+    }
+    if !spec.skills.is_empty() {
+        let mut skill_text = String::new();
+        let g = holon_skills::SkillGraph::default_skills();
+        for sid in &spec.skills {
+            if let Ok(plan) = g.plan(sid) {
+                let step_names: Vec<&str> = plan.steps.iter().map(|st| st.id.as_str()).collect();
+                let ifaces: Vec<&str> =
+                    plan.required_interfaces.iter().map(|i| i.as_str()).collect();
+                skill_text.push_str(&format!(
+                    "- Skill [{}]: {}\n  Intent: {}\n  Preconditions: {}\n  Postconditions: {}\n  Execution Flow: {}\n  Required WIT: {}\n\n",
+                    plan.root_skill.id,
+                    plan.root_skill.name,
+                    plan.root_skill.intent,
+                    plan.root_skill.preconditions.join(", "),
+                    plan.root_skill.postconditions.join(", "),
+                    step_names.join(" -> "),
+                    ifaces.join(", ")
+                ));
+            }
+        }
+        if !skill_text.is_empty() {
+            s.push_str("Active Graph-Native Skills:\n");
+            s.push_str(&skill_text);
+        }
     }
     let memories = host.store().recall(&spec.name, "", 5);
     if !memories.is_empty() {
@@ -2101,6 +2135,25 @@ fn exec(
             } else {
                 let all_nodes: Vec<_> = g.nodes.values().cloned().collect();
                 serde_json::to_string_pretty(&all_nodes).map_err(|e| e.to_string())
+            }
+        }
+        "skill_activate" => {
+            let g = holon_skills::SkillGraph::default_skills();
+            let skill_id = arg(args, "skill_id");
+            match g.plan(&skill_id) {
+                Ok(plan) => {
+                    let available_caps: Vec<String> =
+                        spec.capabilities.iter().map(|c| c.name.clone()).collect();
+                    let can_run = g.can_execute(&skill_id, &available_caps);
+                    let res = json!({
+                        "activated": true,
+                        "skill_id": skill_id,
+                        "plan": plan,
+                        "capabilities_satisfied": can_run,
+                    });
+                    Ok(serde_json::to_string_pretty(&res).unwrap_or_default())
+                }
+                Err(e) => Err(format!("cannot activate skill `{skill_id}`: {e}")),
             }
         }
         "propose_pr" => {

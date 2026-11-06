@@ -64,6 +64,96 @@ fn test_skill_query_tool_resolves_graph_subskills_and_wit_interfaces() {
 }
 
 #[test]
+fn test_skill_activate_wit_contract_first_scaffold() {
+    let rt = runtime("activate-wit");
+
+    let mut a = agent_with_replies(
+        "scaffolder",
+        &[
+            r#"{"tool": "skill_activate", "args": {"skill_id": "wit:contract_first_scaffold"}}"#,
+            "I have loaded the WIT contract-first scaffolding plan.",
+        ],
+    );
+    a.capabilities.push(Capability::named("skill_activate"));
+    rt.create_agent(a).unwrap();
+
+    let rec = rt
+        .run_agent("scaffolder", "http", "prepare scaffolding", &Cause::default(), "", true)
+        .unwrap();
+
+    let tool_step = rec
+        .steps
+        .iter()
+        .find_map(|s| match s {
+            Step::Tool { name, result, error, .. } if name == "skill_activate" => {
+                Some((result.clone(), *error))
+            }
+            _ => None,
+        })
+        .expect("skill_activate tool step found");
+
+    assert!(!tool_step.1);
+    assert!(tool_step.0.contains("wit:contract_first_scaffold"));
+    assert!(tool_step.0.contains("wit:draft_interface"));
+    assert!(tool_step.0.contains("bindings:generate_xtask"));
+    assert!(tool_step.0.contains("wit:reflect@0.1.0"));
+}
+
+#[test]
+fn test_skill_activate_bug_repro_and_repair() {
+    let rt = runtime("activate-bug");
+
+    let mut a = agent_with_replies(
+        "debugger",
+        &[
+            r#"{"tool": "skill_activate", "args": {"skill_id": "bug:autonomous_repro_and_repair"}}"#,
+            "I have activated the autonomous bug reproduction and gate repair plan.",
+        ],
+    );
+    a.capabilities.push(Capability::named("skill_activate"));
+    rt.create_agent(a).unwrap();
+
+    let rec =
+        rt.run_agent("debugger", "http", "fix issue #102", &Cause::default(), "", true).unwrap();
+
+    let tool_step = rec
+        .steps
+        .iter()
+        .find_map(|s| match s {
+            Step::Tool { name, result, error, .. } if name == "skill_activate" => {
+                Some((result.clone(), *error))
+            }
+            _ => None,
+        })
+        .expect("skill_activate tool step found");
+
+    assert!(!tool_step.1);
+    assert!(tool_step.0.contains("bug:autonomous_repro_and_repair"));
+    assert!(tool_step.0.contains("test:author_failing_gate"));
+    assert!(tool_step.0.contains("gate:prove_initial_failure"));
+    assert!(tool_step.0.contains("graph:fitness/evaluator"));
+}
+
+#[test]
+fn test_agent_with_configured_skills_loads_dags_into_system_prompt() {
+    let rt = runtime("spec-skills");
+
+    let mut a = agent_with_replies("lead_eng", &["I am ready with both skills loaded."]);
+    a.skills = vec![
+        "wit:contract_first_scaffold".to_string(),
+        "bug:autonomous_repro_and_repair".to_string(),
+    ];
+    let prompt = agent_runtime::agent::system_prompt(rt.as_ref(), &a);
+    assert!(prompt.contains("Active Graph-Native Skills:"));
+    assert!(prompt.contains("[wit:contract_first_scaffold]"));
+    assert!(prompt.contains("wit:draft_interface"));
+    assert!(prompt.contains("bindings:generate_xtask"));
+    assert!(prompt.contains("[bug:autonomous_repro_and_repair]"));
+    assert!(prompt.contains("test:author_failing_gate"));
+    assert!(prompt.contains("gate:verify_green"));
+}
+
+#[test]
 fn test_agent_propose_pr_records_provenance_and_returns_opened_record() {
     let rt = runtime("propose-pr");
 
