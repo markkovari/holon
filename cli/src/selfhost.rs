@@ -51,6 +51,10 @@ pub struct Spec {
     /// Native daemons (ADR-0095) the component dials over loopback; absent, it answers `unavailable`.
     #[serde(default, rename = "daemon")]
     pub daemons: Vec<Daemon>,
+
+    /// Addresses the component dials itself (`AppSpec::egress`): a service holon does not run.
+    #[serde(default)]
+    pub egress: Vec<String>,
 }
 
 pub use holon_metadata::app::{Daemon, Triggers};
@@ -170,6 +174,12 @@ pub fn check(spec: &Spec) -> Result<()> {
             bail!("config key {k:?} must be lowercase-with-dashes");
         }
     }
+    for e in &spec.egress {
+        // Interpolated into `ExecStart=` too; an authority has no use for anything else.
+        if e.is_empty() || !e.chars().all(|c| c.is_ascii_alphanumeric() || ".-:[]".contains(c)) {
+            bail!("egress {e:?} must be a host:port");
+        }
+    }
     for d in &spec.daemons {
         // Interpolated into `ExecStart=`: `%` is a systemd specifier and a newline injects a directive.
         let clean = |v: &str| !v.contains('%') && !v.contains('\n');
@@ -284,13 +294,13 @@ pub fn render_unit(spec: &Spec, layout: &Layout) -> String {
     if !spec.pooling {
         args.push_str(" --no-pool");
     }
-    // comp-host denies egress and loopback by default; the allow-list is only daemon IP literals,
-    // so `--allow-private-egress` opens nothing a name could resolve into.
-    let reachable: Vec<&str> = spec.daemons.iter().filter_map(|d| d.addr.as_deref()).collect();
-    for addr in &reachable {
+    // comp-host denies egress and loopback by default. The allow-list is the daemons' IP literals
+    // and the app's own `egress`; private egress opens only for a daemon or a private literal.
+    let daemons: Vec<&str> = spec.daemons.iter().filter_map(|d| d.addr.as_deref()).collect();
+    for addr in daemons.iter().copied().chain(spec.egress.iter().map(String::as_str)) {
         args.push_str(&format!(" --egress {addr}"));
     }
-    if !reachable.is_empty() {
+    if !daemons.is_empty() || spec.egress.iter().any(|a| holon_metadata::app::private(a)) {
         args.push_str(" --allow-private-egress");
     }
 
@@ -918,6 +928,19 @@ routes = "upstream=http://127.0.0.1:9000"
         assert!(unit.contains("--kv sqlite"), "{unit}");
         assert!(!unit.contains("--sqlite-path"), "{unit}");
         assert!(unit.contains("StateDirectory=comp/gate"), "{unit}");
+    }
+
+    #[test]
+    fn an_apps_own_egress_reaches_its_unit_and_nothing_else_does() {
+        let local = spec(&format!("{MINIMAL}egress = [\"127.0.0.1:11434\"]\n"));
+        let u = render_unit(&local, &Layout::default());
+        assert!(u.contains("--egress 127.0.0.1:11434 --allow-private-egress"), "{u}");
+        let public = spec(&format!("{MINIMAL}egress = [\"www.googleapis.com:443\"]\n"));
+        let u = render_unit(&public, &Layout::default());
+        assert!(u.contains("--egress www.googleapis.com:443") && !u.contains("private"), "{u}");
+        let bad: Spec =
+            toml::from_str(&format!("{MINIMAL}egress = [\"a:1 --egress *\"]\n")).unwrap();
+        assert!(check(&bad).unwrap_err().to_string().contains("must be a host:port"));
     }
 
     #[test]

@@ -299,7 +299,7 @@ pub fn discover_apps(root_dir: &Path) -> Vec<App> {
 }
 
 /// A loopback or private IP literal, which the host refuses without `--allow-private-egress`.
-fn private(addr: &str) -> bool {
+pub fn private(addr: &str) -> bool {
     let host = addr.rsplit_once(':').map_or(addr, |(h, _)| h).trim_matches(['[', ']']);
     match host.parse::<std::net::IpAddr>() {
         Ok(std::net::IpAddr::V4(v)) => v.is_loopback() || v.is_private() || v.is_link_local(),
