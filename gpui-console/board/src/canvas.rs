@@ -339,6 +339,7 @@ impl MapView {
             Kind::Agent => t.line,
             Kind::Lesson => t.badge(Status::Failed).1,
             Kind::Part => t.muted,
+            Kind::Skill => gpui::rgb(0x00d2ff),
         }
     }
 

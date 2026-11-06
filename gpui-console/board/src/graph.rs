@@ -11,6 +11,9 @@ pub enum Rel {
     Tried,
     Touched,
     Ran,
+    Composes,
+    Requires,
+    EquippedWith,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,21 +150,115 @@ impl Graph {
         g
     }
 
+    pub fn with_skills(
+        mut self,
+        skill_graph: &holon_skills::SkillGraph,
+        agents: &[super::agents::AgentInfo],
+    ) -> Self {
+        for (id, skill) in &skill_graph.nodes {
+            let key = format!("skill:{id}");
+            let mut proof = Vec::new();
+            for pre in &skill.preconditions {
+                proof.push(Proof::Check {
+                    id: "precondition".to_string(),
+                    passed: true,
+                    detail: pre.clone(),
+                });
+            }
+            for post in &skill.postconditions {
+                proof.push(Proof::Check {
+                    id: "postcondition".to_string(),
+                    passed: true,
+                    detail: post.clone(),
+                });
+            }
+            self.nodes.insert(
+                key.clone(),
+                Node {
+                    key: key.clone(),
+                    label: skill.name.clone(),
+                    sub: skill.intent.clone(),
+                    kind: Kind::Skill,
+                    weight: 1,
+                    proof,
+                },
+            );
+
+            if let Some(edges) = skill_graph.edges.get(id) {
+                for edge in edges {
+                    match edge {
+                        holon_skills::SkillEdge::ComposesSkill(sub) => {
+                            let to = format!("skill:{sub}");
+                            self.rels.insert((key.clone(), Rel::Composes, to));
+                        }
+                        holon_skills::SkillEdge::RequiresInterface(iface) => {
+                            let to = format!("component:{iface}");
+                            self.nodes.entry(to.clone()).or_insert_with(|| Node {
+                                key: to.clone(),
+                                label: iface.clone(),
+                                sub: "WIT capability".to_string(),
+                                kind: Kind::Part,
+                                weight: 0,
+                                proof: Vec::new(),
+                            });
+                            self.rels.insert((key.clone(), Rel::Requires, to));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            for alias in &skill.aliases {
+                let alias_key = format!("skill:{alias}");
+                self.nodes.insert(
+                    alias_key.clone(),
+                    Node {
+                        key: alias_key.clone(),
+                        label: format!("alias: {alias}"),
+                        sub: format!("routes to {id}"),
+                        kind: Kind::Skill,
+                        weight: 0,
+                        proof: Vec::new(),
+                    },
+                );
+                self.rels.insert((alias_key, Rel::Composes, key.clone()));
+            }
+        }
+
+        // Link agents to equipped skills
+        for a in agents {
+            let agent_key = format!("agent:{}", a.name);
+            for c in &a.capabilities {
+                let skill_key = format!("skill:{c}");
+                if self.nodes.contains_key(&skill_key) {
+                    self.rels.insert((agent_key.clone(), Rel::EquippedWith, skill_key));
+                }
+            }
+        }
+
+        self
+    }
+
     pub fn lanes(&self, key: &str) -> Vec<Lane> {
-        const LANES: [(Rel, bool, &str, Side); 14] = [
+        const LANES: [(Rel, bool, &str, Side); 19] = [
             (Rel::Ran, false, "run by", Side::Above),
             (Rel::Added, false, "added by", Side::Above),
             (Rel::Wrote, false, "written by", Side::Above),
             (Rel::Tried, false, "attempt of", Side::Above),
+            (Rel::EquippedWith, false, "equipped by", Side::Above),
             (Rel::Uses, true, "uses", Side::Left),
             (Rel::Carries, true, "made of", Side::Left),
+            (Rel::Composes, false, "sub-skill of", Side::Left),
             (Rel::Uses, false, "used by", Side::Right),
             (Rel::Carries, false, "part of", Side::Right),
+            (Rel::Composes, true, "composes", Side::Right),
             (Rel::Tried, true, "attempts", Side::Below),
             (Rel::Added, true, "added", Side::Below),
             (Rel::Wrote, true, "wrote", Side::Below),
             (Rel::Touched, false, "touched in", Side::Below),
             (Rel::Touched, true, "touched", Side::Below),
+            (Rel::Requires, true, "requires", Side::Below),
+            (Rel::EquippedWith, true, "equipped with", Side::Below),
             (Rel::Ran, true, "ran", Side::Below),
         ];
         LANES
@@ -334,5 +431,30 @@ mod tests {
         assert!(g.search("  ", 5).is_empty());
         let all = g.search("a", 50);
         assert_eq!((all.len(), all.iter().collect::<BTreeSet<_>>().len()), (4, 4));
+    }
+
+    #[test]
+    fn skills_are_seen_with_composed_subskills_and_required_interfaces() {
+        let g = graph();
+        let skill_graph = holon_skills::SkillGraph::default_skills();
+        let agents = [crate::agents::AgentInfo {
+            name: "scaffolder".into(),
+            capabilities: vec!["wit:contract_first_scaffold".into()],
+            ..Default::default()
+        }];
+        let g = g.with_skills(&skill_graph, &agents);
+
+        assert!(g.nodes.contains_key("skill:wit:contract_first_scaffold"));
+        assert_eq!(g.nodes["skill:wit:contract_first_scaffold"].kind, Kind::Skill);
+
+        let lanes = g.lanes("skill:wit:contract_first_scaffold");
+        let titles: Vec<&str> = lanes.iter().map(|l| l.title).collect();
+        assert!(titles.contains(&"composes"));
+        assert!(titles.contains(&"requires"));
+        assert!(titles.contains(&"equipped by"));
+
+        let composes_lane = lanes.iter().find(|l| l.title == "composes").unwrap();
+        assert!(composes_lane.keys.contains(&"skill:wit:draft_interface".to_string()));
+        assert!(composes_lane.keys.contains(&"skill:bindings:generate_xtask".to_string()));
     }
 }

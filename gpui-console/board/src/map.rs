@@ -26,6 +26,7 @@ pub enum Kind {
     Lesson,
     Session,
     Agent,
+    Skill,
 }
 
 #[derive(Clone, Debug, PartialEq)]
