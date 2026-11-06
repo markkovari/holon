@@ -125,7 +125,7 @@ tells you what is true now rather than what was once believed.
 | [0093](0093-a-lesson-is-reached-through-its-interface.md) | A lesson is reached through its interface | **accepted**, and built — the `lesson -about-> interface` edge [0091](0091-one-store-one-schema.md) drafted |
 | [0094](0094-a-capability-describes-itself-in-a-callers-words.md) | A capability describes itself in a caller's words | **accepted**, and built — the discovery third of [0089](0089-capability-accumulation.md) |
 | [0095](0095-what-is-allowed-to-be-native.md) | What is allowed to be native | **accepted** — names the rule the tree already followed, and the five things that qualified |
-| [0096](0096-a-pull-contract-needs-a-relay.md) | A pull contract needs a relay, and the relay is native | **accepted**, and built — `comp-relay`, the sixth native thing |
+| [0096](0096-a-pull-contract-needs-a-relay.md) | A pull contract needs a relay, and the relay is native | superseded by [0130](0130-the-host-is-the-clock.md): the host pumps its app itself |
 | [0097](0097-a-derived-file-is-a-liability.md) | A derived file is a liability, and a name is not a fact | **accepted**, and done — `catalog.json` deleted, `reusable_as_is` read off the exports |
 | [0098](0098-photos-live-in-object-storage.md) | Photos live in object storage, and evaluation is a queue on the machine with the GPU | **accepted** — `comp-media`, `media:pipeline`, first user `photoquest` |
 | [0099](0099-an-agent-native-code-store.md) | An agent-native code store: an oplog over a commutative, symbol-level patch graph | **served** — contract `wit/vcs/vcs.wit`; engine + NATS/SurrealDB adapters in `crates/holon-vcs` (step two); crash consistency, exact `commuted`, name reservations, positions, indexes (step three); `comp-vcs` + `vcs-store` + `vcs-gateway`, `apps/vcs.toml`, `e2e/vcs.sh` (the service) |
@@ -159,6 +159,7 @@ tells you what is true now rather than what was once believed.
 | [0127](0127-multimodal-voice-for-edge-devices.md) | Multimodal voice and speech for edge devices: zero-install speech-to-text and synthesis via Gemini for Linux edge nodes | **accepted** |
 | [0128](0128-component-catalog-pruning.md) | Capability component catalog pruning and consolidation: isolate polyglot test fixtures, prune unreferenced prototypes via `comp-capgraph` | **accepted** |
 | [0129](0129-agent-handoff-and-context-routing.md) | Agent handoff and context routing protocol: request/response message envelopes and pass-by-reference context pointers | **accepted** |
+| [0130](0130-the-host-is-the-clock.md) | The host is the clock: comp-host pumps the app it serves (`--pump`), and `comp-relay` is deleted | **accepted** — supersedes [0096](0096-a-pull-contract-needs-a-relay.md)'s relay |
 
 ## History: superseded, and kept
 

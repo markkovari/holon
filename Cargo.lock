@@ -3157,18 +3157,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "holon-relay"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "futures",
- "holon-lattice",
- "reqwest 0.12.28",
- "tokio",
-]
-
-[[package]]
 name = "holon-skills"
 version = "0.1.0"
 dependencies = [

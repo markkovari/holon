@@ -46,7 +46,6 @@ browser ────┘   (orgs, catalogue, market, secrets, deployments, revisi
 | `comp-host` | the runtime. wasmtime 45, one process per node, every tenant inside it |
 | `comp-reconciler` | the loop. A pure `plan()` diff plus command dispatch |
 | `comp-ingress` | the door. Host-header routing, least-outstanding, shedding, activation |
-| `comp-relay` | the clock. Pokes an app's pump so pull-based timers and topics fire ([0096](adr/0096-a-pull-contract-needs-a-relay.md)) |
 | `comp-stub` | a stand-in control plane for tests and benchmarks |
 | `comp-bench` | reads benchmark output; the only thing that interprets a number |
 | `comp-planscale` | times `plan()` over synthetic fleets — control-loop scaling |
@@ -81,7 +80,7 @@ different recipe, never a rewrite ([`SELFHOST.md`](SELFHOST.md)).
 
 **Triggers.** HTTP is the entrypoint for 94 component worlds. `sched:timer`,
 `event:bus` and `cron:expr` are pull-based on purpose — it is what keeps them pure
-WASI — so `comp-relay` drives them, and an app declares `[triggers]` rather than
+WASI — so the host pumps the app (`--pump`, [0130](adr/0130-the-host-is-the-clock.md)), and an app declares `[triggers]` rather than
 changing its exported WIT. Measured: a `saga-domain` trip whose leg fails sits at
 `running` forever with no relay, and reaches `compensated` in seconds with one.
 

@@ -186,8 +186,8 @@ curl -i http://rpizero2.local:8080/holon
 ### 1. Resilient Offline Webhook Buffer
 Deploy `holon-host` with `--kv sqlite`. When an edge node loses uplink connectivity, incoming HTTP webhooks are stored durably to local SQLite and drained when uplink returns.
 
-### 2. 24/7 Low-Power Pulse Relay (`holon-relay`)
-A Pi Zero 2 W draws ~1 W of wall power. Running `holon-relay` on the Pi provides a dedicated, battery-backupable timer and cron event source (`sched:timer`, `cron:expr`) driving schedules across your homelab or cloud lattice over Tailscale.
+### 2. 24/7 Low-Power Timers
+A Pi Zero 2 W draws ~1 W of wall power. `holon-host --pump` on the Pi drives an app's `sched:timer` and `cron:expr` from the host itself (ADR-0130): a dedicated, battery-backupable clock for your homelab.
 
 ### 3. Edge Leaf in a NATS Lattice (Lane 2)
 Join the Pi to your central lattice by pointing `holon-host` at your NATS server:
