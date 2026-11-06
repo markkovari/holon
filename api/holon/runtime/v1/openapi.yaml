@@ -94,7 +94,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Run" }
-        "202": { description: "Started: `{agent, status: running}`." }
+        "202": { description: "Started: `{agent, status: running, job}`; `GET /v1/jobs/{job}` follows it." }
         "400": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "423": { $ref: "#/components/responses/Problem" }
@@ -112,6 +112,22 @@ paths:
                 type: object
                 properties:
                   runs: { type: array, items: { $ref: "#/components/schemas/Run" } }
+
+  /v1/jobs/{job}:
+    parameters:
+      - { name: job, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getJob
+      summary: A run started without wait, until it ends; kept in memory, the last 1024.
+      responses:
+        "200":
+          description: The run, ended.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Run" }
+        "202": { description: "Still running: `{job, status: running}`." }
+        "404": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
 
   /v1/agents/{name}/handoff:
     parameters: [{ $ref: "#/components/parameters/Name" }]
@@ -400,6 +416,7 @@ components:
         chain: { type: array, items: { type: string } }
         project: { type: string }
         attachments: { type: array, items: { type: string } }
+        job: { type: string, description: "Set when it was started without wait: what GET /v1/jobs/{job} takes." }
 
     RuntimeEvent:
       type: object

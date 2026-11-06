@@ -27,8 +27,11 @@ service AgentRuntimeService {
   rpc SetPaused(SetPausedRequest) returns (Agent);
 
   // POST /v1/agents/{agent}/runs. With wait, returns the finished run; without it,
-  // returns at once with status RUNNING and progress arrives on StreamEvents.
+  // returns at once with status RUNNING and a job, and progress arrives on StreamEvents.
   rpc StartRun(StartRunRequest) returns (Run);
+  // GET /v1/jobs/{job}: a run started without wait. RUNNING (HTTP 202) until it ends, then the
+  // run (200), or the refusal that stopped it starting, with its status.
+  rpc GetJob(GetJobRequest) returns (Run);
   // GET /v1/agents/{agent}/runs?limit=: newest first.
   rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
   // POST /v1/agents/{agent}/handoff: invokes agent with structured request envelope
@@ -145,6 +148,12 @@ message Run {
   repeated string chain = 17;
   string project = 18;
   repeated string attachments = 19;
+  // Set when it was started without wait: what GetJob takes.
+  string job = 20;
+}
+
+message GetJobRequest {
+  string job = 1;
 }
 
 message Step {
