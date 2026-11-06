@@ -15,6 +15,7 @@ members = [
     "crates/holon-oci",
     "crates/holon-park",
     "crates/holon-plug",
+    "crates/holon-skills",
     "crates/holon-vcs",
     "host",
     "lattice",
@@ -80,6 +81,7 @@ holon-metadata = { path = "crates/holon-metadata" }
 holon-oci = { path = "crates/holon-oci" }
 holon-park = { path = "crates/holon-park", features = ["native"] }
 holon-plug = { path = "crates/holon-plug" }
+holon-skills = { path = "crates/holon-skills" }
 holon-vcs = { path = "crates/holon-vcs" }
 
 [profile.dev]

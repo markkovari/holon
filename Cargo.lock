@@ -65,6 +65,7 @@ dependencies = [
  "base64 0.22.1",
  "clap",
  "holon-llm",
+ "holon-skills",
  "protox",
  "reqwest 0.12.28",
  "serde",
@@ -3065,7 +3066,9 @@ dependencies = [
  "anyhow",
  "clap",
  "holon-fleet",
+ "holon-skills",
  "reqwest 0.12.28",
+ "serde",
  "serde_json",
  "tempfile",
  "toml 0.8.23",
@@ -3203,6 +3206,15 @@ dependencies = [
  "holon-lattice",
  "reqwest 0.12.28",
  "tokio",
+]
+
+[[package]]
+name = "holon-skills"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

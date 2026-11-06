@@ -122,9 +122,24 @@ pub enum ModelSpec {
     Fallback {
         models: Vec<ModelSpec>,
     },
+    /// Free-tier batch queue (NATS JetStream / holon-llmbatch, ADR-0126) with $0.00 spend.
+    BatchQueue {
+        #[serde(default = "default_batch_queue_url")]
+        queue_url: String,
+        #[serde(default = "default_batch_model")]
+        model: String,
+    },
     Mock {
         replies: Vec<String>,
     },
+}
+
+fn default_batch_queue_url() -> String {
+    "http://127.0.0.1:4222".into()
+}
+
+fn default_batch_model() -> String {
+    "gemini-2.5-flash-lite".into()
 }
 
 impl ModelSpec {
@@ -133,6 +148,7 @@ impl ModelSpec {
     pub fn label(&self) -> String {
         match self {
             ModelSpec::Local => "local".into(),
+            ModelSpec::BatchQueue { model, .. } => format!("batch:{model}"),
             ModelSpec::OpenAi { model, .. }
             | ModelSpec::Anthropic { model, .. }
             | ModelSpec::Gemini { model, .. } => model.clone(),
