@@ -55,9 +55,11 @@ cargo test --release -p holon-reconciler --test gate_treasury # reconciler gate/
 (`infra/ci-runner/`, Docker on OrbStack) while the repo variable `CI_RUNNER=picur` is set, and never
 for a PR from a fork. `gh variable delete CI_RUNNER` sends every job back to GitHub's runners.
 
-- The runners share one `target/` volume, so a job must never write over a binary in place. Fetch
-  into `$RUNNER_TEMP`, then copy under a temporary name and rename (see "Put the fetched artifacts in
-  place" in `ci.yml`), or a running job fails with `Text file busy`.
+- Each runner keeps its own warm `target/` on the shared volume (`/ci-target/$RUNNER_NAME/`): two
+  runners on one tree, from one checkout path, let cargo take one PR's build of a crate as fresh for
+  another's. A job that only reads fetched wasm links `components/target` into `$RUNNER_TEMP`. Still
+  never write over a binary in place: fetch into `$RUNNER_TEMP`, then copy under a temporary name
+  and rename (see "Put the fetched artifacts in place" in `ci.yml`).
 - `infra/ci-runner/install.sh install` refuses while a runner is busy; run it at most once. Killing
   a runner mid-job orphans the job, and its session blocks the new container for minutes.
 
