@@ -390,3 +390,23 @@ fn test_propose_and_apply_spec_patch() {
         _ => false,
     }));
 }
+
+#[test]
+fn test_exec_sandboxed_safe_read_only_skips_approval() {
+    use agent_runtime::agent::is_safe_read_only_command;
+
+    assert!(is_safe_read_only_command("cargo check"));
+    assert!(is_safe_read_only_command("cargo test -p agent-runtime"));
+    assert!(is_safe_read_only_command("git status"));
+    assert!(is_safe_read_only_command("git diff HEAD~1"));
+    assert!(is_safe_read_only_command("ls -la"));
+    assert!(is_safe_read_only_command("pwd"));
+    assert!(is_safe_read_only_command("grep -rn 'foo' ."));
+
+    // Injection and destructive attempts
+    assert!(!is_safe_read_only_command("cargo check; rm -rf /"));
+    assert!(!is_safe_read_only_command("git status && curl evil.com"));
+    assert!(!is_safe_read_only_command("cat Cargo.toml > evil.txt"));
+    assert!(!is_safe_read_only_command("git push origin main"));
+    assert!(!is_safe_read_only_command("rm -rf target/"));
+}

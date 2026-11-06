@@ -184,6 +184,38 @@ pub fn on_hosts(strategies: &[Strategy], hosts: &[String]) -> Vec<Strategy> {
     strategies.iter().zip(hosts).map(|(s, h)| Strategy { host: h.clone(), ..s.clone() }).collect()
 }
 
+/// Detects regressions where a check that was passing in `earlier_failures`
+/// is now failing in `current_failures`. Returns a list of regressed check alerts.
+pub fn detect_regressions(earlier_failures: &Value, current_failures: &Value) -> Vec<String> {
+    let current = current_failures.as_array();
+    let earlier = earlier_failures.as_array();
+    let (Some(curr), Some(prev)) = (current, earlier) else {
+        return Vec::new();
+    };
+
+    if prev.is_empty() || curr.is_empty() {
+        return Vec::new();
+    }
+
+    let earlier_ids: std::collections::HashSet<&str> =
+        prev.iter().filter_map(|f| f["id"].as_str().or_else(|| f.as_str())).collect();
+
+    let mut regressions = Vec::new();
+    for f in curr {
+        let id = f["id"].as_str().or_else(|| f.as_str()).unwrap_or("");
+        if !id.is_empty() && !earlier_ids.contains(id) {
+            let detail = f["detail"].as_str().unwrap_or("").lines().next().unwrap_or("").trim();
+            if detail.is_empty() {
+                regressions.push(format!("Check '{id}' was passing previously but now fails"));
+            } else {
+                regressions
+                    .push(format!("Check '{id}' was passing previously but now fails: {detail}"));
+            }
+        }
+    }
+    regressions
+}
+
 fn plan_for(base: &Value, prior: Option<&Entry>, s: &Strategy) -> Value {
     let mut plan = base.clone();
     if !s.lens.is_empty() {
@@ -212,6 +244,20 @@ fn plan_for(base: &Value, prior: Option<&Entry>, s: &Strategy) -> Value {
     plan["context"] = Value::Array(context);
     // Seeding code without the verdict hands branches broken work with no reason.
     plan["previous"] = prior.failures.clone();
+
+    // Detect regressions (flapping) between earlier attempts and the prior attempt
+    let regressions = detect_regressions(&base["previous"], &prior.failures);
+    if !regressions.is_empty() {
+        let text = plan["text"].as_str().unwrap_or_default().to_string();
+        let list = regressions.join("\n- ");
+        plan["text"] = json!(format!(
+            "{text}\n\n## Regression Warning (Flap Detected)\n\n\
+             The prior attempt regressed checks that were previously passing:\n\
+             - {list}\n\n\
+             Preserve the fixes for these checks while addressing remaining issues.\n"
+        ));
+        plan["regressions"] = json!(regressions);
+    }
     plan
 }
 
@@ -624,6 +670,36 @@ mod tests {
         let prior = entry("w", 500, json!([{ "path": "new.rs", "content": "invented" }]));
         let seeded = plan_for(&base, Some(&prior), &default_strategies(1)[0]);
         assert_eq!(seeded["context"][0]["path"], json!("new.rs"));
+    }
+
+    #[test]
+    fn regression_and_flapping_detection_injects_warnings_into_plan() {
+        let prev_failures = json!([
+            { "id": "check_auth", "detail": "token expired" },
+        ]);
+        let curr_failures = json!([
+            { "id": "check_auth", "detail": "token expired" },
+            { "id": "check_types", "detail": "mismatched types in lib.rs" },
+        ]);
+
+        let reg = detect_regressions(&prev_failures, &curr_failures);
+        assert_eq!(reg.len(), 1);
+        assert!(reg[0].contains("check_types"));
+        assert!(reg[0].contains("mismatched types"));
+
+        let base = json!({
+            "text": "implement feature",
+            "context": [],
+            "previous": prev_failures,
+        });
+        let mut prior = entry("w", 600, json!([]));
+        prior.failures = curr_failures;
+
+        let seeded = plan_for(&base, Some(&prior), &default_strategies(1)[0]);
+        assert_eq!(seeded["regressions"].as_array().unwrap().len(), 1);
+        let text = seeded["text"].as_str().unwrap();
+        assert!(text.contains("Regression Warning (Flap Detected)"));
+        assert!(text.contains("check_types"));
     }
 
     fn part(name: &str, text: &str) -> Part {

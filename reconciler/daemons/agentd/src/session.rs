@@ -504,6 +504,29 @@ impl Session {
                 .is_some_and(|r| r.task_id == task_id && r.approved.contains(tool))
     }
 
+    /// Checks whether `task_id` may call `tool` with `input` without human confirmation.
+    /// In addition to tool-level auto approvals and prior task/session approvals,
+    /// safe read-only inspection commands (cargo check/test, git status/diff, etc.)
+    /// are permitted automatically to eliminate approval fatigue.
+    pub fn runs_without_asking_with_input(
+        &self,
+        task_id: &str,
+        tool: &str,
+        input: &serde_json::Value,
+    ) -> bool {
+        if self.runs_without_asking(task_id, tool) {
+            return true;
+        }
+        if tool == "run" {
+            if let Some(cmd) = input.get("command").and_then(serde_json::Value::as_str) {
+                if crate::tools::is_command_safe_read_only(cmd) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// A person's answer to the approval of call `call_id` is decided: the log says so, and its
     /// reach is what `Machine::apply` remembers. A denial is for the call it answers, whatever
     /// reach it was sent with, and the log says `once`: nothing ever remembers a refusal.

