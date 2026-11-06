@@ -30,11 +30,18 @@ path = "src/bin/contrastserve.rs"
 name = "holon-reuse-ratio"
 path = "src/bin/reuseratio.rs"
 
+# Harness and agent effectiveness, failure taxonomy, reuse ratio, and generation yield.
+[[bin]]
+name = "holon-harness-metrics"
+path = "src/bin/harness_metrics.rs"
+
 [dependencies]
 holon-fleet.workspace = true
+holon-skills.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 reqwest.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tempfile.workspace = true
 toml.workspace = true
