@@ -1,4 +1,4 @@
-//! `comp-park` as `comp-agentd` uses it (ADR-0113): one ticket for each approval a human has
+//! The park app as `comp-agentd` uses it (ADR-0113, ADR-0132): one ticket for each approval a human has
 //! not yet given, so that the wait survives this process, woken by the human's answer.
 //!
 //! Loopback HTTP and one JSON object a call, the wire `park-store` speaks, with `holon-park`'s own
@@ -69,7 +69,7 @@ impl Park {
         }
         match serde_json::from_slice::<ErrorBody>(&bytes) {
             Ok(body) => Err(body.into_error()),
-            Err(_) => Err(ParkError::storage(format!("comp-park answered {status}"))),
+            Err(_) => Err(ParkError::storage(format!("the park app answered {status}"))),
         }
     }
 

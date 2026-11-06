@@ -116,16 +116,16 @@ struct Args {
     #[arg(long = "auto-approve-tool", value_parser = parse_tool)]
     auto_approve_tools: Vec<String>,
 
-    /// `comp-park`'s base URL (ADR-0113). With it, a task that needs a human's approval parks
-    /// instead of waiting here: it writes down where it stands, parks the approval and lets go,
-    /// and goes on when the answer is delivered, by `comp-resume` to `POST /park/deliver` on
-    /// this daemon, in this process or in the one that replaced it. A restart no longer ends a
-    /// task that was waiting on a person. Needs `comp-park` and a `comp-resume` whose
-    /// `--sink-url` is this daemon, and `--state-dir`. Unset: the wait is held here, and a
+    /// The park app's base URL (ADR-0113, ADR-0132). With it, a task that needs a human's approval
+    /// parks instead of waiting here: it writes down where it stands, parks the approval and lets
+    /// go, and goes on when the answer is delivered, by the park app's sweep to `POST /park/deliver`
+    /// on this daemon, in this process or in the one that replaced it. A restart no longer ends a
+    /// task that was waiting on a person. Needs the park app with this daemon as its
+    /// `park-sink-url`, and `--state-dir`. Unset: the wait is held here, and a
     /// restart ends the task, as it always did.
     #[arg(long, env = "PARK_URL", requires = "state_dir")]
     park_url: Option<String>,
-    /// Shared secret `comp-park` requires, sent as `Authorization: Bearer <token>`.
+    /// Sent to the park app as `Authorization: Bearer <token>`, for a proxy in front of it.
     #[arg(long, requires = "park_url")]
     park_token: Option<String>,
     /// Same, read from a file. Wins over `--park-token`.

@@ -55,7 +55,7 @@ pub struct AppSpec {
 pub struct Daemon {
     /// `comp-<name>` is the binary; `check()` makes `addr` agree with `[config]`'s `<name>-url`.
     pub name: String,
-    /// Absent makes it a worker that listens on nothing (`comp-resume`, ADR-0106): no `--addr`,
+    /// Absent makes it a worker that listens on nothing: no `--addr`,
     /// no `<name>-url`, no token, no egress from the app.
     #[serde(default)]
     pub addr: Option<String>,

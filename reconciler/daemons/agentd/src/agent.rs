@@ -3,7 +3,7 @@
 //! back, until it answers without tools or runs out of turns or budget.
 //!
 //! With a park (ADR-0113) the wait for a human is not a future held here. The loop writes down
-//! where it stands, parks the approval with `comp-park` and returns, and a loop of its own begins
+//! where it stands, parks the approval with the park app and returns, and a loop of its own begins
 //! again from that checkpoint when the answer is delivered, in this process or in the one that
 //! replaced it.
 
@@ -30,7 +30,7 @@ pub struct Ctx {
     /// Whether DeepSeek's off-peak price applies; a clock question `cost.rs`
     /// leaves to its caller.
     pub off_peak: fn() -> bool,
-    /// `comp-park`, when the wait for a human is to be parked (ADR-0113). `None`: it is a future
+    /// The park app, when the wait for a human is to be parked (ADR-0113, ADR-0132). `None`: it is a future
     /// held here, and a restart ends the task, as it always did.
     pub park: Option<Park>,
     /// `comp-vcs`, to record each `write_file` in (ADR-0121). `None`: edits are not recorded, and

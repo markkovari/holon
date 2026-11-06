@@ -38,7 +38,7 @@ pub enum Fail {
     /// A limit the caller can wait out: REST `429`, gRPC `RESOURCE_EXHAUSTED`.
     Exhausted(&'static str, String),
     /// What a delivery was for is gone, and will not come back: REST `410`, which is what tells
-    /// `comp-resume` to cancel the ticket and stop (ADR-0113).
+    /// the park app to cancel the ticket and stop (ADR-0113).
     Gone(String),
     /// Something this call needs is down and may not be soon: REST `503`, gRPC `UNAVAILABLE`.
     Unavailable(&'static str, String),
@@ -110,7 +110,7 @@ impl Daemon {
         Ok(s.view())
     }
 
-    /// Give up, in `comp-park`, on the approvals of tasks that are over. Best effort and off the
+    /// Give up, in the park app, on the approvals of tasks that are over. Best effort and off the
     /// caller's path: one that is missed is answered `410` when it is delivered, which cancels it
     /// from the other side.
     fn cancel_tickets(&self, tickets: Vec<String>) {
@@ -338,15 +338,15 @@ impl Daemon {
             Err(e) => {
                 sess.unclaim_parked_answer(call_id);
                 Err(Fail::Unavailable("park-unavailable", format!(
-                    "the answer did not reach comp-park, so nothing has happened ({e}); send it again"
+                    "the answer did not reach the park app, so nothing has happened ({e}); send it again"
                 )))
             }
         }
     }
 
-    /// What `comp-resume` hands this daemon as its sink (ADR-0113): the end of a wait a task
+    /// What the park app's sweep hands this daemon as its sink (ADR-0113): the end of a wait a task
     /// parked on. An answer is the human's decision; an interruption is nobody's, which is a
-    /// denial, as a timeout always was. Every reply is one `comp-resume` understands: `2xx` for
+    /// denial, as a timeout always was. Every reply is one the park app understands: `2xx` for
     /// "taken, now or before", `410` for "there is nobody to take it", which cancels the ticket.
     pub fn deliver(&self, d: Delivery) -> R<()> {
         let sess = {
@@ -398,7 +398,7 @@ impl Daemon {
     /// A task that was parked when this daemon started has a ticket for its approval if all went
     /// well; if the process died between writing the checkpoint and parking, or the store lost
     /// it, it has none. Parking is idempotent by correlation, so every approval found parked is
-    /// parked again, and until `comp-park` is there to take it, tried again.
+    /// parked again, and until the park app is there to take it, tried again.
     pub fn reassert_parks(&self) {
         if self.ctx.park.is_none() {
             return;

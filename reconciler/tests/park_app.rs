@@ -1,25 +1,18 @@
-//! A durable record of an outstanding call, end to end (ADR-0100): every request goes
+//! The park app end to end (ADR-0100, ADR-0132): every request goes
 //!
-//!   this test -> comp-host (park-gateway + park-store) -> comp-park -> NATS JetStream
+//!   this test -> comp-host (park-gateway + park-store, the engine in-process) -> its keyvalue
 //!
-//! over real HTTP, through the component model, against a real NATS, never the library. `bash e2e/park.sh`
-//! brings NATS up, builds what is needed, runs this file and tears it down.
+//! over real HTTP, through the component model, never the library, and the host's pump runs the
+//! recovery pass and its deliveries to a stub sink: what the park and resume daemons were.
 //!
-//! Without `PARK_E2E_NATS_URL` every test prints `SKIPPED` and returns (CI compiles with `--no-run`, since a
-//! skip that returns `ok` is a green tick for a test that did not run).
-//!
-//! Each test owns its bucket, wake stream, `comp-park` port and `comp-host`, so they run in parallel.
-//!
-//! The resumer tests (ADR-0106) add a real `comp-resume` process and a stub sink it delivers to, and
-//! kill the resumer outright mid-delivery.
+//! Needs `holon-host` built (`cargo build --release -p holon-host`); without it every test prints
+//! `SKIPPED` and returns. Each test owns its host and its sqlite file, so they run in parallel.
 
-// The gate harness the root's suites share, included rather than copied (docs/adr/0115).
-#[path = "../../../tests/gatelib/mod.rs"]
 mod gatelib;
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::process::{Child, Command};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -29,98 +22,57 @@ fn nanos() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
 }
 
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-}
-
-fn nats_url(test: &str) -> Option<String> {
-    match std::env::var("PARK_E2E_NATS_URL") {
-        Ok(u) if !u.trim().is_empty() => Some(u),
-        _ => {
-            eprintln!(
-                "SKIPPED e2e_park::{test}: set PARK_E2E_NATS_URL (bash e2e/park.sh does) — \
-                 this needs a real NATS JetStream, and it did NOT run"
-            );
-            None
-        }
-    }
-}
-
-/// A running `comp-park`, and the `park-gateway + park-store` component in front of it.
+/// The park app on its host: pumped every second, tickets in a sqlite file a restarted host
+/// finds again, a resolution untaken for two seconds delivered again, a deadline acted on at once.
 struct Stack {
     name: String,
-    park: Child,
-    logs: tempfile::TempDir,
     gate: gatelib::Gate,
-    nats: String,
-    bucket: String,
-    wake_stream: String,
-}
-
-impl Drop for Stack {
-    fn drop(&mut self) {
-        let _ = self.park.kill();
-        let _ = self.park.wait();
-    }
+    db: PathBuf,
+    _dir: Option<tempfile::TempDir>,
 }
 
 impl Stack {
-    fn up(test: &str, nats: &str) -> Option<Stack> {
-        let tag = format!("{test}-{}-{}", std::process::id(), nanos() % 1_000_000_000);
-        let port = free_port();
-        let logs = tempfile::tempdir().unwrap();
-        let log = std::fs::File::create(logs.path().join("park.log")).unwrap();
-        let bucket = format!("e2e-park-{tag}");
-        let wake_stream = format!("E2E_PARK_WAKE_{}", tag.replace(['-', '.'], "_"));
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_holon-park"));
-        cmd.args(["--addr", &format!("127.0.0.1:{port}")])
-            .args(["--nats-url", nats])
-            .args(["--bucket", &bucket])
-            .args(["--wake-stream", &wake_stream])
-            .stdout(log.try_clone().unwrap())
-            .stderr(log);
-        let mut child = cmd.spawn().expect("spawn comp-park");
-        let http =
-            reqwest::blocking::Client::builder().timeout(Duration::from_secs(60)).build().unwrap();
+    fn up(test: &str, sink: Option<&str>) -> Option<Stack> {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("park.db");
+        Self::on(test, sink, db, Some(dir))
+    }
 
-        let t0 = Instant::now();
-        loop {
-            if let Ok(r) = http.get(format!("http://127.0.0.1:{port}/health")).send() {
-                let v: Value = r.json().unwrap_or(Value::Null);
-                if v["ok"] == true {
-                    break;
-                }
-            }
-            if let Ok(Some(st)) = child.try_wait() {
-                panic!(
-                    "[{test}] comp-park exited during startup: {st}\n{}",
-                    std::fs::read_to_string(logs.path().join("park.log")).unwrap_or_default()
-                );
-            }
-            assert!(
-                t0.elapsed() < Duration::from_secs(60),
-                "[{test}] comp-park never became healthy"
-            );
-            std::thread::sleep(Duration::from_millis(50));
+    /// Another host on the same tickets: what a restart is.
+    fn on(
+        test: &str,
+        sink: Option<&str>,
+        db: PathBuf,
+        dir: Option<tempfile::TempDir>,
+    ) -> Option<Stack> {
+        let mut config =
+            vec!["park-redeliver-secs=2".to_string(), "park-deadline-grace-secs=0".to_string()];
+        let mut egress = Vec::new();
+        if let Some(url) = sink {
+            config.push(format!("park-sink-url={url}"));
+            egress.push(url.trim_start_matches("http://").split('/').next().unwrap().to_string());
         }
-
-        let url = format!("park-url=http://127.0.0.1:{port}");
-        let egress = format!("127.0.0.1:{port}");
-        let gate = gatelib::Gate::compose_and_start_with_egress(
+        let config: Vec<&str> = config.iter().map(String::as_str).collect();
+        let egress: Vec<&str> = egress.iter().map(String::as_str).collect();
+        let path = db.to_str().unwrap().to_string();
+        let extra = [
+            "--pump",
+            "/internal/pump",
+            "--pump-every",
+            "1",
+            "--kv",
+            "sqlite",
+            "--sqlite-path",
+            &path,
+        ];
+        let gate = gatelib::Gate::compose_and_start_with_host_args(
             "park",
             "park-gateway",
-            &[&url],
-            &[&egress],
+            &config,
+            &egress,
+            &extra,
         )?;
-        Some(Stack {
-            name: test.to_string(),
-            park: child,
-            logs,
-            gate,
-            nats: nats.to_string(),
-            bucket,
-            wake_stream,
-        })
+        Some(Stack { name: test.to_string(), gate, db, _dir: dir })
     }
 
     fn call(&self, func: &str, body: Value) -> (u16, Value) {
@@ -135,11 +87,6 @@ impl Stack {
         let (status, v) = self.call(func, body);
         assert_eq!(status, 200, "[{}] {func} refused: {v}", self.name);
         v
-    }
-
-    /// The park daemon's own log, for a panic message.
-    fn park_log(&self) -> String {
-        std::fs::read_to_string(self.logs.path().join("park.log")).unwrap_or_default()
     }
 }
 
@@ -163,15 +110,14 @@ fn now_ms() -> u64 {
 
 #[test]
 fn park_wake_take_ready_over_the_real_component_chain() {
-    let Some(nats) = nats_url("park_wake_take_ready_over_the_real_component_chain") else { return };
-    let Some(s) = Stack::up("park_wake_take_ready_over_the_real_component_chain", &nats) else {
+    let Some(s) = Stack::up("park_wake_take_ready_over_the_real_component_chain", None) else {
         return;
     };
 
     let session = format!("s-{}", nanos());
     let parked =
         s.ok("park", json!({ "session": session, "call": call_of("req-1"), "by": agent("a1") }));
-    assert_eq!(parked["outcome"], "parked", "{}", s.park_log());
+    assert_eq!(parked["outcome"], "parked", "{parked}");
     let ticket = parked["ticket"].as_str().unwrap().to_string();
 
     // Not ready yet: `take-ready` is `not-found`, not a 200.
@@ -204,10 +150,7 @@ fn park_wake_take_ready_over_the_real_component_chain() {
 
 #[test]
 fn reparking_and_cancelling_over_the_real_component_chain() {
-    let Some(nats) = nats_url("reparking_and_cancelling_over_the_real_component_chain") else {
-        return;
-    };
-    let Some(s) = Stack::up("reparking_and_cancelling_over_the_real_component_chain", &nats) else {
+    let Some(s) = Stack::up("reparking_and_cancelling_over_the_real_component_chain", None) else {
         return;
     };
 
@@ -244,8 +187,7 @@ fn reparking_and_cancelling_over_the_real_component_chain() {
 #[test]
 fn an_interrupted_call_is_taken_as_an_interruption_through_the_component_chain() {
     let name = "an_interrupted_call_is_taken_as_an_interruption_through_the_component_chain";
-    let Some(nats) = nats_url(name) else { return };
-    let Some(s) = Stack::up(name, &nats) else { return };
+    let Some(s) = Stack::up(name, None) else { return };
 
     let session = format!("s-{}", nanos());
     let parked = s.ok(
@@ -296,8 +238,7 @@ fn an_interrupted_call_is_taken_as_an_interruption_through_the_component_chain()
 #[test]
 fn replay_and_the_entry_fields_survive_the_component_chain() {
     let name = "replay_and_the_entry_fields_survive_the_component_chain";
-    let Some(nats) = nats_url(name) else { return };
-    let Some(s) = Stack::up(name, &nats) else { return };
+    let Some(s) = Stack::up(name, None) else { return };
 
     let session = format!("s-{}", nanos());
     let deadline = now_ms() + 3_600_000;
@@ -420,42 +361,7 @@ fn wait_for(what: &str, secs: u64, mut ok: impl FnMut() -> bool) {
     }
 }
 
-struct Resumer {
-    child: Child,
-}
-
-impl Drop for Resumer {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
 impl Stack {
-    /// A real `comp-resume` against this stack's NATS, bucket and stream.
-    fn resumer(&self, sink_url: &str) -> Resumer {
-        let log = std::fs::File::create(self.logs.path().join("resume.log")).unwrap();
-        let child = Command::new(env!("CARGO_BIN_EXE_holon-resume"))
-            .args(["--sink-url", sink_url])
-            .args(["--nats-url", &self.nats])
-            .args(["--bucket", &self.bucket])
-            .args(["--wake-stream", &self.wake_stream])
-            .args(["--consumer", "e2e-resume"])
-            .args(["--sink-timeout-secs", "2", "--ack-wait-secs", "3"])
-            .args(["--sweep-secs", "1", "--deadline-grace-secs", "0"])
-            .args(["--max-redispatches", "1", "--retry-after-secs", "1"])
-            .args(["--reannounce-after-secs", "2"])
-            .stdout(log.try_clone().unwrap())
-            .stderr(log)
-            .spawn()
-            .expect("spawn comp-resume");
-        Resumer { child }
-    }
-
-    fn resume_log(&self) -> String {
-        std::fs::read_to_string(self.logs.path().join("resume.log")).unwrap_or_default()
-    }
-
     fn status_of(&self, session: &str, ticket: &str) -> String {
         let log = self.ok("oplog", json!({ "session": session, "after": null, "limit": 100 }));
         log.as_array()
@@ -468,15 +374,13 @@ impl Stack {
 }
 
 /// The whole path, with nothing mocked but the sink: park and wake through the
-/// component chain, `comp-park` announcing on `PARK_WAKE`, a real `comp-resume`
+/// component chain, `the engine marking it for delivery, the host's pump
 /// delivering it, and the same resumer finding a call nobody answered.
 #[test]
-fn comp_resume_delivers_an_answer_and_gives_up_on_a_call_nobody_answered() {
-    let name = "comp_resume_delivers_an_answer_and_gives_up_on_a_call_nobody_answered";
-    let Some(nats) = nats_url(name) else { return };
-    let Some(s) = Stack::up(name, &nats) else { return };
+fn the_pump_delivers_an_answer_and_gives_up_on_a_call_nobody_answered() {
+    let name = "the_pump_delivers_an_answer_and_gives_up_on_a_call_nobody_answered";
     let sink = StubSink::start();
-    let _resumer = s.resumer(&sink.url());
+    let Some(s) = Stack::up(name, Some(&sink.url())) else { return };
 
     let session = format!("s-{}", nanos());
     let answered = s
@@ -515,27 +419,24 @@ fn comp_resume_delivers_an_answer_and_gives_up_on_a_call_nobody_answered() {
     assert_eq!(key, format!("{unanswered}:interrupted"));
     assert_eq!(body["event"], "interrupted", "{body}");
     assert!(body["interruption"]["reason"].as_str().unwrap().contains("not replay-safe"), "{body}");
-    assert_eq!(body["interruption"]["by"]["id"], "comp-resume");
+    assert_eq!(body["interruption"]["by"]["id"], "park-store");
 
     // Delivered means closed: both are taken, and a take now says so.
     wait_for("both tickets closed", 20, || {
         s.status_of(&session, &answered) == "resumed"
             && s.status_of(&session, &unanswered) == "resumed"
     });
-    assert_eq!(sink.seen().len(), 2, "each told once: {:?}\n{}", sink.seen(), s.resume_log());
+    assert_eq!(sink.seen().len(), 2, "each told once: {:?}", sink.seen());
 }
 
-/// The reason delivery is at least once: `comp-resume` is killed outright while
-/// its sink holds the answer, a replacement takes over, and the sink is handed
-/// the same delivery again.
+/// The reason delivery is at least once: the host is killed outright while its sink holds the
+/// answer, another host takes over the same tickets, and the sink is handed the same delivery again.
 #[test]
-fn a_comp_resume_killed_mid_delivery_is_replaced_without_losing_the_answer() {
-    let name = "a_comp_resume_killed_mid_delivery_is_replaced_without_losing_the_answer";
-    let Some(nats) = nats_url(name) else { return };
-    let Some(s) = Stack::up(name, &nats) else { return };
+fn a_host_killed_mid_delivery_is_replaced_without_losing_the_answer() {
+    let name = "a_host_killed_mid_delivery_is_replaced_without_losing_the_answer";
     let sink = StubSink::start();
     sink.set(Mode::Hang);
-    let mut first = s.resumer(&sink.url());
+    let Some(s) = Stack::up(name, Some(&sink.url())) else { return };
 
     let session = format!("s-{}", nanos());
     let ticket = s
@@ -550,13 +451,13 @@ fn a_comp_resume_killed_mid_delivery_is_replaced_without_losing_the_answer() {
     );
 
     wait_for("the sink to be holding the delivery", 40, || !sink.seen().is_empty());
-    first.child.kill().expect("kill -9 the resumer");
-    let _ = first.child.wait();
-    assert_eq!(s.status_of(&session, &ticket), "ready", "the answer must still be there");
+    // Dropping the gate is kill -9 of its host, mid-delivery.
+    let Stack { gate, db, _dir, .. } = s;
+    drop(gate);
 
     sink.set(Mode::Accept);
-    let _second = s.resumer(&sink.url());
-    // The server hands the message to the replacement once `ack-wait` (3s) runs out on the dead one.
+    let Some(s) = Stack::on(name, Some(&sink.url()), db, _dir) else { return };
+    assert_eq!(s.status_of(&session, &ticket), "ready", "the answer must still be there");
     wait_for("the replacement to deliver", 60, || sink.seen().len() >= 2);
     let seen = sink.seen();
     assert_eq!(seen[0].0, seen[1].0, "same delivery, same key: {seen:?}");
@@ -568,12 +469,10 @@ fn a_comp_resume_killed_mid_delivery_is_replaced_without_losing_the_answer() {
 #[test]
 fn an_interrupt_made_through_the_component_chain_reaches_the_resumer() {
     let name = "an_interrupt_made_through_the_component_chain_reaches_the_resumer";
-    let Some(nats) = nats_url(name) else { return };
-    let Some(s) = Stack::up(name, &nats) else { return };
     let sink = StubSink::start();
-    let _resumer = s.resumer(&sink.url());
+    let Some(s) = Stack::up(name, Some(&sink.url())) else { return };
 
-    // A restarted turn that will not wait for a call it must not repeat says so; `comp-park`
+    // A restarted turn that will not wait for a call it must not repeat says so; the engine
     // announces it, and the resumer tells the turn — the pi-durable "interrupted result".
     let session = format!("s-{}", nanos());
     let ticket = s.ok(
@@ -609,15 +508,13 @@ fn child_json(correlation: &str, parent: &str) -> Value {
 }
 
 /// A fan-out, end to end: the group and its children parked through the real components, the
-/// far side answering each child, and `comp-resume` delivering the group once — as `joined`, with
+/// far side answering each child, and the pump delivering the group once — as `joined`, with
 /// every child — and no child on its own.
 #[test]
-fn a_fan_out_is_delivered_by_comp_resume_as_one_joined_event() {
-    let name = "a_fan_out_is_delivered_by_comp_resume_as_one_joined_event";
-    let Some(nats) = nats_url(name) else { return };
-    let Some(s) = Stack::up(name, &nats) else { return };
+fn a_fan_out_is_delivered_by_the_pump_as_one_joined_event() {
+    let name = "a_fan_out_is_delivered_by_the_pump_as_one_joined_event";
     let sink = StubSink::start();
-    let _resumer = s.resumer(&sink.url());
+    let Some(s) = Stack::up(name, Some(&sink.url())) else { return };
 
     let session = format!("s-{}", nanos());
     let park =
@@ -674,15 +571,13 @@ fn a_fan_out_is_delivered_by_comp_resume_as_one_joined_event() {
 }
 
 /// A failure under fail-fast, through the real chain: the interrupt of one child resolves the
-/// group, the siblings are cancelled, and `comp-park` announced the group (not the child) for
-/// `comp-resume` to deliver.
+/// group, the siblings are cancelled, and the engine announced the group (not the child) for
+/// the pump to deliver.
 #[test]
 fn a_fail_fast_group_through_the_chain_cancels_the_siblings_and_is_delivered() {
     let name = "a_fail_fast_group_through_the_chain_cancels_the_siblings_and_is_delivered";
-    let Some(nats) = nats_url(name) else { return };
-    let Some(s) = Stack::up(name, &nats) else { return };
     let sink = StubSink::start();
-    let _resumer = s.resumer(&sink.url());
+    let Some(s) = Stack::up(name, Some(&sink.url())) else { return };
 
     let session = format!("s-{}", nanos());
     let park =
@@ -721,8 +616,7 @@ fn a_fail_fast_group_through_the_chain_cancels_the_siblings_and_is_delivered() {
 #[test]
 fn what_a_group_and_a_child_refuse_is_refused_through_the_chain() {
     let name = "what_a_group_and_a_child_refuse_is_refused_through_the_chain";
-    let Some(nats) = nats_url(name) else { return };
-    let Some(s) = Stack::up(name, &nats) else { return };
+    let Some(s) = Stack::up(name, None) else { return };
 
     let session = format!("s-{}", nanos());
     let try_park = |call: Value| {
@@ -774,14 +668,12 @@ fn wake_effect(correlation: &str) -> Value {
 
 /// A commit through the real chain: a fan-out registered as one unit, the identical commit again
 /// found done, a list with one bad effect registering nothing — and a second commit whose `wake`
-/// effects resolve the group, so `comp-park` announces it and `comp-resume` delivers it.
+/// effects resolve the group, so the pump delivers it.
 #[test]
 fn a_commit_registers_a_fan_out_whole_and_its_effects_reach_the_resumer() {
     let name = "a_commit_registers_a_fan_out_whole_and_its_effects_reach_the_resumer";
-    let Some(nats) = nats_url(name) else { return };
-    let Some(s) = Stack::up(name, &nats) else { return };
     let sink = StubSink::start();
-    let _resumer = s.resumer(&sink.url());
+    let Some(s) = Stack::up(name, Some(&sink.url())) else { return };
 
     let session = format!("s-{}", nanos());
     let commit = |effects: Value| {

@@ -56,9 +56,7 @@ Everything else that runs natively is a package of its own under `reconciler/`
 package keeps only the control plane. The **host-capability daemons** are one package each in
 `reconciler/daemons/`, `comp-fswatch` first — a watch syscall a guest has not
 ([0095](adr/0095-what-is-allowed-to-be-native.md)) — on the shared `holon-daemon-kit`. Beside
-them are the waits that outlive a process (`comp-park`, `comp-resume`:
-[0100](adr/0100-a-parked-turn-is-a-record-not-a-held-thread.md),
-[0106](adr/0106-a-resumed-turn-knows-what-it-may-repeat.md)) and the agent session daemon
+them is the agent session daemon
 (`comp-agentd`: [0102](adr/0102-an-agent-session-is-a-contract-first.md)). The rest of the tree is the
 loop's tools: `holon-goal` and its binaries, `holon-fleet` (the test harness, `comp-plug` and
 `holon-oci`), `holon-fuel` and `holon-measure`. `ARCHITECTURE.md` says what each is, system by system:

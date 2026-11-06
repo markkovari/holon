@@ -5,24 +5,17 @@ domain = "park.example.com"
 artifact = "components/target/park_gateway.composed.wasm"
 root = "park-gateway"
 port = 3943
-# All state lives in comp-park.
-kv = "memory"
+# Tickets are this app's own records, moved by compare-and-set (ADR-0132), so the store must be
+# durable; on a NATS cluster use kv = "nats" with every server in kv_url and --kv-replicas 3.
+kv = "sqlite"
+# The sink is comp-agentd's /park/deliver (ADR-0113): until it answers, deliveries are retried
+# and tickets stay `ready`.
+egress = ["127.0.0.1:8016"]
+
+# The host runs the recovery pass and hands what it resolves to the sink, every second.
+[triggers]
+pump = "/internal/pump"
+interval = 1
 
 [config]
-park-url = "http://127.0.0.1:8015"
-
-# No `token`: demo only; a real deployment sets it and the matching `park-token` in [config].
-# On a NATS cluster list every server and use `--replicas 3` (ADR-0111).
-[[daemon]]
-name = "park"
-addr = "127.0.0.1:8015"
-extra_args = ["--nats-url nats://127.0.0.1:4222"]
-
-# `comp-resume` (ADR-0106) runs park's recovery pass; a worker, so no `addr`. Same NATS and `--replicas` as comp-park.
-# The sink is comp-agentd's /park/deliver (ADR-0113); until it answers, deliveries retry and tickets stay `ready`.
-[[daemon]]
-name = "resume"
-extra_args = [
-  "--nats-url nats://127.0.0.1:4222",
-  "--sink-url http://127.0.0.1:8016/park/deliver",
-]
+park-sink-url = "http://127.0.0.1:8016/park/deliver"

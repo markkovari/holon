@@ -1,8 +1,17 @@
-//! `park-store` — `holon:park/lot` for components, each call one HTTP request to `comp-park` (ADR-0100, ADR-0095).
-//! Non-daemon failures are `storage-error`, which the contract says a caller may retry.
+//! `park-store` — `holon:park/lot` with `holon-park`'s engine in-process (ADR-0132): tickets are
+//! records in this app's keyvalue, moved by compare-and-set, and `sweep` (the host's pump) runs the
+//! recovery pass and hands what it resolves to the sink. Failures are `storage-error`, which the
+//! contract says a caller may retry.
+//!
+//! Config (wasi:config/store):
+//!   park-sink-url         where resolutions are delivered, e.g. comp-agentd's /park/deliver
+//!   park-sink-token       its bearer token, if it wants one
+//!   park-redeliver-secs   how long a resolution may sit untaken before it is delivered again, default 1
+//!   park-deadline-grace-secs  how long past its deadline a parked call sits before the pass acts, default 10
 
 #[allow(warnings)]
 mod bindings;
+mod kvstore;
 mod witconv;
 
 use bindings::exports::holon::park::lot::Guest as Lot;
@@ -11,10 +20,12 @@ use bindings::wasi::http::outgoing_handler;
 use bindings::wasi::http::types::{
     Fields, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme,
 };
-use bindings::wasi::io::streams::StreamError;
 
 use holon_park::model as m;
-use holon_park::wire;
+use holon_park::recover::RecoveryPolicy;
+use holon_park::resume::{self, Delivery, Handled, Sink, SinkReply};
+use holon_park::{serve, wire, Engine};
+use kvstore::{block_on, KvStore};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use witconv::{ToModel, ToWit};
@@ -26,18 +37,15 @@ use wit::t;
 
 struct Component;
 
-/// Five minutes, as vcs-store: a CAS retry storm in comp-park must not hang a caller forever.
-const TIMEOUT_NS: u64 = 300_000_000_000;
+/// A sink that hangs is a delivery to try again on the next sweep, not a stuck one.
+const SINK_TIMEOUT_NS: u64 = 30_000_000_000;
 
 fn storage(msg: impl Into<String>) -> t::ParkError {
     t::ParkError::StorageError(msg.into())
 }
 
-fn daemon_url() -> Result<String, t::ParkError> {
-    match config::get("park-url") {
-        Ok(Some(u)) if !u.is_empty() => Ok(u),
-        _ => Err(storage("park-url is not set — this component has no comp-park to ask")),
-    }
+fn cfg(key: &str) -> Option<String> {
+    config::get(key).ok().flatten().filter(|s| !s.is_empty())
 }
 
 fn parse_url(url: &str) -> Result<(Scheme, String, String), t::ParkError> {
@@ -46,7 +54,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), t::ParkError> {
     } else if let Some(r) = url.strip_prefix("http://") {
         (Scheme::Http, r)
     } else {
-        return Err(storage(format!("park-url must be http(s), got {url:?}")));
+        return Err(storage(format!("park-sink-url must be http(s), got {url:?}")));
     };
     let (authority, path) = match rest.find('/') {
         Some(i) => (rest[..i].to_string(), rest[i..].trim_end_matches('/').to_string()),
@@ -55,83 +63,128 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), t::ParkError> {
     Ok((scheme, authority, path))
 }
 
+/// One WIT function, by name, over the wire `comp-park` spoke, answered by the engine here.
+/// What it announces is delivered by `sweep`, not now: the sink may be the very caller (comp-agentd
+/// waking its own approval), and a delivery inside its call would be answered by itself.
 fn post(func: &str, body: &[u8]) -> Result<(u16, Vec<u8>), t::ParkError> {
-    let url = daemon_url()?;
-    let (scheme, authority, base) = parse_url(&url)?;
-    let net = |m: &str| storage(format!("comp-park at {url}: {m}"));
+    let engine = Engine::new(KvStore);
+    let a = block_on(serve::dispatch(&engine, func, body, holon_park::engine::now_ms()));
+    Ok((a.status, serde_json::to_vec(&a.body).unwrap_or_default()))
+}
 
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    if let Ok(Some(token)) = config::get("park-token") {
-        if !token.is_empty() {
-            let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
+/// `POST park-sink-url`, the delivery as JSON under its idempotency key (ADR-0106's sink).
+struct HttpSink {
+    url: String,
+}
+
+impl HttpSink {
+    fn send(&self, d: &Delivery) -> Result<u16, String> {
+        let (scheme, authority, path) = parse_url(&self.url).map_err(|e| format!("{e:?}"))?;
+        let headers = Fields::new();
+        let set = |k: &str, v: &str| {
+            let _ = headers.set(k, &[v.as_bytes().to_vec()]);
+        };
+        set("content-type", "application/json");
+        set("idempotency-key", &d.idempotency_key());
+        if let Some(token) = cfg("park-sink-token") {
+            set("authorization", &format!("Bearer {token}"));
+        }
+        let req = OutgoingRequest::new(headers);
+        req.set_method(&Method::Post).map_err(|_| "method")?;
+        req.set_scheme(Some(&scheme)).map_err(|_| "scheme")?;
+        req.set_authority(Some(&authority)).map_err(|_| "authority")?;
+        req.set_path_with_query(Some(if path.is_empty() { "/" } else { &path }))
+            .map_err(|_| "path")?;
+        let body = serde_json::to_vec(d).map_err(|e| e.to_string())?;
+        let out = req.body().map_err(|_| "body")?;
+        {
+            let stream = out.write().map_err(|_| "write")?;
+            // Chunked: `blocking-write-and-flush` traps above 4096 bytes.
+            for chunk in body.chunks(4096) {
+                stream.blocking_write_and_flush(chunk).map_err(|e| format!("{e:?}"))?;
+            }
+        }
+        OutgoingBody::finish(out, None).map_err(|_| "finish")?;
+        let opts = RequestOptions::new();
+        let _ = opts.set_connect_timeout(Some(SINK_TIMEOUT_NS));
+        let _ = opts.set_first_byte_timeout(Some(SINK_TIMEOUT_NS));
+        let fut = outgoing_handler::handle(req, Some(opts)).map_err(|e| format!("{e:?}"))?;
+        fut.subscribe().block();
+        let resp = fut
+            .get()
+            .ok_or("no response")?
+            .map_err(|_| "response taken")?
+            .map_err(|e| format!("{e:?}"))?;
+        // The status is the answer; the body is not read.
+        Ok(resp.status())
+    }
+}
+
+impl Sink for HttpSink {
+    async fn deliver(&self, d: &Delivery) -> SinkReply {
+        match self.send(d) {
+            Ok(s) if (200..300).contains(&s) => SinkReply::Delivered,
+            Ok(410) => SinkReply::Gone("the sink answered 410".into()),
+            Ok(s) => SinkReply::Retry(format!("the sink answered {s}")),
+            Err(e) => SinkReply::Retry(e),
         }
     }
-    let req = OutgoingRequest::new(headers);
-    req.set_method(&Method::Post).map_err(|_| net("set method"))?;
-    req.set_scheme(Some(&scheme)).map_err(|_| net("set scheme"))?;
-    req.set_authority(Some(&authority)).map_err(|_| net("set authority"))?;
-    req.set_path_with_query(Some(&format!("{base}{}", wire::route(func))))
-        .map_err(|_| net("set path"))?;
+}
 
-    let out = req.body().map_err(|_| net("body"))?;
-    {
-        let stream = out.write().map_err(|_| net("write"))?;
-        // Chunked: `blocking-write-and-flush` traps above 4096 bytes.
-        for chunk in body.chunks(4096) {
-            stream
-                .blocking_write_and_flush(chunk)
-                .map_err(|e| net(&format!("body write: {e:?}")))?;
+/// What the recovery pass announces is handed straight to the sink.
+struct Deliver<'a> {
+    engine: &'a Engine<KvStore>,
+    sink: &'a HttpSink,
+    delivered: std::sync::atomic::AtomicU32,
+}
+
+impl resume::Announcer for Deliver<'_> {
+    async fn announce(&self, msg: &m::WakeMessage) -> holon_park::error::Result<()> {
+        let by = resumer();
+        match resume::handle(self.engine, self.sink, msg, &by, holon_park::engine::now_ms()).await?
+        {
+            Handled::Delivered | Handled::Gone => {
+                self.delivered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            // Left as it is: the next sweep delivers it again.
+            Handled::Retry(_) | Handled::Stale => {}
         }
+        Ok(())
     }
-    OutgoingBody::finish(out, None).map_err(|_| net("finish"))?;
+}
 
-    let opts = RequestOptions::new();
-    let _ = opts.set_connect_timeout(Some(TIMEOUT_NS));
-    let _ = opts.set_first_byte_timeout(Some(TIMEOUT_NS));
-    let _ = opts.set_between_bytes_timeout(Some(TIMEOUT_NS));
+fn resumer() -> m::Agent {
+    m::Agent { id: "park-store".into(), goal: None, model: None }
+}
 
-    let fut =
-        outgoing_handler::handle(req, Some(opts)).map_err(|e| net(&format!("handle: {e:?}")))?;
-    fut.subscribe().block();
-    let resp = fut
-        .get()
-        .ok_or_else(|| net("no response"))?
-        .map_err(|_| net("response taken"))?
-        .map_err(|e| net(&format!("http: {e:?}")))?;
-    let status = resp.status();
-
-    let body = resp.consume().map_err(|_| net("consume"))?;
-    let stream = body.stream().map_err(|_| net("stream"))?;
-    let mut buf = Vec::new();
-    loop {
-        match stream.blocking_read(64 * 1024) {
-            Ok(c) if c.is_empty() => break,
-            Ok(c) => buf.extend_from_slice(&c),
-            // Any other error would be a truncated answer.
-            Err(StreamError::Closed) => break,
-            Err(e) => return Err(net(&format!("read: {e:?}"))),
-        }
+fn sweep() -> Result<u32, t::ParkError> {
+    let url = cfg("park-sink-url")
+        .ok_or_else(|| storage("park-sink-url is not set: nowhere to deliver"))?;
+    let engine = Engine::new(KvStore);
+    let sink = HttpSink { url };
+    let redeliver = cfg("park-redeliver-secs").and_then(|s| s.parse().ok()).unwrap_or(1u64);
+    let grace = cfg("park-deadline-grace-secs").and_then(|s| s.parse::<u64>().ok());
+    let mut policy = RecoveryPolicy { reannounce_after_ms: redeliver * 1000, ..Default::default() };
+    if let Some(g) = grace {
+        policy.deadline_grace_ms = g * 1000;
     }
-    Ok((status, buf))
+    let deliver = Deliver { engine: &engine, sink: &sink, delivered: Default::default() };
+    let now = holon_park::engine::now_ms();
+    block_on(resume::sweep(&engine, &deliver, &resumer(), &policy, now)).map_err(|e| e.to_wit())?;
+    Ok(deliver.delivered.into_inner())
 }
 
 fn decode<T: DeserializeOwned>(status: u16, body: &[u8]) -> Result<T, t::ParkError> {
     if status == 200 {
         return serde_json::from_slice(body).map_err(|e| {
-            storage(format!("comp-park answered 200 with a body this cannot read: {e}"))
+            storage(format!("the park engine answered a body this cannot read: {e}"))
         });
-    }
-    if status == 401 {
-        return Err(storage(
-            "comp-park refused the credentials (401): park-token must equal its --token",
-        ));
     }
     match serde_json::from_slice::<wire::ErrorBody>(body) {
         Ok(e) => Err(e.into_error().to_wit()),
         Err(_) => {
             let text = String::from_utf8_lossy(&body[..body.len().min(200)]).into_owned();
-            Err(storage(format!("comp-park answered HTTP {status}: {text}")))
+            Err(storage(format!("the park engine answered {status}: {text}")))
         }
     }
 }
@@ -201,6 +254,10 @@ impl Lot for Component {
     ) -> Result<Vec<t::TicketEntry>, t::ParkError> {
         call::<_, Vec<m::TicketEntry>>("oplog", &wire::OplogRequest { session, after, limit })
     }
+
+    fn sweep() -> Result<u32, t::ParkError> {
+        sweep()
+    }
 }
 
 bindings::export!(Component with_types_in bindings);
@@ -215,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn daemon_refusals_map_back_to_their_park_error_case() {
+    fn engine_refusals_map_back_to_their_park_error_case() {
         let got = decode::<m::ParkResult>(404, &body(&ParkError::NotFound("t1".into())));
         assert!(matches!(got, Err(t::ParkError::NotFound(s)) if s == "t1"));
         let got = decode::<m::Resolution>(409, &body(&ParkError::AlreadyClosed("t1".into())));
@@ -227,12 +284,9 @@ mod tests {
     }
 
     #[test]
-    fn what_is_not_the_daemons_json_is_a_storage_error() {
+    fn what_is_not_the_engines_json_is_a_storage_error() {
         assert!(
             matches!(decode::<String>(502, b"<html>bad gateway</html>"), Err(t::ParkError::StorageError(s)) if s.contains("502"))
-        );
-        assert!(
-            matches!(decode::<String>(401, b""), Err(t::ParkError::StorageError(s)) if s.contains("park-token"))
         );
         assert!(matches!(decode::<String>(200, b"not json"), Err(t::ParkError::StorageError(_))));
         assert_eq!(decode::<String>(200, b"\"tkt\"").ok().as_deref(), Some("tkt"));

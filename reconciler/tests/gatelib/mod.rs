@@ -203,7 +203,24 @@ impl Gate {
             no_host(app, &host);
             return None;
         }
-        Some(Self::serve_with(app, &host, &wasm, config, egress))
+        Some(Self::serve_with(app, &host, &wasm, config, egress, &[]))
+    }
+
+    /// `compose_and_start_with_egress`, and more host flags (`--pump`, ADR-0130).
+    pub fn compose_and_start_with_host_args(
+        app: &str,
+        crate_name: &str,
+        config: &[&str],
+        egress: &[&str],
+        extra: &[&str],
+    ) -> Option<Self> {
+        let wasm = compose(crate_name)?;
+        let host = host_bin();
+        if !host.exists() {
+            no_host(app, &host);
+            return None;
+        }
+        Some(Self::serve_with(app, &host, &wasm, config, egress, extra))
     }
 
     /// Compose `crate_name` here and serve it as `app`.
@@ -239,7 +256,7 @@ impl Gate {
     }
 
     fn serve(app: &str, host: &std::path::Path, wasm: &std::path::Path, config: &[&str]) -> Self {
-        Self::serve_with(app, host, wasm, config, &[])
+        Self::serve_with(app, host, wasm, config, &[], &[])
     }
 
     fn serve_with(
@@ -248,11 +265,12 @@ impl Gate {
         wasm: &std::path::Path,
         config: &[&str],
         egress: &[&str],
+        extra: &[&str],
     ) -> Self {
         // Three tries: a fresh port closes the small window between the OS naming a port and the host
         // binding it, and a third says the machine is out of ports.
         for attempt in 1..=3 {
-            match Self::serve_once(app, host, wasm, config, egress) {
+            match Self::serve_once(app, host, wasm, config, egress, extra) {
                 Ok(gate) => return gate,
                 Err(said) if said.contains("Address already in use") && attempt < 3 => {
                     eprintln!("[{app}] port taken between choosing and binding, retrying");
@@ -271,6 +289,7 @@ impl Gate {
         wasm: &std::path::Path,
         config: &[&str],
         egress: &[&str],
+        extra: &[&str],
     ) -> Result<Self, String> {
         let port = free_port();
         let addr = format!("127.0.0.1:{port}");
@@ -297,6 +316,7 @@ impl Gate {
         if !egress.is_empty() {
             args.push("--allow-private-egress".into());
         }
+        args.extend(extra.iter().map(|a| a.to_string()));
         args.extend([
             "--component".into(),
             wasm.to_string_lossy().into_owned(),

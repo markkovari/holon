@@ -1,36 +1,38 @@
-# park-store ↔ comp-park contract
+# park-store and park-gateway: the wire
 
-`park-store` (this component) exports `holon:park/lot` (`wit/park/park.wit`) and
-implements every call as ONE HTTP request to `comp-park` (native,
-`reconciler/daemons/park/`), which runs the `holon-park` engine over NATS
-JetStream. Why the split: [ADR-0100](../../docs/adr/0100-a-parked-turn-is-a-record-not-a-held-thread.md)
-and [ADR-0095](../../docs/adr/0095-what-is-allowed-to-be-native.md).
-`park-gateway` serves the same routes, with the same JSON, to agents over
-`comp-host`; this file is the wire for both. The contract is `holon:park@0.4.0`
+`park-store` (this component) exports `holon:park/lot` (`wit/park/park.wit`) and runs the
+`holon-park` engine in-process, on its app's keyvalue: a record per ticket, moved by
+`comp:store/cas` ([ADR-0132](../../docs/adr/0132-park-is-a-component.md); it was the native
+`comp-park`, [ADR-0100](../../docs/adr/0100-a-parked-turn-is-a-record-not-a-held-thread.md)).
+`park-gateway` serves every function over HTTP to agents on `comp-host`; this file is that wire.
+The contract is `holon:park@0.5.0`
 ([ADR-0106](../../docs/adr/0106-a-resumed-turn-knows-what-it-may-repeat.md) added
 `replay` and `interrupted`, [ADR-0109](../../docs/adr/0109-a-call-may-fan-out.md) added
 groups, [ADR-0110](../../docs/adr/0110-several-calls-register-together-or-not-at-all.md) added
-`commit`). Callers of 0.1.0 break in two places, marked **0.2.0** below, and callers of 0.2.0
-in one more, marked **0.3.0**: `take-ready` can now return `joined`. 0.4.0 adds a function and
-types and breaks nobody.
+`commit`, ADR-0132 added `sweep`). Callers of 0.1.0 break in two places, marked **0.2.0** below,
+and callers of 0.2.0 in one more, marked **0.3.0**: `take-ready` can now return `joined`. 0.4.0
+and 0.5.0 each add a function and break nobody.
 
-The JSON is defined once, in `crates/holon-park/src/wire.rs`, and every side —
-daemon, store component, gateway — uses that definition.
+The JSON is defined once, in `crates/holon-park/src/wire.rs`, and `holon_park::serve` answers it
+for both the component and the gateway's routes.
 
 ## Config the component reads (`wasi:config`)
 
 | key | meaning |
 |---|---|
-| `park-url` | where `comp-park` listens, e.g. `http://127.0.0.1:8015` (a base path is kept) |
-| `park-token` | bearer token; must equal the daemon's `--token` (absent or empty = no header) |
+| `park-sink-url` | where `sweep` delivers a resolution (ADR-0106's sink), e.g. comp-agentd's `/park/deliver` |
+| `park-sink-token` | its bearer token, if it wants one |
+| `park-redeliver-secs` | how long a resolution may sit untaken before it is delivered again (default 1) |
+| `park-deadline-grace-secs` | how long past its deadline a parked call sits before the pass acts (default 10) |
+
+`POST /internal/pump` on the gateway runs `sweep`; the app's `[triggers]` have the host pump it.
 
 ## Routes
 
 Every route is `POST /v1/<WIT function name>` with one JSON object, and answers
 the function's `ok` value as the JSON body with `200` (or, for `wake`, a bare
-JSON string). Every route except `GET /health` requires `Authorization: Bearer
-<token>` when the daemon has one (`comp_daemon_kit`); a wrong or
-missing one is a bare `401`.
+JSON string). The gateway has no auth of its own: it is a tailnet app, and whoever reaches it
+may park, wake or cancel any ticket.
 
 Records are the WIT's, field for field, kebab-case (`holon_park::model`): an
 `option` is the value or `null`, and an absent `option` field is `null`.
@@ -66,7 +68,7 @@ on the key rather than on `ok`:
 
 ```json
 { "answered":    { "ok": true, "body": [42], "detail": null } }
-{ "interrupted": { "reason": "…", "at": 1700000000000, "by": { "id": "comp-resume", "goal": null, "model": null } } }
+{ "interrupted": { "reason": "…", "at": 1700000000000, "by": { "id": "park-store", "goal": null, "model": null } } }
 ```
 
 `interrupted` means no answer will come **and the call may or may not have
@@ -93,7 +95,7 @@ is how a restarted turn finds the call in its own journal: a ticket id is a hash
 `deadline` is the current one, which a re-dispatch pushes out.
 
 The gateway additionally answers `GET /` and `GET /v1` with the route list and
-`GET /health` with `{ok: true}` (the component's own health, not the daemon's).
+`GET /health` with `{ok: true}` (the component's own health).
 
 ## Errors
 
@@ -116,9 +118,8 @@ client decides by `error`, never by the status alone.
 | `invalid` | string | 400 | `invalid(detail)` — most often two sessions reusing one `correlation` |
 | `bad-request` | string | 400 | `invalid("bad-request: …")` — the body was not the route's JSON |
 
-Anything else — no `park-url`, nothing listening, the daemon dying mid-request,
-a `401`, a body that is not this JSON, an `error` this side does not know — is
-`storage-error` with what happened in its text. That is the one case the
+Anything else — the keyvalue failing, a body that is not this JSON, an `error` this side does
+not know — is `storage-error` with what happened in its text. That is the one case the
 contract says to retry, and it is the right one for "the store did not
 answer".
 
@@ -144,21 +145,11 @@ answer".
 - **`expired`** is not a state anything writes; it is `pending`/`oplog`
   reading a still-`parked` ticket whose `call.deadline` has passed. A late
   `wake` against one still lands. What *does* act on an expired ticket is
-  `comp-resume`'s recovery pass, below.
+  the recovery pass `sweep` runs, below.
 - **Bodies** up to 4 MiB (`park-gateway`'s `MAX_BODY_BYTES`) — every body here
   is small JSON, never a file tree.
-- **Timeouts.** The component allows five minutes per call.
-
-## Flags
-
-| flag | default | |
-|---|---|---|
-| `--addr` | `127.0.0.1:8015` | |
-| `--token` / `--token-file` | none | bearer secret (`daemon_auth`) |
-| `--nats-url` (`PARK_NATS_URL`) | `nats://127.0.0.1:4222` | JetStream: ticket records and indexes (KV), `PARK_WAKE` (a work-queue stream) |
-| `--bucket` | `holon-park` | the KV bucket |
-| `--wake-stream` | `PARK_WAKE` | the wake-notification stream's name |
-| `--memory` | off | everything in memory, nothing durable, no `PARK_WAKE` — for trying it and for tests |
+- **Contention.** A list (a session's or a group's index) is grown by compare-and-set and
+  re-read on a lost race, up to 64 times, then `storage-error`.
 
 ## Groups (ADR-0109)
 
@@ -207,8 +198,8 @@ order listed.
   was declared with; no correlation another session owns; every `wake`, `interrupt` and `cancel`
   naming a call the list parks or one that exists, and none `wake`-ing or `interrupt`-ing a group.
 - **Then the intent is written**, as one record holding the whole list, and from there the effects
-  are all applied or all undone: by this call, and if it dies by `comp-resume`'s sweep once the
-  intent has sat for `--batch-lease-secs`.
+  are all applied or all undone: by this call, and if it dies by the next `sweep` once the
+  intent has sat for its lease (30 s).
 - **Parks first, in order**; then `wake`, `interrupt` and `cancel`, in order. A `park` is the one
   effect that can still be refused after the intent exists (another session may have taken a
   correlation in the meantime), and the one that can be undone, so if one is refused every ticket
@@ -223,22 +214,19 @@ order listed.
 - **Not isolated.** While a commit is pending a reader may see some of its tickets and not others.
   It is atomic in what lasts, not in what is seen on the way.
 - What the effects resolve is announced: a `wake`, `interrupt` or `cancel` of a child that resolves
-  its group puts the group on `PARK_WAKE`, as it would outside a commit.
+  its group marks the group for delivery, as it would outside a commit.
 
-## `PARK_WAKE`, and `comp-resume`
+## `sweep`: recovery and delivery
 
-`comp-park` announces on `PARK_WAKE` (a work-queue stream, subject
-`<stream>.ticket`) once per real transition to something a turn can take: a
-`wake` that moved a ticket to `ready`, an `interrupt` that moved one to
-`interrupted`, and a call (a `wake`, `interrupt` or `cancel` of a child) that
-resolved a group. A child is never announced on its own: its group is. A message is `{"session", "ticket", "kind"}`, `kind` being
-`"resolved"` (the default, and what a pre-0.2.0 `comp-park` sent) or
-`{"redispatch": {"attempt": n}}`. It is a nudge, not the record: if a publish
-fails the ticket has still moved, and a recovery pass announces it again.
+What a turn can take is announced once per real transition: a `wake` that moved a ticket to
+`ready`, an `interrupt` that moved one to `interrupted`, and a call (a `wake`, `interrupt` or
+`cancel` of a child) that resolved a group. A child is never announced on its own: its group is.
 
-`comp-resume` (`reconciler/daemons/park/`) is what reads it. It delivers each
-resolved ticket to a sink over HTTP, at least once, and sweeps for calls that
-never answered. Its sink contract — one `POST` of `holon_park::resume::Delivery`
-with an `Idempotency-Key`, answered `2xx`, `410` or anything else — and its flags
-are documented in that file's header and in ADR-0106.
-
+`sweep` (`POST /internal/pump` on the gateway, pumped by the host) delivers them. Each pass repairs
+what a dead caller left, finishes commits past their lease, acts on calls past their deadline
+(ADR-0106's table), and announces every resolution nobody has taken for `park-redeliver-secs`;
+each announcement is handed to the sink at once. The sink contract is ADR-0106's: one `POST` of
+`holon_park::resume::Delivery` with an `Idempotency-Key`, answered `2xx` (delivered: the ticket is
+closed), `410` (nobody is there: it is cancelled) or anything else (delivered again by a later
+pass). At least once: a host that dies mid-delivery leaves the ticket `ready`, and the next sweep,
+on any host, delivers it again under the same key.
