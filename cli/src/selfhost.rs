@@ -55,6 +55,13 @@ pub struct Spec {
     /// Addresses the component dials itself (`AppSpec::egress`): a service holon does not run.
     #[serde(default)]
     pub egress: Vec<String>,
+
+    /// `<subject>=<path>`: messages the host delivers to the app (ADR-0131), from the NATS at
+    /// `kv_url` when `kv = "nats"`, else at `nats_url`.
+    #[serde(default)]
+    pub subscribe: Vec<String>,
+    #[serde(default)]
+    pub nats_url: Option<String>,
 }
 
 pub use holon_metadata::app::{Daemon, Triggers};
@@ -178,6 +185,24 @@ pub fn check(spec: &Spec) -> Result<()> {
             || !t.pump.starts_with('/')
         {
             bail!("triggers.pump {:?} must be a path such as /internal/pump", t.pump);
+        }
+    }
+    for s in &spec.subscribe {
+        // Interpolated into `ExecStart=`; comp-host checks the shape again.
+        let ok = s.split_once('=').is_some_and(|(subject, path)| {
+            !subject.is_empty()
+                && subject.chars().all(|c| c.is_ascii_alphanumeric() || "._-*>".contains(c))
+                && path.starts_with('/')
+                && path.chars().all(|c| c.is_ascii_alphanumeric() || "/_.-".contains(c))
+        });
+        if !ok {
+            bail!("subscribe {s:?} must be <subject>=<path>, e.g. holon.llm.ask=/ask");
+        }
+    }
+    if !spec.subscribe.is_empty() && spec.kv != "nats" {
+        match &spec.nats_url {
+            Some(u) if u.chars().all(|c| c.is_ascii_alphanumeric() || ":/.,-_".contains(c)) => {}
+            _ => bail!("subscribe needs nats_url (a NATS URL), or kv = \"nats\""),
         }
     }
     for e in &spec.egress {
@@ -308,6 +333,12 @@ pub fn render_unit(spec: &Spec, layout: &Layout) -> String {
     }
     if !daemons.is_empty() || spec.egress.iter().any(|a| holon_metadata::app::private(a)) {
         args.push_str(" --allow-private-egress");
+    }
+    for s in &spec.subscribe {
+        args.push_str(&format!(" --subscribe {s}"));
+    }
+    if let (false, true, Some(u)) = (spec.subscribe.is_empty(), spec.kv != "nats", &spec.nats_url) {
+        args.push_str(&format!(" --nats-url {u}"));
     }
     // The host is the clock: it POSTs to itself on loopback, never through the public name.
     if let Some(t) = &spec.triggers {
@@ -923,6 +954,26 @@ routes = "upstream=http://127.0.0.1:9000"
         let bad: Spec =
             toml::from_str(&format!("{MINIMAL}egress = [\"a:1 --egress *\"]\n")).unwrap();
         assert!(check(&bad).unwrap_err().to_string().contains("must be a host:port"));
+    }
+
+    #[test]
+    fn subscriptions_reach_the_unit_with_their_nats_and_bad_ones_are_refused() {
+        let s = spec(&format!(
+            "{MINIMAL}subscribe = [\"holon.llm.ask=/ask\"]\nnats_url = \"nats://127.0.0.1:4222\"\n"
+        ));
+        let u = render_unit(&s, &Layout::default());
+        assert!(
+            u.contains(" --subscribe holon.llm.ask=/ask --nats-url nats://127.0.0.1:4222"),
+            "{u}"
+        );
+        let no_nats: Spec =
+            toml::from_str(&format!("{MINIMAL}subscribe = [\"a.b=/x\"]\n")).unwrap();
+        assert!(check(&no_nats).unwrap_err().to_string().contains("needs nats_url"));
+        let bad: Spec = toml::from_str(&format!(
+            "{MINIMAL}subscribe = [\"a b=/x --egress *\"]\nnats_url = \"nats://h:4222\"\n"
+        ))
+        .unwrap();
+        assert!(check(&bad).unwrap_err().to_string().contains("<subject>=<path>"));
     }
 
     #[test]

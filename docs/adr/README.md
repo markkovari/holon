@@ -160,6 +160,7 @@ tells you what is true now rather than what was once believed.
 | [0128](0128-component-catalog-pruning.md) | Capability component catalog pruning and consolidation: isolate polyglot test fixtures, prune unreferenced prototypes via `comp-capgraph` | **accepted** |
 | [0129](0129-agent-handoff-and-context-routing.md) | Agent handoff and context routing protocol: request/response message envelopes and pass-by-reference context pointers | **accepted** |
 | [0130](0130-the-host-is-the-clock.md) | The host is the clock: comp-host pumps the app it serves (`--pump`), and `comp-relay` is deleted | **accepted** — supersedes [0096](0096-a-pull-contract-needs-a-relay.md)'s relay |
+| [0131](0131-a-held-subscription-is-the-hosts.md) | A held subscription is the host's: `--subscribe <subject>=<path>` delivers NATS messages to the app as requests, a request's reply being the response | **accepted** |
 
 ## History: superseded, and kept
 
