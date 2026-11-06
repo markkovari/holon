@@ -211,6 +211,16 @@ impl Actions for Remote {
         let _ = self.call(reqwest::Method::POST, &format!("/v1/approvals/{id}"), Some(body));
     }
 
+    fn rewind(&self, session_id: &str, _cx: &mut App) -> Result<(), String> {
+        let body = json!({ "after_seq": 0 });
+        self.call(
+            reqwest::Method::POST,
+            &format!("/v1/sessions/{session_id}/rewind"),
+            Some(body),
+        )
+        .map(|_| ())
+    }
+
     fn agents(&self, cx: &App) -> Vec<AgentChoice> {
         let mut v: Vec<AgentChoice> = self
             .roster(cx)

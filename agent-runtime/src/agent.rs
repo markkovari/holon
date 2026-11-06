@@ -692,6 +692,91 @@ pub fn is_safe_read_only_command(cmd: &str) -> bool {
     false
 }
 
+/// Locates `target` in `content`, using exact matching first and gracefully falling back to
+/// whitespace/indentation-normalized line matching to eliminate common model editing failures.
+pub fn locate_target(content: &str, target: &str) -> Result<(usize, usize), String> {
+    if target.is_empty() {
+        return Err("target string cannot be empty".into());
+    }
+
+    // 1. Fast path: exact match
+    let exact_matches: Vec<_> = content.match_indices(target).collect();
+    if exact_matches.len() == 1 {
+        let (start, _) = exact_matches[0];
+        return Ok((start, start + target.len()));
+    }
+    if exact_matches.len() > 1 {
+        return Err(format!(
+            "target string appears {} times; target must be unique (include surrounding lines for context)",
+            exact_matches.len()
+        ));
+    }
+
+    // 2. Trailing whitespace normalized line matching
+    let target_lines: Vec<&str> = target.lines().map(str::trim_end).collect();
+    if target_lines.is_empty() {
+        return Err("target string not found".into());
+    }
+
+    let mut line_spans: Vec<(usize, usize, &str)> = Vec::new();
+    let mut offset = 0;
+    for line in content.split('\n') {
+        let end = offset + line.len();
+        line_spans.push((offset, end, line.trim_end()));
+        offset = end + 1;
+    }
+
+    let mut matches = Vec::new();
+    let n = target_lines.len();
+    if line_spans.len() >= n {
+        for i in 0..=(line_spans.len() - n) {
+            let window_matches = (0..n).all(|j| line_spans[i + j].2 == target_lines[j]);
+            if window_matches {
+                let start_byte = line_spans[i].0;
+                let end_byte = line_spans[i + n - 1].1;
+                matches.push((start_byte, end_byte));
+            }
+        }
+    }
+
+    if matches.len() == 1 {
+        return Ok(matches[0]);
+    }
+    if matches.len() > 1 {
+        return Err(format!(
+            "target string appears {} times with whitespace normalization; must be unique",
+            matches.len()
+        ));
+    }
+
+    // 3. Trimmed (indentation-tolerant) matching
+    let target_trimmed: Vec<&str> =
+        target.lines().map(str::trim).filter(|s| !s.is_empty()).collect();
+    if !target_trimmed.is_empty() && line_spans.len() >= target_trimmed.len() {
+        let mut trimmed_matches = Vec::new();
+        let m = target_trimmed.len();
+        for i in 0..=(line_spans.len() - m) {
+            let window_matches = (0..m).all(|j| line_spans[i + j].2.trim() == target_trimmed[j]);
+            if window_matches {
+                let start_byte = line_spans[i].0;
+                let end_byte = line_spans[i + m - 1].1;
+                trimmed_matches.push((start_byte, end_byte));
+            }
+        }
+        if trimmed_matches.len() == 1 {
+            return Ok(trimmed_matches[0]);
+        }
+        if trimmed_matches.len() > 1 {
+            return Err(format!(
+                "target string appears {} times with indentation normalization; must be unique",
+                trimmed_matches.len()
+            ));
+        }
+    }
+
+    Err("target string not found".into())
+}
+
 fn tool_def(name: &str) -> Option<&'static ToolDef> {
     TOOLS.iter().find(|t| t.name == name)
 }
@@ -2119,18 +2204,14 @@ fn exec(
             let root = resolve_workspace_dir(store, &spec.name, args)?;
             let p = confine(&root, &arg(args, "path"))?;
             let target = arg(args, "target");
-            if target.is_empty() {
-                return Err("target string cannot be empty".into());
-            }
+            let replacement = arg(args, "replacement");
             let content = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
-            let count = content.matches(&target).count();
-            if count == 0 {
-                return Err("target string not found".into());
-            }
-            if count > 1 {
-                return Err(format!("target string appears {count} times; must be unique in file"));
-            }
-            let new_content = content.replacen(&target, &arg(args, "replacement"), 1);
+            let (start, end) = locate_target(&content, &target)?;
+            let mut new_content =
+                String::with_capacity(content.len() - (end - start) + replacement.len());
+            new_content.push_str(&content[..start]);
+            new_content.push_str(&replacement);
+            new_content.push_str(&content[end..]);
             std::fs::write(&p, &new_content).map_err(|e| e.to_string())?;
             Ok("replaced 1 occurrence".into())
         }

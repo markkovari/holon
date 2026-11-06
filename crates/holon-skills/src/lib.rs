@@ -692,6 +692,35 @@ impl SkillGraph {
         );
 
         // ---------------------------------------------------------------------------------
+        // Skill 4: Spec-to-Gate Auto-Synthesizer (testing:spec_to_gate_synthesizer)
+        // ---------------------------------------------------------------------------------
+        g.insert_node(SkillNode {
+            id: "testing:spec_to_gate_synthesizer".to_string(),
+            name: "Spec-to-Gate Auto-Synthesizer".to_string(),
+            intent: "Synthesize deterministic Rust gate tests from fuzzy human specifications and verify initial baseline failure before starting attempt loops".to_string(),
+            preconditions: vec!["spec:requirement_described".to_string()],
+            postconditions: vec!["test:pre_failure_proven".to_string(), "gate:locked_for_goal".to_string()],
+            tags: vec!["testing".to_string(), "gate".to_string(), "scaffold".to_string(), "reconciler".to_string()],
+            aliases: vec!["testing:auto_gate".to_string(), "goal:synthesize_gate".to_string()],
+        });
+        let _ = g.add_edge(
+            "testing:spec_to_gate_synthesizer",
+            SkillEdge::RequiresInterface("test:gate_runner@0.1.0".to_string()),
+        );
+        let _ = g.add_edge(
+            "testing:spec_to_gate_synthesizer",
+            SkillEdge::RequiresInterface("rust:cargo".to_string()),
+        );
+        let _ = g.add_edge(
+            "testing:spec_to_gate_synthesizer",
+            SkillEdge::ComposesSkill("test:author_failing_gate".to_string()),
+        );
+        let _ = g.add_edge(
+            "testing:spec_to_gate_synthesizer",
+            SkillEdge::ComposesSkill("gate:prove_initial_failure".to_string()),
+        );
+
+        // ---------------------------------------------------------------------------------
         // Skill 3: Autonomous Skill Registry Hygiene & Deduplication (skill:curate_registry)
         // ---------------------------------------------------------------------------------
         g.insert_node(SkillNode {
@@ -928,5 +957,20 @@ carries = ["comp-deploy"]
 
         let alias_node = g.get_node("legacy:deploy_comp").unwrap();
         assert_eq!(alias_node.id, "custom:deploy");
+    }
+
+    #[test]
+    fn spec_to_gate_synthesizer_plans_authoring_and_proving_steps() {
+        let g = SkillGraph::default_skills();
+        let plan = g.plan("testing:spec_to_gate_synthesizer").unwrap();
+        let step_ids: Vec<&str> = plan.steps.iter().map(|s| s.id.as_str()).collect();
+        assert!(step_ids.contains(&"test:author_failing_gate"));
+        assert!(step_ids.contains(&"gate:prove_initial_failure"));
+        assert!(plan.required_interfaces.contains("rust:cargo"));
+        assert!(plan.required_interfaces.contains("test:gate_runner@0.1.0"));
+
+        // Alias resolution
+        let alias_plan = g.plan("testing:auto_gate").unwrap();
+        assert_eq!(alias_plan.root_skill.id, "testing:spec_to_gate_synthesizer");
     }
 }

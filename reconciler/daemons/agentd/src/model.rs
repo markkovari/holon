@@ -44,6 +44,40 @@ with a short summary and no tool calls.";
 
 const MAX_TOKENS: u32 = 8192;
 
+/// Extracts lines marked with `[PINNED]` or under `## Pinned Constraints` to anchor invariant instructions.
+pub fn extract_pinned_constraints(text: &str) -> Option<String> {
+    let mut pinned_lines = Vec::new();
+    let mut in_pinned_block = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("[PINNED]") || trimmed.starts_with("[pinned]") {
+            if let Some(content) =
+                trimmed.strip_prefix("[PINNED]").or_else(|| trimmed.strip_prefix("[pinned]"))
+            {
+                let s = content.trim();
+                if !s.is_empty() {
+                    pinned_lines.push(s.to_string());
+                }
+            }
+        } else if trimmed.eq_ignore_ascii_case("## Pinned Constraints")
+            || trimmed.eq_ignore_ascii_case("## Invariants")
+        {
+            in_pinned_block = true;
+        } else if in_pinned_block {
+            if trimmed.starts_with('#') {
+                in_pinned_block = false;
+            } else if !trimmed.is_empty() {
+                pinned_lines.push(trimmed.to_string());
+            }
+        }
+    }
+    if pinned_lines.is_empty() {
+        None
+    } else {
+        Some(pinned_lines.join("\n"))
+    }
+}
+
 impl Provider {
     pub async fn turn(
         &self,
@@ -52,6 +86,14 @@ impl Provider {
         msgs: &[Msg],
         on_text: &mut (dyn FnMut(&str) + Send),
     ) -> Result<Turn> {
+        let pinned = msgs.iter().find_map(|m| match m {
+            Msg::User(u) => extract_pinned_constraints(u),
+            _ => None,
+        });
+        let pinned_system =
+            pinned.map(|p| format!("{SYSTEM}\n\n## Pinned Constraints (Strict & Invariant)\n{p}"));
+        let sys_ref = pinned_system.as_deref().or(Some(SYSTEM));
+
         match self {
             Provider::Mock => Ok(mock(msgs, on_text)),
             Provider::Anthropic { base, key } => {
@@ -59,7 +101,7 @@ impl Provider {
                     .post(format!("{}/v1/messages", base.trim_end_matches('/')))
                     .header("x-api-key", key)
                     .header("anthropic-version", anthropic::VERSION)
-                    .json(&anthropic::body(&request(model, &messages(msgs), &tools())));
+                    .json(&anthropic::body(&request(model, &messages(msgs), &tools(), sys_ref)));
                 let mut acc = anthropic::Stream::new();
                 stream(req, |data| Ok(acc.feed(data, on_text)?)).await?;
                 Ok(turn_of(acc.finish()))
@@ -67,7 +109,7 @@ impl Provider {
             Provider::OpenAi { base, key } => {
                 let mut req = http
                     .post(format!("{}/chat/completions", base.trim_end_matches('/')))
-                    .json(&openai::body(&request(model, &messages(msgs), &tools())));
+                    .json(&openai::body(&request(model, &messages(msgs), &tools(), sys_ref)));
                 if !key.is_empty() {
                     req = req.bearer_auth(key);
                 }
@@ -84,7 +126,7 @@ impl Provider {
                 let url = format!("{base}/models/{model}:generateContent?key={key}");
                 let ms = messages(msgs);
                 let ts = tools();
-                let mut req_payload = request(model, &ms, &ts);
+                let mut req_payload = request(model, &ms, &ts, sys_ref);
                 req_payload.stream = false;
                 let resp = http
                     .post(url)
@@ -134,9 +176,14 @@ async fn stream(
 }
 
 /// The request both dialects are written from: the system prompt, this session's tools and a stream.
-fn request<'a>(model: &'a str, messages: &'a [Message], tools: &'a [Tool]) -> Request<'a> {
+fn request<'a>(
+    model: &'a str,
+    messages: &'a [Message],
+    tools: &'a [Tool],
+    system: Option<&'a str>,
+) -> Request<'a> {
     Request {
-        system: Some(SYSTEM),
+        system: system.or(Some(SYSTEM)),
         tools,
         max_tokens: Some(MAX_TOKENS),
         stream: true,
@@ -242,7 +289,7 @@ mod tests {
     fn both_dialects_are_written_from_the_same_request() {
         let m = messages(&[Msg::User("hi".into())]);
         let tools = tools();
-        let r = request("m", &m, &tools);
+        let r = request("m", &m, &tools, None);
         let a = anthropic::body(&r);
         let o = openai::body(&r);
         assert_eq!(
@@ -253,5 +300,22 @@ mod tests {
         assert_eq!((o["stream"].as_bool(), o["max_tokens"].as_u64()), (Some(true), Some(8192)));
         assert_eq!(a["tools"].as_array().map(Vec::len), o["tools"].as_array().map(Vec::len));
         assert!(!tools.is_empty());
+    }
+
+    #[test]
+    fn pinned_constraints_are_extracted_and_anchored_in_system_prompt() {
+        let prompt = "Fix the login bug\n[PINNED] Never modify public WIT contracts\n[PINNED] No unwrap in lib.rs";
+        let pinned = extract_pinned_constraints(prompt).unwrap();
+        assert!(pinned.contains("Never modify public WIT contracts"));
+        assert!(pinned.contains("No unwrap in lib.rs"));
+
+        let m = messages(&[Msg::User(prompt.into())]);
+        let tools = tools();
+        let sys = format!("{SYSTEM}\n\n## Pinned Constraints\n{pinned}");
+        let r = request("m", &m, &tools, Some(&sys));
+        let o = openai::body(&r);
+        let sys_content = o["messages"][0]["content"].as_str().unwrap();
+        assert!(sys_content.contains("Pinned Constraints"));
+        assert!(sys_content.contains("Never modify public WIT contracts"));
     }
 }
