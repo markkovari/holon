@@ -436,13 +436,38 @@ mod native {
             tour: a.tour,
             tour_skills: a.tour_skills,
             matrix: a.matrix.clone(),
-            runtime: a.runtime.clone().map(|url| {
-                let home = std::env::var("HOME").unwrap_or_default();
-                let f = a.runtime_token_file.replacen('~', &home, 1);
-                let token = std::fs::read_to_string(&f)
-                    .unwrap_or_else(|e| panic!("the runtime's admin token, {f}: {e}"));
-                (url, token.trim().to_string())
-            }),
+            runtime: a
+                .runtime
+                .clone()
+                .or_else(|| {
+                    if a.shoot.is_none()
+                        && a.gif.is_none()
+                        && !a.tour
+                        && !a.tour_skills
+                        && a.auto.is_none()
+                    {
+                        let home = std::env::var("HOME").unwrap_or_default();
+                        let f = a.runtime_token_file.replacen('~', &home, 1);
+                        if std::path::Path::new(&f).exists() {
+                            let probe = reqwest::blocking::Client::builder()
+                                .timeout(Duration::from_millis(150))
+                                .build()
+                                .ok()
+                                .and_then(|c| c.get("http://127.0.0.1:18017/status").send().ok());
+                            if probe.is_some() {
+                                return Some("http://127.0.0.1:18017".into());
+                            }
+                        }
+                    }
+                    None
+                })
+                .map(|url| {
+                    let home = std::env::var("HOME").unwrap_or_default();
+                    let f = a.runtime_token_file.replacen('~', &home, 1);
+                    let token = std::fs::read_to_string(&f)
+                        .unwrap_or_else(|e| panic!("the runtime's admin token, {f}: {e}"));
+                    (url, token.trim().to_string())
+                }),
         };
         let photographing = a.shoot.is_some() || a.gif.is_some();
         run(
