@@ -427,6 +427,10 @@ subprocess, and a `wasm32-wasip2` component has none of those. What each one
 gives is the interface a host-side implementation has to satisfy, which is the
 same shape as `wasi:keyvalue` — a contract the host answers (ADR-0095).
 
+Two turned out not to need one: `llm-local` calls Ollama over `wasi:http`, and `image-optimizer`
+decodes in the component, so their daemons are gone. Google Calendar (ADR-0125) is a component
+too, `gcal`: an agent tool over `holon:tool/tool`, with its OAuth sign-in on its own HTTP routes.
+
 Each now has a native daemon behind it in `reconciler/daemons/` (`comp-fswatch`,
 `comp-browser`, `comp-docker`, `comp-clipboard`, `comp-imageopt`, `comp-lanscan`,
 `comp-llmlocal`, `comp-mdns`, `comp-cron`, `comp-uinotify`, `comp-ffmpeg`,
@@ -466,9 +470,9 @@ wrapper. The rest ship as a differently-named product:
 | `container-docker` | `holon-docker` | `docker-manager-domain` | `docker-manager` |
 | `desktop-clipboard` | `holon-clipboard` | `clipboard-sync-domain` | `clipboard-sync` |
 | `fs-watcher` | `comp-fswatch` | `fs-watcher-domain` | `fs-watcher` |
-| `image-optimizer` | `holon-imageopt` | `image-optimizer-domain` | `image-optimizer` |
+| `image-optimizer` | none: the codec runs in the component (`media:image@0.3.0`, bytes in and out) | `image-optimizer-domain` | `image-optimizer` |
 | `lan-scanner` | `holon-lanscan` | `lan-scanner-domain` | `lan-scanner` |
-| `llm-local` | `holon-llmlocal` | `local-ai-domain` | `local-ai` |
+| `llm-local` | none: the component dials Ollama itself (the app's `egress`) | `local-ai-domain` | `local-ai` |
 | `mdns-discovery` | `holon-mdns` | `mdns-discoverer-domain` | `mdns-discoverer` |
 | `system-cron` | `holon-cron` | `cron-scheduler-domain` | `cron-scheduler` |
 | `ui-notifier` | `holon-uinotify` | `desktop-notifier-domain` | `desktop-notifier` |

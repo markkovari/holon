@@ -93,7 +93,7 @@ pub fn tool_icon(tool: &str) -> &'static str {
         "spawn_task" | "task_result" | "list_agents" => "git-fork",
         "speak" => "volume-2",
         "session_start" | "session_result" | "session_close" => "code-xml",
-        t if t.starts_with("gcal_") => "calendar",
+        t if t.starts_with("gcal") => "calendar",
         t if t.starts_with("food_") => "utensils",
         t if t.starts_with("agent") => "bot",
         t if t.starts_with("session") => "code-xml",

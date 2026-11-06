@@ -32,6 +32,10 @@ pub struct AppSpec {
     /// The ADR-0095 native daemons this app's component dials over loopback.
     #[serde(default, rename = "daemon")]
     pub daemons: Vec<Daemon>,
+    /// Addresses (`host:port`) a component dials itself, beyond its daemons: a service such as Ollama
+    /// that holon does not run. Each joins the host's egress allow-list.
+    #[serde(default)]
+    pub egress: Vec<String>,
     /// The app's `wasi:config` — the same table `holon node render` writes to
     /// the `--config-file` its unit loads. Includes each daemon's
     /// `<name>-url`/`<name>-token` (`holon`'s `check()` enforces that).
@@ -129,11 +133,13 @@ impl AppSpec {
             args.push("--config".to_string());
             args.push(format!("{k}={v}"));
         }
-        for addr in self.daemons.iter().filter_map(|d| d.addr.as_ref()) {
+        let egress: Vec<&String> =
+            self.daemons.iter().filter_map(|d| d.addr.as_ref()).chain(&self.egress).collect();
+        for addr in &egress {
             args.push("--egress".to_string());
-            args.push(addr.clone());
+            args.push(addr.to_string());
         }
-        if self.daemons.iter().any(|d| d.addr.is_some()) {
+        if self.daemons.iter().any(|d| d.addr.is_some()) || self.egress.iter().any(|a| private(a)) {
             args.push("--allow-private-egress".to_string());
         }
         args
@@ -292,6 +298,16 @@ pub fn discover_apps(root_dir: &Path) -> Vec<App> {
     out
 }
 
+/// A loopback or private IP literal, which the host refuses without `--allow-private-egress`.
+pub fn private(addr: &str) -> bool {
+    let host = addr.rsplit_once(':').map_or(addr, |(h, _)| h).trim_matches(['[', ']']);
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(v)) => v.is_loopback() || v.is_private() || v.is_link_local(),
+        Ok(std::net::IpAddr::V6(v)) => v.is_loopback(),
+        Err(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,15 +320,15 @@ mod tests {
         let spec: AppSpec = toml::from_str(
             "name = \"a\"\n[config]\nmedia-url = \"http://127.0.0.1:8013\"\npublic-callback-base = \"http://127.0.0.1:3941\"\n\
              [[daemon]]\nname = \"media\"\naddr = \"127.0.0.1:8013\"\n\
-             [[daemon]]\nname = \"imageopt\"\naddr = \"127.0.0.1:8009\"\ntoken = \"t\"\n",
+             [[daemon]]\nname = \"ffmpeg\"\naddr = \"127.0.0.1:8009\"\ntoken = \"t\"\n",
         )
         .unwrap();
         let a = spec.host_args().join(" ");
         assert!(a.contains("--config public-callback-base=http://127.0.0.1:3941"), "{a}");
         assert!(a.contains("--config media-url=http://127.0.0.1:8013"), "{a}");
         assert_eq!(a.matches("media-url=").count(), 1, "{a}");
-        assert!(a.contains("--config imageopt-url=http://127.0.0.1:8009"), "{a}");
-        assert!(a.contains("--config imageopt-token=t"), "{a}");
+        assert!(a.contains("--config ffmpeg-url=http://127.0.0.1:8009"), "{a}");
+        assert!(a.contains("--config ffmpeg-token=t"), "{a}");
         assert!(
             a.contains("--egress 127.0.0.1:8013") && a.contains("--egress 127.0.0.1:8009"),
             "{a}"
@@ -321,6 +337,20 @@ mod tests {
 
         let bare: AppSpec = toml::from_str("name = \"b\"\n").unwrap();
         assert!(bare.host_args().is_empty());
+    }
+
+    /// A component that dials a service itself (Ollama) names it; only a private one opens
+    /// private egress.
+    #[test]
+    fn an_apps_own_egress_reaches_the_host() {
+        let local: AppSpec =
+            toml::from_str("name = \"a\"\negress = [\"127.0.0.1:11434\"]\n").unwrap();
+        let a = local.host_args().join(" ");
+        assert_eq!(a, "--egress 127.0.0.1:11434 --allow-private-egress");
+        let public: AppSpec =
+            toml::from_str("name = \"b\"\negress = [\"api.example.com:443\"]\n").unwrap();
+        assert_eq!(public.host_args().join(" "), "--egress api.example.com:443");
+        assert!(private("[::1]:11434") && private("10.0.0.5:80") && !private("8.8.8.8:53"));
     }
 
     #[test]

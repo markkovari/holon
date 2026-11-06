@@ -1,0 +1,14 @@
+// Google Calendar for agents (ADR-0125): `holon:tool/tool.call` with `{"op": ...}` for an
+// agent-runtime connector (`wrpc`, or `url` on `POST /tool`), and the one-time sign-in on
+// `/auth/start` and `/auth/callback`.
+package holon:gcal@0.1.0;
+
+world gcal {
+    export holon:tool/tool@0.1.0;
+    export wasi:http/incoming-handler@0.2.0;
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:config/store@0.2.0-rc.1;
+    import wasi:random/random@0.2.0;
+    import comp:secrets/reader@0.1.0;
+}

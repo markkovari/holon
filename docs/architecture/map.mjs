@@ -95,7 +95,7 @@ export const SYS = [
             'They bind loopback. comp-checks bounds the command with --allow but not the tree it runs over, so off loopback it refuses to start without a token.',
             'A missing dependency (Docker, Ollama, Chrome, ffmpeg, a desktop session) is reported as unavailable, never answered with a plausible constant.',
             'The twelve ADR-0095 daemons are each their own Cargo package, with one heavy crate and the shared holon-daemon-kit, so building or shipping one compiles none of the others (ADR-0115).'],
-  code:['reconciler/daemons/{kit,fswatch,browser,docker,clipboard}/','reconciler/daemons/{imageopt,lanscan,llmlocal,mdns}/','reconciler/daemons/{cron,uinotify,ffmpeg,wireguard,media,mailrelay}/','reconciler/src/bin/checks.rs']},
+  code:['reconciler/daemons/{kit,fswatch,browser,docker,clipboard}/','reconciler/daemons/{lanscan,mdns}/','reconciler/daemons/{cron,uinotify,ffmpeg,wireguard,media,mailrelay}/','reconciler/src/bin/checks.rs']},
 
  {id:'durable', name:'Durable services', short:'park and vcs on JetStream',
   purpose:'comp-park and comp-vcs: a ticket per outstanding call, and an agent-native code store.',
@@ -376,8 +376,8 @@ export const DIA = {
    N('broker',0,1,'ext','Runtime \u00b7 comp-host',['wasi:http/outgoing-handler dials a loopback address; the address comes from wasi:config/store, set per instance. The guest holds no socket.'],{cs:4,ghost:1,sys:'runtime'}),
    N('d-files',0,2,'native','Files and desktop',['holon-fswatch · holon-clipboard','holon-uinotify · holon-cron']),
    N('d-net',1,2,'native','Network',['holon-lanscan · holon-mdns','holon-wireguard']),
-   N('d-proc',2,2,'native','Processes and codecs',['holon-docker · holon-ffmpeg','holon-browser · holon-imageopt']),
-   N('d-data',3,2,'native','Models, data, gate',['holon-llmlocal · holon-media','holon-mailrelay · comp-checks']),
+   N('d-proc',2,2,'native','Processes and codecs',['holon-docker · holon-ffmpeg','holon-browser']),
+   N('d-data',3,2,'native','Models, data, gate',['holon-media','holon-mailrelay · comp-checks']),
    N('machine',0,3,'ext','The machine',['docker socket · crontab · desktop session · LAN · WireGuard · Chrome · ffmpeg · Ollama \u2014 what the daemon, and only the daemon, may touch.'],{cs:4})
   ],
   groups:[

@@ -52,12 +52,14 @@ impl Guest for Component {
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
-            (Method::Get, [""]) => Outcome::Html(200, r#"<!DOCTYPE html><html><head><title>Image Optimizer</title></head><body><h1>Image Optimizer</h1><button onclick="fetch('/api/optimize').then(r=>r.json()).then(d=>document.getElementById('r').innerText=JSON.stringify(d))">Optimize Image</button><div id="r"></div></body></html>"#.to_string()),
-            (Method::Get, ["api", "optimize"]) => match optimizer::optimize("photo.jpg") {
-                Ok(path) => Outcome::Json(200, json!({ "result": path }).to_string()),
-                Err(optimizer::ImageError::NotPermitted(d)) => Outcome::Err(403, d),
-                Err(optimizer::ImageError::NoSuchFile(d)) => Outcome::Err(404, d),
-                Err(optimizer::ImageError::Unavailable(d)) => Outcome::Err(503, d),
+            (Method::Get, [""]) => Outcome::Html(200, PAGE.to_string()),
+            (Method::Post, ["api", "optimize"]) => match read_body(request).await {
+                Err(()) => Outcome::Err(413, format!("an upload is at most {MAX_UPLOAD} bytes")),
+                Ok(img) => match optimizer::optimize(&img) {
+                    Ok(small) => Outcome::Image(small),
+                    Err(optimizer::ImageError::NotAnImage(d)) => Outcome::Err(415, d),
+                    Err(optimizer::ImageError::TooLarge(d)) => Outcome::Err(413, d),
+                },
             },
             _ => Outcome::Err(404, "not_found".into()),
         };
@@ -65,22 +67,45 @@ impl Guest for Component {
     }
 }
 
+/// The page posts the chosen file's bytes and shows what comes back.
+const PAGE: &str = r#"<!DOCTYPE html><html><head><title>Image Optimizer</title></head><body><h1>Image Optimizer</h1><input type="file" id="f" accept="image/*"><div id="r"></div><script>document.getElementById("f").onchange=async e=>{const f=e.target.files[0];const r=await fetch("/api/optimize",{method:"POST",body:f});const o=document.getElementById("r");if(!r.ok){o.innerText=(await r.json()).error;return}const b=await r.blob();o.innerHTML="";o.append(f.size+" bytes to "+b.size,document.createElement("br"));const i=document.createElement("img");i.src=URL.createObjectURL(b);o.append(i)}</script></body></html>"#;
+
+/// The component decodes at most 8 megapixels; a larger file would not get that far.
+const MAX_UPLOAD: usize = 16 * 1024 * 1024;
+
 enum Outcome {
     Html(u16, String),
-    Json(u16, String),
+    Image(Vec<u8>),
     Err(u16, String),
+}
+
+/// The optimizer answers in the format it was given.
+fn image_type(b: &[u8]) -> &'static [u8] {
+    match b {
+        [0xff, 0xd8, ..] => b"image/jpeg",
+        [0x89, b'P', b'N', b'G', ..] => b"image/png",
+        [b'G', b'I', b'F', ..] => b"image/gif",
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => b"image/webp",
+        _ => b"application/octet-stream",
+    }
 }
 
 fn emit(result: Outcome) -> Result<Response, ErrorCode> {
     let (code, body, content_type) = match result {
-        Outcome::Html(c, b) => (c, b, b"text/html".to_vec()),
-        Outcome::Json(c, b) => (c, b, b"application/json".to_vec()),
-        Outcome::Err(c, m) => (c, json!({ "error": m }).to_string(), b"application/json".to_vec()),
+        Outcome::Html(c, b) => (c, b.into_bytes(), b"text/html".to_vec()),
+        Outcome::Image(b) => {
+            let t = image_type(&b).to_vec();
+            (200, b, t)
+        }
+        Outcome::Err(c, m) => {
+            (c, json!({ "error": m }).to_string().into_bytes(), b"application/json".to_vec())
+        }
     };
     let headers = Fields::new();
     let _ = headers.set("content-type", &[content_type]);
-    respond_with(code, headers, body.into_bytes())
+    respond_with(code, headers, body)
 }
 bindings::export!(Component with_types_in bindings);
 
 guestio::guest_p3_respond!();
+guestio::guest_p3_read_body!(MAX_UPLOAD);

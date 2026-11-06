@@ -47,8 +47,9 @@ try {
   await page.goto(BASE);
   await sleep(1000);
 
-  await page.getByRole('button').first().click();
-  await sleep(2000);
+  // Any picture will do: it comes back no wider than 1600 px, shown under the input.
+  await page.setInputFiles("#f", join(ROOT, "docs/media/agents-board-map.png"));
+  await sleep(2500);
 
   await ctx.close();
   await browser.close();
