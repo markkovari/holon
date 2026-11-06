@@ -258,7 +258,7 @@ async fn tools_turn(
                 );
                 // Asked at each call, not once for the step: an approval a person gave for the
                 // first call of a tool in this step already covers the second (ADR-0114).
-                if sess.runs_without_asking(task, &call.name) {
+                if sess.runs_without_asking_with_input(task, &call.name, &call.input) {
                     None
                 } else {
                     match ask(sess, ctx, task, turn, history, step, &call).await {

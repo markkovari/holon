@@ -639,6 +639,59 @@ pub const TOOLS: &[ToolDef] = &[
     },
 ];
 
+pub fn is_safe_read_only_command(cmd: &str) -> bool {
+    let trimmed = cmd.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let has_chaining_or_redirect = trimmed.chars().enumerate().any(|(i, c)| match c {
+        ';' | '\n' | '\r' | '`' | '>' | '<' => true,
+        '&' => trimmed.as_bytes().get(i + 1) == Some(&b'&'),
+        '|' => true,
+        '$' => trimmed.as_bytes().get(i + 1) == Some(&b'('),
+        _ => false,
+    });
+    if has_chaining_or_redirect {
+        return false;
+    }
+    const SAFE_PREFIXES: &[&str] = &[
+        "cargo check",
+        "cargo test",
+        "cargo clippy",
+        "cargo metadata",
+        "cargo --version",
+        "git status",
+        "git diff",
+        "git log",
+        "git show",
+        "git branch",
+        "git rev-parse",
+        "pwd",
+        "ls",
+        "cat",
+        "head",
+        "tail",
+        "wc",
+        "grep",
+        "rg",
+        "find",
+        "file",
+        "which",
+        "echo",
+    ];
+    for prefix in SAFE_PREFIXES {
+        if trimmed == *prefix {
+            return true;
+        }
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            if rest.starts_with(' ') || rest.starts_with('\t') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn tool_def(name: &str) -> Option<&'static ToolDef> {
     TOOLS.iter().find(|t| t.name == name)
 }
@@ -2599,7 +2652,13 @@ pub fn run(
                             .iter()
                             .any(|c| c.name == name && c.exec.as_ref().is_some_and(|x| x.sensitive))
                     });
-                let needs = sensitive && !spec.auto_approve.contains(&name);
+                let mut needs = sensitive && !spec.auto_approve.contains(&name);
+                if needs && name == "exec_sandboxed" {
+                    let cmd_str = arg(&args, "cmd");
+                    if is_safe_read_only_command(&cmd_str) {
+                        needs = false;
+                    }
+                }
                 host.observe(Event::ToolStarted {
                     agent: spec.name.clone(),
                     run_id: run_id.clone(),

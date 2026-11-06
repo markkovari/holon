@@ -262,6 +262,59 @@ async fn a_denied_call_is_an_error_the_model_sees_and_auto_approve_skips_asking(
     assert!(!kinds.contains(&"tool_approval_required".to_string()));
 }
 
+#[test]
+fn safe_read_only_commands_run_without_asking_while_dangerous_commands_require_approval() {
+    let (_dir, sess, task) = bare_session();
+
+    // "run" is NOT in auto_approve
+    assert!(!sess.runs_without_asking(&task.id, "run"));
+
+    // Safe read-only inspection commands run without asking
+    assert!(sess.runs_without_asking_with_input(
+        &task.id,
+        "run",
+        &json!({"command": "cargo check"})
+    ));
+    assert!(sess.runs_without_asking_with_input(
+        &task.id,
+        "run",
+        &json!({"command": "cargo test -p holon-agentd"})
+    ));
+    assert!(sess.runs_without_asking_with_input(
+        &task.id,
+        "run",
+        &json!({"command": "git status"})
+    ));
+    assert!(sess.runs_without_asking_with_input(
+        &task.id,
+        "run",
+        &json!({"command": "git diff HEAD~1"})
+    ));
+    assert!(sess.runs_without_asking_with_input(&task.id, "run", &json!({"command": "pwd"})));
+
+    // Dangerous, mutating, chained, or injected commands STILL require approval
+    assert!(!sess.runs_without_asking_with_input(
+        &task.id,
+        "run",
+        &json!({"command": "cargo check; rm -rf /"})
+    ));
+    assert!(!sess.runs_without_asking_with_input(
+        &task.id,
+        "run",
+        &json!({"command": "git push origin main"})
+    ));
+    assert!(!sess.runs_without_asking_with_input(
+        &task.id,
+        "run",
+        &json!({"command": "rm -rf target/"})
+    ));
+    assert!(!sess.runs_without_asking_with_input(
+        &task.id,
+        "run",
+        &json!({"command": "echo $(whoami)"})
+    ));
+}
+
 #[tokio::test]
 async fn an_unanswered_approval_times_out_as_a_denial() {
     let h = harness(Opts { approval_timeout: Some(Duration::from_millis(200)), ..Opts::default() })
