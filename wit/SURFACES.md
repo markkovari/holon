@@ -1530,6 +1530,14 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
+## `holon:tool/tool@0.1.0`
+
+```wit
+  interface tool {
+    call: func(args: string) -> result<string, string>;
+  }
+```
+
 ## `holon:vcs/code-store@0.1.0`
 
 ```wit
