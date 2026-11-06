@@ -14,7 +14,7 @@ plug with a message that names neither the interface nor the reason.
 Adding a *function* to an interface is compatible; adding a case to a
 *variant* or a field to a *record* is not. Both measured, not assumed.
 
-131 interfaces.
+132 interfaces.
 
 ## `actor:entity/handler@0.1.0`
 
@@ -1520,6 +1520,14 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
+## `holon:tool/tool@0.1.0`
+
+```wit
+  interface tool {
+    call: func(args: string) -> result<string, string>;
+  }
+```
+
 ## `holon:vcs/code-store@0.1.0`
 
 ```wit
@@ -2238,17 +2246,16 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
-## `media:image/optimizer@0.2.0`
+## `media:image/optimizer@0.3.0`
 
 ```wit
   interface optimizer {
     variant image-error {
-      not-permitted(string),
-      no-such-file(string),
-      unavailable(string),
+      not-an-image(string),
+      too-large(string),
     }
 
-    optimize: func(img: string) -> result<string, image-error>;
+    optimize: func(img: list<u8>) -> result<list<u8>, image-error>;
   }
 ```
 

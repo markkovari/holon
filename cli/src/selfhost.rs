@@ -394,8 +394,8 @@ pub fn render_relay_unit(spec: &Spec, t: &Triggers, l: &Layout) -> String {
 /// ADR-0118: daemons migrated to `holon-` use the new prefix in their service unit.
 pub fn daemon_bin_name(name: &str) -> String {
     match name {
-        "ffmpeg" | "docker" | "imageopt" | "llmlocal" | "mdns" | "browser" | "clipboard"
-        | "cron" | "lanscan" | "uinotify" | "wireguard" | "media" => {
+        "ffmpeg" | "docker" | "mdns" | "browser" | "clipboard" | "cron" | "lanscan"
+        | "uinotify" | "wireguard" | "media" => {
             format!("holon-{name}")
         }
         _ => format!("comp-{name}"),
@@ -1300,9 +1300,7 @@ static_dir = "ui/dist"
             ("browser", Some("allow-host")),
             ("docker", None),
             ("clipboard", None),
-            ("imageopt", Some("allow-path")),
             ("lanscan", Some("allow-cidr")),
-            ("llmlocal", None),
             ("mdns", None),
             ("cron", None),
             ("uinotify", None),

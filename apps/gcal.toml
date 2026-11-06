@@ -1,0 +1,15 @@
+name = "gcal"
+domain = "gcal.example.com"
+artifact = "components/target/gcal.composed.wasm"
+
+kv = "sqlite"
+
+# The token exchange and the Calendar API; the browser, not the component, visits accounts.google.com.
+egress = ["oauth2.googleapis.com:443", "www.googleapis.com:443"]
+
+# An OAuth client from Google Cloud: its id here, its secret as the `gcal-client-secret` secret,
+# and this app's /auth/callback registered as a redirect URI. Sign in once at /auth/start.
+[config]
+gcal-client-id = ""
+gcal-redirect-uri = "https://gcal.example.com/auth/callback"
+gcal-utc-offset = "+01:00"

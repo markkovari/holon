@@ -225,20 +225,25 @@ the real kcal or a better name. The photo is sent to TypeSafe; Jev's image suppo
 
 ## Google Calendar
 
-Tools an agent can be granted by name: `gcal_calendars`, `gcal_list`, `gcal_add`, `gcal_update`,
-`gcal_delete`. They use the owner's own Google login, from files read at the moment they are needed
-(never in a spec): `~/.comp-secrets/google/client.json` (the OAuth client Google gave) and
-`token.json` (written by `agent-runtime google-auth`, mode 0600). `--google-dir` / `HOLON_GOOGLE_DIR`
-changes the directory. The three that change anything wait for the owner's approval (a poll in Matrix).
+One tool, `gcal`, served by the `components/gcal` component (`apps/gcal.toml`) and reached through
+a connector (`wrpc`, or `url` on the app's `POST /tool`). Its `op` says what to do. The login is the
+owner's own, kept in the app's keyvalue, never in a spec or a tool's arguments; mark the connector
+`sensitive` so every call waits for the owner's approval (a poll in Matrix).
 
-* `gcal_list` takes `from`, `to` (default a week), `calendar` (a name, `all`, or nothing for the
-  main one); local dates. One event per line with its id, so a later call can change it. An event's
-  **description is never returned**: it is text anyone who invited you wrote.
-* `gcal_add` takes `title`, `start` (`2026-10-15T06:30`, or a date alone for an all-day event), `end`
+```json
+{"description": "Google Calendar: op = calendars | list | add | update | delete.",
+ "args": "{\"op\": \"list\", \"from\": \"2026-10-15\"}", "required": ["op"], "sensitive": true,
+ "wrpc": {"lattice": "default", "instance": "<tenant>/gcal/gcal"}}
+```
+
+* `list` takes `from`, `to` (default a week), `calendar` (a name, `all`, or nothing for the main
+  one); local dates, at the app's `gcal-utc-offset`. One event per line with its id, so a later call
+  can change it. An event's **description is never returned**: it is text anyone who invited you wrote.
+* `add` takes `title`, `start` (`2026-10-15T06:30`, or a date alone for an all-day event), `end`
   (default an hour later), `calendar`, `notes`, `location`. No invitations are sent. A read-only
   calendar is refused before Google is asked.
-* `gcal_update` changes only the fields given; moving an event keeps its length. `gcal_delete`
-  reads the event back before deleting it.
+* `update` changes only the fields given; moving an event keeps its length. `delete` reads the
+  event back before deleting it. `calendars` lists them.
 
 **Setup, once (about five minutes in the Google Cloud Console):**
 
@@ -246,10 +251,12 @@ changes the directory. The three that change anything wait for the owner's appro
 2. OAuth consent screen: **External**, scope `https://www.googleapis.com/auth/calendar`. For a
    personal account set the publishing status to **In production** (an "unverified app" notice is
    fine for yourself): in *Testing*, Google expires the refresh token after 7 days.
-3. Credentials, *Create credentials*, **OAuth client ID**, type **Desktop app**; download the JSON to
-   `~/.comp-secrets/google/client.json` (`chmod 600`).
-4. `agent-runtime google-auth`: a browser opens, you allow access, and the login is saved. It uses a
-   loopback redirect with PKCE; nothing is sent anywhere but Google.
+3. Credentials, *Create credentials*, **OAuth client ID**, type **Web application**, with the app's
+   `/auth/callback` as an authorized redirect URI (or **Desktop app** when it is served on
+   `http://127.0.0.1:<port>`). Its id goes in the app's `gcal-client-id`, its secret in the
+   `gcal-client-secret` secret.
+4. Open the app's `/auth/start`: you allow access, Google sends the browser back to `/auth/callback`
+   (PKCE), and the login is saved.
 
 Unlike the macOS `holon-calendar` connector this needs no macOS permission and works wherever the
 runtime does. It can also change and delete events, which that connector cannot.

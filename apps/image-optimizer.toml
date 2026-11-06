@@ -4,13 +4,5 @@ artifact = "components/target/image-optimizer.composed.wasm"
 
 kv = "sqlite"
 
-[config]
-imageopt-url = "http://127.0.0.1:8004"
-
-# No `token`, so the demo runs with nothing to provision; on a shared box set it and the
-# matching `<name>-token` in [config], or any local process can reach this daemon.
-[[daemon]]
-name = "imageopt"
-addr = "127.0.0.1:8004"
-allow_flag = "allow-path"
-allow = ["/var/lib/image-optimizer"]
+# Optional: image-max-width (default 1600) and image-quality (JPEG, default 80). The optimizer
+# decodes in the component; no daemon.

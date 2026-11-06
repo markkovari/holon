@@ -1,161 +1,65 @@
-//! `image-optimizer` — shrink a picture by re-encoding it at lower cost
-//!
-//! The re-encoding happens in `holon-imageopt` (formerly `comp-imageopt`), which is native (ADR-0095, ADR-0118). This is the component side: it holds
-//! the contract and reaches the daemon over HTTP, as `fs-watcher` reaches `comp-fswatch`.
+//! `image-optimizer` — shrink a picture by re-encoding it at lower cost.
 //!
 //! Config (wasi:config/store):
-//!   imageopt-url    where `holon-imageopt` is listening, e.g. http://127.0.0.1:8004
+//!   image-max-width   wider pictures are shrunk to this many pixels, default 1600
+//!   image-quality     JPEG quality, 1-100, default 80
 
 #[allow(warnings)]
 mod bindings;
 
+use std::io::Cursor;
+
 use bindings::exports::media::image::optimizer::{Guest, ImageError};
 use bindings::wasi::config::store as config;
-use bindings::wasi::http::outgoing_handler;
-use bindings::wasi::http::types::{
-    Fields, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme,
-};
-use bindings::wasi::io::streams::StreamError;
+use image::codecs::jpeg::JpegEncoder;
+use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader};
 
 struct Component;
 
-/// Thirty seconds. Re-encoding a large image is slower than a directory poll but must not hang a caller.
-const TIMEOUT_NS: u64 = 30_000_000_000;
+/// A decoded picture's bytes (3 a pixel for a JPEG, 4 for an RGBA PNG) must fit beside its
+/// encoded input and the smaller output in the guest's memory.
+const MAX_DECODED: u64 = 40_000_000;
 
-fn daemon_url() -> Result<String, ImageError> {
-    match config::get("imageopt-url") {
-        Ok(Some(u)) if !u.is_empty() => Ok(u),
-        // Unavailable rather than not-permitted: nobody refused anything, the deployment never said where the daemon is.
-        _ => Err(ImageError::Unavailable(
-            "imageopt-url is not set — this component has nowhere to ask".into(),
-        )),
+fn setting(key: &str, default: u32) -> u32 {
+    match config::get(key) {
+        Ok(Some(v)) => v.trim().parse().unwrap_or(default),
+        _ => default,
     }
 }
 
-fn parse_url(url: &str) -> Result<(Scheme, String, String), ImageError> {
-    let (scheme, rest) = if let Some(r) = url.strip_prefix("https://") {
-        (Scheme::Https, r)
-    } else if let Some(r) = url.strip_prefix("http://") {
-        (Scheme::Http, r)
-    } else {
-        return Err(ImageError::Unavailable(format!("imageopt-url must be http(s), got {url:?}")));
-    };
-    let (authority, path) = match rest.find('/') {
-        Some(i) => (rest[..i].to_string(), rest[i..].to_string()),
-        None => (rest.to_string(), String::new()),
-    };
-    Ok((scheme, authority, path))
-}
-
-/// POST the request and return the body. Every failure is `unavailable`: the daemon's own refusals arrive as JSON with a 200, so anything at this level is the transport.
-fn post(body: Vec<u8>) -> Result<Vec<u8>, ImageError> {
-    let url = daemon_url()?;
-    let (scheme, authority, base) = parse_url(&url)?;
-    let net = |m: &str| ImageError::Unavailable(m.to_string());
-
-    let headers = Fields::new();
-    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // A shared secret, if the deployment set one (see `comp_daemon_kit` for why loopback binding alone is not a boundary). Absent means the daemon runs with no --token.
-    if let Ok(Some(token)) = config::get("imageopt-token") {
-        if !token.is_empty() {
-            let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
-        }
+fn optimize(img: &[u8], max_width: u32, quality: u8) -> Result<Vec<u8>, ImageError> {
+    let bad = |e: image::ImageError| ImageError::NotAnImage(e.to_string());
+    let reader = ImageReader::new(Cursor::new(img))
+        .with_guessed_format()
+        .map_err(|e| ImageError::NotAnImage(e.to_string()))?;
+    let format = reader.format().ok_or_else(|| ImageError::NotAnImage("unknown format".into()))?;
+    let decoder = reader.into_decoder().map_err(bad)?;
+    let ((w, h), bytes) = (decoder.dimensions(), decoder.total_bytes());
+    if bytes > MAX_DECODED {
+        return Err(ImageError::TooLarge(format!(
+            "{w}x{h} decodes to {bytes} bytes, over {MAX_DECODED}"
+        )));
     }
-    let req = OutgoingRequest::new(headers);
-    req.set_method(&Method::Post).map_err(|_| net("set method"))?;
-    req.set_scheme(Some(&scheme)).map_err(|_| net("set scheme"))?;
-    req.set_authority(Some(&authority)).map_err(|_| net("set authority"))?;
-    req.set_path_with_query(Some(&format!("{base}/optimize"))).map_err(|_| net("set path"))?;
-
-    let out = req.body().map_err(|_| net("body"))?;
-    {
-        let stream = out.write().map_err(|_| net("write"))?;
-        // Chunked: `blocking-write-and-flush` traps above 4096 bytes and a path is not bounded.
-        for chunk in body.chunks(4096) {
-            stream
-                .blocking_write_and_flush(chunk)
-                .map_err(|e| net(&format!("body write: {e:?}")))?;
+    let decoded = DynamicImage::from_decoder(decoder).map_err(bad)?;
+    // `thumbnail` averages areas in integers; `resize` would hold a float copy, 16 bytes a pixel.
+    let resized = if w > max_width { decoded.thumbnail(max_width, u32::MAX) } else { decoded };
+    let mut out = Cursor::new(Vec::new());
+    match format {
+        // The generic encoder ignores quality and writes at 75.
+        ImageFormat::Jpeg => {
+            resized.to_rgb8().write_with_encoder(JpegEncoder::new_with_quality(&mut out, quality))
         }
+        f => resized.write_to(&mut out, f),
     }
-    OutgoingBody::finish(out, None).map_err(|_| net("finish"))?;
-
-    let opts = RequestOptions::new();
-    let _ = opts.set_connect_timeout(Some(TIMEOUT_NS));
-    let _ = opts.set_first_byte_timeout(Some(TIMEOUT_NS));
-    let _ = opts.set_between_bytes_timeout(Some(TIMEOUT_NS));
-
-    let fut =
-        outgoing_handler::handle(req, Some(opts)).map_err(|e| net(&format!("handle: {e:?}")))?;
-    fut.subscribe().block();
-    let resp = fut
-        .get()
-        .ok_or_else(|| net("no response"))?
-        .map_err(|_| net("response taken"))?
-        .map_err(|e| net(&format!("http: {e:?}")))?;
-
-    let body = resp.consume().map_err(|_| net("consume"))?;
-    let stream = body.stream().map_err(|_| net("stream"))?;
-    let mut buf = Vec::new();
-    loop {
-        match stream.blocking_read(8192) {
-            Ok(c) if c.is_empty() => break,
-            Ok(c) => buf.extend_from_slice(&c),
-            // `Closed` is end-of-body; anything else is a read that went wrong, and returning what arrived would present a truncated answer as whole.
-            Err(StreamError::Closed) => break,
-            Err(e) => return Err(net(&format!("read: {e:?}"))),
-        }
-    }
-    Ok(buf)
-}
-
-/// Pull one JSON string field out without a parser: the daemon's replies have three flat shapes, so serde would be more code than the thing it reads.
-fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
-    let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
-    let rest = &json[at..];
-    let start = rest.find('"')? + 1;
-    let end = rest[start..].find('"')? + start;
-    Some(&rest[start..end])
+    .map_err(bad)?;
+    Ok(out.into_inner())
 }
 
 impl Guest for Component {
-    fn optimize(img: String) -> Result<String, ImageError> {
-        let body = format!("{{\"img\":{}}}", json_str(&img));
-        let raw = post(body.into_bytes())?;
-        let text = String::from_utf8_lossy(&raw).into_owned();
-
-        // The daemon reports refusals in the body; map them back to the variant, or a caller that cannot tell "you may not touch that" from "daemon down" retries forever.
-        if let Some(err) = field(&text, "error") {
-            let detail = field(&text, "detail").unwrap_or_default().to_string();
-            return Err(match err {
-                "not-permitted" => ImageError::NotPermitted(detail),
-                "no-such-file" => ImageError::NoSuchFile(detail),
-                other => ImageError::Unavailable(format!("{other}: {detail}")),
-            });
-        }
-
-        field(&text, "output")
-            .map(str::to_string)
-            .ok_or_else(|| ImageError::Unavailable("daemon reply had no output field".into()))
+    fn optimize(img: Vec<u8>) -> Result<Vec<u8>, ImageError> {
+        let quality = setting("image-quality", 80).clamp(1, 100) as u8;
+        optimize(&img, setting("image-max-width", 1600).max(1), quality)
     }
-}
-
-/// A JSON string literal: a path can contain a quote or a backslash, and this builds a request out of one.
-fn json_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }
 
 bindings::export!(Component with_types_in bindings);
@@ -163,26 +67,41 @@ bindings::export!(Component with_types_in bindings);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::{DynamicImage, RgbImage};
 
-    /// A path is caller-supplied and goes into a JSON request; an unescaped quote would end the string early.
-    #[test]
-    fn a_path_cannot_break_out_of_the_request_it_is_put_in() {
-        assert_eq!(json_str(r#"/a/b"#), r#""/a/b""#);
-        assert_eq!(json_str(r#"/a"b"#), r#""/a\"b""#);
-        assert_eq!(json_str(r#"/a\b"#), r#""/a\\b""#);
+    fn encoded(w: u32, h: u32, format: ImageFormat) -> Vec<u8> {
+        let mut out = Cursor::new(Vec::new());
+        DynamicImage::ImageRgb8(RgbImage::from_fn(w, h, |x, y| image::Rgb([x as u8, y as u8, 7])))
+            .write_to(&mut out, format)
+            .unwrap();
+        out.into_inner()
+    }
+
+    fn size(bytes: &[u8]) -> (u32, u32, ImageFormat) {
+        let r = ImageReader::new(Cursor::new(bytes)).with_guessed_format().unwrap();
+        let f = r.format().unwrap();
+        let (w, h) = r.into_dimensions().unwrap();
+        (w, h, f)
     }
 
     #[test]
-    fn an_output_field_is_read_back() {
-        let json = r#"{"output":"/x/y/photo.opt.jpg"}"#;
-        assert_eq!(field(json, "output"), Some("/x/y/photo.opt.jpg"));
-        assert!(field(json, "error").is_none());
+    fn a_wide_picture_shrinks_to_the_maximum_and_keeps_its_format_and_aspect() {
+        let out = optimize(&encoded(400, 100, ImageFormat::Png), 200, 80).unwrap();
+        assert_eq!(size(&out), (200, 50, ImageFormat::Png));
+        let out = optimize(&encoded(400, 300, ImageFormat::Jpeg), 100, 60).unwrap();
+        assert_eq!(size(&out), (100, 75, ImageFormat::Jpeg));
     }
 
     #[test]
-    fn a_not_permitted_error_is_told_apart_from_no_such_file() {
-        let json = r#"{"error":"not-permitted","detail":"/etc/passwd"}"#;
-        assert_eq!(field(json, "error"), Some("not-permitted"));
-        assert_eq!(field(json, "detail"), Some("/etc/passwd"));
+    fn a_narrow_picture_keeps_its_size() {
+        let out = optimize(&encoded(50, 40, ImageFormat::Png), 200, 80).unwrap();
+        assert_eq!(size(&out), (50, 40, ImageFormat::Png));
+    }
+
+    #[test]
+    fn not_a_picture_and_too_many_pixels_are_refused_before_decoding() {
+        assert!(matches!(optimize(b"hello", 200, 80), Err(ImageError::NotAnImage(_))));
+        let huge = encoded(5000, 3000, ImageFormat::Png);
+        assert!(matches!(optimize(&huge, 200, 80), Err(ImageError::TooLarge(_))));
     }
 }

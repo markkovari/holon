@@ -2894,25 +2894,6 @@ name = "holon-fuel"
 version = "0.1.0"
 
 [[package]]
-name = "holon-gcal"
-version = "0.1.0"
-dependencies = [
- "agent-wire",
- "anyhow",
- "base64 0.22.1",
- "clap",
- "holon-daemon-kit",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "tiny_http",
- "tokio",
- "url",
-]
-
-[[package]]
 name = "holon-goal"
 version = "0.1.0"
 dependencies = [
@@ -2970,20 +2951,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "holon-imageopt"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "holon-daemon-kit",
- "image",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "holon-lanscan"
 version = "0.1.0"
 dependencies = [
@@ -3029,20 +2996,6 @@ dependencies = [
  "futures",
  "holon-daemon-kit",
  "holon-llm",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "holon-llmlocal"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "holon-daemon-kit",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

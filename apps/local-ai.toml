@@ -6,12 +6,9 @@ kv = "sqlite"
 
 components = ["local-ai-domain"]
 
-[config]
-llmlocal-url = "http://127.0.0.1:8006"
+# `llm-local` dials Ollama itself; no daemon sits in between.
+egress = ["127.0.0.1:11434"]
 
-# No `token`, so the demo runs with nothing to provision; on a shared box set it and the
-# matching `<name>-token` in [config], or any local process can reach this daemon.
-[[daemon]]
-name = "llmlocal"
-addr = "127.0.0.1:8006"
-extra_args = ["--ollama-url http://127.0.0.1:11434 --model llama3.2"]
+[config]
+ollama-url = "http://127.0.0.1:11434"
+ollama-model = "llama3.2"

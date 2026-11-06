@@ -27,7 +27,7 @@ pub(crate) fn unavailable(e: impl std::fmt::Display) -> MediaError {
     MediaError::Unavailable(e.to_string())
 }
 
-/// Every route answers 200: a non-200 means transport, same as `comp-imageopt`.
+/// Every route answers 200: a non-200 means transport, same as `holon-ffmpeg`.
 pub(crate) fn answer(r: Result<Value, MediaError>) -> Json<Value> {
     match r {
         Ok(v) => Json(v),

@@ -8,6 +8,7 @@ publish.workspace = true
 crate-type = ["cdylib"]
 [dependencies]
 wit-bindgen-rt = { workspace = true }
+serde_json = { workspace = true }
 [package.metadata.component]
 package = "ai:local"
 [package.metadata.component.target]

@@ -1,4 +1,8 @@
 //! `llm-local` — send a prompt to a language model running on this machine
+//!
+//! Config (wasi:config/store):
+//!   ollama-url      where Ollama (or an API-compatible server) listens; the app's `egress` lists it
+//!   ollama-model    the model to run the prompt through, default llama3.2
 
 #[allow(warnings)]
 mod bindings;
@@ -16,13 +20,21 @@ struct Component;
 /// Minutes: a local model is slow, but a caller would rather hear "unavailable" than hang.
 const TIMEOUT_NS: u64 = 120_000_000_000;
 
-fn daemon_url() -> Result<String, InferError> {
-    match config::get("llmlocal-url") {
+/// Ollama (or an API-compatible server), dialled directly: the app's `egress` lists its address.
+fn ollama_url() -> Result<String, InferError> {
+    match config::get("ollama-url") {
         Ok(Some(u)) if !u.is_empty() => Ok(u),
-        // Unavailable: nobody refused anything, the deployment never said where the daemon is.
+        // Unavailable: nobody refused anything, the deployment never said where the model is.
         _ => Err(InferError::Unavailable(
-            "llmlocal-url is not set — this component has nowhere to ask".into(),
+            "ollama-url is not set — this component has nowhere to ask".into(),
         )),
+    }
+}
+
+fn model() -> String {
+    match config::get("ollama-model") {
+        Ok(Some(m)) if !m.is_empty() => m,
+        _ => "llama3.2".into(),
     }
 }
 
@@ -32,7 +44,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), InferError> {
     } else if let Some(r) = url.strip_prefix("http://") {
         (Scheme::Http, r)
     } else {
-        return Err(InferError::Unavailable(format!("llmlocal-url must be http(s), got {url:?}")));
+        return Err(InferError::Unavailable(format!("ollama-url must be http(s), got {url:?}")));
     };
     let (authority, path) = match rest.find('/') {
         Some(i) => (rest[..i].to_string(), rest[i..].to_string()),
@@ -41,25 +53,19 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), InferError> {
     Ok((scheme, authority, path))
 }
 
-/// Every failure is `unavailable`: the daemon's own refusals arrive as JSON with a 200.
-fn post(body: Vec<u8>) -> Result<Vec<u8>, InferError> {
-    let url = daemon_url()?;
+/// The response's status and body; every failure to get one is `unavailable`.
+fn post(body: Vec<u8>) -> Result<(u16, Vec<u8>), InferError> {
+    let url = ollama_url()?;
     let (scheme, authority, base) = parse_url(&url)?;
     let net = |m: &str| InferError::Unavailable(m.to_string());
 
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
-    // Optional shared secret: loopback binding alone is not a boundary (see `comp_daemon_kit`).
-    if let Ok(Some(token)) = config::get("llmlocal-token") {
-        if !token.is_empty() {
-            let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
-        }
-    }
     let req = OutgoingRequest::new(headers);
     req.set_method(&Method::Post).map_err(|_| net("set method"))?;
     req.set_scheme(Some(&scheme)).map_err(|_| net("set scheme"))?;
     req.set_authority(Some(&authority)).map_err(|_| net("set authority"))?;
-    req.set_path_with_query(Some(&format!("{base}/infer"))).map_err(|_| net("set path"))?;
+    req.set_path_with_query(Some(&format!("{base}/api/generate"))).map_err(|_| net("set path"))?;
 
     let out = req.body().map_err(|_| net("body"))?;
     {
@@ -87,6 +93,7 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, InferError> {
         .map_err(|_| net("response taken"))?
         .map_err(|e| net(&format!("http: {e:?}")))?;
 
+    let status = resp.status();
     let body = resp.consume().map_err(|_| net("consume"))?;
     let stream = body.stream().map_err(|_| net("stream"))?;
     let mut buf = Vec::new();
@@ -99,51 +106,33 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, InferError> {
             Err(e) => return Err(net(&format!("read: {e:?}"))),
         }
     }
-    Ok(buf)
+    Ok((status, buf))
 }
 
-/// No parser: the daemon's replies have two flat shapes.
-fn field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
-    let at = json.find(&format!("\"{key}\""))? + key.len() + 2;
-    let rest = &json[at..];
-    let start = rest.find('"')? + 1;
-    let end = rest[start..].find('"')? + start;
-    Some(&rest[start..end])
+/// `stream: false`: no caller here could consume a stream.
+fn request_body(model: &str, prompt: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({ "model": model, "prompt": prompt, "stream": false }))
+        .unwrap_or_default()
+}
+
+/// Ollama's answer, or why there is none: a non-2xx reply carries `{"error": ...}`.
+fn answer(status: u16, body: &[u8]) -> Result<String, InferError> {
+    let v: serde_json::Value = serde_json::from_slice(body).unwrap_or_default();
+    if !(200..300).contains(&status) {
+        let why = v["error"].as_str().unwrap_or("no reason given");
+        return Err(InferError::Unavailable(format!("ollama returned {status}: {why}")));
+    }
+    v["response"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| InferError::Unavailable("ollama reply had no response field".into()))
 }
 
 impl Guest for Component {
     fn infer(prompt: String) -> Result<String, InferError> {
-        let body = format!("{{\"prompt\":{}}}", json_str(&prompt));
-        let raw = post(body.into_bytes())?;
-        let text = String::from_utf8_lossy(&raw).into_owned();
-
-        if let Some(err) = field(&text, "error") {
-            let detail = field(&text, "detail").unwrap_or_default().to_string();
-            return Err(InferError::Unavailable(format!("{err}: {detail}")));
-        }
-
-        field(&text, "response")
-            .map(str::to_string)
-            .ok_or_else(|| InferError::Unavailable("daemon reply had no response field".into()))
+        let (status, body) = post(request_body(&model(), &prompt))?;
+        answer(status, &body)
     }
-}
-
-fn json_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }
 
 bindings::export!(Component with_types_in bindings);
@@ -153,26 +142,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_prompt_cannot_break_out_of_the_request_it_is_put_in() {
-        assert_eq!(json_str(r#"hello"#), r#""hello""#);
-        assert_eq!(json_str(r#"say "hi""#), r#""say \"hi\"""#);
-        assert_eq!(json_str("a\\b"), r#""a\\b""#);
-        assert_eq!(json_str("a\nb"), r#""a\nb""#);
-        // Escaped, not stripped: silently removing a control character would change the prompt the daemon sees.
-        assert_eq!(json_str("a\u{1}b"), r#""a\u0001b""#);
+    fn the_request_carries_the_model_and_prompt_without_streaming() {
+        let v: serde_json::Value =
+            serde_json::from_slice(&request_body("llama3.2", "say \"hi\"\n")).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"model": "llama3.2", "prompt": "say \"hi\"\n", "stream": false})
+        );
     }
 
     #[test]
-    fn a_response_field_is_read_back() {
-        let json = r#"{"response":"the answer"}"#;
-        assert_eq!(field(json, "response"), Some("the answer"));
-        assert!(field(json, "error").is_none());
+    fn a_response_with_quotes_and_newlines_comes_back_whole() {
+        let body = br#"{"model":"llama3.2","response":"he said \"hi\"\nthen left","done":true}"#;
+        assert_eq!(answer(200, body).unwrap(), "he said \"hi\"\nthen left");
     }
 
     #[test]
-    fn an_error_field_carries_its_detail() {
-        let json = r#"{"error":"unavailable","detail":"connection refused"}"#;
-        assert_eq!(field(json, "error"), Some("unavailable"));
-        assert_eq!(field(json, "detail"), Some("connection refused"));
+    fn a_refusal_or_an_empty_reply_is_unavailable_with_its_reason() {
+        let Err(InferError::Unavailable(why)) = answer(404, br#"{"error":"model 'x' not found"}"#)
+        else {
+            panic!()
+        };
+        assert_eq!(why, "ollama returned 404: model 'x' not found");
+        assert!(answer(200, br#"{"done":true}"#).is_err());
+        assert!(answer(200, b"not json").is_err());
     }
 }
