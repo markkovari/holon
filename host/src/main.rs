@@ -1732,9 +1732,8 @@ mod cache_tests {
 
     #[test]
     fn a_component_rebuilt_after_its_cwasm_is_compiled_again() {
-        let d = std::env::temp_dir().join(format!("cwasm-fresh-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
-        let (wasm, cwasm) = (d.join("t.wasm"), d.join("t.cwasm"));
+        let d = tempfile::tempdir().unwrap();
+        let (wasm, cwasm) = (d.path().join("t.wasm"), d.path().join("t.cwasm"));
         let at = |p: &std::path::Path, secs: u64| {
             std::fs::write(p, b"x").unwrap();
             let f = std::fs::File::options().write(true).open(p).unwrap();
@@ -1746,6 +1745,5 @@ mod cache_tests {
         assert!(cache_is_fresh(&cwasm, &wasm));
         at(&wasm, 300);
         assert!(!cache_is_fresh(&cwasm, &wasm), "the rebuilt component is newer");
-        let _ = std::fs::remove_dir_all(&d);
     }
 }
