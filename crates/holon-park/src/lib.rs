@@ -14,11 +14,11 @@
 //! that makes `park` idempotent, [`store`] is the one storage trait
 //! [`engine::Engine`] needs, and [`mem`] is its in-memory implementation.
 //! [`recover`] is the pass a resumer runs on a timer, [`resume`] is what it does
-//! with the result, and [`wire`] is the JSON `comp-park` speaks.
+//! with the result, [`wire`] is the JSON the park app speaks, and [`serve`] answers it.
 //!
-//! The service around the engine is `comp-park` (with the `native` adapter in
-//! `nats`) and `comp-resume`, both in `reconciler/daemons/park/`; `components/park-store` and
-//! `components/park-gateway` put the contract in front of it.
+//! The service around the engine is the park app (ADR-0132): `components/park-store` runs it on
+//! its keyvalue and `components/park-gateway` serves it. The `native` adapter in [`nats`] is the
+//! engine on JetStream, kept for a native caller.
 
 pub mod batch;
 pub mod engine;
@@ -28,6 +28,7 @@ pub mod mem;
 pub mod model;
 pub mod recover;
 pub mod resume;
+pub mod serve;
 pub mod store;
 pub mod ticket;
 pub mod wire;

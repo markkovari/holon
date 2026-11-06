@@ -3078,25 +3078,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "holon-park-daemon"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "hmac 0.12.1",
- "holon-daemon-kit",
- "holon-fleet",
- "holon-park",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha1",
- "tempfile",
- "tokio",
-]
-
-[[package]]
 name = "holon-plug"
 version = "0.1.0"
 dependencies = [
