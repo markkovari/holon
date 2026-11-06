@@ -1,0 +1,14 @@
+id = "wit:contract_first_scaffold"
+name = "WIT Contract-First Component Scaffolder"
+intent = "Scaffold a new WASM component by writing WIT contracts first, validating syntax, generating bindings, and creating crate skeleton"
+preconditions = ["goal:feature_spec_defined"]
+postconditions = ["wit:interface_validated", "bindings:generated", "component:cargo_scaffolded"]
+tags = ["wit", "wasm", "contract", "scaffold"]
+requires = ["wit:reflect@0.1.0", "wasi:filesystem"]
+composes = [
+    "wit:draft_interface",
+    "wit:validate_ast",
+    "bindings:generate_xtask",
+    "component:scaffold_crate"
+]
+carries = ["wit-reflect"]

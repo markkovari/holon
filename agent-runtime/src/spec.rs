@@ -296,6 +296,9 @@ pub struct AgentSpec {
     pub paused: bool,
     #[serde(default, skip_serializing_if = "SessionPolicy::is_default")]
     pub sessions: SessionPolicy,
+    /// Active graph-native skills loaded for this agent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
     /// From the project registry at run time (`projects::effective`).
     #[serde(skip)]
     pub projects: Vec<crate::projects::ProjectInfo>,
@@ -318,6 +321,7 @@ impl AgentSpec {
             auto_approve: Vec::new(),
             allow_hosts: Vec::new(),
             api_keys: Vec::new(),
+            skills: Vec::new(),
             triggers: Vec::new(),
             model: ModelSpec::Local,
             max_steps: default_steps(),

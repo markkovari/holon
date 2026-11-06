@@ -1,0 +1,14 @@
+id = "bug:autonomous_repro_and_repair"
+name = "Autonomous Bug Reproduction and Gate-Driven Repair"
+intent = "Reproduce a reported bug with a failing gate test first, generate candidate repair via free-tier queue, and verify test turns green"
+preconditions = ["bug:report_given"]
+postconditions = ["test:pre_failure_proven", "patch:applied", "gate:all_passing"]
+tags = ["bugfix", "gate", "fitness", "repair"]
+requires = ["graph:fitness/evaluator", "holon:llmbatch/queue"]
+composes = [
+    "test:author_failing_gate",
+    "gate:prove_initial_failure",
+    "code:generate_repair",
+    "gate:verify_green"
+]
+carries = []
