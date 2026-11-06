@@ -62,8 +62,11 @@ name = "agent-runtime"
 version = "0.1.0"
 dependencies = [
  "agent-wire",
+ "async-nats",
  "base64 0.22.1",
  "clap",
+ "futures",
+ "holon-lattice",
  "holon-llm",
  "holon-skills",
  "protox",
@@ -73,6 +76,9 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "tiny_http",
+ "tokio",
+ "wrpc-transport",
+ "wrpc-transport-nats",
 ]
 
 [[package]]
@@ -2951,6 +2957,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "tokio",
  "ureq 2.12.1",
  "url",

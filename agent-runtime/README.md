@@ -45,6 +45,20 @@ every run), `workspaces/<name>/` (the only place its file tools can reach).
   platform. A built-in tool name (or `agent:<other>`) makes it callable; any
   other name is an ability the model is told about. A tool the agent was not
   granted is refused, never dispatched.
+* **Connectors** make a granted name a tool without code: `<state>/connectors/<name>.json` holds
+  `description`, an `args` hint, `required`, `sensitive` and `timeout_secs`, and one of: `command` (a
+  program, JSON args on stdin), `url` (JSON args POSTed, the body is the result), or `wrpc`
+  (`{"lattice": "dev", "instance": "<tenant>/<app>/<component>"}`: a component exporting
+  `holon:tool/tool` (`wit/tool/tool.wit`), called over NATS at `HOLON_NATS_URL`). A component tool
+  is written in any language that targets the component model; `components/text-stats-mbt` is one
+  in MoonBit that answers both `url` and `wrpc`.
+* **`tool_build`** lets an agent make a tool it lacks: it writes `tool.mbt`, and the runtime compiles
+  it from that template (about 0.3 s), starts it on a lattice node, writes its `wrpc` connector and
+  grants it, so the agent calls it from its next step; a compile error comes back for it to fix
+  (`src/forge.rs` lists the `HOLON_FORGE_*` settings). `scenarios/tool-forge/run.sh` plays it through
+  with a scripted model; `live.sh "<goal>"` with a real one, every turn through the free queue.
+* **`batch_queue`** models go through `holon-llmbatch` over NATS (`queue_url`, ADR-0126): the whole
+  conversation as a transcript, and an error, never a made-up reply, when the queue does not answer.
 * **Triggers**: HTTP (always, through the gateway), `schedule` (5-field cron
   UTC, `@hourly`, `@every 30s`; add `"notify": true` and a chat bridge posts
   each result to you, otherwise it is only in the run log; add `"project": "rowing"`

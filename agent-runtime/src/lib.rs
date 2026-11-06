@@ -6,6 +6,7 @@ pub use agent_wire::clock;
 pub mod connector;
 pub mod cron;
 pub mod embed;
+pub mod forge;
 pub mod html;
 pub mod jev;
 pub mod keys;

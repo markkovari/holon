@@ -1,13 +1,15 @@
 //! Core processing logic for NATS JetStream LLM batch coalescing and realtime routing.
 
+use crate::providers::{self, Health, Kind, Provider};
 use anyhow::{anyhow, Result};
 use async_nats::jetstream::{self, consumer::PullConsumer};
 use async_nats::Client;
 use futures::StreamExt;
 use holon_llm::coalesce::{self, BatchTask, TaskOutput};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
 
 pub const BATCH_STREAM: &str = "LLM_BATCH";
 pub const BATCH_SUBJECT: &str = "holon.llm.batch.>";
@@ -35,6 +37,29 @@ pub struct BatchWorker {
     pub http: reqwest::Client,
     pub config: WorkerConfig,
     pub kv: Option<async_nats::jetstream::kv::Store>,
+    /// Asked in order; see `providers.json`.
+    pub providers: Vec<Provider>,
+    health: Mutex<HashMap<String, Health>>,
+    models: Mutex<HashMap<String, Vec<String>>>,
+}
+
+/// How many of one provider's models a request may try before moving on.
+const MODELS_PER_PROVIDER: usize = 3;
+
+/// A provider's own entry carries no request limits: those are per model.
+fn unlimited(p: &Provider) -> Provider {
+    Provider { rpm: 0, rpd: 0, ..p.clone() }
+}
+
+/// A provider's refusal, as it said it.
+struct Failure {
+    status: Option<u16>,
+    retry_after: Option<String>,
+    body: String,
+}
+
+fn secs_until(t: SystemTime, now: SystemTime) -> u64 {
+    t.duration_since(now).unwrap_or_default().as_secs()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,174 +78,294 @@ pub struct DlqEntry {
     pub timestamp_ms: u64,
 }
 
+/// An answer with no text is a failure the caller should see, not a blank reply.
+fn non_empty(reply: holon_llm::Reply) -> Result<String> {
+    if reply.text.trim().is_empty() {
+        return Err(anyhow!(
+            "upstream answered no text (finish_reason {}, {} tool call(s))",
+            reply.finish.as_deref().unwrap_or("none"),
+            reply.calls.len()
+        ));
+    }
+    Ok(reply.text)
+}
+
+/// The key goes in a header, never the URL: a failed request's error names its URL, and that
+/// error travels back to the caller (and into an agent's run log).
+fn gemini_request(
+    http: &reqwest::Client,
+    url: &str,
+    key: Option<&str>,
+    body: &serde_json::Value,
+) -> reqwest::RequestBuilder {
+    let rb = http.post(url).json(body);
+    match key {
+        Some(k) => rb.header("x-goog-api-key", k),
+        None => rb,
+    }
+}
+
 impl BatchWorker {
     pub fn new(
         nats: Client,
         js: jetstream::Context,
         config: WorkerConfig,
         kv: Option<async_nats::jetstream::kv::Store>,
+        providers: Vec<Provider>,
     ) -> Self {
-        let http =
-            reqwest::Client::builder().timeout(Duration::from_secs(60)).build().unwrap_or_default();
-        Self { nats, js, http, config, kv }
+        // Thinking models take over a minute on an agent's long transcript; callers wait 180 s.
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(170))
+            .build()
+            .unwrap_or_default();
+        Self {
+            nats,
+            js,
+            http,
+            config,
+            kv,
+            providers,
+            health: Mutex::default(),
+            models: Mutex::default(),
+        }
     }
 
-    /// Dynamically resolves the API key in priority order:
-    /// 1. Directly configured key in WorkerConfig
-    /// 2. Environment variables (e.g. GEMINI_API_KEY, GROQ_API_KEY, CEREBRAS_API_KEY, OPENAI_API_KEY)
-    /// 3. NATS JetStream KV bucket (`SECRETS` or configured bucket)
-    /// 4. Local ~/.comp-secrets/<provider>.key file
+    /// A provider's key: `<NAME>_API_KEY`, then `<name>-api-key` in the SECRETS bucket, then
+    /// `~/.comp-secrets/<name>.key`. `--api-key` only for a single `--upstream-url`.
     pub async fn resolve_api_key(&self, provider: &str) -> Option<String> {
-        if let Some(ref k) = self.config.api_key {
-            let trimmed = k.trim().to_string();
-            if !trimmed.is_empty() {
-                return Some(trimmed);
+        let clean = |s: String| Some(s.trim().to_string()).filter(|s| !s.is_empty());
+        if self.providers.len() == 1 {
+            if let Some(k) = self.config.api_key.clone().and_then(clean) {
+                return Some(k);
             }
         }
-
-        let env_candidates: &[&str] = match provider {
-            "gemini" => &["GEMINI_API_KEY", "HOLON_GEMINI_API_KEY"],
-            "groq" => &["GROQ_API_KEY", "HOLON_GROQ_API_KEY"],
-            "cerebras" => &["CEREBRAS_API_KEY", "HOLON_CEREBRAS_API_KEY"],
-            _ => &["OPENAI_API_KEY", "LLM_API_KEY"],
-        };
-
-        for env_var in env_candidates {
-            if let Ok(val) = std::env::var(env_var) {
-                let trimmed = val.trim().to_string();
-                if !trimmed.is_empty() {
-                    return Some(trimmed);
-                }
+        let upper = provider.to_uppercase().replace('-', "_");
+        for var in [format!("{upper}_API_KEY"), format!("HOLON_{upper}_API_KEY")] {
+            if let Some(k) = std::env::var(var).ok().and_then(clean) {
+                return Some(k);
             }
         }
-
-        // Check NATS JetStream KV store if available
         if let Some(ref kv) = self.kv {
-            let kv_candidates: &[&str] = match provider {
-                "gemini" => &["gemini-api-key", "gemini_api_key", "GEMINI_API_KEY", "gemini.key"],
-                "groq" => &["groq-api-key", "groq_api_key", "GROQ_API_KEY", "groq.key"],
-                "cerebras" => {
-                    &["cerebras-api-key", "cerebras_api_key", "CEREBRAS_API_KEY", "cerebras.key"]
-                }
-                _ => &["openai-api-key", "openai_api_key", "OPENAI_API_KEY", "openai.key"],
-            };
-
-            for key in kv_candidates {
-                if let Ok(Some(bytes)) = kv.get(*key).await {
-                    let val = String::from_utf8_lossy(&bytes).trim().to_string();
-                    if !val.is_empty() {
-                        return Some(val);
-                    }
-                }
-            }
-        }
-
-        // Check local ~/.comp-secrets/<provider>.key
-        if let Ok(home) = std::env::var("HOME") {
-            let p = std::path::Path::new(&home).join(".comp-secrets");
-            for file_name in [
-                format!("{provider}.key"),
+            for key in [
                 format!("{provider}-api-key"),
-                format!("{provider}.secret"),
+                format!("{provider}_api_key"),
+                format!("{upper}_API_KEY"),
             ] {
-                if let Ok(content) = std::fs::read_to_string(p.join(file_name)) {
-                    let trimmed = content.trim().to_string();
-                    if !trimmed.is_empty() {
-                        return Some(trimmed);
+                if let Ok(Some(bytes)) = kv.get(&key).await {
+                    if let Some(k) = clean(String::from_utf8_lossy(&bytes).into_owned()) {
+                        return Some(k);
                     }
                 }
             }
         }
-
-        None
+        let home = std::env::var("HOME").ok()?;
+        let dir = std::path::Path::new(&home).join(".comp-secrets");
+        [format!("{provider}.key"), format!("{provider}-api-key")]
+            .iter()
+            .find_map(|f| std::fs::read_to_string(dir.join(f)).ok().and_then(clean))
     }
 
-    /// Execute prompt upstream against Gemini REST or OpenAI-compatible endpoint.
+    /// `name` is a provider (for what stops it as a whole) or `provider/model`.
+    fn health<R>(&self, name: &str, f: impl FnOnce(&mut Health) -> R) -> R {
+        f(self.health.lock().unwrap().entry(name.to_string()).or_default())
+    }
+
+    /// Asks the free providers' models in order, skipping any cooling down, at its documented
+    /// limits or without a key. A failure sets when that model (or, for a refused key, that
+    /// provider) may be asked again; the next one is tried at once.
     pub async fn execute_upstream(&self, system: &str, user_prompt: &str) -> Result<String> {
-        let is_gemini = self.config.upstream_url.contains("googleapis.com")
-            || self.config.upstream_url.ends_with(":generateContent")
-            || self.config.model.starts_with("gemini");
-        let provider_tag = if is_gemini {
-            "gemini"
-        } else if self.config.upstream_url.contains("groq.com") {
-            "groq"
-        } else if self.config.upstream_url.contains("cerebras.ai") {
-            "cerebras"
-        } else {
-            "openai"
-        };
-
-        let resolved_key = self.resolve_api_key(provider_tag).await;
-
-        if is_gemini {
-            let req = holon_llm::Request {
-                model: &self.config.model,
-                messages: &[holon_llm::Message {
-                    role: holon_llm::Role::User,
-                    parts: vec![holon_llm::Part::Text(user_prompt.to_string())],
-                }],
-                system: if system.is_empty() { None } else { Some(system) },
-                tools: &[],
-                max_tokens: Some(8192),
-                temperature: Some(0.1),
-                stop: &[],
-                seed: None,
-                stream: false,
-                cache: false,
-                blocks: false,
+        let mut passed = Vec::new();
+        for p in &self.providers {
+            let now = SystemTime::now();
+            if let Some((back, why)) = self.health(&p.name, |h| h.blocked(&unlimited(p), now)) {
+                passed.push(format!("{} {why}, back in {}s", p.name, secs_until(back, now)));
+                continue;
+            }
+            let Some(key) = self.resolve_api_key(&p.name).await else {
+                passed.push(format!("{} has no key", p.name));
+                continue;
             };
-            let body = holon_llm::gemini::body(&req);
-            let mut url = self.config.upstream_url.clone();
-            if let Some(ref key) = resolved_key {
-                let sep = if url.contains('?') { "&" } else { "?" };
-                url = format!("{url}{sep}key={key}");
-            }
-            let resp = self.http.post(&url).json(&body).send().await?;
-            let status = resp.status();
-            let bytes = resp.bytes().await?;
-            if !status.is_success() {
-                return Err(anyhow!(
-                    "upstream gemini returned status {status}: {}",
-                    String::from_utf8_lossy(&bytes)
-                ));
-            }
-            let reply = holon_llm::gemini::reply(&bytes).map_err(|e| anyhow!("{e:?}"))?;
-            Ok(reply.text)
-        } else {
-            // OpenAI-compatible chat completions endpoint (e.g. llm-router or Ollama)
-            let req = holon_llm::Request {
-                model: &self.config.model,
-                messages: &[holon_llm::Message {
-                    role: holon_llm::Role::User,
-                    parts: vec![holon_llm::Part::Text(user_prompt.to_string())],
-                }],
-                system: if system.is_empty() { None } else { Some(system) },
-                tools: &[],
-                max_tokens: Some(8192),
-                temperature: Some(0.1),
-                stop: &[],
-                seed: None,
-                stream: false,
-                cache: false,
-                blocks: false,
+            let models = match self.models_for(p, &key).await {
+                Ok(m) => m,
+                Err(why) => {
+                    passed.push(format!("{} {why}", p.name));
+                    continue;
+                }
             };
-            let body = holon_llm::openai::body(&req);
-            let mut rb = self.http.post(&self.config.upstream_url).json(&body);
-            if let Some(ref key) = resolved_key {
-                rb = rb.header("Authorization", format!("Bearer {key}"));
+            for model in models.iter().take(MODELS_PER_PROVIDER) {
+                let slot = format!("{}/{model}", p.name);
+                let now = SystemTime::now();
+                if let Some((back, why)) = self.health(&slot, |h| h.blocked(p, now)) {
+                    passed.push(format!("{slot} {why}, back in {}s", secs_until(back, now)));
+                    continue;
+                }
+                self.health(&slot, |h| h.spent(p, now));
+                let f = match self.ask(p, model, &key, system, user_prompt).await {
+                    Ok(text) => return Ok(text),
+                    Err(f) => f,
+                };
+                if let Some(call) = providers::salvaged_tool_call(&f.body) {
+                    return Ok(call);
+                }
+                let now = SystemTime::now();
+                let (back, why) =
+                    providers::back_at(p, f.status, f.retry_after.as_deref(), &f.body, now);
+                let detail: String = f.body.chars().take(200).collect();
+                eprintln!(
+                    "holon-llmbatch: {slot} {why}, back in {}s: {detail}",
+                    secs_until(back, now)
+                );
+                passed.push(format!("{slot} {why}"));
+                let whole = matches!(f.status, Some(401 | 403));
+                self.health(if whole { &p.name } else { &slot }, |h| {
+                    h.until = Some(back);
+                    h.why = why;
+                });
+                if f.status == Some(404) {
+                    self.models.lock().unwrap().remove(&p.name);
+                }
+                if whole {
+                    break;
+                }
             }
-            let resp = rb.send().await?;
-            let status = resp.status();
-            let bytes = resp.bytes().await?;
-            if !status.is_success() {
-                return Err(anyhow!(
-                    "upstream openai returned status {status}: {}",
-                    String::from_utf8_lossy(&bytes)
-                ));
-            }
-            let reply = holon_llm::openai::parse(&bytes).map_err(|e| anyhow!("{e:?}"))?;
-            Ok(reply.text)
         }
+        Err(anyhow!("no free provider answered: {}", passed.join("; ")))
+    }
+
+    /// The provider's offered models worth asking, best first, listed once and kept.
+    async fn models_for(
+        &self,
+        p: &Provider,
+        key: &str,
+    ) -> std::result::Result<Vec<String>, String> {
+        if let Some(m) = self.models.lock().unwrap().get(&p.name) {
+            return Ok(m.clone());
+        }
+        let url = format!(
+            "{}/models{}",
+            p.base,
+            if p.kind == Kind::Gemini { "?pageSize=1000" } else { "" }
+        );
+        let rb = self.http.get(url);
+        let rb = match p.kind {
+            Kind::Gemini => rb.header("x-goog-api-key", key),
+            Kind::Openai => rb.bearer_auth(key),
+        };
+        let fail = |status: Option<u16>, body: &str| {
+            let now = SystemTime::now();
+            let (back, why) = providers::back_at(p, status, None, body, now);
+            let why = format!("cannot list its models ({why})");
+            self.health(&p.name, |h| {
+                h.until = Some(back.max(now + Duration::from_secs(60)));
+                h.why = why.clone();
+            });
+            why
+        };
+        let resp = match rb.send().await {
+            Ok(r) => r,
+            Err(e) => return Err(fail(None, &e.without_url().to_string())),
+        };
+        let status = resp.status().as_u16();
+        let body = resp.text().await.unwrap_or_default();
+        if !(200..300).contains(&status) {
+            return Err(fail(Some(status), &body));
+        }
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        let offered: Vec<String> = match p.kind {
+            Kind::Gemini => v["models"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|m| m["supportedGenerationMethods"].to_string().contains("generateContent"))
+                .filter_map(|m| {
+                    m["name"].as_str().map(|n| n.trim_start_matches("models/").to_string())
+                })
+                .collect(),
+            Kind::Openai => v["data"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|m| m["id"].as_str().map(String::from))
+                .collect(),
+        };
+        let wanted = providers::candidates(&p.models, &offered);
+        eprintln!(
+            "holon-llmbatch: {} will ask {} (of what it offers: {})",
+            p.name,
+            wanted.join(", "),
+            offered.join(", ")
+        );
+        if wanted.is_empty() {
+            let why = "offers none of its wanted models".to_string();
+            self.health(&p.name, |h| {
+                h.until = Some(SystemTime::now() + Duration::from_secs(3600));
+                h.why = why.clone();
+            });
+            return Err(why);
+        }
+        self.models.lock().unwrap().insert(p.name.clone(), wanted.clone());
+        Ok(wanted)
+    }
+
+    async fn ask(
+        &self,
+        p: &Provider,
+        model: &str,
+        key: &str,
+        system: &str,
+        prompt: &str,
+    ) -> std::result::Result<String, Failure> {
+        let messages = [holon_llm::Message {
+            role: holon_llm::Role::User,
+            parts: vec![holon_llm::Part::Text(prompt.to_string())],
+        }];
+        let req = holon_llm::Request {
+            model,
+            messages: &messages,
+            system: if system.is_empty() { None } else { Some(system) },
+            tools: &[],
+            max_tokens: Some(8192),
+            temperature: Some(0.1),
+            stop: &[],
+            seed: None,
+            stream: false,
+            cache: false,
+            blocks: false,
+        };
+        let rb = match p.kind {
+            Kind::Gemini => gemini_request(
+                &self.http,
+                &format!("{}/models/{model}:generateContent", p.base),
+                Some(key),
+                &holon_llm::gemini::body(&req),
+            ),
+            Kind::Openai => self
+                .http
+                .post(format!("{}/chat/completions", p.base))
+                .bearer_auth(key)
+                .json(&holon_llm::openai::body(&req)),
+        };
+        let resp = rb.send().await.map_err(|e| Failure {
+            status: None,
+            retry_after: None,
+            body: e.without_url().to_string(),
+        })?;
+        let status = resp.status().as_u16();
+        let retry_after =
+            resp.headers().get("retry-after").and_then(|v| v.to_str().ok()).map(String::from);
+        let bytes = resp.bytes().await.unwrap_or_default();
+        let body = String::from_utf8_lossy(&bytes).into_owned();
+        if !(200..300).contains(&status) {
+            return Err(Failure { status: Some(status), retry_after, body });
+        }
+        let reply = match p.kind {
+            Kind::Gemini => holon_llm::gemini::reply(&bytes).map_err(|e| format!("{e:?}")),
+            Kind::Openai => holon_llm::openai::parse(&bytes).map_err(|e| format!("{e:?}")),
+        };
+        reply
+            .map_err(|e| e.to_string())
+            .and_then(|r| non_empty(r).map_err(|e| e.to_string()))
+            .map_err(|e| Failure { status: Some(status), retry_after: None, body: e })
     }
 
     /// Process a coalesced batch of tasks.
@@ -402,6 +547,19 @@ mod tests {
         let json = serde_json::to_string(&task).unwrap();
         let parsed: BatchTask = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, task);
+    }
+
+    #[test]
+    fn the_key_never_rides_in_the_url_or_an_error() {
+        let http = reqwest::Client::new();
+        let url = "http://127.0.0.1:1/v1beta/models/m:generateContent";
+        let rb = gemini_request(&http, url, Some("SECRET-KEY"), &serde_json::json!({}));
+        let req = rb.try_clone().unwrap().build().unwrap();
+        assert!(!req.url().as_str().contains("SECRET-KEY"));
+        assert_eq!(req.headers()["x-goog-api-key"], "SECRET-KEY");
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let err = rt.block_on(rb.send()).unwrap_err();
+        assert!(!format!("{}", err.without_url()).contains("SECRET-KEY"));
     }
 
     #[test]

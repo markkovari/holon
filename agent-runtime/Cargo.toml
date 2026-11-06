@@ -27,6 +27,13 @@ holon-llm.workspace = true
 holon-skills.workspace = true
 agent-wire.workspace = true
 tempfile.workspace = true
+# A connector's `wrpc`: a tool component on the lattice, called over NATS. Versions follow host/Cargo.toml.
+async-nats.workspace = true
+futures.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+holon-lattice.workspace = true
+wrpc-transport = "0.29"
+wrpc-transport-nats = "0.31"
 
 [dev-dependencies]
 # tests/contract.rs: the runtime contract (api/holon/runtime/v1, ADR-0120) compiles.

@@ -196,20 +196,19 @@ fn test_agent_propose_pr_records_provenance_and_returns_opened_record() {
 }
 
 #[test]
-fn test_free_tier_batch_queue_model_spec_completion() {
+fn the_free_queue_unreachable_is_an_error_never_a_made_up_reply() {
     let spec = ModelSpec::BatchQueue {
-        queue_url: "http://127.0.0.1:4222".into(),
+        queue_url: "http://127.0.0.1:1".into(),
         model: "gemini-2.5-flash-lite".into(),
     };
     let local = LocalModel::default();
     let mock_cursor = Mutex::new(0);
     let msgs = vec![Msg::user("write a rust function for adding two numbers")];
 
-    let reply =
+    let err =
         agent_runtime::model::complete(&spec, &local, "System coder prompt", &msgs, &mock_cursor)
-            .unwrap();
-    assert!(reply.text.contains("gemini-2.5-flash-lite"));
-    assert!(reply.text.contains("free-tier"));
+            .unwrap_err();
+    assert!(err.contains("free queue") && err.contains("nats://127.0.0.1:1"), "{err}");
     assert_eq!(spec.label(), "batch:gemini-2.5-flash-lite");
 }
 

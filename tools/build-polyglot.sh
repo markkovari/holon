@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Build a binder capability in Go, C, JS or Python: the embed-and-encode `cargo component` does for Rust,
+# Build a binder capability in Go, C, JS, Python or MoonBit: the embed-and-encode `cargo component` does for Rust,
 # written out per language (components/portfolio-value-go/README.md).
 set -euo pipefail
 cd "$(dirname "$0")/.." || exit 1
 root="$PWD"
 out_dir="$root/components/target"
 
-lang="${1:?usage: build-polyglot.sh <go|c|js|py> <portfolio-value|price-history>}"
+lang="${1:?usage: build-polyglot.sh <go|c|js|py|mbt> <capability>}"
 cap="${2:?}"
 snake="${cap//-/_}"
 out="$out_dir/${snake}_${lang}.wasm"
@@ -65,8 +65,22 @@ py)
   componentize-py --wit-path "../${cap}/wit" --world "$cap" componentize app -o "$out"
   ;;
 
+mbt)
+  # MoonBit strings are UTF-16, and the bindings hand them over as they are: without
+  # `--encoding utf16` every string crossing the boundary arrives garbled.
+  moon="${MOON:-$HOME/.moon/bin/moon}"
+  [ -x "$moon" ] || { echo "no moon at '$moon' — https://www.moonbitlang.com/download" >&2; exit 1; }
+  cd "components/${cap}-mbt"
+  "$moon" build --target wasm --release --quiet
+  embedded="$(mktemp -t polyembed).wasm"
+  trap 'rm -f "$embedded"' EXIT
+  wasm-tools component embed ./wit --world "$cap" --encoding utf16 \
+    _build/wasm/release/build/gen/gen.wasm -o "$embedded"
+  wasm-tools component new "$embedded" -o "$out"
+  ;;
+
 *)
-  echo "unknown language '$lang' (go, c, js, py)" >&2
+  echo "unknown language '$lang' (go, c, js, py, mbt)" >&2
   exit 1
   ;;
 esac

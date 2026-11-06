@@ -51,3 +51,6 @@ serde_json.workspace = true
 wrpc-runtime-wasmtime = "0.31"
 wrpc-transport-nats = "0.31"
 wrpc-transport = "0.29"
+
+[dev-dependencies]
+tempfile.workspace = true

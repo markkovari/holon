@@ -1,0 +1,6 @@
+package holon:text-stats@0.1.0;
+
+world text-stats {
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
+    export holon:tool/tool@0.1.0;
+}
