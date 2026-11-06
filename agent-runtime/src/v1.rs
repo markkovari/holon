@@ -77,6 +77,7 @@ pub fn route(
     match (method, segs) {
         // The open tier, as the old trigger routes were: anything that may poke an agent may call these.
         (Method::Post, ["agents", name, "runs"]) => return start_run(rt, name, body, trace),
+        (Method::Get, ["jobs", id]) => return job(id),
         (Method::Post, ["agents", name, "handoff"]) => return handoff(rt, name, body, trace),
         (Method::Post, ["topics", topic, "events"]) => {
             let v = match body_json(body) {
@@ -325,13 +326,21 @@ fn start_run(rt: &Arc<Runtime>, name: &str, body: &str, trace: Option<Traceparen
         if rt.store().get(name).is_none() {
             return problem(404, format!("no agent named {name}"));
         }
-        let (rt, agent) = (rt.clone(), name.to_string());
-        // A run can wait minutes on an approval; its progress is on the stream.
+        let id = format!("job-{}", crate::trace::new_span_id());
+        jobs::started(&id);
+        let (rt, agent, job) = (rt.clone(), name.to_string(), id.clone());
+        // A run can wait minutes on an approval; its progress is on the stream, its end at the job.
         std::thread::spawn(move || {
-            let _ =
+            let r =
                 crate::server::start_run(&rt, &agent, &input, &why, project, attachments, trace);
+            let r = r.map(|rec| {
+                let mut v = json!(rec);
+                v["job"] = json!(job);
+                v
+            });
+            jobs::ended(&job, r);
         });
-        return Reply::Json(202, json!({"agent": name, "status": "running"}));
+        return Reply::Json(202, json!({"agent": name, "status": "running", "job": id}));
     }
     match crate::server::start_run(rt, name, &input, &why, project, attachments, trace) {
         Ok(r) => Reply::Json(200, json!(r)),
@@ -373,5 +382,57 @@ fn handoff(rt: &Arc<Runtime>, name: &str, body: &str, trace: Option<Traceparent>
             }
         }
         Err((status, e)) => problem(status, e),
+    }
+}
+
+fn job(id: &str) -> Reply {
+    match jobs::get(id) {
+        Some(jobs::Job::Running) => Reply::Json(202, json!({"job": id, "status": "running"})),
+        Some(jobs::Job::Done(run)) => Reply::Json(200, run),
+        Some(jobs::Job::Refused(status, why)) => problem(status, why),
+        None => problem(404, format!("no job {id}: it never was, or it is long forgotten")),
+    }
+}
+
+/// Runs started without `wait`, by the job their start answered, until a caller reads how they
+/// ended. shortcut: in memory and the last 1024 only, so a restart forgets them (and the runs
+/// they named were cut off anyway); keep them in the store if a caller must outlive one.
+mod jobs {
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    use serde_json::Value;
+
+    const KEPT: usize = 1024;
+
+    #[derive(Clone)]
+    pub enum Job {
+        Running,
+        Done(Value),
+        Refused(u16, String),
+    }
+
+    static JOBS: Mutex<VecDeque<(String, Job)>> = Mutex::new(VecDeque::new());
+
+    pub fn started(id: &str) {
+        let mut j = JOBS.lock().unwrap();
+        if j.len() >= KEPT {
+            j.pop_front();
+        }
+        j.push_back((id.to_string(), Job::Running));
+    }
+
+    pub fn ended(id: &str, r: Result<Value, (u16, String)>) {
+        let mut j = JOBS.lock().unwrap();
+        if let Some((_, job)) = j.iter_mut().find(|(k, _)| k == id) {
+            *job = match r {
+                Ok(run) => Job::Done(run),
+                Err((status, why)) => Job::Refused(status, why),
+            };
+        }
+    }
+
+    pub fn get(id: &str) -> Option<Job> {
+        JOBS.lock().unwrap().iter().find(|(k, _)| k == id).map(|(_, j)| j.clone())
     }
 }
