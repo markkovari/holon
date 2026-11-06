@@ -624,6 +624,13 @@ pub const TOOLS: &[ToolDef] = &[
         sensitive: false,
     },
     ToolDef {
+        name: "skill_audit",
+        args: r#"{}"#,
+        about: "Audit the skill registry graph for duplicate skills, divergent forks, monolithic DAGs needing decomposition, and missing prerequisites.",
+        category: "skills",
+        sensitive: false,
+    },
+    ToolDef {
         name: "propose_pr",
         args: r#"{"branch": "feat/my-change", "title": "...", "body": "...", "base": "main", "message": "...", "changes": [{"path": "...", "content": "..."}]}"#,
         about: "Propose a Pull Request to git forge with file changes and record PR provenance in the knowledge graph. If `changes` is omitted, commits workspace modifications.",
@@ -2155,6 +2162,18 @@ fn exec(
                 }
                 Err(e) => Err(format!("cannot activate skill `{skill_id}`: {e}")),
             }
+        }
+        "skill_audit" => {
+            let mut g = holon_skills::SkillGraph::default_skills();
+            let _ = g.load_dir(std::path::Path::new(".comp/skills"));
+            let issues = g.audit();
+            let res = json!({
+                "total_skills": g.nodes.len(),
+                "issue_count": issues.len(),
+                "issues": issues,
+                "healthy": issues.is_empty(),
+            });
+            Ok(serde_json::to_string_pretty(&res).unwrap_or_default())
         }
         "propose_pr" => {
             let branch = arg(args, "branch");
