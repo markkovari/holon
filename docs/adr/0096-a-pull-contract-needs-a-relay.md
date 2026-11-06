@@ -3,7 +3,7 @@
 *Three capabilities describe work that happens later. None of them could make it
 happen, and nothing in the tree admitted that in one place.*
 
-**Status: accepted.** Adds the sixth native thing, under the rule ADR-0095 wrote
+**Status: superseded by [ADR-0130](0130-the-host-is-the-clock.md)** (the host pumps its app; `comp-relay` is gone). Was: adds the sixth native thing, under the rule ADR-0095 wrote
 for exactly this.
 
 ## The gap

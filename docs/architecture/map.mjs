@@ -65,13 +65,13 @@ export const SYS = [
   purpose:'platform-domain decides, comp-reconciler makes the fleet match, comp-ingress is the door.',
   blurb:'platform-domain, itself a wasm app, keeps orgs, the catalogue, deployments and secrets. comp-reconciler diffs desired against observed and sends commands over NATS; comp-ingress routes HTTP by Host header from inventory. Bare metal joined by NATS, with no Kubernetes on the runtime path.',
   entry:'the holon CLI and the Holon console (both over /api), and comp-ingress for end users',
-  parts:[['wasm','platform-domain'],['native','holon-reconciler'],['native','holon-ingress'],['native','holon-relay'],['wasm','console-domain'],['native','holon-backup']],
+  parts:[['wasm','platform-domain'],['native','holon-reconciler'],['native','holon-ingress'],['wasm','console-domain'],['native','holon-backup']],
   uses:['nats','disk'],
   boundary:['comp-reconciler is the only process that can start code on every node. It holds no business logic, no database and no user concept, so it stays small enough to audit in one sitting.',
             'The ingress needs no platform credential: its routing table comes from inventory, so it keeps routing while the control plane is down.',
             'Admission fails closed: 429 above max-placement-lag, 503 when the reconciler’s report goes stale.',
             'Only one reconciler acts at a time, decided by a lease in the store; a standby takes over within the TTL plus one interval.'],
-  code:['components/platform-domain','components/console-domain','reconciler/src/{main,plan}.rs','reconciler/src/bin/ingress.rs','reconciler/daemons/{relay,backup}/','lattice/src/']},
+  code:['components/platform-domain','components/console-domain','reconciler/src/{main,plan}.rs','reconciler/src/bin/ingress.rs','reconciler/daemons/backup/','lattice/src/']},
 
  {id:'runtime', name:'Runtime', short:'comp-host, one process per node',
   purpose:'comp-host: one process per node runs every tenant’s components over wasmtime.',
@@ -180,7 +180,7 @@ export const COR = [
  {id:'C7',a:['control','holon-ingress'],b:['runtime','HTTP listener'],p:'http',over:'HTTP',contract:'Proxies by Host header straight to a node on the tailnet; least outstanding requests, sheds load past max_inflight.',adr:'0029 · 0041'},
  {id:'C8',a:['control','holon-ingress'],b:['control','holon-reconciler'],p:'nats',over:'NATS',contract:'An activate command when a scaled-to-zero app gets its first request; one activation per host at a time. Internal to the control plane.',adr:'0042',internal:true},
  {id:'C9',a:['users','browsers · callers'],b:['control','holon-ingress'],p:'http',over:'HTTPS',contract:'Caddy terminates TLS for apps declared access = "public"; everything else is reachable on the tailnet only.',adr:'0029'},
- {id:'C10',a:['control','holon-relay'],b:['runtime','tenant apps'],p:'http',over:'HTTP',contract:'Pokes an app’s [triggers] pump (/internal/pump) on an interval so pull-based timers, topics and cron fire.',adr:'0096'},
+ {id:'C10',a:['runtime','holon-host'],b:['runtime','tenant apps'],p:'http',over:'HTTP',contract:'The host POSTs an app’s [triggers] pump (/internal/pump) to itself on an interval (--pump), so pull-based timers, topics and cron fire.',adr:'0130'},
  {id:'C11',a:['runtime','comp:secrets/reader'],b:['control','platform-domain'],p:'http',over:'HTTP',contract:'reveal fetches the plaintext on first use with a single-use token; a captured fetch is spent. The guest never holds a reference.',adr:'0051 · 0071'},
  {id:'C12',a:['loop','comp-goald'],b:['control','platform-domain'],p:'http',over:'HTTP',contract:'The project’s goal queue and events under /api/projects/{p}/… A person still starts every goal.',adr:'0082'},
 
@@ -296,8 +296,7 @@ export const DIA = {
    N('platform',1,1,'wasm','platform-domain',['orgs · catalogue · deployments','revisions · secrets · market']),
    N('recon',2,1,'native','holon-reconciler',['pure plan() diff, one leader','sole start/stop authority'],{m:1}),
    N('nats',1,2,'store','NATS lattice buckets',['comp-inventory (TTL) · comp-artifacts','comp-load · lease · cmd subjects']),
-   N('ingress',2,2,'native','holon-ingress',['Host header → replica','least-outstanding · sheds · activates'],{m:1}),
-   N('relay',2,3,'native','holon-relay',['pokes /internal/pump so pull-','based timers and topics fire'],{m:1})
+   N('ingress',2,2,'native','holon-ingress',['Host header → replica','least-outstanding · sheds · activates'],{m:1})
   ],
   edges:[
    ['cli','platform','HTTP /api','http'],['console','platform','HTTP /api','http'],['recon','platform','poll','http'],
@@ -320,7 +319,6 @@ export const DIA = {
    {a:'g-del',b:'recon',n:5,lab:'render',cor:['D7']},
    {a:'recon',b:'g-run',n:6,lab:'NATS',cor:['C6'],d:'<->'},
    {a:'ingress',b:'g-run',n:7,lab:'proxy',cor:['C7']},
-   {a:'relay',b:'g-run',n:8,lab:'pump',cor:['C10']},
    {a:'g-run',b:'platform',n:9,lab:'reveal',cor:['C11']},
    {a:'g-users',b:'ingress',n:10,lab:'HTTP',cor:['C9']}
   ]},

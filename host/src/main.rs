@@ -6,8 +6,10 @@ mod kv;
 mod kvcache;
 mod kvprofile;
 mod objkv;
+mod pump;
 mod rpc;
 mod secrets;
+mod subscribe;
 mod sync;
 mod tenant;
 // Backend gates live outside `kv.rs`: the file that implements a backend must not judge it.
@@ -907,6 +909,17 @@ struct Args {
     #[arg(long, default_value = "30")]
     request_timeout_secs: u64,
 
+    /// `POST` this path to the app every `--pump-every` seconds, from the host itself (ADR-0130):
+    /// what drives an app's `sched:timer`, `event:bus` and `cron:expr`. Solo only.
+    #[arg(long)]
+    pump: Option<String>,
+    #[arg(long, default_value = "10")]
+    pump_every: u64,
+    /// `<subject>=<path>`, repeatable: the host holds the NATS subscription (at `--nats-url`) and
+    /// POSTs each message to the path, a request's reply being the response (ADR-0131). Solo only.
+    #[arg(long)]
+    subscribe: Vec<String>,
+
     /// Join a lattice at this NATS URL and take instances from start commands instead of `--component`.
     #[arg(long)]
     lattice_nats: Option<String>,
@@ -1320,6 +1333,34 @@ async fn main() -> Result<()> {
 
     let platform_url = args.platform_url.clone();
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    if let Some(path) = &args.pump {
+        if args.lattice_nats.is_some() {
+            anyhow::bail!(
+                "--pump is for one app on one host; on a lattice the start command carries it"
+            );
+        }
+        if !path.starts_with('/') {
+            anyhow::bail!("--pump takes a path such as /internal/pump, not {path:?}");
+        }
+        let url = pump::target(addr, path);
+        println!("comp-host: pumping {url} every {}s", args.pump_every.max(1));
+        pump::spawn(url, std::time::Duration::from_secs(args.pump_every.max(1)));
+    }
+    if !args.subscribe.is_empty() {
+        if args.lattice_nats.is_some() {
+            anyhow::bail!("--subscribe is for one app on one host: a lattice manifest cannot carry subscriptions yet (ADR-0131)");
+        }
+        let routes = args
+            .subscribe
+            .iter()
+            .map(|s| subscribe::parse(s))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(anyhow::Error::msg)?;
+        let servers: Vec<String> = nats_url.split(',').map(str::to_string).collect();
+        let nats =
+            async_nats::connect(servers).await.context("connecting to NATS for --subscribe")?;
+        subscribe::spawn(nats, routes, addr, 16).await?;
+    }
 
     loop {
         let (stream, _) = listener.accept().await?;

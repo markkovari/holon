@@ -547,7 +547,7 @@ export default function App() {
               );
               await refresh();
             }}
-            // In a deployment this is `comp-relay` on a schedule — the app spec's
+            // In a deployment this is the host's own pump (`--pump`), from the app spec's
             // [triggers] block — hitting the same route. A component has no loop of
             // its own, so "the clock ticked" is always something calling in. Here it
             // is a button, which is the same work with a person as the scheduler.

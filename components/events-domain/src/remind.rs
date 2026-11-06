@@ -93,7 +93,7 @@ pub fn tell(
     }
 }
 
-/// A route because a component has no loop: `comp-relay` calls it on a schedule.
+/// A route because a component has no loop: the host calls it on a schedule (`--pump`).
 pub fn run(method: &Method, route: &Route) -> Reply {
     if !matches!(method, Method::Post) {
         return Reply::err(404, "not_found");

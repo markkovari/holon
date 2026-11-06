@@ -11,7 +11,7 @@
 //   * the organizer opens an event, and its reminder goes on the clock at
 //     `starts_at` minus 24 hours — `sched:timer` holds it;
 //   * the attendee holds a ticket and has opted into BOTH channels;
-//   * the clock ticks. In a deployment that is `comp-relay` on a schedule hitting
+//   * the clock ticks. In a deployment that is the host's own pump (`--pump`) hitting
 //     the same route; here it is a button, which is the same work;
 //   * the badge moves on the LEFT without anybody reloading it — an SSE frame,
 //     through a stream opened with a signed 60-second ticket because `EventSource`

@@ -126,14 +126,13 @@ Holon components are pure WebAssembly, but the host environment and engineering 
 ### 2. Standalone Holon Binaries (Install via script)
 Run our automated multi-platform installer to install prebuilt native binaries into `~/.holon/bin`:
 ```bash
-# Installs holon CLI, holon-host, comp-plug, comp-checks, and holon-relay
+# Installs holon CLI, holon-host, comp-plug and comp-checks
 curl -fsSL https://raw.githubusercontent.com/markkovari/holon/main/install.sh | sh
 ```
 * `holon`: The CLI for managing nodes, rendering systemd units, inspecting components, and deploying lattices.
 * `holon-host`: The native Wasmtime-based host serving WASI p2/p3 components over HTTP and NATS.
 * `comp-plug`: The automatic import resolver and linker (wraps `wac`).
 * `comp-checks`: The high-concurrency test gate daemon (materializes trees, executes sandboxed test suites).
-* `holon-relay`: The pull-to-push event relay driving `sched:timer`, `event:bus`, and `cron:expr`.
 
 ### 3. Optional Supporting Infrastructure
 * **NATS Server** (`nats-server`): Needed only for Lane 2 (multi-node lattice orchestration) and JetStream RPC.
@@ -260,8 +259,8 @@ cargo xtask compose gate                # components -> one .wasm
 ```
 
 HTTP is not the only trigger. `sched:timer`, `event:bus` and `cron:expr` are
-pull-based by design — which keeps them pure WASI and portable — so `holon-relay`
-drives them in every lane, and an app gains a trigger by declaring `[triggers]`
+pull-based by design — which keeps them pure WASI and portable — so the host pumps
+the app (`--pump`, ADR-0130), and an app gains a trigger by declaring `[triggers]`
 rather than by changing its exported WIT.
 
 See [`docs/SELFHOST.md`](docs/SELFHOST.md) for all four lanes and what each costs.
@@ -280,8 +279,7 @@ Only what *must* be native is native, and
 admitting anything new: it must need a capability WASI denies a guest — a process,
 a raw socket, a held subscription — not a convenience. The host that runs the wasm
 (`host/`, wasmtime 45), the reconciler that holds a NATS subscription and a timer
-(`reconciler/`), the gate that spawns processes, the relay that holds a clock, and
-the CLI. Everything else is a component.
+(`reconciler/`), the gate that spawns processes, and the CLI. Everything else is a component.
 
 <a id="the-agentic-loop"></a>
 <a id="the-agentic-loop--paused-and-kept"></a>
@@ -354,7 +352,7 @@ CHECKOUT=~/src/widgets REPO=acme/widgets bash goal-demo.sh real     # goal → P
 | the four lanes, and what each costs | [`docs/SELFHOST.md`](docs/SELFHOST.md) |
 | the app spec — the only file you write | `apps/<name>.toml`, rendered by `holon node render` |
 | the lattice: nodes, a reconciler, an ingress | `fleet.example.toml`, `holon fleet render` |
-| triggers that are not HTTP | [ADR-0096](docs/adr/0096-a-pull-contract-needs-a-relay.md) — `holon-relay`, and why push never replaces the sweep |
+| triggers that are not HTTP | [ADR-0130](docs/adr/0130-the-host-is-the-clock.md) — the host pumps its app; [ADR-0096](docs/adr/0096-a-pull-contract-needs-a-relay.md) for why the sweep is the contract |
 | what may be native at all | [ADR-0095](docs/adr/0095-what-is-allowed-to-be-native.md) — three questions, and the answer to the third is usually "here is the WIT" |
 | what runs today, measured, and honestly missing | [`docs/CURRENT.md`](docs/CURRENT.md) |
 | what a hardening sweep found, fixed, and left | [`docs/HARDENING.md`](docs/HARDENING.md) — five failures that wore the return type of a success |

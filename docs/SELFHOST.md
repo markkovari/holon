@@ -49,8 +49,8 @@ a team already runs wasmCloud, and the generated host config says so in its head
 
 `sched:timer`, `event:bus` and `cron:expr` are all **pull** — each says in its own
 WIT that a relay must drive it, which is what keeps them pure WASI and portable.
-Something outside has to poke the app, and `comp-relay` is that something in every
-lane. An app declares it wants one:
+Something has to poke the app, and the host that serves it does (`--pump`, ADR-0130).
+An app declares it wants one:
 
 ```toml
 [triggers]
@@ -58,21 +58,21 @@ pump = "/internal/pump"   # the convention: saga-domain and the four eshop-* ser
 interval = 10             # the completeness path
 ```
 
-Tier 1 renders a second unit for it; on wasmCloud, `event-pusher` does the same job
+Tier 1 renders it into the app's own unit; on wasmCloud, `event-pusher` does the same job
 through `wasmcloud:messaging`. The app's exported WIT does not change either way.
 
 Measured rather than asserted — a `saga-domain` trip whose hotel leg fails:
 
 | | after 6s |
 |---|---|
-| no relay | `running` — `[pending, pending, pending]` |
-| relay, 1s interval | `compensated` — `[compensated, failed, pending]` |
+| no pump | `running` — `[pending, pending, pending]` |
+| pumped every 1s | `compensated` — `[compensated, failed, pending]` |
 
 ### Daemons: the fourteen host capabilities need a process too
 
 The fourteen `comp-<x>` daemons — ADR-0095's twelve (`comp-fswatch`, `comp-docker`,
 `comp-ffmpeg`, ...) plus `comp-media` ([ADR-0098](adr/0098-photos-live-in-object-storage.md))
-and `comp-vcs` ([ADR-0099](adr/0099-an-agent-native-code-store.md)) are native for the same reason a relay is: a `wasm32-wasip2` component cannot
+and `comp-vcs` ([ADR-0099](adr/0099-an-agent-native-code-store.md)) are native because a `wasm32-wasip2` component cannot
 watch a filesystem, spawn `ffmpeg`, or open a Docker socket. An app whose component
 dials one over loopback HTTP declares it the same way it declares a trigger:
 
@@ -91,8 +91,7 @@ extra_args = ["--ollama-url http://127.0.0.1:11434"]   # any other flags, verbat
 `check()` refuses a spec where `addr` and `[config]`'s `<name>-url` disagree — they
 are written for two different readers (a process bind address, a wasm guest's
 config) and nothing else stops them drifting apart by hand. Tier 1 renders one
-`comp-<name>.service` per daemon, `BindsTo`/`After` the app's own unit, same
-reasoning as the relay. The app's own unit gains `--egress <addr>` per daemon and
+`comp-<name>.service` per daemon, `BindsTo`/`After` the app's own unit. The app's own unit gains `--egress <addr>` per daemon and
 `--allow-private-egress` — comp-host is default-deny outbound and refuses loopback
 otherwise, so the component could not reach the daemon started beside it.
 
@@ -110,8 +109,7 @@ name = "resume"                          # comp-resume: no addr, so a worker
 extra_args = ["--nats-url nats://127.0.0.1:4222", "--sink-url http://127.0.0.1:8016/park/deliver"]
 ```
 
-**One unit, one file.** A spec renders `comp-<app>.service`, `comp-<app>-relay.service` if it
-has `[triggers]`, and `comp-<daemon>.service` per daemon — except a daemon named like its own
+**One unit, one file.** A spec renders `comp-<app>.service` and `comp-<daemon>.service` per daemon — except a daemon named like its own
 app (`park` and `comp-park`, `vcs` and `comp-vcs`), which is `comp-<name>-daemon.service`. Both
 used to be `comp-<name>.service`, so the daemon's text was written over the app's: nothing was
 left to serve the app, and the daemon's unit was `BindsTo` itself. `check()` now refuses any
@@ -346,9 +344,8 @@ EOF
 ssh my-vps systemctl status comp-gate --no-pager -n 15
 ```
 
-A spec with `[triggers]` also renders `comp-gate-relay.service`, which needs a static
-`comp-relay` on the box (`cross build … --bin comp-relay` in `reconciler/`) and is
-installed and enabled the same way. A spec with `static_dir` expects the built SPA in
+A spec with `[triggers]` adds `--pump` to the same unit, so there is nothing more to
+install. A spec with `static_dir` expects the built SPA in
 `/srv/comp/<app>/static` — the unit points there, and an empty one serves the API
 and 404s at `/`.
 

@@ -10,8 +10,8 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use selfhost::{
     check, check_goald, daemon_unit_name, port_of, render_daemon_unit, render_env,
-    render_goald_launchd, render_goald_unit, render_ingress_route, render_relay_unit, render_route,
-    render_unit, write_secret_file, GoaldFormat, GoaldSpec, Layout, Router, Spec,
+    render_goald_launchd, render_goald_unit, render_ingress_route, render_route, render_unit,
+    write_secret_file, GoaldFormat, GoaldSpec, Layout, Router, Spec,
 };
 
 #[derive(Parser)]
@@ -542,13 +542,6 @@ fn main() -> Result<()> {
             std::fs::write(&unit, render_unit(&spec, &layout))?;
             write_secret_file(&env, render_env(&spec).as_bytes())?;
             std::fs::write(&route, render_route(&spec, router))?;
-            // Only when asked: an app with no triggers must not gain a process that pokes it forever.
-            if let Some(t) = &spec.triggers {
-                std::fs::write(
-                    dir.join(format!("comp-{}-relay.service", spec.name)),
-                    render_relay_unit(&spec, t, &layout),
-                )?;
-            }
             // One unit per daemon; `Daemon`'s doc says why not one shared runner.
             for d in &spec.daemons {
                 std::fs::write(
@@ -572,7 +565,7 @@ fn main() -> Result<()> {
                 spec.artifact
             );
             if let Some(t) = &spec.triggers {
-                eprintln!("  + relay: POST {} every {}s", t.pump, t.interval);
+                eprintln!("  + pump: the host POSTs {} every {}s", t.pump, t.interval);
             }
             for d in &spec.daemons {
                 match &d.addr {

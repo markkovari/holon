@@ -251,7 +251,6 @@ flowchart LR
   n_recon["<b>holon-reconciler</b><br/>pure plan() diff, one leader<br/>sole start/stop authority"]:::native
   n_nats[("<b>NATS lattice buckets</b><br/>comp-inventory (TTL) · comp-artifacts<br/>comp-load · lease · cmd subjects")]:::store
   n_ingress["<b>holon-ingress</b><br/>Host header → replica<br/>least-outstanding · sheds · activates"]:::native
-  n_relay["<b>holon-relay</b><br/>pokes /internal/pump so pull-<br/>based timers and topics fire"]:::native
   n_g_lib(["<b>Library #amp; Build</b><br/>composed .wasm"]):::ghost
   n_g_loop(["<b>Engineering loop</b><br/>comp-goald"]):::ghost
   n_g_sur(["<b>SurrealDB</b><br/>run history"]):::ghost
@@ -272,7 +271,6 @@ flowchart LR
   n_g_del -- "5 · render" --> n_recon
   n_recon <-- "6 · NATS" --> n_g_run
   n_ingress -- "7 · proxy" --> n_g_run
-  n_relay -- "8 · pump" --> n_g_run
   n_g_run -- "9 · reveal" --> n_platform
   n_g_users -- "10 · HTTP" --> n_ingress
   linkStyle 3 stroke-dasharray:7 4
@@ -291,7 +289,6 @@ flowchart LR
 | 5 | reconciler · ingress | ← | [Delivery](#delivery)<br>holon fleet render | file | One directory per box holding its units and, on the control box, reconciler.env (with PLATFORM_SECRET to fill in). | [0021](adr/0021-there-is-no-kubernetes.md) |
 | 6 | holon-reconciler | ⇄ | [Runtime](#runtime)<br>node agent | NATS | Commands on comp.v1.&lt;lattice&gt;.cmd.&lt;node&gt;.&lt;verb&gt;, request and reply, so “started” means “will serve”. Each node answers with a full inventory snapshot in KV comp-inventory, which expires on its own. | [0021](adr/0021-there-is-no-kubernetes.md) · [0022](adr/0022-desired-state-is-a-manifest.md) · [0058](adr/0058-snapshots-compress-and-parses-are-reused.md) |
 | 7 | holon-ingress | → | [Runtime](#runtime)<br>HTTP listener | HTTP | Proxies by Host header straight to a node on the tailnet; least outstanding requests, sheds load past max_inflight. | [0029](adr/0029-one-address-in-front-of-n-replicas.md) · [0041](adr/0041-the-ingress-sheds-load.md) |
-| 8 | holon-relay | → | [Runtime](#runtime)<br>tenant apps | HTTP | Pokes an app’s \[triggers\] pump (/internal/pump) on an interval so pull-based timers, topics and cron fire. | [0096](adr/0096-a-pull-contract-needs-a-relay.md) |
 | 9 | platform-domain | ← | [Runtime](#runtime)<br>comp:secrets/reader | HTTP | reveal fetches the plaintext on first use with a single-use token; a captured fetch is spent. The guest never holds a reference. | [0051](adr/0051-the-secret-reader.md) · [0071](adr/0071-a-captured-fetch-is-spent.md) |
 | 10 | holon-ingress | ← | End users &amp; callers<br>browsers · callers | HTTPS | Caddy terminates TLS for apps declared access = "public"; everything else is reachable on the tailnet only. | [0029](adr/0029-one-address-in-front-of-n-replicas.md) |
 |  | holon-reconciler | → | [Control plane & lattice](#control-plane--lattice)<br>platform-domain | HTTP · inside | Polls /api/internal/{revisions, status, pending-pushes, artifact, pushed, fetch-token} with x-platform-secret. Internal to the control plane. | [0022](adr/0022-desired-state-is-a-manifest.md) |
@@ -305,7 +302,7 @@ flowchart LR
 - Admission fails closed: 429 above max-placement-lag, 503 when the reconciler’s report goes stale.
 - Only one reconciler acts at a time, decided by a lease in the store; a standby takes over within the TTL plus one interval.
 
-**Where it lives** [`components/platform-domain`](../components/platform-domain) · [`components/console-domain`](../components/console-domain) · [`reconciler/src/main.rs`](../reconciler/src/main.rs) · [`reconciler/src/plan.rs`](../reconciler/src/plan.rs) · [`reconciler/src/bin/ingress.rs`](../reconciler/src/bin/ingress.rs) · [`reconciler/daemons/relay/`](../reconciler/daemons/relay/) · [`reconciler/daemons/backup/`](../reconciler/daemons/backup/) · [`lattice/src/`](../lattice/src/)
+**Where it lives** [`components/platform-domain`](../components/platform-domain) · [`components/console-domain`](../components/console-domain) · [`reconciler/src/main.rs`](../reconciler/src/main.rs) · [`reconciler/src/plan.rs`](../reconciler/src/plan.rs) · [`reconciler/src/bin/ingress.rs`](../reconciler/src/bin/ingress.rs) · [`reconciler/daemons/backup/`](../reconciler/daemons/backup/) · [`lattice/src/`](../lattice/src/)
 
 ### Runtime
 
@@ -380,7 +377,7 @@ flowchart LR
 | 11 | wasi:keyvalue | → | NATS JetStream<br>state backends | --kv | --kv memory \| sqlite \| redis \| nats \| surreal \| turso; the wasm is identical for every backend. A lattice node defaults to nats, the only backend where two replicas share a store. | [0027](adr/0027-a-spread-app-needs-a-shared-store.md) · [0057](adr/0057-the-latency-column-was-arithmetic.md) |
 | 11 | blob-store | → | S3 / R2<br>bucket | S3 API | --blob s3 puts object bytes in S3, R2 or MinIO; keyed state stays on --kv. | [0101](adr/0101-state-can-live-somewhere-else.md) |
 | 12 | wRPC | ⇄ | [Runtime](#runtime)<br>other nodes | NATS | Cross-node component links as wRPC on comp.v1.&lt;lattice&gt;.rpc.&lt;instance&gt;; one call costs about 57 µs. | [0028](adr/0028-cross-node-calls-are-wrpc.md) · [0074](adr/0074-the-split-graph-still-works.md) |
-|  | tenant apps | ← | [Control plane & lattice](#control-plane--lattice)<br>holon-relay | HTTP | Pokes an app’s \[triggers\] pump (/internal/pump) on an interval so pull-based timers, topics and cron fire. | [0096](adr/0096-a-pull-contract-needs-a-relay.md) |
+|  | holon-host | → | [Runtime](#runtime)<br>tenant apps | HTTP | The host POSTs an app’s \[triggers\] pump (/internal/pump) to itself on an interval (--pump), so pull-based timers, topics and cron fire. | [0130](adr/0130-the-host-is-the-clock.md) |
 
 **What keeps it apart**
 
@@ -753,7 +750,7 @@ One row for each thing one system says to another, with what crosses, over what,
 | [Control plane & lattice](#control-plane--lattice)<br>holon-ingress | → | [Runtime](#runtime)<br>HTTP listener | HTTP | Proxies by Host header straight to a node on the tailnet; least outstanding requests, sheds load past max_inflight. | [0029](adr/0029-one-address-in-front-of-n-replicas.md) · [0041](adr/0041-the-ingress-sheds-load.md) |
 | [Control plane & lattice](#control-plane--lattice)<br>holon-ingress | → | [Control plane & lattice](#control-plane--lattice)<br>holon-reconciler | NATS · inside | An activate command when a scaled-to-zero app gets its first request; one activation per host at a time. Internal to the control plane. | [0042](adr/0042-scale-to-zero-and-back.md) |
 | End users &amp; callers<br>browsers · callers | → | [Control plane & lattice](#control-plane--lattice)<br>holon-ingress | HTTPS | Caddy terminates TLS for apps declared access = "public"; everything else is reachable on the tailnet only. | [0029](adr/0029-one-address-in-front-of-n-replicas.md) |
-| [Control plane & lattice](#control-plane--lattice)<br>holon-relay | → | [Runtime](#runtime)<br>tenant apps | HTTP | Pokes an app’s \[triggers\] pump (/internal/pump) on an interval so pull-based timers, topics and cron fire. | [0096](adr/0096-a-pull-contract-needs-a-relay.md) |
+| [Runtime](#runtime)<br>holon-host | → | [Runtime](#runtime)<br>tenant apps | HTTP | The host POSTs an app’s \[triggers\] pump (/internal/pump) to itself on an interval (--pump), so pull-based timers, topics and cron fire. | [0130](adr/0130-the-host-is-the-clock.md) |
 | [Runtime](#runtime)<br>comp:secrets/reader | → | [Control plane & lattice](#control-plane--lattice)<br>platform-domain | HTTP | reveal fetches the plaintext on first use with a single-use token; a captured fetch is spent. The guest never holds a reference. | [0051](adr/0051-the-secret-reader.md) · [0071](adr/0071-a-captured-fetch-is-spent.md) |
 | [Engineering loop](#engineering-loop)<br>comp-goald | → | [Control plane & lattice](#control-plane--lattice)<br>platform-domain | HTTP | The project’s goal queue and events under /api/projects/{p}/… A person still starts every goal. | [0082](adr/0082-a-project-owns-a-repo-and-a-queue.md) |
 | [Runtime](#runtime)<br>wasi:http outgoing | → | [Capability daemons](#capability-daemons)<br>comp-\* | loopback HTTP | A component dials its daemon through wasi:http/outgoing-handler; the address is given by wasi:config/store. The daemon alone holds the syscall. | [0095](adr/0095-what-is-allowed-to-be-native.md) |

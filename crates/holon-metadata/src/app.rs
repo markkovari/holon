@@ -26,7 +26,7 @@ pub struct AppSpec {
     pub kv: Option<toml::Value>,
     #[serde(default)]
     pub root: Option<String>,
-    /// `sched:timer`, `event:bus` and `cron:expr` are pull: without a relay, timers never fire.
+    /// `sched:timer`, `event:bus` and `cron:expr` are pull: without a pump (the host's `--pump`), timers never fire.
     #[serde(default)]
     pub triggers: Option<Triggers>,
     /// The ADR-0095 native daemons this app's component dials over loopback.
