@@ -812,7 +812,7 @@ impl Fleet {
                 if let Ok(entries) = holon_lattice::Inventory::read_all(&inv).await {
                     let placed = entries.iter().any(|e| {
                         serde_json::from_slice::<serde_json::Value>(
-                            &holon_lattice::snapshot::expand(e.value.clone()),
+                            &holon_lattice::snapshot::expand(&e.value),
                         )
                         .ok()
                         .and_then(|v| v["instances"].as_array().cloned())

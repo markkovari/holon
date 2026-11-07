@@ -24,7 +24,7 @@ pub trait Inventory: Send + Sync {
 
 pub struct Command {
     pub verb: String,
-    pub payload: Vec<u8>,
+    pub payload: bytes::Bytes,
     /// Dropping it unsent is fine: the sender sees the same as a timeout.
     pub reply: tokio::sync::oneshot::Sender<Vec<u8>>,
 }
@@ -123,17 +123,17 @@ pub mod snapshot {
     /// JSON starts with `{`, so the magic tells old and new nodes apart mid-rollout (ADR-0044).
     const MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
 
-    pub fn compress(json: Vec<u8>) -> Vec<u8> {
+    pub fn compress(json: &[u8]) -> Vec<u8> {
         // Level 1: runs every heartbeat; higher levels cost several times the CPU for a few %.
-        zstd::encode_all(json.as_slice(), 1).unwrap_or(json)
+        zstd::encode_all(json, 1).unwrap_or_else(|_| json.to_vec())
     }
 
-    pub fn expand(raw: Vec<u8>) -> Vec<u8> {
+    pub fn expand(raw: &[u8]) -> Vec<u8> {
         if raw.len() >= 4 && raw[..4] == MAGIC {
             // Unreadable becomes empty, which the caller's parse skips like a corrupt entry.
-            zstd::decode_all(raw.as_slice()).unwrap_or_default()
+            zstd::decode_all(raw).unwrap_or_default()
         } else {
-            raw
+            raw.to_vec()
         }
     }
 
@@ -144,11 +144,11 @@ pub mod snapshot {
         #[test]
         fn a_snapshot_round_trips_and_plain_json_still_reads() {
             let json = br#"[{"tenant":"acme","app":"shop","digest":"sha256:aaaa"}]"#.repeat(50);
-            let small = compress(json.clone());
+            let small = compress(&json);
             assert!(small.len() * 4 < json.len(), "{} -> {}", json.len(), small.len());
-            assert_eq!(expand(small), json);
+            assert_eq!(expand(&small), json);
             // A node that has not been upgraded yet publishes plain JSON.
-            assert_eq!(expand(json.clone()), json);
+            assert_eq!(expand(&json), json);
         }
     }
 }
