@@ -37,6 +37,13 @@ struct Cli {
     /// Mac, build `speech/holon-stt.swift` (see its header). Without it, transcription is off.
     #[arg(long, env = "HOLON_STT_BIN")]
     stt_bin: Option<PathBuf>,
+    /// A git checkout whose `origin` takes the branches `propose_pr` pushes; without it agents
+    /// cannot open pull requests.
+    #[arg(long, env = "HOLON_PR_REPO")]
+    pr_repo: Option<PathBuf>,
+    /// The `gh` that opens them (logged in to the repository's forge).
+    #[arg(long, env = "HOLON_GH", default_value = "gh")]
+    gh: PathBuf,
     /// Text-to-speech override: `<bin> <out-audio-file> <voice>`, text on stdin. By
     /// default the system `say` is used.
     #[arg(long, env = "HOLON_TTS_BIN")]
@@ -80,6 +87,7 @@ fn main() -> Result<(), String> {
     cfg.otlp_endpoint = cli.otlp_endpoint.filter(|e| !e.is_empty());
     cfg.embed_url = cli.embed_url;
     cfg.embed_service = cli.embed_service;
+    cfg.pr = cli.pr_repo.map(|repo| agent_runtime::pr::Forge { repo, gh: cli.gh });
     cfg.speech = agent_runtime::speech::SpeechConfig {
         stt: cli.stt_bin,
         tts: cli.tts_bin,

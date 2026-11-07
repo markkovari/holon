@@ -154,13 +154,13 @@ fn test_agent_with_configured_skills_loads_dags_into_system_prompt() {
 }
 
 #[test]
-fn test_agent_propose_pr_records_provenance_and_returns_opened_record() {
-    let rt = runtime("propose-pr");
+fn propose_pr_pushes_a_branch_opens_a_real_pr_and_records_it() {
+    let (rt, dir) = runtime_with_forge("propose-pr");
 
     let mut a = agent_with_replies(
         "coder",
         &[
-            r#"{"tool": "propose_pr", "args": {"branch": "feat/skill-graph-pr", "title": "feat(core): add skill graph and forge pr", "body": "Resolves issue #42", "message": "feat(core): add skill graph and forge pr"}}"#,
+            r#"{"tool": "propose_pr", "args": {"branch": "feat/skill-graph-pr", "title": "feat(core): add skill graph and forge pr", "body": "Resolves issue #42", "changes": [{"path": "docs/skills.md", "content": "graph\n"}]}}"#,
             "PR opened successfully with provenance recorded.",
         ],
     );
@@ -183,9 +183,26 @@ fn test_agent_propose_pr_records_provenance_and_returns_opened_record() {
         })
         .expect("propose_pr tool step found");
 
-    assert!(!tool_step.1);
-    assert!(tool_step.0.contains("https://github.com/markkovari/holon/pull/"));
-    assert!(tool_step.0.contains("feat/skill-graph-pr"));
+    assert!(!tool_step.1, "{}", tool_step.0);
+    let opened: serde_json::Value = serde_json::from_str(&tool_step.0).unwrap();
+    assert_eq!(
+        opened["url"], "https://github.com/o/r/pull/7",
+        "what gh answered, not a made-up number"
+    );
+    assert_eq!(opened["number"], 7);
+    assert_eq!(
+        on_origin(&dir, "feat/skill-graph-pr", "docs/skills.md"),
+        "graph\n",
+        "the branch is pushed"
+    );
+    let commit = opened["commit"].as_str().unwrap();
+    assert_eq!(on_origin(&dir, "feat/skill-graph-pr", "README.md"), "base\n", "off main");
+    assert_eq!(commit.len(), 40);
+    let gh_args = std::fs::read_to_string(dir.join("gh.args")).unwrap();
+    assert!(
+        gh_args.contains("--head feat/skill-graph-pr") && gh_args.contains("--base main"),
+        "{gh_args}"
+    );
 
     // Verify PR provenance was recorded in knowledge store
     let rows = rt.kv().list("pr_provenance", "pr:").unwrap();
@@ -214,13 +231,13 @@ fn the_free_queue_unreachable_is_an_error_never_a_made_up_reply() {
 
 #[test]
 fn test_skill_curator_agent_audits_registry_and_proposes_refactor_pr() {
-    let rt = runtime("curator");
+    let (rt, dir) = runtime_with_forge("curator");
 
     let mut a = agent_with_replies(
         "curator-agent",
         &[
             r#"{"tool": "skill_audit", "args": {}}"#,
-            r#"{"tool": "propose_pr", "args": {"branch": "refactor/dedup-skills", "title": "refactor(skills): deduplicate registry and alias legacy workflows", "body": "Periodic curator audit detected near-duplicate workflows; consolidated definitions."}}"#,
+            r#"{"tool": "propose_pr", "args": {"branch": "refactor/dedup-skills", "title": "refactor(skills): deduplicate registry and alias legacy workflows", "body": "Periodic curator audit detected near-duplicate workflows; consolidated definitions.", "changes": [{"path": "skills/aliases.md", "content": "legacy -> deliver_feature\n"}]}}"#,
             "Curator audit completed and PR opened.",
         ],
     );
@@ -267,6 +284,112 @@ fn test_skill_curator_agent_audits_registry_and_proposes_refactor_pr() {
         })
         .expect("propose_pr tool step found");
 
-    assert!(!pr_step.1);
+    assert!(!pr_step.1, "{}", pr_step.0);
     assert!(pr_step.0.contains("refactor/dedup-skills"));
+    assert_eq!(
+        on_origin(&dir, "refactor/dedup-skills", "skills/aliases.md"),
+        "legacy -> deliver_feature\n"
+    );
+}
+
+/// A runtime whose `propose_pr` pushes to a local bare `origin` and whose `gh` is a stub that
+/// answers PR 7's URL: what a PR test checks is then what really happened, with no GitHub.
+fn runtime_with_forge(tag: &str) -> (Arc<Runtime>, std::path::PathBuf) {
+    let dir = tempfile::Builder::new().prefix(&format!("ar-pr-{tag}-")).tempdir().unwrap().keep();
+    let sh = |args: &[&str], at: &std::path::Path| {
+        let out = std::process::Command::new("git").args(args).current_dir(at).output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    let origin = dir.join("origin.git");
+    let repo = dir.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    sh(&["init", "--quiet", "--bare", "-b", "main", origin.to_str().unwrap()], &dir);
+    sh(&["init", "--quiet", "-b", "main"], &repo);
+    sh(&["config", "user.email", "t@t"], &repo);
+    sh(&["config", "user.name", "t"], &repo);
+    std::fs::write(repo.join("README.md"), "base\n").unwrap();
+    sh(&["add", "."], &repo);
+    sh(&["-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "base"], &repo);
+    sh(&["remote", "add", "origin", origin.to_str().unwrap()], &repo);
+    sh(&["push", "--quiet", "origin", "main"], &repo);
+    let gh = dir.join("gh");
+    std::fs::write(&gh, "#!/bin/sh\necho \"$@\" > \"$(dirname \"$0\")/gh.args\"\necho https://github.com/o/r/pull/7\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut cfg = Config::new(dir.join("state"));
+    cfg.pr = Some(agent_runtime::pr::Forge { repo, gh });
+    (Runtime::new(cfg).unwrap(), dir)
+}
+
+fn on_origin(dir: &std::path::Path, branch: &str, path: &str) -> String {
+    let out = std::process::Command::new("git")
+        .args(["--git-dir", dir.join("origin.git").to_str().unwrap(), "show"])
+        .arg(format!("{branch}:{path}"))
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn without_a_forge_propose_pr_refuses_and_never_invents_a_pr() {
+    let rt = runtime("no-forge");
+    let mut a = agent_with_replies(
+        "coder",
+        &[
+            r#"{"tool": "propose_pr", "args": {"branch": "feat/x", "title": "x", "changes": [{"path": "a", "content": "b"}]}}"#,
+            "done",
+        ],
+    );
+    a.capabilities.push(Capability::named("propose_pr"));
+    a.auto_approve.push("propose_pr".into());
+    rt.create_agent(a).unwrap();
+    let rec = rt.run_agent("coder", "http", "open a PR", &Cause::default(), "", true).unwrap();
+    let (result, error) = rec
+        .steps
+        .iter()
+        .find_map(|s| match s {
+            Step::Tool { name, result, error, .. } if name == "propose_pr" => {
+                Some((result.clone(), *error))
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert!(error && result.contains("--pr-repo"), "{result}");
+    assert!(rt.kv().list("pr_provenance", "pr:").unwrap().is_empty(), "no provenance for no PR");
+}
+
+#[test]
+fn a_built_tool_is_proposed_as_its_whole_component() {
+    let (rt, dir) = runtime_with_forge("tool-pr");
+    // What tool_build leaves: the template's copy with the agent's tool.mbt, and its build output.
+    let work = dir.join("state/forge/helper-prime_count");
+    for (p, c) in [
+        ("tool/tool.mbt", "pub fn call() {}"),
+        ("moon.mod", "{}"),
+        ("wit/world.wit", "w"),
+        ("_build/x.wasm", "x"),
+    ] {
+        std::fs::create_dir_all(work.join(p).parent().unwrap()).unwrap();
+        std::fs::write(work.join(p), c).unwrap();
+    }
+    let mut a = agent_with_replies(
+        "helper",
+        &[
+            r#"{"tool": "propose_pr", "args": {"branch": "tool/prime-count", "title": "feat(tools): prime_count", "tool": "prime_count"}}"#,
+            "proposed",
+        ],
+    );
+    a.capabilities.push(Capability::named("propose_pr"));
+    a.auto_approve.push("propose_pr".into());
+    rt.create_agent(a).unwrap();
+    let rec = rt.run_agent("helper", "http", "propose it", &Cause::default(), "", true).unwrap();
+    let ok = rec
+        .steps
+        .iter()
+        .any(|s| matches!(s, Step::Tool { name, error: false, .. } if name == "propose_pr"));
+    assert!(ok, "{:?}", rec.steps);
+    let at = |p: &str| on_origin(&dir, "tool/prime-count", p);
+    assert_eq!(at("components/prime-count-mbt/tool/tool.mbt"), "pub fn call() {}");
+    assert_eq!(at("components/prime-count-mbt/wit/world.wit"), "w");
+    assert_eq!(at("components/prime-count-mbt/_build/x.wasm"), "", "build output is not proposed");
 }
