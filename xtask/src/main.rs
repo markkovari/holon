@@ -10,6 +10,7 @@ mod contract_critic;
 mod e2e_cmd;
 mod examples;
 mod host;
+mod parity;
 mod stateless_guard;
 mod topology;
 mod util;
@@ -157,6 +158,12 @@ enum Commands {
         /// Optional specific application to check
         app: Option<String>,
     },
+
+    /// Verify feature matching and parity between a Rust baseline and a MoonBit port
+    Parity {
+        /// Component name (e.g. bytes-codec, luhn-checksum)
+        component: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -286,6 +293,10 @@ fn main() -> Result<()> {
 
         Commands::CheckTopology { app } => {
             topology::check_topology(std::path::Path::new("."), app.as_deref())?;
+        }
+
+        Commands::Parity { component } => {
+            parity::run_parity(&component)?;
         }
     }
 

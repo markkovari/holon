@@ -102,6 +102,6 @@ voice/tray/HolonVoiceTray
 voice/tray/HolonVoiceTray
 
 # MoonBit build output (tools/build-polyglot.sh mbt).
-components/*-mbt/_build/
-components/*-mbt/.mooncakes/
-components/*-mbt/**/*.generated.mbti
+components/**/_build/
+components/**/.mooncakes/
+components/**/*.generated.mbti

@@ -9,7 +9,9 @@ pub fn registered_components(root_dir: &Path) -> BTreeSet<String> {
             let path = entry.path();
             if path.is_dir() {
                 if let Some(name) = entry.file_name().to_str() {
-                    if name != "target" && path.join("Cargo.toml").is_file() {
+                    if name != "target"
+                        && (path.join("Cargo.toml").is_file() || path.join("moon.mod").is_file())
+                    {
                         component_names.insert(name.to_string());
                     }
                 }
