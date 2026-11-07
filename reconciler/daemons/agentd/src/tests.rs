@@ -1677,11 +1677,14 @@ fn a_task_accepted_onto_a_session_always_starts_or_ends_in_the_log_whatever_race
         let driver = {
             let (s, producing) = (s.clone(), producing.clone());
             std::thread::spawn(move || loop {
+                // Read before the view: once it is false every send has returned, so an idle
+                // view is the end. Read after, a send could start a task between the two.
+                let more = producing.load(Ordering::SeqCst);
                 match s.view().active_task_id {
                     Some(id) => {
                         let _ = s.finish(&id, Ok("done".into()));
                     }
-                    None if producing.load(Ordering::SeqCst) => std::thread::yield_now(),
+                    None if more => std::thread::yield_now(),
                     None => break,
                 }
             })

@@ -615,7 +615,7 @@ mod tests {
                 ops.push((m.to_uppercase(), path.clone()));
             }
         }
-        assert_eq!(ops.len(), 23, "the operations read from openapi.yaml");
+        assert_eq!(ops.len(), 24, "the operations read from openapi.yaml");
         let c = reqwest::blocking::Client::new();
         for (method, path) in &ops {
             let url = path
@@ -623,7 +623,8 @@ mod tests {
                 .replace("{agent}", "a")
                 .replace("{topic}", "t")
                 .replace("{key}", "k")
-                .replace("{id}", "1");
+                .replace("{id}", "1")
+                .replace("{job}", "job-x");
             if url == "/v1/events" {
                 continue; // a stream that does not end; its own test reads it
             }
@@ -659,12 +660,25 @@ mod tests {
         );
         let r = run(json!({"input": "later"}));
         assert_eq!(r.status(), 202, "without wait it returns before the run ends");
+        let job = r.json::<Value>().unwrap()["job"].as_str().unwrap().to_string();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while rt.store().runs("echo", 5).len() < 2 {
+        let ended = loop {
+            let r = c.get(format!("{base}/v1/jobs/{job}")).send().unwrap();
+            if r.status() == 200 {
+                break r.json::<Value>().unwrap();
+            }
+            assert_eq!(r.status(), 202, "a job is running until its run ends");
             assert!(std::time::Instant::now() < deadline, "the run never happened");
             std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert_eq!(rt.store().runs("echo", 1)[0].input, "later");
+        };
+        assert_eq!(
+            (ended["input"].as_str(), ended["answer"].as_str()),
+            (Some("later"), Some("second"))
+        );
+        assert_eq!(rt.store().runs("echo", 1)[0].id, ended["id"].as_str().unwrap());
+        assert_eq!(ended["job"].as_str(), Some(job.as_str()));
+        let gone = c.get(format!("{base}/v1/jobs/job-nope")).send().unwrap();
+        assert_eq!(gone.status(), 404);
         let missing = run(json!({"input": "x", "attachments": ["nope.png"], "wait": true}));
         assert_eq!(missing.status(), 400);
         assert!(missing.json::<Value>().unwrap()["detail"].as_str().unwrap().contains("nope.png"));
