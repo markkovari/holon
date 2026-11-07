@@ -163,10 +163,8 @@ jobs:
   # in PARALLEL with `components` (no `needs:` between them) — its own ~90s
   # hides entirely inside that job's ~270s.
   #
-  # NOT `comp-plug`/`comp-mailrelay`: neither needs anything the downstream jobs
-  # do not already compile. `comp-plug` is `comp-fleet`'s command line over the
-  # composition library every suite links, and `comp-mailrelay` has no
-  # dependencies (docs/adr/0115) and builds in about a second.
+  # NOT `comp-plug`: it needs nothing the downstream jobs do not already compile;
+  # it is `comp-fleet`'s command line over the composition library every suite links.
   native-binaries:
     name: native binaries (comp-host, holon, comp-plug)
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_RUNNER || 'ubuntu-24.04' }}
@@ -442,7 +440,7 @@ jobs:
       #     versions run.
       #
       # What the Rust gates still need is two binaries and nothing else: `comp-host`
-      # to run what they compose, and `comp-mailrelay` for the mail ones. They compose
+      # to run what they compose (the mail ones speak SMTP from the component, ADR-0133). They compose
       # IN PROCESS via `plug::compose_to` (ADR-0087), so `comp-plug` is no longer a
       # gate dependency — it is still built below because `console_session` spawns it.
       #
@@ -455,15 +453,7 @@ jobs:
       # the answer is nothing, delete it and keep the program.
       #
       # `comp-host` and `holon` are not built here any more — downloaded above,
-      # from `native-binaries`. Only `comp-plug` and `comp-mailrelay` remain, and
-      # THIS step is what builds them: each is a binary of a package (`comp-plug`
-      # of `comp-fleet`, `comp-mailrelay` of its own, docs/adr/0115) that no test of
-      # that package asks cargo to build, and `console_session` and the mail gates
-      # find them by path.
-      - name: Build the binaries the gates and suites spawn
-        run: |
-          cargo build --release -p holon-mailrelay --bin holon-mailrelay
-
+      # from `native-binaries`.
       # Which binaries, established by asking the suites rather than by adding one
       # per failure. The fleet suites (the OTHER job) resolve exactly two by PATH —
       # `comp-host` and `cli/.../holon` — and three more through `CARGO_BIN_EXE_*`,
@@ -669,12 +659,6 @@ jobs:
           for f in "$RUNNER_TEMP"/fetched/wasm/*.wasm; do
             [ -e "$f" ] && put "$f" components/target/wasm32-wasip2/release
           done
-
-      # Only `comp-plug` and `comp-mailrelay` built here — same reasoning as
-      # `reconciler-artifact-suites`'s own comment: this step is what builds them.
-      - name: Build the binaries the gates and suites spawn
-        run: |
-          cargo build --release -p holon-mailrelay --bin holon-mailrelay
 
       # THE FLEET SUITES — 43 of them, and until #289 nothing ran a single one.
       #

@@ -6,12 +6,10 @@
 // cannot tell "the address was rejected" from "the gateway is down", and it hands
 // back no id, so nothing later can ask what happened to a message.
 //
-// HTTP and not SMTP, and that is a constraint rather than a preference: `comp-host`
-// wires no `wasi:sockets` at all, so a component has no way to open a TCP
-// connection. Every backend of this interface is therefore a POST — Resend in
-// production, and `tools/mail-relay` in front of MailHog locally, which speaks the
-// real SMTP that MailHog needs. The component is byte-identical either way, which
-// is the property a mock never gives you.
+// A POST to an HTTP gateway (Resend in production), or SMTP to a server on the app's
+// egress (MailHog locally): `comp-host` lets a component open a TCP connection to an
+// address its egress names (ADR-0133). The component is byte-identical either way,
+// which is the property a mock never gives you.
 package mail:send@0.1.0;
 
 interface sender {
@@ -47,8 +45,8 @@ interface sender {
 
 /// `mail-http` provides `mail:send` by POSTing to whatever `mail:gateway-url`
 /// names, with `mail:from` as the sender and the key at `mail-api-key` as a bearer
-/// when one is present. The vendor is never named here: pointing it at Resend or at
-/// `tools/mail-relay` is a deploy-time choice and not a different component.
+/// when one is present, or by SMTP to `mail:smtp` when that is set. Which one is a
+/// deploy-time choice and not a different component.
 world mail-http {
     export sender;
     import wasi:http/outgoing-handler@0.2.0;

@@ -5,10 +5,10 @@
 //!
 //! This gains CI coverage the shell version cannot have: `e2e.sh` needs MailHog (archived, does not
 //! `go install` on the runner), so the fan-out was a local-only check. `gatelib::MailSink` is a pure-Rust
-//! SMTP server on an OS-picked port; `comp-mailrelay` still speaks SMTP to it.
+//! SMTP server on an OS-picked port; the mail component speaks SMTP to it (`mail:smtp`).
 
 mod gatelib;
-use gatelib::{field, Gate, MailRelay, MailSink};
+use gatelib::{field, Gate, MailSink};
 use serde_json::{json, Value};
 
 const CRATE: &str = "notify-probe";
@@ -41,13 +41,10 @@ fn ok_on(out: &str, channel: &str) -> bool {
 #[test]
 fn one_call_reaches_an_inbox_and_a_real_mailbox_and_opting_out_is_real() {
     let mail = MailSink::start();
-    let Some(relay) = MailRelay::start(&mail.addr()) else { return };
-
-    let gateway = format!("mail:gateway-url={}", relay.url());
-    let config = [gateway.as_str(), "mail:from=notify@holon.test"];
-    let relay_egress = relay.egress();
-    let Some(gate) =
-        Gate::compose_and_start_with_egress("notify", CRATE, &config, &[&relay_egress])
+    // The component speaks SMTP to the mailbox itself, over its egress (ADR-0133).
+    let smtp = format!("mail:smtp={}", mail.addr());
+    let config = [smtp.as_str(), "mail:from=notify@holon.test"];
+    let Some(gate) = Gate::compose_and_start_with_egress("notify", CRATE, &config, &[&mail.addr()])
     else {
         return;
     };
@@ -64,7 +61,7 @@ fn one_call_reaches_an_inbox_and_a_real_mailbox_and_opting_out_is_real() {
         "notify-prefs",
         "mail:send/sender",
         "email leaves through mail:send, whose backend is a deploy-time choice — Resend or \
-         the local relay — and not something this component decides",
+         SMTP — and not something this component decides",
     );
 
     // Unique per run, because the mailbox and the inbox both outlive one assertion.
@@ -122,7 +119,7 @@ fn one_call_reaches_an_inbox_and_a_real_mailbox_and_opting_out_is_real() {
     );
 
     // --- and a REAL email is in a REAL mailbox ---
-    // Delivered over genuine SMTP by comp-mailrelay. Polled rather than slept (the shell's 0.5s sleep
+    // Delivered over genuine SMTP, by the mail component itself. Polled rather than slept (the shell's 0.5s sleep
     // is either too long or too short).
     let mut found = 0usize;
     for _ in 0..40 {

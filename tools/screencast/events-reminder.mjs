@@ -2,9 +2,8 @@
 //
 // Three panes, all of them live. Left and centre are the same SPA under
 // `?as=attendee` and `?as=organizer`, served from the app's own static dir. Right is
-// MailHog's own UI — not a screenshot of one, and not a mock: `comp-mailrelay` turns
-// the component's HTTP POST into a genuine SMTP session, because `comp-host` wires
-// no `wasi:sockets` and a component cannot speak SMTP at all.
+// MailHog's own UI — not a screenshot of one, and not a mock: the mail component speaks
+// a genuine SMTP session to it, over the socket its egress allows (ADR-0133).
 //
 // What the recording is meant to say, in order:
 //
@@ -21,8 +20,8 @@
 // The event starts in two hours, so its reminder is already due. The schedule is
 // real; only the clock is chosen — waiting a day would prove the same thing slower.
 //
-// Prereq: MailHog on :8025, `target/release/comp-mailrelay 127.0.0.1:3390 127.0.0.1:1025 &`
-// (build: `cargo build --release -p comp-mailrelay`), and the app on :3230.
+// Prereq: MailHog on :8025 (SMTP :1025), the app configured `mail:smtp=127.0.0.1:1025` with
+// `--egress 127.0.0.1:1025`, on :3230.
 import { chromium } from "playwright";
 
 const BASE = process.env.EVENTS_URL || "http://127.0.0.1:3230";

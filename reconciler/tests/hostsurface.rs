@@ -53,6 +53,17 @@ const ALLOWED: &[&str] = &[
     "wasi:keyvalue/store",        //  57
     "wasi:random/insecure-seed",  // 10
     "wasi:random/random",         //  15
+    // A TCP connect to what egress names (ADR-0133): the host refuses bind, listen and UDP, and an
+    // address egress does not allow. Name lookup goes with it, checked the same way.
+    "wasi:sockets/instance-network",  // 1 — mail-http, SMTP
+    "wasi:sockets/ip-name-lookup",    // 1
+    "wasi:sockets/network",           // 1
+    "wasi:sockets/tcp",               // 1
+    "wasi:sockets/tcp-create-socket", // 1
+    // Imported because Rust's std links every socket interface; the host builds every guest with
+    // `allow_udp(false)`, so a UDP socket is refused before it is made.
+    "wasi:sockets/udp",               // 1
+    "wasi:sockets/udp-create-socket", // 1
     // This repository's own host interfaces. `comp:` is in HOST_NAMESPACES because a host provides it,
     // so it belongs here, and is a capability grant like any other.
     "comp:secrets/reader", //   8

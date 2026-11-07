@@ -2,11 +2,10 @@
 //!
 //! THIS ONE GAINS COVERAGE RATHER THAN SPEED: the shell gate needs MailHog, which CI cannot install, so
 //! the notification fan-out had no coverage on a pull request. `gatelib::MailSink` receives the SMTP
-//! directly; the chain is otherwise unchanged (the component posts to `mail:gateway-url`,
-//! `comp-mailrelay` turns that into SMTP).
+//! directly: the mail component speaks SMTP to it (`mail:smtp`, ADR-0133).
 
 mod gatelib;
-use gatelib::{field, Gate, MailRelay, MailSink};
+use gatelib::{field, Gate, MailSink};
 use serde_json::{json, Value};
 
 fn parse(t: &str) -> Value {
@@ -26,19 +25,16 @@ fn in_two_hours() -> String {
 #[test]
 fn a_reminder_is_scheduled_fired_once_and_reaches_a_real_mailbox() {
     let mail = MailSink::start();
-    let Some(relay) = MailRelay::start(&mail.addr()) else { return };
-
-    let gateway = format!("mail:gateway-url={}", relay.url());
+    let smtp = format!("mail:smtp={}", mail.addr());
     let config = [
         "allow-test-routes=1",
         "allowed-types=image/png,image/jpeg,image/webp",
         "max-size=2097152",
-        gateway.as_str(),
+        smtp.as_str(),
         "mail:from=events@holon.test",
     ];
-    let relay_egress = relay.egress();
     let Some(gate) =
-        Gate::compose_and_start_with_egress("events", "events-domain", &config, &[&relay_egress])
+        Gate::compose_and_start_with_egress("events", "events-domain", &config, &[&mail.addr()])
     else {
         return;
     };

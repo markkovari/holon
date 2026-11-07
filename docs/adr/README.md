@@ -162,6 +162,7 @@ tells you what is true now rather than what was once believed.
 | [0130](0130-the-host-is-the-clock.md) | The host is the clock: comp-host pumps the app it serves (`--pump`), and `comp-relay` is deleted | **accepted** — supersedes [0096](0096-a-pull-contract-needs-a-relay.md)'s relay |
 | [0131](0131-a-held-subscription-is-the-hosts.md) | A held subscription is the host's: `--subscribe <subject>=<path>` delivers NATS messages to the app as requests, a request's reply being the response | **accepted** |
 | [0132](0132-park-is-a-component.md) | Park is a component: `park-store` runs `holon-park`'s engine on the app's keyvalue (compare-and-set), `sweep` delivers on the host's pump, and `comp-park` and `comp-resume` are deleted | **accepted** |
+| [0133](0133-a-socket-to-what-egress-names.md) | A socket to what egress names: a guest may TCP-connect to an address its egress allows (port named, address checked), no bind or UDP; `mail-http` speaks SMTP itself and `comp-mailrelay` is deleted | **accepted** |
 
 ## History: superseded, and kept
 

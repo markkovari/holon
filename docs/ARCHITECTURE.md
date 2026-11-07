@@ -413,7 +413,7 @@ flowchart TB
     n_d_files["<b>Files and desktop</b><br/>holon-fswatch · holon-clipboard<br/>holon-uinotify · holon-cron"]:::native
     n_d_net["<b>Network</b><br/>holon-lanscan · holon-mdns<br/>holon-wireguard"]:::native
     n_d_proc["<b>Processes and codecs</b><br/>holon-docker · holon-ffmpeg<br/>holon-browser"]:::native
-    n_d_data["<b>Models, data, gate</b><br/>holon-media<br/>holon-mailrelay · comp-checks"]:::native
+    n_d_data["<b>Models, data, gate</b><br/>holon-media<br/>comp-checks"]:::native
   end
   n_broker(["<b>Runtime · comp-host</b><br/>wasi:http/outgoing-handler dials a loopback address; the address comes from wasi:config/store, set per instance. The guest holds no socket."]):::ghost
   n_machine["<b>The machine</b><br/>docker socket · crontab · desktop session · LAN · WireGuard · Chrome · ffmpeg · Ollama — what the daemon, and only the daemon, may touch."]:::ext
@@ -452,7 +452,7 @@ flowchart TB
 - A missing dependency (Docker, Ollama, Chrome, ffmpeg, a desktop session) is reported as unavailable, never answered with a plausible constant.
 - The twelve [ADR-0095](adr/0095-what-is-allowed-to-be-native.md) daemons are each their own Cargo package, with one heavy crate and the shared holon-daemon-kit, so building or shipping one compiles none of the others ([ADR-0115](adr/0115-the-reconciler-is-a-workspace-of-single-purpose-packages.md)).
 
-**Where it lives** [`reconciler/daemons/kit/`](../reconciler/daemons/kit/) · [`reconciler/daemons/fswatch/`](../reconciler/daemons/fswatch/) · [`reconciler/daemons/browser/`](../reconciler/daemons/browser/) · [`reconciler/daemons/docker/`](../reconciler/daemons/docker/) · [`reconciler/daemons/clipboard/`](../reconciler/daemons/clipboard/) · [`reconciler/daemons/lanscan/`](../reconciler/daemons/lanscan/) · [`reconciler/daemons/mdns/`](../reconciler/daemons/mdns/) · [`reconciler/daemons/cron/`](../reconciler/daemons/cron/) · [`reconciler/daemons/uinotify/`](../reconciler/daemons/uinotify/) · [`reconciler/daemons/ffmpeg/`](../reconciler/daemons/ffmpeg/) · [`reconciler/daemons/wireguard/`](../reconciler/daemons/wireguard/) · [`reconciler/daemons/media/`](../reconciler/daemons/media/) · [`reconciler/daemons/mailrelay/`](../reconciler/daemons/mailrelay/) · [`reconciler/src/bin/checks.rs`](../reconciler/src/bin/checks.rs)
+**Where it lives** [`reconciler/daemons/kit/`](../reconciler/daemons/kit/) · [`reconciler/daemons/fswatch/`](../reconciler/daemons/fswatch/) · [`reconciler/daemons/browser/`](../reconciler/daemons/browser/) · [`reconciler/daemons/docker/`](../reconciler/daemons/docker/) · [`reconciler/daemons/clipboard/`](../reconciler/daemons/clipboard/) · [`reconciler/daemons/lanscan/`](../reconciler/daemons/lanscan/) · [`reconciler/daemons/mdns/`](../reconciler/daemons/mdns/) · [`reconciler/daemons/cron/`](../reconciler/daemons/cron/) · [`reconciler/daemons/uinotify/`](../reconciler/daemons/uinotify/) · [`reconciler/daemons/ffmpeg/`](../reconciler/daemons/ffmpeg/) · [`reconciler/daemons/wireguard/`](../reconciler/daemons/wireguard/) · [`reconciler/daemons/media/`](../reconciler/daemons/media/) · [`reconciler/src/bin/checks.rs`](../reconciler/src/bin/checks.rs)
 
 ### Durable services
 
