@@ -500,6 +500,24 @@ impl reader::Host for Host {
         if let Some(v) = self.secret_cache.get(&reference) {
             return Ok(Ok(v.clone()));
         }
+        if let Some((bucket, k)) = secrets::nats_kv_ref(reference.as_str()) {
+            let got = match secrets::NATS_KV.get() {
+                Some(nats) => secrets::fetch_nats_kv(nats, bucket, k).await,
+                None => Err("no NATS connection for nats-kv secrets".into()),
+            };
+            return match got {
+                Ok(v) => {
+                    self.secret_cache.put(&reference, v.clone());
+                    Ok(Ok(v))
+                }
+                Err(e) => {
+                    eprintln!("comp-host: {} could not read secret {key:?}: {e}", self.scope.id());
+                    Ok(Err(reader::SecretError::Unavailable(
+                        "the cluster has no such secret".into(),
+                    )))
+                }
+            };
+        }
         match secrets::fetch(
             &self.fetch_http,
             &self.platform_url,
@@ -887,6 +905,11 @@ struct Args {
     /// Config for `wasi:config`, repeatable: `--config grace-period-secs=5`.
     #[arg(long = "config", value_parser = parse_kv)]
     configs: Vec<(String, String)>,
+    /// A secret this app may read through `comp:secrets`, repeatable:
+    /// `--secret groq-api-key=nats-kv://SECRETS/groq-api-key` (a key in a JetStream bucket on
+    /// `--nats-url`). Solo mode has no platform vault, so this is its only source.
+    #[arg(long = "secret", value_parser = parse_kv)]
+    secrets: Vec<(String, String)>,
     /// A file of `key = value` lines to seed config from, applied before `--config`.
     #[arg(long)]
     config_file: Option<String>,
@@ -1065,6 +1088,19 @@ async fn main() -> Result<()> {
         .clone()
         .or_else(|| args.lattice_nats.clone())
         .unwrap_or_else(|| "127.0.0.1:4222".into());
+    if !args.secrets.is_empty() {
+        if lattice_mode {
+            anyhow::bail!("--secret is for one app on one host: a lattice node's secrets come from the platform");
+        }
+        if let Some((k, r)) = args.secrets.iter().find(|(_, r)| secrets::nats_kv_ref(r).is_none()) {
+            anyhow::bail!("--secret {k}={r}: expected nats-kv://<bucket>/<key>");
+        }
+        let servers: Vec<String> = nats_url.split(',').map(str::to_string).collect();
+        let nats = async_nats::connect(servers).await.context("connecting to NATS for --secret")?;
+        let _ = secrets::NATS_KV.set(nats);
+        let names: Vec<&str> = args.secrets.iter().map(|(k, _)| k.as_str()).collect();
+        println!("comp-host: secrets from NATS: {}", names.join(", "));
+    }
     let kv_token = args
         .kv_token
         .as_ref()
@@ -1203,8 +1239,8 @@ async fn main() -> Result<()> {
                     count: 1,
                     config: cfg,
                     links: Default::default(),
-                    // Solo mode has no platform, so nothing is granted.
-                    secrets: Default::default(),
+                    // No platform: only what `--secret` names, and only from NATS.
+                    secrets: args.secrets.iter().cloned().collect(),
                     fetch_token: String::new(),
                     host_needs: Vec::new(),
                     egress: args.egress.clone(),

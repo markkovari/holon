@@ -5,9 +5,17 @@ artifact = "components/target/wasm32-wasip2/release/llm_queue.wasm"
 kv = "sqlite"
 
 # The free LLM queue (ADR-0126): the host answers `holon.llm.ask` requests with it (ADR-0131).
-# Run it beside the NATS the agents use (malna). Each provider's key is its `<provider>-api-key`
-# secret, or a line in the box's config file; a provider without one is skipped.
+# Run it beside the NATS the agents use (malna). Each provider's key is read from that NATS's
+# `SECRETS` bucket (ADR-0126: `nats kv put SECRETS groq-api-key <key>`, once for the cluster), or a
+# line in the box's config file; a provider without one is skipped.
 subscribe = ["holon.llm.ask=/ask"]
+secrets = [
+  "groq-api-key=nats-kv://SECRETS/groq-api-key",
+  "cerebras-api-key=nats-kv://SECRETS/cerebras-api-key",
+  "gemini-api-key=nats-kv://SECRETS/gemini-api-key",
+  "openrouter-api-key=nats-kv://SECRETS/openrouter-api-key",
+  "mistral-api-key=nats-kv://SECRETS/mistral-api-key",
+]
 nats_url = "nats://127.0.0.1:4222"
 egress = [
   "api.groq.com:443",
