@@ -46,14 +46,14 @@ fn respond(
   status : UInt32,
   text : String,
 ) -> Result[@types.Response, @types.ErrorCode] {
-  let body = @text.utf8(text)
+  let body = @tool.utf8(text)
   let content_type = if status == 200 {
     "application/json"
   } else {
     "text/plain; charset=utf-8"
   }
   let headers = @types.Fields::from_list([
-    ("content-type", @text.utf8(content_type).to_fixedarray()),
+    ("content-type", @tool.utf8(content_type).to_fixedarray()),
   ]).unwrap()
   let contents = @async-core.Stream::produce(async fn(sink) {
     ignore(sink.write_all_bytes(body))

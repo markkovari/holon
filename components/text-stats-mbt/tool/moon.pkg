@@ -1,5 +1,5 @@
 import {
-  "holon/text-stats/text",
+  "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/json",
 }
 
