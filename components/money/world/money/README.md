@@ -1,0 +1,1 @@
+`money` provides exact arithmetic; pure compute, no host imports.
