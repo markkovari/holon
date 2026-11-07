@@ -1,17 +1,17 @@
 //! The runtime's registry is the truth: each reconcile makes Matrix match it (ADR-0105).
 //! Only the owner can talk to the agents.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use serde_json::{json, Value};
 
 use crate::config::Config;
+use crate::http::Http;
 use crate::matrix::{Matrix, R};
 use crate::retire::Verdict;
-use crate::runtime::{AgentInfo, ProjectInfo, Runtime};
-use crate::state::{ProjectRooms, RoomKind, State};
+use crate::runtime::{AgentInfo, Job, ProjectInfo, Runtime};
+use crate::state::{Pending, ProjectRooms, Retry, RoomKind, State, Store};
 
 const MAX_REPLY: usize = 30_000;
 
@@ -20,11 +20,9 @@ pub struct Bridge {
     pub mx: Matrix,
     pub rt: Runtime,
     pub state: State,
-    seen_events: Mutex<(HashSet<String>, VecDeque<String>)>,
+    http: Arc<dyn Http>,
     /// Two reconcile passes at once would race on room creation.
     reconciling: Mutex<()>,
-    absence: Mutex<crate::retire::Absence>,
-    refusal_told: Mutex<bool>,
 }
 
 fn log(msg: &str) {
@@ -79,6 +77,24 @@ pub fn clear_winner(ranked: &[(String, f32)]) -> Option<String> {
     }
 }
 
+/// What an agent posts while its run is going; the answer replaces it by an edit.
+pub const THINKING: &str = "*(thinking...)*";
+
+fn edit_target(m: &Value) -> Option<&str> {
+    let rel = &m["content"]["m.relates_to"];
+    (rel["rel_type"] == "m.replace").then(|| rel["event_id"].as_str()).flatten()
+}
+
+/// A message as it reads now: its newest edit, `msgs` being newest first as `/messages` gives them.
+fn latest_body<'a>(msgs: &'a [Value], m: &'a Value) -> &'a str {
+    let id = m["event_id"].as_str();
+    msgs.iter()
+        .find(|e| id.is_some() && edit_target(e) == id)
+        .and_then(|e| e["content"]["m.new_content"]["body"].as_str())
+        .or_else(|| m["content"]["body"].as_str())
+        .unwrap_or_default()
+}
+
 pub fn history_lines(cfg: &Config, msgs: &[Value], skip: &str, budget: usize) -> String {
     const PER_MESSAGE: usize = 400;
     let mut picked: Vec<String> = Vec::new();
@@ -98,10 +114,9 @@ pub fn history_lines(cfg: &Config, msgs: &[Value], skip: &str, budget: usize) ->
             };
             photo_line.as_str()
         } else {
-            m["content"]["body"].as_str().unwrap_or_default().trim()
+            latest_body(msgs, m).trim()
         };
-        if body.is_empty() || m["content"]["m.relates_to"]["rel_type"].as_str() == Some("m.replace")
-        {
+        if body.is_empty() || body == THINKING || edit_target(m).is_some() {
             continue;
         }
         let sender = m["sender"].as_str().unwrap_or_default();
@@ -331,20 +346,10 @@ pub fn slug(name: &str) -> String {
 }
 
 impl Bridge {
-    pub fn new(cfg: Config) -> Arc<Self> {
-        let mx = Matrix::new(&cfg.homeserver, &cfg.as_token, &cfg.admin_token);
-        let rt = Runtime::new(&cfg.runtime_url, &cfg.runtime_token);
-        let state = State::load(cfg.state_file.clone());
-        Arc::new(Self {
-            cfg,
-            mx,
-            rt,
-            state,
-            seen_events: Mutex::new(Default::default()),
-            reconciling: Mutex::new(()),
-            absence: Mutex::default(),
-            refusal_told: Mutex::new(false),
-        })
+    pub fn new(cfg: Config, http: Arc<dyn Http>, store: Box<dyn Store>) -> Arc<Self> {
+        let mx = Matrix::new(http.clone(), &cfg.homeserver, &cfg.as_token, &cfg.admin_token);
+        let rt = Runtime::new(http.clone(), &cfg.runtime_url, &cfg.runtime_token);
+        Arc::new(Self { cfg, mx, rt, state: State::new(store), http, reconciling: Mutex::new(()) })
     }
 
     fn tell_owner(&self, text: &str) {
@@ -353,12 +358,30 @@ impl Bridge {
         }
     }
 
+    /// Synapse rate-limits joins, so a burst of new rooms can leave the owner only invited: such a
+    /// room is kept and joined again by a later pass.
     fn place_owner(&self, room: &str) {
         if let Err(e) = self.mx.join_as_owner(room) {
             log(&format!(
                 "could not place {} in {room} (an invite is pending instead): {e}",
                 self.cfg.owner
             ));
+            if e.errcode != "M_LIMIT_EXCEEDED" {
+                return;
+            }
+            self.state.write(|d| {
+                if !d.unplaced.iter().any(|r| r == room) {
+                    d.unplaced.push(room.to_string());
+                }
+            });
+        }
+    }
+
+    fn place_owner_again(&self) {
+        for room in self.state.read(|d| d.unplaced.clone()) {
+            if !matches!(self.mx.join_as_owner(&room), Err(e) if e.errcode == "M_LIMIT_EXCEEDED") {
+                self.state.write(|d| d.unplaced.retain(|r| r != &room));
+            }
         }
     }
 
@@ -376,6 +399,7 @@ impl Bridge {
         let agents = self.rt.agents()?;
         let projects = self.rt.projects()?;
         self.ensure_control_room().map_err(|e| format!("control room: {e}"))?;
+        self.place_owner_again();
         // Before `ensure_agent`: a restored agent gets its old room back and not a new one.
         self.retire_gone_agents(&agents);
         for a in &agents {
@@ -405,7 +429,12 @@ impl Bridge {
             }
         }
         let known: Vec<String> = self.state.read(|d| d.dms.keys().cloned().collect());
-        let verdict = self.absence.lock().unwrap().observe(&known, &live);
+        let before = self.state.read(|d| d.absence.clone());
+        let mut absence = before.clone();
+        let verdict = absence.observe(&known, &live);
+        if absence != before {
+            self.state.write(|d| d.absence = absence.clone());
+        }
         let waiting: Vec<(String, String)> = self
             .state
             .read(|d| d.retired.clone())
@@ -413,7 +442,7 @@ impl Bridge {
             .filter(|(n, _)| !live.contains(n))
             .collect();
         if waiting.is_empty() && matches!(verdict, Verdict::Nothing) {
-            *self.refusal_told.lock().unwrap() = false;
+            self.refusal_told(false);
             return;
         }
         // The farewell depends on the trash; without it, try next pass.
@@ -426,15 +455,17 @@ impl Bridge {
             }
         }
         match verdict {
-            Verdict::Nothing => *self.refusal_told.lock().unwrap() = false,
+            Verdict::Nothing => {
+                self.refusal_told(false);
+            }
             Verdict::Retire(gone) => {
-                *self.refusal_told.lock().unwrap() = false;
+                self.refusal_told(false);
                 for name in gone {
                     self.retire(&name, in_trash(&name));
                 }
             }
             Verdict::Refuse(gone) => {
-                if !std::mem::replace(&mut *self.refusal_told.lock().unwrap(), true) {
+                if !self.refusal_told(true) {
                     self.tell_owner(&format!(
                         "{} of my {} agents ({}) are missing from the runtime at once. That looks \
                          like a runtime started against the wrong state directory, not a set of \
@@ -447,6 +478,15 @@ impl Bridge {
                 }
             }
         }
+    }
+
+    /// Sets whether the owner was told of a refused retirement; answers what it was.
+    fn refusal_told(&self, told: bool) -> bool {
+        let was = self.state.read(|d| d.refusal_told);
+        if was != told {
+            self.state.write(|d| d.refusal_told = told);
+        }
+        was
     }
 
     /// A trashed agent's user stays in the room, so a restore can invite the owner back to it.
@@ -470,7 +510,7 @@ impl Bridge {
         if in_trash {
             self.state.write(|d| {
                 d.dms.remove(name);
-                d.retired.insert(name.to_string(), room);
+                d.retired.insert(name.to_string(), room.clone());
             });
         } else {
             let _ = self.mx.leave(&room, &ghost);
@@ -588,7 +628,7 @@ impl Bridge {
             json!({"via": [self.cfg.server_name], "canonical": true}),
         )?;
         self.place_owner(&room);
-        self.state.write(|d| d.dms.insert(a.name.clone(), room));
+        self.state.write(|d| d.dms.insert(a.name.clone(), room.clone()));
         Ok(())
     }
 
@@ -646,7 +686,7 @@ impl Bridge {
         if rooms.feed.is_empty() && p.agents.len() >= 2 {
             rooms.feed = make_feed(&rooms.space)?;
             let r = rooms.clone();
-            self.state.write(|d| d.projects.insert(p.name.clone(), r));
+            self.state.write(|d| d.projects.insert(p.name.clone(), r.clone()));
         }
         for room in [&rooms.general, &rooms.feed].into_iter().filter(|r| !r.is_empty()) {
             let joined = self.mx.joined(room, &bridge)?;
@@ -775,26 +815,9 @@ impl Bridge {
     }
 
     /// Synapse can deliver an event twice.
-    fn first_time(&self, event_id: &str) -> bool {
-        if event_id.is_empty() {
-            return true;
-        }
-        let mut g = self.seen_events.lock().unwrap();
-        if !g.0.insert(event_id.to_string()) {
-            return false;
-        }
-        g.1.push_back(event_id.to_string());
-        while g.1.len() > 5000 {
-            if let Some(old) = g.1.pop_front() {
-                g.0.remove(&old);
-            }
-        }
-        true
-    }
-
     pub fn handle_events(self: &Arc<Self>, events: &[Value]) {
         for ev in events {
-            if !self.first_time(ev["event_id"].as_str().unwrap_or_default()) {
+            if !self.state.first_time(ev["event_id"].as_str().unwrap_or_default()) {
                 continue;
             }
             self.on_event(ev);
@@ -920,26 +943,17 @@ impl Bridge {
         let agents: Vec<String> = match self.state.kind_of(room) {
             Some(RoomKind::Control) if heard || photo => return,
             Some(RoomKind::Control) => {
-                let me = self.clone();
-                let (room, bridge) = (room.to_string(), self.bridge_user());
-                std::thread::spawn(move || {
-                    if let Some(reply) = me.command(&body) {
-                        let _ = me.mx.send_text(&room, &bridge, &reply, None);
-                    }
-                });
+                if let Some(reply) = self.command(&body) {
+                    let _ = self.mx.send_text(room, &self.bridge_user(), &reply, None);
+                }
                 return;
             }
             Some(RoomKind::Dm(a)) => {
                 if !heard && !photo && (body.starts_with('/') || body.starts_with('!')) {
                     if let Some(cmd) = crate::commands::parse(&body) {
-                        let me = self.clone();
-                        let (agent, room, event_id, body_text) =
-                            (a.clone(), room.to_string(), event_id.to_string(), body.clone());
-                        std::thread::spawn(move || {
-                            let reply = me.run_slash_command(&agent, &room, cmd, &body_text);
-                            let ghost = me.cfg.ghost(&agent);
-                            let _ = me.mx.send_markdown(&room, &ghost, &reply, Some(&event_id));
-                        });
+                        let reply = self.run_slash_command(&a, room, cmd, &body);
+                        let ghost = self.cfg.ghost(&a);
+                        let _ = self.mx.send_markdown(room, &ghost, &reply, Some(event_id));
                         return;
                     }
                 }
@@ -951,15 +965,13 @@ impl Bridge {
             | Some(RoomKind::ProjectFeed(p)) => {
                 if !heard && !photo && (body.starts_with('/') || body.starts_with('!')) {
                     if let Some(_cmd) = crate::commands::parse(&body) {
-                        let me = self.clone();
-                        let (room, event_id, body_text) =
-                            (room.to_string(), event_id.to_string(), body.clone());
-                        std::thread::spawn(move || {
-                            let bridge = me.bridge_user();
-                            let reply =
-                                me.command(&body_text).unwrap_or_else(|| "unknown command".into());
-                            let _ = me.mx.send_markdown(&room, &bridge, &reply, Some(&event_id));
-                        });
+                        let reply = self.command(&body).unwrap_or_else(|| "unknown command".into());
+                        let _ = self.mx.send_markdown(
+                            room,
+                            &self.bridge_user(),
+                            &reply,
+                            Some(event_id),
+                        );
                         return;
                     }
                 }
@@ -971,10 +983,9 @@ impl Bridge {
                 let mentioned = mentioned_agents(&self.cfg, content);
                 let named = mentioned.iter().any(|a| info.agents.contains(a));
                 // Nobody named: Jev if configured, else a clear embedding winner, else the lead.
-                let jev_key = std::env::var("HOLON_JEV_KEY_FILE").unwrap_or_default();
-                let by_jev = if named || jev_key.is_empty() || info.agents.len() < 2 {
+                let by_jev = if named || info.agents.len() < 2 {
                     None
-                } else {
+                } else if let Some(jev_key) = self.cfg.jev_key.as_deref() {
                     let known = self.rt.agents().unwrap_or_default();
                     let cands: Vec<(String, String)> = info
                         .agents
@@ -984,7 +995,10 @@ impl Bridge {
                             (a.clone(), d.map(|k| k.description.clone()).unwrap_or_default())
                         })
                         .collect();
-                    crate::jev::affected(&jev_key, &body, &cands).filter(|v| !v.is_empty())
+                    crate::jev::affected(self.http.as_ref(), jev_key, &body, &cands)
+                        .filter(|v| !v.is_empty())
+                } else {
+                    None
                 };
                 let judged = if by_jev.is_some() {
                     None
@@ -1035,27 +1049,14 @@ impl Bridge {
                 }
             }
         };
+        let tid = thread_id.as_deref();
         for agent in agents {
-            let (me, room, event_id, body, content, tid) = (
-                self.clone(),
-                room.to_string(),
-                event_id.to_string(),
-                body.clone(),
-                content.clone(),
-                thread_id.clone(),
-            );
             if heard {
-                std::thread::spawn(move || {
-                    me.answer_voice(&agent, &room, &event_id, tid.as_deref(), &content)
-                });
+                self.answer_voice(&agent, room, event_id, tid, content)
             } else if photo {
-                std::thread::spawn(move || {
-                    me.answer_photo(&agent, &room, &event_id, tid.as_deref(), &body, &content)
-                });
+                self.answer_photo(&agent, room, event_id, tid, &body, content)
             } else {
-                std::thread::spawn(move || {
-                    me.answer(&agent, &room, &event_id, tid.as_deref(), &body)
-                });
+                self.answer(&agent, room, event_id, tid, &body)
             }
         }
     }
@@ -1125,29 +1126,14 @@ impl Bridge {
             Some(t) => format!("[Thread: {t}]\n{text}"),
             None => text,
         };
-        let (ok, answer) = self.rt.run(
+        let started = self.rt.start_run(
             agent,
             &self.task(room, reply_to, &prompt),
             &self.why(room),
-            None,
             self.project_of(room).as_deref(),
             std::slice::from_ref(&file),
         );
-        self.mx.typing(room, &ghost, false);
-        let body = if ok {
-            if answer.trim().is_empty() {
-                "(no answer)".to_string()
-            } else {
-                clip(&answer, MAX_REPLY)
-            }
-        } else {
-            format!("⚠️ {}", clip(&answer, 2_000))
-        };
-        if let Err(e) =
-            self.mx.send_markdown_threaded(room, &ghost, &body, thread_id, Some(reply_to))
-        {
-            log(&format!("{agent}: could not post the answer: {e}"));
-        }
+        self.start(self.pending_for(agent, room, reply_to, thread_id), started.map(|j| (j, None)));
     }
 
     /// A voice message to an agent: download it, transcribe it, show what was heard, run
@@ -1202,26 +1188,8 @@ impl Bridge {
             None => text,
         };
 
-        let (ok, answer) = self.run_with_follow_up(agent, room, reply_to, &prompt);
-        self.mx.typing(room, &ghost, false);
-        let written = if ok {
-            if answer.trim().is_empty() {
-                "(no answer)".to_string()
-            } else {
-                clip(&answer, MAX_REPLY)
-            }
-        } else {
-            format!("⚠️ {}", clip(&answer, 2_000))
-        };
-        if let Err(e) =
-            self.mx.send_markdown_threaded(room, &ghost, &written, thread_id, Some(reply_to))
-        {
-            log(&format!("{agent}: could not post the answer: {e}"));
-        }
-        // ...and the same answer, spoken, if the runtime can speak.
-        if ok && self.rt.speech_caps().1 {
-            self.speak_in(room, &ghost, &spoken_excerpt(&answer), reply_to, thread_id);
-        }
+        let p = Pending { speak: true, ..self.pending_for(agent, room, reply_to, thread_id) };
+        self.start(p, self.start_with_follow_up(agent, room, reply_to, &prompt));
     }
 
     /// Posts `text` as a voice message from `ghost`.
@@ -1268,44 +1236,129 @@ impl Bridge {
         // The agent may not be in this room yet (a hand-made one it was invited to).
         let _ = self.mx.join(room, &ghost);
         self.mx.typing(room, &ghost, true);
-
-        // Feature 5: Establish streaming anchor via initial placeholder in Matrix
-        let initial_msg = self.mx.send_markdown_threaded(
-            room,
-            &ghost,
-            "*(thinking...)*",
-            thread_id,
-            Some(reply_to),
-        );
-
-        // Feature 7: Include thread context if operating in a thread branch
+        // What the answer replaces when it comes.
+        let placeholder =
+            self.mx.send_markdown_threaded(room, &ghost, THINKING, thread_id, Some(reply_to)).ok();
         let prompt = match thread_id {
             Some(t) => format!("[Thread: {t}]\n{text}"),
             None => text.to_string(),
         };
+        let p = Pending { placeholder, ..self.pending_for(agent, room, reply_to, thread_id) };
+        self.start(p, self.start_with_follow_up(agent, room, reply_to, &prompt));
+    }
 
-        let (ok, answer) = self.run_with_follow_up(agent, room, reply_to, &prompt);
-        self.mx.typing(room, &ghost, false);
-        let body = if ok {
-            if answer.trim().is_empty() {
-                "(no answer)".to_string()
-            } else {
-                clip(&answer, MAX_REPLY)
+    fn pending_for(
+        &self,
+        agent: &str,
+        room: &str,
+        reply_to: &str,
+        thread_id: Option<&str>,
+    ) -> Pending {
+        Pending {
+            agent: agent.to_string(),
+            room: room.to_string(),
+            sender: self.cfg.ghost(agent),
+            reply_to: Some(reply_to.to_string()),
+            thread: thread_id.map(String::from),
+            ..Pending::default()
+        }
+    }
+
+    /// Records a started run for the pump to deliver, or tells at once why it did not start.
+    fn start(&self, mut p: Pending, started: Result<(String, Option<Retry>), String>) {
+        match started {
+            Ok((job, retry)) => {
+                p.job = job;
+                p.retry = retry;
+                self.state.add_pending(p);
             }
-        } else {
-            format!("⚠️ {}", clip(&answer, 2_000))
+            Err(e) => self.finish(&p, false, &e),
+        }
+    }
+
+    /// Posts a finished run's answer where its message was: over the placeholder when there is
+    /// one, and spoken too for a voice message.
+    pub fn finish(&self, p: &Pending, ok: bool, answer: &str) {
+        let ghost = p.sender != self.bridge_user();
+        if ghost {
+            self.mx.typing(&p.room, &p.sender, false);
+        }
+        let body = match &p.steer {
+            Some(m) if ok => format!(
+                "✅ Steering guidance applied to `{}`:\n> {m}\n\n{}",
+                p.agent,
+                clip(answer, 1000)
+            ),
+            Some(_) => format!("⚠️ Steering directive failed on `{}`: {answer}", p.agent),
+            None if ok && answer.trim().is_empty() => "(no answer)".to_string(),
+            None if ok => clip(answer, MAX_REPLY),
+            None => format!("⚠️ {}", clip(answer, 2_000)),
         };
-
-        if let Ok(ref event_id) = initial_msg {
-            if let Err(e) = self.mx.edit_markdown(room, &ghost, event_id, &body) {
-                log(&format!("{agent}: edit failed, falling back to new message: {e}"));
-                let _ =
-                    self.mx.send_markdown_threaded(room, &ghost, &body, thread_id, Some(reply_to));
+        let edited = match p.placeholder.as_deref() {
+            Some(ev) => match self.mx.edit_markdown(&p.room, &p.sender, ev, &body) {
+                Ok(_) => true,
+                Err(e) => {
+                    log(&format!("{}: edit failed, falling back to new message: {e}", p.agent));
+                    false
+                }
+            },
+            None => false,
+        };
+        if !edited {
+            if let Err(e) = self.mx.send_markdown_threaded(
+                &p.room,
+                &p.sender,
+                &body,
+                p.thread.as_deref(),
+                p.reply_to.as_deref(),
+            ) {
+                log(&format!("{}: could not post the answer: {e}", p.agent));
             }
-        } else if let Err(e) =
-            self.mx.send_markdown_threaded(room, &ghost, &body, thread_id, Some(reply_to))
-        {
-            log(&format!("{agent}: could not post the answer: {e}"));
+        }
+        if p.speak && ok && self.rt.speech_caps().1 {
+            let reply_to = p.reply_to.as_deref().unwrap_or_default();
+            self.speak_in(
+                &p.room,
+                &p.sender,
+                &spoken_excerpt(answer),
+                reply_to,
+                p.thread.as_deref(),
+            );
+        }
+    }
+
+    /// Asks after every run the bridge started: a finished one is taken out of the list (so a
+    /// pass running beside this one cannot post it too) and answered; a running one keeps its
+    /// agent typing.
+    pub fn poll_pending(&self) {
+        for p in self.state.read(|d| d.pending.clone()) {
+            match self.rt.job(&p.job) {
+                Job::Running => {
+                    if p.sender != self.bridge_user() {
+                        self.mx.typing(&p.room, &p.sender, true);
+                    }
+                }
+                Job::Done(ok, answer) => {
+                    let Some(mut p) = self.state.take_pending(&p.job) else { continue };
+                    if !ok {
+                        if let Some(r) = p.retry.take() {
+                            let again = self.rt.start_run(
+                                &p.agent,
+                                &r.task,
+                                &r.why,
+                                r.project.as_deref(),
+                                &[],
+                            );
+                            if let Ok(job) = again {
+                                p.job = job;
+                                self.state.add_pending(p);
+                                continue;
+                            }
+                        }
+                    }
+                    self.finish(&p, ok, &answer);
+                }
+            }
         }
     }
 
@@ -1359,36 +1412,28 @@ impl Bridge {
         Some((file, format!("\n\n(Mark's last photo, sent {when}, is attached again.)")))
     }
 
-    /// Runs `agent` on a text message. If the message follows a photo it was given a moment ago,
-    /// that photo comes along again: the agent cannot look at a picture it was only sent a message
-    /// ago, and "how much is this?" is about the picture. If that photo is no longer in its inbox
-    /// the question is asked without it rather than not at all.
-    fn run_with_follow_up(
+    /// Starts `agent` on a text message. If the message follows a photo it was given a moment
+    /// ago, that photo comes along again: the agent cannot look at a picture it was only sent a
+    /// message ago, and "how much is this?" is about the picture. If that photo is no longer in
+    /// its inbox the run fails, and the [`Retry`] asks the question without it rather than not at all.
+    fn start_with_follow_up(
         &self,
         agent: &str,
         room: &str,
         reply_to: &str,
         text: &str,
-    ) -> (bool, String) {
+    ) -> Result<(String, Option<Retry>), String> {
         let project = self.project_of(room);
-        let run = |text: &str, attach: &[String]| {
-            self.rt.run(
-                agent,
-                &self.task(room, reply_to, text),
-                &self.why(room),
-                None,
-                project.as_deref(),
-                attach,
-            )
-        };
-        let Some((file, note)) = self.follow_up_photo(room, agent, reply_to) else {
-            return run(text, &[]);
-        };
-        let (ok, answer) = run(&format!("{text}{note}"), std::slice::from_ref(&file));
-        if ok {
-            return (ok, answer);
+        let why = self.why(room);
+        let task = self.task(room, reply_to, text);
+        if let Some((file, note)) = self.follow_up_photo(room, agent, reply_to) {
+            let with = self.task(room, reply_to, &format!("{text}{note}"));
+            let attach = std::slice::from_ref(&file);
+            if let Ok(job) = self.rt.start_run(agent, &with, &why, project.as_deref(), attach) {
+                return Ok((job, Some(Retry { task, why, project })));
+            }
         }
-        run(text, &[])
+        self.rt.start_run(agent, &task, &why, project.as_deref(), &[]).map(|job| (job, None))
     }
 
     /// Why an agent is being woken, for its `Trigger:` line.
@@ -1403,11 +1448,10 @@ impl Bridge {
     }
 
     /// What the agent is handed: the recent conversation (so it knows what the message is
-    /// about and who said what), then the new message. `HOLON_HISTORY_CHARS` bounds the
-    /// history (default 3000; 0 sends the bare message). `skip` is the message being answered.
+    /// about and who said what), then the new message, the history bounded by
+    /// `history_chars`. `skip` is the message being answered.
     fn task(&self, room: &str, skip: &str, text: &str) -> String {
-        let budget: usize =
-            std::env::var("HOLON_HISTORY_CHARS").ok().and_then(|v| v.parse().ok()).unwrap_or(3000);
+        let budget = self.cfg.history_chars;
         if budget == 0 {
             return text.to_string();
         }
@@ -1495,7 +1539,7 @@ impl Bridge {
                 content,
             ) {
                 Ok(event_id) => {
-                    self.state.write(|d| d.polls.insert(event_id, a.id));
+                    self.state.write(|d| d.polls.insert(event_id.clone(), a.id));
                 }
                 Err(e) => log(&format!("approval {}: could not post the poll: {e}", a.id)),
             }
@@ -1693,29 +1737,16 @@ impl Bridge {
         }
     }
 
-    /// Starts the reconcile, approval and scheduled-result loops on their own threads.
-    pub fn spawn_loops(self: &Arc<Self>) {
-        let me = self.clone();
-        std::thread::spawn(move || loop {
-            if let Err(e) = me.reconcile() {
-                log(&format!("reconcile: {e}"));
-            }
-            std::thread::sleep(Duration::from_secs(5));
-        });
-        // Woken by the runtime's events instead of polling it; one thread, so no pass runs twice at once.
-        // A (re)connect and the stream's quiet pings sweep both, for whatever a dropped stream missed.
-        let me = self.clone();
-        std::thread::spawn(move || {
-            me.rt.follow(|kind| match kind {
-                "approval_requested" | "approval_resolved" => me.poll_approvals(),
-                "run_finished" => me.deliver_scheduled(),
-                "connected" | "ping" => {
-                    me.poll_approvals();
-                    me.deliver_scheduled();
-                }
-                _ => {}
-            })
-        });
+    /// One pass of everything that is not an answer to Synapse: make Matrix match the runtime,
+    /// post and settle approval polls, deliver scheduled results and finished runs. The host's
+    /// pump calls it (ADR-0130); a pass that missed something is caught up by the next.
+    pub fn pump(&self) {
+        if let Err(e) = self.reconcile() {
+            log(&format!("reconcile: {e}"));
+        }
+        self.poll_approvals();
+        self.deliver_scheduled();
+        self.poll_pending();
     }
 }
 
@@ -1729,12 +1760,12 @@ mod tests {
             server_name: "s.net".into(),
             as_token: "a".into(),
             hs_token: "h".into(),
-            listen: "0.0.0.0:1".into(),
             runtime_url: "http://r".into(),
             runtime_token: "t".into(),
             owner: "@mark:s.net".into(),
             admin_token: "x".into(),
-            state_file: "/tmp/none.json".into(),
+            history_chars: 3000,
+            jev_key: None,
         }
     }
 
@@ -1798,6 +1829,29 @@ mod tests {
         let tight = history_lines(&cfg, &msgs, "$4", 30);
         assert_eq!(tight, "coach: Shall I ask the rower?");
         assert_eq!(history_lines(&cfg, &[], "", 100), "");
+    }
+
+    #[test]
+    fn history_reads_an_answer_as_its_edit_and_leaves_out_one_still_thinking() {
+        let cfg = cfg();
+        let (agent, owner) = (cfg.ghost("coach"), cfg.owner.clone());
+        let m = |id: &str, from: &str, body: &str| json!({"event_id": id, "sender": from, "content": {"body": body}});
+        let edit = |id: &str, of: &str, body: &str| {
+            json!({"event_id": id, "sender": agent, "content": {
+                "body": format!("* {body}"),
+                "m.new_content": {"body": body},
+                "m.relates_to": {"rel_type": "m.replace", "event_id": of},
+            }})
+        };
+        // newest first: a second question whose answer is still coming, under an answered one
+        let msgs = vec![
+            m("$5", &agent, THINKING),
+            m("$4", &owner, "and tomorrow?"),
+            edit("$3", "$2", "Rest today."),
+            m("$2", &agent, THINKING),
+            m("$1", &owner, "what now?"),
+        ];
+        assert_eq!(history_lines(&cfg, &msgs, "$4", 10_000), "mark: what now?\ncoach: Rest today.");
     }
 
     #[test]

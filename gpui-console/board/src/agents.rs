@@ -129,12 +129,25 @@ impl Element {
                 std::env::var("HOME").map(|h| std::path::Path::new(&h).join(".holon-matrix"))
             })
             .ok()?;
-        let read = |f: &str| -> Option<serde_json::Value> {
-            serde_json::from_str(&std::fs::read_to_string(dir.join(f)).ok()?).ok()
+        // `holon matrix init` writes bridge.conf; the bridge component keeps its rooms and
+        // answers them, with the hs_token, at /internal/rooms.
+        let conf = std::fs::read_to_string(dir.join("bridge.conf")).ok()?;
+        let get = |k: &str| {
+            conf.lines().find_map(|l| l.strip_prefix(k)?.strip_prefix(" = ").map(String::from))
         };
-        // `agent-matrix init` writes bridge.json; config.json is the older name.
-        let config = read("bridge.json").or_else(|| read("config.json"))?;
-        Element::from_files(&config, &read("state.json").unwrap_or_default())
+        let url = std::env::var("HOLON_MATRIX_URL").unwrap_or("http://127.0.0.1:9009".into());
+        let rooms = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+            .ok()?
+            .get(format!("{url}/internal/rooms"))
+            .bearer_auth(get("matrix-hs-token")?)
+            .send()
+            .ok()?
+            .json::<serde_json::Value>()
+            .ok()
+            .unwrap_or_default();
+        Element::from_files(&serde_json::json!({"server_name": get("matrix-server-name")?}), &rooms)
     }
 
     pub fn agent(&self, agent: &str, projects: &[String]) -> String {

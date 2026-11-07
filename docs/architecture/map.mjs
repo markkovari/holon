@@ -112,12 +112,12 @@ export const SYS = [
   purpose:'comp-agentd sessions with approvals, and the agent-runtime stack with its Matrix and desktop fronts.',
   blurb:'Two independent ways to run agents; neither calls the other. comp-agentd serves sessions, tasks and one resumable event stream with per-tool approval. agent-runtime runs autonomous agents with memory, schedules and events, fronted by a desktop console and a Matrix bridge.',
   entry:'REST, SSE and gRPC for agentd clients; Element and the GPUI console for agent-runtime',
-  parts:[['native','holon-agentd'],['native','agent-runtime'],['native','agent-matrix'],['native','gpui-console'],['wasm','agent gateway']],
+  parts:[['native','holon-agentd'],['native','agent-runtime'],['wasm','matrix-bridge'],['native','gpui-console'],['wasm','agent gateway']],
   uses:['llm','disk'],
   boundary:['comp-agentd tools are confined to the session’s workspace root; run cannot be confined, which is what approval is for.',
             'agent-runtime refuses a tool an agent was not granted instead of dispatching it, and only the owner’s Matrix messages start a run.',
             'agent-runtime is the first client of comp-agentd: an agent granted session_start opens a coding session, the runtime watches it and shows its approvals as its own (ADR-0119); the contract came first, for bots, backends and scripts outside it (ADR-0102). Whether agent-runtime should also run its own tasks on the daemon is proposed in ADR-0117.'],
-  code:['reconciler/daemons/agentd/','crates/holon-llm/','crates/holon-fuel/','api/holon/v1/agent.proto','api/openapi.yaml','agent-runtime/','agent-matrix/','gpui-console/']},
+  code:['reconciler/daemons/agentd/','crates/holon-llm/','crates/holon-fuel/','api/holon/v1/agent.proto','api/openapi.yaml','agent-runtime/','agent-matrix/','components/matrix-bridge/','gpui-console/']},
 
  {id:'loop', name:'Engineering loop', short:'goal to pull request',
   purpose:'Parallel AI branches, a real test gate, and a selector that opens the winner as a pull request.',
@@ -207,7 +207,7 @@ export const COR = [
  {id:'A1',a:['clients','bots · scripts · UIs'],b:['agents','comp-agentd'],p:'http',over:'REST · SSE · gRPC',contract:'api/openapi.yaml and api/holon/v1/agent.proto on one port. Sessions, tasks, one resumable event stream, a state snapshot to catch up, steering, a bounded queue, per-tool approval with a scope.',adr:'0102 · 0107 · 0108 · 0112 · 0114'},
  {id:'A2',a:['agents','comp-agentd'],b:['llm','providers'],p:'http',over:'HTTPS',contract:'Anthropic /v1/messages or any OpenAI-compatible /chat/completions, streamed; a mock provider for tests.',adr:'0102'},
  {id:'A4',a:['agents','agent-runtime'],b:['llm','providers'],p:'http',over:'HTTPS',contract:'On-device, OpenAI-compatible or Anthropic models; each run has a step, token and daily budget.',adr:''},
- {id:'A7',a:['element','Element'],b:['agents','agent-matrix'],p:'http',over:'Matrix',contract:'Every agent is a Matrix user and every project a Space, bridged by an appservice; approvals are polls.',adr:'0105'},
+ {id:'A7',a:['element','Element'],b:['agents','matrix-bridge'],p:'http',over:'Matrix',contract:'Every agent is a Matrix user and every project a Space, bridged by an appservice component; approvals are polls.',adr:'0135'},
 
  {id:'E2',a:['loop','agent-driver'],b:['llm','providers'],p:'http',over:'HTTPS',contract:'anthropic-provider (or openai-provider) is the model behind each branch; a real model, not a mock.',adr:''},
  {id:'E4',a:['loop','github-forge'],b:['git','forge'],p:'http',over:'HTTPS',contract:'Opens the pull request for the selected candidate; the only path from a branch to a PR.',adr:''},
@@ -442,7 +442,7 @@ export const DIA = {
    N('rt',2,3,'native','agent-runtime',['spec + bounded tool loop, memory,','run log, triggers · --state-dir']),
    N('gw',3,3,'wasm','agent gateway',['one generic component per agent','HTTP front door on the lattice']),
    N('syn',1,4,'ext','Synapse',['Matrix homeserver','infra/matrix, on the tailnet']),
-   N('mx',2,4,'native','agent-matrix',['appservice: agent = user,','project = Space · approvals = polls'],{m:1})
+   N('mx',2,4,'wasm','matrix-bridge',['appservice on comp-host: agent = user,','project = Space · approvals = polls'],{m:1})
   ],
   groups:[
    {id:'ad',t:'comp-agentd (ADR-0102, 0107, 0108, 0112\u20130114)',ids:['api','sess','loop','tools','prov','disk','appr']},

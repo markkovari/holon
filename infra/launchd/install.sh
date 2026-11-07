@@ -8,7 +8,7 @@
 # Services (label io.holon.<name>): fm (Apple model), qwen (4B model), qwen-large (27B, slower, ~15 GB), embed (EmbeddingGemma 2),
 # nats and platform (the vault agents' API keys live in, ADR-0051), vcs (the code store, ADR-0099,
 # a component on comp-host, ADR-0134), agentd (coding sessions, ADR-0102, their edits recorded in vcs,
-# ADR-0121), runtime (the agents), bridge (Matrix). Logs: ~/Library/Logs/holon/<name>.log. Nothing secret goes in a plist: tokens stay in
+# ADR-0121), runtime (the agents), bridge (Matrix, a component on comp-host, ADR-0135). Logs: ~/Library/Logs/holon/<name>.log. Nothing secret goes in a plist: tokens stay in
 # ~/.holon-agents, ~/.holon-matrix and ~/.holon-platform, where the programs read them.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -18,6 +18,7 @@ UID_="$(id -u)"
 SERVICES=(fm qwen qwen-large embed nats platform vcs agentd runtime bridge)
 PLATFORM="$HOME/.holon-platform"
 STATE="$HOME/.holon-agents"
+MATRIX="$HOME/.holon-matrix"
 # Big local models: installed but not started. The runtime starts one when a model chain needs it
 # (DeepSeek unavailable or not good enough; or, for embed, a recall or routing call) and stops it
 # after 10 idle minutes.
@@ -37,7 +38,8 @@ spec() {
     vcs) echo "$STATE"; echo "$REPO/target/release/comp-host" --component "$REPO/components/target/vcs_gateway.composed.wasm" --addr 127.0.0.1:18014 --kv sqlite --sqlite-path "$STATE/vcs.db" --dir "$STATE/checkouts" --mem-cap-mb 256 ;;
     agentd) echo "$STATE"; echo "$REPO/target/release/comp-agentd" --addr 127.0.0.1:18016 --token-file "$STATE/agentd-token" --workspace-root "$STATE/workspaces" --state-dir "$STATE/agentd" --provider openai --base-url https://api.deepseek.com --api-key-file "$HOME/.comp-secrets/deepseek" --vcs-url http://127.0.0.1:18014 ;;
     runtime) echo "$REPO/agent-runtime"; echo "$REPO/target/release/agent-runtime" --state-dir "$STATE" --listen 127.0.0.1:18017 --local-url http://127.0.0.1:18099 --stt-bin "$STATE/holon-stt" --embed-url http://127.0.0.1:18102 --embed-service io.holon.embed --platform-file "$STATE/platform.json" --agentd-url http://127.0.0.1:18016 --agentd-token-file "$STATE/agentd-token" --session-model deepseek-chat ;;
-    bridge) echo "$REPO/agent-matrix"; echo "$REPO/target/release/agent-matrix" run --config "$HOME/.holon-matrix/bridge.json" ;;
+    # Synapse dials it over the tailnet; it dials the homeserver there and the runtime on loopback.
+    bridge) echo "$MATRIX"; echo "$REPO/target/release/comp-host" --component "$REPO/components/target/wasm32-wasip2/release/matrix_bridge.wasm" --addr 0.0.0.0:9009 --kv sqlite --sqlite-path "$MATRIX/bridge.db" --config-file "$MATRIX/bridge.conf" --egress '*' --allow-private-egress --pump /internal/pump --pump-every 2 --mem-cap-mb 256 ;;
   esac
 }
 
@@ -100,6 +102,23 @@ platform_account() {
   echo "made the runtime's platform account ($f)"
 }
 
+# The bridge component's config file; a native bridge's bridge.json becomes it once, keeping its
+# tokens so Synapse's registration stays valid.
+matrix_conf() {
+  [ -f "$MATRIX/bridge.conf" ] && return
+  [ -f "$MATRIX/bridge.json" ] || { echo "missing $MATRIX/bridge.conf — holon matrix init first"; exit 1; }
+  local jev="$HOME/.comp-secrets/typesafe"
+  if [ -f "$jev" ]; then HOLON_JEV_KEY_FILE="$jev" "$REPO/target/release/holon" matrix migrate
+  else "$REPO/target/release/holon" matrix migrate; fi
+}
+
+# The native bridge's rooms, handed once to the component as soon as it answers.
+matrix_state() {
+  [ -f "$MATRIX/state.json" ] || return 0
+  for _ in $(seq 1 30); do curl -sf http://127.0.0.1:9009/health >/dev/null && break; sleep 1; done
+  "$REPO/target/release/holon" matrix import-state
+}
+
 case "${1:-}" in
   install)
     mkdir -p "$AGENTS" "$LOGS"
@@ -107,10 +126,10 @@ case "${1:-}" in
     tokens
     [ -f "$HOME/.comp-secrets/deepseek" ] || { echo "missing ~/.comp-secrets/deepseek — agentd's model key"; exit 1; }
     for f in "$REPO/target/release/comp-host" "$REPO/components/target/platform-domain.composed.wasm" \
-      "$REPO/components/target/vcs_gateway.composed.wasm"; do
+      "$REPO/components/target/vcs_gateway.composed.wasm" "$REPO/components/target/wasm32-wasip2/release/matrix_bridge.wasm"; do
       [ -f "$f" ] || { echo "missing $f — cargo xtask host platform, then cargo xtask build"; exit 1; }
     done
-    BINS=(agent-runtime agent-matrix comp-agentd)
+    BINS=(agent-runtime comp-agentd holon)
     for b in "${BINS[@]/#/$REPO/target/release/}"; do
       [ -x "$b" ] || { echo "missing $b — cargo build --release -p $(basename "$b") first"; exit 1; }
     done
@@ -118,6 +137,7 @@ case "${1:-}" in
     for b in "${BINS[@]/#/$REPO/target/release/}"; do
       codesign --force --sign - "$b" 2>/dev/null || true
     done
+    matrix_conf
     for s in "${SERVICES[@]}"; do
       f="$AGENTS/io.holon.$s.plist"
       launchctl bootout "gui/$UID_/io.holon.$s" 2>/dev/null || true
@@ -128,6 +148,7 @@ case "${1:-}" in
       launchctl bootstrap "gui/$UID_" "$f"
       echo "started io.holon.$s"
       if [ "$s" = platform ]; then platform_account; fi
+      if [ "$s" = bridge ]; then matrix_state; fi
     done ;;
   uninstall)
     for s in "${SERVICES[@]}"; do

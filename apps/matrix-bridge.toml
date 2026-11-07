@@ -1,0 +1,25 @@
+name = "matrix-bridge"
+# Synapse dials it over the tailnet with the hs_token; nothing else is answered.
+access = "tailnet"
+domain = "matrix-bridge.internal"
+artifact = "components/target/wasm32-wasip2/release/matrix_bridge.wasm"
+port = 9009
+# The rooms it made: one document moved by compare-and-set, so it must be durable.
+kv = "sqlite"
+# A photo or a voice note passes through whole.
+mem_cap_mb = 256
+# The homeserver, the agent runtime and Jev; set the first two to where yours are.
+egress = ["matrix.example.com:443", "127.0.0.1:18017", "api.typesafe.ai:443"]
+
+# Reconcile with the runtime, post approval polls, deliver scheduled results and finished runs.
+[triggers]
+pump = "/internal/pump"
+interval = 2
+
+# `holon matrix init` writes all of these, the secrets among them, into its config file; a
+# secret may instead be a comp:secrets entry of the same name.
+[config]
+matrix-homeserver = "https://matrix.example.com"
+matrix-server-name = "example.com"
+matrix-owner = "@mark:example.com"
+runtime-url = "http://127.0.0.1:18017"

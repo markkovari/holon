@@ -1,7 +1,5 @@
 //! Jev (TypeSafe's System One) routes a message to agents; its key is read per call, never stored or logged.
 
-use std::time::Duration;
-
 use agent_wire::jev::{self as codec, AnswerSpec, QuestionItem, QuestionSpec};
 
 const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
@@ -10,11 +8,11 @@ const MODEL: &str = "jev-latest";
 const THRESHOLD: u32 = 500;
 
 pub fn affected(
-    key_file: &str,
+    http: &dyn crate::http::Http,
+    key: &str,
     message: &str,
     candidates: &[(String, String)],
 ) -> Option<Vec<String>> {
-    let key = std::fs::read_to_string(key_file).ok()?;
     let items: Vec<QuestionItem> = candidates
         .iter()
         .map(|(name, about)| QuestionItem {
@@ -29,19 +27,13 @@ pub fn affected(
         })
         .collect();
     let body = codec::evaluate_body(MODEL, message, &items);
-    let client =
-        reqwest::blocking::Client::builder().timeout(Duration::from_secs(8)).build().ok()?;
-    let resp = client
-        .post(ENDPOINT)
-        .bearer_auth(key.trim())
-        .header("content-type", "application/json")
-        .body(body)
-        .send()
-        .ok()?;
-    if !resp.status().is_success() {
+    let auth = crate::http::bearer(key.trim());
+    let headers = [("authorization", auth.as_str()), ("content-type", "application/json")];
+    let resp = http.send("POST", ENDPOINT, &headers, Some(body.as_bytes())).ok()?;
+    if !resp.ok() {
         return None;
     }
-    let answers = codec::parse_evaluate(&resp.bytes().ok()?, &items).ok()?;
+    let answers = codec::parse_evaluate(&resp.body, &items).ok()?;
     Some(
         answers
             .into_iter()
@@ -54,6 +46,10 @@ pub fn affected(
 }
 
 #[cfg(test)]
+#[path = "../tests/support/reqwest_http.rs"]
+mod reqwest_http;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -62,6 +58,8 @@ mod tests {
     #[ignore]
     fn jev_live_picks_the_member_a_message_is_about() {
         let key_file = std::env::var("HOLON_JEV_KEY_FILE").expect("HOLON_JEV_KEY_FILE");
+        let key = std::fs::read_to_string(key_file).expect("the key file");
+        let http = super::reqwest_http::Reqwest::new();
         let cands = vec![
             (
                 "rower".to_string(),
@@ -78,7 +76,7 @@ mod tests {
             ("what should I cook after training?", "chef"),
             ("why is nginx down?", "sysadmin"),
         ] {
-            let got = affected(&key_file, msg, &cands).expect("Jev answered");
+            let got = affected(&http, &key, msg, &cands).expect("Jev answered");
             println!("{msg:45} -> {got:?}");
             assert!(got.contains(&want.to_string()), "{msg}: {got:?}");
         }

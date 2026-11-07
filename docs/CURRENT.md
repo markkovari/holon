@@ -187,7 +187,8 @@ set per package under it. `default-members` lists every package, so `cargo test`
 and `cargo clippy` in that directory reach all of them, and `reconciler/tests/workspace.rs` fails when
 one is left out. `host`, `lattice`, `cli` and `crates` are workspaces of their own with tests of their
 own, and the components have theirs (`cargo xtask test`). No workflow builds or tests `agent-runtime`,
-`agent-matrix` or `gpui-console`: they are run by hand. No Python anywhere in `bench/` or `e2e/`.
+`agent-matrix` (the Matrix bridge's logic; its component, `matrix-bridge`, is built with the rest) or
+`gpui-console`: they are run by hand. No Python anywhere in `bench/` or `e2e/`.
 
 Not guarded by a test, deliberately: an exact count is a number that has to be
 edited every time somebody adds a test, which is how this page came to say 173 while

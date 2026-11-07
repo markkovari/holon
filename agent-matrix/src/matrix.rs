@@ -1,8 +1,10 @@
 //! Acts as a namespace user via `user_id`; the `*_as_owner` calls use the owner's session.
 
-use std::time::Duration;
+use std::sync::Arc;
 
 use serde_json::{json, Value};
+
+use crate::http::{bearer, enc, Http};
 
 #[derive(Debug, Clone)]
 pub struct MxErr {
@@ -17,9 +19,9 @@ impl std::fmt::Display for MxErr {
     }
 }
 
-impl From<reqwest::Error> for MxErr {
-    fn from(e: reqwest::Error) -> Self {
-        MxErr { status: 0, errcode: "TRANSPORT".into(), msg: e.to_string() }
+impl From<String> for MxErr {
+    fn from(msg: String) -> Self {
+        MxErr { status: 0, errcode: "TRANSPORT".into(), msg }
     }
 }
 
@@ -29,37 +31,22 @@ pub struct Matrix {
     base: String,
     as_token: String,
     admin_token: String,
-    http: reqwest::blocking::Client,
-}
-
-fn enc(s: &str) -> String {
-    // Room ids contain `!` and `:`.
-    s.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (b as char).to_string()
-            }
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
+    http: Arc<dyn Http>,
 }
 
 impl Matrix {
-    pub fn new(base: &str, as_token: &str, admin_token: &str) -> Self {
+    pub fn new(http: Arc<dyn Http>, base: &str, as_token: &str, admin_token: &str) -> Self {
         Self {
             base: base.trim_end_matches('/').to_string(),
             as_token: as_token.to_string(),
             admin_token: admin_token.to_string(),
-            http: reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()
-                .expect("http client"),
+            http,
         }
     }
 
     fn call(
         &self,
-        method: reqwest::Method,
+        method: &str,
         path: &str,
         as_user: Option<&str>,
         token: &str,
@@ -70,13 +57,15 @@ impl Matrix {
             url.push(if path.contains('?') { '&' } else { '?' });
             url.push_str(&format!("user_id={}", enc(u)));
         }
-        let mut req = self.http.request(method, &url).bearer_auth(token);
-        if let Some(b) = body {
-            req = req.json(&b);
+        let auth = bearer(token);
+        let mut headers = vec![("authorization", auth.as_str())];
+        let body = body.map(|b| b.to_string());
+        if body.is_some() {
+            headers.push(("content-type", "application/json"));
         }
-        let resp = req.send()?;
-        let status = resp.status().as_u16();
-        let text = resp.text().unwrap_or_default();
+        let resp = self.http.send(method, &url, &headers, body.as_deref().map(str::as_bytes))?;
+        let status = resp.status;
+        let text = resp.text();
         let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
         if (200..300).contains(&status) {
             Ok(v)
@@ -89,32 +78,26 @@ impl Matrix {
         }
     }
 
-    fn as_call(
-        &self,
-        method: reqwest::Method,
-        path: &str,
-        user: &str,
-        body: Option<Value>,
-    ) -> R<Value> {
+    fn as_call(&self, method: &str, path: &str, user: &str, body: Option<Value>) -> R<Value> {
         self.call(method, path, Some(user), &self.as_token, body)
     }
 
     fn txn() -> String {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static N: AtomicU64 = AtomicU64::new(0);
+        use std::hash::BuildHasher;
+        // Random, not a counter: each component instance would start its counter at 0 again.
         format!(
-            "holon-{}-{}",
+            "holon-{}-{:x}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis())
                 .unwrap_or(0),
-            N.fetch_add(1, Ordering::Relaxed)
+            std::collections::hash_map::RandomState::new().hash_one(0u8)
         )
     }
 
     pub fn register(&self, localpart: &str) -> R<()> {
         match self.call(
-            reqwest::Method::POST,
+            "POST",
             "/_matrix/client/v3/register",
             None,
             &self.as_token,
@@ -128,7 +111,7 @@ impl Matrix {
 
     pub fn set_displayname(&self, user: &str, name: &str) -> R<()> {
         self.as_call(
-            reqwest::Method::PUT,
+            "PUT",
             &format!("/_matrix/client/v3/profile/{}/displayname", enc(user)),
             user,
             Some(json!({"displayname": name})),
@@ -137,12 +120,7 @@ impl Matrix {
     }
 
     pub fn create_room(&self, as_user: &str, body: Value) -> R<String> {
-        let v = self.as_call(
-            reqwest::Method::POST,
-            "/_matrix/client/v3/createRoom",
-            as_user,
-            Some(body),
-        )?;
+        let v = self.as_call("POST", "/_matrix/client/v3/createRoom", as_user, Some(body))?;
         v["room_id"].as_str().map(String::from).ok_or(MxErr {
             status: 200,
             errcode: "NO_ROOM_ID".into(),
@@ -152,7 +130,7 @@ impl Matrix {
 
     pub fn invite(&self, room: &str, by: &str, target: &str) -> R<()> {
         match self.as_call(
-            reqwest::Method::POST,
+            "POST",
             &format!("/_matrix/client/v3/rooms/{}/invite", enc(room)),
             by,
             Some(json!({"user_id": target})),
@@ -169,7 +147,7 @@ impl Matrix {
 
     pub fn join(&self, room: &str, user: &str) -> R<()> {
         self.as_call(
-            reqwest::Method::POST,
+            "POST",
             &format!("/_matrix/client/v3/join/{}", enc(room)),
             user,
             Some(json!({})),
@@ -179,7 +157,7 @@ impl Matrix {
 
     pub fn leave(&self, room: &str, user: &str) -> R<()> {
         self.as_call(
-            reqwest::Method::POST,
+            "POST",
             &format!("/_matrix/client/v3/rooms/{}/leave", enc(room)),
             user,
             Some(json!({})),
@@ -189,7 +167,7 @@ impl Matrix {
 
     pub fn kick(&self, room: &str, by: &str, target: &str, reason: &str) -> R<()> {
         self.as_call(
-            reqwest::Method::POST,
+            "POST",
             &format!("/_matrix/client/v3/rooms/{}/kick", enc(room)),
             by,
             Some(json!({"user_id": target, "reason": reason})),
@@ -205,7 +183,7 @@ impl Matrix {
         content: Value,
     ) -> R<String> {
         let v = self.as_call(
-            reqwest::Method::PUT,
+            "PUT",
             &format!(
                 "/_matrix/client/v3/rooms/{}/send/{}/{}",
                 enc(room),
@@ -305,7 +283,7 @@ impl Matrix {
         content: Value,
     ) -> R<()> {
         self.as_call(
-            reqwest::Method::PUT,
+            "PUT",
             &format!(
                 "/_matrix/client/v3/rooms/{}/state/{}/{}",
                 enc(room),
@@ -320,7 +298,7 @@ impl Matrix {
 
     pub fn typing(&self, room: &str, user: &str, on: bool) {
         let _ = self.as_call(
-            reqwest::Method::PUT,
+            "PUT",
             &format!("/_matrix/client/v3/rooms/{}/typing/{}", enc(room), enc(user)),
             user,
             Some(if on {
@@ -333,7 +311,7 @@ impl Matrix {
 
     pub fn joined(&self, room: &str, as_user: &str) -> R<Vec<String>> {
         let v = self.as_call(
-            reqwest::Method::GET,
+            "GET",
             &format!("/_matrix/client/v3/rooms/{}/joined_members", enc(room)),
             as_user,
             None,
@@ -343,7 +321,7 @@ impl Matrix {
 
     pub fn room_state(&self, room: &str, as_user: &str) -> R<Vec<Value>> {
         let v = self.as_call(
-            reqwest::Method::GET,
+            "GET",
             &format!("/_matrix/client/v3/rooms/{}/state", enc(room)),
             as_user,
             None,
@@ -354,7 +332,7 @@ impl Matrix {
     /// For rooms the owner made that no agent is in yet.
     pub fn room_state_as_owner(&self, room: &str) -> R<Vec<Value>> {
         let v = self.call(
-            reqwest::Method::GET,
+            "GET",
             &format!("/_matrix/client/v3/rooms/{}/state", enc(room)),
             None,
             &self.admin_token,
@@ -367,7 +345,7 @@ impl Matrix {
     pub fn messages_as_owner(&self, room: &str, limit: usize) -> R<Vec<Value>> {
         let filter = enc(&json!({"types": ["m.room.message"]}).to_string());
         let v = self.call(
-            reqwest::Method::GET,
+            "GET",
             &format!(
                 "/_matrix/client/v3/rooms/{}/messages?dir=b&limit={limit}&filter={filter}",
                 enc(room)
@@ -381,7 +359,7 @@ impl Matrix {
 
     pub fn joined_as_owner(&self, room: &str) -> R<Vec<String>> {
         let v = self.call(
-            reqwest::Method::GET,
+            "GET",
             &format!("/_matrix/client/v3/rooms/{}/joined_members", enc(room)),
             None,
             &self.admin_token,
@@ -393,7 +371,7 @@ impl Matrix {
     /// For rooms the owner made: the bridge is not a member of those.
     pub fn invite_as_owner(&self, room: &str, target: &str) -> R<()> {
         match self.call(
-            reqwest::Method::POST,
+            "POST",
             &format!("/_matrix/client/v3/rooms/{}/invite", enc(room)),
             None,
             &self.admin_token,
@@ -411,7 +389,7 @@ impl Matrix {
 
     pub fn kick_as_owner(&self, room: &str, target: &str, reason: &str) -> R<()> {
         self.call(
-            reqwest::Method::POST,
+            "POST",
             &format!("/_matrix/client/v3/rooms/{}/kick", enc(room)),
             None,
             &self.admin_token,
@@ -431,16 +409,12 @@ impl Matrix {
             self.base,
             enc(as_user)
         );
-        let r = self.http.get(url).bearer_auth(&self.as_token).send()?;
-        let status = r.status().as_u16();
-        if !(200..300).contains(&status) {
-            return Err(MxErr {
-                status,
-                errcode: String::new(),
-                msg: r.text().unwrap_or_default(),
-            });
+        let auth = bearer(&self.as_token);
+        let r = self.http.send("GET", &url, &[("authorization", &auth)], None)?;
+        if !r.ok() {
+            return Err(MxErr { status: r.status, errcode: String::new(), msg: r.text() });
         }
-        Ok(r.bytes()?.to_vec())
+        Ok(r.body)
     }
 
     pub fn upload(
@@ -456,15 +430,11 @@ impl Matrix {
             enc(filename),
             enc(as_user)
         );
-        let r = self
-            .http
-            .post(url)
-            .bearer_auth(&self.as_token)
-            .header("content-type", content_type)
-            .body(bytes)
-            .send()?;
-        let status = r.status().as_u16();
-        let v: Value = r.json().unwrap_or(Value::Null);
+        let auth = bearer(&self.as_token);
+        let headers = [("authorization", auth.as_str()), ("content-type", content_type)];
+        let r = self.http.send("POST", &url, &headers, Some(&bytes))?;
+        let status = r.status;
+        let v = r.json();
         if (200..300).contains(&status) {
             v["content_uri"].as_str().map(String::from).ok_or(MxErr {
                 status,
@@ -484,7 +454,7 @@ impl Matrix {
     pub fn leave_and_forget_as_owner(&self, room: &str) -> R<()> {
         for verb in ["leave", "forget"] {
             self.call(
-                reqwest::Method::POST,
+                "POST",
                 &format!("/_matrix/client/v3/rooms/{}/{verb}", enc(room)),
                 None,
                 &self.admin_token,
@@ -497,7 +467,7 @@ impl Matrix {
     /// Synapse's admin-join API refuses invite-only rooms it has no member to invite from.
     pub fn join_as_owner(&self, room: &str) -> R<()> {
         self.call(
-            reqwest::Method::POST,
+            "POST",
             &format!("/_matrix/client/v3/join/{}", enc(room)),
             None,
             &self.admin_token,
