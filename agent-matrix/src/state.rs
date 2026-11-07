@@ -84,6 +84,9 @@ pub struct Pending {
     pub placeholder: Option<String>,
     /// A voice message's answer is also spoken.
     pub speak: bool,
+    /// `job` is the voice message's transcription, not yet a run.
+    #[serde(default)]
+    pub transcribing: bool,
     /// A run with a photo attached again: if it fails, the bare task is asked instead.
     pub retry: Option<Retry>,
     /// A steer directive's text, which the answer is reported under.

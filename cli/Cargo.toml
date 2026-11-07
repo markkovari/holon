@@ -25,3 +25,6 @@ serde_json.workspace = true
 ureq = { version = "2", features = ["json", "tls"] }
 # Not hand-rolled: /dev/tty, terminal restore on Ctrl-C and dying mid-prompt are easy to get wrong.
 rpassword = "7"
+
+[dev-dependencies]
+tempfile.workspace = true

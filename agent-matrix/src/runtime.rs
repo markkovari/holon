@@ -307,12 +307,20 @@ impl Runtime {
         }
     }
 
-    pub fn transcribe(&self, audio: Vec<u8>) -> Result<String, String> {
-        let r = self.req("POST", "/speech/transcribe", None, Some(&audio))?;
+    /// Starts transcribing a recording, read back with [`Runtime::transcription`].
+    pub fn start_transcribe(&self, audio: Vec<u8>) -> Result<String, String> {
+        let r = self.req("POST", "/speech/transcribe?wait=false", None, Some(&audio))?;
         if !r.ok() {
-            return Err(r.text());
+            return Err(said(&r));
         }
-        r.json()["text"].as_str().map(String::from).ok_or_else(|| "unexpected reply".into())
+        r.json()["job"].as_str().map(String::from).ok_or_else(|| "unexpected reply".into())
+    }
+
+    /// A transcription's end: `Done(true, the text)` or `Done(false, why not)`.
+    pub fn transcription(&self, job: &str) -> Job {
+        self.read_job(&format!("/speech/transcribe/{job}"), |v| {
+            (true, v["text"].as_str().unwrap_or_default().into())
+        })
     }
 
     pub fn speak(&self, text: &str) -> Result<Spoken, String> {
@@ -364,15 +372,21 @@ impl Runtime {
     }
 
     pub fn job(&self, job: &str) -> Job {
-        match self.req("GET", &format!("/v1/jobs/{job}"), None, None) {
+        self.read_job(&format!("/v1/jobs/{job}"), |run| {
+            (run["status"] == "ok", run["answer"].as_str().unwrap_or_default().into())
+        })
+    }
+
+    fn read_job(&self, path: &str, done: impl Fn(&Value) -> (bool, String)) -> Job {
+        match self.req("GET", path, None, None) {
             Err(_) => Job::Running,
             Ok(r) if r.status == 202 => Job::Running,
             Ok(r) if r.ok() => {
-                let run = r.json();
-                Job::Done(run["status"] == "ok", run["answer"].as_str().unwrap_or_default().into())
+                let (ok, text) = done(&r.json());
+                Job::Done(ok, text)
             }
             Ok(r) if r.status == 404 => {
-                Job::Done(false, "the agent runtime restarted and lost this run; ask again".into())
+                Job::Done(false, "the agent runtime restarted and lost this; send it again".into())
             }
             Ok(r) => Job::Done(false, said(&r)),
         }

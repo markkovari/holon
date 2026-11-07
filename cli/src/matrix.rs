@@ -114,3 +114,59 @@ pub fn import_state(dir: &Path, url: &str) -> Result<()> {
     std::fs::rename(&state, dir.join("state.json.imported"))?;
     Ok(())
 }
+
+/// `host:port` of an http(s) URL, the port the scheme's when it names none.
+fn authority(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let host = rest.split(['/', '?']).next().filter(|h| !h.is_empty())?;
+    if host.rsplit_once(':').is_some_and(|(_, p)| p.parse::<u16>().is_ok()) {
+        return Some(host.to_string());
+    }
+    let port = match scheme {
+        "https" => 443,
+        "http" => 80,
+        _ => return None,
+    };
+    Some(format!("{host}:{port}"))
+}
+
+/// What the bridge may reach, for `comp-host --egress`: the homeserver, the runtime, and Jev
+/// when it has a key. Reads bridge.conf; prints no value but these addresses.
+pub fn egress(dir: &Path) -> Result<Vec<String>> {
+    let conf = std::fs::read_to_string(config_path(dir)).context("reading bridge.conf")?;
+    let get = |k: &str| conf.lines().find_map(|l| l.strip_prefix(k)?.strip_prefix(" = "));
+    let mut out = Vec::new();
+    for key in ["matrix-homeserver", "runtime-url"] {
+        let url = get(key).with_context(|| format!("bridge.conf has no {key}"))?;
+        out.push(authority(url).with_context(|| format!("{key} is not an http(s) URL"))?);
+    }
+    if get("jev-key").is_some_and(|k| !k.is_empty()) {
+        out.push(agent_matrix::jev::AUTHORITY.to_string());
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_authority_carries_its_port_or_its_scheme_s() {
+        assert_eq!(authority("https://node.ts.net").as_deref(), Some("node.ts.net:443"));
+        assert_eq!(authority("http://127.0.0.1:18017/").as_deref(), Some("127.0.0.1:18017"));
+        assert_eq!(authority("http://100.64.0.2:8008/x?y").as_deref(), Some("100.64.0.2:8008"));
+        assert_eq!(authority("ftp://x"), None);
+        assert_eq!(authority("node.ts.net"), None);
+    }
+
+    #[test]
+    fn egress_names_the_homeserver_the_runtime_and_jev_only_with_a_key() {
+        let d = tempfile::tempdir().unwrap();
+        let base =
+            "matrix-homeserver = https://node.ts.net\nruntime-url = http://127.0.0.1:18017\n";
+        std::fs::write(config_path(d.path()), base).unwrap();
+        assert_eq!(egress(d.path()).unwrap(), ["node.ts.net:443", "127.0.0.1:18017"]);
+        std::fs::write(config_path(d.path()), format!("{base}jev-key = k\n")).unwrap();
+        assert_eq!(egress(d.path()).unwrap().len(), 3);
+    }
+}
