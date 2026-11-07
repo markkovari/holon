@@ -21,10 +21,11 @@ NATS, events, llm-queue).
    so a node needs no toolchain to run one: CI composes and publishes each app to
    `ghcr.io/markkovari/holon-apps` and the `deploy` branch's `apps.lock` names the digest
    (`publish-apps.yml`); each node's `comp-agent` keeps the apps it has a unit for at that digest.
-2. **A component is built where its toolchain runs.** Rust builds on every node. MoonBit's
-   toolchain ships for macOS and x86_64 Linux only, not aarch64 Linux, so a MoonBit component made
-   on the fly is built on picur (or CI) and shared like any other; a Pi runs it, it does not build
-   it. A node-built component reaches the others through the code store (`vcs`, ADR-0134) and the
+2. **Any node can build a component.** Rust builds on every node, and so does MoonBit: its
+   installer ships a native aarch64 Linux `moon`/`moonc` (0.1.20261104 checked), and
+   `tools/build-polyglot.sh mbt text-stats` builds the same 243 KB component on a Debian 12 arm64
+   container as on picur, in 0.3 s, its tests passing. So a Pi can make a MoonBit tool on the fly
+   itself. A node-built component reaches the others through the code store (`vcs`, ADR-0134) and the
    registry, the same path a CI-built one takes.
 3. **`comp-agent` keeps the host current too.** malna's `comp-events` crash-looped because
    `comp-agent` pulled a p3 events build while `/usr/local/bin/comp-host` was a pre-p3 binary from
