@@ -1,0 +1,12 @@
+// The free LLM queue (ADR-0126) as a component: `POST /ask` takes a task and answers it from the
+// first free provider that can, failing over between them. comp-host delivers `holon.llm.ask`
+// requests to it (`--subscribe`, ADR-0131).
+package holon:llm-queue@0.1.0;
+
+world llm-queue {
+    export wasi:http/incoming-handler@0.2.0;
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:config/store@0.2.0-rc.1;
+    import comp:secrets/reader@0.1.0;
+}

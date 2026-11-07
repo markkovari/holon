@@ -125,8 +125,9 @@ async fn approve(
     reply(StatusCode::OK, r)
 }
 
-/// The sink `comp-resume` delivers parked approvals to (ADR-0113). Not part of `openapi.yaml`: it
-/// is the other end of `comp-resume --sink-url`, and behind the same token as everything else.
+/// The sink the park app delivers parked approvals to (ADR-0113, ADR-0132). Not part of
+/// `openapi.yaml`: it is the other end of the app's `park-sink-url`, and behind the same token as
+/// everything else (`park-sink-token`).
 async fn deliver(State(d): State<Shared>, body: axum::body::Bytes) -> Response {
     let r = parse(&body).and_then(|delivery| d.deliver(delivery));
     reply(StatusCode::OK, r.map(|()| serde_json::json!({"ok": true})))

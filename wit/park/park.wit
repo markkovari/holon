@@ -33,7 +33,10 @@
 // 0.4.0 (ADR-0110) adds `commit`: several effects applied together, or not at all. A function
 // and new types, so compatible with 0.3.0 in what a 0.3.0 caller uses; the version moves with
 // the shape.
-package holon:park@0.4.0;
+//
+// 0.5.0 (ADR-0132) adds `sweep`: the recovery pass and the deliveries it announces, which a
+// resumer daemon ran on a timer and the lot now runs itself when its host pumps it.
+package holon:park@0.5.0;
 
 interface types {
     /// A conversation or task this ticket belongs to. Opaque to this contract;
@@ -342,6 +345,12 @@ interface lot {
     /// One session's history, oldest first, starting after the given
     /// millisecond timestamp (`none`: from the start).
     oplog: func(session: session-id, after: option<u64>, limit: u32) -> result<list<ticket-entry>, park-error>;
+
+    /// One recovery pass (ADR-0106), then every resolution it announces handed to the sink the
+    /// lot was configured with: repaired commits finished, calls past their deadline
+    /// re-dispatched, interrupted or cancelled, answers nobody took delivered. How many were
+    /// delivered.
+    sweep: func() -> result<u32, park-error>;
 }
 
 /// What a park daemon provides — the native daemon's component face, or an

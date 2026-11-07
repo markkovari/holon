@@ -6,6 +6,9 @@ or an hour later. Nothing here should have to guess which.*
 **Status: accepted.** Names the shape of `comp-park` before any of it is built,
 the way ADR-0099 named holon-vcs's shape before `crates/holon-vcs` existed.
 
+Since [ADR-0132](0132-park-is-a-component.md) the engine runs in `park-store`, on its app's
+keyvalue, and the host's pump does the resumer's work: `comp-park` and `comp-resume` are gone.
+
 ## The problem
 
 An agent turn dispatches an outbound call — to a model, a tool, another

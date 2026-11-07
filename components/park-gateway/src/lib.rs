@@ -135,6 +135,11 @@ impl Guest for Component {
                     "routes": wire::ROUTES.iter().map(|r| format!("POST {}", wire::route(r))).collect::<Vec<_>>(),
                 }),
             ),
+            // The host's pump (`--pump /internal/pump`, ADR-0130): one recovery pass and its deliveries.
+            (Method::Post, ["internal", "pump"]) => match store::sweep() {
+                Ok(n) => (200, json!({ "delivered": n })),
+                Err(e) => refusal(e),
+            },
             (Method::Post, ["v1", func]) => match read_body(request).await {
                 Ok(bytes) => dispatch(func, &bytes),
                 Err(()) => (
@@ -186,7 +191,7 @@ mod tests {
         );
         let (s, v) = refusal(t::ParkError::AlreadyClosed("t1".into()));
         assert_eq!((s, v["error"].as_str()), (409, Some("already-closed")));
-        let (s, v) = refusal(t::ParkError::StorageError("comp-park at …: http".into()));
+        let (s, v) = refusal(t::ParkError::StorageError("the keyvalue: unavailable".into()));
         assert_eq!((s, v["error"].as_str()), (503, Some("storage-error")));
     }
 }

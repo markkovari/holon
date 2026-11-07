@@ -1496,7 +1496,7 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
-## `holon:park/lot@0.4.0`
+## `holon:park/lot@0.5.0`
 
 ```wit
   interface lot {
@@ -1517,6 +1517,8 @@ Adding a *function* to an interface is compatible; adding a case to a
     commit: func(session: session-id, effects: list<effect>, by: agent) -> result<commit-result, park-error>;
 
     oplog: func(session: session-id, after: option<u64>, limit: u32) -> result<list<ticket-entry>, park-error>;
+
+    sweep: func() -> result<u32, park-error>;
   }
 ```
 

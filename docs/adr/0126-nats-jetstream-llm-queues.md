@@ -2,7 +2,7 @@
 
 *Connecting `llm-batcher` and agent task queues directly to NATS JetStream streams (`LLM_REALTIME` and `LLM_BATCH`) ensures durable distributed queuing across edge nodes, eliminates in-memory state loss, and preserves free-tier RPM limits via 1M-token coalescing.*
 
-**Status: accepted.**
+**Status: accepted.** Since [ADR-0131](0131-a-held-subscription-is-the-hosts.md) the realtime worker is a component, `llm-queue`: a host delivers `holon.llm.ask` requests to it, it fails over between the free providers, and `holon-llmbatch` is gone. The batch path is `llm-batcher`'s.
 
 ## The problem
 

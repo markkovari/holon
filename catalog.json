@@ -2504,6 +2504,32 @@
     "unimplemented": false
   },
   {
+    "name": "llm-queue",
+    "package": "holon:llm-queue@0.1.0",
+    "description": "`llm-queue` — the free LLM queue (ADR-0126): a task in, the first free provider's answer out",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "comp:secrets/reader",
+      "wasi:config/store",
+      "wasi:http/outgoing-handler",
+      "wasi:keyvalue/store"
+    ],
+    "config_keys": [
+      {
+        "name": "llm-providers",
+        "description": "the provider list as JSON, in `providers.json`'s shape; the built-in one when unset"
+      },
+      {
+        "name": "retry-after",
+        "description": ""
+      }
+    ],
+    "reusable_as_is": false,
+    "unimplemented": false
+  },
+  {
     "name": "lms-domain",
     "package": "lms:app@0.1.0",
     "description": "`lms-domain` — a learning-management service (docs/apps/LMS.md) as ONE composed wasm",
@@ -3080,6 +3106,54 @@
       {
         "name": "max-page-size",
         "description": ""
+      }
+    ],
+    "reusable_as_is": true,
+    "unimplemented": false
+  },
+  {
+    "name": "park-gateway",
+    "package": "holon:park-gateway",
+    "description": "`park-gateway` — the parking lot as HTTP routes, for agents and tests",
+    "exports": [
+      "wasi:http/handler@0.3.0-rc-2026-03-15"
+    ],
+    "capability_deps": [
+      "holon:park/lot"
+    ],
+    "config_keys": [],
+    "reusable_as_is": false,
+    "unimplemented": false
+  },
+  {
+    "name": "park-store",
+    "package": "holon:park-store",
+    "description": "`park-store` — `holon:park/lot` with `holon-park`'s engine in-process (ADR-0132): tickets are",
+    "exports": [
+      "holon:park/lot@0.5.0"
+    ],
+    "capability_deps": [
+      "comp:store/cas",
+      "wasi:config/store",
+      "wasi:http/outgoing-handler",
+      "wasi:keyvalue/store"
+    ],
+    "config_keys": [
+      {
+        "name": "park-sink-url",
+        "description": "where resolutions are delivered, e.g. comp-agentd's /park/deliver"
+      },
+      {
+        "name": "park-sink-token",
+        "description": "its bearer token, if it wants one"
+      },
+      {
+        "name": "park-redeliver-secs",
+        "description": "how long a resolution may sit untaken before it is delivered again, default 1"
+      },
+      {
+        "name": "park-deadline-grace-secs",
+        "description": "how long past its deadline a parked call sits before the pass acts, default 10"
       }
     ],
     "reusable_as_is": true,

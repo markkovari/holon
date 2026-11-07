@@ -1,14 +1,11 @@
-// holon:park-store — the parking lot's component face: every call is one
-// HTTP request to `comp-park`, the native daemon that holds NATS JetStream
-// (ADR-0100, ADR-0095).
+// park-store — `holon:park/lot` with the engine in-process (ADR-0132): tickets are records in this
+// app's keyvalue, moved by compare-and-set, and `sweep` delivers what it resolves to the sink.
 package holon:park-store;
 
 world component {
-    // holon:park's lot-provider world, spelled out: comp-catalog reads
-    // exports from source.
-    export holon:park/lot@0.4.0;
-    /// The daemon lives outside the sandbox. This is how it is reached; the
-    /// manifest's egress list decides whether it can be.
+    export holon:park/lot@0.5.0;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import comp:store/cas@0.1.0;
     import wasi:http/outgoing-handler@0.2.0;
     import wasi:config/store@0.2.0-rc.1;
 }

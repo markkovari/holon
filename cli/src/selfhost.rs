@@ -1131,52 +1131,18 @@ routes = "upstream=http://127.0.0.1:9000"
     }
 
     #[test]
-    fn the_park_spec_renders_its_app_its_daemon_and_its_resumer() {
+    fn the_park_spec_is_one_unit_its_host_pumps_and_its_sink_reachable() {
         let src = std::fs::read_to_string("../apps/park.toml").expect("../apps/park.toml");
         let s: Spec = toml::from_str(&src).expect("parses");
         check(&s).expect("valid");
-        let l = Layout::default();
+        assert_eq!(unit_names(&s), ["comp-park.service"], "no park or resume daemon (ADR-0132)");
+        let app = render_unit(&s, &Layout::default());
+        assert!(app.contains(" --pump /internal/pump --pump-every 1"), "{app}");
+        assert!(app.contains("--egress 127.0.0.1:8016"), "the sink: {app}");
         assert_eq!(
-            unit_names(&s),
-            ["comp-park.service", "comp-park-daemon.service", "comp-resume.service"]
+            s.config.get("park-sink-url").map(String::as_str),
+            Some("http://127.0.0.1:8016/park/deliver")
         );
-        let app = render_unit(&s, &l);
-        assert!(app.contains("comp-host") && app.contains("--egress 127.0.0.1:8015"), "{app}");
-        assert_eq!(app.matches("--egress").count(), 1, "{app}");
-        let resume = s.daemons.iter().find(|d| d.name == "resume").expect("a resume worker");
-        assert_eq!(resume.addr, None);
-        let u = render_daemon_unit(&s, resume, &l);
-        assert!(!u.contains("--addr"), "{u}");
-        assert!(u.contains("--sink-url ") && u.contains("--nats-url "), "{u}");
-        let park = s.daemons.iter().find(|d| d.name == "park").expect("the park daemon");
-        let nats = |d: &Daemon| d.extra_args.iter().find(|a| a.starts_with("--nats-url")).cloned();
-        assert_eq!(nats(park), nats(resume), "comp-park and comp-resume must share a NATS");
-    }
-
-    /// A misspelt flag is a unit that restarts every two seconds. Skipped where unbuilt.
-    #[test]
-    fn every_flag_in_the_park_spec_exists_on_its_binaries() {
-        let src = std::fs::read_to_string("../apps/park.toml").expect("../apps/park.toml");
-        let s: Spec = toml::from_str(&src).expect("parses");
-        let mut checked = 0;
-        for d in &s.daemons {
-            let bin = std::path::PathBuf::from(format!("../target/release/comp-{}", d.name));
-            if !bin.exists() {
-                eprintln!("skipping {}: no {} built", d.name, bin.display());
-                continue;
-            }
-            let help = std::process::Command::new(&bin).arg("--help").output().expect("--help");
-            let help = String::from_utf8_lossy(&help.stdout).to_string();
-            let unit = render_daemon_unit(&s, d, &Layout::default());
-            let exec = unit.lines().find(|l| l.starts_with("ExecStart=")).expect("an ExecStart");
-            for flag in exec.split_whitespace().filter(|w| w.starts_with("--")) {
-                assert!(help.contains(flag), "comp-{} has no {flag}\n--- help ---\n{help}", d.name);
-            }
-            checked += 1;
-        }
-        if checked == 0 {
-            eprintln!("skipping entirely: no park binaries built under ../target/release");
-        }
     }
 
     #[test]

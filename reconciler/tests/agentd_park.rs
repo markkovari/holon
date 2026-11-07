@@ -1,14 +1,12 @@
-//! `comp-agentd` parking its approvals (ADR-0113), through the real daemons: `comp-agentd`,
-//! `comp-park` and `comp-resume` as processes, over a private `nats-server`, a token on every hop.
+//! `comp-agentd` parking its approvals (ADR-0113), through the real thing: `comp-agentd` and the
+//! park app (`park-gateway` + `park-store`, ADR-0132) on its host, as processes.
 //!
-//! The unit tests in `agentd/tests.rs` play `comp-park` and `comp-resume` themselves. This is the
-//! chain with nobody playing: the answer goes agentd -> `comp-park` -> NATS -> `comp-resume` ->
-//! agentd's sink, and the thing it proves is what no stand-in can, that a task waiting on a person
+//! The unit tests in `agentd/tests.rs` play the park themselves. This is the chain with nobody
+//! playing: the answer goes agentd -> the park app -> its host's pump -> agentd's sink, and the thing it proves is what no stand-in can, that a task waiting on a person
 //! survives `kill -9` of the daemon that asked.
 //!
-//! Needs `nats-server` on `PATH`; without it every test prints `SKIPPED` and returns. And needs the
-//! three daemons built, which are two other packages' (docs/adr/0115): `cargo build --bin comp-agentd
-//! --bin comp-park --bin comp-resume` first, in the profile this runs in.
+//! Needs the park app composed (`cargo xtask compose park`), without which every test prints
+//! `SKIPPED` and returns, and `holon-agentd` and `holon-host` built in the profile this runs in.
 
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -18,7 +16,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde_json::{json, Value};
 
 const AGENT_TOKEN: &str = "agent-secret";
-const PARK_TOKEN: &str = "park-secret";
 
 fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
@@ -76,9 +73,7 @@ struct Stack {
     agent_port: u16,
     park_port: u16,
     approval_timeout: Option<u64>,
-    nats: Option<Proc>,
     park: Option<Proc>,
-    resume: Option<Proc>,
     agentd: Option<Proc>,
     http: reqwest::blocking::Client,
 }
@@ -92,28 +87,32 @@ fn wait_listening(port: u16, what: &str) {
 }
 
 impl Stack {
-    /// Everything but agentd. `None` when there is no `nats-server` to start.
+    /// Everything but agentd: the park app on its host. `None` when the app is not built.
     fn up(what: &str, approval_timeout: Option<u64>) -> Option<Stack> {
+        let art = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../components/target/park_gateway.composed.wasm");
+        if !art.exists() {
+            eprintln!("SKIPPED: no {} — `cargo xtask compose park`", art.display());
+            return None;
+        }
         let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
             "agentd-park-{what}-{}-{}",
             std::process::id(),
             SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
         ));
         let (ws, state) = (dir.join("workspace"), dir.join("state"));
-        for d in [&ws, &state, &dir.join("nats")] {
+        for d in [&ws, &state] {
             std::fs::create_dir_all(d).unwrap();
         }
         std::fs::write(ws.join("README.md"), "hi").unwrap();
-        let (nats_port, park_port, agent_port) = (free_port(), free_port(), free_port());
+        let (park_port, agent_port) = (free_port(), free_port());
         let mut s = Stack {
             ws: ws.canonicalize().unwrap(),
             state,
             agent_port,
             park_port,
             approval_timeout,
-            nats: None,
             park: None,
-            resume: None,
             agentd: None,
             http: reqwest::blocking::Client::builder()
                 .timeout(Duration::from_secs(10))
@@ -122,60 +121,38 @@ impl Stack {
             dir,
         };
         let a = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        s.nats = Some(Proc::start(
-            "nats-server",
-            &a(&[
-                "-js",
-                "-a",
-                "127.0.0.1",
-                "-p",
-                &nats_port.to_string(),
-                "-sd",
-                s.dir.join("nats").to_str().unwrap(),
-            ]),
-            s.dir.join("nats.log"),
-        )?);
-        wait_listening(nats_port, "nats-server");
-        let nats = format!("nats://127.0.0.1:{nats_port}");
+        // The host pumps the app every second: its sweep is the resumer (ADR-0132), delivering to
+        // agentd's sink at once and acting on a deadline with no grace.
         s.park = Proc::start(
-            holon_fleet::fleet::built_bin("comp-park"),
+            holon_fleet::fleet::built_bin("holon-host"),
             &a(&[
+                "--component",
+                art.to_str().unwrap(),
                 "--addr",
                 &format!("127.0.0.1:{park_port}"),
-                "--nats-url",
-                &nats,
-                "--bucket",
-                "ag",
-                "--wake-stream",
-                "AG_WAKE",
-                "--token",
-                PARK_TOKEN,
+                "--kv",
+                "sqlite",
+                "--sqlite-path",
+                s.dir.join("park.db").to_str().unwrap(),
+                "--pump",
+                "/internal/pump",
+                "--pump-every",
+                "1",
+                "--config",
+                &format!("park-sink-url=http://127.0.0.1:{agent_port}/park/deliver"),
+                "--config",
+                &format!("park-sink-token={AGENT_TOKEN}"),
+                "--config",
+                "park-redeliver-secs=1",
+                "--config",
+                "park-deadline-grace-secs=0",
+                "--egress",
+                &format!("127.0.0.1:{agent_port}"),
+                "--allow-private-egress",
             ]),
             s.dir.join("park.log"),
         );
-        wait_listening(park_port, "comp-park");
-        s.resume = Proc::start(
-            holon_fleet::fleet::built_bin("comp-resume"),
-            &a(&[
-                "--nats-url",
-                &nats,
-                "--bucket",
-                "ag",
-                "--wake-stream",
-                "AG_WAKE",
-                "--sink-url",
-                &format!("http://127.0.0.1:{agent_port}/park/deliver"),
-                "--sink-token",
-                AGENT_TOKEN,
-                "--sweep-secs",
-                "1",
-                "--deadline-grace-secs",
-                "0",
-                "--reannounce-after-secs",
-                "3600",
-            ]),
-            s.dir.join("resume.log"),
-        );
+        wait_listening(park_port, "the park app");
         Some(s)
     }
 
@@ -199,8 +176,6 @@ impl Stack {
             AGENT_TOKEN,
             "--park-url",
             &format!("http://127.0.0.1:{}", self.park_port),
-            "--park-token",
-            PARK_TOKEN,
         ]
         .iter()
         .map(|x| x.to_string())
@@ -248,17 +223,13 @@ impl Stack {
                 return v;
             }
             if t0.elapsed() > Duration::from_secs(secs) {
-                let logs = [
-                    ("agentd", &self.agentd),
-                    ("comp-park", &self.park),
-                    ("comp-resume", &self.resume),
-                ]
-                .iter()
-                .map(|(n, p)| {
-                    format!("--- {n}\n{}", p.as_ref().map(|p| p.tail()).unwrap_or_default())
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+                let logs = [("agentd", &self.agentd), ("the park app", &self.park)]
+                    .iter()
+                    .map(|(n, p)| {
+                        format!("--- {n}\n{}", p.as_ref().map(|p| p.tail()).unwrap_or_default())
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 panic!("timed out waiting for {what}\n{logs}");
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -304,7 +275,7 @@ macro_rules! stack_or_skip {
         match Stack::up($what, $timeout) {
             Some(s) => s,
             None => {
-                eprintln!("SKIPPED {}: no `nats-server` on PATH", $what);
+                eprintln!("SKIPPED {}: the park app is not composed", $what);
                 return;
             }
         }
@@ -334,8 +305,8 @@ fn a_task_waiting_for_a_person_survives_kill_dash_9_of_agentd_and_finishes_when_
     assert!(s.ended(&sid).is_none(), "the restart did not cut the task off");
     assert_eq!(s.get(&format!("/v1/sessions/{sid}"))["status"], "awaiting_approval");
 
-    // A person answers the new process. The answer goes to `comp-park`, through NATS to
-    // `comp-resume`, and back to this daemon's sink, which moves the task on.
+    // A person answers the new process. The answer goes to the park app, and its host's
+    // pump hands it back to this daemon's sink, which moves the task on.
     let (code, ans) = s.post(
         &format!("/v1/sessions/{sid}/tool-calls/{call_id}/approval"),
         json!({"decision": "approve", "approver": "mark"}),
@@ -357,7 +328,7 @@ fn an_approval_nobody_answers_is_interrupted_by_the_resumers_pass_and_is_a_denia
     s.post(&format!("/v1/sessions/{sid}/tasks"), json!({"prompt": "look"}));
     let call_id = s.until("the task to wait for a person", 15, || s.waiting_call(&sid));
 
-    // Nobody answers. The ticket's deadline passes, `comp-resume`'s recovery pass interrupts it
+    // Nobody answers. The ticket's deadline passes, the park app's recovery pass interrupts it
     // and delivers that to the sink, which is a denial: the model is told, and the task ends.
     let ended = s.until("the approval to time out", 30, || s.ended(&sid));
     assert_eq!(ended["outcome"], "completed", "{ended}");
@@ -385,8 +356,8 @@ fn an_approval_for_the_session_crosses_the_real_chain_and_kill_dash_9_and_a_flag
     assert_eq!(code, 202);
     let call_id = s.until("the task to wait for a person", 15, || s.waiting_call(&sid));
 
-    // The person approves the tool for the session. The answer and its reach go to `comp-park`,
-    // through NATS to `comp-resume`, and back; and the daemon says what it understood.
+    // The person approves the tool for the session. The answer and its reach go to the park app,
+    // and its pump brings them back; and the daemon says what it understood.
     let (code, ans) = s.post(
         &format!("/v1/sessions/{sid}/tool-calls/{call_id}/approval"),
         json!({"decision": "approve", "approver": "mark", "scope": "session"}),

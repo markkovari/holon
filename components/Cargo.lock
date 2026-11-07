@@ -2143,6 +2143,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "llm-queue"
+version = "0.1.0"
+dependencies = [
+ "guestio",
+ "holon-llm",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "llm-router"
 version = "0.1.0"
 dependencies = [
@@ -2565,6 +2576,7 @@ dependencies = [
  "holon-park",
  "serde",
  "serde_json",
+ "sha2",
  "wit-bindgen-rt",
 ]
 

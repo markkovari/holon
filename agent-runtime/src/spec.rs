@@ -122,7 +122,7 @@ pub enum ModelSpec {
     Fallback {
         models: Vec<ModelSpec>,
     },
-    /// Free-tier batch queue (NATS JetStream / holon-llmbatch, ADR-0126) with $0.00 spend.
+    /// The free queue (`llm-queue` over NATS, ADR-0126 and ADR-0131) with $0.00 spend.
     BatchQueue {
         #[serde(default = "default_batch_queue_url")]
         queue_url: String,

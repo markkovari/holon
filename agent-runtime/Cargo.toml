@@ -29,7 +29,6 @@ agent-wire.workspace = true
 tempfile.workspace = true
 # A connector's `wrpc`: a tool component on the lattice, called over NATS. Versions follow host/Cargo.toml.
 async-nats.workspace = true
-futures.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 holon-lattice.workspace = true
 wrpc-transport = "0.29"

@@ -57,7 +57,7 @@ every run), `workspaces/<name>/` (the only place its file tools can reach).
   grants it, so the agent calls it from its next step; a compile error comes back for it to fix
   (`src/forge.rs` lists the `HOLON_FORGE_*` settings). `scenarios/tool-forge/run.sh` plays it through
   with a scripted model; `live.sh "<goal>"` with a real one, every turn through the free queue.
-* **`batch_queue`** models go through `holon-llmbatch` over NATS (`queue_url`, ADR-0126): the whole
+* **`batch_queue`** models ask the `llm-queue` component over NATS (`holon.llm.ask` at `queue_url`, ADR-0126, ADR-0131): the whole
   conversation as a transcript, and an error, never a made-up reply, when the queue does not answer.
 * **Triggers**: HTTP (always, through the gateway), `schedule` (5-field cron
   UTC, `@hourly`, `@every 30s`; add `"notify": true` and a chat bridge posts

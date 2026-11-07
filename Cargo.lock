@@ -65,7 +65,6 @@ dependencies = [
  "async-nats",
  "base64 0.22.1",
  "clap",
- "futures",
  "holon-lattice",
  "holon-llm",
  "holon-skills",
@@ -2987,22 +2986,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "holon-llmbatch"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-nats",
- "clap",
- "futures",
- "holon-daemon-kit",
- "holon-llm",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "holon-mailrelay"
 version = "0.1.0"
 
@@ -3091,25 +3074,6 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.21",
- "tokio",
-]
-
-[[package]]
-name = "holon-park-daemon"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "clap",
- "hmac 0.12.1",
- "holon-daemon-kit",
- "holon-fleet",
- "holon-park",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha1",
- "tempfile",
  "tokio",
 ]
 

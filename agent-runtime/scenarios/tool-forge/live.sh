@@ -1,11 +1,11 @@
 #!/bin/sh
-# run.sh without a script: every turn of the agent goes through the free queue (ADR-0126: NATS on
-# malna, `holon-llmbatch` resolving the provider key from its SECRETS bucket), and what it builds,
-# calls and answers is the model's own.
+# run.sh without a script: every turn of the agent goes through the free queue (`holon.llm.ask`,
+# ADR-0126), and what it builds, calls and answers is the model's own.
 #   QUEUE        the queue's NATS (default nats://malna:4222)
-#   WORKER=here  also run a holon-llmbatch worker from this machine against QUEUE, for while none
-#                runs next to it. It fails over between the free providers (llmbatch's providers.json).
-# Needs what run.sh needs, plus (WORKER=here) cargo build --release -p holon-llmbatch.
+#   WORKER=here  also serve the `llm-queue` component from this machine on QUEUE, for while no host
+#                serves it there. It fails over between the free providers (its providers.json);
+#                LLM_KEYS is a config file of `<provider>-api-key=...` lines for it.
+# Needs what run.sh needs, plus (WORKER=here) the component: cargo xtask build.
 S=$(cd "$(dirname "$0")" && pwd); H=$(cd "$S/../../.." && pwd); E=$(mktemp -d -t tool-forge-live); mkdir -p $E/node $E/rt
 GOAL=${1:-How many days are there from 2026-03-01 to 2026-11-06, and what weekday is 2026-11-06?}
 QUEUE=${QUEUE:-nats://malna:4222}
@@ -13,7 +13,10 @@ NATS=nats://127.0.0.1:14222; RT=http://127.0.0.1:18917; AUTH='authorization: Bea
 nats-server -js -sd $E/js -a 127.0.0.1 -p 14222 > $E/nats.log 2>&1 & echo $! > $E/pids; sleep 1
 $H/target/release/holon-host --lattice-nats $NATS --node n1 --lattice dev --addr 127.0.0.1:13911 --state-dir $E/node > $E/host.log 2>&1 & echo $! >> $E/pids
 if [ "${WORKER:-}" = here ]; then
-  $H/target/release/holon-llmbatch --nats-url $QUEUE > $E/llm.log 2>&1 & echo $! >> $E/pids
+  $H/target/release/holon-host --component $H/components/target/wasm32-wasip2/release/llm_queue.wasm \
+    --addr 127.0.0.1:13912 --nats-url $QUEUE --subscribe holon.llm.ask=/ask ${LLM_KEYS:+--config-file $LLM_KEYS} \
+    --egress api.groq.com:443 --egress api.cerebras.ai:443 --egress generativelanguage.googleapis.com:443 \
+    --egress openrouter.ai:443 --egress api.mistral.ai:443 > $E/llm.log 2>&1 & echo $! >> $E/pids
 fi
 sleep 2
 echo scenario > $E/rt/admin-token
