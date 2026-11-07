@@ -428,20 +428,18 @@ Two turned out not to need one: `llm-local` calls Ollama over `wasi:http`, and `
 decodes in the component, so their daemons are gone. Google Calendar (ADR-0125) is a component
 too, `gcal`: an agent tool over `holon:tool/tool`, with its OAuth sign-in on its own HTTP routes.
 
-Each now has a native daemon behind it in `reconciler/daemons/` (`comp-fswatch`,
-`comp-browser`, `comp-docker`, `comp-clipboard`, `comp-imageopt`, `comp-lanscan`,
-`comp-llmlocal`, `comp-mdns`, `comp-cron`, `comp-uinotify`, `comp-ffmpeg`,
-`comp-wireguard`) — thirteen with `comp-media`, which is not one of these
-contracts but a new capability under the same rule (ADR-0098: presigned
-object-storage uploads, a JetStream work queue, and on-device evaluation
-with Metal/Core Image/Vision for `photoquest`) — and fourteen with `comp-vcs`, the same again for
-ADR-0099's code store (the `holon-vcs` engine on NATS JetStream + SurrealDB, behind `vcs-store`;
-`docs/apps/VCS.md`) — each with its own allow-list where the input can come from a
+Each of the rest has a native daemon behind it in `reconciler/daemons/` (`comp-fswatch`,
+`comp-browser`, `comp-docker`, `comp-clipboard`, `comp-lanscan`, `comp-mdns`, `comp-cron`,
+`comp-uinotify`, `comp-ffmpeg`, `comp-wireguard`), and so does `comp-media`, which is not one of
+these contracts but a new capability under the same rule (ADR-0098: presigned object-storage
+uploads, a JetStream work queue, and on-device evaluation with Metal/Core Image/Vision for
+`photoquest`) — each with its own allow-list where the input can come from a
 model (a directory, a host, an interface, a CIDR) — no shared daemon, no shared
 allow-list, per ADR-0095's "`container-docker` and `ui-notifier` do not deserve
 the same blast radius". The component side dials its daemon over
 `wasi:http/outgoing-handler`, address given by `wasi:config/store`, exactly like
-`checks-runner` dials `comp-checks`.
+`checks-runner` dials `comp-checks`. ADR-0099's code store had one too, `comp-vcs`,
+until its engine moved into `vcs-store` on the app's own keyvalue (ADR-0134; `docs/apps/VCS.md`).
 
 They used to ship returning a plausible constant instead:
 `"mocked_clipboard_text_123"`, `"192.168.1.1, 192.168.1.10"`,

@@ -1,4 +1,4 @@
-//! `comp-vcs` as `comp-agentd` uses it (ADR-0121): a session's `write_file` edits recorded in the
+//! The vcs app as `comp-agentd` uses it (ADR-0121, ADR-0134): a session's `write_file` edits recorded in the
 //! code store (ADR-0099), one workspace per session, so they can be listed, blamed and rewound.
 //!
 //! Loopback HTTP with `holon-vcs`'s own wire types, as `park.rs` does with `holon-park`'s.
@@ -43,7 +43,7 @@ impl Vcs {
         }
         match serde_json::from_slice::<ErrorBody>(&bytes) {
             Ok(body) => Err(body.into_error()),
-            Err(_) => Err(VcsError::Storage(format!("comp-vcs answered {status}"))),
+            Err(_) => Err(VcsError::Storage(format!("the vcs app answered {status}"))),
         }
     }
 

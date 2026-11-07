@@ -66,6 +66,29 @@ pub trait Kv: Send + Sync {
 }
 
 /// Stores `<hash>@<op>`; a tombstone is `-`, never empty (some KV clients read an empty value as absent).
+/// Blobs as `blob/<hash>` values in a [`Kv`], for a store with no object store beside it.
+pub struct KvBlobs<K> {
+    kv: K,
+}
+
+impl<K> KvBlobs<K> {
+    pub fn new(kv: K) -> Self {
+        Self { kv }
+    }
+}
+
+impl<K: Kv> BlobStore for KvBlobs<K> {
+    async fn put(&self, bytes: Vec<u8>) -> Result<Hash> {
+        let h = sha256_hex(&bytes);
+        // A lost race means the same bytes are already there.
+        let _ = self.kv.cas(&format!("blob/{h}"), None, bytes).await?;
+        Ok(h)
+    }
+    async fn get(&self, hash: &str) -> Result<Option<Vec<u8>>> {
+        Ok(self.kv.get(&format!("blob/{hash}")).await?.map(|(b, _)| b))
+    }
+}
+
 pub struct KvPointers<K> {
     kv: K,
 }

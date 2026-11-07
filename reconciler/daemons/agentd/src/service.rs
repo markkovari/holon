@@ -50,9 +50,9 @@ type R<T> = Result<T, Fail>;
 fn vcs_fail(e: holon_vcs::VcsError) -> Fail {
     match e {
         holon_vcs::VcsError::Storage(d) => {
-            Fail::Unavailable("vcs-unavailable", format!("comp-vcs: {d}"))
+            Fail::Unavailable("vcs-unavailable", format!("vcs: {d}"))
         }
-        e => Fail::Internal(format!("comp-vcs: {e}")),
+        e => Fail::Internal(format!("vcs: {e}")),
     }
 }
 

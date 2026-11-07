@@ -33,7 +33,7 @@ pub struct Ctx {
     /// The park app, when the wait for a human is to be parked (ADR-0113, ADR-0132). `None`: it is a future
     /// held here, and a restart ends the task, as it always did.
     pub park: Option<Park>,
-    /// `comp-vcs`, to record each `write_file` in (ADR-0121). `None`: edits are not recorded, and
+    /// The vcs app, to record each `write_file` in (ADR-0121). `None`: edits are not recorded, and
     /// a session cannot be rewound.
     pub vcs: Option<Vcs>,
 }

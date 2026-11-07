@@ -31,7 +31,7 @@ flowchart LR
   n_control["<b>Control plane #amp; lattice</b><br/>decide, reconcile, route"]:::sys
   n_runtime["<b>Runtime</b><br/>comp-host, one process per node"]:::sys
   n_daemons["<b>Capability daemons</b><br/>what a guest cannot do"]:::sys
-  n_durable["<b>Durable services</b><br/>park and vcs on JetStream"]:::sys
+  n_durable["<b>Durable services</b><br/>park and vcs on their keyvalue"]:::sys
   n_agents["<b>Agent services</b><br/>comp-agentd and the agent-runtime stack"]:::sys
   n_loop["<b>Engineering loop</b><br/>goal to pull request"]:::sys
   n_proof["<b>Proof #amp; measurement</b><br/>tests, e2e, benchmarks"]:::sys
@@ -64,7 +64,7 @@ The primary correspondences only; [every correspondence](#every-correspondence) 
 | **[Control plane & lattice](#control-plane--lattice)** | platform-domain decides, comp-reconciler makes the fleet match, comp-ingress is the door. | the holon CLI and the Holon console (both over /api), and comp-ingress for end users |
 | **[Runtime](#runtime)** | comp-host: one process per node runs every tenant’s components over wasmtime. | HTTP from comp-ingress or a unit’s own port; start and stop commands from the reconciler |
 | **[Capability daemons](#capability-daemons)** | What a guest cannot do, done by small native daemons, each with its own allow-list. | loopback HTTP from a component through wasi:http/outgoing-handler |
-| **[Durable services](#durable-services)** | The park app and comp-vcs: a ticket per outstanding call, and an agent-native code store. | park-gateway and vcs-gateway, tailnet-only by default; comp-agentd calls the park app directly |
+| **[Durable services](#durable-services)** | The park and vcs apps: a ticket per outstanding call, and an agent-native code store. | park-gateway and vcs-gateway, tailnet-only by default; comp-agentd calls the park and vcs apps directly |
 | **[Agent services](#agent-services)** | comp-agentd sessions with approvals, and the agent-runtime stack with its Matrix and desktop fronts. | REST, SSE and gRPC for agentd clients; Element and the GPUI console for agent-runtime |
 | **[Engineering loop](#engineering-loop)** | Parallel AI branches, a real test gate, and a selector that opens the winner as a pull request. | holon goal run, and comp-goald draining a project’s queue |
 | **[Proof & measurement](#proof--measurement)** | Test suites, end-to-end scripts and benchmarks that drive other machines. | cargo xtask test, e2e/run_all.sh, bench/, and CI |
@@ -74,7 +74,7 @@ The primary correspondences only; [every correspondence](#every-correspondence) 
 | State | What lives there | Used by |
 | --- | --- | --- |
 | **NATS JetStream** | inventory · commands · wRPC KV · tickets · oplog · queues | [Control plane & lattice](#control-plane--lattice), [Runtime](#runtime), [Capability daemons](#capability-daemons), [Durable services](#durable-services), [Engineering loop](#engineering-loop) |
-| **SurrealDB** | knowledge graph · run traces code-store graph · kv backend | [Library & Build](#library--build), [Runtime](#runtime), [Durable services](#durable-services), [Engineering loop](#engineering-loop) |
+| **SurrealDB** | knowledge graph · run traces code-store graph · kv backend | [Library & Build](#library--build), [Runtime](#runtime), [Engineering loop](#engineering-loop) |
 | **S3 / R2** | object bytes · backups presigned photo uploads | [Runtime](#runtime), [Capability daemons](#capability-daemons) |
 | **OCI registry** | components and composed apps pulled by digest (GHCR) | [Library & Build](#library--build), [Delivery](#delivery) |
 | **Git (GitHub)** | source · PRs · goals as prose apps.lock on the deploy branch | [Library & Build](#library--build), [Delivery](#delivery), [Engineering loop](#engineering-loop), [Proof & measurement](#proof--measurement) |
@@ -354,7 +354,7 @@ flowchart LR
   n_agent <-- "7 · NATS" --> n_g_cpn
   n_secrets -- "8 · reveal" --> n_g_cp2
   n_cfg -- "9 · loopback" --> n_g_dae
-  n_cfg -- "10 · loopback" --> n_g_dur
+  n_cfg -- "10 · guests" --> n_g_dur
   n_kv -- "11 · --kv" --> n_g_state
   n_rpc <-- "12 · wRPC" --> n_g_peer
   linkStyle 6 stroke-dasharray:7 4
@@ -373,12 +373,12 @@ flowchart LR
 | 7 | node agent | ⇄ | [Control plane & lattice](#control-plane--lattice)<br>holon-reconciler | NATS | Commands on comp.v1.&lt;lattice&gt;.cmd.&lt;node&gt;.&lt;verb&gt;, request and reply, so “started” means “will serve”. Each node answers with a full inventory snapshot in KV comp-inventory, which expires on its own. | [0021](adr/0021-there-is-no-kubernetes.md) · [0022](adr/0022-desired-state-is-a-manifest.md) · [0058](adr/0058-snapshots-compress-and-parses-are-reused.md) |
 | 8 | comp:secrets/reader | → | [Control plane & lattice](#control-plane--lattice)<br>platform-domain | HTTP | reveal fetches the plaintext on first use with a single-use token; a captured fetch is spent. The guest never holds a reference. | [0051](adr/0051-the-secret-reader.md) · [0071](adr/0071-a-captured-fetch-is-spent.md) |
 | 9 | wasi:http outgoing | → | [Capability daemons](#capability-daemons)<br>comp-\* | loopback HTTP | A component dials its daemon through wasi:http/outgoing-handler; the address is given by wasi:config/store. The daemon alone holds the syscall. | [0095](adr/0095-what-is-allowed-to-be-native.md) |
-| 10 | vcs guest | → | [Durable services](#durable-services)<br>vcs-gateway · comp-vcs | loopback HTTP | vcs-store is a guest whose every call is one HTTP request to its daemon; park-store runs its engine in-process. | [0099](adr/0099-an-agent-native-code-store.md) · [0132](adr/0132-park-is-a-component.md) |
+| 10 | park and vcs guests | → | [Durable services](#durable-services)<br>park-store · vcs-store | in-process | park-store and vcs-store run their engines in-process, on the app’s keyvalue; neither is a daemon. | [0132](adr/0132-park-is-a-component.md) · [0134](adr/0134-the-code-store-is-a-component.md) |
 | 11 | wasi:keyvalue | → | NATS JetStream<br>state backends | --kv | --kv memory \| sqlite \| redis \| nats \| surreal \| turso; the wasm is identical for every backend. A lattice node defaults to nats, the only backend where two replicas share a store. | [0027](adr/0027-a-spread-app-needs-a-shared-store.md) · [0057](adr/0057-the-latency-column-was-arithmetic.md) |
 | 11 | blob-store | → | S3 / R2<br>bucket | S3 API | --blob s3 puts object bytes in S3, R2 or MinIO; keyed state stays on --kv. | [0101](adr/0101-state-can-live-somewhere-else.md) |
 | 12 | wRPC | ⇄ | [Runtime](#runtime)<br>other nodes | NATS | Cross-node component links as wRPC on comp.v1.&lt;lattice&gt;.rpc.&lt;instance&gt;; one call costs about 57 µs. | [0028](adr/0028-cross-node-calls-are-wrpc.md) · [0074](adr/0074-the-split-graph-still-works.md) |
 |  | holon-host | → | [Runtime](#runtime)<br>tenant apps | HTTP | The host POSTs an app’s \[triggers\] pump (/internal/pump) to itself on an interval (--pump), so pull-based timers, topics and cron fire. | [0130](adr/0130-the-host-is-the-clock.md) |
-|  | comp-host | → | [Durable services](#durable-services)<br>park app | loopback HTTP | The hostâs pump POSTs /internal/pump every second: one recovery pass and the deliveries it announces. | [0130](adr/0130-the-host-is-the-clock.md) · [0132](adr/0132-park-is-a-component.md) |
+|  | comp-host | → | [Durable services](#durable-services)<br>park app | loopback HTTP | The host’s pump POSTs /internal/pump every second: one recovery pass and the deliveries it announces. | [0130](adr/0130-the-host-is-the-clock.md) · [0132](adr/0132-park-is-a-component.md) |
 
 **What keeps it apart**
 
@@ -456,9 +456,9 @@ flowchart TB
 
 ### Durable services
 
-The park app records an outstanding call so no thread has to wait for its answer, and its hostâs pump delivers what came back; its engine runs in the component, on the appâs keyvalue. comp-vcs, on NATS JetStream, is called over HTTP: it stores code as an oplog of commutative, symbol-level patches.
+The park app records an outstanding call so no thread has to wait for its answer, and its host’s pump delivers what came back; its engine runs in the component, on the app’s keyvalue. The vcs app stores code as an oplog of commutative, symbol-level patches, its engine in the component too, and writes checkouts under its host’s --dir.
 
-**Reached through** park-gateway and vcs-gateway, tailnet-only by default; comp-agentd calls the park app directly.
+**Reached through** park-gateway and vcs-gateway, tailnet-only by default; comp-agentd calls the park and vcs apps directly.
 
 ```mermaid
 %%{init: {"flowchart": {"wrappingWidth": 360}}}%%
@@ -475,12 +475,10 @@ flowchart LR
     n_pst["<b>park-store</b><br/>holon:park@0.5.0<br/>engine in-process · sweep"]:::wasm
     n_ptk[("<b>app keyvalue</b><br/>tickets by compare-and-set<br/>sqlite · NATS · …")]:::store
   end
-  subgraph grp_vcs["vcs (ADR-0099)"]
+  subgraph grp_vcs["vcs (ADR-0099, 0134)"]
     n_vgw["<b>vcs-gateway</b><br/>HTTP routes · tailnet<br/>apps/vcs.toml"]:::wasm
-    n_vst["<b>vcs-store</b><br/>holon:vcs/code-store + files<br/>one request per call"]:::wasm
-    n_vvcs["<b>holon-vcs</b><br/>loopback HTTP · holon-vcs<br/>oplog of commutative patches"]:::native
-    n_vsur[("<b>SurrealDB</b><br/>symbol graph · positions<br/>indexes")]:::store
-    n_vlog[("<b>NATS JetStream</b><br/>oplog streams")]:::store
+    n_vst["<b>vcs-store</b><br/>holon:vcs/code-store + files<br/>engine in-process · --dir"]:::wasm
+    n_vkv[("<b>app keyvalue</b><br/>oplog · pointers · graph<br/>sqlite · NATS · …")]:::store
   end
   n_g_run(["<b>Runtime</b><br/>hosts the gateways"]):::ghost
   n_g_run2(["<b>Runtime</b><br/>hosts the gateways"]):::ghost
@@ -490,34 +488,31 @@ flowchart LR
   n_pgw -- "call" --> n_pst
   n_pst -- "tickets" --> n_ptk
   n_vgw -- "call" --> n_vst
-  n_vst -- "HTTP" --> n_vvcs
-  n_vvcs -- "oplog" --> n_vlog
-  n_vvcs -- "graph" --> n_vsur
+  n_vst -- "records" --> n_vkv
   n_g_run -- "1 · serves" --> n_pgw
   n_g_run2 -- "2 · serves" --> n_vgw
   n_g_cl -- "3 · HTTP" --> n_pgw
   n_g_ag1 -- "4 · park · wake" --> n_pgw
   n_pst -- "5 · sink" --> n_g_ag2
-  linkStyle 4 stroke-dasharray:7 4
 ```
 
 |  | Here |  | Peer | Over | What crosses | Decided in |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1, 2 | vcs-gateway · comp-vcs | ← | [Runtime](#runtime)<br>vcs guest | loopback HTTP | vcs-store is a guest whose every call is one HTTP request to its daemon; park-store runs its engine in-process. | [0099](adr/0099-an-agent-native-code-store.md) · [0132](adr/0132-park-is-a-component.md) |
+| 1, 2 | park-store · vcs-store | ← | [Runtime](#runtime)<br>park and vcs guests | in-process | park-store and vcs-store run their engines in-process, on the app’s keyvalue; neither is a daemon. | [0132](adr/0132-park-is-a-component.md) · [0134](adr/0134-the-code-store-is-a-component.md) |
 | 3 | gateways | ← | Agent clients<br>agents on the tailnet | HTTP | The gateways are the only door: tailnet access, optional token. | [0099](adr/0099-an-agent-native-code-store.md) · [0100](adr/0100-a-parked-turn-is-a-record-not-a-held-thread.md) |
 | 4 | park app | ← | [Agent services](#agent-services)<br>comp-agentd | HTTP | Parks an approval (correlation = call id, replay unsafe, deadline = the approval timeout), answers it, cancels it. Opt-in with --park-url. | [0113](adr/0113-a-task-waiting-for-a-person-is-a-parked-call.md) |
 | 5 | park app | → | [Agent services](#agent-services)<br>comp-agentd | HTTP | POST /park/deliver with Idempotency-Key: 2xx means taken, 410 means gone and cancels the ticket, anything else is retried with backoff. | [0106](adr/0106-a-resumed-turn-knows-what-it-may-repeat.md) · [0113](adr/0113-a-task-waiting-for-a-person-is-a-parked-call.md) |
-|  | park-store | → | [Durable services](#durable-services)<br>the appâs keyvalue | wasi:keyvalue + comp:store/cas · inside | A record per ticket and per batch, moved by compare-and-set; indexes grown by compare-and-set. Internal to the app. | [0132](adr/0132-park-is-a-component.md) |
-|  | park app | ← | [Runtime](#runtime)<br>comp-host | loopback HTTP | The hostâs pump POSTs /internal/pump every second: one recovery pass and the deliveries it announces. | [0130](adr/0130-the-host-is-the-clock.md) · [0132](adr/0132-park-is-a-component.md) |
-|  | comp-vcs | → | SurrealDB<br>symbol graph | SurrealQL | The oplog is on JetStream; the commutative patch graph, positions and indexes are in SurrealDB. | [0099](adr/0099-an-agent-native-code-store.md) |
+|  | park-store | → | [Durable services](#durable-services)<br>the app’s keyvalue | wasi:keyvalue + comp:store/cas · inside | A record per ticket and per batch, moved by compare-and-set; indexes grown by compare-and-set. Internal to the app. | [0132](adr/0132-park-is-a-component.md) |
+|  | park app | ← | [Runtime](#runtime)<br>comp-host | loopback HTTP | The host’s pump POSTs /internal/pump every second: one recovery pass and the deliveries it announces. | [0130](adr/0130-the-host-is-the-clock.md) · [0132](adr/0132-park-is-a-component.md) |
+|  | vcs-store | → | [Durable services](#durable-services)<br>the app’s keyvalue | wasi:keyvalue + comp:store/cas | Blobs, pointers, the oplog and a record per symbol, patch and conflict, each moved by compare-and-set; index lists only grow, and a lookup filters what they name. | [0134](adr/0134-the-code-store-is-a-component.md) |
 
 **What keeps it apart**
 
 - Both gateways are tailnet-only on purpose: whoever reaches the park gateway can park, wake or cancel any session’s ticket, and whoever reaches vcs can edit every workspace.
-- The gateways keep nothing; every byte of state is in the daemon (kv = "memory" in the app spec).
+- Every byte of state is the app’s own keyvalue, moved by compare-and-set: sqlite on one box, NATS with --kv-replicas on a cluster.
 - A bucket that already exists with fewer copies than --replicas is refused, with the command that raises it ([ADR-0111](adr/0111-park-keeps-as-many-copies-as-it-is-told.md)).
 
-**Where it lives** [`crates/holon-park`](../crates/holon-park) · [`crates/holon-vcs`](../crates/holon-vcs) · [`components/park-store`](../components/park-store) · [`components/park-gateway`](../components/park-gateway) · [`components/vcs-store`](../components/vcs-store) · [`components/vcs-gateway`](../components/vcs-gateway) · [`reconciler/daemons/vcs/`](../reconciler/daemons/vcs/) · [`apps/park.toml`](../apps/park.toml) · [`apps/vcs.toml`](../apps/vcs.toml)
+**Where it lives** [`crates/holon-park`](../crates/holon-park) · [`crates/holon-vcs`](../crates/holon-vcs) · [`components/park-store`](../components/park-store) · [`components/park-gateway`](../components/park-gateway) · [`components/vcs-store`](../components/vcs-store) · [`components/vcs-gateway`](../components/vcs-gateway) · [`apps/park.toml`](../apps/park.toml) · [`apps/vcs.toml`](../apps/vcs.toml)
 
 ### Agent services
 
@@ -749,7 +744,7 @@ One row for each thing one system says to another, with what crosses, over what,
 | [Runtime](#runtime)<br>comp:secrets/reader | → | [Control plane & lattice](#control-plane--lattice)<br>platform-domain | HTTP | reveal fetches the plaintext on first use with a single-use token; a captured fetch is spent. The guest never holds a reference. | [0051](adr/0051-the-secret-reader.md) · [0071](adr/0071-a-captured-fetch-is-spent.md) |
 | [Engineering loop](#engineering-loop)<br>comp-goald | → | [Control plane & lattice](#control-plane--lattice)<br>platform-domain | HTTP | The project’s goal queue and events under /api/projects/{p}/… A person still starts every goal. | [0082](adr/0082-a-project-owns-a-repo-and-a-queue.md) |
 | [Runtime](#runtime)<br>wasi:http outgoing | → | [Capability daemons](#capability-daemons)<br>comp-\* | loopback HTTP | A component dials its daemon through wasi:http/outgoing-handler; the address is given by wasi:config/store. The daemon alone holds the syscall. | [0095](adr/0095-what-is-allowed-to-be-native.md) |
-| [Runtime](#runtime)<br>vcs guest | → | [Durable services](#durable-services)<br>vcs-gateway · comp-vcs | loopback HTTP | vcs-store is a guest whose every call is one HTTP request to its daemon; park-store runs its engine in-process. | [0099](adr/0099-an-agent-native-code-store.md) · [0132](adr/0132-park-is-a-component.md) |
+| [Runtime](#runtime)<br>park and vcs guests | → | [Durable services](#durable-services)<br>park-store · vcs-store | in-process | park-store and vcs-store run their engines in-process, on the app’s keyvalue; neither is a daemon. | [0132](adr/0132-park-is-a-component.md) · [0134](adr/0134-the-code-store-is-a-component.md) |
 | [Runtime](#runtime)<br>wasi:keyvalue | → | NATS JetStream<br>state backends | --kv | --kv memory \| sqlite \| redis \| nats \| surreal \| turso; the wasm is identical for every backend. A lattice node defaults to nats, the only backend where two replicas share a store. | [0027](adr/0027-a-spread-app-needs-a-shared-store.md) · [0057](adr/0057-the-latency-column-was-arithmetic.md) |
 | [Runtime](#runtime)<br>blob-store | → | S3 / R2<br>bucket | S3 API | --blob s3 puts object bytes in S3, R2 or MinIO; keyed state stays on --kv. | [0101](adr/0101-state-can-live-somewhere-else.md) |
 | [Runtime](#runtime)<br>wRPC | → | [Runtime](#runtime)<br>other nodes | NATS | Cross-node component links as wRPC on comp.v1.&lt;lattice&gt;.rpc.&lt;instance&gt;; one call costs about 57 µs. | [0028](adr/0028-cross-node-calls-are-wrpc.md) · [0074](adr/0074-the-split-graph-still-works.md) |
@@ -759,11 +754,11 @@ One row for each thing one system says to another, with what crosses, over what,
 | [Engineering loop](#engineering-loop)<br>checks-runner | → | [Capability daemons](#capability-daemons)<br>comp-checks | HTTP | Posts the candidate tree over a base tree keyed by commit id (an unknown commit is asked for with 409) and gets the whole check vector back. | [0081](adr/0081-fitness-fuel-and-what-the-swarm-knows.md) |
 | [Capability daemons](#capability-daemons)<br>comp-media | → | S3 / R2<br>bucket | presigned HTTP | Photos too big for a guest’s 64 MiB go straight to object storage. | [0098](adr/0098-photos-live-in-object-storage.md) |
 | [Capability daemons](#capability-daemons)<br>comp-media | → | NATS JetStream<br>work queue | JetStream | Evaluation is a work queue on the machine with the GPU. | [0098](adr/0098-photos-live-in-object-storage.md) |
-| [Durable services](#durable-services)<br>park-store | → | [Durable services](#durable-services)<br>the appâs keyvalue | wasi:keyvalue + comp:store/cas · inside | A record per ticket and per batch, moved by compare-and-set; indexes grown by compare-and-set. Internal to the app. | [0132](adr/0132-park-is-a-component.md) |
-| [Runtime](#runtime)<br>comp-host | → | [Durable services](#durable-services)<br>park app | loopback HTTP | The hostâs pump POSTs /internal/pump every second: one recovery pass and the deliveries it announces. | [0130](adr/0130-the-host-is-the-clock.md) · [0132](adr/0132-park-is-a-component.md) |
+| [Durable services](#durable-services)<br>park-store | → | [Durable services](#durable-services)<br>the app’s keyvalue | wasi:keyvalue + comp:store/cas · inside | A record per ticket and per batch, moved by compare-and-set; indexes grown by compare-and-set. Internal to the app. | [0132](adr/0132-park-is-a-component.md) |
+| [Runtime](#runtime)<br>comp-host | → | [Durable services](#durable-services)<br>park app | loopback HTTP | The host’s pump POSTs /internal/pump every second: one recovery pass and the deliveries it announces. | [0130](adr/0130-the-host-is-the-clock.md) · [0132](adr/0132-park-is-a-component.md) |
 | [Durable services](#durable-services)<br>park app | → | [Agent services](#agent-services)<br>comp-agentd | HTTP | POST /park/deliver with Idempotency-Key: 2xx means taken, 410 means gone and cancels the ticket, anything else is retried with backoff. | [0106](adr/0106-a-resumed-turn-knows-what-it-may-repeat.md) · [0113](adr/0113-a-task-waiting-for-a-person-is-a-parked-call.md) |
 | [Agent services](#agent-services)<br>comp-agentd | → | [Durable services](#durable-services)<br>park app | HTTP | Parks an approval (correlation = call id, replay unsafe, deadline = the approval timeout), answers it, cancels it. Opt-in with --park-url. | [0113](adr/0113-a-task-waiting-for-a-person-is-a-parked-call.md) |
-| [Durable services](#durable-services)<br>comp-vcs | → | SurrealDB<br>symbol graph | SurrealQL | The oplog is on JetStream; the commutative patch graph, positions and indexes are in SurrealDB. | [0099](adr/0099-an-agent-native-code-store.md) |
+| [Durable services](#durable-services)<br>vcs-store | → | [Durable services](#durable-services)<br>the app’s keyvalue | wasi:keyvalue + comp:store/cas | Blobs, pointers, the oplog and a record per symbol, patch and conflict, each moved by compare-and-set; index lists only grow, and a lookup filters what they name. | [0134](adr/0134-the-code-store-is-a-component.md) |
 | Agent clients<br>agents on the tailnet | → | [Durable services](#durable-services)<br>gateways | HTTP | The gateways are the only door: tailnet access, optional token. | [0099](adr/0099-an-agent-native-code-store.md) · [0100](adr/0100-a-parked-turn-is-a-record-not-a-held-thread.md) |
 | Agent clients<br>bots · scripts · UIs | → | [Agent services](#agent-services)<br>comp-agentd | REST · SSE · gRPC | api/openapi.yaml and api/holon/v1/agent.proto on one port. Sessions, tasks, one resumable event stream, a state snapshot to catch up, steering, a bounded queue, per-tool approval with a scope. | [0102](adr/0102-an-agent-session-is-a-contract-first.md) · [0107](adr/0107-a-client-catches-up-from-a-snapshot-then-tails.md) · [0108](adr/0108-a-running-task-takes-input-at-a-boundary.md) · [0112](adr/0112-a-busy-session-can-queue-a-task.md) · [0114](adr/0114-an-approval-can-reach-beyond-one-call.md) |
 | [Agent services](#agent-services)<br>comp-agentd | → | LLM providers<br>providers | HTTPS | Anthropic /v1/messages or any OpenAI-compatible /chat/completions, streamed; a mock provider for tests. | [0102](adr/0102-an-agent-session-is-a-contract-first.md) |
@@ -791,7 +786,7 @@ flowchart TB
     subgraph z2["Tailnet"]
       z2_items["comp-ingress · platform-domain · NATS lattice · park / vcs gateways · comp-agentd · Synapse"]
       subgraph z3["One machine"]
-        z3_items["comp-agent · comp-vcs · comp-checks · the capability daemons · local disk: SQLite, state dirs"]
+        z3_items["comp-agent · comp-checks · the capability daemons · local disk: SQLite, state dirs"]
         subgraph z4["comp-host, one process"]
           z4_t0["<b>Org A</b><br/>component instances"]
           z4_t1["<b>Org B</b><br/>component instances"]
@@ -806,7 +801,7 @@ flowchart TB
 | --- | --- | --- |
 | **Public internet** | Reachable only where an app says so: a generated file never makes an app public. access = "public" puts it behind Caddy and ACME. | End users · GitHub · GHCR · LLM APIs · S3 / R2 |
 | **Tailnet** | The default reach of every app. Nodes are mutually reachable and say where, so the ingress proxies straight to them and no envelope sits on the bus. | comp-ingress · platform-domain · NATS lattice · park / vcs gateways · comp-agentd · Synapse |
-| **One machine** | systemd units. Native daemons bind loopback, each with its own allow-list and blast radius. A component reaches one only through an address the operator configured. | comp-agent · comp-vcs · comp-checks · the capability daemons · local disk: SQLite, state dirs |
+| **One machine** | systemd units. Native daemons bind loopback, each with its own allow-list and blast radius. A component reaches one only through an address the operator configured. | comp-agent · comp-checks · the capability daemons · local disk: SQLite, state dirs |
 | **comp-host, one process** | Every tenant on the node lives here. There is no OS process between two tenants: only wasmtime’s sandbox and the discipline of tenant.rs, which makes it the one module to be paranoid in. |  |
 | **A tenant** | Its own BucketIds, SecretRefs and config. No sockets, no processes, no environment: only the imports the host links for it. | Org A · Org B · Org C |
 
@@ -826,7 +821,7 @@ flowchart TB
 | **The right to start code on every node** | comp-reconciler, and nothing else | Holds the lattice credential. No business logic, no database, no user concept. | [0022](adr/0022-desired-state-is-a-manifest.md) |
 | **x-platform-secret** | comp-reconciler to platform-domain | Guards /api/internal/\*. Left empty, the reconciler does not converge. | [0022](adr/0022-desired-state-is-a-manifest.md) |
 | **An org’s secrets** | platform-domain’s vault | Named by reference (vault://org/key), never by value, in a manifest. A host reveals one on a single-use fetch. | [0010](adr/0010-config-and-secrets.md) · [0051](adr/0051-the-secret-reader.md) · [0071](adr/0071-a-captured-fetch-is-spent.md) |
-| **Bearer tokens on native daemons** | comp-agentd, comp-vcs, comp-checks | Optional on loopback; comp-checks refuses to start off loopback without one. | [0113](adr/0113-a-task-waiting-for-a-person-is-a-parked-call.md) |
+| **Bearer tokens on native daemons** | comp-agentd, comp-checks | Optional on loopback; comp-checks refuses to start off loopback without one. | [0113](adr/0113-a-task-waiting-for-a-person-is-a-parked-call.md) |
 | **Model and forge keys** | comp-goalrun | Arrive as file paths and reach the vault as vault://…=@path, so they are never on argv. | [0082](adr/0082-a-project-owns-a-repo-and-a-queue.md) |
 | **The deploy pointer** | the deploy branch of the repository | comp-agent holds no CI credential and opens no inbound port; it pulls. | [0006](adr/0006-artifacts-are-digest-pinned-oci.md) |
 

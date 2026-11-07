@@ -70,9 +70,9 @@ Measured rather than asserted — a `saga-domain` trip whose hotel leg fails:
 
 ### Daemons: the fourteen host capabilities need a process too
 
-The fourteen `comp-<x>` daemons — ADR-0095's twelve (`comp-fswatch`, `comp-docker`,
+The `comp-<x>` daemons — ADR-0095's capabilities (`comp-fswatch`, `comp-docker`,
 `comp-ffmpeg`, ...) plus `comp-media` ([ADR-0098](adr/0098-photos-live-in-object-storage.md))
-and `comp-vcs` ([ADR-0099](adr/0099-an-agent-native-code-store.md)) are native because a `wasm32-wasip2` component cannot
+— are native because a `wasm32-wasip2` component cannot
 watch a filesystem, spawn `ffmpeg`, or open a Docker socket. An app whose component
 dials one over loopback HTTP declares it the same way it declares a trigger:
 
@@ -102,8 +102,14 @@ something the unit cannot do), and the app's own unit is given no `--egress` to 
 binds to the app's lifecycle and gets the same hardening. Tier 4 gives it a Deployment and no
 Service. (Park's resumer was one, until park became a component its host pumps: ADR-0132.)
 
+**A directory, and more memory.** `dirs = ["/var/lib/<x>"]` opens each directory to the app at
+the same path (`--dir`, [ADR-0134](adr/0134-the-code-store-is-a-component.md)); the unit makes it a
+`StateDirectory`, the one place a dynamic user can write, so it must be under `/var/lib/`.
+`mem_cap_mb` raises the guest's memory ceiling (`--mem-cap-mb`). The vcs app uses both, for its
+checkouts and its in-process engine.
+
 **One unit, one file.** A spec renders `comp-<app>.service` and `comp-<daemon>.service` per daemon — except a daemon named like its own
-app (`vcs` and `comp-vcs`), which is `comp-<name>-daemon.service`. Both
+app (app `x` with a daemon `x`), which is `comp-<name>-daemon.service`. Both
 used to be `comp-<name>.service`, so the daemon's text was written over the app's: nothing was
 left to serve the app, and the daemon's unit was `BindsTo` itself. `check()` now refuses any
 spec whose units would share a file, and a test reads every committed spec.

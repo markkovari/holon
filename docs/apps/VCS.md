@@ -6,44 +6,40 @@ both land whatever order they arrive in, and two edits to the SAME function
 become a conflict record with both versions kept — data a resolver agent reads
 and settles — rather than an error or a half-finished merge. Every edit is an
 automatic commit in an operation log; any op can be reverted; a crash at any
-point of a write is recovered on the next read or at startup.
+point of a write is recovered by the next call that meets it.
 [ADR-0099](../adr/0099-an-agent-native-code-store.md) is the design; this is the
-service that puts it on the network.
+service that puts it on the network, and
+[ADR-0134](../adr/0134-the-code-store-is-a-component.md) why it is one component.
 
 ## How it fits together
 
 ```
-agent ──HTTP──▶ comp-host ┌ vcs-gateway ──holon:vcs──▶ vcs-store ┐ ──HTTP──▶ comp-vcs ──▶ NATS JetStream (blobs, pointers, oplog)
-                          └──────────── one composed component ──┘                   └─▶ SurrealDB (symbols, patches, conflicts)
+agent ──HTTP──▶ comp-host ┌ vcs-gateway ──holon:vcs──▶ vcs-store ┐ ──comp:store/cas──▶ the app's keyvalue
+                          └──────────── one composed component ──┘    (blobs, pointers, oplog, graph)
 ```
 
 | piece | what it does |
 |---|---|
 | `wit/vcs/vcs.wit` | the contract: `holon:vcs/code-store` (apply, resolve, revert, query, export, conflicts, oplog, verify, repair) and `holon:vcs/files` (ingest real files, materialize a snapshot, read a blob) |
-| `crates/holon-vcs` | the engine — every decision: commutation, conflicts, names, positions, the write order and its recovery, symbol extraction. Pure; builds for wasm32-wasip2 and for the host |
-| `comp-vcs` (`reconciler/daemons/vcs/`) | the engine over its NATS + SurrealDB adapters, one HTTP route per WIT function, startup repair, a `--allow-path` for `materialize`. Native because a guest cannot hold a NATS or SurrealDB connection (ADR-0095) |
-| `vcs-store` (`components/vcs-store`) | exports the contract; each call is one request to `comp-vcs` ([CONTRACT](../../components/vcs-store/CONTRACT.md)) |
-| `vcs-gateway` (`components/vcs-gateway`) | imports the contract and serves it as `POST /v1/<function>` — the same JSON `comp-vcs` takes — for agents and tests |
-| `apps/vcs.toml` | the app: gateway ⊕ store on `:3942`, `comp-vcs` on `127.0.0.1:8014` |
+| `crates/holon-vcs` | the engine — every decision: commutation, conflicts, names, positions, the write order and its recovery, symbol extraction — and its stores over a compare-and-set keyvalue (`KvBlobs`, `KvPointers`, `KvOpLog`, `KvGraph`). Pure; builds for wasm32-wasip2 and for the host |
+| `vcs-store` (`components/vcs-store`) | exports the contract and runs the engine in-process over the app's keyvalue; `materialize` writes under the host's `--dir` ([CONTRACT](../../components/vcs-store/CONTRACT.md)) |
+| `vcs-gateway` (`components/vcs-gateway`) | imports the contract and serves it as `POST /v1/<function>` for agents, `comp-agentd` and tests |
+| `apps/vcs.toml` | the app: gateway ⊕ store on `:3942`, `kv = "sqlite"`, `dirs = ["/var/lib/vcs/checkouts"]`, `mem_cap_mb = 256` |
 
-The JSON is defined once (`crates/holon-vcs/src/wire.rs`) and used by all three
-processes' code; refusals are `{error, detail, message}` with the `vcs-error`
-case, its payload, and a status by kind (409 for a race or a conflict, 404, 400,
-503 for storage).
+The JSON is defined once (`crates/holon-vcs/src/wire.rs`) and answered by one
+dispatch (`holon_vcs::serve`); refusals are `{error, detail, message}` with the
+`vcs-error` case, its payload, and a status by kind (409 for a race or a
+conflict, 404, 400, 503 for storage).
 
 ## Run it locally
 
 ```
-docker compose -f infra/compose.yaml up -d nats                      # or any nats-server -js on :4222
-docker compose -f infra/compose.yaml --profile graph up -d surreal   # SurrealDB 3 on :8000, in memory
-cargo xtask compose vcs
-cargo xtask host vcs                                                  # comp-host on :3942 + comp-vcs on :8014
+cargo xtask build
+cargo xtask host vcs              # comp-host on :3942, the store in a sqlite file
 ```
 
-`cargo xtask host` builds and starts `comp-vcs` from the `[[daemon]]` table
-(`--nats-url`, `--surreal-url` and the allow-list come from `extra_args`/`allow`;
-`VCS_NATS_URL`/`VCS_SURREAL_URL` override the defaults from the environment).
-With no services at all, `comp-vcs --memory` keeps everything in memory.
+It makes `/var/lib/vcs/checkouts` for `materialize`, or says the `sudo` that would. With
+`kv = "memory"` nothing is kept across a restart.
 
 An agent's loop, by hand:
 
@@ -65,48 +61,39 @@ back as a conflict, never as a silent overwrite.
 
 ```
 bash e2e/vcs.sh              # all scenarios, once
-RUNS=5 bash e2e/vcs.sh       # five times over the same services
-bash e2e/vcs.sh c_crash      # a name filter, passed to the test binary
+RUNS=5 bash e2e/vcs.sh       # five times over
+bash e2e/vcs.sh f_real       # a name filter, passed to the test binary
 ```
 
-`e2e/vcs.sh` starts the compose SurrealDB (its own compose project, removed at
-the end) — or uses `VCS_E2E_SURREAL_URL` if you have one — and a private
-`nats-server -js` on a free port with a temp store (never the box's :4222),
-builds the two components and `comp-host`, and runs
-`reconciler/daemons/vcs/tests/e2e_vcs.rs`. Each scenario starts its own `comp-vcs` (own
-buckets, own SurrealDB database, own port) and its own `comp-host` with the
-composed gateway, and talks to nothing but the gateway:
+`reconciler/tests/vcs_app.rs`, in CI with the other built-artifact suites. Each
+scenario starts its own `comp-host` with the composed gateway, its own sqlite
+file and its own `--dir`, and talks to nothing but the gateway:
 
 | | scenario |
 |---|---|
 | A | two agents edit `compute_total` and `validate_order` — adjacent functions of one file — at once from one read point: both land, the second `commuted` naming the other's patch, and the export has both |
 | B | two agents edit `compute_total` at once: one lands, one is `conflicted` with both versions verbatim; export and materialize are refused `unresolved-conflict`; a resolver merges; the materialized directory's `git write-tree` equals the snapshot's `git-tree` |
-| C | `comp-vcs` aborts itself (`--crash-*-step`) at each step of the write order — after the blob, the intent, the write-ahead graph, the name claim; before and after the tip CAS; after the finish, the commit; before a rename's release — then restarts normally: `verify` is clean, the op landed exactly when its commit point had happened, startup repair reports it rolled forward or aborted, a retry lands it exactly once (`duplicate` if it had), one committed op carries the patch |
 | D | `commuted` with `read-at` is exact (an edit read after is `applied`, one read before commutes past exactly it); without `read-at` it over-reports, as documented |
 | E | eight renames to one name at once: one lands, seven `name-taken` naming it |
 | F | `components/record-store`'s real files (`.rs`, `.wit`, `Cargo.toml`) ingested, exported and materialized byte for byte, git tree id checked against `git`; re-ingest writes nothing; then two agents ingest edited copies of `idlist.rs` at once — two neighbouring functions (both land), the same function (one conflict, resolved), two inserts at one spot (both land, no conflict) |
 | G | a function moved by ingest is one `move`, and the export is exact; moved back, exact again |
-| H | a writer crashed before its commit point holds `snapshot-export` (`concurrent-modification`) for the lease (`--lease-secs 4`), then the next reader fences it and export goes through; the edit never landed |
 
-Without `VCS_E2E_NATS_URL` / `VCS_E2E_SURREAL_URL` every test prints `SKIPPED`
-and returns. CI compiles the suite and does not run it (`--no-run`): a skip that
-returns `ok` would be a green tick for a test that did not run.
+A crash at each step of the write order — after the blob, the intent, the
+write-ahead graph, the name claim; before and after the tip CAS; after the
+finish, the commit; before a rename's release — and a writer crashed inside its
+lease are the engine's suite, run over `mem` and over the same keyvalue stores
+(`crates/holon-vcs/tests/kv.rs`): `verify` is clean afterwards, the op landed
+exactly when its commit point had happened, a retry lands it exactly once.
 
-Measured on an M2 Max (release build, SurrealDB 3.1.3 in memory in Docker, a
-local nats-server 2.15): the eight scenarios run in parallel in 19–20 s wall
-time, bounded by C (ten crash/restart cycles, 19–20 s); A, B, D, E 1.3–2.5 s,
-G 1.7–2.9 s, F 3.8–4.9 s, H 5.4–6.6 s (four of them the lease). Five
-consecutive runs over one set of services, all green.
+Measured on an M2 Max (release build): the six scenarios run in parallel in
+under 2 s wall time, F (record-store's 134 symbols) the longest at 1.6 s.
 
 ## Not yet
 
 - **No authentication at the gateway.** Anyone who reaches `:3942` edits every
-  workspace; the app is tailnet-only for that reason. `comp-vcs` takes a
-  `--token`, which the gateway's `vcs-store` sends.
-- **`materialize` writes on the daemon's machine**, under its allow-list — which
-  is the only filesystem there is (ADR-0023); an agent elsewhere reads the
-  snapshot's blobs with `read-blob`.
-- **SurrealDB's `:8000` is also `comp-fswatch`'s port** in `apps/fs-watcher.toml`;
-  the two apps do not share a box as written.
+  workspace; the app is tailnet-only for that reason.
+- **`materialize` writes on the host's machine**, under its `--dir`; an agent
+  elsewhere reads the snapshot's blobs with `read-blob`. WASI has no chmod, so an
+  executable entry is written `0644`.
 - The engine's own open items (ADR-0099, *Still open*): the lease as a liveness
   knob, a tie that placement cannot order, methods as symbols, cross-file edges.

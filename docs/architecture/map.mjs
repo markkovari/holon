@@ -97,16 +97,16 @@ export const SYS = [
             'The twelve ADR-0095 daemons are each their own Cargo package, with one heavy crate and the shared holon-daemon-kit, so building or shipping one compiles none of the others (ADR-0115).'],
   code:['reconciler/daemons/{kit,fswatch,browser,docker,clipboard}/','reconciler/daemons/{lanscan,mdns}/','reconciler/daemons/{cron,uinotify,ffmpeg,wireguard,media}/','reconciler/src/bin/checks.rs']},
 
- {id:'durable', name:'Durable services', short:'park and vcs on JetStream',
-  purpose:'The park app and comp-vcs: a ticket per outstanding call, and an agent-native code store.',
-  blurb:'The park app records an outstanding call so no thread has to wait for its answer, and its hostâs pump delivers what came back; its engine runs in the component, on the appâs keyvalue. comp-vcs, on NATS JetStream, is called over HTTP: it stores code as an oplog of commutative, symbol-level patches.',
-  entry:'park-gateway and vcs-gateway, tailnet-only by default; comp-agentd calls the park app directly',
-  parts:[['native','holon-vcs'],['wasm','park-store'],['wasm','vcs-store']],
-  uses:['nats','surreal'],
+ {id:'durable', name:'Durable services', short:'park and vcs on their keyvalue',
+  purpose:'The park and vcs apps: a ticket per outstanding call, and an agent-native code store.',
+  blurb:'The park app records an outstanding call so no thread has to wait for its answer, and its host’s pump delivers what came back; its engine runs in the component, on the app’s keyvalue. The vcs app stores code as an oplog of commutative, symbol-level patches, its engine in the component too, and writes checkouts under its host’s --dir.',
+  entry:'park-gateway and vcs-gateway, tailnet-only by default; comp-agentd calls the park and vcs apps directly',
+  parts:[['wasm','park-store'],['wasm','vcs-store']],
+  uses:['nats'],
   boundary:['Both gateways are tailnet-only on purpose: whoever reaches the park gateway can park, wake or cancel any session’s ticket, and whoever reaches vcs can edit every workspace.',
-            'The gateways keep nothing; every byte of state is in the daemon (kv = "memory" in the app spec).',
+            'Every byte of state is the app’s own keyvalue, moved by compare-and-set: sqlite on one box, NATS with --kv-replicas on a cluster.',
             'A bucket that already exists with fewer copies than --replicas is refused, with the command that raises it (ADR-0111).'],
-  code:['crates/holon-park','crates/holon-vcs','components/{park,vcs}-{store,gateway}','reconciler/daemons/vcs/','apps/{park,vcs}.toml']},
+  code:['crates/holon-park','crates/holon-vcs','components/{park,vcs}-{store,gateway}','apps/{park,vcs}.toml']},
 
  {id:'agents', name:'Agent services', short:'comp-agentd and the agent-runtime stack',
   purpose:'comp-agentd sessions with approvals, and the agent-runtime stack with its Matrix and desktop fronts.',
@@ -185,7 +185,7 @@ export const COR = [
  {id:'C12',a:['loop','comp-goald'],b:['control','platform-domain'],p:'http',over:'HTTP',contract:'The project’s goal queue and events under /api/projects/{p}/… A person still starts every goal.',adr:'0082'},
 
  {id:'R1',a:['runtime','wasi:http outgoing'],b:['daemons','comp-*'],p:'http',over:'loopback HTTP',contract:'A component dials its daemon through wasi:http/outgoing-handler; the address is given by wasi:config/store. The daemon alone holds the syscall.',adr:'0095'},
- {id:'R2',a:['runtime','vcs guest'],b:['durable','vcs-gateway · comp-vcs'],p:'http',over:'loopback HTTP',contract:'vcs-store is a guest whose every call is one HTTP request to its daemon; park-store runs its engine in-process.',adr:'0099 · 0132'},
+ {id:'R2',a:['runtime','park and vcs guests'],b:['durable','park-store · vcs-store'],p:'call',over:'in-process',contract:'park-store and vcs-store run their engines in-process, on the app’s keyvalue; neither is a daemon.',adr:'0132 · 0134'},
  {id:'R3',a:['runtime','wasi:keyvalue'],b:['nats','state backends'],p:'call',over:'--kv',contract:'--kv memory | sqlite | redis | nats | surreal | turso; the wasm is identical for every backend. A lattice node defaults to nats, the only backend where two replicas share a store.',adr:'0027 · 0057'},
  {id:'R4',a:['runtime','blob-store'],b:['s3','bucket'],p:'http',over:'S3 API',contract:'--blob s3 puts object bytes in S3, R2 or MinIO; keyed state stays on --kv.',adr:'0101'},
  {id:'R5',a:['runtime','wRPC'],b:['runtime','other nodes'],p:'nats',over:'NATS',contract:'Cross-node component links as wRPC on comp.v1.<lattice>.rpc.<instance>; one call costs about 57 µs.',adr:'0028 · 0074'},
@@ -197,11 +197,11 @@ export const COR = [
  {id:'N2',a:['daemons','comp-media'],b:['s3','bucket'],p:'http',over:'presigned HTTP',contract:'Photos too big for a guest’s 64 MiB go straight to object storage.',adr:'0098'},
  {id:'N3',a:['daemons','comp-media'],b:['nats','work queue'],p:'nats',over:'JetStream',contract:'Evaluation is a work queue on the machine with the GPU.',adr:'0098'},
 
- {id:'P1',a:['durable','park-store'],b:['durable','the appâs keyvalue'],p:'call',over:'wasi:keyvalue + comp:store/cas',contract:'A record per ticket and per batch, moved by compare-and-set; indexes grown by compare-and-set. Internal to the app.',adr:'0132',internal:true},
- {id:'P2',a:['runtime','comp-host'],b:['durable','park app'],p:'http',over:'loopback HTTP',contract:'The hostâs pump POSTs /internal/pump every second: one recovery pass and the deliveries it announces.',adr:'0130 · 0132'},
+ {id:'P1',a:['durable','park-store'],b:['durable','the app’s keyvalue'],p:'call',over:'wasi:keyvalue + comp:store/cas',contract:'A record per ticket and per batch, moved by compare-and-set; indexes grown by compare-and-set. Internal to the app.',adr:'0132',internal:true},
+ {id:'P2',a:['runtime','comp-host'],b:['durable','park app'],p:'http',over:'loopback HTTP',contract:'The host’s pump POSTs /internal/pump every second: one recovery pass and the deliveries it announces.',adr:'0130 · 0132'},
  {id:'P3',a:['durable','park app'],b:['agents','comp-agentd'],p:'http',over:'HTTP',contract:'POST /park/deliver with Idempotency-Key: 2xx means taken, 410 means gone and cancels the ticket, anything else is retried with backoff.',adr:'0106 · 0113'},
  {id:'P4',a:['agents','comp-agentd'],b:['durable','park app'],p:'http',over:'HTTP',contract:'Parks an approval (correlation = call id, replay unsafe, deadline = the approval timeout), answers it, cancels it. Opt-in with --park-url.',adr:'0113'},
- {id:'P6',a:['durable','comp-vcs'],b:['surreal','symbol graph'],p:'http',over:'SurrealQL',contract:'The oplog is on JetStream; the commutative patch graph, positions and indexes are in SurrealDB.',adr:'0099'},
+ {id:'P6',a:['durable','vcs-store'],b:['durable','the app’s keyvalue'],p:'call',over:'wasi:keyvalue + comp:store/cas',contract:'Blobs, pointers, the oplog and a record per symbol, patch and conflict, each moved by compare-and-set; index lists only grow, and a lookup filters what they name.',adr:'0134'},
  {id:'P8',a:['clients','agents on the tailnet'],b:['durable','gateways'],p:'http',over:'HTTP',contract:'The gateways are the only door: tailnet access, optional token.',adr:'0099 · 0100'},
 
  {id:'A1',a:['clients','bots · scripts · UIs'],b:['agents','comp-agentd'],p:'http',over:'REST · SSE · gRPC',contract:'api/openapi.yaml and api/holon/v1/agent.proto on one port. Sessions, tasks, one resumable event stream, a state snapshot to catch up, steering, a bounded queue, per-tool approval with a scope.',adr:'0102 · 0107 · 0108 · 0112 · 0114'},
@@ -361,7 +361,7 @@ export const DIA = {
    {a:'agent',b:'g-cpn',n:7,lab:'NATS',cor:['C6'],d:'<->'},
    {a:'secrets',b:'g-cp2',n:8,lab:'reveal',cor:['C11']},
    {a:'cfg',b:'g-dae',n:9,lab:'loopback',cor:['R1']},
-   {a:'cfg',b:'g-dur',n:10,lab:'loopback',cor:['R2']},
+   {a:'cfg',b:'g-dur',n:10,lab:'guests',cor:['R2']},
    {a:'kv',b:'g-state',n:11,lab:'--kv',cor:['R3','R4']},
    {a:'rpc',b:'g-peer',n:12,lab:'wRPC',cor:['R5'],d:'<->'}
   ]},
@@ -405,15 +405,13 @@ export const DIA = {
    N('pst',1,0,'wasm','park-store',['holon:park@0.5.0','engine in-process · sweep']),
    N('ptk',2,0,'store','app keyvalue',['tickets by compare-and-set','sqlite · NATS · …']),
    N('vgw',0,2,'wasm','vcs-gateway',['HTTP routes · tailnet','apps/vcs.toml']),
-   N('vst',1,2,'wasm','vcs-store',['holon:vcs/code-store + files','one request per call']),
-   N('vvcs',2,2,'native','holon-vcs',['loopback HTTP · holon-vcs','oplog of commutative patches'],{m:1}),
-   N('vsur',1,3,'store','SurrealDB',['symbol graph · positions','indexes']),
-   N('vlog',2,3,'store','NATS JetStream',['oplog streams'])
+   N('vst',1,2,'wasm','vcs-store',['holon:vcs/code-store + files','engine in-process · --dir']),
+   N('vkv',2,2,'store','app keyvalue',['oplog · pointers · graph','sqlite · NATS · …'])
   ],
-  groups:[{id:'park',t:'park (ADR-0100, 0106, 0109–0111)',ids:['pgw','pst','ptk']},{id:'vcs',t:'vcs (ADR-0099)',ids:['vgw','vst','vvcs','vsur','vlog']}],
+  groups:[{id:'park',t:'park (ADR-0100, 0106, 0109–0111)',ids:['pgw','pst','ptk']},{id:'vcs',t:'vcs (ADR-0099, 0134)',ids:['vgw','vst','vkv']}],
   edges:[
    ['pgw','pst','call','call'],['pst','ptk','tickets','call'],
-   ['vgw','vst','call','call'],['vst','vvcs','HTTP','http'],['vvcs','vlog','oplog','nats'],['vvcs','vsur','graph','http']
+   ['vgw','vst','call','call'],['vst','vkv','records','call']
   ],
   ghosts:[
    G('g-run','runtime','Runtime',['hosts the gateways'],'l',{r:0,dy:-24}),
@@ -547,7 +545,7 @@ export const CREDS = [
   ['The right to start code on every node','comp-reconciler, and nothing else','Holds the lattice credential. No business logic, no database, no user concept.','0022'],
   ['x-platform-secret','comp-reconciler to platform-domain','Guards /api/internal/*. Left empty, the reconciler does not converge.','0022'],
   ['An org’s secrets','platform-domain’s vault','Named by reference (vault://org/key), never by value, in a manifest. A host reveals one on a single-use fetch.','0010 · 0051 · 0071'],
-  ['Bearer tokens on native daemons','comp-agentd, comp-vcs, comp-checks','Optional on loopback; comp-checks refuses to start off loopback without one.','0113'],
+  ['Bearer tokens on native daemons','comp-agentd, comp-checks','Optional on loopback; comp-checks refuses to start off loopback without one.','0113'],
   ['Model and forge keys','comp-goalrun','Arrive as file paths and reach the vault as vault://…=@path, so they are never on argv.','0082'],
   ['The deploy pointer','the deploy branch of the repository','comp-agent holds no CI credential and opens no inbound port; it pulls.','0006']
 ];
@@ -559,7 +557,7 @@ export const ZONES = [
   {id:'z2', t:'Tailnet', d:'The default reach of every app. Nodes are mutually reachable and say where, so the ingress proxies straight to them and no envelope sits on the bus.',
    items:['comp-ingress','platform-domain','NATS lattice','park / vcs gateways','comp-agentd','Synapse']},
   {id:'z3', t:'One machine', d:'systemd units. Native daemons bind loopback, each with its own allow-list and blast radius. A component reaches one only through an address the operator configured.',
-   items:['comp-agent','comp-vcs','comp-checks','the capability daemons','local disk: SQLite, state dirs']},
+   items:['comp-agent','comp-checks','the capability daemons','local disk: SQLite, state dirs']},
   {id:'z4', t:'comp-host, one process', d:'Every tenant on the node lives here. There is no OS process between two tenants: only wasmtime\u2019s sandbox and the discipline of tenant.rs, which makes it the one module to be paranoid in.',
    items:[]}
 ];

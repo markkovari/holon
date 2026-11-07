@@ -162,6 +162,13 @@ pub(crate) fn host_app(
     // key unset: photoquest's `public-callback-base` was, and `complete`
     // answered 503.
     if let Some(spec) = app_spec {
+        for d in &spec.dirs {
+            if std::fs::create_dir_all(d).is_err() {
+                anyhow::bail!(
+                    "{d} is in the app's dirs and cannot be made: sudo mkdir -p {d} && sudo chown $USER {d}"
+                );
+            }
+        }
         host_cmd.args(spec.host_args());
     }
     // After the spec's: comp-host applies `--config` in order, the last wins.
