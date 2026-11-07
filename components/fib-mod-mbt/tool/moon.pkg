@@ -1,0 +1,6 @@
+import {
+  "holon/text-stats/text",
+  "moonbitlang/core/json",
+}
+
+warnings = "-44"

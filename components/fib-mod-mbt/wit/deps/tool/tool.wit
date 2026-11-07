@@ -1,0 +1,8 @@
+// An agent tool: arguments in as a JSON object, the result out as JSON (or a reason it failed).
+// agent-runtime reaches it over NATS (wRPC, a connector's `wrpc`) or, for a component that also
+// exports `wasi:http/handler`, over HTTP (a connector's `url`).
+package holon:tool@0.1.0;
+
+interface tool {
+    call: func(args: string) -> result<string, string>;
+}
