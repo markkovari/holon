@@ -2,6 +2,7 @@
 # Keep the agent stack running across logins and crashes, as launchd user agents.
 #
 #   ./install.sh install    write the plists and (re)start every service
+#   ./install.sh install bridge runtime   only those (the checks still run)
 #   ./install.sh uninstall  stop and remove them
 #   ./install.sh status     what is running
 #
@@ -131,6 +132,8 @@ matrix_state() {
 
 case "${1:-}" in
   install)
+    shift
+    [ $# -gt 0 ] && SERVICES=("$@")
     mkdir -p "$AGENTS" "$LOGS"
     platform_conf
     tokens
