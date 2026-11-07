@@ -1,0 +1,9 @@
+import {
+  "moonbitlang/core/deque",
+  "moonbitlang/core/ref",
+  "moonbitlang/core/set",
+}
+
+warnings = "-44"
+
+supported_targets = "wasm"
