@@ -64,6 +64,10 @@ pub struct Spec {
     /// `AppSpec::mem_cap_mb`: the guest's memory ceiling in MiB.
     #[serde(default)]
     pub mem_cap_mb: Option<usize>,
+    /// How long one request may run, in seconds (comp-host's default is 30): an app that waits on a
+    /// slow upstream, like a model, needs longer.
+    #[serde(default)]
+    pub request_timeout_secs: Option<u64>,
 
     /// `<subject>=<path>`: messages the host delivers to the app (ADR-0131), from the NATS at
     /// `kv_url` when `kv = "nats"`, else at `nats_url`.
@@ -380,6 +384,9 @@ pub fn render_unit(spec: &Spec, layout: &Layout) -> String {
     }
     if let Some(m) = spec.mem_cap_mb {
         args.push_str(&format!(" --mem-cap-mb {m}"));
+    }
+    if let Some(t) = spec.request_timeout_secs {
+        args.push_str(&format!(" --request-timeout-secs {t}"));
     }
     let needs_nats = !(spec.subscribe.is_empty() && spec.secrets.is_empty());
     if let (true, true, Some(u)) = (needs_nats, spec.kv != "nats", &spec.nats_url) {
@@ -1019,6 +1026,16 @@ routes = "upstream=http://127.0.0.1:9000"
             let s: Spec = toml::from_str(&format!("{MINIMAL}dirs = [\"{bad}\"]\n")).unwrap();
             assert!(check(&s).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_request_timeout_reaches_the_unit_only_when_the_spec_sets_one() {
+        let u = render_unit(
+            &spec(&format!("{MINIMAL}request_timeout_secs = 170\n")),
+            &Layout::default(),
+        );
+        assert!(u.contains(" --request-timeout-secs 170"), "{u}");
+        assert!(!render_unit(&spec(MINIMAL), &Layout::default()).contains("--request-timeout-secs"));
     }
 
     #[test]

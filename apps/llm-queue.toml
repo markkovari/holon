@@ -3,6 +3,9 @@ domain = "llm-queue.internal"
 artifact = "components/target/wasm32-wasip2/release/llm_queue.wasm"
 
 kv = "sqlite"
+# A model can take minutes: past llm-queue's 160 s wait for a first byte, under the 175 s the host
+# gives a delivered message, and far past the 30 s default.
+request_timeout_secs = 170
 
 # The free LLM queue (ADR-0126): the host answers `holon.llm.ask` requests with it (ADR-0131).
 # Run it beside the NATS the agents use (malna). Each provider's key is read from that NATS's
