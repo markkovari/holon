@@ -53,6 +53,10 @@ const ALLOWED: &[&str] = &[
     "wasi:keyvalue/store",        //  57
     "wasi:random/insecure-seed",  // 10
     "wasi:random/random",         //  15
+    // A directory the host opens with --dir, and nothing else (ADR-0134): solo hosts only, refused
+    // beside --lattice-nats, so a shared host never opens one to a tenant.
+    "wasi:filesystem/preopens", // 1 — vcs-store, materialize
+    "wasi:filesystem/types",    // 1
     // A TCP connect to what egress names (ADR-0133): the host refuses bind, listen and UDP, and an
     // address egress does not allow. Name lookup goes with it, checked the same way.
     "wasi:sockets/instance-network",  // 1 — mail-http, SMTP
