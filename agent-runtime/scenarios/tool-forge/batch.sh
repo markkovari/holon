@@ -39,7 +39,7 @@ HOLON_FORGE_LATTICE=dev HOLON_FORGE_NODE=n1 PATH="$HOME/.cargo/bin:$HOME/.moon/b
   > "$E/rt.log" 2>&1 & echo $! >> "$E/pids"; sleep 1
 
 jq -n --arg q "$QUEUE" --arg base "$PR_BASE" '{spec:{name:"helper",
-  description:("You answer questions exactly and briefly. Facts and language you know, answer directly. You cannot compute counts, dates or arithmetic over many steps reliably: for those, if no tool you have fits, write one with tool_build (MoonBit, a `call(args : Json) -> Result[Json, String]` in tool/tool.mbt, as the template shows), call it, and answer with its result. After a tool you built answered, propose it once with propose_pr: {\"branch\": \"tool/<name with - for _>\", \"base\": \"" + $base + "\", \"title\": \"feat(tools): <name> — a tool an agent built\", \"body\": \"<what it computes, and the question it answered>\", \"tool\": \"<name>\"}. End with the answer alone on the last line."),
+  description:("You answer questions exactly and briefly. Facts and language you know, answer directly. Never answer a count, a date difference, a sequence or a digit algorithm from memory, even one you think you know: if no tool you have fits, write one with tool_build (MoonBit, a `call(args : Json) -> Result[Json, String]` in tool/tool.mbt, as the template shows), call it, and answer with its result. MoonBit: integers are `Int` and `Int64`; arrays are mutable without `mut` (`let a = Array::make(n, false)`), `mut` is only for a variable you reassign; read a number argument with `guard args is { \"n\": Number(n, ..), .. } else { return Err(\"n is required\") }` (`n` is a Double: `n.to_int()`) and answer `Ok({ \"result\": Json::number(x.to_double()) })`. After a tool you built answered, propose it once with propose_pr: {\"branch\": \"tool/<name with - for _>\", \"base\": \"" + $base + "\", \"title\": \"feat(tools): <name> — a tool an agent built\", \"body\": \"<what it computes, and the question it answered>\", \"tool\": \"<name>\"}. End with the answer alone on the last line."),
   capabilities:[{name:"tool_build"},{name:"propose_pr"}],auto_approve:["tool_build","propose_pr"],max_steps:10,
   model:{kind:"batch_queue",queue_url:$q,model:"free"}}}' \
   | curl -s -o /dev/null -w "create agent: %{http_code}\n" -X PUT -H "$AUTH" -H 'content-type: application/json' $RT/v1/agents/helper --data-binary @-
@@ -64,16 +64,26 @@ known|How do you say "good morning" in Hungarian?|reggelt
 known|Who wrote the novel 1984?|Orwell
 EOF
 
-pass=0; n=0
+pass=0; n=0; guessed=0
 while IFS='|' read -r kind q want; do
   n=$((n+1)); t0=$(date +%s)
-  got=$(curl -s -m 600 -G --data-urlencode "q=$q" $RT/agents/helper/run)
+  got=$(curl -s -m 900 -G --data-urlencode "q=$q" $RT/agents/helper/run)
   last=$(printf '%s\n' "$got" | awk 'NF{l=$0} END{print l}')
-  if printf '%s' "$last" | grep -qiF -- "$want"; then ok=PASS; pass=$((pass+1)); else ok=FAIL; fi
-  printf '%-4s %-5s %-4ss %s\n     want %s, got: %s\n' "$ok" "$kind" "$(( $(date +%s) - t0 ))" "$q" "$want" "$(printf '%s' "$last" | cut -c1-120)"
+  # A number is right only as the answer's last number: the question's own digits do not count.
+  if [[ "$want" =~ ^[0-9]+$ ]]; then
+    ans=$(printf '%s' "$last" | grep -oE '[0-9]+' | tail -1)
+    [ "$ans" = "$want" ] && ok=PASS || ok=FAIL
+  else
+    printf '%s' "$last" | grep -qiF -- "$want" && ok=PASS || ok=FAIL
+  fi
+  # A task that needs a tool passes only if a tool the agent built answered it.
+  used=$(curl -s -H "$AUTH" "$RT/v1/agents/helper/runs?limit=1" | jq -r '[.runs[0].steps[] | select(.kind=="tool" and (.error|not) and (.name|IN("tool_build","propose_pr")|not)) | .name] | unique | join(",")')
+  if [ "$kind" = new ] && [ -z "$used" ] && [ $ok = PASS ]; then ok=GUESS; guessed=$((guessed+1)); fi
+  [ $ok = PASS ] && pass=$((pass+1))
+  printf '%-5s %-5s %4ss %s\n      want %s, got: %s%s\n' "$ok" "$kind" "$(( $(date +%s) - t0 ))" "$q" "$want" "$(printf '%s' "$last" | cut -c1-110)" "${used:+   [tool: $used]}"
 done < "$E/tasks"
 
-echo; echo "answers: $pass/$n right"
+echo; echo "answers: $pass/$n right (a guess at a tool's task does not count: $guessed)"
 echo "tools built: $(ls "$E/rt/forge" 2>/dev/null | sed 's/^helper-//' | tr '\n' ' ')"
 echo "pull requests:"
 curl -s -H "$AUTH" "$RT/v1/agents/helper/runs?limit=50" | jq -r '.runs[].steps[] | select(.kind=="tool" and .name=="propose_pr") |

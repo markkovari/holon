@@ -352,7 +352,11 @@ fn batch_queue_complete(
         .build()
         .map_err(|e| e.to_string())?;
     let payload = rt.block_on(async {
-        let nats = async_nats::connect(&nats_url)
+        // The client's own request timeout is 10 s by default and would cut a turn off long before
+        // the 180 s below: a provider failing over, or a long answer, takes longer.
+        let nats = async_nats::ConnectOptions::new()
+            .request_timeout(Some(std::time::Duration::from_secs(180)))
+            .connect(&nats_url)
             .await
             .map_err(|e| format!("the free queue at {nats_url}: {e}"))?;
         let task = holon_llm::coalesce::BatchTask {
