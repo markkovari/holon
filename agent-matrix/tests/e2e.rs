@@ -7,7 +7,7 @@
 //! first time (matrixdotorg/synapse).
 
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -345,7 +345,20 @@ fn world() -> Option<World> {
     world_with(SpeechConfig::default())
 }
 
-fn world_with(speech: SpeechConfig) -> Option<World> {
+/// Synapse with the bridge's appservice registered, a runtime with scripted agents, and the
+/// config the bridge runs with. What answers Synapse on `bridge_port` is the caller's.
+struct Stage {
+    rt: Arc<Runtime>,
+    cfg: Config,
+    base: String,
+    container: String,
+    bridge_port: u16,
+    work: tempfile::TempDir,
+    down: Synapse,
+    lock: std::sync::MutexGuard<'static, ()>,
+}
+
+fn stage(speech: SpeechConfig) -> Option<Stage> {
     if !docker_ok() {
         eprintln!("skipping: docker is not available");
         return None;
@@ -418,7 +431,11 @@ fn world_with(speech: SpeechConfig) -> Option<World> {
     let appservice_url = format!("http://host.docker.internal:{bridge_port}");
     std::fs::write(&reg_path, setup::registration_yaml(&cfg, &appservice_url)).unwrap();
     deploy(&project, &syn_dir, syn_port, Some(&reg_path)); // now Synapse knows the appservice
+    Some(Stage { rt, cfg, base, container, bridge_port, work, down, lock })
+}
 
+fn world_with(speech: SpeechConfig) -> Option<World> {
+    let Stage { rt, cfg, base, container, bridge_port, work, down, lock } = stage(speech)?;
     let store = FileStore::new(work.path().join("state.json"));
     let bridge: Arc<Bridge> = Bridge::new(cfg, Arc::new(Reqwest::new()), Box::new(store));
     bridge
@@ -1075,4 +1092,143 @@ fn serve(bridge: Arc<Bridge>, port: u16) {
                 .respond(tiny_http::Response::from_string(v.to_string()).with_status_code(status));
         }
     });
+}
+
+/// comp-host serving the built `matrix-bridge` component, as launchd runs it; stopped with the test.
+struct CompHost(std::process::Child);
+
+impl Drop for CompHost {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// The host and the component, when both are built (`cargo build --release -p holon-host`,
+/// `cargo xtask build`).
+fn component_built() -> Option<(PathBuf, PathBuf)> {
+    let host = ["holon-host", "comp-host"]
+        .iter()
+        .map(|b| repo().join("target/release").join(b))
+        .find(|p| p.exists());
+    let wasm = repo().join("components/target/wasm32-wasip2/release/matrix_bridge.wasm");
+    match host {
+        Some(h) if wasm.exists() => Some((h, wasm)),
+        _ => {
+            eprintln!(
+                "skipping: needs target/release/holon-host and the matrix-bridge component built"
+            );
+            None
+        }
+    }
+}
+
+fn comp_host(s: &Stage, host: &Path, wasm: &Path, db: &Path) -> CompHost {
+    let conf = s.work.path().join("bridge.conf");
+    std::fs::write(&conf, setup::config_file(&s.cfg)).unwrap();
+    let authority = |u: &str| u.split_once("://").unwrap().1.trim_end_matches('/').to_string();
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(s.work.path().join("comp-host.log"))
+        .unwrap();
+    let child = Command::new(host)
+        .args(["--component".as_ref(), wasm.as_os_str()])
+        .args(["--addr", &format!("0.0.0.0:{}", s.bridge_port)])
+        .args(["--kv".as_ref(), "sqlite".as_ref(), "--sqlite-path".as_ref(), db.as_os_str()])
+        .args(["--config-file".as_ref(), conf.as_os_str()])
+        // exactly what the config names, as `holon matrix egress` gives launchd
+        .args(["--egress", &authority(&s.cfg.homeserver)])
+        .args(["--egress", &authority(&s.cfg.runtime_url)])
+        .args(["--allow-private-egress", "--pump", "/internal/pump", "--pump-every", "1"])
+        .args(["--mem-cap-mb", "256"])
+        .stdout(log.try_clone().unwrap())
+        .stderr(log)
+        .spawn()
+        .expect("starting comp-host");
+    let health = format!("http://127.0.0.1:{}/health", s.bridge_port);
+    wait_for("comp-host serving the bridge", 30, || {
+        reqwest::blocking::get(&health).ok().filter(|r| r.status().is_success()).map(|_| ())
+    });
+    CompHost(child)
+}
+
+/// The rooms the component keeps, as the board reads them.
+fn rooms(s: &Stage) -> Value {
+    reqwest::blocking::Client::new()
+        .get(format!("http://127.0.0.1:{}/internal/rooms", s.bridge_port))
+        .bearer_auth(&s.cfg.hs_token)
+        .send()
+        .and_then(|r| r.json())
+        .unwrap_or(Value::Null)
+}
+
+#[test]
+fn the_component_on_comp_host_chats_answers_a_poll_and_keeps_its_rooms_across_a_restart() {
+    let Some((host, wasm)) = component_built() else { return };
+    let Some(s) = stage(SpeechConfig::default()) else { return };
+    let db = s.work.path().join("bridge.db");
+    let mut served = comp_host(&s, &host, &wasm, &db);
+    let owner = Owner::login(&s.base);
+
+    // The pump made the rooms: the owner and the agent are in its direct room.
+    let dm = |a: &str| {
+        wait_for(&format!("{a}'s room"), 60, || rooms(&s)["dms"][a].as_str().map(String::from))
+    };
+    let rower = dm("rower");
+    wait_for("the owner and rower in rower's room", 60, || {
+        let j = owner.joined(&rower);
+        (j.contains(&owner.user) && j.contains(&ghost("rower"))).then_some(())
+    });
+
+    // A message is a runtime job; the pump replaces the thinking note with the answer.
+    owner.say(&rower, "how was my last row?");
+    let a = wait_for("rower's answer", 60, || {
+        Some(owner.texts_from(&rower, &ghost("rower"))).filter(|t| !t.is_empty())
+    });
+    assert_eq!(a, ["Your last row was 12,108m."]);
+    assert_eq!(s.rt.store().runs("rower", 5)[0].input, "how was my last row?");
+
+    // A sensitive tool waits on a poll the pump posted; the vote, through Synapse, resolves it.
+    let scout = dm("scout");
+    wait_for("the owner in scout's room", 60, || {
+        owner.joined(&scout).contains(&owner.user).then_some(())
+    });
+    owner.say(&scout, "write the file");
+    let poll = wait_for("the approval poll", 60, || {
+        owner.events(&scout).into_iter().find(|e| {
+            e["type"] == "org.matrix.msc3381.poll.start" && e["sender"] == ghost("scout").as_str()
+        })
+    });
+    owner.call(
+        reqwest::Method::PUT,
+        &format!(
+            "/_matrix/client/v3/rooms/{}/send/org.matrix.msc3381.poll.response/vote1",
+            enc(&scout)
+        ),
+        Some(json!({
+            "m.relates_to": {"rel_type": "m.reference", "event_id": poll["event_id"]},
+            "org.matrix.msc3381.poll.response": {"answers": ["approve"]},
+        })),
+    );
+    let done = wait_for("scout's answer after the vote", 60, || {
+        Some(owner.texts_from(&scout, &ghost("scout"))).filter(|t| !t.is_empty())
+    });
+    assert_eq!(done, ["wrote it"]);
+    assert!(s.rt.store().workspace("scout").unwrap().join("a.txt").exists());
+
+    // The rooms are the app's keyvalue, not the process's: a restart makes none twice.
+    let before = rooms(&s);
+    drop(served);
+    served = comp_host(&s, &host, &wasm, &db);
+    std::thread::sleep(Duration::from_secs(4)); // a few pump passes
+    let after = rooms(&s);
+    assert_eq!(after["dms"], before["dms"], "every agent keeps its room");
+    assert_eq!(after["control_room"], before["control_room"]);
+    assert_eq!(after["projects"], before["projects"]);
+    owner.say(&rower, "and the one before?");
+    wait_for("rower's second answer, after the restart", 60, || {
+        (owner.texts_from(&rower, &ghost("rower")).len() == 2).then_some(())
+    });
+    drop(served);
 }
