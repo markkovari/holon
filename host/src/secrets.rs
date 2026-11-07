@@ -206,3 +206,55 @@ mod tests {
         assert_eq!(urlencoding("vault://acme/stripe"), "vault%3A%2F%2Facme%2Fstripe");
     }
 }
+
+/// The NATS a solo host reads `nats-kv://` secrets over, set at start when any is granted.
+pub static NATS_KV: std::sync::OnceLock<async_nats::Client> = std::sync::OnceLock::new();
+
+/// `nats-kv://<bucket>/<key>`: a secret kept in a JetStream keyvalue bucket every node of the
+/// cluster reads (ADR-0126's `SECRETS`), so a key is stored once, not copied onto each box.
+pub fn nats_kv_ref(reference: &str) -> Option<(&str, &str)> {
+    let (bucket, key) = reference.strip_prefix("nats-kv://")?.split_once('/')?;
+    let ok = |s: &str| {
+        !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+    };
+    (ok(bucket) && ok(key)).then_some((bucket, key))
+}
+
+/// The value under `key` in `bucket`, trimmed (a key file's newline is not part of the key).
+pub async fn fetch_nats_kv(
+    nats: &async_nats::Client,
+    bucket: &str,
+    key: &str,
+) -> Result<String, String> {
+    let kv = async_nats::jetstream::new(nats.clone())
+        .get_key_value(bucket)
+        .await
+        .map_err(|e| format!("bucket {bucket}: {e}"))?;
+    match kv.get(key).await.map_err(|e| format!("{bucket}/{key}: {e}"))? {
+        Some(v) => Ok(String::from_utf8_lossy(&v).trim().to_string()),
+        None => Err(format!("{bucket} has no {key}")),
+    }
+}
+
+#[cfg(test)]
+mod nats_kv_tests {
+    use super::nats_kv_ref;
+
+    #[test]
+    fn a_nats_kv_reference_names_one_bucket_and_one_key() {
+        assert_eq!(
+            nats_kv_ref("nats-kv://SECRETS/groq-api-key"),
+            Some(("SECRETS", "groq-api-key"))
+        );
+        for bad in [
+            "vault://o/k",
+            "nats-kv://SECRETS",
+            "nats-kv:///k",
+            "nats-kv://B/",
+            "nats-kv://B/a/b",
+            "nats-kv://B/a b",
+        ] {
+            assert_eq!(nats_kv_ref(bad), None, "{bad}");
+        }
+    }
+}

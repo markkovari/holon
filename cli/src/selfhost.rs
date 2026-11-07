@@ -64,11 +64,19 @@ pub struct Spec {
     /// `AppSpec::mem_cap_mb`: the guest's memory ceiling in MiB.
     #[serde(default)]
     pub mem_cap_mb: Option<usize>,
+    /// How long one request may run, in seconds (comp-host's default is 30): an app that waits on a
+    /// slow upstream, like a model, needs longer.
+    #[serde(default)]
+    pub request_timeout_secs: Option<u64>,
 
     /// `<subject>=<path>`: messages the host delivers to the app (ADR-0131), from the NATS at
     /// `kv_url` when `kv = "nats"`, else at `nats_url`.
     #[serde(default)]
     pub subscribe: Vec<String>,
+    /// `<key>=nats-kv://<bucket>/<name>`: a secret the app reads through `comp:secrets`, from a
+    /// JetStream bucket on the same NATS (ADR-0126's `SECRETS`), so no box keeps a copy.
+    #[serde(default)]
+    pub secrets: Vec<String>,
     #[serde(default)]
     pub nats_url: Option<String>,
 }
@@ -208,10 +216,21 @@ pub fn check(spec: &Spec) -> Result<()> {
             bail!("subscribe {s:?} must be <subject>=<path>, e.g. holon.llm.ask=/ask");
         }
     }
-    if !spec.subscribe.is_empty() && spec.kv != "nats" {
+    for s in &spec.secrets {
+        let name = |x: &str| {
+            !x.is_empty() && x.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+        };
+        let ok = s.split_once("=nats-kv://").is_some_and(|(key, at)| {
+            name(key) && at.split_once('/').is_some_and(|(b, k)| name(b) && name(k))
+        });
+        if !ok {
+            bail!("secrets {s:?} must be <key>=nats-kv://<bucket>/<name>, e.g. groq-api-key=nats-kv://SECRETS/groq-api-key");
+        }
+    }
+    if !(spec.subscribe.is_empty() && spec.secrets.is_empty()) && spec.kv != "nats" {
         match &spec.nats_url {
             Some(u) if u.chars().all(|c| c.is_ascii_alphanumeric() || ":/.,-_".contains(c)) => {}
-            _ => bail!("subscribe needs nats_url (a NATS URL), or kv = \"nats\""),
+            _ => bail!("a subscription or a secret needs nats_url (a NATS URL), or kv = \"nats\""),
         }
     }
     for d in &spec.dirs {
@@ -357,13 +376,20 @@ pub fn render_unit(spec: &Spec, layout: &Layout) -> String {
     for s in &spec.subscribe {
         args.push_str(&format!(" --subscribe {s}"));
     }
+    for s in &spec.secrets {
+        args.push_str(&format!(" --secret {s}"));
+    }
     for d in &spec.dirs {
         args.push_str(&format!(" --dir {d}"));
     }
     if let Some(m) = spec.mem_cap_mb {
         args.push_str(&format!(" --mem-cap-mb {m}"));
     }
-    if let (false, true, Some(u)) = (spec.subscribe.is_empty(), spec.kv != "nats", &spec.nats_url) {
+    if let Some(t) = spec.request_timeout_secs {
+        args.push_str(&format!(" --request-timeout-secs {t}"));
+    }
+    let needs_nats = !(spec.subscribe.is_empty() && spec.secrets.is_empty());
+    if let (true, true, Some(u)) = (needs_nats, spec.kv != "nats", &spec.nats_url) {
         args.push_str(&format!(" --nats-url {u}"));
     }
     // The host is the clock: it POSTs to itself on loopback, never through the public name.
@@ -1000,6 +1026,45 @@ routes = "upstream=http://127.0.0.1:9000"
             let s: Spec = toml::from_str(&format!("{MINIMAL}dirs = [\"{bad}\"]\n")).unwrap();
             assert!(check(&s).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_request_timeout_reaches_the_unit_only_when_the_spec_sets_one() {
+        let u = render_unit(
+            &spec(&format!("{MINIMAL}request_timeout_secs = 170\n")),
+            &Layout::default(),
+        );
+        assert!(u.contains(" --request-timeout-secs 170"), "{u}");
+        assert!(!render_unit(&spec(MINIMAL), &Layout::default()).contains("--request-timeout-secs"));
+    }
+
+    #[test]
+    fn secrets_from_nats_reach_the_unit_and_anything_else_is_refused() {
+        let s = spec(&format!(
+            "{MINIMAL}secrets = [\"groq-api-key=nats-kv://SECRETS/groq-api-key\"]\nnats_url = \"nats://127.0.0.1:4222\"\n"
+        ));
+        let u = render_unit(&s, &Layout::default());
+        assert!(u.contains(" --secret groq-api-key=nats-kv://SECRETS/groq-api-key"), "{u}");
+        assert!(
+            u.contains(" --nats-url nats://127.0.0.1:4222"),
+            "secrets alone need the NATS: {u}"
+        );
+        for bad in [
+            "k=vault://o/k",
+            "k=nats-kv://SECRETS",
+            "k=nats-kv://S/a b",
+            "=nats-kv://S/k",
+            "k nats-kv://S/k",
+        ] {
+            let s: Spec = toml::from_str(&format!(
+                "{MINIMAL}secrets = [\"{bad}\"]\nnats_url = \"nats://127.0.0.1:4222\"\n"
+            ))
+            .unwrap();
+            assert!(check(&s).is_err(), "{bad}");
+        }
+        let no_nats: Spec =
+            toml::from_str(&format!("{MINIMAL}secrets = [\"k=nats-kv://S/k\"]\n")).unwrap();
+        assert!(check(&no_nats).is_err(), "a secret needs a NATS to come from");
     }
 
     #[test]
