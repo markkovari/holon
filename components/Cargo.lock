@@ -308,13 +308,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bigadd"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "billing-domain"
 version = "0.1.0"
 dependencies = [
@@ -469,13 +462,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "calc"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "capability-advisor"
 version = "0.1.0"
 dependencies = [
@@ -494,13 +480,6 @@ name = "card-identify"
 version = "0.1.0"
 dependencies = [
  "serde_json",
- "wit-bindgen-rt",
-]
-
-[[package]]
-name = "case-conv"
-version = "0.1.0"
-dependencies = [
  "wit-bindgen-rt",
 ]
 
@@ -1117,13 +1096,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "expr"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "fdeflate"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1435,13 +1407,6 @@ dependencies = [
  "base64",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
-]
-
-[[package]]
-name = "glob"
-version = "0.1.0"
-dependencies = [
  "wit-bindgen-rt",
 ]
 
@@ -2527,13 +2492,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ordinal"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "otp"
 version = "0.1.0"
 dependencies = [
@@ -3109,13 +3067,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "roman"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
-]
-
-[[package]]
 name = "room-booking-domain"
 version = "0.1.0"
 dependencies = [
@@ -3124,13 +3075,6 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen",
-]
-
-[[package]]
-name = "rot13"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen-rt",
 ]
 
 [[package]]
