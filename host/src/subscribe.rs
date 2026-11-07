@@ -52,7 +52,7 @@ pub async fn spawn(
                 let (nats, http, url) = (nats.clone(), http.clone(), url.clone());
                 tokio::spawn(async move {
                     let _permit = permit;
-                    let answer = http.post(&url).body(msg.payload.to_vec()).send().await;
+                    let answer = http.post(&url).body(msg.payload).send().await;
                     let Some(reply) = msg.reply else { return };
                     // Any status is the app's answer; only a failure to get one is the host's to say.
                     let sent = match answer {
