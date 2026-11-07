@@ -111,6 +111,11 @@ enum MatrixCmd {
         #[arg(long, default_value = "http://127.0.0.1:9009")]
         url: String,
     },
+    /// Print what the bridge may reach, one `host:port` a line, for `comp-host --egress`.
+    Egress {
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
 }
 
 fn matrix_dir(dir: Option<PathBuf>) -> PathBuf {
@@ -539,6 +544,11 @@ fn main() -> Result<()> {
         }
         Cmd::Matrix(MatrixCmd::Migrate { dir }) => {
             println!("wrote {}", matrix::migrate(&matrix_dir(dir))?.display());
+        }
+        Cmd::Matrix(MatrixCmd::Egress { dir }) => {
+            for a in matrix::egress(&matrix_dir(dir))? {
+                println!("{a}");
+            }
         }
         Cmd::Matrix(MatrixCmd::ImportState { dir, url }) => {
             matrix::import_state(&matrix_dir(dir), &url)?;

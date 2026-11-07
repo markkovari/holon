@@ -1163,15 +1163,30 @@ impl Bridge {
             Err(e) => return note(&format!("⚠️ I could not fetch that recording: {e}")),
         };
         self.mx.typing(room, &ghost, true);
-        let heard = self.rt.transcribe(audio);
-        let text = match heard {
+        // A long recording takes longer than Synapse waits for this transaction: a job.
+        let p = Pending { speak: true, ..self.pending_for(agent, room, reply_to, thread_id) };
+        match self.rt.start_transcribe(audio) {
+            Ok(job) => self.state.add_pending(Pending { job, transcribing: true, ..p }),
+            Err(e) => self.heard(p, Err(e)),
+        }
+    }
+
+    /// A voice message's transcript, or why there is none: the agent says what it heard and
+    /// is run on it.
+    fn heard(&self, p: Pending, transcript: Result<String, String>) {
+        let ghost = &p.sender;
+        let note = |text: &str| {
+            let (room, thread, reply_to) = (&p.room, p.thread.as_deref(), p.reply_to.as_deref());
+            let _ = self.mx.send_markdown_threaded(room, ghost, text, thread, reply_to);
+        };
+        let text = match transcript {
             Ok(t) if t.trim().is_empty() => {
-                self.mx.typing(room, &ghost, false);
+                self.mx.typing(&p.room, ghost, false);
                 return note("🎙️ I did not catch anything in that recording.");
             }
             Ok(t) => t.trim().to_string(),
             Err(e) => {
-                self.mx.typing(room, &ghost, false);
+                self.mx.typing(&p.room, ghost, false);
                 let why = if e.contains("not configured") {
                     "speech-to-text is not set up on the runtime (start it with --stt-bin)"
                         .to_string()
@@ -1182,14 +1197,13 @@ impl Bridge {
             }
         };
         note(&format!("🎙️ “{}”", clip(&text, 1_000)));
-
-        let prompt = match thread_id {
+        let prompt = match &p.thread {
             Some(t) => format!("[Thread: {t}]\n{text}"),
             None => text,
         };
-
-        let p = Pending { speak: true, ..self.pending_for(agent, room, reply_to, thread_id) };
-        self.start(p, self.start_with_follow_up(agent, room, reply_to, &prompt));
+        let reply_to = p.reply_to.clone().unwrap_or_default();
+        let started = self.start_with_follow_up(&p.agent, &p.room, &reply_to, &prompt);
+        self.start(Pending { transcribing: false, ..p }, started);
     }
 
     /// Posts `text` as a voice message from `ghost`.
@@ -1332,7 +1346,9 @@ impl Bridge {
     /// agent typing.
     pub fn poll_pending(&self) {
         for p in self.state.read(|d| d.pending.clone()) {
-            match self.rt.job(&p.job) {
+            let job =
+                if p.transcribing { self.rt.transcription(&p.job) } else { self.rt.job(&p.job) };
+            match job {
                 Job::Running => {
                     if p.sender != self.bridge_user() {
                         self.mx.typing(&p.room, &p.sender, true);
@@ -1340,6 +1356,10 @@ impl Bridge {
                 }
                 Job::Done(ok, answer) => {
                     let Some(mut p) = self.state.take_pending(&p.job) else { continue };
+                    if p.transcribing {
+                        self.heard(p, if ok { Ok(answer) } else { Err(answer) });
+                        continue;
+                    }
                     if !ok {
                         if let Some(r) = p.retry.take() {
                             let again = self.rt.start_run(

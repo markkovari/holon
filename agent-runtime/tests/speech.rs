@@ -215,3 +215,33 @@ fn the_real_on_device_engines_hear_what_the_real_voice_says() {
         "the helper's reason reaches the caller"
     );
 }
+
+#[test]
+fn a_transcription_started_without_waiting_is_read_back_by_its_job() {
+    let (base, _d) = serve_with(SpeechConfig::default());
+    let c = reqwest::blocking::Client::new();
+    let r = c
+        .post(format!("{base}/speech/transcribe?wait=false"))
+        .bearer_auth("tok")
+        .body(vec![1, 2, 3])
+        .send()
+        .unwrap();
+    assert_eq!(r.status(), 202);
+    let job = r.json::<Value>().unwrap()["job"].as_str().unwrap().to_string();
+    let read =
+        || c.get(format!("{base}/speech/transcribe/{job}")).bearer_auth("tok").send().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let r = loop {
+        let r = read();
+        if r.status() != 202 || std::time::Instant::now() > deadline {
+            break r;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    // the refusal it would have answered at once, kept as the job's end
+    assert_eq!(r.status(), 501);
+    assert!(r.text().unwrap().contains("not configured"));
+    let unknown = c.get(format!("{base}/speech/transcribe/job-nope")).bearer_auth("tok").send();
+    assert_eq!(unknown.unwrap().status(), 404);
+    assert_eq!(c.get(format!("{base}/speech/transcribe/{job}")).send().unwrap().status(), 401);
+}

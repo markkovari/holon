@@ -221,19 +221,8 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
 
     if segs.first() == Some(&"v1") {
         let trace = caller_trace(&req);
-        return match crate::v1::route(rt, &method, &segs[1..], query, &body, authed, trace) {
-            crate::v1::Reply::Json(status, v) => json_reply(req, status, v),
-            crate::v1::Reply::Problem(status, detail) => reply(
-                req,
-                status,
-                "application/problem+json",
-                crate::v1::problem_body(status, &detail).to_string(),
-            ),
-            crate::v1::Reply::Events(after) => {
-                let resume = header_value(&req, "last-event-id").and_then(|v| v.parse().ok());
-                events(rt, req, resume.unwrap_or(after))
-            }
-        };
+        let r = crate::v1::route(rt, &method, &segs[1..], query, &body, authed, trace);
+        return send_v1(rt, req, r);
     }
     if !authed {
         return text(req, 401, "admin token required");
@@ -335,6 +324,21 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
                 "locale": rt.speech().config().default_locale,
             }),
         ),
+        // A long recording outlasts its caller's request; it is read back at /speech/transcribe/{job}.
+        (Method::Post, ["speech", "transcribe"])
+            if query_param(query, "wait").as_deref() == Some("false") =>
+        {
+            let (rt, lang) = (rt.clone(), query_param(query, "lang"));
+            let job = crate::v1::start_job(move |_| {
+                match rt.speech().transcribe(&raw, lang.as_deref()) {
+                    Ok(text) => Ok(json!({ "text": text })),
+                    Err(e) if e.contains("not configured") => Err((501, e)),
+                    Err(e) => Err((422, e)),
+                }
+            });
+            json_reply(req, 202, json!({ "job": job }))
+        }
+        (Method::Get, ["speech", "transcribe", job]) => send_v1(rt, req, crate::v1::job(job)),
         (Method::Post, ["speech", "transcribe"]) => {
             match rt.speech().transcribe(&raw, query_param(query, "lang").as_deref()) {
                 Ok(text) => json_reply(req, 200, json!({ "text": text })),
@@ -388,6 +392,22 @@ fn handle(rt: &Arc<Runtime>, token: &str, mut req: Request) {
 
 /// `GET /v1/events`: what the log still holds after `after`, then every event as it happens, as SSE.
 /// Written to the socket, not through a Response: tiny_http holds a chunked body back in 8 KB blocks.
+fn send_v1(rt: &Arc<Runtime>, req: Request, r: crate::v1::Reply) {
+    match r {
+        crate::v1::Reply::Json(status, v) => json_reply(req, status, v),
+        crate::v1::Reply::Problem(status, detail) => reply(
+            req,
+            status,
+            "application/problem+json",
+            crate::v1::problem_body(status, &detail).to_string(),
+        ),
+        crate::v1::Reply::Events(after) => {
+            let resume = header_value(&req, "last-event-id").and_then(|v| v.parse().ok());
+            events(rt, req, resume.unwrap_or(after))
+        }
+    }
+}
+
 fn events(rt: &Arc<Runtime>, req: Request, after: u64) {
     let (backlog, rx) = rt.follow(after);
     let mut w = req.into_writer();

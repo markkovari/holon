@@ -2,6 +2,7 @@
 # Keep the agent stack running across logins and crashes, as launchd user agents.
 #
 #   ./install.sh install    write the plists and (re)start every service
+#   ./install.sh install bridge runtime   only those (the checks still run)
 #   ./install.sh uninstall  stop and remove them
 #   ./install.sh status     what is running
 #
@@ -26,7 +27,8 @@ LAZY=" qwen qwen-large embed "
 NO_THINKING='{"enable_thinking":false}'
 PATH_ENV="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
-# name -> working directory, then program arguments
+# name -> working directory, then program arguments; $MATRIX_EGRESS is one --egress per word.
+# shellcheck disable=SC2086
 spec() {
   case "$1" in
     fm) echo "$HOME"; echo /usr/bin/fm serve --port 18099 ;;
@@ -38,8 +40,9 @@ spec() {
     vcs) echo "$STATE"; echo "$REPO/target/release/comp-host" --component "$REPO/components/target/vcs_gateway.composed.wasm" --addr 127.0.0.1:18014 --kv sqlite --sqlite-path "$STATE/vcs.db" --dir "$STATE/checkouts" --mem-cap-mb 256 ;;
     agentd) echo "$STATE"; echo "$REPO/target/release/comp-agentd" --addr 127.0.0.1:18016 --token-file "$STATE/agentd-token" --workspace-root "$STATE/workspaces" --state-dir "$STATE/agentd" --provider openai --base-url https://api.deepseek.com --api-key-file "$HOME/.comp-secrets/deepseek" --vcs-url http://127.0.0.1:18014 ;;
     runtime) echo "$REPO/agent-runtime"; echo "$REPO/target/release/agent-runtime" --state-dir "$STATE" --listen 127.0.0.1:18017 --local-url http://127.0.0.1:18099 --stt-bin "$STATE/holon-stt" --embed-url http://127.0.0.1:18102 --embed-service io.holon.embed --platform-file "$STATE/platform.json" --agentd-url http://127.0.0.1:18016 --agentd-token-file "$STATE/agentd-token" --session-model deepseek-chat ;;
-    # Synapse dials it over the tailnet; it dials the homeserver there and the runtime on loopback.
-    bridge) echo "$MATRIX"; echo "$REPO/target/release/comp-host" --component "$REPO/components/target/wasm32-wasip2/release/matrix_bridge.wasm" --addr 0.0.0.0:9009 --kv sqlite --sqlite-path "$MATRIX/bridge.db" --config-file "$MATRIX/bridge.conf" --egress '*' --allow-private-egress --pump /internal/pump --pump-every 2 --mem-cap-mb 256 ;;
+    # Synapse dials it over the tailnet. It reaches only what its config names (the homeserver on the
+    # tailnet, the runtime on loopback: both private, hence the flag), as `holon matrix egress` lists.
+    bridge) echo "$MATRIX"; echo "$REPO/target/release/comp-host" --component "$REPO/components/target/wasm32-wasip2/release/matrix_bridge.wasm" --addr 0.0.0.0:9009 --kv sqlite --sqlite-path "$MATRIX/bridge.db" --config-file "$MATRIX/bridge.conf" $MATRIX_EGRESS --allow-private-egress --pump /internal/pump --pump-every 2 --mem-cap-mb 256 ;;
   esac
 }
 
@@ -105,11 +108,19 @@ platform_account() {
 # The bridge component's config file; a native bridge's bridge.json becomes it once, keeping its
 # tokens so Synapse's registration stays valid.
 matrix_conf() {
-  [ -f "$MATRIX/bridge.conf" ] && return
+  [ -f "$MATRIX/bridge.conf" ] && return 0
   [ -f "$MATRIX/bridge.json" ] || { echo "missing $MATRIX/bridge.conf — holon matrix init first"; exit 1; }
   local jev="$HOME/.comp-secrets/typesafe"
   if [ -f "$jev" ]; then HOLON_JEV_KEY_FILE="$jev" "$REPO/target/release/holon" matrix migrate
   else "$REPO/target/release/holon" matrix migrate; fi
+}
+
+# `--egress host:port` for each address the bridge's config names.
+matrix_egress() {
+  local out a
+  out="$("$REPO/target/release/holon" matrix egress)"
+  MATRIX_EGRESS=""
+  while read -r a; do MATRIX_EGRESS+="--egress $a "; done <<<"$out"
 }
 
 # The native bridge's rooms, handed once to the component as soon as it answers.
@@ -121,6 +132,8 @@ matrix_state() {
 
 case "${1:-}" in
   install)
+    shift
+    [ $# -gt 0 ] && SERVICES=("$@")
     mkdir -p "$AGENTS" "$LOGS"
     platform_conf
     tokens
@@ -138,6 +151,7 @@ case "${1:-}" in
       codesign --force --sign - "$b" 2>/dev/null || true
     done
     matrix_conf
+    matrix_egress
     for s in "${SERVICES[@]}"; do
       f="$AGENTS/io.holon.$s.plist"
       launchctl bootout "gui/$UID_/io.holon.$s" 2>/dev/null || true

@@ -326,19 +326,16 @@ fn start_run(rt: &Arc<Runtime>, name: &str, body: &str, trace: Option<Traceparen
         if rt.store().get(name).is_none() {
             return problem(404, format!("no agent named {name}"));
         }
-        let id = format!("job-{}", crate::trace::new_span_id());
-        jobs::started(&id);
-        let (rt, agent, job) = (rt.clone(), name.to_string(), id.clone());
+        let (rt, agent) = (rt.clone(), name.to_string());
         // A run can wait minutes on an approval; its progress is on the stream, its end at the job.
-        std::thread::spawn(move || {
-            let r =
-                crate::server::start_run(&rt, &agent, &input, &why, project, attachments, trace);
-            let r = r.map(|rec| {
-                let mut v = json!(rec);
-                v["job"] = json!(job);
-                v
-            });
-            jobs::ended(&job, r);
+        let id = start_job(move |job| {
+            crate::server::start_run(&rt, &agent, &input, &why, project, attachments, trace).map(
+                |rec| {
+                    let mut v = json!(rec);
+                    v["job"] = json!(job);
+                    v
+                },
+            )
         });
         return Reply::Json(202, json!({"agent": name, "status": "running", "job": id}));
     }
@@ -385,7 +382,19 @@ fn handoff(rt: &Arc<Runtime>, name: &str, body: &str, trace: Option<Traceparent>
     }
 }
 
-fn job(id: &str) -> Reply {
+/// Runs `work` on its own thread under a new job id, answered at once; `work` is handed the id.
+pub(crate) fn start_job(
+    work: impl FnOnce(&str) -> Result<Value, (u16, String)> + Send + 'static,
+) -> String {
+    let id = format!("job-{}", crate::trace::new_span_id());
+    jobs::started(&id);
+    let job = id.clone();
+    std::thread::spawn(move || jobs::ended(&job, work(&job)));
+    id
+}
+
+/// A job as `/v1/jobs` answers it: 202 running, 200 its value, or its refusal; 404 unknown.
+pub(crate) fn job(id: &str) -> Reply {
     match jobs::get(id) {
         Some(jobs::Job::Running) => Reply::Json(202, json!({"job": id, "status": "running"})),
         Some(jobs::Job::Done(run)) => Reply::Json(200, run),

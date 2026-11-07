@@ -44,12 +44,13 @@ these is a capability: each is a way of waiting.
 ## Consequences
 
 - One more component on comp-host and one less native binary; launchd's `bridge` is `comp-host`
-  with `--pump`, `--kv sqlite` and `--config-file`. Egress is `'*'` with private addresses allowed:
-  the homeserver is on the tailnet and the runtime on loopback, and both are config, not code.
-- A Synapse transaction is answered when its events are handled, as before; what is slow (a run) is
-  a job. A voice note is still transcribed inside the transaction: a long one can outlast the
-  host's 30 s request timeout, and Synapse's retry is then dropped as already seen. *Shortcut:
-  transcription inline; make it a job like a run when voice notes get long.*
+  with `--pump`, `--kv sqlite` and `--config-file`. Its egress is what its config names, as
+  `holon matrix egress` lists it (the homeserver, the runtime, Jev with a key); private addresses
+  are allowed, since the homeserver is on the tailnet and the runtime on loopback.
+- A Synapse transaction is answered when its events are handled, as before; what is slow is a job:
+  a run, and a voice note's transcription (`POST /speech/transcribe?wait=false`, read back at
+  `/speech/transcribe/{job}`, off `/v1` so `/v1/jobs` stays runs only). The pump turns a finished
+  transcript into what it heard and a run, so no recording is too long for a request.
 - The suite found two bugs the native bridge had: an agent's earlier answers reached its history as
   "*(thinking...)*" (an edit was skipped, not applied), and the owner, rate-limited by Synapse while
   joining a burst of new rooms, was left with an invite for good. History now reads a message as

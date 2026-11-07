@@ -3,6 +3,8 @@
 use agent_wire::jev::{self as codec, AnswerSpec, QuestionItem, QuestionSpec};
 
 const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
+/// What the bridge's egress must name for Jev.
+pub const AUTHORITY: &str = "api.typesafe.ai:443";
 const MODEL: &str = "jev-latest";
 /// In milli-probability.
 const THRESHOLD: u32 = 500;
