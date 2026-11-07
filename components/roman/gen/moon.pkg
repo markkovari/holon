@@ -1,0 +1,22 @@
+import {
+  "demo/roman/gen/interface/demo/roman/numerals" @numerals,
+}
+
+warnings = "-44"
+
+pkgtype(kind: "foreign_library")
+
+options(
+  link: {
+    "wasm": {
+      "export-memory-name": "memory",
+      "heap-start-address": 16,
+      "exports": [
+        "mbt_ffi_cabi_realloc:cabi_realloc",
+        "wasmExportFromRoman:demo:roman/numerals@0.1.0#from-roman",
+        "wasmExportToRoman:demo:roman/numerals@0.1.0#to-roman",
+        "wasmExportToRomanPostReturn:cabi_post_demo:roman/numerals@0.1.0#to-roman"
+      ],
+    },
+  },
+)
