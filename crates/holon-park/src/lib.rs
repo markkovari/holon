@@ -13,12 +13,12 @@
 //! mirrors its types one to one, [`ticket`] is the content-addressed ticket id
 //! that makes `park` idempotent, [`store`] is the one storage trait
 //! [`engine::Engine`] needs, and [`mem`] is its in-memory implementation.
-//! [`recover`] is the pass a resumer runs on a timer, [`resume`] is what it does
-//! with the result, [`wire`] is the JSON the park app speaks, and [`serve`] answers it.
+//! [`recover`] is the pass a sweep runs, [`resume`] is what it does with the result, [`kvstore`]
+//! is the store over any compare-and-set keyvalue, [`wire`] is the JSON the park app speaks, and
+//! [`serve`] answers it.
 //!
 //! The service around the engine is the park app (ADR-0132): `components/park-store` runs it on
-//! its keyvalue and `components/park-gateway` serves it. The `native` adapter in [`nats`] is the
-//! engine on JetStream, kept for a native caller.
+//! its keyvalue and `components/park-gateway` serves it.
 
 pub mod batch;
 pub mod engine;
@@ -33,8 +33,7 @@ pub mod store;
 pub mod ticket;
 pub mod wire;
 
-#[cfg(feature = "native")]
-pub mod nats;
+pub mod kvstore;
 
 pub use engine::Engine;
 pub use error::ParkError;

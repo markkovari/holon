@@ -25,7 +25,7 @@ use holon_park::model as m;
 use holon_park::recover::RecoveryPolicy;
 use holon_park::resume::{self, Delivery, Handled, Sink, SinkReply};
 use holon_park::{serve, wire, Engine};
-use kvstore::{block_on, KvStore};
+use kvstore::{block_on, kv_store, KvStore};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use witconv::{ToModel, ToWit};
@@ -67,7 +67,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), t::ParkError> {
 /// What it announces is delivered by `sweep`, not now: the sink may be the very caller (comp-agentd
 /// waking its own approval), and a delivery inside its call would be answered by itself.
 fn post(func: &str, body: &[u8]) -> Result<(u16, Vec<u8>), t::ParkError> {
-    let engine = Engine::new(KvStore);
+    let engine = Engine::new(kv_store());
     let a = block_on(serve::dispatch(&engine, func, body, holon_park::engine::now_ms()));
     Ok((a.status, serde_json::to_vec(&a.body).unwrap_or_default()))
 }
@@ -160,7 +160,7 @@ fn resumer() -> m::Agent {
 fn sweep() -> Result<u32, t::ParkError> {
     let url = cfg("park-sink-url")
         .ok_or_else(|| storage("park-sink-url is not set: nowhere to deliver"))?;
-    let engine = Engine::new(KvStore);
+    let engine = Engine::new(kv_store());
     let sink = HttpSink { url };
     let redeliver = cfg("park-redeliver-secs").and_then(|s| s.parse().ok()).unwrap_or(1u64);
     let grace = cfg("park-deadline-grace-secs").and_then(|s| s.parse::<u64>().ok());

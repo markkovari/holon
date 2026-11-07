@@ -1,7 +1,6 @@
 //! A resumer (ADR-0106): deliver at least once, then close; recover on a timer.
 
 use std::future::Future;
-use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -83,7 +82,7 @@ pub enum Handled {
     /// The ticket is gone, taken or cancelled, or a later re-dispatch superseded this one.
     Stale,
     Gone,
-    /// Nak the message so it returns after [`backoff`].
+    /// Not delivered: the next sweep tries again.
     Retry(String),
 }
 
@@ -91,12 +90,6 @@ impl Handled {
     pub fn is_finished(&self) -> bool {
         !matches!(self, Handled::Retry(_))
     }
-}
-
-/// Capped at 256s: a sink down for an hour is retried a few dozen times, not a few thousand.
-pub fn backoff(delivered: u64) -> Duration {
-    let exp = delivered.saturating_sub(1).min(8) as u32;
-    Duration::from_secs(1u64 << exp)
 }
 
 /// A message is a nudge, not the truth: what is done is decided by the ticket as it is now.
@@ -202,173 +195,9 @@ pub async fn sweep<S: ParkStore, A: Announcer>(
     Ok(Swept { repaired, batches, recovered, unannounced })
 }
 
-#[cfg(feature = "native")]
-#[derive(Debug, Clone)]
-pub struct RunConfig {
-    /// Resumers sharing one durable consumer share the work.
-    pub consumer: String,
-    /// Must outlast one sink call, or the server hands the message to another resumer.
-    pub ack_wait: Duration,
-    pub concurrency: usize,
-    pub sweep_every: Duration,
-    pub policy: RecoveryPolicy,
-    pub by: Agent,
-}
-
-#[cfg(feature = "native")]
-impl Default for RunConfig {
-    fn default() -> Self {
-        RunConfig {
-            consumer: "comp-resume".into(),
-            ack_wait: Duration::from_secs(60),
-            concurrency: 8,
-            sweep_every: Duration::from_secs(15),
-            policy: RecoveryPolicy::default(),
-            by: Agent {
-                id: "comp-resume".into(),
-                goal: Some("recovery sweep".into()),
-                model: None,
-            },
-        }
-    }
-}
-
-/// Dying instead of returning is the case this is built for: whatever was in flight is
-/// redelivered after `ack_wait`, and the sink sees the same [`Delivery`] again.
-#[cfg(feature = "native")]
-pub async fn run<S, K>(
-    engine: std::sync::Arc<Engine<S>>,
-    wake: std::sync::Arc<crate::nats::WakeStream>,
-    sink: std::sync::Arc<K>,
-    cfg: RunConfig,
-    shutdown: tokio::sync::watch::Receiver<bool>,
-) -> Result<()>
-where
-    S: ParkStore + 'static,
-    K: Sink + 'static,
-{
-    use std::sync::Arc;
-
-    use tokio::sync::Semaphore;
-
-    use crate::engine::now_ms;
-
-    let concurrency = cfg.concurrency.max(1);
-    let mut consumer = wake.consumer(&cfg.consumer, cfg.ack_wait).await?;
-
-    let sweeper = {
-        let (engine, wake, cfg, mut shutdown) =
-            (engine.clone(), wake.clone(), cfg.clone(), shutdown.clone());
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(cfg.sweep_every);
-            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            loop {
-                tokio::select! {
-                    _ = shutdown.changed() => break,
-                    _ = tick.tick() => {}
-                }
-                match sweep(&engine, &*wake, &cfg.by, &cfg.policy, now_ms()).await {
-                    Ok(s) => {
-                        if !s.repaired.is_empty() {
-                            eprintln!("holon-park resume: repaired indexes: {:?}", s.repaired);
-                        }
-                        for b in &s.batches {
-                            eprintln!(
-                                "holon-park resume: commit {} (session {}): {:?}",
-                                b.batch, b.session, b.outcome
-                            );
-                        }
-                        for r in &s.recovered {
-                            eprintln!(
-                                "holon-park resume: {:?} {} (session {})",
-                                r.action, r.ticket, r.session
-                            );
-                        }
-                        for (ticket, e) in &s.unannounced {
-                            eprintln!("holon-park resume: could not announce {ticket}: {e}");
-                        }
-                    }
-                    Err(e) => eprintln!("holon-park resume: recovery pass failed: {e}"),
-                }
-            }
-        })
-    };
-
-    let permits = Arc::new(Semaphore::new(concurrency));
-    let mut shutdown = shutdown;
-    let mut ended: Result<()> = Ok(());
-    loop {
-        let permit = tokio::select! {
-            _ = shutdown.changed() => break,
-            p = permits.clone().acquire_owned() => match p {
-                Ok(p) => p,
-                Err(_) => break,
-            },
-        };
-        let next = tokio::select! {
-            _ = shutdown.changed() => break,
-            n = consumer.next() => n,
-        };
-        let delivery = match next {
-            Ok(Some(d)) => d,
-            Ok(None) => {
-                ended = Err(ParkError::storage("the PARK_WAKE consumer's stream ended"));
-                break;
-            }
-            Err(e) => {
-                // Transient: the client re-pulls by itself; only slow the retry.
-                eprintln!("holon-park resume: reading PARK_WAKE: {e}");
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                continue;
-            }
-        };
-        let (engine, sink, by) = (engine.clone(), sink.clone(), cfg.by.clone());
-        tokio::spawn(async move {
-            let _permit = permit;
-            let delay = backoff(delivery.delivered);
-            let verdict = handle(&engine, &*sink, &delivery.wake, &by, now_ms()).await;
-            let answered = match verdict {
-                Ok(h) if h.is_finished() => delivery.ack().await,
-                Ok(h) => {
-                    if let Handled::Retry(why) = &h {
-                        eprintln!(
-                            "holon-park resume: {} not delivered ({why}); again in {delay:?}",
-                            delivery.wake.ticket
-                        );
-                    }
-                    delivery.nak(delay).await
-                }
-                Err(e) => {
-                    eprintln!(
-                        "holon-park resume: {}: {e}; again in {delay:?}",
-                        delivery.wake.ticket
-                    );
-                    delivery.nak(delay).await
-                }
-            };
-            if let Err(e) = answered {
-                // The server redelivers after `ack_wait`; the sink dedupes.
-                eprintln!("holon-park resume: answering PARK_WAKE: {e}");
-            }
-        });
-    }
-
-    // A sweep cut short by the timeout only costs a re-announcement.
-    let _ = permits.acquire_many(concurrency as u32).await;
-    let _ = tokio::time::timeout(Duration::from_secs(5), sweeper).await;
-    ended
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn backoff_doubles_from_a_second_and_stops_at_five_minutes() {
-        let secs: Vec<u64> = (0..=12).map(|n| backoff(n).as_secs()).collect();
-        assert_eq!(secs, [1, 1, 2, 4, 8, 16, 32, 64, 128, 256, 256, 256, 256]);
-        assert_eq!(backoff(u64::MAX).as_secs(), 256);
-    }
 
     #[test]
     fn a_delivery_is_the_documented_json() {

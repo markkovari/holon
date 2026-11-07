@@ -2772,8 +2772,6 @@ dependencies = [
 name = "holon-park"
 version = "0.1.0"
 dependencies = [
- "async-nats",
- "futures",
  "hex",
  "serde",
  "serde_json",

@@ -129,7 +129,7 @@ refused after the intent was written rolling back what the commit parked, leavin
 already there alone, and never applying the cancel listed first; a rolled-back group cancelled
 children first; a dead caller's commit finished by a pass once the lease has run out and not before;
 a pass rolling back a commit that can never be applied; and the sweep announcing what a finished
-commit resolved. Over real JetStream ([`tests/live.rs`](../../crates/holon-park/tests/live.rs)): a
+commit resolved. Over real JetStream ([`tests/live.rs`](https://github.com/markkovari/holon/blob/a640b21baa424f383c7ae761a40965c9a621c88e/crates/holon-park/tests/live.rs)): a
 dead caller's intent finished by the resumer's own sweep, and six callers committing the identical
 list at once making one commit and four tickets. Through the real components, daemon and resumer
 ([`reconciler/tests/e2e_park.rs`](../../reconciler/tests/park_app.rs)): a fan-out committed, the same
