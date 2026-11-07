@@ -105,3 +105,6 @@ voice/tray/HolonVoiceTray
 components/**/_build/
 components/**/.mooncakes/
 components/**/*.generated.mbti
+
+.claude/
+
