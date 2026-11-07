@@ -12,7 +12,7 @@ pub enum Verdict {
     Refuse(Vec<String>),
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Absence(HashMap<String, u32>);
 
 impl Absence {

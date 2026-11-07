@@ -12,11 +12,14 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use agent_matrix::init::{init, InitArgs};
-use agent_matrix::serve::serve;
-use agent_matrix::{Bridge, Config};
+#[path = "support/reqwest_http.rs"]
+mod reqwest_http;
+
+use agent_matrix::state::FileStore;
+use agent_matrix::{appservice, setup, Bridge, Config};
 use agent_runtime::speech::SpeechConfig;
 use agent_runtime::{AgentSpec, Capability, Config as RtConfig, ModelSpec, Runtime};
+use reqwest_http::Reqwest;
 use serde_json::{json, Value};
 
 const SERVER: &str = "localhost";
@@ -151,13 +154,34 @@ impl Owner {
         v["chunk"].as_array().cloned().unwrap_or_default()
     }
 
-    /// Text messages from `sender`, oldest first.
+    /// Text messages from `sender`, oldest first, as Element shows them: an edit replaces the message it edits, and an agent's "thinking"
+    /// placeholder is not an answer yet.
     fn texts_from(&self, room: &str, sender: &str) -> Vec<String> {
-        let mut v: Vec<String> = self
+        let events: Vec<Value> = self
             .events(room)
-            .iter()
+            .into_iter()
             .filter(|e| e["type"] == "m.room.message" && e["sender"] == sender)
-            .filter_map(|e| e["content"]["body"].as_str().map(String::from))
+            .collect();
+        let edit_of = |e: &Value| {
+            (e["content"]["m.relates_to"]["rel_type"] == "m.replace")
+                .then(|| e["content"]["m.relates_to"]["event_id"].as_str())
+                .flatten()
+                .map(String::from)
+        };
+        let mut v: Vec<String> = events
+            .iter()
+            .filter(|e| edit_of(e).is_none())
+            .filter_map(|e| {
+                // newest first, so the first edit found is the latest
+                let edited =
+                    events.iter().find(|x| edit_of(x).as_deref() == e["event_id"].as_str());
+                let body = match edited {
+                    Some(x) => &x["content"]["m.new_content"]["body"],
+                    None => &e["content"]["body"],
+                };
+                body.as_str().map(String::from)
+            })
+            .filter(|b| b != "*(thinking...)*")
             .collect();
         v.reverse();
         v
@@ -376,35 +400,38 @@ fn world_with(speech: SpeechConfig) -> Option<World> {
         .unwrap();
     assert!(reg.status.success(), "creating the owner: {}", String::from_utf8_lossy(&reg.stderr));
 
-    let (config_path, reg_path) = init(InitArgs {
-        server_name: SERVER.into(),
+    // What `holon matrix init` writes, done here without its owner prompt.
+    let owner_token = Owner::login(&base).token;
+    let cfg = Config {
         homeserver: base.clone(),
-        owner_localpart: "mark".into(),
-        owner_password: OWNER_PW.into(),
+        server_name: SERVER.into(),
+        as_token: format!("as-{}", free_port()),
+        hs_token: format!("hs-{}", free_port()),
         runtime_url: format!("http://{rt_addr}"),
         runtime_token: "rt-admin-token".into(),
-        listen: format!("0.0.0.0:{bridge_port}"),
-        appservice_url: format!("http://host.docker.internal:{bridge_port}"),
-        dir: work.path().join("bridge"),
-    })
-    .expect("agent-matrix init");
-    // the config and registration hold secrets: both must be private
-    {
-        use std::os::unix::fs::PermissionsExt;
-        for p in [&config_path, &reg_path] {
-            assert_eq!(std::fs::metadata(p).unwrap().permissions().mode() & 0o777, 0o600);
-        }
-    }
+        owner: format!("@mark:{SERVER}"),
+        admin_token: owner_token,
+        history_chars: agent_matrix::config::history_chars(),
+        jev_key: None,
+    };
+    let reg_path = work.path().join("holon-agents.yaml");
+    let appservice_url = format!("http://host.docker.internal:{bridge_port}");
+    std::fs::write(&reg_path, setup::registration_yaml(&cfg, &appservice_url)).unwrap();
     deploy(&project, &syn_dir, syn_port, Some(&reg_path)); // now Synapse knows the appservice
 
-    let cfg = Config::load(&config_path).unwrap();
-    let bridge: Arc<Bridge> = Bridge::new(cfg);
+    let store = FileStore::new(work.path().join("state.json"));
+    let bridge: Arc<Bridge> = Bridge::new(cfg, Arc::new(Reqwest::new()), Box::new(store));
     bridge
         .ensure_bridge_user()
         .expect("the appservice registration is loaded, so the bridge user registers");
-    serve(bridge.clone()).unwrap();
+    serve(bridge.clone(), bridge_port);
     bridge.reconcile().expect("first reconcile");
-    bridge.spawn_loops();
+    // What comp-host's pump does for the component (ADR-0130).
+    let b = bridge.clone();
+    std::thread::spawn(move || loop {
+        b.pump();
+        std::thread::sleep(Duration::from_millis(500));
+    });
     let owner = Owner::login(&base);
     Some(World { rt, bridge, owner, base, container, _work: work, _down: down, _lock: lock })
 }
@@ -782,7 +809,10 @@ fn archiving_a_project_pauses_its_agents_and_takes_its_rooms_out_of_your_list() 
             .then_some(())
     });
     let all = [&rooms.space, &rooms.general, &rooms.feed];
-    assert!(all.iter().all(|r| owner.joined(r).contains(&owner.user)), "you are in all of them");
+    // Eventually: Synapse rate-limits a burst of joins, and a later pass joins the rest.
+    wait_for("you are in all of them", 40, || {
+        all.iter().all(|r| owner.joined(r).contains(&owner.user)).then_some(())
+    });
     rt.set_paused("rower", true).unwrap(); // your own doing, not archiving's
 
     // ---- archive: chef loses its last live home; coach is still in `side`; rower was yours
@@ -1024,4 +1054,25 @@ fn you_can_talk_to_an_agent_and_it_talks_back() {
     assert_eq!(&audio[..4], b"OggS");
     let back = rt.speech().transcribe(&audio, None).expect("transcribing the reply").to_lowercase();
     assert!(back.contains("last row"), "the voice reply says the answer: {back}");
+}
+
+/// Synapse's side of the component, natively: one request at a time, as Synapse sends them.
+fn serve(bridge: Arc<Bridge>, port: u16) {
+    let server = tiny_http::Server::http(("0.0.0.0", port)).expect("bind the appservice port");
+    std::thread::spawn(move || {
+        for mut req in server.incoming_requests() {
+            let auth = req
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv("authorization"))
+                .map(|h| h.value.as_str().to_string());
+            let mut body = Vec::new();
+            let _ = std::io::Read::read_to_end(req.as_reader(), &mut body);
+            let method = req.method().as_str().to_string();
+            let (status, v) =
+                appservice::handle(&bridge, &method, req.url(), auth.as_deref(), &body);
+            let _ = req
+                .respond(tiny_http::Response::from_string(v.to_string()).with_status_code(status));
+        }
+    });
 }

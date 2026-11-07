@@ -544,7 +544,7 @@ flowchart LR
     n_rt["<b>agent-runtime</b><br/>spec + bounded tool loop, memory,<br/>run log, triggers · --state-dir"]:::native
     n_gw["<b>agent gateway</b><br/>one generic component per agent<br/>HTTP front door on the lattice"]:::wasm
     n_syn["<b>Synapse</b><br/>Matrix homeserver<br/>infra/matrix, on the tailnet"]:::ext
-    n_mx["<b>agent-matrix</b><br/>appservice: agent = user,<br/>project = Space · approvals = polls"]:::native
+    n_mx["<b>matrix-bridge</b><br/>appservice on comp-host: agent = user,<br/>project = Space · approvals = polls"]:::wasm
   end
   n_g_cl(["<b>Agent clients</b><br/>bots · scripts · UIs"]):::ghost
   n_g_res(["<b>Durable services</b><br/>park app sweep"]):::ghost
@@ -578,7 +578,7 @@ flowchart LR
 | 3 | comp-agentd | → | [Durable services](#durable-services)<br>park app | HTTP | Parks an approval (correlation = call id, replay unsafe, deadline = the approval timeout), answers it, cancels it. Opt-in with --park-url. | [0113](adr/0113-a-task-waiting-for-a-person-is-a-parked-call.md) |
 | 4 | comp-agentd | → | LLM providers<br>providers | HTTPS | Anthropic /v1/messages or any OpenAI-compatible /chat/completions, streamed; a mock provider for tests. | [0102](adr/0102-an-agent-session-is-a-contract-first.md) |
 | 5 | agent gateway | → | [Runtime](#runtime)<br>holon-host | lattice | The gateway is one generic wasm component deployed once per agent; it forwards W3C traceparent both ways. |  |
-| 6 | agent-matrix | ← | Element (Matrix)<br>Element | Matrix | Every agent is a Matrix user and every project a Space, bridged by an appservice; approvals are polls. | [0105](adr/0105-agents-live-in-spaces.md) |
+| 6 | matrix-bridge | ← | Element (Matrix)<br>Element | Matrix | Every agent is a Matrix user and every project a Space, bridged by an appservice component; approvals are polls. | [0135](adr/0135-the-matrix-bridge-is-a-component.md) |
 |  | agent-runtime | → | LLM providers<br>providers | HTTPS | On-device, OpenAI-compatible or Anthropic models; each run has a step, token and daily budget. |  |
 
 **What keeps it apart**
@@ -587,7 +587,7 @@ flowchart LR
 - agent-runtime refuses a tool an agent was not granted instead of dispatching it, and only the owner’s Matrix messages start a run.
 - agent-runtime is the first client of comp-agentd: an agent granted session_start opens a coding session, the runtime watches it and shows its approvals as its own ([ADR-0119](adr/0119-an-agent-can-start-a-coding-session.md)); the contract came first, for bots, backends and scripts outside it ([ADR-0102](adr/0102-an-agent-session-is-a-contract-first.md)). Whether agent-runtime should also run its own tasks on the daemon is proposed in [ADR-0117](adr/0117-an-autonomous-run-is-a-task-in-a-session.md).
 
-**Where it lives** [`reconciler/daemons/agentd/`](../reconciler/daemons/agentd/) · [`crates/holon-llm/`](../crates/holon-llm/) · [`crates/holon-fuel/`](../crates/holon-fuel/) · [`api/holon/v1/agent.proto`](../api/holon/v1/agent.proto) · [`api/openapi.yaml`](../api/openapi.yaml) · [`agent-runtime/`](../agent-runtime/) · [`agent-matrix/`](../agent-matrix/) · [`gpui-console/`](../gpui-console/)
+**Where it lives** [`reconciler/daemons/agentd/`](../reconciler/daemons/agentd/) · [`crates/holon-llm/`](../crates/holon-llm/) · [`crates/holon-fuel/`](../crates/holon-fuel/) · [`api/holon/v1/agent.proto`](../api/holon/v1/agent.proto) · [`api/openapi.yaml`](../api/openapi.yaml) · [`agent-runtime/`](../agent-runtime/) · [`agent-matrix/`](../agent-matrix/) · [`components/matrix-bridge/`](../components/matrix-bridge/) · [`gpui-console/`](../gpui-console/)
 
 ### Engineering loop
 
@@ -763,7 +763,7 @@ One row for each thing one system says to another, with what crosses, over what,
 | Agent clients<br>bots · scripts · UIs | → | [Agent services](#agent-services)<br>comp-agentd | REST · SSE · gRPC | api/openapi.yaml and api/holon/v1/agent.proto on one port. Sessions, tasks, one resumable event stream, a state snapshot to catch up, steering, a bounded queue, per-tool approval with a scope. | [0102](adr/0102-an-agent-session-is-a-contract-first.md) · [0107](adr/0107-a-client-catches-up-from-a-snapshot-then-tails.md) · [0108](adr/0108-a-running-task-takes-input-at-a-boundary.md) · [0112](adr/0112-a-busy-session-can-queue-a-task.md) · [0114](adr/0114-an-approval-can-reach-beyond-one-call.md) |
 | [Agent services](#agent-services)<br>comp-agentd | → | LLM providers<br>providers | HTTPS | Anthropic /v1/messages or any OpenAI-compatible /chat/completions, streamed; a mock provider for tests. | [0102](adr/0102-an-agent-session-is-a-contract-first.md) |
 | [Agent services](#agent-services)<br>agent-runtime | → | LLM providers<br>providers | HTTPS | On-device, OpenAI-compatible or Anthropic models; each run has a step, token and daily budget. |  |
-| Element (Matrix)<br>Element | → | [Agent services](#agent-services)<br>agent-matrix | Matrix | Every agent is a Matrix user and every project a Space, bridged by an appservice; approvals are polls. | [0105](adr/0105-agents-live-in-spaces.md) |
+| Element (Matrix)<br>Element | → | [Agent services](#agent-services)<br>matrix-bridge | Matrix | Every agent is a Matrix user and every project a Space, bridged by an appservice component; approvals are polls. | [0135](adr/0135-the-matrix-bridge-is-a-component.md) |
 | [Engineering loop](#engineering-loop)<br>agent-driver | → | LLM providers<br>providers | HTTPS | anthropic-provider (or openai-provider) is the model behind each branch; a real model, not a mock. |  |
 | [Engineering loop](#engineering-loop)<br>github-forge | → | Git (GitHub)<br>forge | HTTPS | Opens the pull request for the selected candidate; the only path from a branch to a PR. |  |
 | [Engineering loop](#engineering-loop)<br>knowledge-memory | → | SurrealDB<br>knowledge graph | SurrealQL | KNN fused with TF-IDF; observe and promote split at the linker, so an agent cannot write what the swarm believes. | [0084](adr/0084-two-retrievers-and-an-optimistic-database.md) · [0091](adr/0091-one-store-one-schema.md) |

@@ -5,28 +5,18 @@ edition.workspace = true
 publish.workspace = true
 description = "Matrix bridge for agent-runtime: every agent is a Matrix user, every project a Space. Chat with an agent in its room, add an agent to a project by inviting it, approve tool calls with a poll."
 
-# Native, outside the components/ (wasm32) workspace — same arrangement as
-# agent-runtime/ and gpui-console/. It talks to the runtime over HTTP only and
-# shares no code with it.
-
-[lib]
-name = "agent_matrix"
-path = "src/lib.rs"
-
-[[bin]]
-name = "agent-matrix"
-path = "src/main.rs"
+# The bridge's logic, with no I/O of its own: `components/matrix-bridge` runs it on comp-host,
+# handing it wasi:http and the app's keyvalue; the e2e test hands it reqwest and a file.
 
 [dependencies]
 agent-wire.workspace = true
-clap.workspace = true
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
-reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tiny_http = "0.12"
 
 [dev-dependencies]
 # The e2e test starts a real runtime with scripted agents, in-process.
 agent-runtime.workspace = true
+reqwest.workspace = true
 tempfile.workspace = true
+tiny_http = "0.12"

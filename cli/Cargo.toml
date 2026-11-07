@@ -14,6 +14,8 @@ path = "src/main.rs"
 
 [dependencies]
 holon-metadata.workspace = true
+# Only its config and setup files: the bridge itself is the matrix-bridge component.
+agent-matrix.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true

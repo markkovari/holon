@@ -5,8 +5,12 @@ is a Space.** You use Element X on the iPhone and iPad and Element on the Mac;
 there is no app of our own to publish.
 
 ```
-Element ── Synapse (malna, tailnet) ──appservice──▶ agent-matrix ──HTTP──▶ agent-runtime ──▶ agents
+Element ── Synapse (malna, tailnet) ──appservice──▶ matrix-bridge (comp-host) ──HTTP──▶ agent-runtime ──▶ agents
 ```
+
+This crate is the bridge's logic with no I/O of its own; `components/matrix-bridge` runs it on
+comp-host (ADR-0135), handing it `wasi:http` and the app's keyvalue. A message starts a run as a
+runtime job, and the host's pump (every 2 s) delivers the answer, so no request waits on an agent.
 
 ## What you get
 
@@ -70,24 +74,31 @@ The runtime must be running (`agent-runtime --state-dir …`) and Synapse deploy
 
 ```sh
 # 1. once: tokens, one owner login, the config and Synapse's registration file
-HOLON_OWNER_PASSWORD=… agent-matrix init \
+HOLON_OWNER_PASSWORD=… holon matrix init \
     --server-name node.tailnet.ts.net --homeserver https://node.tailnet.ts.net \
     --runtime-token-file <runtime state dir>/admin-token \
     --appservice-url http://<this machine's tailnet IP>:9009
 # 2. give Synapse the registration file (this restarts Synapse for a few seconds)
 APPSERVICE_REG=~/.holon-matrix/holon-agents.yaml infra/matrix/deploy.sh Malna
-# 3. run the bridge
-agent-matrix run
+# 3. run the bridge: comp-host serving the component, as a launchd agent (`bridge`)
+cargo build --release -p holon-host -p holon && cargo xtask build
+infra/launchd/install.sh install
 ```
 
-`init` writes `~/.holon-matrix/bridge.json` (mode 0600; it holds the appservice
-tokens, the runtime's admin token and your session token) and `holon-agents.yaml`.
-**Neither goes in the repo.** The registration claims only `@agent-.*:<server>`.
+`init` writes `~/.holon-matrix/bridge.conf` (mode 0600; the component's config file, holding the
+appservice tokens, the runtime's admin token and your session token) and `holon-agents.yaml`.
+**Neither goes in the repo.** The registration claims only `@agent-.*:<server>`. The config keys
+are `Config::entries`; a Jev key goes in as `jev-key`.
+
+Moving from the native bridge: `install.sh` turns its `bridge.json` into `bridge.conf` (`holon
+matrix migrate`, same tokens, so Synapse's registration stays) and hands its `state.json` to the
+running component once (`holon matrix import-state`), which keeps every room you already have.
 
 ## How it stays consistent
 
 The runtime's registry is the source of truth for agents and projects. The bridge
-keeps only a map of which room is which (`state.json`); every pass it reads the
+keeps only a map of which room is which (one document in the app's keyvalue, moved by
+compare-and-set); every pass it reads the
 runtime and makes Matrix match: it creates missing rooms, invites the project's
 agents, and kicks agents that left the project. Membership changes made *in Matrix*
 (an invite, a kick, a command) are written to the runtime first, then reconciled.
@@ -192,14 +203,13 @@ passed through.
 * Files other than photos (documents, audio files) coming in, and any file going from an agent back to Matrix.
 * Agents posting unprompted *as a tool* (a `notify` capability an agent calls mid-run).
 * More than one human, and per-room permissions.
-* Running as a service (launchd); today it is a foreground process.
 * Whether the bridge's own session and the appservice survive a Synapse upgrade is
   untested.
 
 ## Who answers when nobody is named
 
 In a project room, `@name` picks the agent. Otherwise, in order:
-1. **Jev**, when `HOLON_JEV_KEY_FILE` names a file holding a TypeSafe key: each member's description
+1. **Jev**, when the config has a `jev-key` (a TypeSafe key): each member's description
    is put to Jev as a yes/no question about the message, and the members it confirms answer. Jev
    returns probabilities, not text, so it routes; it is not a chat model.
 2. **Embeddings**, through the runtime's `/embed` (when it has an embedding service): a member answers

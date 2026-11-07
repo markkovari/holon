@@ -1,0 +1,13 @@
+// The Matrix bridge (agent-matrix) as a component: Synapse's appservice transactions in, the
+// homeserver and the agent runtime out over HTTP, its rooms in the app's keyvalue. comp-host's
+// pump (ADR-0130) drives the reconcile, the approval polls and the delivery of finished runs.
+package holon:matrix-bridge@0.1.0;
+
+world matrix-bridge {
+    export wasi:http/incoming-handler@0.2.0;
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import comp:store/cas@0.1.0;
+    import wasi:config/store@0.2.0-rc.1;
+    import comp:secrets/reader@0.1.0;
+}

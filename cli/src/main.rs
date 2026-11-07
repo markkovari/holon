@@ -1,4 +1,5 @@
 mod fleet;
+mod matrix;
 mod platform;
 mod selfhost;
 mod wadm;
@@ -68,6 +69,54 @@ enum Cmd {
     /// Goals: the worklist. Nothing starts one but you (ADR-0082).
     #[command(subcommand)]
     Goal(GoalCmd),
+    /// The Matrix bridge component: its config, and the move from the native bridge.
+    #[command(subcommand)]
+    Matrix(MatrixCmd),
+}
+
+#[derive(Subcommand)]
+enum MatrixCmd {
+    /// Log the owner in once, write the config file and Synapse's registration file.
+    Init {
+        #[arg(long)]
+        server_name: String,
+        #[arg(long)]
+        homeserver: String,
+        /// The owner's local part (`mark` for @mark:server). Must be a Synapse admin.
+        #[arg(long, default_value = "mark")]
+        owner: String,
+        /// Read from the environment, never from the command line.
+        #[arg(long, env = "HOLON_OWNER_PASSWORD", hide_env_values = true)]
+        owner_password: String,
+        #[arg(long, default_value = "http://127.0.0.1:18017")]
+        runtime_url: String,
+        /// File holding the runtime's admin token (`<state-dir>/admin-token`).
+        #[arg(long)]
+        runtime_token_file: PathBuf,
+        /// How Synapse reaches the bridge, e.g. http://<this Mac's tailnet IP>:9009
+        #[arg(long)]
+        appservice_url: String,
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+    /// Turn the native bridge's bridge.json into the component's bridge.conf.
+    Migrate {
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
+    /// Hand the native bridge's state.json to the running component, once.
+    ImportState {
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        #[arg(long, default_value = "http://127.0.0.1:9009")]
+        url: String,
+    },
+}
+
+fn matrix_dir(dir: Option<PathBuf>) -> PathBuf {
+    dir.unwrap_or_else(|| {
+        PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".holon-matrix")
+    })
 }
 
 #[derive(Subcommand)]
@@ -461,6 +510,40 @@ fn main() -> Result<()> {
             platform::goal_add(&project, &title, spec.as_deref(), priority)?
         }
         Cmd::Goal(GoalCmd::Ls { project, state }) => platform::goal_ls(&project, state.as_deref())?,
+        Cmd::Matrix(MatrixCmd::Init {
+            server_name,
+            homeserver,
+            owner,
+            owner_password,
+            runtime_url,
+            runtime_token_file,
+            appservice_url,
+            dir,
+        }) => {
+            let runtime_token = std::fs::read_to_string(&runtime_token_file)
+                .with_context(|| runtime_token_file.display().to_string())?
+                .trim()
+                .to_string();
+            let (conf, reg) = matrix::init(matrix::InitArgs {
+                server_name,
+                homeserver,
+                owner_localpart: owner,
+                owner_password,
+                runtime_url,
+                runtime_token,
+                appservice_url,
+                dir: matrix_dir(dir),
+            })?;
+            println!("wrote {}\nwrote {}", conf.display(), reg.display());
+            println!("Next: give Synapse the registration file (infra/matrix/deploy.sh does it when APPSERVICE_REG is set), restart it, then infra/launchd/install.sh install.");
+        }
+        Cmd::Matrix(MatrixCmd::Migrate { dir }) => {
+            println!("wrote {}", matrix::migrate(&matrix_dir(dir))?.display());
+        }
+        Cmd::Matrix(MatrixCmd::ImportState { dir, url }) => {
+            matrix::import_state(&matrix_dir(dir), &url)?;
+            println!("the bridge took the state; state.json is now state.json.imported");
+        }
         Cmd::Goal(GoalCmd::Watch { project, interval, full_refresh }) => {
             platform::goal_watch(&project, interval, full_refresh)?
         }

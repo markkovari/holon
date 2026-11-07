@@ -48,7 +48,6 @@ version = "0.1.0"
 dependencies = [
  "agent-runtime",
  "agent-wire",
- "clap",
  "pulldown-cmark",
  "reqwest",
  "serde",
@@ -2407,6 +2406,7 @@ dependencies = [
 name = "holon"
 version = "0.1.0"
 dependencies = [
+ "agent-matrix",
  "anyhow",
  "clap",
  "holon-metadata",

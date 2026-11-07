@@ -68,6 +68,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # wasmparser is pinned to the one wac-graph carries (0.10 reads with 0.247).
 wasmparser = "0.247"
 agent-runtime = { path = "agent-runtime" }
+agent-matrix = { path = "agent-matrix" }
 agent-wire = { path = "crates/agent-wire" }
 holon-cdp = { path = "crates/holon-cdp" }
 holon-daemon-kit = { path = "reconciler/daemons/kit" }

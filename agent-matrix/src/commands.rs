@@ -417,14 +417,27 @@ impl Bridge {
     pub fn handle_steer_cmd(&self, agent: &str, message: &str, room: Option<&str>) -> String {
         let prompt = format!("[STEER DIRECTIVE]: {message}");
         let project = room.and_then(|r| self.project_of(r));
-        let (ok, answer) = self.rt.run(agent, &prompt, "steer", None, project.as_deref(), &[]);
-        if ok {
-            format!(
-                "✅ Steering guidance applied to `{agent}`:\n> {message}\n\n{}",
-                clip(&answer, 1000)
-            )
-        } else {
-            format!("⚠️ Steering directive failed on `{agent}`: {answer}")
+        // Its outcome is posted where it was asked: by the agent in its room, by the bridge in control.
+        let (room, sender) = match room {
+            Some(r) => (r.to_string(), self.cfg.ghost(agent)),
+            None => match self.state.read(|d| d.control_room.clone()) {
+                Some(c) => (c, self.cfg.bridge_user()),
+                None => return "no control room to report the outcome in".into(),
+            },
+        };
+        match self.rt.start_run(agent, &prompt, "steer", project.as_deref(), &[]) {
+            Ok(job) => {
+                self.state.add_pending(crate::state::Pending {
+                    job,
+                    agent: agent.to_string(),
+                    room,
+                    sender,
+                    steer: Some(message.to_string()),
+                    ..Default::default()
+                });
+                format!("🧭 Steering `{agent}`; its answer follows.")
+            }
+            Err(e) => format!("⚠️ Steering directive failed on `{agent}`: {e}"),
         }
     }
 }

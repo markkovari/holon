@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Rebuild the agent runtime and the Matrix bridge, sign what macOS grants permissions to, and
+# Rebuild the agent runtime and the Matrix bridge component, sign what macOS grants permissions to, and
 # restart them under launchd.
 #
 #   ./rebuild.sh               build, sign, restart both
@@ -27,7 +27,7 @@ fi
 
 echo "== build"
 (cd "$REPO/agent-runtime" && cargo build --release)
-(cd "$REPO/agent-matrix" && cargo build --release)
+(cd "$REPO/components" && cargo build --release --target wasm32-wasip2 -p matrix-bridge)
 
 # Sign a COPY and rename it over the original: the rename is atomic and leaves a running process
 # on its old file, where signing in place would invalidate the pages it has mapped.
